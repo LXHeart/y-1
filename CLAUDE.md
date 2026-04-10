@@ -136,6 +136,9 @@ Defined in `server/src/routes/douyin.ts`:
 - Audio extraction depends on `ffmpeg`; temp files are created under the configured `server/.data` path and cleaned up after streaming.
 - Production mode serves the built SPA from Express, so frontend/backend behavior is coupled at deployment time.
 - When adding or changing runtime config, update `server/src/lib/env.ts` first and keep docs in sync.
+- Anonymous resolver behavior differs by input shape: short-link/share inputs may still use `mobile_http`, while direct `douyin.com/video/:id` inputs now skip low-value `mobile_http` when desktop HTTP remains unresolved and go straight to `browser`.
+- That direct-URL optimization must not disable browser-side mobile retry. Resolver-level `mobile_http` skipping and browser-internal mobile follow-up are separate controls.
+- Browser challenge pages can still contribute useful network snippets, but challenge pages themselves must not be treated as final success material.
 
 ## Testing notes
 

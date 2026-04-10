@@ -49,6 +49,12 @@ npx playwright install
 
 ### 2. 配置环境变量
 
+可直接复制示例文件：
+
+```bash
+cp .env.example .env
+```
+
 在项目根目录创建 `.env`，至少包含：
 
 ```dotenv
@@ -153,6 +159,61 @@ curl -X POST http://localhost:3000/api/douyin/extract-video \
   -d '{"input":"7.54 复制打开抖音，看看【示例】 https://v.douyin.com/xxxx/"}'
 ```
 
+响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "sourceUrl": "https://v.douyin.com/xxxx/",
+    "platform": "douyin",
+    "videoId": "1234567890",
+    "author": "示例作者",
+    "title": "示例标题",
+    "coverUrl": "https://p3-sign.douyinpic.com/...",
+    "proxyVideoUrl": "/api/douyin/proxy/<token>",
+    "downloadVideoUrl": "/api/douyin/download/<token>",
+    "downloadAudioUrl": "/api/douyin/audio/<token>",
+    "usedSession": false,
+    "fetchStage": "browser_network"
+  }
+}
+```
+
+字段说明：
+- `proxyVideoUrl`：用于页面内预览的视频代理地址
+- `downloadVideoUrl`：用于下载 mp4 的后端地址
+- `downloadAudioUrl`：用于触发音频提取并下载音频文件
+- `usedSession`：`true` 表示本次解析走了本地持久化登录态增强
+- `fetchStage`：表示最终可播放地址的来源，可能为：
+  - `page_json`：直接来自页面 HTML / script 中的可用片段
+  - `browser_json`：来自浏览器抓取到的页面 JSON 片段
+  - `browser_network`：来自浏览器网络响应或媒体请求信号
+
+失败时统一返回：
+
+```json
+{
+  "success": false,
+  "error": "错误信息"
+}
+```
+
+### 示例：查询登录增强状态
+
+```bash
+curl http://localhost:3000/api/douyin/session
+```
+
+典型状态包括：
+- `missing`：当前未建立本地登录态
+- `launching`：后端正在准备登录页/二维码
+- `qr_ready`：二维码已生成，等待扫码
+- `waiting_for_confirm`：已扫码，等待手机确认
+- `authenticated`：本地登录态可复用
+- `expired`：旧登录态已失效
+- `error`：登录增强流程异常
+
 ## 项目结构
 
 ```text
@@ -179,6 +240,12 @@ curl -X POST http://localhost:3000/api/douyin/extract-video \
 - 登录增强只保存在后端本地文件中，不回传到前端。
 - `extract-video`、`proxy`、`download`、`audio`、`session` 接口都带有基础限流。
 - 该项目当前更适合本地自用或受控环境，不是公开多租户 SaaS。
+
+当前匿名解析链路的非显然行为：
+- 短链 / 分享页输入仍可能经过 `desktop_http -> mobile_http -> browser` 的多阶段回退。
+- direct `/video/:id?...` 输入在 `desktop_http` 未解析出可播放素材时，会跳过低价值 `mobile_http`，直接进入 `browser`。
+- 这类 direct URL 优化不会关闭 browser 内部的 mobile retry；是否继续 mobile follow-up，仍由 browser 侧基于实际信号决定。
+- 如果匿名链路命中 challenge / captcha，再由登录增强作为 fallback，而不是默认路径。
 
 ## 测试与校验
 
