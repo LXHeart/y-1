@@ -6,3 +6,4 @@ server/dist
 coverage
 server/.data
 playwright-report
+test-artifacts
