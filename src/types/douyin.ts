@@ -4,6 +4,8 @@ export interface ApiResponse<T> {
   error?: string
 }
 
+export type DouyinFetchStage = 'page_json' | 'browser_json' | 'browser_network'
+
 export interface ExtractedDouyinVideoPayload {
   sourceUrl: string
   platform: 'douyin'
@@ -15,7 +17,17 @@ export interface ExtractedDouyinVideoPayload {
   downloadVideoUrl: string
   downloadAudioUrl: string
   usedSession: boolean
-  fetchStage: 'page_json' | 'browser_json' | 'browser_network'
+  fetchStage: DouyinFetchStage
+}
+
+export interface DouyinVideoAnalysisResult {
+  videoCaptions?: string
+  videoScript?: string
+  charactersDescription?: string
+  voiceDescription?: string
+  propsDescription?: string
+  sceneDescription?: string
+  runId?: string
 }
 
 export interface DouyinSessionState {

@@ -1,15 +1,11 @@
 import { ref } from 'vue'
-import type { ApiResponse, DouyinFetchStage, ExtractedDouyinVideoPayload } from '../types/douyin'
+import type { ApiResponse, ExtractedBilibiliVideoPayload } from '../types/bilibili'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isDouyinFetchStage(value: unknown): value is DouyinFetchStage {
-  return value === 'page_json' || value === 'browser_json' || value === 'browser_network'
-}
-
-function normalizeExtractedDouyinVideoPayload(value: unknown): ExtractedDouyinVideoPayload | null {
+function normalizeExtractedBilibiliVideoPayload(value: unknown): ExtractedBilibiliVideoPayload | null {
   if (!isPlainObject(value)) {
     return null
   }
@@ -18,39 +14,35 @@ function normalizeExtractedDouyinVideoPayload(value: unknown): ExtractedDouyinVi
     typeof value.sourceUrl !== 'string'
     || typeof value.proxyVideoUrl !== 'string'
     || typeof value.downloadVideoUrl !== 'string'
-    || typeof value.downloadAudioUrl !== 'string'
-    || typeof value.usedSession !== 'boolean'
-    || !isDouyinFetchStage(value.fetchStage)
+    || (value.playbackMode !== 'progressive' && value.playbackMode !== 'dash')
   ) {
     return null
   }
 
   return {
     sourceUrl: value.sourceUrl,
-    platform: 'douyin',
+    platform: 'bilibili',
     videoId: typeof value.videoId === 'string' ? value.videoId : undefined,
     author: typeof value.author === 'string' ? value.author : undefined,
     title: typeof value.title === 'string' ? value.title : undefined,
     coverUrl: typeof value.coverUrl === 'string' ? value.coverUrl : undefined,
     proxyVideoUrl: value.proxyVideoUrl,
     downloadVideoUrl: value.downloadVideoUrl,
-    downloadAudioUrl: value.downloadAudioUrl,
-    usedSession: value.usedSession,
-    fetchStage: value.fetchStage,
+    playbackMode: value.playbackMode,
   }
 }
 
-export function useDouyinParse() {
-  const extractedVideo = ref<ExtractedDouyinVideoPayload | null>(null)
+export function useBilibiliParse() {
+  const extractedVideo = ref<ExtractedBilibiliVideoPayload | null>(null)
   const loading = ref(false)
   const error = ref('')
 
-  async function extractVideo(input: string): Promise<ExtractedDouyinVideoPayload | null> {
+  async function extractVideo(input: string): Promise<ExtractedBilibiliVideoPayload | null> {
     const normalizedInput = input.trim()
 
     if (!normalizedInput) {
       extractedVideo.value = null
-      error.value = '请输入抖音分享文本或链接'
+      error.value = '请输入 B 站分享文本或链接'
       return null
     }
 
@@ -59,7 +51,7 @@ export function useDouyinParse() {
     extractedVideo.value = null
 
     try {
-      const response = await fetch('/api/douyin/extract-video', {
+      const response = await fetch('/api/bilibili/extract-video', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -74,7 +66,7 @@ export function useDouyinParse() {
       }
 
       const body = await response.json() as ApiResponse<unknown>
-      const normalizedData = normalizeExtractedDouyinVideoPayload(body.data)
+      const normalizedData = normalizeExtractedBilibiliVideoPayload(body.data)
 
       if (!response.ok || !body.success || !normalizedData) {
         throw new Error(body.error || '提取视频失败，请稍后重试')

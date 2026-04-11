@@ -9,9 +9,6 @@ const allowedDouyinPageHosts = new Set([
   'www.iesdouyin.com',
 ])
 
-const redirectStatusCodes = new Set([301, 302, 303, 307, 308])
-const MAX_REDIRECT_HOPS = 5
-
 function assertAllowedHost(url: string): void {
   const parsed = new URL(url)
   const hostname = parsed.hostname.toLowerCase()
@@ -26,71 +23,51 @@ function assertAllowedHost(url: string): void {
   }
 }
 
-function getRedirectLocation(response: Response, currentUrl: string): string {
-  const location = response.headers.get('location')
-  if (!location) {
-    throw new AppError('抖音链接返回了无效的跳转地址', 502)
-  }
-
-  return new URL(location, currentUrl).toString()
-}
-
-async function fetchWithValidatedRedirects(url: string, init: RequestInit): Promise<Response> {
-  let currentUrl = url
-
-  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
-    assertAllowedHost(currentUrl)
-
-    const response = await fetch(currentUrl, {
-      ...init,
-      redirect: 'manual',
-    })
-
-    if (!redirectStatusCodes.has(response.status)) {
-      return response
-    }
-
-    if (hop === MAX_REDIRECT_HOPS) {
-      throw new AppError('抖音链接跳转次数过多', 502)
-    }
-
-    currentUrl = getRedirectLocation(response, currentUrl)
-  }
-
-  throw new AppError('抖音链接跳转次数过多', 502)
-}
-
 export async function fetchText(url: string, init: RequestInit, timeoutMs: number): Promise<{ finalUrl: string, body: string }> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetchWithValidatedRedirects(url, {
-      ...init,
-      signal: controller.signal,
-    })
+    let nextUrl = url
 
-    if (!response.ok) {
-      throw new AppError(`上游请求失败：${response.status}`, 502)
+    for (let redirectCount = 0; redirectCount < 5; redirectCount += 1) {
+      const response = await fetch(nextUrl, {
+        ...init,
+        redirect: 'manual',
+        signal: controller.signal,
+      })
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location')
+        if (!location) {
+          throw new AppError('抖音链接返回了无效的跳转地址', 502)
+        }
+
+        nextUrl = new URL(location, nextUrl).toString()
+        assertAllowedHost(nextUrl)
+        continue
+      }
+
+      const body = await response.text()
+      return {
+        finalUrl: nextUrl,
+        body,
+      }
     }
 
-    assertAllowedHost(response.url)
-
-    return {
-      finalUrl: response.url,
-      body: await response.text(),
-    }
+    throw new AppError('抖音链接跳转次数过多', 502)
   } catch (error: unknown) {
     if (error instanceof AppError) {
       throw error
     }
 
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof DOMException && error.name === 'AbortError') {
       throw new AppError('请求抖音页面超时', 504)
     }
 
+    logger.error({ err: error, targetUrl: url }, 'Failed to fetch douyin text')
     throw new AppError('请求抖音页面失败', 502)
   } finally {
-    clearTimeout(timer)
+    clearTimeout(timeout)
   }
 }

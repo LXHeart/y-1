@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { env } from '../lib/env.js'
 import { AppError } from '../lib/errors.js'
-import { buildDownloadFilename, createDouyinProxyToken, parseDouyinProxyToken } from './douyin-proxy.service.js'
+import {
+  buildDownloadFilename,
+  buildDouyinAudioPath,
+  buildDouyinDownloadPath,
+  buildDouyinProxyPath,
+  buildPublicDouyinProxyUrl,
+  createDouyinProxyToken,
+  parseDouyinProxyToken,
+} from './douyin-proxy.service.js'
 
 describe('douyin proxy tokens', () => {
   it('round-trips playable url headers and filename', () => {
@@ -49,6 +58,33 @@ describe('douyin proxy tokens', () => {
     const tampered = `${token}x`
 
     expect(() => parseDouyinProxyToken(tampered)).toThrow(AppError)
+  })
+})
+
+describe('proxy url builders', () => {
+  it('builds relative proxy, download, and audio paths from a token', () => {
+    const token = createDouyinProxyToken({
+      playableVideoUrl: 'https://v3-dy-example.zjcdn.com/video.mp4',
+    })
+
+    expect(buildDouyinProxyPath(token)).toBe(`/api/douyin/proxy/${encodeURIComponent(token)}`)
+    expect(buildDouyinDownloadPath(token)).toBe(`/api/douyin/download/${encodeURIComponent(token)}`)
+    expect(buildDouyinAudioPath(token)).toBe(`/api/douyin/audio/${encodeURIComponent(token)}`)
+  })
+
+  it('builds a public proxy url from the configured backend origin when available', () => {
+    const token = createDouyinProxyToken({
+      playableVideoUrl: 'https://v3-dy-example.zjcdn.com/video.mp4',
+    })
+
+    if (!env.PUBLIC_BACKEND_ORIGIN) {
+      expect(() => buildPublicDouyinProxyUrl(token)).toThrow('未配置 PUBLIC_BACKEND_ORIGIN')
+      return
+    }
+
+    expect(buildPublicDouyinProxyUrl(token)).toBe(
+      `${env.PUBLIC_BACKEND_ORIGIN}/api/douyin/proxy/${encodeURIComponent(token)}`,
+    )
   })
 })
 

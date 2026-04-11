@@ -25,8 +25,12 @@ export const extractDouyinVideoRequest = z.object({
   input: z.string().trim().min(1, '请输入抖音分享文本或链接').refine(hasAllowedDouyinUrl, '请输入包含有效抖音 HTTPS 链接的分享文本或链接'),
 })
 
+export const analyzeDouyinVideoRequest = z.object({
+  proxyVideoUrl: z.string().trim().min(1, '缺少视频代理地址'),
+})
+
 export const proxyDouyinVideoRequestParams = z.object({
-  token: z.string().trim().min(1, '缺少视频代理凭证'),
+  token: z.string().trim().min(1, '缺少视频代理 token'),
 })
 
 export const douyinSessionResponseSchema = z.object({

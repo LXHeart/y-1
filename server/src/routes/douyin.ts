@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import {
+  analyzeDouyinVideoHandler,
   downloadDouyinAudioHandler,
   downloadDouyinVideoHandler,
   extractDouyinVideoHandler,
@@ -13,6 +14,7 @@ import {
 const douyinRouter = Router()
 
 douyinRouter.post('/extract-video', extractDouyinVideoHandler)
+douyinRouter.post('/analyze-video', analyzeDouyinVideoHandler)
 douyinRouter.get('/proxy/:token', proxyDouyinVideoHandler)
 douyinRouter.get('/download/:token', downloadDouyinVideoHandler)
 douyinRouter.get('/audio/:token', downloadDouyinAudioHandler)

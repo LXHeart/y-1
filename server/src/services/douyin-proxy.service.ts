@@ -6,6 +6,9 @@ import { AppError } from '../lib/errors.js'
 const payloadVersion = 1
 const proxyTokenTtlMs = 15 * 60 * 1000
 const defaultDownloadFilename = 'douyin-video.mp4'
+const douyinProxyPathPrefix = '/api/douyin/proxy/'
+const douyinDownloadPathPrefix = '/api/douyin/download/'
+const douyinAudioPathPrefix = '/api/douyin/audio/'
 const invalidFilenameCharsPattern = /[<>:"/\\|?*\x00-\x1F]+/g
 const whitespacePattern = /\s+/g
 const repeatedDashPattern = /-+/g
@@ -136,6 +139,26 @@ export function createDouyinProxyToken(input: {
   const signature = signPayload(encodedPayload)
 
   return `${encodedPayload}.${signature}`
+}
+
+export function buildDouyinProxyPath(token: string): string {
+  return `${douyinProxyPathPrefix}${encodeURIComponent(token)}`
+}
+
+export function buildDouyinDownloadPath(token: string): string {
+  return `${douyinDownloadPathPrefix}${encodeURIComponent(token)}`
+}
+
+export function buildDouyinAudioPath(token: string): string {
+  return `${douyinAudioPathPrefix}${encodeURIComponent(token)}`
+}
+
+export function buildPublicDouyinProxyUrl(token: string): string {
+  if (!env.PUBLIC_BACKEND_ORIGIN) {
+    throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，第三方分析服务无法访问视频代理地址', 500)
+  }
+
+  return `${env.PUBLIC_BACKEND_ORIGIN}${buildDouyinProxyPath(token)}`
 }
 
 export function parseDouyinProxyToken(token: string): {

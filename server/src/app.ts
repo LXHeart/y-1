@@ -7,6 +7,7 @@ import { ZodError } from 'zod'
 import { env } from './lib/env.js'
 import { AppError } from './lib/errors.js'
 import { logger } from './lib/logger.js'
+import { bilibiliRouter } from './routes/bilibili.js'
 import { douyinRouter } from './routes/douyin.js'
 
 interface RateLimitEntry {
@@ -82,19 +83,19 @@ export function createApp() {
   app.use(pinoHttp({ logger }))
   app.use(cors({ origin: env.CORS_ORIGIN }))
   app.use(express.json({ limit: '1mb' }))
-  app.use('/api/douyin/session', createRateLimit({
-    id: 'douyin-session',
-    max: 8,
-    windowMs: 60 * 1000,
-    methods: ['POST'],
-    message: '抖音登录操作过于频繁，请稍后再试。',
-  }))
   app.use('/api/douyin/extract-video', createRateLimit({
     id: 'douyin-extract',
     max: 20,
     windowMs: 60 * 1000,
     methods: ['POST'],
     message: '提取请求过于频繁，请稍后再试。',
+  }))
+  app.use('/api/douyin/analyze-video', createRateLimit({
+    id: 'douyin-analyze',
+    max: 20,
+    windowMs: 60 * 1000,
+    methods: ['POST'],
+    message: '视频内容提取请求过于频繁，请稍后再试。',
   }))
   app.use('/api/douyin/proxy', createRateLimit({
     id: 'douyin-proxy',
@@ -117,11 +118,33 @@ export function createApp() {
     methods: ['GET'],
     message: '音频提取请求过于频繁，请稍后再试。',
   }))
+  app.use('/api/bilibili/extract-video', createRateLimit({
+    id: 'bilibili-extract',
+    max: 20,
+    windowMs: 60 * 1000,
+    methods: ['POST'],
+    message: '提取请求过于频繁，请稍后再试。',
+  }))
+  app.use('/api/bilibili/proxy', createRateLimit({
+    id: 'bilibili-proxy',
+    max: 120,
+    windowMs: 60 * 1000,
+    methods: ['GET'],
+    message: '视频预览请求过于频繁，请稍后再试。',
+  }))
+  app.use('/api/bilibili/download', createRateLimit({
+    id: 'bilibili-download',
+    max: 30,
+    windowMs: 60 * 1000,
+    methods: ['GET'],
+    message: '视频下载请求过于频繁，请稍后再试。',
+  }))
 
   app.get('/health', (_req, res) => {
     res.json({ success: true })
   })
 
+  app.use('/api/bilibili', bilibiliRouter)
   app.use('/api/douyin', douyinRouter)
 
   if (env.NODE_ENV === 'production') {

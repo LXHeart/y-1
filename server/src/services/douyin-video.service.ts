@@ -1,4 +1,10 @@
-import { createDouyinProxyToken, buildDownloadFilename } from './douyin-proxy.service.js'
+import {
+  buildDouyinAudioPath,
+  buildDouyinDownloadPath,
+  buildDouyinProxyPath,
+  buildDownloadFilename,
+  createDouyinProxyToken,
+} from './douyin-proxy.service.js'
 import { extractDouyinEntryUrl, resolveDouyinSource, resolveDouyinVideoAsset } from './douyin-resolve.service.js'
 
 export interface ExtractedDouyinVideoPayload {
@@ -38,9 +44,9 @@ export async function extractDouyinVideo(input: string): Promise<ExtractedDouyin
     author: source.author,
     title: source.title,
     coverUrl: source.coverUrl,
-    proxyVideoUrl: `/api/douyin/proxy/${encodeURIComponent(token)}`,
-    downloadVideoUrl: `/api/douyin/download/${encodeURIComponent(token)}`,
-    downloadAudioUrl: `/api/douyin/audio/${encodeURIComponent(token)}`,
+    proxyVideoUrl: buildDouyinProxyPath(token),
+    downloadVideoUrl: buildDouyinDownloadPath(token),
+    downloadAudioUrl: buildDouyinAudioPath(token),
     usedSession: videoAsset.usedSession,
     fetchStage: videoAsset.fetchStage,
   }

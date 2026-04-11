@@ -3,9 +3,10 @@ import { request as httpsRequest } from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
 import type { NextFunction, Request, Response } from 'express'
 import { isAllowedDouyinVideoHost } from '../lib/douyin-hosts.js'
-import { extractDouyinVideoRequest, proxyDouyinVideoRequestParams } from '../schemas/douyin.js'
+import { AppError } from '../lib/errors.js'
+import { logger } from '../lib/logger.js'
+import { analyzeDouyinVideoRequest, extractDouyinVideoRequest, proxyDouyinVideoRequestParams } from '../schemas/douyin.js'
 import { cleanupDouyinAudioFile, extractDouyinAudio } from '../services/douyin-audio.service.js'
-import { extractDouyinVideo } from '../services/douyin-video.service.js'
 import { parseDouyinProxyToken } from '../services/douyin-proxy.service.js'
 import {
   getDouyinSessionSnapshot,
@@ -13,8 +14,8 @@ import {
   pollDouyinSession,
   startDouyinSession,
 } from '../services/douyin-session.service.js'
-import { AppError } from '../lib/errors.js'
-import { logger } from '../lib/logger.js'
+import { analyzeDouyinVideoByProxyUrl } from '../services/douyin-video-analysis.service.js'
+import { extractDouyinVideo } from '../services/douyin-video.service.js'
 
 export function isAllowedVideoHost(hostname: string): boolean {
   return isAllowedDouyinVideoHost(hostname)
@@ -254,6 +255,20 @@ export async function extractDouyinVideoHandler(req: Request, res: Response, nex
   try {
     const { input } = extractDouyinVideoRequest.parse(req.body)
     const data = await extractDouyinVideo(input)
+
+    res.json({
+      success: true,
+      data,
+    })
+  } catch (error: unknown) {
+    next(error)
+  }
+}
+
+export async function analyzeDouyinVideoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { proxyVideoUrl } = analyzeDouyinVideoRequest.parse(req.body)
+    const data = await analyzeDouyinVideoByProxyUrl(proxyVideoUrl)
 
     res.json({
       success: true,
