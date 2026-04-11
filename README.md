@@ -1,6 +1,10 @@
 # Douyin Extractor
 
-一个本地优先的抖音视频提取工具。
+一个本地优先的抖音/Bilibili 视频提取工具。
+
+当前项目能力需要按运行方式区分：
+- **本地 Node 环境**：支持基础解析、视频预览、下载、音频提取，以及抖音登录增强 / browser fallback
+- **Docker Compose 部署**：当前只承诺基础解析、视频预览、下载、音频提取、视频分析，不承诺 Playwright 登录增强 / browser fallback
 
 当前已实现：
 - 粘贴抖音分享文本或链接
@@ -8,7 +12,8 @@
 - 页面内预览视频
 - 下载 mp4 视频
 - 提取音频附件
-- 匿名解析失败时，启用扫码登录增强
+- 手动触发视频分析
+- 匿名解析失败时，在本地 Node 环境下可启用扫码登录增强
 
 ## 技术栈
 
@@ -86,6 +91,153 @@ npm run start
 
 生产模式下，后端会托管前端构建产物 `dist/`。
 
+## Docker Compose 部署
+
+适用于服务器部署，当前推荐方案为：
+- 前后端拆开容器
+- 前端容器提供静态页面
+- 前端通过 Nginx 反向代理 `/api` 到后端容器
+- 后端容器提供 API、视频代理、下载、音频提取、视频分析能力
+
+当前这个 Compose 方案**不包含** Playwright 浏览器登录增强 / browser fallback，仅适用于基础解析链路。
+
+### 1. 准备部署环境变量
+
+```bash
+cp .env.docker.example .env.docker
+```
+
+#### 域名部署示例
+
+```dotenv
+FRONTEND_ORIGIN=https://your-frontend-domain.com
+PUBLIC_BACKEND_ORIGIN=https://your-backend-domain.com
+CORS_ORIGIN=https://your-frontend-domain.com
+DOUYIN_PROXY_TOKEN_SECRET=replace-with-at-least-32-characters
+BILIBILI_PROXY_TOKEN_SECRET=replace-with-at-least-32-characters
+VIDEO_ANALYSIS_API_TOKEN=your-token
+```
+
+#### IP + 自定义端口示例
+
+```dotenv
+FRONTEND_ORIGIN=http://64.83.36.35:18080
+PUBLIC_BACKEND_ORIGIN=http://64.83.36.35:13000
+FRONTEND_PORT=18080
+BACKEND_PORT=13000
+CORS_ORIGIN=http://64.83.36.35:18080
+DOUYIN_PROXY_TOKEN_SECRET=replace-with-at-least-32-characters
+BILIBILI_PROXY_TOKEN_SECRET=replace-with-at-least-32-characters
+VIDEO_ANALYSIS_API_TOKEN=your-token
+```
+
+说明：
+- `FRONTEND_ORIGIN` 是浏览器实际访问前端页面的地址
+- `PUBLIC_BACKEND_ORIGIN` 必须是第三方分析服务可访问的后端公网地址
+- `CORS_ORIGIN` 应填写前端公网地址
+- `FRONTEND_PORT` / `BACKEND_PORT` 是宿主机暴露端口
+- `PORT` 是后端容器内部监听端口，通常保持 `3000`
+- 后端容器内 `ffmpeg` 已通过镜像安装，通常保持 `FFMPEG_PATH=ffmpeg` 即可
+
+### 2. 构建并启动
+
+```bash
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d
+```
+
+默认映射：
+- 前端：`8080 -> 80`
+- 后端：`3000 -> 3000`
+
+如需修改，可在 `.env.docker` 中调整：
+- `FRONTEND_PORT`
+- `BACKEND_PORT`
+
+### 3. 验证服务
+
+检查 Compose 配置：
+
+```bash
+docker compose --env-file .env.docker config
+```
+
+检查后端健康状态时，请把 `<BACKEND_PORT>` 替换成 `.env.docker` 里的实际数值。
+
+例如，如果你配置的是：
+
+```dotenv
+BACKEND_PORT=13000
+```
+
+那么应执行：
+
+```bash
+curl http://64.83.36.35:13000/health
+```
+
+前端访问地址同理。如果你配置的是：
+
+```dotenv
+FRONTEND_PORT=18080
+```
+
+那么浏览器访问：
+
+```text
+http://64.83.36.35:18080
+```
+
+查看日志：
+
+```bash
+docker compose --env-file .env.docker logs -f frontend
+docker compose --env-file .env.docker logs -f backend
+```
+
+### 4. 验证功能
+
+部署后建议依次验证：
+- 提取抖音视频
+- 页面内预览
+- 下载视频
+- 提取音频
+- 点击“分析视频”，确认第三方分析服务使用的是 `${PUBLIC_BACKEND_ORIGIN}/api/douyin/proxy/:token`
+
+### 5. 数据持久化
+
+Compose 已为后端挂载 `backend_data` volume，对应容器内目录：
+
+```text
+/app/server/.data
+```
+
+用于保存：
+- 媒体临时目录
+- 未来可复用的数据目录约定
+
+### 6. 当前限制
+
+本轮 Docker Compose 部署**不承诺支持**：
+- 抖音扫码登录增强
+- Playwright 浏览器兜底解析
+
+说明：
+- `.env.docker.example` 里仍然保留了 `DOUYIN_LOGIN_*` 等字段，主要是为了和现有配置结构保持兼容
+- 但当前 Compose 镜像不以这些登录增强 / browser fallback 能力作为可用能力对外承诺
+
+如果后续服务器部署必须保留这些能力，需要单独做包含 Playwright/Chromium 依赖的 heavier backend 镜像。
+
+### 7. 最小排障清单
+
+如果 Compose 部署启动后仍不可用，优先检查：
+- Docker daemon 是否已启动
+- 服务器安全组 / 防火墙是否已放行 `FRONTEND_PORT` 和 `BACKEND_PORT`
+- `DOUYIN_PROXY_TOKEN_SECRET` / `BILIBILI_PROXY_TOKEN_SECRET` 是否至少 32 位
+- `VIDEO_ANALYSIS_API_TOKEN` 是否已填写真实值
+- `PUBLIC_BACKEND_ORIGIN` 是否与第三方分析服务真实可访问的后端地址一致
+- 前端请求 `/api/...` 是否已通过 `nginx.conf` 正常转发到 `backend:3000`
+
 ## 常用命令
 
 ```bash
@@ -117,6 +269,11 @@ npm run preview
 | `DOUYIN_USER_AGENT` | 内置桌面 UA | 抖音请求默认 UA |
 | `DOUYIN_COOKIE_USER_AGENT` | 空 | 可选，单独覆盖 cookie/login 相关 UA |
 | `DOUYIN_PROXY_TOKEN_SECRET` | 无默认值 | 必填，且至少 32 字符，用于代理/下载 token 签名 |
+| `PUBLIC_BACKEND_ORIGIN` | 空 | 第三方分析服务访问后端代理地址时使用的公网 backend origin |
+| `VIDEO_ANALYSIS_API_BASE_URL` | `https://g3xqktww2r.coze.site/run` | 视频分析上游完整 endpoint |
+| `VIDEO_ANALYSIS_API_PATH` | 空 | 兼容保留字段，当前不参与主要拼接逻辑 |
+| `VIDEO_ANALYSIS_API_TOKEN` | 空 | 视频分析上游 Bearer Token |
+| `VIDEO_ANALYSIS_API_TIMEOUT_MS` | `60000` | 视频分析请求超时 |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg 可执行路径 |
 | `LOG_LEVEL` | `info` | Pino 日志级别 |
 | `TRUST_PROXY` | 未设置 | 部署在反向代理后时可设为 `1` |
@@ -133,6 +290,8 @@ npm run preview
 4. 如果匿名链路命中校验页或失败，再展开“登录增强”面板扫码，并在登录完成后重新提取。
 
 ## 接口一览
+
+当前 README 的接口示例仍以 Douyin 为主，因为这部分说明主要覆盖本次联调和部署验证所需的核心链路。Bilibili 相关运行时变量与容器化能力已经接入，但如需对外文档化完整 Bilibili 路由与行为，可后续再单独补一节，避免和当前 Douyin 验证主线混在一起。
 
 ### 健康检查
 

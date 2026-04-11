@@ -47,6 +47,16 @@ npm run preview
 - production server entry: `server/dist/index.js`
 - in production, Express serves the frontend build output from `dist/`
 
+### Docker Compose deployment
+
+- `docker-compose.yml` is the default server deployment entrypoint for containerized deployment.
+- `Dockerfile.frontend` builds the Vite app and serves it with Nginx.
+- `Dockerfile.backend` builds and runs the Express API with `ffmpeg` installed.
+- `nginx.conf` proxies `/api` and `/health` from the frontend container to `backend:3000`.
+- `.env.docker.example` is the deployment env template and should be copied to `.env.docker` before running Compose.
+- The current Compose setup is intentionally limited to the base parsing/download/audio/analysis flow and does **not** include Playwright login enhancement or browser fallback.
+- For deployment commands and IP/custom-port examples, prefer the README Docker Compose section as the user-facing source of truth.
+
 ### Verification
 
 ```bash

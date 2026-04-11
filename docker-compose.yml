@@ -1,0 +1,47 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-3000}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      DOUYIN_FETCH_TIMEOUT_MS: ${DOUYIN_FETCH_TIMEOUT_MS:-15000}
+      DOUYIN_LOGIN_TIMEOUT_MS: ${DOUYIN_LOGIN_TIMEOUT_MS:-180000}
+      DOUYIN_LOGIN_URL: ${DOUYIN_LOGIN_URL:-https://www.douyin.com/}
+      DOUYIN_STORAGE_STATE_PATH: ${DOUYIN_STORAGE_STATE_PATH:-server/.data/douyin-storage-state.json}
+      DOUYIN_MEDIA_PROCESS_TIMEOUT_MS: ${DOUYIN_MEDIA_PROCESS_TIMEOUT_MS:-45000}
+      DOUYIN_MEDIA_TEMP_DIR: ${DOUYIN_MEDIA_TEMP_DIR:-server/.data/douyin-audio}
+      DOUYIN_USER_AGENT: ${DOUYIN_USER_AGENT}
+      DOUYIN_PROXY_TOKEN_SECRET: ${DOUYIN_PROXY_TOKEN_SECRET}
+      PUBLIC_BACKEND_ORIGIN: ${PUBLIC_BACKEND_ORIGIN}
+      VIDEO_ANALYSIS_API_BASE_URL: ${VIDEO_ANALYSIS_API_BASE_URL:-https://g3xqktww2r.coze.site/run}
+      VIDEO_ANALYSIS_API_PATH: ${VIDEO_ANALYSIS_API_PATH:-}
+      VIDEO_ANALYSIS_API_TOKEN: ${VIDEO_ANALYSIS_API_TOKEN:-}
+      VIDEO_ANALYSIS_API_TIMEOUT_MS: ${VIDEO_ANALYSIS_API_TIMEOUT_MS:-60000}
+      BILIBILI_FETCH_TIMEOUT_MS: ${BILIBILI_FETCH_TIMEOUT_MS:-15000}
+      BILIBILI_MEDIA_TEMP_DIR: ${BILIBILI_MEDIA_TEMP_DIR:-server/.data/bilibili-media}
+      BILIBILI_USER_AGENT: ${BILIBILI_USER_AGENT}
+      BILIBILI_PROXY_TOKEN_SECRET: ${BILIBILI_PROXY_TOKEN_SECRET}
+      FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    volumes:
+      - backend_data:/app/server/.data
+    restart: unless-stopped
+
+volumes:
+  backend_data:
