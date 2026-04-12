@@ -2,6 +2,8 @@ import { AppError } from '../lib/errors.js'
 import { buildPublicBilibiliProxyUrl, parseBilibiliProxyToken } from './bilibili-proxy.service.js'
 import { analyzeVideoContent, type VideoAnalysisResult } from './video-analysis.service.js'
 
+const UNSUPPORTED_DASH_ANALYSIS_MESSAGE = '当前 B 站 DASH 音视频分离样本暂不支持视频分析，请换一个单流样本后再试'
+
 function extractTokenFromProxyUrl(proxyVideoUrl: string): string {
   let parsedUrl: URL
 
@@ -21,7 +23,11 @@ function extractTokenFromProxyUrl(proxyVideoUrl: string): string {
 
 export async function analyzeBilibiliVideoByProxyUrl(proxyVideoUrl: string): Promise<VideoAnalysisResult> {
   const token = extractTokenFromProxyUrl(proxyVideoUrl)
-  parseBilibiliProxyToken(token)
+  const target = parseBilibiliProxyToken(token)
+
+  if (target.kind === 'dash') {
+    throw new AppError(UNSUPPORTED_DASH_ANALYSIS_MESSAGE, 400)
+  }
 
   return analyzeVideoContent(buildPublicBilibiliProxyUrl(token))
 }

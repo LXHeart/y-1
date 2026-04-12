@@ -128,6 +128,24 @@ describe('analyzeBilibiliVideoHandler', () => {
     })
     expect(next).not.toHaveBeenCalled()
   })
+
+  it('forwards analysis errors to next', async () => {
+    const req = {
+      body: {
+        proxyVideoUrl: '/api/bilibili/proxy/token',
+      },
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+    const error = new Error('当前 B 站 DASH 音视频分离样本暂不支持视频分析，请换一个单流样本后再试')
+
+    vi.mocked(analyzeBilibiliVideoByProxyUrl).mockRejectedValueOnce(error)
+
+    await analyzeBilibiliVideoHandler(req as never, res as never, next)
+
+    expect(res.json).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(error)
+  })
 })
 
 describe('downloadBilibiliVideoHandler', () => {

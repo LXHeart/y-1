@@ -44,6 +44,19 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     expect(result).toEqual({ runId: 'run_bilibili_123' })
   })
 
+  it('rejects DASH proxy targets before calling the analyzer', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'dash',
+      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
+    })
+
+    await expect(analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)).rejects.toThrow(
+      '当前 B 站 DASH 音视频分离样本暂不支持视频分析，请换一个单流样本后再试',
+    )
+    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
+  })
+
   it('rejects invalid tokens before calling the analyzer', async () => {
     await expect(analyzeBilibiliVideoByProxyUrl('/api/bilibili/proxy/not-a-valid-token')).rejects.toThrow(AppError)
     expect(analyzeVideoContentMock).not.toHaveBeenCalled()
