@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { env } from '../lib/env.js'
 import { buildBilibiliDownloadFilename } from '../lib/bilibili-filename.js'
 import { AppError } from '../lib/errors.js'
 
@@ -6,9 +7,20 @@ beforeEach(() => {
   process.env.BILIBILI_PROXY_TOKEN_SECRET = 'bilibili-proxy-test-secret-1234567890'
 })
 
-const { createBilibiliProxyToken, parseBilibiliProxyToken } = await import('./bilibili-proxy.service.js')
+const { createBilibiliProxyToken, parseBilibiliProxyToken, buildPublicBilibiliProxyUrl } = await import('./bilibili-proxy.service.js')
 
 describe('bilibili proxy tokens', () => {
+  it('builds a public bilibili proxy URL from the configured backend origin', () => {
+    if (!env.PUBLIC_BACKEND_ORIGIN) {
+      expect(() => buildPublicBilibiliProxyUrl('token')).toThrow('未配置 PUBLIC_BACKEND_ORIGIN')
+      return
+    }
+
+    expect(buildPublicBilibiliProxyUrl('token value')).toBe(
+      `${env.PUBLIC_BACKEND_ORIGIN}/api/bilibili/proxy/token%20value`,
+    )
+  })
+
   it('round-trips progressive playable url headers and filename', () => {
     const token = createBilibiliProxyToken({
       kind: 'progressive',

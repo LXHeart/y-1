@@ -5,6 +5,7 @@ beforeEach(() => {
 })
 
 const {
+  analyzeBilibiliVideoHandler,
   downloadBilibiliVideoHandler,
   extractBilibiliVideoHandler,
   proxyBilibiliVideoHandler,
@@ -39,9 +40,16 @@ vi.mock('../services/bilibili-stream.service.js', () => ({
   downloadBilibiliMedia: vi.fn(async () => {}),
 }))
 
+vi.mock('../services/bilibili-video-analysis.service.js', () => ({
+  analyzeBilibiliVideoByProxyUrl: vi.fn(async () => ({
+    runId: 'bilibili-analysis-run',
+  })),
+}))
+
 const { extractBilibiliVideo } = await import('../services/bilibili-video.service.js')
 const { parseBilibiliProxyToken } = await import('../services/bilibili-proxy.service.js')
 const { downloadBilibiliMedia, proxyBilibiliMedia } = await import('../services/bilibili-stream.service.js')
+const { analyzeBilibiliVideoByProxyUrl } = await import('../services/bilibili-video-analysis.service.js')
 
 function createResponseMock() {
   return {
@@ -94,6 +102,29 @@ describe('proxyBilibiliVideoHandler', () => {
       videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
       audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
       filename: 'test.mp4',
+    })
+    expect(next).not.toHaveBeenCalled()
+  })
+})
+
+describe('analyzeBilibiliVideoHandler', () => {
+  it('delegates proxy url analysis and returns json', async () => {
+    const req = {
+      body: {
+        proxyVideoUrl: '/api/bilibili/proxy/token',
+      },
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+
+    await analyzeBilibiliVideoHandler(req as never, res as never, next)
+
+    expect(analyzeBilibiliVideoByProxyUrl).toHaveBeenCalledWith('/api/bilibili/proxy/token')
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      data: {
+        runId: 'bilibili-analysis-run',
+      },
     })
     expect(next).not.toHaveBeenCalled()
   })

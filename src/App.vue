@@ -104,7 +104,11 @@
           :extracted-video="bilibiliExtractedVideo"
           :loading="bilibiliParseLoading"
           :error="bilibiliParseError"
+          :analysis="bilibiliVideoAnalysis"
+          :analysis-loading="bilibiliAnalysisLoading"
+          :analysis-error="bilibiliAnalysisError"
           @retry="handleExtractBilibiliVideo"
+          @retry-analysis="handleRetryBilibiliAnalysis"
         />
 
         <section v-if="showEmptyState" class="empty-card glass-card">
@@ -125,6 +129,7 @@ import BilibiliParsePanel from './components/BilibiliParsePanel.vue'
 import DouyinParsePanel from './components/DouyinParsePanel.vue'
 import DouyinSessionPanel from './components/DouyinSessionPanel.vue'
 import { useBilibiliParse } from './composables/useBilibiliParse'
+import { useBilibiliVideoAnalysis } from './composables/useBilibiliVideoAnalysis'
 import { useDouyinParse } from './composables/useDouyinParse'
 import { useDouyinSession } from './composables/useDouyinSession'
 import { useDouyinVideoAnalysis } from './composables/useDouyinVideoAnalysis'
@@ -206,6 +211,14 @@ const {
 } = useBilibiliParse()
 
 const {
+  analysis: bilibiliVideoAnalysis,
+  loading: bilibiliAnalysisLoading,
+  error: bilibiliAnalysisError,
+  analyzeVideo: analyzeBilibiliVideo,
+  reset: resetBilibiliAnalysis,
+} = useBilibiliVideoAnalysis()
+
+const {
   state: douyinSession,
   loading: sessionLoading,
   error: sessionError,
@@ -251,6 +264,15 @@ async function handleRetryDouyinAnalysis(): Promise<void> {
   await analyzeVideo(proxyVideoUrl)
 }
 
+async function handleRetryBilibiliAnalysis(): Promise<void> {
+  const proxyVideoUrl = bilibiliExtractedVideo.value?.proxyVideoUrl
+  if (!proxyVideoUrl) {
+    return
+  }
+
+  await analyzeBilibiliVideo(proxyVideoUrl)
+}
+
 async function handleExtractDouyinVideo(): Promise<void> {
   resetAnalysis()
 
@@ -264,6 +286,7 @@ async function handleExtractDouyinVideo(): Promise<void> {
 }
 
 async function handleExtractBilibiliVideo(): Promise<void> {
+  resetBilibiliAnalysis()
   await extractBilibiliVideo(videoInput.value)
 }
 
@@ -281,6 +304,7 @@ function handleSwitchPlatform(platform: SupportedPlatform): void {
   videoInput.value = ''
   showSessionPanel.value = false
   resetAnalysis()
+  resetBilibiliAnalysis()
   resetParse()
   resetBilibiliParse()
 }
@@ -289,6 +313,7 @@ function handleReset(): void {
   videoInput.value = ''
   showSessionPanel.value = false
   resetAnalysis()
+  resetBilibiliAnalysis()
   resetParse()
   resetBilibiliParse()
 }

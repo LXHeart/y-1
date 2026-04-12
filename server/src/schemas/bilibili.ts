@@ -27,3 +27,7 @@ export const extractBilibiliVideoRequest = z.object({
 export const proxyBilibiliVideoRequestParams = z.object({
   token: z.string().trim().min(1, '缺少视频代理凭证'),
 })
+
+export const analyzeBilibiliVideoRequest = z.object({
+  proxyVideoUrl: z.string().trim().min(1, '缺少可分析的视频地址'),
+})

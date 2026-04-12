@@ -17,3 +17,13 @@ export interface ExtractedBilibiliVideoPayload {
   downloadVideoUrl: string
   playbackMode: BilibiliPlaybackMode
 }
+
+export interface BilibiliVideoAnalysisResult {
+  videoCaptions?: string
+  videoScript?: string
+  charactersDescription?: string
+  voiceDescription?: string
+  propsDescription?: string
+  sceneDescription?: string
+  runId?: string
+}

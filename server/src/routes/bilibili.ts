@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import {
+  analyzeBilibiliVideoHandler,
   downloadBilibiliVideoHandler,
   extractBilibiliVideoHandler,
   proxyBilibiliVideoHandler,
@@ -8,6 +9,7 @@ import {
 const bilibiliRouter = Router()
 
 bilibiliRouter.post('/extract-video', extractBilibiliVideoHandler)
+bilibiliRouter.post('/analyze-video', analyzeBilibiliVideoHandler)
 bilibiliRouter.get('/proxy/:token', proxyBilibiliVideoHandler)
 bilibiliRouter.get('/download/:token', downloadBilibiliVideoHandler)
 
