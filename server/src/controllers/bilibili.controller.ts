@@ -101,9 +101,19 @@ export async function extractBilibiliVideoHandler(req: Request, res: Response, n
 }
 
 export async function analyzeBilibiliVideoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const abortController = new AbortController()
+  const abortAnalysis = (): void => {
+    abortController.abort()
+  }
+
+  req.once('aborted', abortAnalysis)
+  res.once('close', abortAnalysis)
+
   try {
     const { proxyVideoUrl } = analyzeBilibiliVideoRequest.parse(req.body)
-    const data = await analyzeBilibiliVideoByProxyUrl(proxyVideoUrl)
+    const data = await analyzeBilibiliVideoByProxyUrl(proxyVideoUrl, {
+      signal: abortController.signal,
+    })
 
     res.json({
       success: true,
@@ -111,6 +121,9 @@ export async function analyzeBilibiliVideoHandler(req: Request, res: Response, n
     })
   } catch (error: unknown) {
     next(error)
+  } finally {
+    req.off('aborted', abortAnalysis)
+    res.off('close', abortAnalysis)
   }
 }
 

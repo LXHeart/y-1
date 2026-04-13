@@ -37,7 +37,7 @@ const envSchema = z.object({
   VIDEO_ANALYSIS_API_BASE_URL: z.string().trim().default('https://g3xqktww2r.coze.site/run'),
   VIDEO_ANALYSIS_API_PATH: z.string().trim().default(''),
   VIDEO_ANALYSIS_API_TOKEN: z.string().trim().optional().transform((value) => value || undefined),
-  VIDEO_ANALYSIS_API_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+  VIDEO_ANALYSIS_API_TIMEOUT_MS: z.coerce.number().int().positive().max(600000).default(180000),
   BILIBILI_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   BILIBILI_USER_AGENT: z.string().default(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',

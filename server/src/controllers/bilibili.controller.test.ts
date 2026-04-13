@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 
 const {
@@ -88,9 +89,14 @@ const { downloadBilibiliMedia, proxyBilibiliMedia } = await import('../services/
 const { analyzeBilibiliVideoByProxyUrl } = await import('../services/bilibili-video-analysis.service.js')
 
 function createResponseMock() {
+  const responseEmitter = new EventEmitter()
   const response = {
     destroy: vi.fn(),
     json: vi.fn(),
+    off: responseEmitter.off.bind(responseEmitter),
+    on: responseEmitter.on.bind(responseEmitter),
+    once: responseEmitter.once.bind(responseEmitter),
+    emit: responseEmitter.emit.bind(responseEmitter),
     setHeader: vi.fn(),
     status: vi.fn(() => response),
   }
@@ -151,17 +157,24 @@ describe('proxyBilibiliVideoHandler', () => {
 
 describe('analyzeBilibiliVideoHandler', () => {
   it('delegates proxy url analysis and returns json', async () => {
+    const reqEmitter = new EventEmitter()
     const req = {
       body: {
         proxyVideoUrl: '/api/bilibili/proxy/token',
       },
+      off: reqEmitter.off.bind(reqEmitter),
+      on: reqEmitter.on.bind(reqEmitter),
+      once: reqEmitter.once.bind(reqEmitter),
+      emit: reqEmitter.emit.bind(reqEmitter),
     }
     const res = createResponseMock()
     const next = vi.fn()
 
     await analyzeBilibiliVideoHandler(req as never, res as never, next)
 
-    expect(analyzeBilibiliVideoByProxyUrl).toHaveBeenCalledWith('/api/bilibili/proxy/token')
+    expect(analyzeBilibiliVideoByProxyUrl).toHaveBeenCalledWith('/api/bilibili/proxy/token', {
+      signal: expect.any(AbortSignal),
+    })
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       data: {
@@ -172,10 +185,15 @@ describe('analyzeBilibiliVideoHandler', () => {
   })
 
   it('forwards analysis errors to next', async () => {
+    const reqEmitter = new EventEmitter()
     const req = {
       body: {
         proxyVideoUrl: '/api/bilibili/proxy/token',
       },
+      off: reqEmitter.off.bind(reqEmitter),
+      on: reqEmitter.on.bind(reqEmitter),
+      once: reqEmitter.once.bind(reqEmitter),
+      emit: reqEmitter.emit.bind(reqEmitter),
     }
     const res = createResponseMock()
     const next = vi.fn()

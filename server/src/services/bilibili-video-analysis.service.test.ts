@@ -84,6 +84,7 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
 
     expect(analyzeVideoContentMock).toHaveBeenCalledWith(
       `${env.PUBLIC_BACKEND_ORIGIN}/api/bilibili/proxy/${encodeURIComponent(token)}`,
+      {},
     )
     expect(prepareBilibiliMediaFileMock).not.toHaveBeenCalled()
     expect(result).toEqual({ runId: 'run_bilibili_123' })
@@ -114,7 +115,10 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
       mimeType: 'video/mp4',
     })
     expect(buildPublicBilibiliAnalysisMediaUrlMock).toHaveBeenCalledWith('analysis-media-id')
-    expect(analyzeVideoContentMock).toHaveBeenCalledWith('https://backend.example.com/api/bilibili/analysis-media/analysis-media-id')
+    expect(analyzeVideoContentMock).toHaveBeenCalledWith(
+      'https://backend.example.com/api/bilibili/analysis-media/analysis-media-id',
+      {},
+    )
     expect(result).toEqual({ runId: 'run_bilibili_123' })
   })
 
@@ -217,6 +221,46 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
 
     expect(deleteBilibiliAnalysisMediaSessionMock).toHaveBeenCalledWith('analysis-media-id')
     expect(cleanupBilibiliMediaFileMock).not.toHaveBeenCalled()
+  })
+
+  it('passes an AbortSignal through to the analyzer', async () => {
+    if (!env.PUBLIC_BACKEND_ORIGIN) {
+      return
+    }
+
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 118,
+    })
+    const signal = new AbortController().signal
+
+    await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`, { signal })
+
+    expect(analyzeVideoContentMock).toHaveBeenCalledWith(
+      `${env.PUBLIC_BACKEND_ORIGIN}/api/bilibili/proxy/${encodeURIComponent(token)}`,
+      { signal },
+    )
+  })
+
+  it('rejects immediately when the caller signal is already aborted', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'dash',
+      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
+      durationSeconds: 125,
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`, { signal: controller.signal }),
+    ).rejects.toMatchObject({
+      statusCode: 499,
+      message: '分析请求已取消',
+    } satisfies Partial<AppError>)
+    expect(prepareBilibiliMediaFileMock).not.toHaveBeenCalled()
+    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
   })
 
   it('rejects invalid tokens before calling the analyzer', async () => {

@@ -42,19 +42,32 @@ function assertBilibiliAnalysisMediaPublicUrlAvailable(): void {
   buildPublicBilibiliAnalysisMediaUrl('bilibili-analysis-media-preflight')
 }
 
-export async function analyzeBilibiliVideoByProxyUrl(proxyVideoUrl: string): Promise<VideoAnalysisResult> {
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new AppError('分析请求已取消', 499)
+  }
+}
+
+export async function analyzeBilibiliVideoByProxyUrl(
+  proxyVideoUrl: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<VideoAnalysisResult> {
+  throwIfAborted(options.signal)
+
   const token = extractTokenFromProxyUrl(proxyVideoUrl)
   const target = parseBilibiliProxyToken(token)
 
   assertBilibiliAnalysisDuration(target.durationSeconds)
 
   if (target.kind === 'progressive') {
-    return analyzeVideoContent(buildPublicBilibiliProxyUrl(token))
+    return analyzeVideoContent(buildPublicBilibiliProxyUrl(token), options)
   }
 
   assertBilibiliAnalysisMediaPublicUrlAvailable()
+  throwIfAborted(options.signal)
 
   const mediaFile = await prepareBilibiliMediaFile(target)
+  throwIfAborted(options.signal)
   let analysisMediaSessionId: string | undefined
 
   try {
@@ -66,8 +79,10 @@ export async function analyzeBilibiliVideoByProxyUrl(proxyVideoUrl: string): Pro
     })
     analysisMediaSessionId = session.id
 
+    throwIfAborted(options.signal)
+
     const analysisMediaUrl = buildPublicBilibiliAnalysisMediaUrl(session.id)
-    return await analyzeVideoContent(analysisMediaUrl)
+    return await analyzeVideoContent(analysisMediaUrl, options)
   } catch (error: unknown) {
     if (analysisMediaSessionId) {
       try {
