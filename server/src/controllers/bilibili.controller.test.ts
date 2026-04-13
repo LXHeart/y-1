@@ -45,6 +45,7 @@ vi.mock('../services/bilibili-video.service.js', () => ({
     proxyVideoUrl: '/api/bilibili/proxy/token',
     downloadVideoUrl: '/api/bilibili/download/token',
     playbackMode: 'dash',
+    durationSeconds: 125,
   })),
 }))
 
@@ -118,6 +119,7 @@ describe('extractBilibiliVideoHandler', () => {
         proxyVideoUrl: '/api/bilibili/proxy/token',
         downloadVideoUrl: '/api/bilibili/download/token',
         playbackMode: 'dash',
+        durationSeconds: 125,
       },
     })
     expect(next).not.toHaveBeenCalled()

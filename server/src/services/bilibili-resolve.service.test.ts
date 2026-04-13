@@ -23,7 +23,7 @@ describe('resolveBilibiliSource', () => {
   it('returns progressive source material when durl is present', async () => {
     const originalFetch = globalThis.fetch
     const html = `
-      <script>window.__INITIAL_STATE__={"videoData":{"title":"标题","owner":{"name":"作者"},"pic":"https://i0.hdslb.com/test.jpg","bvid":"BV123"}};</script>
+      <script>window.__INITIAL_STATE__={"videoData":{"title":"标题","owner":{"name":"作者"},"pic":"https://i0.hdslb.com/test.jpg","bvid":"BV123","duration":118}};</script>
       <script>window.__playinfo__={"data":{"durl":[{"url":"https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.mp4"}]}};</script>
     `
 
@@ -40,6 +40,7 @@ describe('resolveBilibiliSource', () => {
         author: '作者',
         title: '标题',
         coverUrl: 'https://i0.hdslb.com/test.jpg',
+        durationSeconds: 118,
         playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.mp4',
         requestHeaders: {
           'User-Agent': expect.any(String),
@@ -56,7 +57,7 @@ describe('resolveBilibiliSource', () => {
   it('returns dash source material when video and audio tracks are present', async () => {
     const originalFetch = globalThis.fetch
     const html = `
-      <script>window.__INITIAL_STATE__={"videoData":{"title":"标题","owner":{"name":"作者"},"pic":"https://i0.hdslb.com/test.jpg","bvid":"BV123"}};</script>
+      <script>window.__INITIAL_STATE__={"videoData":{"title":"标题","owner":{"name":"作者"},"pic":"https://i0.hdslb.com/test.jpg","bvid":"BV123","duration":125}};</script>
       <script>window.__playinfo__={"data":{"dash":{"video":[{"baseUrl":"https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s"}],"audio":[{"baseUrl":"https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s"}]}}};</script>
     `
 
@@ -73,6 +74,7 @@ describe('resolveBilibiliSource', () => {
         author: '作者',
         title: '标题',
         coverUrl: 'https://i0.hdslb.com/test.jpg',
+        durationSeconds: 125,
         videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
         audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
         requestHeaders: {
@@ -87,11 +89,12 @@ describe('resolveBilibiliSource', () => {
     }
   })
 
-  it('rejects dash source material when audio track is missing', async () => {
+
+  it('falls back to playinfo timelength when initial state duration is missing', async () => {
     const originalFetch = globalThis.fetch
     const html = `
-      <script>window.__INITIAL_STATE__={"videoData":{"bvid":"BV123"}};</script>
-      <script>window.__playinfo__={"data":{"dash":{"video":[{"baseUrl":"https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s"}],"audio":[]}}};</script>
+      <script>window.__INITIAL_STATE__={"videoData":{"title":"标题","owner":{"name":"作者"},"pic":"https://i0.hdslb.com/test.jpg","bvid":"BV123"}};</script>
+      <script>window.__playinfo__={"data":{"timelength":301001,"durl":[{"url":"https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.mp4"}]}};</script>
     `
 
     globalThis.fetch = (async () => new Response(html, {
@@ -100,9 +103,13 @@ describe('resolveBilibiliSource', () => {
     })) as typeof fetch
 
     try {
-      await expect(resolveBilibiliSource('https://www.bilibili.com/video/BV123')).rejects.toThrow('当前 B 站视频缺少可用的音视频双轨')
+      await expect(resolveBilibiliSource('https://www.bilibili.com/video/BV123')).resolves.toMatchObject({
+        durationSeconds: 302,
+        playbackMode: 'progressive',
+      })
     } finally {
       globalThis.fetch = originalFetch
     }
   })
 })
+

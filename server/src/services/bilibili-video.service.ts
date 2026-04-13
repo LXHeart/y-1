@@ -10,6 +10,7 @@ export interface ExtractedBilibiliVideoPayload {
   author?: string
   title?: string
   coverUrl?: string
+  durationSeconds?: number
   proxyVideoUrl: string
   downloadVideoUrl: string
   playbackMode: BilibiliPlaybackMode
@@ -30,6 +31,7 @@ export async function extractBilibiliVideo(input: string): Promise<ExtractedBili
         playableVideoUrl: source.playableVideoUrl,
         requestHeaders: source.requestHeaders,
         filename,
+        durationSeconds: source.durationSeconds,
       })
     : createBilibiliProxyToken({
         kind: 'dash',
@@ -37,6 +39,7 @@ export async function extractBilibiliVideo(input: string): Promise<ExtractedBili
         audioTrackUrl: source.audioTrackUrl,
         requestHeaders: source.requestHeaders,
         filename,
+        durationSeconds: source.durationSeconds,
       })
 
   return {
@@ -46,6 +49,7 @@ export async function extractBilibiliVideo(input: string): Promise<ExtractedBili
     author: source.author,
     title: source.title,
     coverUrl: source.coverUrl,
+    durationSeconds: source.durationSeconds,
     proxyVideoUrl: `/api/bilibili/proxy/${encodeURIComponent(token)}`,
     downloadVideoUrl: `/api/bilibili/download/${encodeURIComponent(token)}`,
     playbackMode: source.playbackMode,

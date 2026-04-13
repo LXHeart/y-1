@@ -16,6 +16,7 @@ interface BilibiliProgressiveProxyPayload {
   playableVideoUrl: string
   requestHeaders?: Record<string, string>
   filename?: string
+  durationSeconds?: number
 }
 
 interface BilibiliDashProxyPayload {
@@ -26,6 +27,7 @@ interface BilibiliDashProxyPayload {
   audioTrackUrl: string
   requestHeaders?: Record<string, string>
   filename?: string
+  durationSeconds?: number
 }
 
 type BilibiliProxyPayload = BilibiliProgressiveProxyPayload | BilibiliDashProxyPayload
@@ -57,6 +59,14 @@ function sanitizeProxyRequestHeaders(input: unknown): Record<string, string> | u
   return Object.fromEntries(sanitizedEntries)
 }
 
+function readDurationSeconds(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined
+  }
+
+  return Math.ceil(value)
+}
+
 function decodePayload(encodedPayload: string): BilibiliProxyPayload {
   let parsed: unknown
 
@@ -85,6 +95,7 @@ function decodePayload(encodedPayload: string): BilibiliProxyPayload {
       playableVideoUrl: payload.playableVideoUrl,
       requestHeaders,
       filename: typeof payload.filename === 'string' ? payload.filename : undefined,
+      durationSeconds: readDurationSeconds(payload.durationSeconds),
     }
   }
 
@@ -101,6 +112,7 @@ function decodePayload(encodedPayload: string): BilibiliProxyPayload {
       audioTrackUrl: payload.audioTrackUrl,
       requestHeaders,
       filename: typeof payload.filename === 'string' ? payload.filename : undefined,
+      durationSeconds: readDurationSeconds(payload.durationSeconds),
     }
   }
 
@@ -113,6 +125,7 @@ export function createBilibiliProxyToken(input: BilibiliMediaTarget): string {
     exp: Date.now() + proxyTokenTtlMs,
     requestHeaders: sanitizeProxyRequestHeaders(input.requestHeaders),
     filename: normalizeBilibiliDownloadFilename(input.filename),
+    durationSeconds: readDurationSeconds(input.durationSeconds),
   }
 
   const payload: BilibiliProxyPayload = input.kind === 'progressive'
@@ -174,6 +187,7 @@ export function parseBilibiliProxyToken(token: string): BilibiliMediaTarget {
       playableVideoUrl: payload.playableVideoUrl,
       requestHeaders: payload.requestHeaders,
       filename: payload.filename,
+      durationSeconds: payload.durationSeconds,
     }
   }
 
@@ -189,5 +203,6 @@ export function parseBilibiliProxyToken(token: string): BilibiliMediaTarget {
     audioTrackUrl: payload.audioTrackUrl,
     requestHeaders: payload.requestHeaders,
     filename: payload.filename,
+    durationSeconds: payload.durationSeconds,
   }
 }

@@ -31,6 +31,7 @@ describe('bilibili proxy tokens', () => {
         Origin: 'https://www.bilibili.com',
       },
       filename: 'test-video.mp4',
+      durationSeconds: 118,
     })
 
     expect(parseBilibiliProxyToken(token)).toEqual({
@@ -42,6 +43,7 @@ describe('bilibili proxy tokens', () => {
         Origin: 'https://www.bilibili.com',
       },
       filename: 'test-video.mp4',
+      durationSeconds: 118,
     })
   })
 
@@ -55,6 +57,7 @@ describe('bilibili proxy tokens', () => {
         'User-Agent': 'Mozilla/5.0 test',
       },
       filename: 'dash-video.mp4',
+      durationSeconds: 301,
     })
 
     expect(parseBilibiliProxyToken(token)).toEqual({
@@ -66,6 +69,7 @@ describe('bilibili proxy tokens', () => {
         'User-Agent': 'Mozilla/5.0 test',
       },
       filename: 'dash-video.mp4',
+      durationSeconds: 301,
     })
   })
 
@@ -86,6 +90,7 @@ describe('bilibili proxy tokens', () => {
         Referer: 'https://www.bilibili.com/video/BV1test',
       },
       filename: undefined,
+      durationSeconds: undefined,
     })
   })
 

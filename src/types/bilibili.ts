@@ -13,6 +13,7 @@ export interface ExtractedBilibiliVideoPayload {
   author?: string
   title?: string
   coverUrl?: string
+  durationSeconds?: number
   proxyVideoUrl: string
   downloadVideoUrl: string
   playbackMode: BilibiliPlaybackMode

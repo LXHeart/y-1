@@ -152,6 +152,10 @@ function extractFirstJsonBlock(html: string, marker: string): string | undefined
   return undefined
 }
 
+function readNumberCandidate(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 function readTextCandidate(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
@@ -257,6 +261,22 @@ function extractVideoId(initialState: Record<string, unknown>, resolvedUrl: stri
   return match?.[1]
 }
 
+function extractDurationSeconds(initialState: Record<string, unknown>, playInfo: Record<string, unknown>): number | undefined {
+  const videoData = getNestedRecord(initialState, 'videoData')
+  const directDurationSeconds = readNumberCandidate(videoData?.duration)
+  if (directDurationSeconds) {
+    return Math.ceil(directDurationSeconds)
+  }
+
+  const playInfoData = getNestedRecord(playInfo, 'data')
+  const timelengthMs = readNumberCandidate(playInfoData?.timelength)
+  if (timelengthMs) {
+    return Math.ceil(timelengthMs / 1000)
+  }
+
+  return undefined
+}
+
 export async function resolveBilibiliSource(url: string): Promise<BilibiliSourceMaterial> {
   const entryUrl = extractBilibiliEntryUrl(url)
   const { finalUrl, body } = await fetchHtml(entryUrl)
@@ -280,6 +300,7 @@ export async function resolveBilibiliSource(url: string): Promise<BilibiliSource
 
   const progressiveUrl = extractProgressiveUrl(playInfo)
   const requestHeaders = buildMediaRequestHeaders(finalUrl)
+  const durationSeconds = extractDurationSeconds(initialState, playInfo)
 
   if (progressiveUrl) {
     return {
@@ -289,6 +310,7 @@ export async function resolveBilibiliSource(url: string): Promise<BilibiliSource
       author: extractAuthor(initialState),
       title: extractTitle(initialState),
       coverUrl: extractCoverUrl(initialState),
+      durationSeconds,
       playableVideoUrl: progressiveUrl,
       requestHeaders,
       playbackMode: 'progressive',
@@ -309,6 +331,7 @@ export async function resolveBilibiliSource(url: string): Promise<BilibiliSource
     author: extractAuthor(initialState),
     title: extractTitle(initialState),
     coverUrl: extractCoverUrl(initialState),
+    durationSeconds,
     videoTrackUrl,
     audioTrackUrl,
     requestHeaders,

@@ -30,6 +30,10 @@
               <dt>视频 ID</dt>
               <dd>{{ extractedVideo.videoId }}</dd>
             </div>
+            <div v-if="durationLabel">
+              <dt>视频时长</dt>
+              <dd>{{ durationLabel }}</dd>
+            </div>
             <div>
               <dt>播放模式</dt>
               <dd>{{ playbackModeLabel }}</dd>
@@ -61,11 +65,14 @@
 
       <section class="analysis-panel" aria-labelledby="bilibili-analysis-heading">
         <div class="analysis-header">
-          <div>
-            <p class="analysis-kicker">视频内容提取</p>
-            <h3 id="bilibili-analysis-heading" class="analysis-title">结构化内容分析</h3>
+          <div class="analysis-header-copy">
+            <div>
+              <p class="analysis-kicker">视频内容提取</p>
+              <h3 id="bilibili-analysis-heading" class="analysis-title">结构化内容分析</h3>
+            </div>
+            <p class="analysis-hint">建议选择 30 秒到 2 分钟的视频进行分析，超过 5 分钟暂不支持。</p>
           </div>
-          <button class="btn-secondary" :disabled="analysisLoading" @click="$emit('retry-analysis')">
+          <button class="btn-secondary" :disabled="analysisLoading || isAnalysisTooLong" @click="$emit('retry-analysis')">
             {{ analysisActionLabel }}
           </button>
         </div>
@@ -78,6 +85,11 @@
         <div v-else-if="analysisError" class="analysis-status analysis-status-error">
           <p class="analysis-status-title">视频内容提取失败</p>
           <p>{{ analysisError }}</p>
+        </div>
+
+        <div v-else-if="isAnalysisTooLong" class="analysis-status analysis-status-warning">
+          <p class="analysis-status-title">当前视频暂不支持分析</p>
+          <p>仅支持分析 5 分钟以内的 B 站视频，建议选择 30 秒到 2 分钟的视频。</p>
         </div>
 
         <div v-else-if="analysisSections.length" class="analysis-grid">
@@ -106,6 +118,8 @@ interface AnalysisSection {
   content: string
 }
 
+const maxAnalysisDurationSeconds = 5 * 60
+
 const props = defineProps<{
   extractedVideo: ExtractedBilibiliVideoPayload | null
   loading: boolean
@@ -120,12 +134,40 @@ defineEmits<{
   'retry-analysis': []
 }>()
 
+function formatDurationLabel(durationSeconds: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(durationSeconds))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (minutes === 0) {
+    return `${seconds} 秒`
+  }
+
+  if (seconds === 0) {
+    return `${minutes} 分钟`
+  }
+
+  return `${minutes} 分 ${seconds} 秒`
+}
+
 const displayTitle = computed(() => {
   if (!props.extractedVideo) {
     return ''
   }
 
   return props.extractedVideo.title || '已提取到可播放视频'
+})
+
+const durationLabel = computed(() => {
+  if (!props.extractedVideo?.durationSeconds) {
+    return ''
+  }
+
+  return formatDurationLabel(props.extractedVideo.durationSeconds)
+})
+
+const isAnalysisTooLong = computed(() => {
+  return (props.extractedVideo?.durationSeconds || 0) > maxAnalysisDurationSeconds
 })
 
 const playbackModeLabel = computed(() => {
@@ -155,6 +197,10 @@ const hasAttemptedAnalysis = computed(() => {
 const analysisActionLabel = computed(() => {
   if (props.analysisLoading) {
     return '提取中…'
+  }
+
+  if (isAnalysisTooLong.value) {
+    return '超过 5 分钟'
   }
 
   return hasAttemptedAnalysis.value ? '重新分析' : '分析视频'
@@ -234,6 +280,7 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 .result-notes p,
 .analysis-kicker,
 .analysis-title,
+.analysis-hint,
 .analysis-status-title,
 .analysis-status p,
 .analysis-card-label,
@@ -251,7 +298,8 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 
 .loading-copy,
 .error-copy,
-.result-notes p {
+.result-notes p,
+.analysis-hint {
   color: var(--color-text-secondary);
 }
 
@@ -342,6 +390,11 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   gap: 12px;
 }
 
+.analysis-header-copy {
+  display: grid;
+  gap: 6px;
+}
+
 .analysis-title {
   font-size: 1.05rem;
   color: var(--color-text);
@@ -364,6 +417,11 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 .analysis-status-error {
   border: 1px solid rgba(255,107,107,0.35);
   background: rgba(255,107,107,0.08);
+}
+
+.analysis-status-warning {
+  border: 1px solid rgba(255,184,77,0.35);
+  background: rgba(255,184,77,0.08);
 }
 
 .analysis-status-empty {

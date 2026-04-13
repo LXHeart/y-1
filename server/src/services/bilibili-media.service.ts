@@ -278,6 +278,10 @@ export async function cleanupBilibiliMediaFile(filePath: string): Promise<void> 
   await cleanupTempFile(filePath, defaultDependencies.cleanupFile)
 }
 
+export async function cleanupBilibiliMediaFileStrict(filePath: string): Promise<void> {
+  await defaultDependencies.cleanupFile(filePath)
+}
+
 export async function prepareBilibiliMediaFile(
   input: BilibiliMediaTarget,
   dependencies: BilibiliMediaDependencies = defaultDependencies,

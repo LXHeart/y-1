@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { env } from '../lib/env.js'
 import { AppError } from '../lib/errors.js'
-import { cleanupBilibiliMediaFile } from './bilibili-media.service.js'
+import { logger } from '../lib/logger.js'
+import { cleanupBilibiliMediaFile, cleanupBilibiliMediaFileStrict } from './bilibili-media.service.js'
 
 const analysisMediaTtlMs = 15 * 60 * 1000
+const analysisMediaCleanupRetryMs = 60 * 1000
 
 export interface BilibiliAnalysisMediaSession {
   id: string
@@ -15,13 +17,63 @@ export interface BilibiliAnalysisMediaSession {
 }
 
 const sessions = new Map<string, BilibiliAnalysisMediaSession>()
+const cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function clearBilibiliAnalysisMediaCleanupTimer(id: string): void {
+  const timer = cleanupTimers.get(id)
+  if (!timer) {
+    return
+  }
+
+  clearTimeout(timer)
+  cleanupTimers.delete(id)
+}
+
+function scheduleBilibiliAnalysisMediaCleanup(session: BilibiliAnalysisMediaSession, delayMs?: number): void {
+  clearBilibiliAnalysisMediaCleanupTimer(session.id)
+
+  const timer = setTimeout(() => {
+    void cleanupExpiredBilibiliAnalysisMediaSessions(Date.now()).catch((error: unknown) => {
+      logger.warn({
+        sessionId: session.id,
+        err: error instanceof Error ? { name: error.name, message: error.message } : { message: 'Unknown cleanup error' },
+      }, 'Bilibili analysis media cleanup timer failed')
+    })
+  }, delayMs ?? Math.max(session.expiresAt - Date.now(), 0))
+
+  cleanupTimers.set(session.id, timer)
+}
+
+async function deleteBilibiliAnalysisMediaSessionInternal(id: string): Promise<void> {
+  const session = sessions.get(id)
+  if (!session) {
+    clearBilibiliAnalysisMediaCleanupTimer(id)
+    return
+  }
+
+  clearBilibiliAnalysisMediaCleanupTimer(id)
+
+  try {
+    await cleanupBilibiliMediaFileStrict(session.filePath)
+    sessions.delete(id)
+  } catch (error: unknown) {
+    scheduleBilibiliAnalysisMediaCleanup(session, analysisMediaCleanupRetryMs)
+    throw error
+  }
+}
 
 async function cleanupExpiredBilibiliAnalysisMediaSessions(now: number): Promise<void> {
   const expiredSessions = Array.from(sessions.values()).filter((session) => session.expiresAt <= now)
 
   for (const session of expiredSessions) {
-    sessions.delete(session.id)
-    await cleanupBilibiliMediaFile(session.filePath)
+    try {
+      await deleteBilibiliAnalysisMediaSessionInternal(session.id)
+    } catch (error: unknown) {
+      logger.warn({
+        sessionId: session.id,
+        err: error instanceof Error ? { name: error.name, message: error.message } : { message: 'Unknown cleanup error' },
+      }, 'Failed to clean up expired Bilibili analysis media session')
+    }
   }
 }
 
@@ -44,6 +96,7 @@ export async function createBilibiliAnalysisMediaSession(input: {
   }
 
   sessions.set(session.id, session)
+  scheduleBilibiliAnalysisMediaCleanup(session)
   return session
 }
 
@@ -62,7 +115,7 @@ export async function getBilibiliAnalysisMediaSession(id: string): Promise<Bilib
 export async function deleteBilibiliAnalysisMediaSession(id: string): Promise<void> {
   const now = Date.now()
   await cleanupExpiredBilibiliAnalysisMediaSessions(now)
-  sessions.delete(id)
+  await deleteBilibiliAnalysisMediaSessionInternal(id)
 }
 
 export function buildPublicBilibiliAnalysisMediaUrl(id: string): string {

@@ -5,11 +5,13 @@ interface BilibiliBaseMetadata {
   author?: string
   title?: string
   coverUrl?: string
+  durationSeconds?: number
 }
 
 interface BilibiliRequestContext {
   requestHeaders?: Record<string, string>
   filename?: string
+  durationSeconds?: number
 }
 
 export interface BilibiliProgressiveSourceMaterial extends BilibiliBaseMetadata {

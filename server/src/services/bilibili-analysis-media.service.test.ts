@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { cleanupBilibiliMediaFileMock } = vi.hoisted(() => ({
+const {
+  cleanupBilibiliMediaFileMock,
+  cleanupBilibiliMediaFileStrictMock,
+} = vi.hoisted(() => ({
   cleanupBilibiliMediaFileMock: vi.fn<(filePath: string) => Promise<void>>(),
+  cleanupBilibiliMediaFileStrictMock: vi.fn<(filePath: string) => Promise<void>>(),
 }))
 
 vi.mock('./bilibili-media.service.js', () => ({
   cleanupBilibiliMediaFile: cleanupBilibiliMediaFileMock,
+  cleanupBilibiliMediaFileStrict: cleanupBilibiliMediaFileStrictMock,
 }))
 
 import { env } from '../lib/env.js'
@@ -22,6 +27,8 @@ describe('bilibili analysis media sessions', () => {
     vi.setSystemTime(new Date('2026-04-13T12:00:00.000Z'))
     cleanupBilibiliMediaFileMock.mockReset()
     cleanupBilibiliMediaFileMock.mockResolvedValue(undefined)
+    cleanupBilibiliMediaFileStrictMock.mockReset()
+    cleanupBilibiliMediaFileStrictMock.mockResolvedValue(undefined)
   })
 
   afterEach(async () => {
@@ -57,7 +64,65 @@ describe('bilibili analysis media sessions', () => {
 
     await deleteBilibiliAnalysisMediaSession(session.id)
 
+    expect(cleanupBilibiliMediaFileStrictMock).toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4')
     await expect(getBilibiliAnalysisMediaSession(session.id)).rejects.toThrow('分析视频文件不存在或已过期')
+  })
+
+  it('keeps the session when strict deletion cleanup fails', async () => {
+    const session = await createBilibiliAnalysisMediaSession({
+      filePath: '/tmp/cleanup-failed-analysis.mp4',
+      fileSize: 222,
+      filename: 'cleanup-failed.mp4',
+      mimeType: 'video/mp4',
+    })
+    cleanupBilibiliMediaFileStrictMock.mockRejectedValueOnce(new Error('rm failed'))
+
+    await expect(deleteBilibiliAnalysisMediaSession(session.id)).rejects.toThrow('rm failed')
+    await expect(getBilibiliAnalysisMediaSession(session.id)).resolves.toMatchObject({
+      id: session.id,
+      filePath: '/tmp/cleanup-failed-analysis.mp4',
+    })
+  })
+
+  it('does not block unrelated session reads when expired cleanup fails', async () => {
+    const expiredSession = await createBilibiliAnalysisMediaSession({
+      filePath: '/tmp/expired-cleanup-failed.mp4',
+      fileSize: 100,
+      filename: 'expired-cleanup-failed.mp4',
+      mimeType: 'video/mp4',
+    })
+
+    vi.advanceTimersByTime(5 * 60 * 1000)
+
+    const activeSession = await createBilibiliAnalysisMediaSession({
+      filePath: '/tmp/active-analysis.mp4',
+      fileSize: 200,
+      filename: 'active-analysis.mp4',
+      mimeType: 'video/mp4',
+    })
+
+    cleanupBilibiliMediaFileStrictMock.mockRejectedValueOnce(new Error('rm failed'))
+    vi.advanceTimersByTime(10 * 60 * 1000 + 1)
+
+    await expect(getBilibiliAnalysisMediaSession(activeSession.id)).resolves.toMatchObject({
+      id: activeSession.id,
+      filePath: '/tmp/active-analysis.mp4',
+    })
+    await expect(getBilibiliAnalysisMediaSession(expiredSession.id)).rejects.toThrow('分析视频文件不存在或已过期')
+  })
+
+  it('cleans up expired sessions even without follow-up access', async () => {
+    await createBilibiliAnalysisMediaSession({
+      filePath: '/tmp/timer-expired-analysis.mp4',
+      fileSize: 321,
+      filename: 'timer-expired.mp4',
+      mimeType: 'video/mp4',
+    })
+
+    vi.advanceTimersByTime(15 * 60 * 1000 + 1)
+    await vi.runAllTimersAsync()
+
+    expect(cleanupBilibiliMediaFileStrictMock).toHaveBeenCalledWith('/tmp/timer-expired-analysis.mp4')
   })
 
   it('expires old sessions and cleans up their files', async () => {
@@ -71,6 +136,6 @@ describe('bilibili analysis media sessions', () => {
     vi.advanceTimersByTime(15 * 60 * 1000 + 1)
 
     await expect(getBilibiliAnalysisMediaSession(session.id)).rejects.toThrow('分析视频文件不存在或已过期')
-    expect(cleanupBilibiliMediaFileMock).toHaveBeenCalledWith('/tmp/expired-analysis.mp4')
+    expect(cleanupBilibiliMediaFileStrictMock).toHaveBeenCalledWith('/tmp/expired-analysis.mp4')
   })
 })

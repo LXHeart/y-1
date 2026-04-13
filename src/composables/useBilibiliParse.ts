@@ -5,6 +5,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function readOptionalDurationSeconds(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : undefined
+}
+
 function normalizeExtractedBilibiliVideoPayload(value: unknown): ExtractedBilibiliVideoPayload | null {
   if (!isPlainObject(value)) {
     return null
@@ -26,6 +30,7 @@ function normalizeExtractedBilibiliVideoPayload(value: unknown): ExtractedBilibi
     author: typeof value.author === 'string' ? value.author : undefined,
     title: typeof value.title === 'string' ? value.title : undefined,
     coverUrl: typeof value.coverUrl === 'string' ? value.coverUrl : undefined,
+    durationSeconds: readOptionalDurationSeconds(value.durationSeconds),
     proxyVideoUrl: value.proxyVideoUrl,
     downloadVideoUrl: value.downloadVideoUrl,
     playbackMode: value.playbackMode,
