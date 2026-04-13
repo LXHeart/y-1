@@ -191,6 +191,7 @@ describe('analyzeBilibiliVideoHandler', () => {
 describe('serveBilibiliAnalysisMediaHandler', () => {
   it('streams the prepared analysis media file', async () => {
     const req = {
+      headers: {},
       params: {
         id: 'analysis-media-id',
       },
@@ -201,8 +202,9 @@ describe('serveBilibiliAnalysisMediaHandler', () => {
     await serveBilibiliAnalysisMediaHandler(req as never, res as never, next)
 
     expect(getBilibiliAnalysisMediaSessionMock).toHaveBeenCalledWith('analysis-media-id')
-    expect(createBilibiliMediaReadStreamMock).toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4')
+    expect(createBilibiliMediaReadStreamMock).toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4', undefined)
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store, private')
+    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes')
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'video/mp4')
     expect(res.setHeader).toHaveBeenCalledWith('Content-Length', '123')
     expect(res.status).toHaveBeenCalledWith(200)
@@ -210,8 +212,35 @@ describe('serveBilibiliAnalysisMediaHandler', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
+  it('streams a requested analysis media byte range', async () => {
+    const req = {
+      headers: {
+        range: 'bytes=10-19',
+      },
+      params: {
+        id: 'analysis-media-id',
+      },
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+
+    await serveBilibiliAnalysisMediaHandler(req as never, res as never, next)
+
+    expect(createBilibiliMediaReadStreamMock).toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4', {
+      start: 10,
+      end: 19,
+    })
+    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes')
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 10-19/123')
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Length', '10')
+    expect(res.status).toHaveBeenCalledWith(206)
+    expect(mediaStreamMock.pipe).toHaveBeenCalledWith(res)
+    expect(next).not.toHaveBeenCalled()
+  })
+
   it('forwards missing media errors to next', async () => {
     const req = {
+      headers: {},
       params: {
         id: 'missing-id',
       },

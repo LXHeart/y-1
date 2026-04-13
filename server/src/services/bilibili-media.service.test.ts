@@ -71,6 +71,8 @@ describe('prepareBilibiliMediaFile', () => {
       '/tmp/audio.m4s',
       '-c',
       'copy',
+      '-movflags',
+      '+faststart',
       '/tmp/output.mp4',
     ], expect.any(Number))
     expect(cleanupFile).toHaveBeenCalledWith('/tmp/video.m4s')

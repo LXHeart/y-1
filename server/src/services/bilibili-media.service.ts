@@ -135,6 +135,8 @@ async function muxBilibiliTracks(input: {
     input.audioTrackFilePath,
     '-c',
     'copy',
+    '-movflags',
+    '+faststart',
     input.outputFilePath,
   ], env.DOUYIN_MEDIA_PROCESS_TIMEOUT_MS)
 }
@@ -357,6 +359,9 @@ export async function prepareBilibiliMediaFile(
   }
 }
 
-export async function createBilibiliMediaReadStream(filePath: string) {
-  return createReadStream(filePath)
+export async function createBilibiliMediaReadStream(filePath: string, options?: {
+  start?: number
+  end?: number
+}) {
+  return createReadStream(filePath, options)
 }

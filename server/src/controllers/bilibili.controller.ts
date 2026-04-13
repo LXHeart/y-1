@@ -1,3 +1,4 @@
+import { AppError } from '../lib/errors.js'
 import { createBilibiliMediaReadStream } from '../services/bilibili-media.service.js'
 import { getBilibiliAnalysisMediaSession } from '../services/bilibili-analysis-media.service.js'
 import type { NextFunction, Request, Response } from 'express'
@@ -15,6 +16,74 @@ import { extractBilibiliVideo } from '../services/bilibili-video.service.js'
 
 function buildContentDisposition(filename: string): string {
   return `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`
+}
+
+function parseSingleRangeHeader(rangeHeader: string | undefined, fileSize: number): {
+  start: number
+  end: number
+} | null {
+  if (!rangeHeader) {
+    return null
+  }
+
+  const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/)
+  if (!match) {
+    throw new AppError('视频范围请求无效', 416)
+  }
+
+  const [, rawStart, rawEnd] = match
+  if (!rawStart && !rawEnd) {
+    throw new AppError('视频范围请求无效', 416)
+  }
+
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd)
+    if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
+      throw new AppError('视频范围请求无效', 416)
+    }
+
+    const start = Math.max(0, fileSize - suffixLength)
+    return {
+      start,
+      end: fileSize - 1,
+    }
+  }
+
+  const start = Number(rawStart)
+  const end = rawEnd ? Number(rawEnd) : fileSize - 1
+
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || start >= fileSize) {
+    throw new AppError('视频范围请求无效', 416)
+  }
+
+  return {
+    start,
+    end: Math.min(end, fileSize - 1),
+  }
+}
+
+function applyAnalysisMediaHeaders(res: Response, input: {
+  mimeType: string
+  fileSize: number
+  range?: {
+    start: number
+    end: number
+  } | null
+}): void {
+  res.setHeader('Cache-Control', 'no-store, private')
+  res.setHeader('Accept-Ranges', 'bytes')
+  res.setHeader('Content-Type', input.mimeType)
+
+  if (!input.range) {
+    res.setHeader('Content-Length', String(input.fileSize))
+    res.status(200)
+    return
+  }
+
+  const contentLength = input.range.end - input.range.start + 1
+  res.setHeader('Content-Length', String(contentLength))
+  res.setHeader('Content-Range', `bytes ${input.range.start}-${input.range.end}/${input.fileSize}`)
+  res.status(206)
 }
 
 export async function extractBilibiliVideoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -49,7 +118,8 @@ export async function serveBilibiliAnalysisMediaHandler(req: Request, res: Respo
   try {
     const { id } = analysisBilibiliMediaRequestParams.parse(req.params)
     const media = await getBilibiliAnalysisMediaSession(id)
-    const mediaStream = await createBilibiliMediaReadStream(media.filePath)
+    const range = parseSingleRangeHeader(typeof req.headers.range === 'string' ? req.headers.range : undefined, media.fileSize)
+    const mediaStream = await createBilibiliMediaReadStream(media.filePath, range || undefined)
 
     mediaStream.on('error', (error) => {
       if (res.headersSent) {
@@ -60,12 +130,25 @@ export async function serveBilibiliAnalysisMediaHandler(req: Request, res: Respo
       next(error)
     })
 
-    res.setHeader('Cache-Control', 'no-store, private')
-    res.setHeader('Content-Type', media.mimeType)
-    res.setHeader('Content-Length', String(media.fileSize))
-    res.status(200)
+    applyAnalysisMediaHeaders(res, {
+      mimeType: media.mimeType,
+      fileSize: media.fileSize,
+      range,
+    })
     mediaStream.pipe(res)
   } catch (error: unknown) {
+    if (error instanceof AppError && error.statusCode === 416) {
+      const sessionId = typeof req.params?.id === 'string' ? req.params.id : null
+      if (sessionId) {
+        try {
+          const media = await getBilibiliAnalysisMediaSession(sessionId)
+          res.setHeader('Content-Range', `bytes */${media.fileSize}`)
+        } catch {
+          // ignore follow-up session lookup failures for invalid range responses
+        }
+      }
+    }
+
     next(error)
   }
 }
