@@ -147,7 +147,7 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     expect(result).toEqual({ runId: 'run_bilibili_123' })
   })
 
-  it('splits long videos into 30-second clips and merges the analysis output', async () => {
+  it('splits long videos into 30-second clips and merges analysis with field-specific dedupe', async () => {
     const token = createBilibiliProxyToken({
       kind: 'progressive',
       playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
@@ -165,17 +165,30 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
       .mockResolvedValueOnce({ id: 'analysis-media-3' })
     analyzeVideoContentMock
       .mockResolvedValueOnce({
-        videoScript: '脚本一',
-        videoCaptions: '字幕一',
+        videoScript: '[00:00] 小明走进房间\n[00:10] 小明拿起红伞',
+        videoCaptions: '今天测试分段合并。接下来',
+        charactersDescription: '小明：年轻男性；李总：管理者',
+        voiceDescription: '人声：男声解说；背景音乐：无；音效：无',
+        propsDescription: '红伞；窗户',
+        sceneDescription: '现代办公室；光线明亮',
         runId: 'run_1',
       })
       .mockResolvedValueOnce({
-        videoScript: '脚本二',
-        videoCaptions: '字幕二',
+        videoScript: '[00:00] 小明拿起红伞\n[00:18] 小明打开窗户',
+        videoCaptions: '接下来展示结果。',
+        charactersDescription: '小明：年轻男性；李总：资深管理者',
+        voiceDescription: '人声：男声解说；背景音乐：无；音效：无',
+        propsDescription: '红伞；窗户；电脑',
+        sceneDescription: '现代办公室；玻璃隔断',
         runId: 'run_2',
       })
       .mockResolvedValueOnce({
-        videoScript: '脚本三',
+        videoScript: '[00:00] 小明打开窗户',
+        videoCaptions: '展示结果。',
+        charactersDescription: '小明：年轻男性',
+        voiceDescription: '人声：男声解说；背景音乐：无；音效：无',
+        propsDescription: '红伞',
+        sceneDescription: '现代办公室',
         runId: 'run_3',
       })
 
@@ -221,22 +234,129 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
       runIds: ['run_1', 'run_2', 'run_3'],
       videoScript: [
         '第 1 段（00:00-00:30）',
-        '脚本一',
+        '[00:00] 小明走进房间',
+        '[00:10] 小明拿起红伞',
         '',
         '第 2 段（00:30-01:00）',
-        '脚本二',
-        '',
-        '第 3 段（01:00-01:05）',
-        '脚本三',
+        '[00:18] 小明打开窗户',
       ].join('\n'),
-      videoCaptions: [
-        '第 1 段（00:00-00:30）',
-        '字幕一',
-        '',
-        '第 2 段（00:30-01:00）',
-        '字幕二',
-      ].join('\n'),
+      videoCaptions: ['今天测试分段合并。接下来', '展示结果。'].join('\n'),
+      charactersDescription: ['小明：年轻男性', '李总：管理者', '李总：资深管理者'].join('\n'),
+      voiceDescription: ['人声：男声解说', '背景音乐：无', '音效：无'].join('\n'),
+      propsDescription: ['红伞', '窗户', '电脑'].join('\n'),
+      sceneDescription: ['现代办公室', '光线明亮', '玻璃隔断'].join('\n'),
     })
+  })
+
+  it('keeps a short trailing script segment when it adds new content', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 65,
+    })
+
+    createBilibiliMediaClipsMock.mockResolvedValueOnce([
+      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
+      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
+      createClip({ clipIndex: 2, startSeconds: 60, endSeconds: 65, filePath: '/tmp/clip-3.mp4' }),
+    ])
+    createBilibiliAnalysisMediaSessionMock
+      .mockResolvedValueOnce({ id: 'analysis-media-1' })
+      .mockResolvedValueOnce({ id: 'analysis-media-2' })
+      .mockResolvedValueOnce({ id: 'analysis-media-3' })
+    analyzeVideoContentMock
+      .mockResolvedValueOnce({
+        videoScript: '[00:00] 第一段内容',
+        runId: 'run_1',
+      })
+      .mockResolvedValueOnce({
+        videoScript: '[00:30] 第二段内容',
+        runId: 'run_2',
+      })
+      .mockResolvedValueOnce({
+        videoScript: '[00:00] 尾段新增内容',
+        runId: 'run_3',
+      })
+
+    const result = await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)
+
+    expect(result.videoScript).toContain('第 3 段（01:00-01:05）')
+    expect(result.videoScript).toContain('[00:00] 尾段新增内容')
+  })
+
+  it('preserves keyed summary entries with distinct details', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 65,
+    })
+
+    createBilibiliMediaClipsMock.mockResolvedValueOnce([
+      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
+      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
+      createClip({ clipIndex: 2, startSeconds: 60, endSeconds: 65, filePath: '/tmp/clip-3.mp4' }),
+    ])
+    createBilibiliAnalysisMediaSessionMock
+      .mockResolvedValueOnce({ id: 'analysis-media-1' })
+      .mockResolvedValueOnce({ id: 'analysis-media-2' })
+      .mockResolvedValueOnce({ id: 'analysis-media-3' })
+    analyzeVideoContentMock
+      .mockResolvedValueOnce({
+        charactersDescription: '李总：管理者',
+        propsDescription: '办公室',
+        runId: 'run_1',
+      })
+      .mockResolvedValueOnce({
+        charactersDescription: '李总：戴眼镜',
+        propsDescription: '现代办公室',
+        runId: 'run_2',
+      })
+      .mockResolvedValueOnce({
+        charactersDescription: '李总：穿西装',
+        propsDescription: '办公室挂画',
+        runId: 'run_3',
+      })
+
+    const result = await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)
+
+    expect(result.charactersDescription).toBe(['李总：管理者', '李总：戴眼镜', '李总：穿西装'].join('\n'))
+    expect(result.propsDescription).toBe(['办公室', '现代办公室', '办公室挂画'].join('\n'))
+  })
+
+  it('preserves the next script timestamp when trimming partial overlap', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 65,
+    })
+
+    createBilibiliMediaClipsMock.mockResolvedValueOnce([
+      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
+      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
+      createClip({ clipIndex: 2, startSeconds: 60, endSeconds: 65, filePath: '/tmp/clip-3.mp4' }),
+    ])
+    createBilibiliAnalysisMediaSessionMock
+      .mockResolvedValueOnce({ id: 'analysis-media-1' })
+      .mockResolvedValueOnce({ id: 'analysis-media-2' })
+      .mockResolvedValueOnce({ id: 'analysis-media-3' })
+    analyzeVideoContentMock
+      .mockResolvedValueOnce({
+        videoScript: '[00:10] 小明拿起红伞',
+        runId: 'run_1',
+      })
+      .mockResolvedValueOnce({
+        videoScript: '[00:00] 小明拿起红伞然后打开窗户',
+        runId: 'run_2',
+      })
+      .mockResolvedValueOnce({
+        videoScript: '[00:00] 然后打开窗户后离开',
+        runId: 'run_3',
+      })
+
+    const result = await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)
+
+    expect(result.videoScript).toContain('[00:00] 然后打开窗户')
+    expect(result.videoScript).toContain('[00:00] 后离开')
   })
 
   it('cleans up generated clip files when one clip analysis fails', async () => {

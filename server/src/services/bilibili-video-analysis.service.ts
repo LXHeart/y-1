@@ -16,6 +16,17 @@ import { analyzeVideoContent, type VideoAnalysisResult } from './video-analysis.
 
 const maxAnalysisDurationSeconds = 10 * 60
 const segmentedAnalysisClipDurationSeconds = 30
+const maxAdjacentOverlapLines = 3
+const minimumComparableTextLength = 6
+const minimumAdjacentOverlapLength = 3
+const redundantTrailingSegmentMaxDurationSeconds = 12
+
+interface SummaryEntry {
+  content: string
+  normalized: string
+  key?: string
+  value: string
+}
 
 function extractTokenFromProxyUrl(proxyVideoUrl: string): string {
   let parsedUrl: URL
@@ -67,40 +78,287 @@ function formatSegmentLabel(clip: Pick<BilibiliMediaClip, 'clipIndex' | 'startSe
   return `第 ${clip.clipIndex + 1} 段（${formatSegmentTimestamp(clip.startSeconds)}-${formatSegmentTimestamp(clip.endSeconds)}）`
 }
 
-function mergeSegmentedAnalysisField(
+function normalizeMergeText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function splitTranscriptLineParts(line: string): { prefix: string, body: string } {
+  const trimmedLine = line.trim()
+  const match = trimmedLine.match(/^(\[[^\]]+\])\s*(.*)$/)
+  if (!match) {
+    return {
+      prefix: '',
+      body: trimmedLine,
+    }
+  }
+
+  return {
+    prefix: match[1],
+    body: match[2] || '',
+  }
+}
+
+function buildTranscriptLine(prefix: string, body: string): string {
+  const trimmedBody = body.trim()
+  if (!trimmedBody) {
+    return ''
+  }
+
+  return prefix ? `${prefix} ${trimmedBody}` : trimmedBody
+}
+
+function normalizeTranscriptLine(text: string): string {
+  return normalizeMergeText(splitTranscriptLineParts(text).body)
+}
+
+function normalizeDescriptionEntryText(text: string): string {
+  return normalizeMergeText(text).replace(/^[，。；;、,\s]+|[，。；;、,\s]+$/g, '')
+}
+
+function splitTranscriptLines(content: string): string[] {
+  return content
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function splitDescriptionEntries(content: string): string[] {
+  return content
+    .split(/\r?\n+/)
+    .flatMap((line) => line.split(/[；;]/))
+    .map(normalizeDescriptionEntryText)
+    .filter(Boolean)
+}
+
+function trimLeadingOverlapText(text: string, overlap: string): string {
+  const { prefix, body } = splitTranscriptLineParts(text)
+  const normalizedBody = normalizeMergeText(body)
+  const trimmedOverlap = overlap.trim()
+  if (!normalizedBody.startsWith(trimmedOverlap)) {
+    return buildTranscriptLine(prefix, body)
+  }
+
+  const trimmedBody = normalizedBody.slice(trimmedOverlap.length).replace(/^[，。；;、,\s]+/, '').trim()
+  return buildTranscriptLine(prefix, trimmedBody)
+}
+
+function findTextOverlapLength(previousText: string, nextText: string): number {
+  const maxLength = Math.min(previousText.length, nextText.length)
+
+  for (let overlapLength = maxLength; overlapLength >= minimumAdjacentOverlapLength; overlapLength -= 1) {
+    if (previousText.slice(-overlapLength) === nextText.slice(0, overlapLength)) {
+      return overlapLength
+    }
+  }
+
+  return 0
+}
+
+function trimAdjacentOverlap(previousLines: string[], nextLines: string[]): string[] {
+  const maxOverlap = Math.min(maxAdjacentOverlapLines, previousLines.length, nextLines.length)
+  let trimmedLines = [...nextLines]
+
+  for (let overlapLength = maxOverlap; overlapLength >= 1; overlapLength -= 1) {
+    const previousTail = previousLines.slice(-overlapLength).map(normalizeTranscriptLine)
+    const nextHead = trimmedLines.slice(0, overlapLength).map(normalizeTranscriptLine)
+
+    if (previousTail.every((line, index) => line === nextHead[index])) {
+      trimmedLines = trimmedLines.slice(overlapLength)
+      break
+    }
+  }
+
+  if (!trimmedLines.length || !previousLines.length) {
+    return trimmedLines
+  }
+
+  const lastPreviousLine = previousLines[previousLines.length - 1]
+  const firstNextLine = trimmedLines[0]
+  const normalizedPreviousLine = normalizeTranscriptLine(lastPreviousLine)
+  const normalizedNextLine = normalizeTranscriptLine(firstNextLine)
+
+  if (!normalizedPreviousLine || !normalizedNextLine) {
+    return trimmedLines
+  }
+
+  if (
+    normalizedNextLine.length >= minimumComparableTextLength
+    && normalizedPreviousLine.includes(normalizedNextLine)
+  ) {
+    return trimmedLines.slice(1)
+  }
+
+  if (
+    normalizedPreviousLine.length >= minimumComparableTextLength
+    && normalizedNextLine.startsWith(normalizedPreviousLine)
+  ) {
+    const trimmedFirstLine = trimLeadingOverlapText(firstNextLine, normalizedPreviousLine)
+    if (!trimmedFirstLine) {
+      return trimmedLines.slice(1)
+    }
+
+    return [trimmedFirstLine, ...trimmedLines.slice(1)]
+  }
+
+  const overlapLength = findTextOverlapLength(normalizedPreviousLine, normalizedNextLine)
+  if (overlapLength === 0) {
+    return trimmedLines
+  }
+
+  const trimmedFirstLine = normalizedNextLine.slice(overlapLength).replace(/^[，。；;、,\s]+/, '').trim()
+  if (!trimmedFirstLine) {
+    return trimmedLines.slice(1)
+  }
+
+  return [trimmedFirstLine, ...trimmedLines.slice(1)]
+}
+
+function extractDescriptionEntryParts(entry: string): { key?: string, value: string } {
+  const normalizedEntry = normalizeDescriptionEntryText(entry)
+  const match = normalizedEntry.match(/^([^：:]{1,30})[：:](.+)$/)
+  if (!match?.[1] || !match[2]) {
+    return {
+      value: normalizedEntry,
+    }
+  }
+
+  return {
+    key: normalizeMergeText(match[1]),
+    value: normalizeDescriptionEntryText(match[2]),
+  }
+}
+
+function choosePreferredEntry(currentEntry: SummaryEntry, nextEntry: SummaryEntry): SummaryEntry {
+  return nextEntry.normalized.length > currentEntry.normalized.length ? nextEntry : currentEntry
+}
+
+function createSummaryEntry(content: string): SummaryEntry | null {
+  const normalizedContent = normalizeDescriptionEntryText(content)
+  if (!normalizedContent) {
+    return null
+  }
+
+  const { key, value } = extractDescriptionEntryParts(normalizedContent)
+
+  return {
+    content: normalizedContent,
+    normalized: normalizedContent,
+    key,
+    value,
+  }
+}
+
+function matchesSummaryEntry(currentEntry: SummaryEntry, nextEntry: SummaryEntry): boolean {
+  if (currentEntry.normalized === nextEntry.normalized) {
+    return true
+  }
+
+  if (currentEntry.key && nextEntry.key && currentEntry.key === nextEntry.key) {
+    if (currentEntry.value === nextEntry.value) {
+      return true
+    }
+
+    if (currentEntry.value.length >= minimumComparableTextLength && currentEntry.value.includes(nextEntry.value)) {
+      return true
+    }
+
+    return nextEntry.value.length >= minimumComparableTextLength && nextEntry.value.includes(currentEntry.value)
+  }
+
+  return false
+}
+
+function mergeSummaryEntry(entries: SummaryEntry[], nextEntry: SummaryEntry): SummaryEntry[] {
+  const matchedIndex = entries.findIndex((entry) => matchesSummaryEntry(entry, nextEntry))
+  if (matchedIndex === -1) {
+    return [...entries, nextEntry]
+  }
+
+  const preferredEntry = choosePreferredEntry(entries[matchedIndex], nextEntry)
+  return entries.map((entry, index) => index === matchedIndex ? preferredEntry : entry)
+}
+
+function shouldDropRedundantTrailingSegment(
+  clip: Pick<BilibiliMediaClip, 'startSeconds' | 'endSeconds'>,
+  trimmedLines: string[],
+  isLastClip: boolean,
+): boolean {
+  if (!isLastClip) {
+    return false
+  }
+
+  return clip.endSeconds - clip.startSeconds <= redundantTrailingSegmentMaxDurationSeconds && trimmedLines.length === 0
+}
+
+function mergeSegmentedScriptField(
   clips: Array<Pick<BilibiliMediaClip, 'clipIndex' | 'startSeconds' | 'endSeconds'>>,
   results: VideoAnalysisResult[],
-  selector: (result: VideoAnalysisResult) => string | undefined,
 ): string | undefined {
+  let mergedLines: string[] = []
   const sections = clips.flatMap((clip, index) => {
-    const content = selector(results[index] || {})?.trim()
-    if (!content) {
+    const lines = splitTranscriptLines(results[index]?.videoScript || '')
+    if (!lines.length) {
       return []
     }
 
-    return `${formatSegmentLabel(clip)}\n${content}`
+    const dedupedLines = mergedLines.length ? trimAdjacentOverlap(mergedLines, lines) : lines
+    if (shouldDropRedundantTrailingSegment(clip, dedupedLines, index === clips.length - 1) || dedupedLines.length === 0) {
+      return []
+    }
+
+    mergedLines = [...mergedLines, ...dedupedLines]
+    return [[formatSegmentLabel(clip), ...dedupedLines].join('\n')]
   })
 
-  if (sections.length === 0) {
-    return undefined
-  }
+  return sections.length ? sections.join('\n\n') : undefined
+}
 
-  return sections.join('\n\n')
+function mergeSegmentedCaptionsField(results: VideoAnalysisResult[]): string | undefined {
+  const mergedLines = results.reduce<string[]>((currentLines, result) => {
+    const lines = splitTranscriptLines(result.videoCaptions || '')
+    if (!lines.length) {
+      return currentLines
+    }
+
+    const dedupedLines = currentLines.length ? trimAdjacentOverlap(currentLines, lines) : lines
+    return dedupedLines.length ? [...currentLines, ...dedupedLines] : currentLines
+  }, [])
+
+  return mergedLines.length ? mergedLines.join('\n') : undefined
+}
+
+function mergeDistinctSummaryField(
+  results: VideoAnalysisResult[],
+  selector: (result: VideoAnalysisResult) => string | undefined,
+): string | undefined {
+  const entries = results.reduce<SummaryEntry[]>((currentEntries, result) => {
+    const content = selector(result)?.trim()
+    if (!content) {
+      return currentEntries
+    }
+
+    return splitDescriptionEntries(content)
+      .map(createSummaryEntry)
+      .filter((entry): entry is SummaryEntry => entry !== null)
+      .reduce((mergedEntries, entry) => mergeSummaryEntry(mergedEntries, entry), currentEntries)
+  }, [])
+
+  return entries.length ? entries.map((entry) => entry.content).join('\n') : undefined
 }
 
 function mergeSegmentedAnalysisResults(clips: BilibiliMediaClip[], results: VideoAnalysisResult[]): VideoAnalysisResult {
-  const runIds = results.flatMap((result) => result.runId ? [result.runId] : [])
+  const runIds = Array.from(new Set(results.flatMap((result) => result.runId ? [result.runId] : [])))
 
   return {
     segmented: true,
     clipCount: clips.length,
     runIds: runIds.length ? runIds : undefined,
-    videoCaptions: mergeSegmentedAnalysisField(clips, results, (result) => result.videoCaptions),
-    videoScript: mergeSegmentedAnalysisField(clips, results, (result) => result.videoScript),
-    charactersDescription: mergeSegmentedAnalysisField(clips, results, (result) => result.charactersDescription),
-    voiceDescription: mergeSegmentedAnalysisField(clips, results, (result) => result.voiceDescription),
-    propsDescription: mergeSegmentedAnalysisField(clips, results, (result) => result.propsDescription),
-    sceneDescription: mergeSegmentedAnalysisField(clips, results, (result) => result.sceneDescription),
+    videoCaptions: mergeSegmentedCaptionsField(results),
+    videoScript: mergeSegmentedScriptField(clips, results),
+    charactersDescription: mergeDistinctSummaryField(results, (result) => result.charactersDescription),
+    voiceDescription: mergeDistinctSummaryField(results, (result) => result.voiceDescription),
+    propsDescription: mergeDistinctSummaryField(results, (result) => result.propsDescription),
+    sceneDescription: mergeDistinctSummaryField(results, (result) => result.sceneDescription),
   }
 }
 
