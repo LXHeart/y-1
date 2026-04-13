@@ -70,7 +70,7 @@
               <p class="analysis-kicker">视频内容提取</p>
               <h3 id="bilibili-analysis-heading" class="analysis-title">结构化内容分析</h3>
             </div>
-            <p class="analysis-hint">建议选择 30 秒到 2 分钟的视频进行分析，超过 5 分钟暂不支持。</p>
+            <p class="analysis-hint">分析时会自动按最长 30 秒分段；30 秒到 2 分钟的视频通常效果最好，当前最多支持 10 分钟。</p>
           </div>
           <button class="btn-secondary" :disabled="analysisLoading || isAnalysisTooLong" @click="$emit('retry-analysis')">
             {{ analysisActionLabel }}
@@ -89,21 +89,28 @@
 
         <div v-else-if="isAnalysisTooLong" class="analysis-status analysis-status-warning">
           <p class="analysis-status-title">当前视频暂不支持分析</p>
-          <p>仅支持分析 5 分钟以内的 B 站视频，建议选择 30 秒到 2 分钟的视频。</p>
+          <p>仅支持分析 10 分钟以内的 B 站视频，分析时会自动按最长 30 秒分段，建议选择 30 秒到 2 分钟的视频。</p>
         </div>
 
-        <div v-else-if="analysisSections.length" class="analysis-grid">
-          <article v-for="section in analysisSections" :key="section.title" class="analysis-card">
-            <p class="analysis-card-label">{{ section.title }}</p>
-            <p class="analysis-card-copy">{{ section.content }}</p>
-          </article>
-        </div>
+        <template v-else-if="analysisSections.length">
+          <div v-if="segmentedAnalysisHint" class="analysis-status analysis-status-info">
+            <p>{{ segmentedAnalysisHint }}</p>
+          </div>
+
+          <div class="analysis-grid">
+            <article v-for="section in analysisSections" :key="section.title" class="analysis-card">
+              <p class="analysis-card-label">{{ section.title }}</p>
+              <p class="analysis-card-copy">{{ section.content }}</p>
+            </article>
+          </div>
+        </template>
+
 
         <div v-else class="analysis-status analysis-status-empty">
           <p>点击“分析视频”后再提取结构化内容分析结果。</p>
         </div>
 
-        <p v-if="analysis?.runId" class="analysis-run-id">运行 ID：{{ analysis.runId }}</p>
+        <p v-if="analysisRunIdText" class="analysis-run-id">{{ analysisRunIdText }}</p>
       </section>
     </template>
   </section>
@@ -118,7 +125,7 @@ interface AnalysisSection {
   content: string
 }
 
-const maxAnalysisDurationSeconds = 5 * 60
+const maxAnalysisDurationSeconds = 10 * 60
 
 const props = defineProps<{
   extractedVideo: ExtractedBilibiliVideoPayload | null
@@ -200,10 +207,30 @@ const analysisActionLabel = computed(() => {
   }
 
   if (isAnalysisTooLong.value) {
-    return '超过 5 分钟'
+    return '超过 10 分钟'
   }
 
   return hasAttemptedAnalysis.value ? '重新分析' : '分析视频'
+})
+
+const segmentedAnalysisHint = computed(() => {
+  if (!props.analysis?.segmented || !props.analysis.clipCount) {
+    return ''
+  }
+
+  return `该结果由 ${props.analysis.clipCount} 个最长 30 秒的片段合并生成。`
+})
+
+const analysisRunIdText = computed(() => {
+  if (props.analysis?.runId) {
+    return `运行 ID：${props.analysis.runId}`
+  }
+
+  if (props.analysis?.runIds?.length) {
+    return `运行 ID：${props.analysis.runIds.join('、')}`
+  }
+
+  return ''
 })
 
 const analysisSections = computed<AnalysisSection[]>(() => {

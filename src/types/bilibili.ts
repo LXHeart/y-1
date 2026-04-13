@@ -27,4 +27,7 @@ export interface BilibiliVideoAnalysisResult {
   propsDescription?: string
   sceneDescription?: string
   runId?: string
+  segmented?: boolean
+  clipCount?: number
+  runIds?: string[]
 }

@@ -134,7 +134,7 @@ export function createApp() {
   }))
   app.use('/api/bilibili/analysis-media', createRateLimit({
     id: 'bilibili-analysis-media',
-    max: 120,
+    max: 300,
     windowMs: 60 * 1000,
     methods: ['GET'],
     message: '分析视频读取请求过于频繁，请稍后再试。',

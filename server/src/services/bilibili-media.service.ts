@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile)
 const maxUpstreamRedirects = 2
 const maxDownloadBytes = 400 * 1024 * 1024
 const videoMimeType = 'video/mp4'
+const defaultClipDurationSeconds = 30
 const acceptedUpstreamContentTypes = new Set(['application/octet-stream', 'video/mp4', 'audio/mp4'])
 
 export interface BilibiliMediaFile {
@@ -32,6 +33,11 @@ export interface BilibiliMediaFile {
   createReadStream: () => ReadStream
 }
 
+export interface BilibiliMediaClip extends BilibiliMediaFile {
+  clipIndex: number
+  startSeconds: number
+  endSeconds: number
+}
 
 interface BilibiliMediaPaths {
   videoTrackFilePath: string
@@ -48,6 +54,13 @@ interface BilibiliMediaDependencies {
     expectedContentTypePrefix: 'video/' | 'audio/'
     targetFilePath: string
   }) => Promise<void>
+  runCommand: (command: string, args: string[], timeoutMs: number) => Promise<void>
+  statFile: (filePath: string) => Promise<{ size: number }>
+  cleanupFile: (filePath: string) => Promise<void>
+}
+
+interface BilibiliMediaClipDependencies {
+  ensureTempDir: (dirPath: string) => Promise<void>
   runCommand: (command: string, args: string[], timeoutMs: number) => Promise<void>
   statFile: (filePath: string) => Promise<{ size: number }>
   cleanupFile: (filePath: string) => Promise<void>
@@ -118,6 +131,38 @@ function buildBilibiliMediaFileResult(input: {
     filename: input.filename || 'bilibili-video.mp4',
     mimeType: videoMimeType,
     createReadStream: () => createReadStream(input.filePath),
+  }
+}
+
+function buildBilibiliMediaClipFilename(filename: string | undefined, clipIndex: number): string {
+  const parsed = path.parse(filename || 'bilibili-video.mp4')
+  const extension = parsed.ext || '.mp4'
+  const baseName = parsed.name || 'bilibili-video'
+  return `${baseName}-clip-${clipIndex + 1}${extension}`
+}
+
+function buildClipOutputFilePath(sourceFilePath: string, clipIndex: number): string {
+  const parsed = path.parse(sourceFilePath)
+  return path.join(parsed.dir, `${parsed.name}-clip-${clipIndex + 1}.mp4`)
+}
+
+function buildBilibiliMediaClipResult(input: {
+  filePath: string
+  fileSize: number
+  filename?: string
+  clipIndex: number
+  startSeconds: number
+  endSeconds: number
+}): BilibiliMediaClip {
+  return {
+    ...buildBilibiliMediaFileResult({
+      filePath: input.filePath,
+      fileSize: input.fileSize,
+      filename: input.filename,
+    }),
+    clipIndex: input.clipIndex,
+    startSeconds: input.startSeconds,
+    endSeconds: input.endSeconds,
   }
 }
 
@@ -263,6 +308,13 @@ const defaultDependencies: BilibiliMediaDependencies = {
   },
 }
 
+const defaultClipDependencies: BilibiliMediaClipDependencies = {
+  ensureTempDir: defaultDependencies.ensureTempDir,
+  runCommand: defaultDependencies.runCommand,
+  statFile: defaultDependencies.statFile,
+  cleanupFile: defaultDependencies.cleanupFile,
+}
+
 async function cleanupTempFile(filePath: string, cleanupFileImpl: BilibiliMediaDependencies['cleanupFile']): Promise<void> {
   try {
     await cleanupFileImpl(filePath)
@@ -280,6 +332,71 @@ export async function cleanupBilibiliMediaFile(filePath: string): Promise<void> 
 
 export async function cleanupBilibiliMediaFileStrict(filePath: string): Promise<void> {
   await defaultDependencies.cleanupFile(filePath)
+}
+
+export async function createBilibiliMediaClips(input: {
+  sourceFilePath: string
+  durationSeconds: number
+  filename?: string
+  clipDurationSeconds?: number
+}, dependencies: BilibiliMediaClipDependencies = defaultClipDependencies): Promise<BilibiliMediaClip[]> {
+  const clipDurationSeconds = input.clipDurationSeconds || defaultClipDurationSeconds
+  const totalDurationSeconds = Math.ceil(input.durationSeconds)
+
+  if (!Number.isInteger(totalDurationSeconds) || totalDurationSeconds <= 0) {
+    throw new AppError('未能识别视频时长，请重新提取后再分析', 422)
+  }
+
+  await dependencies.ensureTempDir(path.dirname(input.sourceFilePath))
+
+  const clips: BilibiliMediaClip[] = []
+
+  try {
+    for (let clipIndex = 0, startSeconds = 0; startSeconds < totalDurationSeconds; clipIndex += 1, startSeconds += clipDurationSeconds) {
+      const endSeconds = Math.min(startSeconds + clipDurationSeconds, totalDurationSeconds)
+      const outputFilePath = buildClipOutputFilePath(input.sourceFilePath, clipIndex)
+
+      await dependencies.runCommand(env.FFMPEG_PATH, [
+        '-y',
+        '-i',
+        input.sourceFilePath,
+        '-ss',
+        String(startSeconds),
+        '-t',
+        String(endSeconds - startSeconds),
+        '-c',
+        'copy',
+        '-movflags',
+        '+faststart',
+        outputFilePath,
+      ], env.DOUYIN_MEDIA_PROCESS_TIMEOUT_MS)
+
+      const outputFile = await dependencies.statFile(outputFilePath)
+      clips.push(buildBilibiliMediaClipResult({
+        filePath: outputFilePath,
+        fileSize: outputFile.size,
+        filename: buildBilibiliMediaClipFilename(input.filename, clipIndex),
+        clipIndex,
+        startSeconds,
+        endSeconds,
+      }))
+    }
+
+    return clips
+  } catch (error: unknown) {
+    await Promise.all(clips.map(async (clip) => {
+      await cleanupTempFile(clip.filePath, dependencies.cleanupFile)
+    }))
+
+    const currentOutputFilePath = buildClipOutputFilePath(input.sourceFilePath, clips.length)
+    await cleanupTempFile(currentOutputFilePath, dependencies.cleanupFile)
+
+    if (error instanceof AppError) {
+      throw error
+    }
+
+    throw new AppError('B 站视频切片失败，请稍后重试', 502)
+  }
 }
 
 export async function prepareBilibiliMediaFile(

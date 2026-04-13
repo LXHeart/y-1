@@ -1,6 +1,122 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '../lib/errors.js'
-import { prepareBilibiliMediaFile } from './bilibili-media.service.js'
+import { createBilibiliMediaClips, prepareBilibiliMediaFile } from './bilibili-media.service.js'
+
+describe('createBilibiliMediaClips', () => {
+  it('creates sequential 30-second ffmpeg clip commands and returns clip metadata', async () => {
+    const ensureTempDir = vi.fn(async () => {})
+    const statFile = vi.fn(async (filePath: string) => ({
+      size: filePath.endsWith('clip-1.mp4') ? 101 : filePath.endsWith('clip-2.mp4') ? 102 : 103,
+    }))
+    const runCommand = vi.fn(async () => {})
+
+    const clips = await createBilibiliMediaClips({
+      sourceFilePath: '/tmp/source.mp4',
+      durationSeconds: 65,
+      filename: 'analysis.mp4',
+      clipDurationSeconds: 30,
+    }, {
+      ensureTempDir,
+      statFile,
+      runCommand,
+      cleanupFile: vi.fn(async () => {}),
+    })
+
+    expect(ensureTempDir).toHaveBeenCalled()
+    expect(runCommand).toHaveBeenNthCalledWith(1, expect.any(String), [
+      '-y',
+      '-i',
+      '/tmp/source.mp4',
+      '-ss',
+      '0',
+      '-t',
+      '30',
+      '-c',
+      'copy',
+      '-movflags',
+      '+faststart',
+      expect.stringContaining('clip-1.mp4'),
+    ], expect.any(Number))
+    expect(runCommand).toHaveBeenNthCalledWith(2, expect.any(String), [
+      '-y',
+      '-i',
+      '/tmp/source.mp4',
+      '-ss',
+      '30',
+      '-t',
+      '30',
+      '-c',
+      'copy',
+      '-movflags',
+      '+faststart',
+      expect.stringContaining('clip-2.mp4'),
+    ], expect.any(Number))
+    expect(runCommand).toHaveBeenNthCalledWith(3, expect.any(String), [
+      '-y',
+      '-i',
+      '/tmp/source.mp4',
+      '-ss',
+      '60',
+      '-t',
+      '5',
+      '-c',
+      'copy',
+      '-movflags',
+      '+faststart',
+      expect.stringContaining('clip-3.mp4'),
+    ], expect.any(Number))
+    expect(clips).toMatchObject([
+      {
+        clipIndex: 0,
+        startSeconds: 0,
+        endSeconds: 30,
+        filename: 'analysis-clip-1.mp4',
+        mimeType: 'video/mp4',
+        fileSize: 101,
+      },
+      {
+        clipIndex: 1,
+        startSeconds: 30,
+        endSeconds: 60,
+        filename: 'analysis-clip-2.mp4',
+        mimeType: 'video/mp4',
+        fileSize: 102,
+      },
+      {
+        clipIndex: 2,
+        startSeconds: 60,
+        endSeconds: 65,
+        filename: 'analysis-clip-3.mp4',
+        mimeType: 'video/mp4',
+        fileSize: 103,
+      },
+    ])
+  })
+
+  it('cleans up already-created clips when ffmpeg splitting fails midway', async () => {
+    const cleanupFile = vi.fn(async () => {})
+    const runCommand = vi.fn(async (_command: string, args: string[]) => {
+      if (String(args.at(-1)).includes('clip-2.mp4')) {
+        throw new AppError('clip failed', 502)
+      }
+    })
+
+    await expect(createBilibiliMediaClips({
+      sourceFilePath: '/tmp/source.mp4',
+      durationSeconds: 65,
+      filename: 'analysis.mp4',
+      clipDurationSeconds: 30,
+    }, {
+      ensureTempDir: vi.fn(async () => {}),
+      statFile: vi.fn(async () => ({ size: 100 })),
+      runCommand,
+      cleanupFile,
+    })).rejects.toThrow('clip failed')
+
+    expect(cleanupFile).toHaveBeenCalledWith(expect.stringContaining('clip-1.mp4'))
+    expect(cleanupFile).toHaveBeenCalledWith(expect.stringContaining('clip-2.mp4'))
+  })
+})
 
 describe('prepareBilibiliMediaFile', () => {
   it('returns downloaded progressive media file metadata', async () => {

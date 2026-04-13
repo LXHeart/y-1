@@ -118,6 +118,12 @@ export async function deleteBilibiliAnalysisMediaSession(id: string): Promise<vo
   await deleteBilibiliAnalysisMediaSessionInternal(id)
 }
 
+export async function deleteBilibiliAnalysisMediaSessions(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await deleteBilibiliAnalysisMediaSession(id)
+  }
+}
+
 export function buildPublicBilibiliAnalysisMediaUrl(id: string): string {
   if (!env.PUBLIC_BACKEND_ORIGIN) {
     throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，第三方分析服务无法访问分析视频文件地址', 500)

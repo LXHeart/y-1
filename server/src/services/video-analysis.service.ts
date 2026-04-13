@@ -14,6 +14,9 @@ export interface VideoAnalysisResult {
   propsDescription?: string
   sceneDescription?: string
   runId?: string
+  segmented?: boolean
+  clipCount?: number
+  runIds?: string[]
 }
 
 interface VideoAnalysisApiResponse {

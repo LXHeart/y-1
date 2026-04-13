@@ -45,7 +45,7 @@
             class="input-area"
             rows="7"
             :placeholder="inputPlaceholder"
-            :disabled="isCurrentPlatformLoading"
+            :disabled="isCurrentPlatformParseLoading"
           />
 
           <p class="field-note">
@@ -55,12 +55,12 @@
           <div class="action-row">
             <button
               class="btn-primary"
-              :disabled="isCurrentPlatformLoading || !videoInput.trim()"
+              :disabled="isCurrentPlatformParseLoading || !videoInput.trim()"
               @click="handleExtractVideo"
             >
-              {{ isCurrentPlatformLoading ? '提取中…' : '提取视频' }}
+              {{ isCurrentPlatformParseLoading ? '提取中…' : '提取视频' }}
             </button>
-            <button class="btn-secondary" :disabled="isCurrentPlatformLoading" @click="handleReset">
+            <button class="btn-secondary" :disabled="isCurrentPlatformParseLoading" @click="handleReset">
               清空
             </button>
           </div>
@@ -227,7 +227,7 @@ const {
   logout: logoutDouyinSession,
 } = useDouyinSession()
 
-const isCurrentPlatformLoading = computed(() => {
+const isCurrentPlatformParseLoading = computed(() => {
   return activePlatform.value === 'douyin' ? parseLoading.value : bilibiliParseLoading.value
 })
 
