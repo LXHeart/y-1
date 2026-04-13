@@ -1,7 +1,33 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 
+const {
+  createBilibiliMediaReadStreamMock,
+  getBilibiliAnalysisMediaSessionMock,
+  mediaStreamMock,
+} = vi.hoisted(() => {
+  const mediaStreamMock = {
+    on: vi.fn(() => mediaStreamMock),
+    pipe: vi.fn(),
+  }
+
+  return {
+    createBilibiliMediaReadStreamMock: vi.fn(async () => mediaStreamMock),
+    getBilibiliAnalysisMediaSessionMock: vi.fn(async () => ({
+      filePath: '/tmp/bilibili-analysis.mp4',
+      fileSize: 123,
+      filename: 'analysis.mp4',
+      mimeType: 'video/mp4',
+    })),
+    mediaStreamMock,
+  }
+})
+
 beforeEach(() => {
   process.env.BILIBILI_PROXY_TOKEN_SECRET = 'bilibili-proxy-test-secret-1234567890'
+  createBilibiliMediaReadStreamMock.mockClear()
+  getBilibiliAnalysisMediaSessionMock.mockClear()
+  mediaStreamMock.on.mockClear()
+  mediaStreamMock.pipe.mockClear()
 })
 
 const {
@@ -9,6 +35,7 @@ const {
   downloadBilibiliVideoHandler,
   extractBilibiliVideoHandler,
   proxyBilibiliVideoHandler,
+  serveBilibiliAnalysisMediaHandler,
 } = await import('./bilibili.controller.js')
 
 vi.mock('../services/bilibili-video.service.js', () => ({
@@ -46,15 +73,28 @@ vi.mock('../services/bilibili-video-analysis.service.js', () => ({
   })),
 }))
 
+vi.mock('../services/bilibili-analysis-media.service.js', () => ({
+  getBilibiliAnalysisMediaSession: getBilibiliAnalysisMediaSessionMock,
+}))
+
+vi.mock('../services/bilibili-media.service.js', () => ({
+  createBilibiliMediaReadStream: createBilibiliMediaReadStreamMock,
+}))
+
 const { extractBilibiliVideo } = await import('../services/bilibili-video.service.js')
 const { parseBilibiliProxyToken } = await import('../services/bilibili-proxy.service.js')
 const { downloadBilibiliMedia, proxyBilibiliMedia } = await import('../services/bilibili-stream.service.js')
 const { analyzeBilibiliVideoByProxyUrl } = await import('../services/bilibili-video-analysis.service.js')
 
 function createResponseMock() {
-  return {
+  const response = {
+    destroy: vi.fn(),
     json: vi.fn(),
+    setHeader: vi.fn(),
+    status: vi.fn(() => response),
   }
+
+  return response
 }
 
 describe('extractBilibiliVideoHandler', () => {
@@ -137,13 +177,53 @@ describe('analyzeBilibiliVideoHandler', () => {
     }
     const res = createResponseMock()
     const next = vi.fn()
-    const error = new Error('当前 B 站 DASH 音视频分离样本暂不支持视频分析，请换一个单流样本后再试')
+    const error = new Error('视频内容提取失败')
 
     vi.mocked(analyzeBilibiliVideoByProxyUrl).mockRejectedValueOnce(error)
 
     await analyzeBilibiliVideoHandler(req as never, res as never, next)
 
     expect(res.json).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(error)
+  })
+})
+
+describe('serveBilibiliAnalysisMediaHandler', () => {
+  it('streams the prepared analysis media file', async () => {
+    const req = {
+      params: {
+        id: 'analysis-media-id',
+      },
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+
+    await serveBilibiliAnalysisMediaHandler(req as never, res as never, next)
+
+    expect(getBilibiliAnalysisMediaSessionMock).toHaveBeenCalledWith('analysis-media-id')
+    expect(createBilibiliMediaReadStreamMock).toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4')
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store, private')
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'video/mp4')
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Length', '123')
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(mediaStreamMock.pipe).toHaveBeenCalledWith(res)
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('forwards missing media errors to next', async () => {
+    const req = {
+      params: {
+        id: 'missing-id',
+      },
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+    const error = new Error('分析视频文件不存在或已过期')
+
+    getBilibiliAnalysisMediaSessionMock.mockRejectedValueOnce(error)
+
+    await serveBilibiliAnalysisMediaHandler(req as never, res as never, next)
+
     expect(next).toHaveBeenCalledWith(error)
   })
 })

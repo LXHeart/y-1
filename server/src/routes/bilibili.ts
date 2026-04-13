@@ -4,12 +4,14 @@ import {
   downloadBilibiliVideoHandler,
   extractBilibiliVideoHandler,
   proxyBilibiliVideoHandler,
+  serveBilibiliAnalysisMediaHandler,
 } from '../controllers/bilibili.controller.js'
 
 const bilibiliRouter = Router()
 
 bilibiliRouter.post('/extract-video', extractBilibiliVideoHandler)
 bilibiliRouter.post('/analyze-video', analyzeBilibiliVideoHandler)
+bilibiliRouter.get('/analysis-media/:id', serveBilibiliAnalysisMediaHandler)
 bilibiliRouter.get('/proxy/:token', proxyBilibiliVideoHandler)
 bilibiliRouter.get('/download/:token', downloadBilibiliVideoHandler)
 

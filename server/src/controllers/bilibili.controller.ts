@@ -1,6 +1,13 @@
+import { createBilibiliMediaReadStream } from '../services/bilibili-media.service.js'
+import { getBilibiliAnalysisMediaSession } from '../services/bilibili-analysis-media.service.js'
 import type { NextFunction, Request, Response } from 'express'
 import { buildBilibiliDownloadFilename } from '../lib/bilibili-filename.js'
-import { analyzeBilibiliVideoRequest, extractBilibiliVideoRequest, proxyBilibiliVideoRequestParams } from '../schemas/bilibili.js'
+import {
+  analysisBilibiliMediaRequestParams,
+  analyzeBilibiliVideoRequest,
+  extractBilibiliVideoRequest,
+  proxyBilibiliVideoRequestParams,
+} from '../schemas/bilibili.js'
 import { parseBilibiliProxyToken } from '../services/bilibili-proxy.service.js'
 import { downloadBilibiliMedia, proxyBilibiliMedia } from '../services/bilibili-stream.service.js'
 import { analyzeBilibiliVideoByProxyUrl } from '../services/bilibili-video-analysis.service.js'
@@ -33,6 +40,31 @@ export async function analyzeBilibiliVideoHandler(req: Request, res: Response, n
       success: true,
       data,
     })
+  } catch (error: unknown) {
+    next(error)
+  }
+}
+
+export async function serveBilibiliAnalysisMediaHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = analysisBilibiliMediaRequestParams.parse(req.params)
+    const media = await getBilibiliAnalysisMediaSession(id)
+    const mediaStream = await createBilibiliMediaReadStream(media.filePath)
+
+    mediaStream.on('error', (error) => {
+      if (res.headersSent) {
+        res.destroy(error)
+        return
+      }
+
+      next(error)
+    })
+
+    res.setHeader('Cache-Control', 'no-store, private')
+    res.setHeader('Content-Type', media.mimeType)
+    res.setHeader('Content-Length', String(media.fileSize))
+    res.status(200)
+    mediaStream.pipe(res)
   } catch (error: unknown) {
     next(error)
   }

@@ -132,6 +132,13 @@ export function createApp() {
     methods: ['POST'],
     message: '视频内容提取请求过于频繁，请稍后再试。',
   }))
+  app.use('/api/bilibili/analysis-media', createRateLimit({
+    id: 'bilibili-analysis-media',
+    max: 120,
+    windowMs: 60 * 1000,
+    methods: ['GET'],
+    message: '分析视频读取请求过于频繁，请稍后再试。',
+  }))
   app.use('/api/bilibili/proxy', createRateLimit({
     id: 'bilibili-proxy',
     max: 120,

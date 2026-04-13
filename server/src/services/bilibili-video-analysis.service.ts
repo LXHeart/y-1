@@ -1,8 +1,11 @@
 import { AppError } from '../lib/errors.js'
+import {
+  buildPublicBilibiliAnalysisMediaUrl,
+  createBilibiliAnalysisMediaSession,
+} from './bilibili-analysis-media.service.js'
+import { prepareBilibiliMediaFile } from './bilibili-media.service.js'
 import { buildPublicBilibiliProxyUrl, parseBilibiliProxyToken } from './bilibili-proxy.service.js'
 import { analyzeVideoContent, type VideoAnalysisResult } from './video-analysis.service.js'
-
-const UNSUPPORTED_DASH_ANALYSIS_MESSAGE = '当前 B 站 DASH 音视频分离样本暂不支持视频分析，请换一个单流样本后再试'
 
 function extractTokenFromProxyUrl(proxyVideoUrl: string): string {
   let parsedUrl: URL
@@ -25,9 +28,17 @@ export async function analyzeBilibiliVideoByProxyUrl(proxyVideoUrl: string): Pro
   const token = extractTokenFromProxyUrl(proxyVideoUrl)
   const target = parseBilibiliProxyToken(token)
 
-  if (target.kind === 'dash') {
-    throw new AppError(UNSUPPORTED_DASH_ANALYSIS_MESSAGE, 400)
+  if (target.kind === 'progressive') {
+    return analyzeVideoContent(buildPublicBilibiliProxyUrl(token))
   }
 
-  return analyzeVideoContent(buildPublicBilibiliProxyUrl(token))
+  const mediaFile = await prepareBilibiliMediaFile(target)
+  const session = await createBilibiliAnalysisMediaSession({
+    filePath: mediaFile.filePath,
+    fileSize: mediaFile.fileSize,
+    filename: mediaFile.filename,
+    mimeType: mediaFile.mimeType,
+  })
+
+  return analyzeVideoContent(buildPublicBilibiliAnalysisMediaUrl(session.id))
 }
