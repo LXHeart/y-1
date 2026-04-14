@@ -110,9 +110,10 @@ export async function analyzeBilibiliVideoHandler(req: Request, res: Response, n
   res.once('close', abortAnalysis)
 
   try {
-    const { proxyVideoUrl } = analyzeBilibiliVideoRequest.parse(req.body)
+    const { proxyVideoUrl, analysisConfig } = analyzeBilibiliVideoRequest.parse(req.body)
     const data = await analyzeBilibiliVideoByProxyUrl(proxyVideoUrl, {
       signal: abortController.signal,
+      analysisConfig,
     })
 
     res.json({

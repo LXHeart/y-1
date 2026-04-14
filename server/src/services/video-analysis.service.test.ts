@@ -17,6 +17,7 @@ describe('analyzeVideoContent', () => {
   beforeEach(() => {
     process.env.VIDEO_ANALYSIS_API_BASE_URL = 'https://analysis.example.com/run'
     process.env.VIDEO_ANALYSIS_API_TIMEOUT_MS = '180000'
+    process.env.VIDEO_ANALYSIS_API_TOKEN = ''
     loggerWarnMock.mockReset()
     loggerErrorMock.mockReset()
   })
@@ -91,5 +92,84 @@ describe('analyzeVideoContent', () => {
       message: '分析请求已取消',
     } satisfies Partial<AppError>)
     expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses request-scoped analysis config with env fallback', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      video_captions: 'captions',
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }))
+    globalThis.fetch = fetchMock
+
+    const { analyzeVideoContent } = await import('./video-analysis.service.js')
+
+    await analyzeVideoContent('https://backend.example.com/api/douyin/proxy/token', {
+      analysisConfig: {
+        baseUrl: 'https://custom.example.com/analyze',
+      },
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://custom.example.com/analyze',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+        }),
+      }),
+    )
+  })
+
+  it('prefers request-scoped token over env token', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      run_id: 'run_custom',
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }))
+    globalThis.fetch = fetchMock
+    process.env.VIDEO_ANALYSIS_API_TOKEN = 'env-token'
+
+    const { analyzeVideoContent } = await import('./video-analysis.service.js')
+
+    await analyzeVideoContent('https://backend.example.com/api/douyin/proxy/token', {
+      analysisConfig: {
+        apiToken: 'request-token',
+      },
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://analysis.example.com/run',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer request-token',
+        }),
+      }),
+    )
+  })
+
+  it('rejects non-https request-scoped analysis url', async () => {
+    globalThis.fetch = vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }))
+
+    const { analyzeVideoContent } = await import('./video-analysis.service.js')
+
+    await expect(analyzeVideoContent('https://backend.example.com/api/douyin/proxy/token', {
+      analysisConfig: {
+        baseUrl: 'http://custom.example.com/analyze',
+      },
+    })).rejects.toMatchObject({
+      statusCode: 400,
+      message: '视频分析服务地址必须使用 HTTPS',
+    } satisfies Partial<AppError>)
   })
 })

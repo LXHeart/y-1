@@ -350,9 +350,10 @@ export async function analyzeDouyinVideoHandler(req: Request, res: Response, nex
   res.once('close', abortAnalysis)
 
   try {
-    const { proxyVideoUrl } = analyzeDouyinVideoRequest.parse(req.body)
+    const { proxyVideoUrl, analysisConfig } = analyzeDouyinVideoRequest.parse(req.body)
     const data = await analyzeDouyinVideoByProxyUrl(proxyVideoUrl, {
       signal: abortController.signal,
+      analysisConfig,
     })
 
     res.json({

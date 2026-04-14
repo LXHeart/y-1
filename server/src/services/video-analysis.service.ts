@@ -2,8 +2,19 @@ import { logger } from '../lib/logger.js'
 import { env } from '../lib/env.js'
 import { AppError } from '../lib/errors.js'
 
+export interface VideoAnalysisRequestConfig {
+  baseUrl?: string
+  apiToken?: string
+}
+
+interface ResolvedVideoAnalysisConfig {
+  baseUrl: string
+  apiToken?: string
+}
+
 interface AnalyzeVideoContentOptions {
   signal?: AbortSignal
+  analysisConfig?: VideoAnalysisRequestConfig
 }
 
 export interface VideoAnalysisResult {
@@ -51,13 +62,56 @@ function normalizeVideoAnalysisResult(value: unknown): VideoAnalysisResult {
   }
 }
 
-function buildVideoAnalysisHeaders(): Record<string, string> {
+function resolveRequestConfigValue(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const trimmedValue = value.trim()
+  return trimmedValue || undefined
+}
+
+function resolveVideoAnalysisConfig(requestConfig: VideoAnalysisRequestConfig | undefined): ResolvedVideoAnalysisConfig {
+  const baseUrl = resolveRequestConfigValue(requestConfig?.baseUrl) ?? env.VIDEO_ANALYSIS_API_BASE_URL.trim()
+  const apiToken = resolveRequestConfigValue(requestConfig?.apiToken) ?? env.VIDEO_ANALYSIS_API_TOKEN
+
+  if (!baseUrl) {
+    throw new AppError('未配置视频分析服务地址', 500)
+  }
+
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(baseUrl)
+  } catch {
+    throw new AppError('视频分析服务地址无效', 400)
+  }
+
+  if (parsedUrl.protocol !== 'https:') {
+    throw new AppError('视频分析服务地址必须使用 HTTPS', 400)
+  }
+
+  return {
+    baseUrl: parsedUrl.toString(),
+    apiToken,
+  }
+}
+
+function summarizeEndpointForLog(endpoint: string): string {
+  try {
+    const parsedUrl = new URL(endpoint)
+    return parsedUrl.origin + parsedUrl.pathname
+  } catch {
+    return 'invalid-endpoint'
+  }
+}
+
+function buildVideoAnalysisHeaders(apiToken: string | undefined): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
 
-  if (env.VIDEO_ANALYSIS_API_TOKEN) {
-    headers.Authorization = `Bearer ${env.VIDEO_ANALYSIS_API_TOKEN}`
+  if (apiToken) {
+    headers.Authorization = `Bearer ${apiToken}`
   }
 
   return headers
@@ -83,7 +137,9 @@ export async function analyzeVideoContent(
   videoUrl: string,
   options: AnalyzeVideoContentOptions = {},
 ): Promise<VideoAnalysisResult> {
-  const endpoint = env.VIDEO_ANALYSIS_API_BASE_URL.trim()
+  const resolvedConfig = resolveVideoAnalysisConfig(options.analysisConfig)
+  const endpoint = resolvedConfig.baseUrl
+  const endpointSummary = summarizeEndpointForLog(endpoint)
   const controller = new AbortController()
   const startedAt = Date.now()
   const videoUrlType = describeAnalysisVideoUrlType(videoUrl)
@@ -108,7 +164,7 @@ export async function analyzeVideoContent(
 
   if (isClientDisconnected) {
     logger.warn({
-      endpoint,
+      endpoint: endpointSummary,
       videoUrlType,
       durationMs: 0,
     }, 'Video analysis request aborted before upstream fetch started')
@@ -119,7 +175,7 @@ export async function analyzeVideoContent(
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: buildVideoAnalysisHeaders(),
+      headers: buildVideoAnalysisHeaders(resolvedConfig.apiToken),
       body: JSON.stringify({
         video_file: {
           url: videoUrl,
@@ -133,9 +189,9 @@ export async function analyzeVideoContent(
       const responseText = await response.text()
 
       logger.error({
-        endpoint,
+        endpoint: endpointSummary,
         status: response.status,
-        hasToken: Boolean(env.VIDEO_ANALYSIS_API_TOKEN),
+        hasToken: Boolean(resolvedConfig.apiToken),
         videoUrlType,
         durationMs: Date.now() - startedAt,
         responseTextLength: responseText.length,
@@ -154,7 +210,7 @@ export async function analyzeVideoContent(
     if (error instanceof DOMException && error.name === 'AbortError') {
       if (isClientDisconnected) {
         logger.warn({
-          endpoint,
+          endpoint: endpointSummary,
           videoUrlType,
           durationMs: Date.now() - startedAt,
         }, 'Video analysis request aborted after client disconnected')
@@ -162,7 +218,7 @@ export async function analyzeVideoContent(
       }
 
       logger.warn({
-        endpoint,
+        endpoint: endpointSummary,
         videoUrlType,
         durationMs: Date.now() - startedAt,
         abortReason,
@@ -172,8 +228,8 @@ export async function analyzeVideoContent(
 
     logger.error({
       err: error,
-      endpoint,
-      hasToken: Boolean(env.VIDEO_ANALYSIS_API_TOKEN),
+      endpoint: endpointSummary,
+      hasToken: Boolean(resolvedConfig.apiToken),
       videoUrlType,
       durationMs: Date.now() - startedAt,
       abortReason,

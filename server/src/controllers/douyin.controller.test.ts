@@ -275,6 +275,65 @@ describe('analyzeDouyinVideoHandler', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
+  it('passes request-scoped analysis config to the service', async () => {
+    const reqEmitter = new EventEmitter()
+    const req = {
+      body: {
+        proxyVideoUrl: '/api/douyin/proxy/token',
+        analysisConfig: {
+          baseUrl: 'https://custom.example.com/run',
+          apiToken: 'request-token',
+        },
+      },
+      off: reqEmitter.off.bind(reqEmitter),
+      on: reqEmitter.on.bind(reqEmitter),
+      once: reqEmitter.once.bind(reqEmitter),
+      emit: reqEmitter.emit.bind(reqEmitter),
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+
+    await analyzeDouyinVideoHandler(req as never, res as never, next)
+
+    expect(analyzeDouyinVideoByProxyUrl).toHaveBeenCalledWith('/api/douyin/proxy/token', {
+      signal: expect.any(AbortSignal),
+      analysisConfig: {
+        baseUrl: 'https://custom.example.com/run',
+        apiToken: 'request-token',
+      },
+    })
+  })
+
+  it('rejects analyze requests with proxy urls from a different origin', async () => {
+    const reqEmitter = new EventEmitter()
+    const req = {
+      body: {
+        proxyVideoUrl: 'https://evil.example/api/douyin/proxy/token',
+      },
+      off: reqEmitter.off.bind(reqEmitter),
+      on: reqEmitter.on.bind(reqEmitter),
+      once: reqEmitter.once.bind(reqEmitter),
+      emit: reqEmitter.emit.bind(reqEmitter),
+    }
+    const res = createResponseMock()
+    const next = vi.fn()
+
+    vi.mocked(analyzeDouyinVideoByProxyUrl).mockClear()
+
+    await analyzeDouyinVideoHandler(req as never, res as never, next)
+
+    expect(analyzeDouyinVideoByProxyUrl).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'ZodError',
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          message: '视频代理地址无效',
+          path: ['proxyVideoUrl'],
+        }),
+      ]),
+    }))
+  })
+
   it('forwards analysis errors to next', async () => {
     const reqEmitter = new EventEmitter()
     const req = {

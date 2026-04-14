@@ -1,3 +1,4 @@
+import { env } from '../lib/env.js'
 import { AppError } from '../lib/errors.js'
 import {
   buildPublicBilibiliAnalysisMediaUrl,
@@ -12,7 +13,7 @@ import {
 } from './bilibili-media.service.js'
 import { logger } from '../lib/logger.js'
 import { buildPublicBilibiliProxyUrl, parseBilibiliProxyToken } from './bilibili-proxy.service.js'
-import { analyzeVideoContent, type VideoAnalysisResult } from './video-analysis.service.js'
+import { analyzeVideoContent, type VideoAnalysisRequestConfig, type VideoAnalysisResult } from './video-analysis.service.js'
 
 const maxAnalysisDurationSeconds = 10 * 60
 const segmentedAnalysisClipDurationSeconds = 30
@@ -35,6 +36,23 @@ function extractTokenFromProxyUrl(proxyVideoUrl: string): string {
     parsedUrl = new URL(proxyVideoUrl, 'http://localhost')
   } catch {
     throw new AppError('视频代理地址无效', 400)
+  }
+
+  if (parsedUrl.origin !== 'http://localhost') {
+    if (!env.PUBLIC_BACKEND_ORIGIN) {
+      throw new AppError('视频代理地址无效', 400)
+    }
+
+    let publicBackendUrl: URL
+    try {
+      publicBackendUrl = new URL(env.PUBLIC_BACKEND_ORIGIN)
+    } catch {
+      throw new AppError('视频代理地址无效', 400)
+    }
+
+    if (parsedUrl.origin !== publicBackendUrl.origin) {
+      throw new AppError('视频代理地址无效', 400)
+    }
   }
 
   const match = parsedUrl.pathname.match(/\/api\/bilibili\/proxy\/([^/]+)$/)
@@ -377,7 +395,10 @@ async function analyzeBilibiliSegmentedMedia(input: {
   }
   durationSeconds: number
   signal?: AbortSignal
-  options: { signal?: AbortSignal }
+  options: {
+    signal?: AbortSignal
+    analysisConfig?: VideoAnalysisRequestConfig
+  }
 }): Promise<VideoAnalysisResult> {
   const clips = await createBilibiliMediaClips({
     sourceFilePath: input.mediaFile.filePath,
@@ -423,7 +444,10 @@ async function analyzeBilibiliSegmentedMedia(input: {
 
 export async function analyzeBilibiliVideoByProxyUrl(
   proxyVideoUrl: string,
-  options: { signal?: AbortSignal } = {},
+  options: {
+    signal?: AbortSignal
+    analysisConfig?: VideoAnalysisRequestConfig
+  } = {},
 ): Promise<VideoAnalysisResult> {
   throwIfAborted(options.signal)
 

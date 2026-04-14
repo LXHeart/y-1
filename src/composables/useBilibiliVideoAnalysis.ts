@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { ApiResponse, BilibiliVideoAnalysisResult } from '../types/bilibili'
+import type { ApiResponse, BilibiliVideoAnalysisResult, VideoAnalysisRequestConfig } from '../types/bilibili'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -39,9 +39,27 @@ function normalizeBilibiliVideoAnalysisResult(value: unknown): BilibiliVideoAnal
     propsDescription: readOptionalString(value.propsDescription),
     sceneDescription: readOptionalString(value.sceneDescription),
     runId: readOptionalString(value.runId),
-    segmented: value.segmented === true,
+    segmented: value.segmented === true ? true : undefined,
     clipCount: readOptionalPositiveInteger(value.clipCount),
     runIds: readOptionalStringArray(value.runIds),
+  }
+}
+
+function normalizeAnalysisConfig(config: VideoAnalysisRequestConfig | undefined): VideoAnalysisRequestConfig | undefined {
+  if (!config) {
+    return undefined
+  }
+
+  const baseUrl = readOptionalString(config.baseUrl)
+  const apiToken = readOptionalString(config.apiToken)
+
+  if (!baseUrl && !apiToken) {
+    return undefined
+  }
+
+  return {
+    baseUrl,
+    apiToken,
   }
 }
 
@@ -52,8 +70,12 @@ export function useBilibiliVideoAnalysis() {
   let requestCounter = 0
   let currentController: AbortController | null = null
 
-  async function analyzeVideo(proxyVideoUrl: string): Promise<BilibiliVideoAnalysisResult | null> {
+  async function analyzeVideo(
+    proxyVideoUrl: string,
+    analysisConfig?: VideoAnalysisRequestConfig,
+  ): Promise<BilibiliVideoAnalysisResult | null> {
     const normalizedProxyVideoUrl = proxyVideoUrl.trim()
+    const normalizedAnalysisConfig = normalizeAnalysisConfig(analysisConfig)
 
     if (!normalizedProxyVideoUrl) {
       analysis.value = null
@@ -76,7 +98,10 @@ export function useBilibiliVideoAnalysis() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ proxyVideoUrl: normalizedProxyVideoUrl }),
+        body: JSON.stringify({
+          proxyVideoUrl: normalizedProxyVideoUrl,
+          analysisConfig: normalizedAnalysisConfig,
+        }),
         signal: controller.signal,
       })
 

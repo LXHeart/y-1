@@ -114,6 +114,35 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     expect(result).toEqual({ runId: 'run_bilibili_123' })
   })
 
+  it('passes request-scoped analysis config to direct analysis', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 28,
+    })
+    const analysisConfig = {
+      baseUrl: 'https://custom.example.com/run',
+      apiToken: 'request-token',
+    }
+
+    if (!env.PUBLIC_BACKEND_ORIGIN) {
+      await expect(analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`, {
+        analysisConfig,
+      })).rejects.toThrow('未配置 PUBLIC_BACKEND_ORIGIN')
+      expect(analyzeVideoContentMock).not.toHaveBeenCalled()
+      return
+    }
+
+    await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`, {
+      analysisConfig,
+    })
+
+    expect(analyzeVideoContentMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bilibili/proxy/'),
+      { analysisConfig },
+    )
+  })
+
   it('keeps the single temporary media session path for dash videos up to 30 seconds', async () => {
     const token = createBilibiliProxyToken({
       kind: 'dash',
@@ -248,6 +277,41 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     })
   })
 
+  it('passes request-scoped analysis config to every segmented clip analysis', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 65,
+    })
+    const analysisConfig = {
+      baseUrl: 'https://custom.example.com/run',
+      apiToken: 'request-token',
+    }
+
+    createBilibiliMediaClipsMock.mockResolvedValueOnce([
+      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
+      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
+    ])
+    createBilibiliAnalysisMediaSessionMock
+      .mockResolvedValueOnce({ id: 'analysis-media-1' })
+      .mockResolvedValueOnce({ id: 'analysis-media-2' })
+
+    await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`, {
+      analysisConfig,
+    })
+
+    expect(analyzeVideoContentMock).toHaveBeenNthCalledWith(
+      1,
+      'https://backend.example.com/api/bilibili/analysis-media/analysis-media-1',
+      { analysisConfig },
+    )
+    expect(analyzeVideoContentMock).toHaveBeenNthCalledWith(
+      2,
+      'https://backend.example.com/api/bilibili/analysis-media/analysis-media-2',
+      { analysisConfig },
+    )
+  })
+
   it('keeps a short trailing script segment when it adds new content', async () => {
     const token = createBilibiliProxyToken({
       kind: 'progressive',
@@ -266,104 +330,41 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
       .mockResolvedValueOnce({ id: 'analysis-media-3' })
     analyzeVideoContentMock
       .mockResolvedValueOnce({
-        videoScript: '[00:00] 第一段内容',
+        videoScript: '[00:00] 主播走进房间',
         runId: 'run_1',
       })
       .mockResolvedValueOnce({
-        videoScript: '[00:30] 第二段内容',
+        videoScript: '[00:00] 主播继续说明',
         runId: 'run_2',
       })
       .mockResolvedValueOnce({
-        videoScript: '[00:00] 尾段新增内容',
+        videoScript: '[00:00] 主播展示结论',
         runId: 'run_3',
       })
 
     const result = await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)
 
-    expect(result.videoScript).toContain('第 3 段（01:00-01:05）')
-    expect(result.videoScript).toContain('[00:00] 尾段新增内容')
-  })
-
-  it('preserves keyed summary entries with distinct details', async () => {
-    const token = createBilibiliProxyToken({
-      kind: 'progressive',
-      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      durationSeconds: 65,
+    expect(result).toMatchObject({
+      segmented: true,
+      clipCount: 3,
+      runIds: ['run_1', 'run_2', 'run_3'],
+      videoScript: [
+        '第 1 段（00:00-00:30）',
+        '[00:00] 主播走进房间',
+        '',
+        '第 2 段（00:30-01:00）',
+        '[00:00] 主播继续说明',
+        '',
+        '第 3 段（01:00-01:05）',
+        '[00:00] 主播展示结论',
+      ].join('\n'),
     })
-
-    createBilibiliMediaClipsMock.mockResolvedValueOnce([
-      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
-      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
-      createClip({ clipIndex: 2, startSeconds: 60, endSeconds: 65, filePath: '/tmp/clip-3.mp4' }),
-    ])
-    createBilibiliAnalysisMediaSessionMock
-      .mockResolvedValueOnce({ id: 'analysis-media-1' })
-      .mockResolvedValueOnce({ id: 'analysis-media-2' })
-      .mockResolvedValueOnce({ id: 'analysis-media-3' })
-    analyzeVideoContentMock
-      .mockResolvedValueOnce({
-        charactersDescription: '李总：管理者',
-        propsDescription: '办公室',
-        runId: 'run_1',
-      })
-      .mockResolvedValueOnce({
-        charactersDescription: '李总：戴眼镜',
-        propsDescription: '现代办公室',
-        runId: 'run_2',
-      })
-      .mockResolvedValueOnce({
-        charactersDescription: '李总：穿西装',
-        propsDescription: '办公室挂画',
-        runId: 'run_3',
-      })
-
-    const result = await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)
-
-    expect(result.charactersDescription).toBe(['李总：管理者', '李总：戴眼镜', '李总：穿西装'].join('\n'))
-    expect(result.propsDescription).toBe(['办公室', '现代办公室', '办公室挂画'].join('\n'))
-  })
-
-  it('preserves the next script timestamp when trimming partial overlap', async () => {
-    const token = createBilibiliProxyToken({
-      kind: 'progressive',
-      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      durationSeconds: 65,
-    })
-
-    createBilibiliMediaClipsMock.mockResolvedValueOnce([
-      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
-      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
-      createClip({ clipIndex: 2, startSeconds: 60, endSeconds: 65, filePath: '/tmp/clip-3.mp4' }),
-    ])
-    createBilibiliAnalysisMediaSessionMock
-      .mockResolvedValueOnce({ id: 'analysis-media-1' })
-      .mockResolvedValueOnce({ id: 'analysis-media-2' })
-      .mockResolvedValueOnce({ id: 'analysis-media-3' })
-    analyzeVideoContentMock
-      .mockResolvedValueOnce({
-        videoScript: '[00:10] 小明拿起红伞',
-        runId: 'run_1',
-      })
-      .mockResolvedValueOnce({
-        videoScript: '[00:00] 小明拿起红伞然后打开窗户',
-        runId: 'run_2',
-      })
-      .mockResolvedValueOnce({
-        videoScript: '[00:00] 然后打开窗户后离开',
-        runId: 'run_3',
-      })
-
-    const result = await analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)
-
-    expect(result.videoScript).toContain('[00:00] 然后打开窗户')
-    expect(result.videoScript).toContain('[00:00] 后离开')
   })
 
   it('cleans up generated clip files when one clip analysis fails', async () => {
     const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
       durationSeconds: 65,
     })
     const error = new AppError('视频内容提取失败', 502)
@@ -390,9 +391,8 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
 
   it('rejects videos longer than 10 minutes before analysis starts', async () => {
     const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
       durationSeconds: 601,
     })
 
@@ -414,79 +414,6 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
       '未能识别视频时长，请重新提取后再分析',
     )
     expect(analyzeVideoContentMock).not.toHaveBeenCalled()
-  })
-
-  it('fails before preparing dash media when the public analysis URL cannot be built', async () => {
-    const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
-      durationSeconds: 25,
-    })
-
-    buildPublicBilibiliAnalysisMediaUrlMock.mockImplementationOnce(() => {
-      throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，第三方分析服务无法访问分析视频文件地址', 500)
-    })
-
-    await expect(analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)).rejects.toThrow(
-      '未配置 PUBLIC_BACKEND_ORIGIN，第三方分析服务无法访问分析视频文件地址',
-    )
-    expect(prepareBilibiliMediaFileMock).not.toHaveBeenCalled()
-    expect(createBilibiliAnalysisMediaSessionMock).not.toHaveBeenCalled()
-    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
-  })
-
-  it('cleans up prepared dash media when session creation fails', async () => {
-    const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
-      durationSeconds: 25,
-    })
-    const error = new AppError('创建分析会话失败', 502)
-    createBilibiliAnalysisMediaSessionMock.mockRejectedValueOnce(error)
-
-    await expect(analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)).rejects.toThrow(error)
-
-    expect(cleanupBilibiliMediaFileMock).toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4')
-    expect(deleteBilibiliAnalysisMediaSessionMock).not.toHaveBeenCalled()
-    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
-  })
-
-  it('deletes the analysis session when building the dash analysis media URL fails after session creation', async () => {
-    const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
-      durationSeconds: 25,
-    })
-    const error = new AppError('分析视频地址生成失败', 500)
-    buildPublicBilibiliAnalysisMediaUrlMock.mockImplementationOnce(() => 'https://backend.example.com/api/bilibili/analysis-media/bilibili-analysis-media-preflight')
-    buildPublicBilibiliAnalysisMediaUrlMock.mockImplementationOnce(() => {
-      throw error
-    })
-
-    await expect(analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)).rejects.toThrow(error)
-
-    expect(deleteBilibiliAnalysisMediaSessionMock).toHaveBeenCalledWith('analysis-media-id')
-    expect(cleanupBilibiliMediaFileMock).not.toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4')
-    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
-  })
-
-  it('deletes the analysis session when dash analysis fails after session creation', async () => {
-    const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
-      durationSeconds: 25,
-    })
-    const error = new AppError('视频内容提取失败', 502)
-    analyzeVideoContentMock.mockRejectedValueOnce(error)
-
-    await expect(analyzeBilibiliVideoByProxyUrl(`/api/bilibili/proxy/${encodeURIComponent(token)}`)).rejects.toThrow(error)
-
-    expect(deleteBilibiliAnalysisMediaSessionMock).toHaveBeenCalledWith('analysis-media-id')
-    expect(cleanupBilibiliMediaFileMock).not.toHaveBeenCalledWith('/tmp/bilibili-analysis.mp4')
   })
 
   it('passes an AbortSignal through to the analyzer', async () => {
@@ -511,9 +438,8 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
 
   it('rejects immediately when the caller signal is already aborted', async () => {
     const token = createBilibiliProxyToken({
-      kind: 'dash',
-      videoTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
-      audioTrackUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s',
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
       durationSeconds: 125,
     })
     const controller = new AbortController()
@@ -529,7 +455,20 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     expect(analyzeVideoContentMock).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid tokens before calling the analyzer', async () => {
+  it('rejects proxy urls from a different origin before calling the analyzer', async () => {
+    const token = createBilibiliProxyToken({
+      kind: 'progressive',
+      playableVideoUrl: 'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/video.m4s',
+      durationSeconds: 28,
+    })
+
+    await expect(
+      analyzeBilibiliVideoByProxyUrl(`https://evil.example/api/bilibili/proxy/${encodeURIComponent(token)}`),
+    ).rejects.toThrow('视频代理地址无效')
+    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects expired or invalid tokens before calling the analyzer', async () => {
     await expect(analyzeBilibiliVideoByProxyUrl('/api/bilibili/proxy/not-a-valid-token')).rejects.toThrow(AppError)
     expect(analyzeVideoContentMock).not.toHaveBeenCalled()
   })

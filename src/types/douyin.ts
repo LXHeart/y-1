@@ -4,6 +4,11 @@ export interface ApiResponse<T> {
   error?: string
 }
 
+export interface VideoAnalysisRequestConfig {
+  baseUrl?: string
+  apiToken?: string
+}
+
 export type DouyinFetchStage = 'page_json' | 'browser_json' | 'browser_network'
 
 export interface ExtractedDouyinVideoPayload {

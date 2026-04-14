@@ -4,6 +4,11 @@ export interface ApiResponse<T> {
   error?: string
 }
 
+export interface VideoAnalysisRequestConfig {
+  baseUrl?: string
+  apiToken?: string
+}
+
 export type BilibiliPlaybackMode = 'progressive' | 'dash'
 
 export interface ExtractedBilibiliVideoPayload {

@@ -75,6 +75,62 @@
           </button>
         </article>
 
+        <section class="analysis-config-panel glass-card">
+          <header class="analysis-config-header">
+            <div>
+              <p class="eyebrow">分析服务</p>
+              <h2 class="analysis-config-title">页面配置</h2>
+            </div>
+            <button class="toggle-link" type="button" @click="showAnalysisConfigPanel = !showAnalysisConfigPanel">
+              {{ showAnalysisConfigPanel ? '收起配置' : '打开配置' }}
+            </button>
+          </header>
+
+          <p class="analysis-config-copy">
+            分析服务 URL 和 API Token 只会在点击“分析视频”时提交给当前后端，由后端再去请求第三方分析服务。
+          </p>
+
+          <div v-if="showAnalysisConfigPanel" class="analysis-config-body">
+            <label class="field-label" for="analysis-base-url">分析服务 URL</label>
+            <input
+              id="analysis-base-url"
+              v-model="analysisBaseUrl"
+              class="input-field"
+              type="url"
+              inputmode="url"
+              placeholder="https://example.com/run"
+              autocomplete="off"
+              spellcheck="false"
+            >
+
+            <label class="field-label" for="analysis-api-token">API Token</label>
+            <div class="token-row">
+              <input
+                id="analysis-api-token"
+                v-model="analysisApiToken"
+                class="input-field"
+                :type="showAnalysisApiToken ? 'text' : 'password'"
+                placeholder="可选：覆盖服务端默认 Token"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <button class="btn-secondary" type="button" @click="showAnalysisApiToken = !showAnalysisApiToken">
+                {{ showAnalysisApiToken ? '隐藏' : '显示' }}
+              </button>
+            </div>
+
+            <p class="field-note">
+              留空时继续使用服务端默认配置；浏览器不会直接请求第三方分析接口。
+            </p>
+
+            <div class="action-row">
+              <button class="btn-secondary" type="button" @click="handleResetAnalysisConfig">
+                清空配置
+              </button>
+            </div>
+          </div>
+        </section>
+
         <DouyinSessionPanel
           v-if="activePlatform === 'douyin' && showSessionPanel"
           :session="douyinSession"
@@ -125,6 +181,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import type { VideoAnalysisRequestConfig as BilibiliVideoAnalysisRequestConfig } from './types/bilibili'
+import type { VideoAnalysisRequestConfig as DouyinVideoAnalysisRequestConfig } from './types/douyin'
 import BilibiliParsePanel from './components/BilibiliParsePanel.vue'
 import DouyinParsePanel from './components/DouyinParsePanel.vue'
 import DouyinSessionPanel from './components/DouyinSessionPanel.vue'
@@ -146,6 +204,7 @@ const autoOpenSessionErrorPatterns = [
 ]
 
 type SupportedPlatform = 'douyin' | 'bilibili'
+type SharedVideoAnalysisRequestConfig = DouyinVideoAnalysisRequestConfig & BilibiliVideoAnalysisRequestConfig
 
 function shouldAutoOpenSessionPanel(errorMessage: string): boolean {
   const normalizedError = errorMessage.toLowerCase()
@@ -185,6 +244,10 @@ const emptyCopyByPlatform: Record<SupportedPlatform, string> = {
 const activePlatform = ref<SupportedPlatform>('douyin')
 const videoInput = ref('')
 const showSessionPanel = ref(false)
+const showAnalysisConfigPanel = ref(false)
+const showAnalysisApiToken = ref(false)
+const analysisBaseUrl = ref('')
+const analysisApiToken = ref('')
 
 const {
   extractedVideo,
@@ -251,6 +314,20 @@ const emptyTitle = computed(() => emptyTitleByPlatform[activePlatform.value])
 
 const emptyCopy = computed(() => emptyCopyByPlatform[activePlatform.value])
 
+const currentAnalysisConfig = computed<SharedVideoAnalysisRequestConfig | undefined>(() => {
+  const baseUrl = analysisBaseUrl.value.trim()
+  const apiToken = analysisApiToken.value.trim()
+
+  if (!baseUrl && !apiToken) {
+    return undefined
+  }
+
+  return {
+    baseUrl: baseUrl || undefined,
+    apiToken: apiToken || undefined,
+  }
+})
+
 onMounted(() => {
   void refreshDouyinSession()
 })
@@ -261,7 +338,7 @@ async function handleRetryDouyinAnalysis(): Promise<void> {
     return
   }
 
-  await analyzeVideo(proxyVideoUrl)
+  await analyzeVideo(proxyVideoUrl, currentAnalysisConfig.value)
 }
 
 async function handleRetryBilibiliAnalysis(): Promise<void> {
@@ -270,7 +347,7 @@ async function handleRetryBilibiliAnalysis(): Promise<void> {
     return
   }
 
-  await analyzeBilibiliVideo(proxyVideoUrl)
+  await analyzeBilibiliVideo(proxyVideoUrl, currentAnalysisConfig.value)
 }
 
 async function handleExtractDouyinVideo(): Promise<void> {
@@ -297,6 +374,12 @@ async function handleExtractVideo(): Promise<void> {
   }
 
   await handleExtractBilibiliVideo()
+}
+
+function handleResetAnalysisConfig(): void {
+  analysisBaseUrl.value = ''
+  analysisApiToken.value = ''
+  showAnalysisApiToken.value = false
 }
 
 function handleSwitchPlatform(platform: SupportedPlatform): void {
@@ -386,11 +469,41 @@ function handleReset(): void {
   top: 20px;
 }
 
-.editor-card,
-.empty-card {
-  border-radius: var(--radius-lg);
-  padding: 22px;
+.analysis-config-panel {
+  border-radius: var(--radius-md);
+  padding: 20px;
+  display: grid;
+  gap: 16px;
 }
+
+.analysis-config-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.analysis-config-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.analysis-config-copy {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.analysis-config-body {
+  display: grid;
+  gap: 12px;
+}
+
+.token-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
 
 .editor-card {
   display: grid;
@@ -444,7 +557,8 @@ function handleReset(): void {
   font-weight: 600;
 }
 
-.input-area {
+.input-area,
+.input-field {
   width: 100%;
   resize: vertical;
   min-height: 160px;
@@ -457,7 +571,12 @@ function handleReset(): void {
   transition: border-color 160ms ease, background 160ms ease;
 }
 
-.input-area:focus {
+.input-field {
+  min-height: 0;
+}
+
+.input-area:focus,
+.input-field:focus {
   border-color: rgba(139,92,246,0.6);
   background: rgba(255,255,255,0.08);
 }

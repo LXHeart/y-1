@@ -13,6 +13,7 @@
 - 下载 mp4 视频
 - 提取音频附件
 - 手动触发视频分析
+- 在页面内临时配置分析服务 URL / API Token
 - 匿名解析失败时，在本地 Node 环境下可启用扫码登录增强
 
 ## 技术栈
@@ -90,6 +91,29 @@ npm run start
 ```
 
 生产模式下，后端会托管前端构建产物 `dist/`。
+
+## 视频分析配置说明
+
+当前视频分析支持两种配置来源：
+
+1. **服务端默认配置**
+   - 通过 `.env` 或 `.env.docker` 中的以下变量提供：
+     - `VIDEO_ANALYSIS_API_BASE_URL`
+     - `VIDEO_ANALYSIS_API_TOKEN`
+     - `VIDEO_ANALYSIS_API_TIMEOUT_MS`
+2. **页面级临时配置**
+   - 页面左侧输入区域下方有“分析服务 / 页面配置”面板
+   - 可临时填写分析服务 URL 和 API Token
+   - 只在点击“分析视频”时随当前请求提交给后端
+   - 浏览器不会直接请求第三方分析服务
+   - 留空时自动回退到服务端环境变量默认值
+
+说明：
+- 页面配置**不会持久化保存到服务端**，刷新页面后需要重新填写
+- 分析服务 URL 必须是有效的 `https://` 地址
+- API Token 留空时，后端会继续使用 `VIDEO_ANALYSIS_API_TOKEN`
+- `proxyVideoUrl` 仅允许本站相对路径或与 `PUBLIC_BACKEND_ORIGIN` 同源的绝对地址，其他来源会被拒绝
+
 
 ## Docker Compose 部署
 
@@ -203,6 +227,7 @@ docker compose --env-file .env.docker logs -f backend
 - 下载视频
 - 提取音频
 - 点击“分析视频”，确认第三方分析服务使用的是 `${PUBLIC_BACKEND_ORIGIN}/api/douyin/proxy/:token`
+- 展开“分析服务 / 页面配置”面板，仅填写 URL 或 Token 再次分析，确认页面临时配置可覆盖服务端默认值
 
 ### 5. 数据持久化
 
@@ -269,10 +294,10 @@ npm run preview
 | `DOUYIN_USER_AGENT` | 内置桌面 UA | 抖音请求默认 UA |
 | `DOUYIN_COOKIE_USER_AGENT` | 空 | 可选，单独覆盖 cookie/login 相关 UA |
 | `DOUYIN_PROXY_TOKEN_SECRET` | 无默认值 | 必填，且至少 32 字符，用于代理/下载 token 签名 |
-| `PUBLIC_BACKEND_ORIGIN` | 空 | 第三方分析服务访问后端代理地址时使用的公网 backend origin |
-| `VIDEO_ANALYSIS_API_BASE_URL` | `https://g3xqktww2r.coze.site/run` | 视频分析上游完整 endpoint |
+| `PUBLIC_BACKEND_ORIGIN` | 空 | 第三方分析服务访问后端代理地址时使用的公网 backend origin；页面提交的绝对 `proxyVideoUrl` 也必须与其同源 |
+| `VIDEO_ANALYSIS_API_BASE_URL` | `https://g3xqktww2r.coze.site/run` | 视频分析上游完整 endpoint，可被页面临时配置覆盖 |
 | `VIDEO_ANALYSIS_API_PATH` | 空 | 兼容保留字段，当前不参与主要拼接逻辑 |
-| `VIDEO_ANALYSIS_API_TOKEN` | 空 | 视频分析上游 Bearer Token |
+| `VIDEO_ANALYSIS_API_TOKEN` | 空 | 视频分析上游 Bearer Token，可被页面临时配置覆盖 |
 | `VIDEO_ANALYSIS_API_TIMEOUT_MS` | `60000` | 视频分析请求超时 |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg 可执行路径 |
 | `LOG_LEVEL` | `info` | Pino 日志级别 |
@@ -280,18 +305,18 @@ npm run preview
 
 ## 使用流程
 
-1. 把抖音 App 复制出来的整段分享文本或链接粘贴到输入框。
-2. 点击“提取视频”。
-3. 成功后可直接：
-   - 页面内预览视频
-   - 下载视频
-   - 提取音频
-   - 在新标签页预览代理流
-4. 如果匿名链路命中校验页或失败，再展开“登录增强”面板扫码，并在登录完成后重新提取。
+1. 在页面顶部切换平台：抖音 / B 站。
+2. 把对应平台的分享文本或链接粘贴到输入框。
+3. 点击“提取视频”。
+4. 成功后可直接预览、下载；抖音额外支持提取音频，也可在新标签页打开代理流。
+5. 如需覆盖默认分析服务配置，可展开左侧“分析服务 / 页面配置”面板，填写分析服务 URL、可选 API Token，再点击“分析视频”。
+6. 如果匿名链路失败：
+   - 抖音：展开“登录增强”面板扫码，并在登录完成后重新提取
+   - B 站：优先检查分享链接是否有效、`PUBLIC_BACKEND_ORIGIN` 是否可被分析服务访问
 
 ## 接口一览
 
-当前 README 的接口示例仍以 Douyin 为主，因为这部分说明主要覆盖本次联调和部署验证所需的核心链路。Bilibili 相关运行时变量与容器化能力已经接入，但如需对外文档化完整 Bilibili 路由与行为，可后续再单独补一节，避免和当前 Douyin 验证主线混在一起。
+当前前端支持抖音与 B 站双平台；两者都走“先提取可播放代理地址，再按需分析”的统一模式。
 
 ### 健康检查
 
@@ -300,6 +325,8 @@ npm run preview
 ### 抖音相关接口
 
 - `POST /api/douyin/extract-video`
+- `POST /api/douyin/analyze-video`
+- `GET /api/douyin/analysis-media/:id`
 - `GET /api/douyin/proxy/:token`
 - `GET /api/douyin/download/:token`
 - `GET /api/douyin/audio/:token`
@@ -308,7 +335,39 @@ npm run preview
 - `GET /api/douyin/session/poll`
 - `POST /api/douyin/session/logout`
 
+### B 站相关接口
+
+- `POST /api/bilibili/extract-video`
+- `POST /api/bilibili/analyze-video`
+- `GET /api/bilibili/analysis-media/:id`
+- `GET /api/bilibili/proxy/:token`
+- `GET /api/bilibili/download/:token`
+
+### 分析接口请求体
+
+抖音与 B 站分析接口都接受同样的请求体结构：
+
+```json
+{
+  "proxyVideoUrl": "/api/douyin/proxy/<token>",
+  "analysisConfig": {
+    "baseUrl": "https://example.com/run",
+    "apiToken": "optional-request-token"
+  }
+}
+```
+
+字段说明：
+- `proxyVideoUrl` 必填
+- `analysisConfig` 可选
+- `analysisConfig.baseUrl` 与 `analysisConfig.apiToken` 都是可选覆盖项
+
+其余约束（如 HTTPS 校验、Token 回退、`proxyVideoUrl` 来源限制）见上方“视频分析配置说明”。
+
+
 ### 示例：提取视频
+
+#### 抖音
 
 请求：
 
@@ -339,12 +398,43 @@ curl -X POST http://localhost:3000/api/douyin/extract-video \
 }
 ```
 
+#### B 站
+
+请求：
+
+```bash
+curl -X POST http://localhost:3000/api/bilibili/extract-video \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"https://www.bilibili.com/video/BV1test"}'
+```
+
+响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "sourceUrl": "https://www.bilibili.com/video/BV1test",
+    "platform": "bilibili",
+    "videoId": "BV1test",
+    "author": "示例作者",
+    "title": "示例标题",
+    "coverUrl": "https://i0.hdslb.com/...",
+    "durationSeconds": 125,
+    "proxyVideoUrl": "/api/bilibili/proxy/<token>",
+    "downloadVideoUrl": "/api/bilibili/download/<token>",
+    "playbackMode": "dash"
+  }
+}
+```
+
 字段说明：
-- `proxyVideoUrl`：用于页面内预览的视频代理地址
+- `proxyVideoUrl`：用于页面内预览和后续分析的视频代理地址
 - `downloadVideoUrl`：用于下载 mp4 的后端地址
-- `downloadAudioUrl`：用于触发音频提取并下载音频文件
-- `usedSession`：`true` 表示本次解析走了本地持久化登录态增强
-- `fetchStage`：表示最终可播放地址的来源，可能为：
+- `downloadAudioUrl`：仅抖音返回，用于触发音频提取并下载音频文件
+- `playbackMode`：仅 B 站返回，`progressive` 表示单流直连，`dash` 表示音视频分离并由后端处理
+- `usedSession`：仅抖音返回，`true` 表示本次解析走了本地持久化登录态增强
+- `fetchStage`：仅抖音返回，表示最终可播放地址的来源，可能为：
   - `page_json`：直接来自页面 HTML / script 中的可用片段
   - `browser_json`：来自浏览器抓取到的页面 JSON 片段
   - `browser_network`：来自浏览器网络响应或媒体请求信号
@@ -357,6 +447,52 @@ curl -X POST http://localhost:3000/api/douyin/extract-video \
   "error": "错误信息"
 }
 ```
+
+### 示例：分析视频
+
+#### 抖音
+
+```bash
+curl -X POST http://localhost:3000/api/douyin/analyze-video \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "proxyVideoUrl": "/api/douyin/proxy/<token>",
+    "analysisConfig": {
+      "baseUrl": "https://example.com/run",
+      "apiToken": "request-token"
+    }
+  }'
+```
+
+#### B 站
+
+```bash
+curl -X POST http://localhost:3000/api/bilibili/analyze-video \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "proxyVideoUrl": "/api/bilibili/proxy/<token>",
+    "analysisConfig": {
+      "baseUrl": "https://example.com/run"
+    }
+  }'
+```
+
+分析结果说明：
+- 短视频会直接走单次分析
+- 较长视频会自动按最长 30 秒分段，再把多段结果合并
+- 当前只支持分析 10 分钟以内的视频
+- 30 秒到 2 分钟的视频通常效果最好
+- 返回结果中可能包含：
+  - `runId`
+  - `runIds`
+  - `segmented`
+  - `clipCount`
+  - `videoScript`
+  - `videoCaptions`
+  - `charactersDescription`
+  - `sceneDescription`
+  - `propsDescription`
+  - `voiceDescription`
 
 ### 示例：查询登录增强状态
 
@@ -373,7 +509,59 @@ curl http://localhost:3000/api/douyin/session
 - `expired`：旧登录态已失效
 - `error`：登录增强流程异常
 
-## 项目结构
+## 页面操作说明 / 常见问题
+
+### 1. 为什么分析需要 `PUBLIC_BACKEND_ORIGIN`？
+
+因为第三方分析服务需要回源访问本项目生成的 `proxyVideoUrl` 或 `analysis-media` 地址。
+如果后端没有一个外部可访问的公网地址，第三方分析服务就拿不到视频内容。
+
+简化理解：
+- 浏览器可以访问你的页面
+- 后端可以访问上游视频源
+- 第三方分析服务还需要能访问你的后端代理地址
+
+所以：
+- 本地开发时，如果分析服务无法访问你的本机 `localhost`，分析可能失败
+- 服务器部署时，应把 `PUBLIC_BACKEND_ORIGIN` 配成第三方分析服务可访问的真实公网地址
+
+### 2. 为什么页面里的分析配置不会持久化？
+
+这是有意这样设计的。
+
+页面里的分析服务 URL / API Token 只作为**当前分析请求的临时覆盖项**提交给后端，不会写回服务端配置文件，也不会保存到数据库。
+
+这样做是为了：
+- 避免为了临时切换分析服务而改配置、重启服务
+- 避免引入服务端持久化敏感 token 的额外风险
+
+如果你希望长期固定使用某个分析服务，仍建议配置在 `.env` 或 `.env.docker`。
+
+### 3. 为什么超过 10 分钟不给分析？
+
+当前分析链路会把较长视频自动拆成多个最长 30 秒的片段分别分析，再把结果合并。
+但视频过长时会带来几个问题：
+- 上游分析耗时明显变长
+- 分段数量过多，整体成本更高
+- 合并后的结果可读性通常会下降
+
+所以当前限制为：
+- 最长 10 分钟
+- 最佳体验建议 30 秒到 2 分钟
+
+### 4. 抖音和 B 站的分析链路有什么区别？
+
+两者对外使用方式基本一致：先提取视频，再点击“分析视频”；必要时也都可以在页面里临时覆盖分析服务 URL / Token。
+
+后端处理细节不同：
+- **抖音**：主要是单视频流代理，额外支持登录增强、音频提取
+- **B 站**：既支持 progressive 单流，也支持 DASH 音视频分离资源；遇到 DASH 时，后端会先准备可分析媒体，再继续分析
+
+共同点：
+- 都支持最长 30 秒自动分段分析
+- 都支持 10 分钟时长限制
+- 都会把页面级 `analysisConfig` 作为单次请求覆盖项传给后端分析调用
+
 
 ```text
 .
@@ -389,7 +577,8 @@ curl http://localhost:3000/api/douyin/session
 - `src/components/`：页面组件
 - `src/composables/`：前端请求与状态逻辑
 - `server/src/controllers/`：HTTP handler
-- `server/src/services/`：Douyin 提取、登录、代理、音频处理
+- `server/src/routes/`：Douyin / Bilibili 路由定义
+- `server/src/services/`：Douyin、Bilibili 提取 / 代理 / 分析 / 音频处理
 - `server/src/lib/`：浏览器抓取、HTTP、日志、环境变量等基础能力
 
 ## 已实现的边界与约束

@@ -219,6 +219,40 @@ describe('analyzeDouyinVideoByProxyUrl', () => {
     })
   })
 
+  it('passes request-scoped analysis config to every segmented clip analysis', async () => {
+    const token = createDouyinProxyToken({
+      playableVideoUrl: 'https://aweme.snssdk.com/aweme/v1/play/?video_id=test',
+      durationSeconds: 65,
+    })
+    const analysisConfig = {
+      baseUrl: 'https://custom.example.com/run',
+      apiToken: 'request-token',
+    }
+
+    createDouyinMediaClipsMock.mockResolvedValueOnce([
+      createClip({ clipIndex: 0, startSeconds: 0, endSeconds: 30, filePath: '/tmp/clip-1.mp4' }),
+      createClip({ clipIndex: 1, startSeconds: 30, endSeconds: 60, filePath: '/tmp/clip-2.mp4' }),
+    ])
+    createDouyinAnalysisMediaSessionMock
+      .mockResolvedValueOnce({ id: 'analysis-media-1' })
+      .mockResolvedValueOnce({ id: 'analysis-media-2' })
+
+    await analyzeDouyinVideoByProxyUrl(`/api/douyin/proxy/${encodeURIComponent(token)}`, {
+      analysisConfig,
+    })
+
+    expect(analyzeVideoContentMock).toHaveBeenNthCalledWith(
+      1,
+      'https://backend.example.com/api/douyin/analysis-media/analysis-media-1',
+      { analysisConfig },
+    )
+    expect(analyzeVideoContentMock).toHaveBeenNthCalledWith(
+      2,
+      'https://backend.example.com/api/douyin/analysis-media/analysis-media-2',
+      { analysisConfig },
+    )
+  })
+
   it('cleans up generated clip files when one clip analysis fails', async () => {
     const token = createDouyinProxyToken({
       playableVideoUrl: 'https://aweme.snssdk.com/aweme/v1/play/?video_id=test',
@@ -305,6 +339,18 @@ describe('analyzeDouyinVideoByProxyUrl', () => {
       message: '分析请求已取消',
     } satisfies Partial<AppError>)
     expect(prepareDouyinMediaFileMock).not.toHaveBeenCalled()
+    expect(analyzeVideoContentMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects proxy urls from a different origin before calling the analyzer', async () => {
+    const token = createDouyinProxyToken({
+      playableVideoUrl: 'https://aweme.snssdk.com/aweme/v1/play/?video_id=test',
+      durationSeconds: 28,
+    })
+
+    await expect(
+      analyzeDouyinVideoByProxyUrl(`https://evil.example/api/douyin/proxy/${encodeURIComponent(token)}`),
+    ).rejects.toThrow('视频代理地址无效')
     expect(analyzeVideoContentMock).not.toHaveBeenCalled()
   })
 
