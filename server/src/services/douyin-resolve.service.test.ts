@@ -164,6 +164,23 @@ describe('resolveDouyinSource', () => {
     expect(result.durationSeconds).toBe(94)
   })
 
+  it('extracts durationSeconds from loaderData videoInfoRes item list video duration', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"loaderData":{"video_(id)/page":{"videoInfoRes":{"item_list":[{"video":{"duration":52245}}]}}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(53)
+    expect(result.durationSourceStage).toBe('page_json')
+    expect(result.durationSourceSnippetIndex).toBe(0)
+    expect(result.durationSourcePath).toBe('loaderData.video_(id)/page.videoInfoRes.item_list[0].video.duration')
+  })
+
   it('records duration metadata source when duration is extracted from itemStruct duration', async () => {
     fetchTextMock.mockResolvedValueOnce({
       finalUrl: 'https://www.douyin.com/video/1234567890',

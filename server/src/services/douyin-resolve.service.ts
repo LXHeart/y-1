@@ -77,10 +77,50 @@ function getNestedRecord(value: unknown, key: string): Record<string, unknown> |
   return isRecord(nestedValue) ? nestedValue : undefined
 }
 
+function extractDurationSecondsFromLoaderData(value: unknown): {
+  durationSeconds?: number
+  sourcePath?: string
+} {
+  const loaderData = getNestedRecord(value, 'loaderData')
+  if (!loaderData) {
+    return {}
+  }
+
+  for (const [loaderKey, loaderValue] of Object.entries(loaderData)) {
+    if (!isRecord(loaderValue)) {
+      continue
+    }
+
+    const videoInfoResponse = getNestedRecord(loaderValue, 'videoInfoRes')
+    const itemList = Array.isArray(videoInfoResponse?.item_list) ? videoInfoResponse.item_list : undefined
+    const firstItem = itemList?.[0]
+    const videoRecord = getNestedRecord(firstItem, 'video')
+    const durationSeconds = normalizeDurationSeconds(
+      readNumberCandidate(videoRecord?.duration)
+      ?? readNumberCandidate(videoRecord?.duration_ms)
+      ?? readNumberCandidate(videoRecord?.durationMs),
+    )
+
+    if (durationSeconds) {
+      return {
+        durationSeconds,
+        sourcePath: `loaderData.${loaderKey}.videoInfoRes.item_list[0].video.duration`,
+      }
+    }
+  }
+
+  return {}
+}
+
 function extractDurationSecondsFromStructuredData(value: unknown): {
   durationSeconds?: number
   sourcePath?: string
 } {
+  const loaderDataDuration = extractDurationSecondsFromLoaderData(value)
+  if (loaderDataDuration.durationSeconds) {
+    return loaderDataDuration
+  }
+
   const candidates = [
     { value, sourcePath: 'root' },
     { value: getNestedRecord(value, 'data'), sourcePath: 'data' },
@@ -127,6 +167,24 @@ function extractDurationSecondsFromSnippet(content: string): {
   candidatePaths?: Array<{ path: string, value: number | string }>
 } {
   const normalizedContent = normalizeEscapedUrlContent(content)
+  const jsonStartIndex = normalizedContent.indexOf('{')
+  const jsonEndIndex = normalizedContent.lastIndexOf('}')
+  if (jsonStartIndex !== -1 && jsonEndIndex > jsonStartIndex) {
+    try {
+      const parsed = JSON.parse(normalizedContent.slice(jsonStartIndex, jsonEndIndex + 1)) as unknown
+      const extracted = extractDurationSecondsFromStructuredData(parsed)
+      if (extracted.durationSeconds) {
+        return extracted
+      }
+
+      return {
+        candidatePaths: collectPotentialDurationValues(parsed),
+      }
+    } catch {
+      // fall through to regex fallback
+    }
+  }
+
   const directMatch = normalizedContent.match(/"video"\s*:\s*\{[\s\S]{0,1600}?"duration(?:_ms|Ms)?"\s*:\s*(\d+)/i)?.[1]
   const directDurationSeconds = normalizeDurationSeconds(directMatch ? Number(directMatch) : undefined)
   if (directDurationSeconds) {
@@ -136,25 +194,11 @@ function extractDurationSecondsFromSnippet(content: string): {
     }
   }
 
-  const jsonStartIndex = normalizedContent.indexOf('{')
-  const jsonEndIndex = normalizedContent.lastIndexOf('}')
   if (jsonStartIndex === -1 || jsonEndIndex <= jsonStartIndex) {
     return {}
   }
 
-  try {
-    const parsed = JSON.parse(normalizedContent.slice(jsonStartIndex, jsonEndIndex + 1)) as unknown
-    const extracted = extractDurationSecondsFromStructuredData(parsed)
-    if (extracted.durationSeconds) {
-      return extracted
-    }
-
-    return {
-      candidatePaths: collectPotentialDurationValues(parsed),
-    }
-  } catch {
-    return {}
-  }
+  return {}
 }
 
 function extractDurationSecondsFromSnippets(input: {
