@@ -108,6 +108,79 @@ describe('resolveDouyinSource', () => {
     expect(resolveDouyinVideoAsset(result).playableVideoUrl).toBe('https://v3-dy-o.zjcdn.com/play/video.mp4')
   })
 
+  it('extracts durationSeconds from aweme detail duration when video duration is absent', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"aweme_detail":{"duration":118000,"video":{"play_addr":{"url_list":["https://v3-dy-o.zjcdn.com/play/video.mp4"]}}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(118)
+  })
+
+  it('extracts durationSeconds from itemStruct duration when video duration is absent', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"itemInfo":{"itemStruct":{"duration":87,"video":{"play_addr":{"url_list":["https://v3-dy-o.zjcdn.com/play/video.mp4"]}}}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(87)
+  })
+
+  it('extracts durationSeconds from awemeDetail durationMs when video duration is absent', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"awemeDetail":{"durationMs":120500,"video":{"playAddr":{"urlList":["https://v3-dy-o.zjcdn.com/play/video.mp4"]}}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(121)
+  })
+
+  it('extracts durationSeconds from play address duration when other duration fields are absent', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"aweme_detail":{"video":{"play_addr":{"duration":94000,"url_list":["https://v3-dy-o.zjcdn.com/play/video.mp4"]}}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(94)
+  })
+
+  it('records duration metadata source when duration is extracted from itemStruct duration', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"itemInfo":{"itemStruct":{"duration":87,"video":{"play_addr":{"url_list":["https://v3-dy-o.zjcdn.com/play/video.mp4"]}}}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(87)
+    expect(result.durationSourceStage).toBe('page_json')
+    expect(result.durationSourcePath).toBe('itemInfo.itemStruct.duration')
+    expect(result.durationSourceSnippetIndex).toBe(0)
+  })
+
   it('extracts durationSeconds from aweme video metadata in page json snippets', async () => {
     fetchTextMock.mockResolvedValueOnce({
       finalUrl: 'https://www.douyin.com/video/1234567890',

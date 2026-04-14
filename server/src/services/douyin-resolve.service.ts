@@ -17,6 +17,9 @@ export interface DouyinSourceMaterial {
   title?: string
   coverUrl?: string
   durationSeconds?: number
+  durationSourceStage?: 'network_json' | 'browser_json' | 'page_json'
+  durationSourcePath?: string
+  durationSourceSnippetIndex?: number
   metaDescription?: string
   visibleText: string
   pageJsonSnippets: string[]
@@ -74,52 +77,75 @@ function getNestedRecord(value: unknown, key: string): Record<string, unknown> |
   return isRecord(nestedValue) ? nestedValue : undefined
 }
 
-function extractDurationSecondsFromStructuredData(value: unknown): number | undefined {
+function extractDurationSecondsFromStructuredData(value: unknown): {
+  durationSeconds?: number
+  sourcePath?: string
+} {
   const candidates = [
-    value,
-    getNestedRecord(value, 'data'),
-    getNestedRecord(value, 'aweme_detail'),
-    getNestedRecord(value, 'awemeDetail'),
-    getNestedRecord(value, 'itemInfo'),
-    getNestedRecord(getNestedRecord(value, 'itemInfo'), 'itemStruct'),
-    getNestedRecord(value, 'videoDetail'),
-    getNestedRecord(getNestedRecord(value, 'app'), 'videoDetail'),
+    { value, sourcePath: 'root' },
+    { value: getNestedRecord(value, 'data'), sourcePath: 'data' },
+    { value: getNestedRecord(value, 'aweme_detail'), sourcePath: 'aweme_detail' },
+    { value: getNestedRecord(value, 'awemeDetail'), sourcePath: 'awemeDetail' },
+    { value: getNestedRecord(value, 'itemInfo'), sourcePath: 'itemInfo' },
+    { value: getNestedRecord(getNestedRecord(value, 'itemInfo'), 'itemStruct'), sourcePath: 'itemInfo.itemStruct' },
+    { value: getNestedRecord(value, 'videoDetail'), sourcePath: 'videoDetail' },
+    { value: getNestedRecord(getNestedRecord(value, 'app'), 'videoDetail'), sourcePath: 'app.videoDetail' },
   ]
 
-  for (const candidate of candidates) {
+  for (const candidateEntry of candidates) {
+    const candidate = candidateEntry.value
     const videoRecord = getNestedRecord(candidate, 'video')
-    const durationSeconds = normalizeDurationSeconds(
-      videoRecord?.duration_ms
-      ?? videoRecord?.durationMs
-      ?? videoRecord?.duration,
-    )
-    if (durationSeconds) {
-      return durationSeconds
+    const playAddressRecord = getNestedRecord(videoRecord, 'play_addr') || getNestedRecord(videoRecord, 'playAddr')
+    const candidateRecord = isRecord(candidate) ? candidate : undefined
+    const durationCandidates = [
+      { value: readNumberCandidate(candidateRecord?.duration), sourcePath: `${candidateEntry.sourcePath}.duration` },
+      { value: readNumberCandidate(candidateRecord?.duration_ms), sourcePath: `${candidateEntry.sourcePath}.duration_ms` },
+      { value: readNumberCandidate(candidateRecord?.durationMs), sourcePath: `${candidateEntry.sourcePath}.durationMs` },
+      { value: readNumberCandidate(videoRecord?.duration_ms), sourcePath: `${candidateEntry.sourcePath}.video.duration_ms` },
+      { value: readNumberCandidate(videoRecord?.durationMs), sourcePath: `${candidateEntry.sourcePath}.video.durationMs` },
+      { value: readNumberCandidate(videoRecord?.duration), sourcePath: `${candidateEntry.sourcePath}.video.duration` },
+      { value: readNumberCandidate(playAddressRecord?.duration), sourcePath: `${candidateEntry.sourcePath}.video.play_addr.duration` },
+    ]
+
+    for (const durationCandidate of durationCandidates) {
+      const durationSeconds = normalizeDurationSeconds(durationCandidate.value)
+      if (durationSeconds) {
+        return {
+          durationSeconds,
+          sourcePath: durationCandidate.sourcePath,
+        }
+      }
     }
   }
 
-  return undefined
+  return {}
 }
 
-function extractDurationSecondsFromSnippet(content: string): number | undefined {
+function extractDurationSecondsFromSnippet(content: string): {
+  durationSeconds?: number
+  sourcePath?: string
+} {
   const normalizedContent = normalizeEscapedUrlContent(content)
   const directMatch = normalizedContent.match(/"video"\s*:\s*\{[\s\S]{0,1600}?"duration(?:_ms|Ms)?"\s*:\s*(\d+)/i)?.[1]
   const directDurationSeconds = normalizeDurationSeconds(directMatch ? Number(directMatch) : undefined)
   if (directDurationSeconds) {
-    return directDurationSeconds
+    return {
+      durationSeconds: directDurationSeconds,
+      sourcePath: 'snippet.video.duration-regex',
+    }
   }
 
   const jsonStartIndex = normalizedContent.indexOf('{')
   const jsonEndIndex = normalizedContent.lastIndexOf('}')
   if (jsonStartIndex === -1 || jsonEndIndex <= jsonStartIndex) {
-    return undefined
+    return {}
   }
 
   try {
     const parsed = JSON.parse(normalizedContent.slice(jsonStartIndex, jsonEndIndex + 1)) as unknown
     return extractDurationSecondsFromStructuredData(parsed)
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -127,21 +153,36 @@ function extractDurationSecondsFromSnippets(input: {
   pageJsonSnippets: string[]
   browserJsonSnippets: string[]
   networkJsonSnippets: string[]
-}): number | undefined {
-  const snippets = [
-    ...input.networkJsonSnippets,
-    ...input.browserJsonSnippets,
-    ...input.pageJsonSnippets,
+}): {
+  durationSeconds?: number
+  sourceStage?: 'network_json' | 'browser_json' | 'page_json'
+  sourceSnippetIndex?: number
+  sourcePath?: string
+} {
+  const snippetGroups: Array<{
+    snippets: string[]
+    sourceStage: 'network_json' | 'browser_json' | 'page_json'
+  }> = [
+    { snippets: input.networkJsonSnippets, sourceStage: 'network_json' },
+    { snippets: input.browserJsonSnippets, sourceStage: 'browser_json' },
+    { snippets: input.pageJsonSnippets, sourceStage: 'page_json' },
   ]
 
-  for (const snippet of snippets) {
-    const durationSeconds = extractDurationSecondsFromSnippet(snippet)
-    if (durationSeconds) {
-      return durationSeconds
+  for (const group of snippetGroups) {
+    for (const [index, snippet] of group.snippets.entries()) {
+      const extracted = extractDurationSecondsFromSnippet(snippet)
+      if (extracted.durationSeconds) {
+        return {
+          durationSeconds: extracted.durationSeconds,
+          sourceStage: group.sourceStage,
+          sourceSnippetIndex: index,
+          sourcePath: extracted.sourcePath,
+        }
+      }
     }
   }
 
-  return undefined
+  return {}
 }
 
 function collectJsonSnippets(html: string): string[] {
@@ -313,7 +354,9 @@ function summarizeMaterialForLog(material: DouyinSourceMaterial): Record<string,
     resolvedTarget: summarizeResolvedUrl(material.resolvedUrl),
     videoId: material.videoId,
     durationSeconds: material.durationSeconds,
-    fetchMode: material.fetchMode,
+    durationSourceStage: material.durationSourceStage,
+    durationSourcePath: material.durationSourcePath,
+    durationSourceSnippetIndex: material.durationSourceSnippetIndex,
     fetchStage: material.fetchStage,
     usedSession: material.usedSession,
     attemptedSession: material.attemptedSession,
@@ -546,11 +589,12 @@ function parseSourceMaterial(
   const pageJsonSnippets = mergeJsonSnippets(collectJsonSnippets(body), extraPageJsonSnippets)
   const browserJsonSnippets = fetchStage === 'browser' ? mergeJsonSnippets(extraPageJsonSnippets) : []
   const networkJsonSnippets = fetchStage === 'browser' ? mergeJsonSnippets(extraNetworkJsonSnippets) : []
-  const durationSeconds = extractDurationSecondsFromSnippets({
+  const durationMetadata = extractDurationSecondsFromSnippets({
     pageJsonSnippets,
     browserJsonSnippets,
     networkJsonSnippets,
   })
+  const durationSeconds = durationMetadata.durationSeconds
   const { isChallengePage, challengeHints } = detectChallengePage(body, visibleText)
 
   if (!looksLikeShareMetadata && !contentText && !normalizedTitle && !normalizedMetaDescription && pageJsonSnippets.length === 0) {
@@ -565,6 +609,9 @@ function parseSourceMaterial(
     title: shareMeta.title || normalizedTitle,
     coverUrl,
     durationSeconds,
+    durationSourceStage: durationMetadata.sourceStage,
+    durationSourcePath: durationMetadata.sourcePath,
+    durationSourceSnippetIndex: durationMetadata.sourceSnippetIndex,
     metaDescription: normalizedMetaDescription,
     visibleText: contentText.slice(0, 6000),
     pageJsonSnippets,
