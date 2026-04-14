@@ -118,6 +118,13 @@ export function createApp() {
     methods: ['GET'],
     message: '音频提取请求过于频繁，请稍后再试。',
   }))
+  app.use('/api/douyin/analysis-media', createRateLimit({
+    id: 'douyin-analysis-media',
+    max: 300,
+    windowMs: 60 * 1000,
+    methods: ['GET'],
+    message: '分析视频读取请求过于频繁，请稍后再试。',
+  }))
   app.use('/api/bilibili/extract-video', createRateLimit({
     id: 'bilibili-extract',
     max: 20,

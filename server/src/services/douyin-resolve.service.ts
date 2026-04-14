@@ -16,6 +16,7 @@ export interface DouyinSourceMaterial {
   author?: string
   title?: string
   coverUrl?: string
+  durationSeconds?: number
   metaDescription?: string
   visibleText: string
   pageJsonSnippets: string[]
@@ -45,6 +46,102 @@ export interface DouyinVideoAsset {
 function extractVideoId(url: string): string | undefined {
   const match = url.match(/video\/(\d+)/) || url.match(/modal_id=(\d+)/) || url.match(/aweme_id=(\d+)/)
   return match?.[1]
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function readNumberCandidate(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function normalizeDurationSeconds(value: unknown): number | undefined {
+  const duration = readNumberCandidate(value)
+  if (!duration) {
+    return undefined
+  }
+
+  return duration >= 1000 ? Math.ceil(duration / 1000) : Math.ceil(duration)
+}
+
+function getNestedRecord(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  const nestedValue = value[key]
+  return isRecord(nestedValue) ? nestedValue : undefined
+}
+
+function extractDurationSecondsFromStructuredData(value: unknown): number | undefined {
+  const candidates = [
+    value,
+    getNestedRecord(value, 'data'),
+    getNestedRecord(value, 'aweme_detail'),
+    getNestedRecord(value, 'awemeDetail'),
+    getNestedRecord(value, 'itemInfo'),
+    getNestedRecord(getNestedRecord(value, 'itemInfo'), 'itemStruct'),
+    getNestedRecord(value, 'videoDetail'),
+    getNestedRecord(getNestedRecord(value, 'app'), 'videoDetail'),
+  ]
+
+  for (const candidate of candidates) {
+    const videoRecord = getNestedRecord(candidate, 'video')
+    const durationSeconds = normalizeDurationSeconds(
+      videoRecord?.duration_ms
+      ?? videoRecord?.durationMs
+      ?? videoRecord?.duration,
+    )
+    if (durationSeconds) {
+      return durationSeconds
+    }
+  }
+
+  return undefined
+}
+
+function extractDurationSecondsFromSnippet(content: string): number | undefined {
+  const normalizedContent = normalizeEscapedUrlContent(content)
+  const directMatch = normalizedContent.match(/"video"\s*:\s*\{[\s\S]{0,1600}?"duration(?:_ms|Ms)?"\s*:\s*(\d+)/i)?.[1]
+  const directDurationSeconds = normalizeDurationSeconds(directMatch ? Number(directMatch) : undefined)
+  if (directDurationSeconds) {
+    return directDurationSeconds
+  }
+
+  const jsonStartIndex = normalizedContent.indexOf('{')
+  const jsonEndIndex = normalizedContent.lastIndexOf('}')
+  if (jsonStartIndex === -1 || jsonEndIndex <= jsonStartIndex) {
+    return undefined
+  }
+
+  try {
+    const parsed = JSON.parse(normalizedContent.slice(jsonStartIndex, jsonEndIndex + 1)) as unknown
+    return extractDurationSecondsFromStructuredData(parsed)
+  } catch {
+    return undefined
+  }
+}
+
+function extractDurationSecondsFromSnippets(input: {
+  pageJsonSnippets: string[]
+  browserJsonSnippets: string[]
+  networkJsonSnippets: string[]
+}): number | undefined {
+  const snippets = [
+    ...input.networkJsonSnippets,
+    ...input.browserJsonSnippets,
+    ...input.pageJsonSnippets,
+  ]
+
+  for (const snippet of snippets) {
+    const durationSeconds = extractDurationSecondsFromSnippet(snippet)
+    if (durationSeconds) {
+      return durationSeconds
+    }
+  }
+
+  return undefined
 }
 
 function collectJsonSnippets(html: string): string[] {
@@ -215,6 +312,7 @@ function summarizeMaterialForLog(material: DouyinSourceMaterial): Record<string,
   return {
     resolvedTarget: summarizeResolvedUrl(material.resolvedUrl),
     videoId: material.videoId,
+    durationSeconds: material.durationSeconds,
     fetchMode: material.fetchMode,
     fetchStage: material.fetchStage,
     usedSession: material.usedSession,
@@ -370,6 +468,7 @@ function mergeMaterialFields(preferred: DouyinSourceMaterial, fallback: DouyinSo
     author: preferred.author || fallback.author,
     title: preferred.title || fallback.title,
     coverUrl: preferred.coverUrl || fallback.coverUrl,
+    durationSeconds: preferred.durationSeconds || fallback.durationSeconds,
     metaDescription: preferred.metaDescription || fallback.metaDescription,
     visibleText: preferred.visibleText || fallback.visibleText,
     pageJsonSnippets: mergeJsonSnippets(preferred.pageJsonSnippets, fallback.pageJsonSnippets),
@@ -447,6 +546,11 @@ function parseSourceMaterial(
   const pageJsonSnippets = mergeJsonSnippets(collectJsonSnippets(body), extraPageJsonSnippets)
   const browserJsonSnippets = fetchStage === 'browser' ? mergeJsonSnippets(extraPageJsonSnippets) : []
   const networkJsonSnippets = fetchStage === 'browser' ? mergeJsonSnippets(extraNetworkJsonSnippets) : []
+  const durationSeconds = extractDurationSecondsFromSnippets({
+    pageJsonSnippets,
+    browserJsonSnippets,
+    networkJsonSnippets,
+  })
   const { isChallengePage, challengeHints } = detectChallengePage(body, visibleText)
 
   if (!looksLikeShareMetadata && !contentText && !normalizedTitle && !normalizedMetaDescription && pageJsonSnippets.length === 0) {
@@ -460,6 +564,7 @@ function parseSourceMaterial(
     author: shareMeta.author || author,
     title: shareMeta.title || normalizedTitle,
     coverUrl,
+    durationSeconds,
     metaDescription: normalizedMetaDescription,
     visibleText: contentText.slice(0, 6000),
     pageJsonSnippets,

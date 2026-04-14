@@ -14,6 +14,7 @@ export interface ExtractedDouyinVideoPayload {
   author?: string
   title?: string
   coverUrl?: string
+  durationSeconds?: number
   proxyVideoUrl: string
   downloadVideoUrl: string
   downloadAudioUrl: string
@@ -35,6 +36,7 @@ export async function extractDouyinVideo(input: string): Promise<ExtractedDouyin
     playableVideoUrl: videoAsset.playableVideoUrl,
     requestHeaders: videoAsset.requestHeaders,
     filename,
+    durationSeconds: source.durationSeconds,
   })
 
   return {
@@ -44,6 +46,7 @@ export async function extractDouyinVideo(input: string): Promise<ExtractedDouyin
     author: source.author,
     title: source.title,
     coverUrl: source.coverUrl,
+    durationSeconds: source.durationSeconds,
     proxyVideoUrl: buildDouyinProxyPath(token),
     downloadVideoUrl: buildDouyinDownloadPath(token),
     downloadAudioUrl: buildDouyinAudioPath(token),

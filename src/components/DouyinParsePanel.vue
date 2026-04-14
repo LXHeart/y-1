@@ -30,6 +30,10 @@
               <dt>视频 ID</dt>
               <dd>{{ extractedVideo.videoId }}</dd>
             </div>
+            <div v-if="durationLabel">
+              <dt>视频时长</dt>
+              <dd>{{ durationLabel }}</dd>
+            </div>
             <div>
               <dt>链路</dt>
               <dd>{{ extractedVideo.usedSession ? '登录增强' : '匿名提取' }}</dd>
@@ -63,11 +67,14 @@
 
       <section class="analysis-panel" aria-labelledby="analysis-heading">
         <div class="analysis-header">
-          <div>
-            <p class="analysis-kicker">视频内容提取</p>
-            <h3 id="analysis-heading" class="analysis-title">结构化内容分析</h3>
+          <div class="analysis-header-copy">
+            <div>
+              <p class="analysis-kicker">视频内容提取</p>
+              <h3 id="analysis-heading" class="analysis-title">结构化内容分析</h3>
+            </div>
+            <p class="analysis-hint">分析时会自动按最长 30 秒分段；30 秒到 2 分钟的视频通常效果最好，当前最多支持 10 分钟。</p>
           </div>
-          <button class="btn-secondary" :disabled="analysisLoading" @click="$emit('retry-analysis')">
+          <button class="btn-secondary" :disabled="analysisLoading || isAnalysisTooLong" @click="$emit('retry-analysis')">
             {{ analysisActionLabel }}
           </button>
         </div>
@@ -82,18 +89,29 @@
           <p>{{ analysisError }}</p>
         </div>
 
-        <div v-else-if="analysisSections.length" class="analysis-grid">
-          <article v-for="section in analysisSections" :key="section.title" class="analysis-card">
-            <p class="analysis-card-label">{{ section.title }}</p>
-            <p class="analysis-card-copy">{{ section.content }}</p>
-          </article>
+        <div v-else-if="isAnalysisTooLong" class="analysis-status analysis-status-warning">
+          <p class="analysis-status-title">当前视频暂不支持分析</p>
+          <p>仅支持分析 10 分钟以内的抖音视频，分析时会自动按最长 30 秒分段，建议选择 30 秒到 2 分钟的视频。</p>
         </div>
+
+        <template v-else-if="analysisSections.length">
+          <div v-if="segmentedAnalysisHint" class="analysis-status analysis-status-info">
+            <p>{{ segmentedAnalysisHint }}</p>
+          </div>
+
+          <div class="analysis-grid">
+            <article v-for="section in analysisSections" :key="section.title" class="analysis-card">
+              <p class="analysis-card-label">{{ section.title }}</p>
+              <p class="analysis-card-copy">{{ section.content }}</p>
+            </article>
+          </div>
+        </template>
 
         <div v-else class="analysis-status analysis-status-empty">
           <p>点击“分析视频”后再提取结构化内容分析结果。</p>
         </div>
 
-        <p v-if="analysis?.runId" class="analysis-run-id">运行 ID：{{ analysis.runId }}</p>
+        <p v-if="analysisRunIdText" class="analysis-run-id">{{ analysisRunIdText }}</p>
       </section>
     </template>
   </section>
@@ -107,6 +125,8 @@ interface AnalysisSection {
   title: string
   content: string
 }
+
+const maxAnalysisDurationSeconds = 10 * 60
 
 const props = defineProps<{
   extractedVideo: ExtractedDouyinVideoPayload | null
@@ -122,12 +142,40 @@ defineEmits<{
   'retry-analysis': []
 }>()
 
+function formatDurationLabel(durationSeconds: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(durationSeconds))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (minutes === 0) {
+    return `${seconds} 秒`
+  }
+
+  if (seconds === 0) {
+    return `${minutes} 分钟`
+  }
+
+  return `${minutes} 分 ${seconds} 秒`
+}
+
 const displayTitle = computed(() => {
   if (!props.extractedVideo) {
     return ''
   }
 
   return props.extractedVideo.title || '已提取到可播放视频'
+})
+
+const durationLabel = computed(() => {
+  if (!props.extractedVideo?.durationSeconds) {
+    return ''
+  }
+
+  return formatDurationLabel(props.extractedVideo.durationSeconds)
+})
+
+const isAnalysisTooLong = computed(() => {
+  return (props.extractedVideo?.durationSeconds || 0) > maxAnalysisDurationSeconds
 })
 
 const hasAttemptedAnalysis = computed(() => {
@@ -139,7 +187,31 @@ const analysisActionLabel = computed(() => {
     return '提取中…'
   }
 
+  if (isAnalysisTooLong.value) {
+    return '超过 10 分钟'
+  }
+
   return hasAttemptedAnalysis.value ? '重新分析' : '分析视频'
+})
+
+const segmentedAnalysisHint = computed(() => {
+  if (!props.analysis?.segmented || !props.analysis.clipCount) {
+    return ''
+  }
+
+  return `该结果由 ${props.analysis.clipCount} 个最长 30 秒的片段合并生成。`
+})
+
+const analysisRunIdText = computed(() => {
+  if (props.analysis?.runId) {
+    return `运行 ID：${props.analysis.runId}`
+  }
+
+  if (props.analysis?.runIds?.length) {
+    return `运行 ID：${props.analysis.runIds.join('、')}`
+  }
+
+  return ''
 })
 
 const analysisSections = computed<AnalysisSection[]>(() => {
@@ -216,6 +288,7 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 .result-notes p,
 .analysis-kicker,
 .analysis-title,
+.analysis-hint,
 .analysis-status-title,
 .analysis-status p,
 .analysis-card-label,
@@ -233,7 +306,8 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 
 .loading-copy,
 .error-copy,
-.result-notes p {
+.result-notes p,
+.analysis-hint {
   color: var(--color-text-secondary);
 }
 
@@ -322,43 +396,64 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   display: grid;
   gap: 16px;
   padding: 18px;
-  border-radius: 22px;
+  border-radius: 20px;
   border: 1px solid var(--color-border);
   background: rgba(255,255,255,0.03);
 }
 
 .analysis-header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: space-between;
   align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysis-header-copy {
+  display: grid;
+  gap: 6px;
 }
 
 .analysis-title {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   color: var(--color-text);
 }
 
 .analysis-status {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 16px;
   border-radius: 16px;
-  border: 1px solid var(--color-border);
   background: rgba(255,255,255,0.03);
   color: var(--color-text-secondary);
 }
 
-.analysis-status-error {
-  display: grid;
-  gap: 4px;
+.analysis-status-loading {
+  grid-template-columns: auto 1fr;
+  align-items: center;
 }
 
-.analysis-status-title {
+.analysis-status-error {
+  border: 1px solid rgba(255,107,107,0.35);
+  background: rgba(255,107,107,0.08);
+}
+
+.analysis-status-warning {
+  border: 1px solid rgba(255,184,77,0.35);
+  background: rgba(255,184,77,0.08);
+}
+
+.analysis-status-info {
+  border: 1px solid rgba(103,232,249,0.24);
+  background: rgba(103,232,249,0.08);
+}
+
+.analysis-status-empty {
+  border: 1px dashed var(--color-border);
+}
+
+.analysis-status-title,
+.analysis-card-label {
   color: var(--color-text);
-  font-weight: 700;
 }
 
 .analysis-grid {
@@ -435,6 +530,10 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 
   .cover-image {
     width: min(220px, 100%);
+  }
+
+  .analysis-header {
+    flex-direction: column;
   }
 }
 </style>

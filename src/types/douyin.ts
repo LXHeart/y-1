@@ -13,6 +13,7 @@ export interface ExtractedDouyinVideoPayload {
   author?: string
   title?: string
   coverUrl?: string
+  durationSeconds?: number
   proxyVideoUrl: string
   downloadVideoUrl: string
   downloadAudioUrl: string
@@ -28,6 +29,9 @@ export interface DouyinVideoAnalysisResult {
   propsDescription?: string
   sceneDescription?: string
   runId?: string
+  segmented?: boolean
+  clipCount?: number
+  runIds?: string[]
 }
 
 export interface DouyinSessionState {

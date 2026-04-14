@@ -9,6 +9,10 @@ function isDouyinFetchStage(value: unknown): value is DouyinFetchStage {
   return value === 'page_json' || value === 'browser_json' || value === 'browser_network'
 }
 
+function readOptionalDurationSeconds(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : undefined
+}
+
 function normalizeExtractedDouyinVideoPayload(value: unknown): ExtractedDouyinVideoPayload | null {
   if (!isPlainObject(value)) {
     return null
@@ -32,6 +36,7 @@ function normalizeExtractedDouyinVideoPayload(value: unknown): ExtractedDouyinVi
     author: typeof value.author === 'string' ? value.author : undefined,
     title: typeof value.title === 'string' ? value.title : undefined,
     coverUrl: typeof value.coverUrl === 'string' ? value.coverUrl : undefined,
+    durationSeconds: readOptionalDurationSeconds(value.durationSeconds),
     proxyVideoUrl: value.proxyVideoUrl,
     downloadVideoUrl: value.downloadVideoUrl,
     downloadAudioUrl: value.downloadAudioUrl,

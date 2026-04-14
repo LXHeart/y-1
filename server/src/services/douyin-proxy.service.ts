@@ -20,6 +20,7 @@ interface DouyinProxyPayload {
   playableVideoUrl: string
   requestHeaders?: Record<string, string>
   filename?: string
+  durationSeconds?: number
 }
 
 function signPayload(encodedPayload: string): string {
@@ -92,6 +93,14 @@ function sanitizeProxyRequestHeaders(input: unknown): Record<string, string> | u
   return Object.fromEntries(sanitizedEntries)
 }
 
+function readDurationSeconds(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined
+  }
+
+  return Math.ceil(value)
+}
+
 function decodePayload(encodedPayload: string): DouyinProxyPayload {
   let parsed: unknown
 
@@ -119,6 +128,7 @@ function decodePayload(encodedPayload: string): DouyinProxyPayload {
     playableVideoUrl: payload.playableVideoUrl,
     requestHeaders,
     filename: typeof payload.filename === 'string' ? payload.filename : undefined,
+    durationSeconds: readDurationSeconds(payload.durationSeconds),
   }
 }
 
@@ -126,6 +136,7 @@ export function createDouyinProxyToken(input: {
   playableVideoUrl: string
   requestHeaders?: Record<string, string>
   filename?: string
+  durationSeconds?: number
 }): string {
   const payload: DouyinProxyPayload = {
     v: payloadVersion,
@@ -133,6 +144,7 @@ export function createDouyinProxyToken(input: {
     playableVideoUrl: input.playableVideoUrl,
     requestHeaders: sanitizeProxyRequestHeaders(input.requestHeaders),
     filename: sanitizeFilenamePart(input.filename) ? ensureMp4Extension(sanitizeFilenamePart(input.filename) as string) : undefined,
+    durationSeconds: readDurationSeconds(input.durationSeconds),
   }
 
   const encodedPayload = encodePayload(payload)
@@ -165,6 +177,7 @@ export function parseDouyinProxyToken(token: string): {
   playableVideoUrl: string
   requestHeaders?: Record<string, string>
   filename?: string
+  durationSeconds?: number
 } {
   const [encodedPayload, signature] = token.split('.')
 
@@ -195,5 +208,6 @@ export function parseDouyinProxyToken(token: string): {
     playableVideoUrl: payload.playableVideoUrl,
     requestHeaders: payload.requestHeaders,
     filename: payload.filename,
+    durationSeconds: payload.durationSeconds,
   }
 }

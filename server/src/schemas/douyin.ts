@@ -29,6 +29,10 @@ export const analyzeDouyinVideoRequest = z.object({
   proxyVideoUrl: z.string().trim().min(1, '缺少视频代理地址'),
 })
 
+export const analysisDouyinMediaRequestParams = z.object({
+  id: z.string().trim().min(1, '缺少分析视频文件标识'),
+})
+
 export const proxyDouyinVideoRequestParams = z.object({
   token: z.string().trim().min(1, '缺少视频代理 token'),
 })

@@ -8,6 +8,7 @@ import {
   logoutDouyinSessionHandler,
   pollDouyinSessionHandler,
   proxyDouyinVideoHandler,
+  serveDouyinAnalysisMediaHandler,
   startDouyinSessionHandler,
 } from '../controllers/douyin.controller.js'
 
@@ -15,6 +16,7 @@ const douyinRouter = Router()
 
 douyinRouter.post('/extract-video', extractDouyinVideoHandler)
 douyinRouter.post('/analyze-video', analyzeDouyinVideoHandler)
+douyinRouter.get('/analysis-media/:id', serveDouyinAnalysisMediaHandler)
 douyinRouter.get('/proxy/:token', proxyDouyinVideoHandler)
 douyinRouter.get('/download/:token', downloadDouyinVideoHandler)
 douyinRouter.get('/audio/:token', downloadDouyinAudioHandler)

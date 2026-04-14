@@ -20,6 +20,7 @@ describe('douyin proxy tokens', () => {
         'User-Agent': 'Mozilla/5.0 test',
       },
       filename: 'test-video.mp4',
+      durationSeconds: 118,
     })
 
     expect(parseDouyinProxyToken(token)).toEqual({
@@ -29,6 +30,7 @@ describe('douyin proxy tokens', () => {
         'User-Agent': 'Mozilla/5.0 test',
       },
       filename: 'test-video.mp4',
+      durationSeconds: 118,
     })
   })
 

@@ -108,6 +108,20 @@ describe('resolveDouyinSource', () => {
     expect(resolveDouyinVideoAsset(result).playableVideoUrl).toBe('https://v3-dy-o.zjcdn.com/play/video.mp4')
   })
 
+  it('extracts durationSeconds from aweme video metadata in page json snippets', async () => {
+    fetchTextMock.mockResolvedValueOnce({
+      finalUrl: 'https://www.douyin.com/video/1234567890',
+      body: buildHtml({
+        bodyText: '正文',
+        scripts: ['{"aweme_detail":{"video":{"duration":118000}},"play_addr":"https://v3-dy-o.zjcdn.com/play/video.mp4"}'],
+      }),
+    })
+
+    const result = await resolveDouyinSource('https://v.douyin.com/abc/')
+
+    expect(result.durationSeconds).toBe(118)
+  })
+
   it('skips the canonical desktop retry when the first desktop response is already the canonical video page', async () => {
     fetchTextMock
       .mockResolvedValueOnce({
@@ -550,6 +564,7 @@ describe('resolveDouyinVideoAsset', () => {
       fetchStage: 'browser',
       usedSession: false,
       attemptedSession: false,
+      durationSeconds: undefined,
     }
 
     expect(resolveDouyinVideoAsset(source).playableVideoUrl).toBe('https://v3-dy-o.zjcdn.com/video.mp4')

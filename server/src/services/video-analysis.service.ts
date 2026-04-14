@@ -68,7 +68,7 @@ function describeAnalysisVideoUrlType(videoUrl: string): 'proxy' | 'analysis-med
     return 'proxy'
   }
 
-  if (videoUrl.includes('/api/bilibili/analysis-media/')) {
+  if (videoUrl.includes('/api/bilibili/analysis-media/') || videoUrl.includes('/api/douyin/analysis-media/')) {
     return 'analysis-media'
   }
 
