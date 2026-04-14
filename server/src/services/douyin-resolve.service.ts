@@ -124,6 +124,7 @@ function extractDurationSecondsFromStructuredData(value: unknown): {
 function extractDurationSecondsFromSnippet(content: string): {
   durationSeconds?: number
   sourcePath?: string
+  candidatePaths?: Array<{ path: string, value: number | string }>
 } {
   const normalizedContent = normalizeEscapedUrlContent(content)
   const directMatch = normalizedContent.match(/"video"\s*:\s*\{[\s\S]{0,1600}?"duration(?:_ms|Ms)?"\s*:\s*(\d+)/i)?.[1]
@@ -143,7 +144,14 @@ function extractDurationSecondsFromSnippet(content: string): {
 
   try {
     const parsed = JSON.parse(normalizedContent.slice(jsonStartIndex, jsonEndIndex + 1)) as unknown
-    return extractDurationSecondsFromStructuredData(parsed)
+    const extracted = extractDurationSecondsFromStructuredData(parsed)
+    if (extracted.durationSeconds) {
+      return extracted
+    }
+
+    return {
+      candidatePaths: collectPotentialDurationValues(parsed),
+    }
   } catch {
     return {}
   }
@@ -158,6 +166,7 @@ function extractDurationSecondsFromSnippets(input: {
   sourceStage?: 'network_json' | 'browser_json' | 'page_json'
   sourceSnippetIndex?: number
   sourcePath?: string
+  candidatePaths?: Array<{ path: string, value: number | string }>
 } {
   const snippetGroups: Array<{
     snippets: string[]
@@ -179,12 +188,101 @@ function extractDurationSecondsFromSnippets(input: {
           sourcePath: extracted.sourcePath,
         }
       }
+
+      if (extracted.candidatePaths?.length) {
+        return {
+          sourceStage: group.sourceStage,
+          sourceSnippetIndex: index,
+          candidatePaths: extracted.candidatePaths,
+        }
+      }
     }
   }
 
   return {}
 }
 
+function summarizeSnippetForDiagnostics(content: string, index: number, sourceStage: 'network_json' | 'browser_json' | 'page_json'): Record<string, unknown> {
+  const normalizedContent = normalizeEscapedUrlContent(content)
+  const preview = normalizedContent.replace(/\s+/g, ' ').slice(0, 400)
+
+  return {
+    sourceStage,
+    snippetIndex: index,
+    length: normalizedContent.length,
+    hasPlayAddr: /play_addr|playAddr/i.test(normalizedContent),
+    hasDurationKey: /duration(?:_ms|Ms)?/i.test(normalizedContent),
+    hasAwemeDetail: /aweme_detail|awemeDetail/i.test(normalizedContent),
+    hasItemStruct: /itemInfo|itemStruct/i.test(normalizedContent),
+    hasVideoKeyword: /"video"\s*:|videoDetail/i.test(normalizedContent),
+    preview,
+  }
+}
+
+function logDurationExtractionMiss(input: {
+  resolvedUrl: string
+  videoId?: string
+  pageJsonSnippets: string[]
+  browserJsonSnippets: string[]
+  networkJsonSnippets: string[]
+}): void {
+  const diagnostics = [
+    ...input.networkJsonSnippets.map((snippet, index) => summarizeSnippetForDiagnostics(snippet, index, 'network_json')),
+    ...input.browserJsonSnippets.map((snippet, index) => summarizeSnippetForDiagnostics(snippet, index, 'browser_json')),
+    ...input.pageJsonSnippets.map((snippet, index) => summarizeSnippetForDiagnostics(snippet, index, 'page_json')),
+  ]
+
+  logger.info({
+    resolvedTarget: summarizeResolvedUrl(input.resolvedUrl),
+    videoId: input.videoId,
+    snippetDiagnostics: diagnostics,
+  }, 'Douyin duration extraction miss')
+}
+
+function collectPotentialDurationValues(value: unknown, limit = 12): Array<{ path: string, value: number | string }> {
+  const results: Array<{ path: string, value: number | string }> = []
+  const visited = new WeakSet<object>()
+
+  function visit(current: unknown, path: string): void {
+    if (results.length >= limit) {
+      return
+    }
+
+    if (Array.isArray(current)) {
+      current.forEach((item, index) => {
+        if (results.length < limit) {
+          visit(item, `${path}[${index}]`)
+        }
+      })
+      return
+    }
+
+    if (!isRecord(current)) {
+      return
+    }
+
+    if (visited.has(current)) {
+      return
+    }
+    visited.add(current)
+
+    for (const [key, nestedValue] of Object.entries(current)) {
+      if (results.length >= limit) {
+        return
+      }
+
+      const nextPath = path ? `${path}.${key}` : key
+      if (/duration/i.test(key) && (typeof nestedValue === 'number' || typeof nestedValue === 'string')) {
+        results.push({ path: nextPath, value: nestedValue })
+      }
+
+      visit(nestedValue, nextPath)
+    }
+  }
+
+  visit(value, 'root')
+  return results
+}
 function collectJsonSnippets(html: string): string[] {
   const scriptMatches = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || []
   return scriptMatches
@@ -595,6 +693,25 @@ function parseSourceMaterial(
     networkJsonSnippets,
   })
   const durationSeconds = durationMetadata.durationSeconds
+  if (!durationSeconds && (pageJsonSnippets.length || browserJsonSnippets.length || networkJsonSnippets.length)) {
+    logDurationExtractionMiss({
+      resolvedUrl: finalUrl,
+      videoId: extractVideoId(finalUrl),
+      pageJsonSnippets,
+      browserJsonSnippets,
+      networkJsonSnippets,
+    })
+
+    if (durationMetadata.candidatePaths?.length) {
+      logger.info({
+        resolvedTarget: summarizeResolvedUrl(finalUrl),
+        videoId: extractVideoId(finalUrl),
+        sourceStage: durationMetadata.sourceStage,
+        sourceSnippetIndex: durationMetadata.sourceSnippetIndex,
+        candidatePaths: durationMetadata.candidatePaths,
+      }, 'Douyin duration candidate paths')
+    }
+  }
   const { isChallengePage, challengeHints } = detectChallengePage(body, visibleText)
 
   if (!looksLikeShareMetadata && !contentText && !normalizedTitle && !normalizedMetaDescription && pageJsonSnippets.length === 0) {
