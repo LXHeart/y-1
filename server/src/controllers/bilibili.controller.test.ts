@@ -71,6 +71,9 @@ vi.mock('../services/bilibili-stream.service.js', () => ({
 
 vi.mock('../services/bilibili-video-analysis.service.js', () => ({
   analyzeBilibiliVideoByProxyUrl: vi.fn(async () => ({
+    videoCaptions: '字幕内容',
+    videoScript: '脚本内容',
+    sceneDescription: '场景内容',
     runId: 'bilibili-analysis-run',
   })),
 }))
@@ -178,20 +181,26 @@ describe('analyzeBilibiliVideoHandler', () => {
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       data: {
+        videoCaptions: '字幕内容',
+        videoScript: '脚本内容',
+        sceneDescription: '场景内容',
         runId: 'bilibili-analysis-run',
       },
     })
     expect(next).not.toHaveBeenCalled()
   })
 
-  it('passes request-scoped analysis config to the service', async () => {
+  it('ignores request-scoped analysis config from public requests', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
       body: {
         proxyVideoUrl: '/api/bilibili/proxy/token',
         analysisConfig: {
+          provider: 'qwen',
           baseUrl: 'https://custom.example.com/run',
           apiToken: 'request-token',
+          apiKey: 'request-key',
+          model: 'qwen-max',
         },
       },
       off: reqEmitter.off.bind(reqEmitter),
@@ -206,11 +215,11 @@ describe('analyzeBilibiliVideoHandler', () => {
 
     expect(analyzeBilibiliVideoByProxyUrl).toHaveBeenCalledWith('/api/bilibili/proxy/token', {
       signal: expect.any(AbortSignal),
-      analysisConfig: {
-        baseUrl: 'https://custom.example.com/run',
-        apiToken: 'request-token',
-      },
     })
+    expect(analyzeBilibiliVideoByProxyUrl).not.toHaveBeenCalledWith(
+      '/api/bilibili/proxy/token',
+      expect.objectContaining({ analysisConfig: expect.anything() }),
+    )
   })
 
   it('rejects analyze requests with proxy urls from a different origin', async () => {

@@ -13,7 +13,7 @@ import {
 } from './bilibili-media.service.js'
 import { logger } from '../lib/logger.js'
 import { buildPublicBilibiliProxyUrl, parseBilibiliProxyToken } from './bilibili-proxy.service.js'
-import { analyzeVideoContent, type VideoAnalysisRequestConfig, type VideoAnalysisResult } from './video-analysis.service.js'
+import { analyzeVideoContent, analyzeVideoForRecreation, type VideoAnalysisRequestConfig, type VideoAnalysisResult, type VideoRecreationResult } from './video-analysis.service.js'
 
 const maxAnalysisDurationSeconds = 10 * 60
 const segmentedAnalysisClipDurationSeconds = 30
@@ -447,6 +447,7 @@ export async function analyzeBilibiliVideoByProxyUrl(
   options: {
     signal?: AbortSignal
     analysisConfig?: VideoAnalysisRequestConfig
+    userId?: string
   } = {},
 ): Promise<VideoAnalysisResult> {
   throwIfAborted(options.signal)
@@ -510,6 +511,156 @@ export async function analyzeBilibiliVideoByProxyUrl(
 
   try {
     return await analyzeBilibiliSegmentedMedia({
+      mediaFile,
+      durationSeconds,
+      signal: options.signal,
+      options,
+    })
+  } finally {
+    await cleanupBilibiliMediaFile(mediaFile.filePath)
+  }
+}
+
+function mergeSegmentedRecreationResults(results: VideoRecreationResult[]): VideoRecreationResult {
+  const allScenes = results.flatMap((r) => r.scenes)
+  const runIds = Array.from(new Set(results.flatMap((r) => r.runId ? [r.runId] : [])))
+
+  return {
+    scenes: allScenes,
+    overallStyle: results[0]?.overallStyle,
+    runId: runIds[0],
+    runIds: runIds.length > 1 ? runIds : undefined,
+    segmented: true,
+    clipCount: results.length,
+  }
+}
+
+async function analyzeBilibiliSegmentedForRecreation(input: {
+  mediaFile: {
+    filePath: string
+    fileSize: number
+    filename: string
+    mimeType: string
+  }
+  durationSeconds: number
+  signal?: AbortSignal
+  options: {
+    signal?: AbortSignal
+    analysisConfig?: VideoAnalysisRequestConfig
+    userId?: string
+  }
+}): Promise<VideoRecreationResult> {
+  const clips = await createBilibiliMediaClips({
+    sourceFilePath: input.mediaFile.filePath,
+    durationSeconds: input.durationSeconds,
+    filename: input.mediaFile.filename,
+    clipDurationSeconds: segmentedAnalysisClipDurationSeconds,
+  })
+  const results: VideoRecreationResult[] = []
+
+  try {
+    for (const clip of clips) {
+      throwIfAborted(input.signal)
+      const session = await createBilibiliAnalysisMediaSession({
+        filePath: clip.filePath,
+        fileSize: clip.fileSize,
+        filename: clip.filename,
+        mimeType: clip.mimeType,
+      })
+
+      try {
+        const analysisMediaUrl = buildPublicBilibiliAnalysisMediaUrl(session.id)
+        const result = await analyzeVideoForRecreation(analysisMediaUrl, input.options)
+        results.push(result)
+      } finally {
+        try {
+          await deleteBilibiliAnalysisMediaSession(session.id)
+        } catch (cleanupError: unknown) {
+          logger.warn({
+            sessionId: session.id,
+            err: cleanupError instanceof Error
+              ? { name: cleanupError.name, message: cleanupError.message }
+              : { message: 'Unknown cleanup error' },
+          }, 'Failed to clean up Bilibili analysis media session after segmented recreation analysis')
+        }
+      }
+    }
+
+    return mergeSegmentedRecreationResults(results)
+  } finally {
+    await cleanupBilibiliMediaClips(clips)
+  }
+}
+
+export async function analyzeBilibiliVideoForRecreation(
+  proxyVideoUrl: string,
+  options: {
+    signal?: AbortSignal
+    analysisConfig?: VideoAnalysisRequestConfig
+    userId?: string
+  } = {},
+): Promise<VideoRecreationResult> {
+  throwIfAborted(options.signal)
+
+  const token = extractTokenFromProxyUrl(proxyVideoUrl)
+  const target = parseBilibiliProxyToken(token)
+  const durationSeconds = assertBilibiliAnalysisDuration(target.durationSeconds)
+
+  if (durationSeconds <= segmentedAnalysisClipDurationSeconds) {
+    if (target.kind === 'progressive') {
+      return analyzeVideoForRecreation(buildPublicBilibiliProxyUrl(token), options)
+    }
+
+    assertBilibiliAnalysisMediaPublicUrlAvailable()
+    throwIfAborted(options.signal)
+
+    const mediaFile = await prepareBilibiliMediaFile(target)
+    throwIfAborted(options.signal)
+    let analysisMediaSessionId: string | undefined
+
+    try {
+      const session = await createBilibiliAnalysisMediaSession({
+        filePath: mediaFile.filePath,
+        fileSize: mediaFile.fileSize,
+        filename: mediaFile.filename,
+        mimeType: mediaFile.mimeType,
+      })
+      analysisMediaSessionId = session.id
+
+      throwIfAborted(options.signal)
+
+      const analysisMediaUrl = buildPublicBilibiliAnalysisMediaUrl(session.id)
+      return await analyzeVideoForRecreation(analysisMediaUrl, options)
+    } catch (error: unknown) {
+      if (!analysisMediaSessionId) {
+        await cleanupBilibiliMediaFile(mediaFile.filePath)
+      }
+
+      throw error
+    } finally {
+      if (analysisMediaSessionId) {
+        try {
+          await deleteBilibiliAnalysisMediaSession(analysisMediaSessionId)
+        } catch (cleanupError: unknown) {
+          logger.warn({
+            sessionId: analysisMediaSessionId,
+            err: cleanupError instanceof Error
+              ? { name: cleanupError.name, message: cleanupError.message }
+              : { message: 'Unknown cleanup error' },
+          }, 'Failed to clean up Bilibili analysis media session after recreation analysis error')
+        }
+      }
+    }
+  }
+
+  assertBilibiliAnalysisMediaPublicUrlAvailable()
+  throwIfAborted(options.signal)
+
+  const mediaFile = await prepareBilibiliMediaFile(target)
+  throwIfAborted(options.signal)
+
+  try {
+    return await analyzeBilibiliSegmentedForRecreation({
       mediaFile,
       durationSeconds,
       signal: options.signal,

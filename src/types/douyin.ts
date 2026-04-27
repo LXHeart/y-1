@@ -5,8 +5,11 @@ export interface ApiResponse<T> {
 }
 
 export interface VideoAnalysisRequestConfig {
+  provider?: 'coze' | 'qwen'
   baseUrl?: string
   apiToken?: string
+  apiKey?: string
+  model?: string
 }
 
 export type DouyinFetchStage = 'page_json' | 'browser_json' | 'browser_network'
@@ -26,18 +29,7 @@ export interface ExtractedDouyinVideoPayload {
   fetchStage: DouyinFetchStage
 }
 
-export interface DouyinVideoAnalysisResult {
-  videoCaptions?: string
-  videoScript?: string
-  charactersDescription?: string
-  voiceDescription?: string
-  propsDescription?: string
-  sceneDescription?: string
-  runId?: string
-  segmented?: boolean
-  clipCount?: number
-  runIds?: string[]
-}
+export type DouyinVideoAnalysisResult = import('./video-recreation').VideoAnalysisResult
 
 export interface DouyinSessionState {
   status: 'missing' | 'launching' | 'qr_ready' | 'waiting_for_confirm' | 'authenticated' | 'expired' | 'error'

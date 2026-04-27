@@ -126,7 +126,7 @@ export async function deleteDouyinAnalysisMediaSessions(ids: string[]): Promise<
 
 export function buildPublicDouyinAnalysisMediaUrl(id: string): string {
   if (!env.PUBLIC_BACKEND_ORIGIN) {
-    throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，第三方分析服务无法访问分析视频文件地址', 500)
+    throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，当前大模型需要服务端可公网访问的分析视频地址', 500)
   }
 
   return `${env.PUBLIC_BACKEND_ORIGIN}/api/douyin/analysis-media/${encodeURIComponent(id)}`

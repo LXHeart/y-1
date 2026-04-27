@@ -70,7 +70,7 @@
           <div class="analysis-header-copy">
             <div>
               <p class="analysis-kicker">视频内容提取</p>
-              <h3 id="analysis-heading" class="analysis-title">结构化内容分析</h3>
+              <h3 id="analysis-heading" class="analysis-title">提取结果</h3>
             </div>
             <p class="analysis-hint">分析时会自动按最长 30 秒分段；30 秒到 2 分钟的视频通常效果最好，当前最多支持 10 分钟。</p>
           </div>
@@ -94,21 +94,21 @@
           <p>仅支持分析 10 分钟以内的抖音视频，分析时会自动按最长 30 秒分段，建议选择 30 秒到 2 分钟的视频。</p>
         </div>
 
-        <template v-else-if="analysisSections.length">
+        <template v-else-if="analysisHasContent">
           <div v-if="segmentedAnalysisHint" class="analysis-status analysis-status-info">
             <p>{{ segmentedAnalysisHint }}</p>
           </div>
 
           <div class="analysis-grid">
-            <article v-for="section in analysisSections" :key="section.title" class="analysis-card">
-              <p class="analysis-card-label">{{ section.title }}</p>
+            <article v-for="section in analysisSections" :key="section.key" class="analysis-card">
+              <p class="analysis-card-label">{{ section.label }}</p>
               <p class="analysis-card-copy">{{ section.content }}</p>
             </article>
           </div>
         </template>
 
         <div v-else class="analysis-status analysis-status-empty">
-          <p>点击“分析视频”后再提取结构化内容分析结果。</p>
+          <p>点击“分析视频”后先提取视频内容。</p>
         </div>
 
         <p v-if="analysisRunIdText" class="analysis-run-id">{{ analysisRunIdText }}</p>
@@ -120,11 +120,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DouyinVideoAnalysisResult, ExtractedDouyinVideoPayload } from '../types/douyin'
-
-interface AnalysisSection {
-  title: string
-  content: string
-}
 
 const maxAnalysisDurationSeconds = 10 * 60
 
@@ -202,6 +197,23 @@ const segmentedAnalysisHint = computed(() => {
   return `该结果由 ${props.analysis.clipCount} 个最长 30 秒的片段合并生成。`
 })
 
+const analysisSections = computed(() => {
+  if (!props.analysis) {
+    return []
+  }
+
+  return [
+    { key: 'videoCaptions', label: '字幕提取', content: props.analysis.videoCaptions },
+    { key: 'videoScript', label: '视频脚本', content: props.analysis.videoScript },
+    { key: 'charactersDescription', label: '人物描述', content: props.analysis.charactersDescription },
+    { key: 'sceneDescription', label: '场景描述', content: props.analysis.sceneDescription },
+    { key: 'propsDescription', label: '道具描述', content: props.analysis.propsDescription },
+    { key: 'voiceDescription', label: '音色描述', content: props.analysis.voiceDescription },
+  ].filter((section): section is { key: string, label: string, content: string } => Boolean(section.content?.trim()))
+})
+
+const analysisHasContent = computed(() => analysisSections.value.length > 0)
+
 const analysisRunIdText = computed(() => {
   if (props.analysis?.runId) {
     return `运行 ID：${props.analysis.runId}`
@@ -213,34 +225,10 @@ const analysisRunIdText = computed(() => {
 
   return ''
 })
-
-const analysisSections = computed<AnalysisSection[]>(() => {
-  const sections = [
-    { title: '视频脚本', content: props.analysis?.videoScript },
-    { title: '视频字幕', content: props.analysis?.videoCaptions },
-    { title: '人物描述', content: props.analysis?.charactersDescription },
-    { title: '场景描述', content: props.analysis?.sceneDescription },
-    { title: '道具描述', content: props.analysis?.propsDescription },
-    { title: '音色描述', content: props.analysis?.voiceDescription },
-  ]
-
-  return sections.flatMap((section) => {
-    if (!section.content) {
-      return []
-    }
-
-    return [{
-      title: section.title,
-      content: section.content,
-    }]
-  })
-})
 </script>
 
 <style scoped>
 .result-panel {
-  border-radius: var(--radius-lg);
-  padding: 24px;
   display: grid;
   gap: 20px;
 }
@@ -262,8 +250,8 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  border: 3px solid rgba(255,255,255,0.15);
-  border-top-color: var(--color-accent-2);
+  border: 3px solid rgba(255,255,255,0.12);
+  border-top-color: var(--color-accent);
   animation: spin 0.9s linear infinite;
 }
 
@@ -299,7 +287,7 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 
 .loading-title,
 .error-title {
-  font-size: 1.1rem;
+  font-size: 1.08rem;
   color: var(--color-text);
   font-weight: 700;
 }
@@ -317,10 +305,11 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 
 .eyebrow,
 .analysis-kicker {
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-text-muted);
+  font-weight: 600;
 }
 
 .result-header {
@@ -331,8 +320,8 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 }
 
 .result-title {
-  font-size: clamp(1.35rem, 1.1rem + 0.8vw, 1.9rem);
-  line-height: 1.15;
+  font-size: clamp(1.32rem, 1.1rem + 0.8vw, 1.85rem);
+  line-height: 1.12;
 }
 
 .result-copy {
@@ -351,18 +340,19 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-page);
 }
 
 .meta-list dt {
   margin: 0 0 4px;
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
 }
 
 .meta-list dd {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  color: var(--color-text);
 }
 
 .cover-image {
@@ -375,15 +365,22 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 
 .video-shell {
   overflow: hidden;
-  border-radius: 22px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(0,0,0,0.35);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background: #06080d;
 }
 
 .video-player {
   display: block;
   width: 100%;
   max-height: 72vh;
+}
+
+.result-notes {
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-page);
+  border: 1px solid var(--color-border);
 }
 
 .result-actions {
@@ -396,9 +393,9 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   display: grid;
   gap: 16px;
   padding: 18px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.03);
+  background: var(--surface-page);
 }
 
 .analysis-header {
@@ -414,7 +411,7 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 }
 
 .analysis-title {
-  font-size: 1.05rem;
+  font-size: 1.03rem;
   color: var(--color-text);
 }
 
@@ -422,9 +419,10 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   display: grid;
   gap: 10px;
   padding: 16px;
-  border-radius: 16px;
-  background: rgba(255,255,255,0.03);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
   color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
 }
 
 .analysis-status-loading {
@@ -433,22 +431,22 @@ const analysisSections = computed<AnalysisSection[]>(() => {
 }
 
 .analysis-status-error {
-  border: 1px solid rgba(255,107,107,0.35);
-  background: rgba(255,107,107,0.08);
+  border-color: rgba(239, 107, 107, 0.28);
+  background: rgba(239, 107, 107, 0.08);
 }
 
 .analysis-status-warning {
-  border: 1px solid rgba(255,184,77,0.35);
-  background: rgba(255,184,77,0.08);
+  border-color: rgba(255, 184, 77, 0.28);
+  background: rgba(255, 184, 77, 0.08);
 }
 
 .analysis-status-info {
-  border: 1px solid rgba(103,232,249,0.24);
-  background: rgba(103,232,249,0.08);
+  border-color: rgba(114, 132, 248, 0.22);
+  background: rgba(114, 132, 248, 0.08);
 }
 
 .analysis-status-empty {
-  border: 1px dashed var(--color-border);
+  border-style: dashed;
 }
 
 .analysis-status-title,
@@ -465,56 +463,74 @@ const analysisSections = computed<AnalysisSection[]>(() => {
   display: grid;
   gap: 8px;
   padding: 16px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-card);
 }
 
 .analysis-card-label {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--color-text-muted);
 }
 
-.analysis-card-copy {
-  line-height: 1.65;
+.analysis-card-copy,
+.analysis-run-id {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.analysis-card-copy {
+  line-height: 1.7;
   color: var(--color-text);
 }
 
 .analysis-run-id {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--color-text-muted);
 }
 
 .btn-primary,
 .btn-secondary {
-  min-height: 44px;
+  min-height: 42px;
   padding: 0 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   text-decoration: none;
   cursor: pointer;
-  transition: transform 150ms ease, opacity 150ms ease;
+  transition:
+    transform 150ms ease,
+    opacity 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 .btn-primary {
-  background: var(--gradient-accent);
+  background: var(--color-accent);
   color: white;
   font-weight: 700;
+  border: none;
 }
 
 .btn-secondary {
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-card);
   color: var(--color-text);
 }
 
 .btn-primary:hover,
 .btn-secondary:hover {
   transform: translateY(-1px);
+}
+
+.btn-primary:hover {
+  background: var(--color-accent-2);
+}
+
+.btn-secondary:hover {
+  border-color: var(--color-border-hover);
+  background: var(--color-surface-hover);
 }
 
 .btn-secondary:disabled {

@@ -4,6 +4,7 @@ import {
   downloadDouyinAudioHandler,
   downloadDouyinVideoHandler,
   extractDouyinVideoHandler,
+  getDouyinHotItemsHandler,
   getDouyinSessionHandler,
   logoutDouyinSessionHandler,
   pollDouyinSessionHandler,
@@ -14,6 +15,7 @@ import {
 
 const douyinRouter = Router()
 
+douyinRouter.get('/hot-items', getDouyinHotItemsHandler)
 douyinRouter.post('/extract-video', extractDouyinVideoHandler)
 douyinRouter.post('/analyze-video', analyzeDouyinVideoHandler)
 douyinRouter.get('/analysis-media/:id', serveDouyinAnalysisMediaHandler)

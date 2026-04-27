@@ -4,6 +4,7 @@ import type { IncomingHttpHeaders } from 'node:http'
 import type { NextFunction, Request, Response } from 'express'
 import { isAllowedDouyinVideoHost } from '../lib/douyin-hosts.js'
 import { AppError } from '../lib/errors.js'
+import { getSessionUser } from '../lib/auth.js'
 import { logger } from '../lib/logger.js'
 import {
   analysisDouyinMediaRequestParams,
@@ -22,6 +23,7 @@ import {
   startDouyinSession,
 } from '../services/douyin-session.service.js'
 import { analyzeDouyinVideoByProxyUrl } from '../services/douyin-video-analysis.service.js'
+import { loadDouyinHotItems } from '../services/douyin-hot.service.js'
 import { extractDouyinVideo } from '../services/douyin-video.service.js'
 
 export function isAllowedVideoHost(hostname: string): boolean {
@@ -350,10 +352,10 @@ export async function analyzeDouyinVideoHandler(req: Request, res: Response, nex
   res.once('close', abortAnalysis)
 
   try {
-    const { proxyVideoUrl, analysisConfig } = analyzeDouyinVideoRequest.parse(req.body)
+    const { proxyVideoUrl } = analyzeDouyinVideoRequest.parse(req.body)
     const data = await analyzeDouyinVideoByProxyUrl(proxyVideoUrl, {
       signal: abortController.signal,
-      analysisConfig,
+      userId: getSessionUser(req)?.id,
     })
 
     res.json({
@@ -467,6 +469,15 @@ export async function downloadDouyinAudioHandler(req: Request, res: Response, ne
       res.status(200)
       audioStream.pipe(res)
     })
+  } catch (error: unknown) {
+    next(error)
+  }
+}
+
+export async function getDouyinHotItemsHandler(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await loadDouyinHotItems()
+    res.json({ success: true, data })
   } catch (error: unknown) {
     next(error)
   }

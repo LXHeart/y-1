@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import type { ApiResponse, DouyinVideoAnalysisResult, VideoAnalysisRequestConfig } from '../types/douyin'
+import type { ApiResponse } from '../types/douyin'
+import type { VideoAnalysisResult } from '../types/video-recreation'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -26,45 +27,40 @@ function readOptionalStringArray(value: unknown): string[] | undefined {
   return normalizedValues.length ? normalizedValues : undefined
 }
 
-function normalizeDouyinVideoAnalysisResult(value: unknown): DouyinVideoAnalysisResult | null {
+function normalizeVideoAnalysisResult(value: unknown): VideoAnalysisResult | null {
   if (!isPlainObject(value)) {
     return null
   }
 
-  return {
-    videoCaptions: readOptionalString(value.videoCaptions),
-    videoScript: readOptionalString(value.videoScript),
-    charactersDescription: readOptionalString(value.charactersDescription),
-    voiceDescription: readOptionalString(value.voiceDescription),
-    propsDescription: readOptionalString(value.propsDescription),
-    sceneDescription: readOptionalString(value.sceneDescription),
-    runId: readOptionalString(value.runId),
+  const normalizedResult: VideoAnalysisResult = {
+    videoCaptions: readOptionalString(value.video_captions ?? value.videoCaptions),
+    videoScript: readOptionalString(value.video_script ?? value.videoScript),
+    charactersDescription: readOptionalString(value.characters_description ?? value.charactersDescription),
+    voiceDescription: readOptionalString(value.voice_description ?? value.voiceDescription),
+    propsDescription: readOptionalString(value.props_description ?? value.propsDescription),
+    sceneDescription: readOptionalString(value.scene_description ?? value.sceneDescription),
+    runId: readOptionalString(value.run_id ?? value.runId),
     segmented: value.segmented === true ? true : undefined,
-    clipCount: readOptionalPositiveInteger(value.clipCount),
-    runIds: readOptionalStringArray(value.runIds),
-  }
-}
-
-function normalizeAnalysisConfig(config: VideoAnalysisRequestConfig | undefined): VideoAnalysisRequestConfig | undefined {
-  if (!config) {
-    return undefined
+    clipCount: readOptionalPositiveInteger(value.clip_count ?? value.clipCount),
+    runIds: readOptionalStringArray(value.run_ids ?? value.runIds),
   }
 
-  const baseUrl = readOptionalString(config.baseUrl)
-  const apiToken = readOptionalString(config.apiToken)
-
-  if (!baseUrl && !apiToken) {
-    return undefined
+  if (
+    !normalizedResult.videoCaptions
+    && !normalizedResult.videoScript
+    && !normalizedResult.charactersDescription
+    && !normalizedResult.voiceDescription
+    && !normalizedResult.propsDescription
+    && !normalizedResult.sceneDescription
+  ) {
+    return null
   }
 
-  return {
-    baseUrl,
-    apiToken,
-  }
+  return normalizedResult
 }
 
 export function useDouyinVideoAnalysis() {
-  const analysis = ref<DouyinVideoAnalysisResult | null>(null)
+  const analysis = ref<VideoAnalysisResult | null>(null)
   const loading = ref(false)
   const error = ref('')
   let requestCounter = 0
@@ -72,10 +68,8 @@ export function useDouyinVideoAnalysis() {
 
   async function analyzeVideo(
     proxyVideoUrl: string,
-    analysisConfig?: VideoAnalysisRequestConfig,
-  ): Promise<DouyinVideoAnalysisResult | null> {
+  ): Promise<VideoAnalysisResult | null> {
     const normalizedProxyVideoUrl = proxyVideoUrl.trim()
-    const normalizedAnalysisConfig = normalizeAnalysisConfig(analysisConfig)
 
     if (!normalizedProxyVideoUrl) {
       analysis.value = null
@@ -100,7 +94,6 @@ export function useDouyinVideoAnalysis() {
         },
         body: JSON.stringify({
           proxyVideoUrl: normalizedProxyVideoUrl,
-          analysisConfig: normalizedAnalysisConfig,
         }),
         signal: controller.signal,
       })
@@ -112,7 +105,7 @@ export function useDouyinVideoAnalysis() {
       }
 
       const body = await response.json() as ApiResponse<unknown>
-      const normalizedData = normalizeDouyinVideoAnalysisResult(body.data)
+      const normalizedData = normalizeVideoAnalysisResult(body.data)
 
       if (!response.ok || !body.success || !normalizedData) {
         throw new Error(body.error || '视频内容提取失败，请稍后重试')

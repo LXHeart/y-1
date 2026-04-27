@@ -1,34 +1,6 @@
 import { env } from '../lib/env.js'
 import { z } from 'zod'
 
-function normalizeOptionalTrimmedString(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined
-  }
-
-  const trimmedValue = value.trim()
-  return trimmedValue || undefined
-}
-
-function validateHttpsUrl(value: string): boolean {
-  try {
-    return new URL(value).protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-const analysisConfigSchema = z.object({
-  baseUrl: z.string().optional().transform(normalizeOptionalTrimmedString).refine((value) => !value || validateHttpsUrl(value), '视频分析服务地址必须是有效的 HTTPS URL'),
-  apiToken: z.string().optional().transform(normalizeOptionalTrimmedString),
-}).transform((value) => {
-  if (!value.baseUrl && !value.apiToken) {
-    return undefined
-  }
-
-  return value
-})
-
 const allowedHosts = [
   'www.bilibili.com',
   'bilibili.com',
@@ -85,7 +57,6 @@ function isAllowedAnalyzeProxyUrl(value: string): boolean {
 
 export const analyzeBilibiliVideoRequest = z.object({
   proxyVideoUrl: z.string().trim().min(1, '缺少可分析的视频地址').refine(isAllowedAnalyzeProxyUrl, '视频代理地址无效'),
-  analysisConfig: analysisConfigSchema.optional(),
 })
 
 export const analysisBilibiliMediaRequestParams = z.object({

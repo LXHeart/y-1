@@ -71,6 +71,7 @@ const {
   assertAllowedVideoUrl,
   downloadDouyinVideoHandler,
   extractDouyinVideoHandler,
+  getDouyinHotItemsHandler,
   isAllowedVideoHost,
   proxyDouyinVideoHandler,
   resolveUpstreamRedirectUrl,
@@ -112,7 +113,23 @@ vi.mock('../services/douyin-proxy.service.js', async () => {
 
 vi.mock('../services/douyin-video-analysis.service.js', () => ({
   analyzeDouyinVideoByProxyUrl: vi.fn(async () => ({
+    videoCaptions: '字幕内容',
+    videoScript: '脚本内容',
+    sceneDescription: '场景内容',
     runId: 'douyin-analysis-run',
+  })),
+}))
+
+vi.mock('../services/douyin-hot.service.js', () => ({
+  loadDouyinHotItems: vi.fn(async () => ({
+    items: [{
+      rank: 1,
+      title: '热点 1',
+      hotValue: '9999',
+      url: 'https://www.douyin.com/hot/1',
+      cover: 'https://img.example.com/1.jpg',
+      source: '60sapi',
+    }],
   })),
 }))
 
@@ -140,6 +157,7 @@ vi.mock('../services/douyin-audio.service.js', () => ({
 const { extractDouyinVideo } = await import('../services/douyin-video.service.js')
 const { parseDouyinProxyToken } = await import('../services/douyin-proxy.service.js')
 const { analyzeDouyinVideoByProxyUrl } = await import('../services/douyin-video-analysis.service.js')
+const { loadDouyinHotItems } = await import('../services/douyin-hot.service.js')
 
 function createResponseMock() {
   const responseEmitter = new EventEmitter()
@@ -269,20 +287,26 @@ describe('analyzeDouyinVideoHandler', () => {
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       data: {
+        videoCaptions: '字幕内容',
+        videoScript: '脚本内容',
+        sceneDescription: '场景内容',
         runId: 'douyin-analysis-run',
       },
     })
     expect(next).not.toHaveBeenCalled()
   })
 
-  it('passes request-scoped analysis config to the service', async () => {
+  it('ignores request-scoped analysis config from public requests', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
       body: {
         proxyVideoUrl: '/api/douyin/proxy/token',
         analysisConfig: {
+          provider: 'qwen',
           baseUrl: 'https://custom.example.com/run',
           apiToken: 'request-token',
+          apiKey: 'request-key',
+          model: 'qwen-max',
         },
       },
       off: reqEmitter.off.bind(reqEmitter),
@@ -297,11 +321,11 @@ describe('analyzeDouyinVideoHandler', () => {
 
     expect(analyzeDouyinVideoByProxyUrl).toHaveBeenCalledWith('/api/douyin/proxy/token', {
       signal: expect.any(AbortSignal),
-      analysisConfig: {
-        baseUrl: 'https://custom.example.com/run',
-        apiToken: 'request-token',
-      },
     })
+    expect(analyzeDouyinVideoByProxyUrl).not.toHaveBeenCalledWith(
+      '/api/douyin/proxy/token',
+      expect.objectContaining({ analysisConfig: expect.anything() }),
+    )
   })
 
   it('rejects analyze requests with proxy urls from a different origin', async () => {
@@ -352,6 +376,46 @@ describe('analyzeDouyinVideoHandler', () => {
     vi.mocked(analyzeDouyinVideoByProxyUrl).mockRejectedValueOnce(error)
 
     await analyzeDouyinVideoHandler(req as never, res as never, next)
+
+    expect(res.json).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(error)
+  })
+})
+
+describe('getDouyinHotItemsHandler', () => {
+  it('returns normalized hot items as json', async () => {
+    const req = {}
+    const res = createResponseMock()
+    const next = vi.fn()
+
+    await getDouyinHotItemsHandler(req as never, res as never, next)
+
+    expect(loadDouyinHotItems).toHaveBeenCalledWith()
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      data: {
+        items: [{
+          rank: 1,
+          title: '热点 1',
+          hotValue: '9999',
+          url: 'https://www.douyin.com/hot/1',
+          cover: 'https://img.example.com/1.jpg',
+          source: '60sapi',
+        }],
+      },
+    })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('forwards hot item loading errors to next', async () => {
+    const req = {}
+    const res = createResponseMock()
+    const next = vi.fn()
+    const error = new Error('热点接口失败')
+
+    vi.mocked(loadDouyinHotItems).mockRejectedValueOnce(error)
+
+    await getDouyinHotItemsHandler(req as never, res as never, next)
 
     expect(res.json).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledWith(error)

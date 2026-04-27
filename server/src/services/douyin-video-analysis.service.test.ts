@@ -96,7 +96,7 @@ describe('analyzeDouyinVideoByProxyUrl', () => {
 
     if (!env.PUBLIC_BACKEND_ORIGIN) {
       await expect(analyzeDouyinVideoByProxyUrl(`/api/douyin/proxy/${encodeURIComponent(token)}`)).rejects.toThrow(
-        '未配置 PUBLIC_BACKEND_ORIGIN',
+        '未配置 PUBLIC_BACKEND_ORIGIN，当前大模型需要服务端可公网访问的视频代理地址',
       )
       expect(analyzeVideoContentMock).not.toHaveBeenCalled()
       return

@@ -167,7 +167,7 @@ export function buildDouyinAudioPath(token: string): string {
 
 export function buildPublicDouyinProxyUrl(token: string): string {
   if (!env.PUBLIC_BACKEND_ORIGIN) {
-    throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，第三方分析服务无法访问视频代理地址', 500)
+    throw new AppError('未配置 PUBLIC_BACKEND_ORIGIN，当前大模型需要服务端可公网访问的视频代理地址', 500)
   }
 
   return `${env.PUBLIC_BACKEND_ORIGIN}${buildDouyinProxyPath(token)}`

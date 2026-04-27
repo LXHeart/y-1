@@ -5,8 +5,11 @@ export interface ApiResponse<T> {
 }
 
 export interface VideoAnalysisRequestConfig {
+  provider?: 'coze' | 'qwen'
   baseUrl?: string
   apiToken?: string
+  apiKey?: string
+  model?: string
 }
 
 export type BilibiliPlaybackMode = 'progressive' | 'dash'
@@ -24,15 +27,4 @@ export interface ExtractedBilibiliVideoPayload {
   playbackMode: BilibiliPlaybackMode
 }
 
-export interface BilibiliVideoAnalysisResult {
-  videoCaptions?: string
-  videoScript?: string
-  charactersDescription?: string
-  voiceDescription?: string
-  propsDescription?: string
-  sceneDescription?: string
-  runId?: string
-  segmented?: boolean
-  clipCount?: number
-  runIds?: string[]
-}
+export type BilibiliVideoAnalysisResult = import('./video-recreation').VideoAnalysisResult

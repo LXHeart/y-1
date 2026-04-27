@@ -1,651 +1,629 @@
 <template>
   <div class="app-shell">
     <header class="page-header">
-      <div class="brand">
-        <p class="brand-kicker">Video Extractor</p>
-        <h1 class="brand-title">粘贴抖音或 B 站分享文本，直接预览并下载视频</h1>
-      </div>
-      <p class="brand-copy">
-        抖音支持匿名提取与登录增强；B 站支持单流直连，也支持 DASH 音视频分离资源由后端合成为完整 MP4 后预览和下载。
-      </p>
-    </header>
-
-    <main class="layout">
-      <section class="input-column">
-        <article class="editor-card glass-card">
-          <header class="card-head">
-            <p class="eyebrow">平台</p>
-            <div class="platform-switch" role="tablist" aria-label="视频平台选择">
-              <button
-                class="platform-tab"
-                :class="{ 'platform-tab-active': activePlatform === 'douyin' }"
-                :aria-selected="activePlatform === 'douyin'"
-                type="button"
-                @click="handleSwitchPlatform('douyin')"
-              >
-                抖音
-              </button>
-              <button
-                class="platform-tab"
-                :class="{ 'platform-tab-active': activePlatform === 'bilibili' }"
-                :aria-selected="activePlatform === 'bilibili'"
-                type="button"
-                @click="handleSwitchPlatform('bilibili')"
-              >
-                B 站
-              </button>
-            </div>
-            <h2 class="card-title">{{ inputTitle }}</h2>
-          </header>
-
-          <label class="field-label" for="video-input">{{ inputLabel }}</label>
-          <textarea
-            id="video-input"
-            v-model="videoInput"
-            class="input-area"
-            rows="7"
-            :placeholder="inputPlaceholder"
-            :disabled="isCurrentPlatformParseLoading"
-          />
-
-          <p class="field-note">
-            {{ inputNote }}
-          </p>
-
-          <div class="action-row">
-            <button
-              class="btn-primary"
-              :disabled="isCurrentPlatformParseLoading || !videoInput.trim()"
-              @click="handleExtractVideo"
-            >
-              {{ isCurrentPlatformParseLoading ? '提取中…' : '提取视频' }}
-            </button>
-            <button class="btn-secondary" :disabled="isCurrentPlatformParseLoading" @click="handleReset">
-              清空
-            </button>
+      <div class="header-row">
+        <div class="brand">
+          <span class="brand-dot" aria-hidden="true"></span>
+          <div class="brand-copy">
+            <h1 class="brand-title">Extractor</h1>
+            <p class="brand-subtitle">视频提取、图片评价与文章创作工作台</p>
           </div>
+        </div>
+
+        <div class="header-actions">
+          <button class="theme-toggle" type="button" :title="themeToggleTitle" @click="cycleTheme">
+            <svg v-if="themeMode === 'light'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <svg v-else-if="themeMode === 'dark'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M13.5 9.2A6 6 0 016.8 2.5 6 6 0 108 14a6 6 0 005.5-4.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="2.5" y="3" width="11" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M8 3v10" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M8 3c2.5 0 4.5 2.2 4.5 5s-2 5-4.5 5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+            </svg>
+          </button>
+
+          <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite">
+            <span class="auth-pill-label">已登录</span>
+            <strong class="auth-pill-name">{{ currentUser.displayName || currentUser.email }}</strong>
+          </div>
+
+          <button v-if="isAuthenticated" class="settings-trigger" type="button" @click="handleOpenSettings">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6.5 1.5l.7 2.1a4.5 4.5 0 012.6 0l.7-2.1M3.2 3.2l1.8 1.3a4.5 4.5 0 010 2.6L3.2 8.8M6.5 14.5l.7-2.1a4.5 4.5 0 002.6 0l.7 2.1M12.8 8.8l-1.8-1.3a4.5 4.5 0 000-2.6l1.8-1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+            </svg>
+            <span>设置</span>
+          </button>
 
           <button
-            v-if="activePlatform === 'douyin'"
-            class="toggle-link"
-            :disabled="parseLoading"
-            @click="showSessionPanel = !showSessionPanel"
+            v-if="isAuthenticated"
+            class="auth-trigger auth-trigger-secondary"
+            type="button"
+            :disabled="loggingOut"
+            @click="handleLogout"
           >
-            {{ showSessionPanel ? '收起登录增强' : '抖音解析失败时再尝试登录增强' }}
+            {{ loggingOut ? '退出中…' : '退出登录' }}
           </button>
-        </article>
+          <button v-else class="auth-trigger auth-trigger-primary" type="button" @click="openLoginModal()">
+            登录
+          </button>
+        </div>
+      </div>
 
-        <section class="analysis-config-panel glass-card">
-          <header class="analysis-config-header">
-            <div>
-              <p class="eyebrow">分析服务</p>
-              <h2 class="analysis-config-title">页面配置</h2>
-            </div>
-            <button class="toggle-link" type="button" @click="showAnalysisConfigPanel = !showAnalysisConfigPanel">
-              {{ showAnalysisConfigPanel ? '收起配置' : '打开配置' }}
-            </button>
-          </header>
+      <p v-if="authBannerMessage" class="auth-banner">{{ authBannerMessage }}</p>
 
-          <p class="analysis-config-copy">
-            分析服务 URL 和 API Token 只会在点击“分析视频”时提交给当前后端，由后端再去请求第三方分析服务。
-          </p>
+      <nav class="nav-tabs" role="tablist" aria-label="功能选择">
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'home' }"
+          :aria-selected="currentView === 'home'"
+          type="button"
+          @click="currentView = 'home'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 7.2L8 2l6 5.2v6.1a1.2 1.2 0 01-1.2 1.2H9.7V10H6.3v4.5H3.2A1.2 1.2 0 012 13.3V7.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+          </svg>
+          首页
+        </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'video' }"
+          :aria-selected="currentView === 'video'"
+          type="button"
+          @click="currentView = 'video'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.5" y="3" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M6.5 6.5l3.5 1.5-3.5 1.5V6.5z" fill="currentColor"/>
+          </svg>
+          视频提取分析
+        </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'image' }"
+          :aria-selected="currentView === 'image'"
+          type="button"
+          @click="currentView = 'image'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/>
+            <circle cx="5.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M2 11l3-3 2 2 2.5-2.5L14 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          图片评价文案
+        </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'article' }"
+          :aria-selected="currentView === 'article'"
+          type="button"
+          @click="currentView = 'article'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 2h7.5l3 3v8.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 011 13.5v-10A1.5 1.5 0 012.5 2z" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M5 7.5h6M5 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          爆款文章
+        </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'image-gen' }"
+          :aria-selected="currentView === 'image-gen'"
+          type="button"
+          @click="currentView = 'image-gen'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M5.5 2h5a1 1 0 011 1v1.5H13a1 1 0 011 1V13a1 1 0 01-1 1H3a1 1 0 01-1-1V5.5a1 1 0 011-1h1.5V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <circle cx="8" cy="8.5" r="2" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M5.5 2v2.5M10.5 2v2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          图片生成
+        </button>
+      </nav>
+    </header>
 
-          <div v-if="showAnalysisConfigPanel" class="analysis-config-body">
-            <label class="field-label" for="analysis-base-url">分析服务 URL</label>
-            <input
-              id="analysis-base-url"
-              v-model="analysisBaseUrl"
-              class="input-field"
-              type="url"
-              inputmode="url"
-              placeholder="https://example.com/run"
-              autocomplete="off"
-              spellcheck="false"
-            >
-
-            <label class="field-label" for="analysis-api-token">API Token</label>
-            <div class="token-row">
-              <input
-                id="analysis-api-token"
-                v-model="analysisApiToken"
-                class="input-field"
-                :type="showAnalysisApiToken ? 'text' : 'password'"
-                placeholder="可选：覆盖服务端默认 Token"
-                autocomplete="off"
-                spellcheck="false"
-              >
-              <button class="btn-secondary" type="button" @click="showAnalysisApiToken = !showAnalysisApiToken">
-                {{ showAnalysisApiToken ? '隐藏' : '显示' }}
-              </button>
-            </div>
-
-            <p class="field-note">
-              留空时继续使用服务端默认配置；浏览器不会直接请求第三方分析接口。
-            </p>
-
-            <div class="action-row">
-              <button class="btn-secondary" type="button" @click="handleResetAnalysisConfig">
-                清空配置
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <DouyinSessionPanel
-          v-if="activePlatform === 'douyin' && showSessionPanel"
-          :session="douyinSession"
-          :loading="sessionLoading"
-          :error="sessionError"
-          @start="startDouyinSession"
-          @refresh="refreshDouyinSession"
-          @logout="logoutDouyinSession"
-        />
-      </section>
-
-      <section class="preview-column">
-        <DouyinParsePanel
-          v-if="activePlatform === 'douyin'"
-          :extracted-video="extractedVideo"
-          :loading="parseLoading"
-          :error="parseError"
-          :analysis="videoAnalysis"
-          :analysis-loading="analysisLoading"
-          :analysis-error="analysisError"
-          @retry="handleExtractDouyinVideo"
-          @retry-analysis="handleRetryDouyinAnalysis"
-        />
-
-        <BilibiliParsePanel
-          v-else
-          :extracted-video="bilibiliExtractedVideo"
-          :loading="bilibiliParseLoading"
-          :error="bilibiliParseError"
-          :analysis="bilibiliVideoAnalysis"
-          :analysis-loading="bilibiliAnalysisLoading"
-          :analysis-error="bilibiliAnalysisError"
-          @retry="handleExtractBilibiliVideo"
-          @retry-analysis="handleRetryBilibiliAnalysis"
-        />
-
-        <section v-if="showEmptyState" class="empty-card glass-card">
-          <p class="empty-kicker">准备就绪</p>
-          <h2 class="empty-title">{{ emptyTitle }}</h2>
-          <p class="empty-copy">
-            {{ emptyCopy }}
-          </p>
-        </section>
-      </section>
+    <main class="view-area">
+      <KeepAlive>
+        <component :is="currentViewComponent" @open-view="handleOpenView" @create-article="handleCreateArticleFromTopic" />
+      </KeepAlive>
     </main>
+
+    <AnalysisSettingsModal
+      :visible="showSettingsModal"
+      :settings="analysisSettings"
+      :saving="settingsSaving"
+      :error="showSettingsModal ? (settingsSaveError || settingsLoadError) : ''"
+      :feature-model-states="featureModelStates"
+      :homepage-settings="homepageSettings"
+      :homepage-saving="homepageSaving"
+      :homepage-error="showSettingsModal ? (homepageSaveError || homepageLoadError) : ''"
+      @close="showSettingsModal = false"
+      @save="handleSaveSettings"
+      @fetch-models="handleFetchModels"
+      @verify-model="handleVerifyModel"
+    />
+
+    <LoginModal
+      :visible="showLoginModal"
+      :submitting="loggingIn || registering"
+      :error="loginError || registerError || sendCodeError"
+      :message="loginModalMessage"
+      @close="closeLoginModal"
+      @submit="handleLogin"
+      @register="handleRegister"
+      @send-code="handleSendCode"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import type { VideoAnalysisRequestConfig as BilibiliVideoAnalysisRequestConfig } from './types/bilibili'
-import type { VideoAnalysisRequestConfig as DouyinVideoAnalysisRequestConfig } from './types/douyin'
-import BilibiliParsePanel from './components/BilibiliParsePanel.vue'
-import DouyinParsePanel from './components/DouyinParsePanel.vue'
-import DouyinSessionPanel from './components/DouyinSessionPanel.vue'
-import { useBilibiliParse } from './composables/useBilibiliParse'
-import { useBilibiliVideoAnalysis } from './composables/useBilibiliVideoAnalysis'
-import { useDouyinParse } from './composables/useDouyinParse'
-import { useDouyinSession } from './composables/useDouyinSession'
-import { useDouyinVideoAnalysis } from './composables/useDouyinVideoAnalysis'
+import { computed, onMounted, provide, ref, watch, type Component } from 'vue'
+import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
+import ArticleCreationView from './components/ArticleCreationView.vue'
+import HomeView from './components/HomeView.vue'
+import ImageAnalysisView from './components/ImageAnalysisView.vue'
+import ImageGenerationView from './components/ImageGenerationView.vue'
+import LoginModal from './components/LoginModal.vue'
+import VideoAnalysisView from './components/VideoAnalysisView.vue'
+import { useAnalysisSettings } from './composables/useAnalysisSettings'
+import { useAuth } from './composables/useAuth'
+import { useHomepageSettings } from './composables/useHomepageSettings'
+import { useTheme, type ThemeMode } from './composables/useTheme'
+import type { LoginFormValues, RegisterFormValues } from './types/auth'
+import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-const autoOpenSessionErrorPatterns = [
-  '校验',
-  '验证码',
-  '验证',
-  'challenge',
-  'captcha',
-  '扫码',
-  '登录',
-  'session',
-]
+type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen'
+type HomeFeatureView = Exclude<AppView, 'home'>
 
-type SupportedPlatform = 'douyin' | 'bilibili'
-type SharedVideoAnalysisRequestConfig = DouyinVideoAnalysisRequestConfig & BilibiliVideoAnalysisRequestConfig
-
-function shouldAutoOpenSessionPanel(errorMessage: string): boolean {
-  const normalizedError = errorMessage.toLowerCase()
-  return autoOpenSessionErrorPatterns.some((pattern) => normalizedError.includes(pattern))
-}
-
-const inputTitleByPlatform: Record<SupportedPlatform, string> = {
-  douyin: '抖音分享文本或链接',
-  bilibili: 'B 站分享文本或链接',
-}
-
-const inputLabelByPlatform: Record<SupportedPlatform, string> = {
-  douyin: '把抖音 App 复制出来的整段分享文本贴进来',
-  bilibili: '把 B 站 App 或网页复制出来的分享文本贴进来',
-}
-
-const inputPlaceholderByPlatform: Record<SupportedPlatform, string> = {
-  douyin: '例如：7.54 复制打开抖音 https://v.douyin.com/xxxx/',
-  bilibili: '例如：https://www.bilibili.com/video/BV1xxxxxxxxx',
-}
-
-const inputNoteByPlatform: Record<SupportedPlatform, string> = {
-  douyin: '预览和下载都由后端代理处理，避免浏览器直接暴露真实视频地址。',
-  bilibili: '预览和下载都走后端代理；当前已支持 B 站单流直连与 DASH 音视频分离资源合成为完整 MP4。',
-}
-
-const emptyTitleByPlatform: Record<SupportedPlatform, string> = {
-  douyin: '右侧会出现视频预览',
-  bilibili: '右侧会出现 B 站视频预览',
-}
-
-const emptyCopyByPlatform: Record<SupportedPlatform, string> = {
-  douyin: '提取成功后，你可以直接在页面里播放视频、下载 mp4，或者进一步提取 mp3 音频。',
-  bilibili: '提取成功后，你可以直接在页面里播放视频或下载 mp4；DASH 双轨样本会由后端自动合成为完整 MP4。',
-}
-
-const activePlatform = ref<SupportedPlatform>('douyin')
-const videoInput = ref('')
-const showSessionPanel = ref(false)
-const showAnalysisConfigPanel = ref(false)
-const showAnalysisApiToken = ref(false)
-const analysisBaseUrl = ref('')
-const analysisApiToken = ref('')
+const currentView = ref<AppView>('home')
+const articleInitialTopic = ref('')
+const showSettingsModal = ref(false)
+const showLoginModal = ref(false)
+const loginModalMessage = ref('')
+const authBannerMessage = ref('')
 
 const {
-  extractedVideo,
-  loading: parseLoading,
-  error: parseError,
-  extractVideo,
-  reset: resetParse,
-} = useDouyinParse()
+  currentUser,
+  isAuthenticated,
+  loaded: authLoaded,
+  loggingIn,
+  registering,
+  loggingOut,
+  loginError,
+  registerError,
+  logoutError,
+  loadError: authLoadError,
+  clearLoginError,
+  clearRegisterError,
+  clearLogoutError,
+  sendVerificationCode,
+  clearSendCodeError,
+  sendCodeError,
+  loadCurrentUser,
+  login,
+  register,
+  logout,
+} = useAuth()
 
 const {
-  analysis: videoAnalysis,
-  loading: analysisLoading,
-  error: analysisError,
-  analyzeVideo,
-  reset: resetAnalysis,
-} = useDouyinVideoAnalysis()
+  settings: analysisSettings,
+  loaded: settingsLoaded,
+  saving: settingsSaving,
+  error: settingsLoadError,
+  saveError: settingsSaveError,
+  loadSettings,
+  saveSettings,
+  featureModelStates,
+  fetchModels: fetchModelsAction,
+  verifyModel: verifyModelAction,
+  clearModelState,
+} = useAnalysisSettings()
 
 const {
-  extractedVideo: bilibiliExtractedVideo,
-  loading: bilibiliParseLoading,
-  error: bilibiliParseError,
-  extractVideo: extractBilibiliVideo,
-  reset: resetBilibiliParse,
-} = useBilibiliParse()
+  settings: homepageSettings,
+  loaded: homepageSettingsLoaded,
+  saving: homepageSaving,
+  error: homepageLoadError,
+  saveError: homepageSaveError,
+  loadSettings: loadHomepageSettingsAction,
+  saveSettings: saveHomepageSettingsAction,
+} = useHomepageSettings()
 
-const {
-  analysis: bilibiliVideoAnalysis,
-  loading: bilibiliAnalysisLoading,
-  error: bilibiliAnalysisError,
-  analyzeVideo: analyzeBilibiliVideo,
-  reset: resetBilibiliAnalysis,
-} = useBilibiliVideoAnalysis()
+const { mode: themeMode, resolvedTheme, setMode: setThemeMode } = useTheme()
 
-const {
-  state: douyinSession,
-  loading: sessionLoading,
-  error: sessionError,
-  refresh: refreshDouyinSession,
-  start: startDouyinSession,
-  logout: logoutDouyinSession,
-} = useDouyinSession()
+function cycleTheme(): void {
+  const order: ThemeMode[] = ['light', 'dark', 'system']
+  const currentIndex = order.indexOf(themeMode.value)
+  setThemeMode(order[(currentIndex + 1) % order.length])
+}
 
-const isCurrentPlatformParseLoading = computed(() => {
-  return activePlatform.value === 'douyin' ? parseLoading.value : bilibiliParseLoading.value
-})
-
-const showEmptyState = computed(() => {
-  if (activePlatform.value === 'douyin') {
-    return !parseLoading.value && !parseError.value && !extractedVideo.value
+watch(showSettingsModal, (visible) => {
+  if (!visible) {
+    clearModelState()
+    return
   }
 
-  return !bilibiliParseLoading.value && !bilibiliParseError.value && !bilibiliExtractedVideo.value
-})
-
-const inputTitle = computed(() => inputTitleByPlatform[activePlatform.value])
-
-const inputLabel = computed(() => inputLabelByPlatform[activePlatform.value])
-
-const inputPlaceholder = computed(() => inputPlaceholderByPlatform[activePlatform.value])
-
-const inputNote = computed(() => inputNoteByPlatform[activePlatform.value])
-
-const emptyTitle = computed(() => emptyTitleByPlatform[activePlatform.value])
-
-const emptyCopy = computed(() => emptyCopyByPlatform[activePlatform.value])
-
-const currentAnalysisConfig = computed<SharedVideoAnalysisRequestConfig | undefined>(() => {
-  const baseUrl = analysisBaseUrl.value.trim()
-  const apiToken = analysisApiToken.value.trim()
-
-  if (!baseUrl && !apiToken) {
-    return undefined
+  if (!settingsLoaded.value) {
+    void loadSettings()
   }
 
-  return {
-    baseUrl: baseUrl || undefined,
-    apiToken: apiToken || undefined,
+  if (!homepageSettingsLoaded.value) {
+    void loadHomepageSettingsAction()
   }
+}, { immediate: true })
+
+watch(authLoadError, (message) => {
+  if (!message) {
+    return
+  }
+
+  authBannerMessage.value = message
 })
 
 onMounted(() => {
-  void refreshDouyinSession()
+  void loadCurrentUser()
 })
 
-async function handleRetryDouyinAnalysis(): Promise<void> {
-  const proxyVideoUrl = extractedVideo.value?.proxyVideoUrl
-  if (!proxyVideoUrl) {
+async function handleSaveSettings(newSettings: AnalysisSettings, newHomepageSettings: HomepageSettings): Promise<void> {
+  const [analysisOk, homepageOk] = await Promise.all([
+    saveSettings(newSettings),
+    saveHomepageSettingsAction(newHomepageSettings),
+  ])
+
+  if (analysisOk && homepageOk) {
+    showSettingsModal.value = false
+  }
+}
+
+function handleFetchModels(feature: AnalysisFeature, provider: AnalysisProvider | undefined, settings: AnalysisSettings): void {
+  void fetchModelsAction(feature, provider, settings)
+}
+
+const viewComponentMap: Record<AppView, Component> = {
+  home: HomeView,
+  video: VideoAnalysisView,
+  image: ImageAnalysisView,
+  article: ArticleCreationView,
+  'image-gen': ImageGenerationView,
+}
+
+const currentViewComponent = computed(() => viewComponentMap[currentView.value])
+
+const themeToggleTitle = computed(() => {
+  if (themeMode.value === 'light') return '浅色模式 — 点击切换'
+  if (themeMode.value === 'dark') return '深色模式 — 点击切换'
+  return '跟随系统 — 点击切换'
+})
+
+function handleOpenView(view: HomeFeatureView): void {
+  currentView.value = view
+}
+
+function handleCreateArticleFromTopic(topic: string): void {
+  articleInitialTopic.value = topic
+  currentView.value = 'article'
+}
+
+provide('articleInitialTopic', articleInitialTopic)
+
+function handleVerifyModel(
+  feature: AnalysisFeature,
+  provider: AnalysisProvider | undefined,
+  model: string,
+  settings: AnalysisSettings,
+): void {
+  void verifyModelAction(feature, provider, model, settings)
+}
+
+function openLoginModal(message = ''): void {
+  clearLoginError()
+  clearRegisterError()
+  clearLogoutError()
+  loginModalMessage.value = message
+  showLoginModal.value = true
+}
+
+function closeLoginModal(): void {
+  clearLoginError()
+  clearRegisterError()
+  showLoginModal.value = false
+  loginModalMessage.value = ''
+}
+
+async function handleLogin(values: LoginFormValues): Promise<void> {
+  const ok = await login(values)
+  if (!ok) {
     return
   }
 
-  await analyzeVideo(proxyVideoUrl, currentAnalysisConfig.value)
+  closeLoginModal()
+  authBannerMessage.value = '已登录，现在可以打开设置管理你的专属配置。'
 }
 
-async function handleRetryBilibiliAnalysis(): Promise<void> {
-  const proxyVideoUrl = bilibiliExtractedVideo.value?.proxyVideoUrl
-  if (!proxyVideoUrl) {
+async function handleRegister(values: RegisterFormValues): Promise<void> {
+  const ok = await register(values)
+  if (!ok) {
     return
   }
 
-  await analyzeBilibiliVideo(proxyVideoUrl, currentAnalysisConfig.value)
+  closeLoginModal()
+  authBannerMessage.value = '注册成功，现在可以打开设置管理你的专属配置。'
 }
 
-async function handleExtractDouyinVideo(): Promise<void> {
-  resetAnalysis()
+async function handleSendCode(email: string, captchaCode: string): Promise<void> {
+  clearSendCodeError()
+  await sendVerificationCode(email, captchaCode)
+}
 
-  const data = await extractVideo(videoInput.value)
-  if (!data) {
-    showSessionPanel.value = shouldAutoOpenSessionPanel(parseError.value)
+async function handleLogout(): Promise<void> {
+  clearLogoutError()
+  const ok = await logout()
+  if (!ok) {
+    authBannerMessage.value = logoutError.value || '退出登录失败，请稍后重试。'
     return
   }
 
-  showSessionPanel.value = false
+  showSettingsModal.value = false
+  authBannerMessage.value = '你已退出登录。'
 }
 
-async function handleExtractBilibiliVideo(): Promise<void> {
-  resetBilibiliAnalysis()
-  await extractBilibiliVideo(videoInput.value)
-}
+async function handleOpenSettings(): Promise<void> {
+  const authOk = await loadCurrentUser(true)
 
-async function handleExtractVideo(): Promise<void> {
-  if (activePlatform.value === 'douyin') {
-    await handleExtractDouyinVideo()
+  if (!authOk && authLoadError.value) {
+    authBannerMessage.value = authLoadError.value
     return
   }
 
-  await handleExtractBilibiliVideo()
-}
+  if (!isAuthenticated.value) {
+    openLoginModal('设置、模型和密钥已改为按账号隔离保存，请先登录。')
+    return
+  }
 
-function handleResetAnalysisConfig(): void {
-  analysisBaseUrl.value = ''
-  analysisApiToken.value = ''
-  showAnalysisApiToken.value = false
-}
+  authBannerMessage.value = ''
 
-function handleSwitchPlatform(platform: SupportedPlatform): void {
-  activePlatform.value = platform
-  videoInput.value = ''
-  showSessionPanel.value = false
-  resetAnalysis()
-  resetBilibiliAnalysis()
-  resetParse()
-  resetBilibiliParse()
-}
+  await Promise.all([
+    settingsLoaded.value ? Promise.resolve() : loadSettings(),
+    homepageSettingsLoaded.value ? Promise.resolve() : loadHomepageSettingsAction(),
+  ])
 
-function handleReset(): void {
-  videoInput.value = ''
-  showSessionPanel.value = false
-  resetAnalysis()
-  resetBilibiliAnalysis()
-  resetParse()
-  resetBilibiliParse()
+  showSettingsModal.value = true
 }
 </script>
 
 <style scoped>
 .app-shell {
-  width: min(1280px, calc(100% - 32px));
+  position: relative;
+  z-index: 1;
+  width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
-  padding: var(--space-page) 0 48px;
+  padding: clamp(20px, 3vw, 32px) 0 72px;
 }
 
 .page-header {
   display: grid;
-  gap: 18px;
-  margin-bottom: 28px;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg);
 }
 
 .brand {
-  display: grid;
+  display: flex;
+  align-items: flex-start;
   gap: 12px;
+  min-width: 0;
 }
 
-.brand-kicker,
-.eyebrow,
-.empty-kicker {
-  margin: 0;
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
+.brand-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  flex-shrink: 0;
 }
 
-.brand-title,
-.card-title,
-.empty-title {
-  margin: 0;
-  line-height: 1.05;
+.brand-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .brand-title {
-  max-width: 13ch;
-  font-size: clamp(2.5rem, 1.5rem + 4vw, 5.2rem);
-}
-
-.brand-copy,
-.field-note,
-.empty-copy {
   margin: 0;
-  max-width: 60ch;
-  color: var(--color-text-secondary);
-  font-size: 1rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
 }
 
-.layout {
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: 22px;
-  align-items: start;
+.brand-subtitle {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
 }
 
-.input-column,
-.preview-column {
-  display: grid;
-  gap: 18px;
-}
-
-.input-column {
-  position: sticky;
-  top: 20px;
-}
-
-.analysis-config-panel {
-  border-radius: var(--radius-md);
-  padding: 20px;
-  display: grid;
-  gap: 16px;
-}
-
-.analysis-config-header {
+.header-actions {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.analysis-config-title {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-.analysis-config-copy {
-  margin: 0;
-  color: var(--color-text-secondary);
-}
-
-.analysis-config-body {
-  display: grid;
-  gap: 12px;
-}
-
-.token-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-
-.editor-card {
-  display: grid;
-  gap: 16px;
-}
-
-.card-head {
-  display: grid;
-  gap: 12px;
-}
-
-.platform-switch {
+.auth-pill {
   display: inline-flex;
-  width: fit-content;
+  align-items: center;
   gap: 8px;
-  padding: 6px;
+  min-height: 40px;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-page);
 }
 
-.platform-tab {
-  min-height: 38px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: transform 150ms ease, background 150ms ease, color 150ms ease;
-}
-
-.platform-tab:hover {
-  transform: translateY(-1px);
-}
-
-.platform-tab-active {
-  background: rgba(255,255,255,0.1);
-  color: var(--color-text);
-  font-weight: 700;
-}
-
-.card-title,
-.empty-title {
-  font-size: 1.32rem;
-}
-
-.field-label {
-  font-size: 0.92rem;
-  color: var(--color-text);
+.auth-pill-label {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
   font-weight: 600;
 }
 
-.input-area,
-.input-field {
-  width: 100%;
-  resize: vertical;
-  min-height: 160px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.05);
+.auth-pill-name {
   color: var(--color-text);
-  outline: none;
-  transition: border-color 160ms ease, background 160ms ease;
+  font-size: 0.84rem;
 }
 
-.input-field {
-  min-height: 0;
-}
-
-.input-area:focus,
-.input-field:focus {
-  border-color: rgba(139,92,246,0.6);
-  background: rgba(255,255,255,0.08);
-}
-
-.action-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.btn-primary,
-.btn-secondary,
-.toggle-link {
-  border: none;
-  cursor: pointer;
-}
-
-.btn-primary,
-.btn-secondary {
-  min-height: 44px;
-  padding: 0 18px;
-  border-radius: 999px;
+.settings-trigger,
+.auth-trigger,
+.theme-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  text-decoration: none;
-  transition: transform 150ms ease, opacity 150ms ease;
-}
-
-.btn-primary {
-  background: var(--gradient-accent);
-  color: white;
-  font-weight: 700;
-}
-
-.btn-secondary {
-  background: rgba(255,255,255,0.05);
+  gap: var(--space-xs);
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  color: var(--color-text);
+  background: var(--surface-card);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.btn-primary:hover,
-.btn-secondary:hover,
-.toggle-link:hover {
+.theme-toggle {
+  width: 40px;
+  padding: 0;
+}
+
+.settings-trigger:hover,
+.auth-trigger:hover,
+.theme-toggle:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
   transform: translateY(-1px);
 }
 
-.toggle-link {
-  background: transparent;
+.auth-trigger-primary {
+  background: var(--color-accent);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.auth-trigger-primary:hover {
+  background: var(--color-accent-2);
+  color: #ffffff;
+}
+
+.auth-banner {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-highlight);
   color: var(--color-text-secondary);
-  padding: 0;
-  justify-self: start;
+  font-size: 0.88rem;
+  animation: fade-in var(--duration-normal) var(--ease-out);
 }
 
-.empty-card {
-  min-height: 320px;
-  display: grid;
-  align-content: center;
-  gap: 12px;
+.nav-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-page);
+  border: 1px solid var(--color-border);
+  width: fit-content;
 }
 
-@media (max-width: 980px) {
-  .layout {
-    grid-template-columns: 1fr;
+.nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 16px;
+  border: none;
+  border-radius: calc(var(--radius-lg) - 6px);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.nav-tab:hover {
+  color: var(--color-text-secondary);
+  background: var(--surface-hover);
+}
+
+.nav-tab-active {
+  background: var(--surface-card);
+  color: var(--color-text);
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+}
+
+.view-area {
+  animation: fade-in var(--duration-normal) var(--ease-out);
+}
+
+@media (max-width: 900px) {
+  .header-row {
+    flex-direction: column;
+    gap: var(--space-md);
   }
 
-  .input-column {
-    position: static;
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .nav-tabs {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-shell {
+    width: min(100%, calc(100% - 24px));
+  }
+
+  .brand-subtitle {
+    font-size: 0.82rem;
+  }
+
+  .auth-pill {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 </style>
-

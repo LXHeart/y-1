@@ -1,65 +1,27 @@
 import { logger } from '../lib/logger.js'
 import { env } from '../lib/env.js'
 import { AppError } from '../lib/errors.js'
+import { resolveProviderBaseUrlAtRuntime } from '../lib/provider-url.js'
+import type { AnalysisProvider } from '../schemas/settings.js'
+import { getProvider } from './providers/index.js'
+import { loadSettings, loadSettingsForUser } from './analysis-settings.service.js'
+import type { VideoAnalysisResult, VideoRecreationResult } from './providers/types.js'
+import { legacyResultToRecreationResult } from './providers/types.js'
+
+export type { VideoAnalysisResult, VideoRecreationResult } from './providers/types.js'
 
 export interface VideoAnalysisRequestConfig {
+  provider?: AnalysisProvider
   baseUrl?: string
   apiToken?: string
-}
-
-interface ResolvedVideoAnalysisConfig {
-  baseUrl: string
-  apiToken?: string
+  apiKey?: string
+  model?: string
 }
 
 interface AnalyzeVideoContentOptions {
   signal?: AbortSignal
   analysisConfig?: VideoAnalysisRequestConfig
-}
-
-export interface VideoAnalysisResult {
-  videoCaptions?: string
-  videoScript?: string
-  charactersDescription?: string
-  voiceDescription?: string
-  propsDescription?: string
-  sceneDescription?: string
-  runId?: string
-  segmented?: boolean
-  clipCount?: number
-  runIds?: string[]
-}
-
-interface VideoAnalysisApiResponse {
-  video_captions?: unknown
-  video_script?: unknown
-  characters_description?: unknown
-  voice_description?: unknown
-  props_description?: unknown
-  scene_description?: unknown
-  run_id?: unknown
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function normalizeVideoAnalysisResult(value: unknown): VideoAnalysisResult {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new AppError('视频内容提取服务返回了无效数据', 502)
-  }
-
-  const record = value as VideoAnalysisApiResponse
-
-  return {
-    videoCaptions: readOptionalString(record.video_captions),
-    videoScript: readOptionalString(record.video_script),
-    charactersDescription: readOptionalString(record.characters_description),
-    voiceDescription: readOptionalString(record.voice_description),
-    propsDescription: readOptionalString(record.props_description),
-    sceneDescription: readOptionalString(record.scene_description),
-    runId: readOptionalString(record.run_id),
-  }
+  userId?: string
 }
 
 function resolveRequestConfigValue(value: string | undefined): string | undefined {
@@ -71,173 +33,202 @@ function resolveRequestConfigValue(value: string | undefined): string | undefine
   return trimmedValue || undefined
 }
 
-function resolveVideoAnalysisConfig(requestConfig: VideoAnalysisRequestConfig | undefined): ResolvedVideoAnalysisConfig {
-  const baseUrl = resolveRequestConfigValue(requestConfig?.baseUrl) ?? env.VIDEO_ANALYSIS_API_BASE_URL.trim()
-  const apiToken = resolveRequestConfigValue(requestConfig?.apiToken) ?? env.VIDEO_ANALYSIS_API_TOKEN
+function getEnvDefaultsForProvider(providerId: AnalysisProvider): { baseUrl?: string; apiKey?: string; model?: string } {
+  if (providerId === 'qwen') {
+    return {
+      baseUrl: resolveRequestConfigValue(env.QWEN_ANALYSIS_BASE_URL),
+      apiKey: resolveRequestConfigValue(env.QWEN_ANALYSIS_API_KEY),
+      model: resolveRequestConfigValue(env.QWEN_ANALYSIS_MODEL) ?? 'qwen3.5-flash',
+    }
+  }
+
+  return {
+    baseUrl: resolveRequestConfigValue(env.COZE_ANALYSIS_BASE_URL) ?? resolveRequestConfigValue(env.VIDEO_ANALYSIS_API_BASE_URL),
+    apiKey: resolveRequestConfigValue(env.COZE_ANALYSIS_API_TOKEN) ?? resolveRequestConfigValue(env.VIDEO_ANALYSIS_API_TOKEN),
+  }
+}
+
+const VIDEO_PROVIDER_URL_MESSAGES = {
+  invalid: '视频分析服务地址无效',
+  protocol: '视频分析服务地址必须使用 HTTP 或 HTTPS',
+  credentials: '视频分析服务地址不能包含用户名或密码',
+  privateHost: '视频分析服务地址不能指向本地或私有网络地址',
+  dnsLookupFailed: '视频分析服务地址域名解析失败，请检查后重试',
+} as const
+
+function getFeatureProviderBaseUrlMessages(feature: 'image' | 'article' | 'imageGeneration'): {
+  invalid: string
+  protocol: string
+  credentials: string
+  privateHost: string
+} {
+  if (feature === 'image') {
+    return {
+      invalid: '图片分析服务地址无效',
+      protocol: '图片分析服务地址必须使用 HTTP 或 HTTPS',
+      credentials: '图片分析服务地址不能包含用户名或密码',
+      privateHost: '图片分析服务地址不能指向本地或私有网络地址',
+    }
+  }
+
+  if (feature === 'imageGeneration') {
+    return {
+      invalid: '图片生成服务地址无效',
+      protocol: '图片生成服务地址必须使用 HTTP 或 HTTPS',
+      credentials: '图片生成服务地址不能包含用户名或密码',
+      privateHost: '图片生成服务地址不能指向本地或私有网络地址',
+    }
+  }
+
+  return {
+    invalid: '文章生成服务地址无效',
+    protocol: '文章生成服务地址必须使用 HTTP 或 HTTPS',
+    credentials: '文章生成服务地址不能包含用户名或密码',
+    privateHost: '文章生成服务地址不能指向本地或私有网络地址',
+  }
+}
+
+export async function resolveProviderConfig(
+  providerId: AnalysisProvider,
+  requestConfig: VideoAnalysisRequestConfig | undefined,
+  videoSettings = loadSettings().features.video,
+): Promise<{ baseUrl: string; apiKey?: string; model?: string; dispatcher?: import('undici').Dispatcher }> {
+  const envDefaults = getEnvDefaultsForProvider(providerId)
+
+  const fromSettings = providerId === 'coze'
+    ? {
+        baseUrl: videoSettings.baseUrl,
+        apiKey: videoSettings.apiToken,
+        model: undefined,
+      }
+    : {
+        baseUrl: videoSettings.baseUrl,
+        apiKey: videoSettings.apiKey,
+        model: videoSettings.model,
+      }
+
+  const baseUrl = resolveRequestConfigValue(requestConfig?.baseUrl)
+    ?? resolveRequestConfigValue(fromSettings.baseUrl)
+    ?? envDefaults.baseUrl
+
+  const apiKey = resolveRequestConfigValue(requestConfig?.apiKey ?? requestConfig?.apiToken)
+    ?? resolveRequestConfigValue(fromSettings.apiKey)
+    ?? envDefaults.apiKey
+
+  const model = resolveRequestConfigValue(requestConfig?.model)
+    ?? resolveRequestConfigValue(fromSettings.model)
+    ?? envDefaults.model
 
   if (!baseUrl) {
     throw new AppError('未配置视频分析服务地址', 500)
   }
 
-  let parsedUrl: URL
-  try {
-    parsedUrl = new URL(baseUrl)
-  } catch {
-    throw new AppError('视频分析服务地址无效', 400)
-  }
-
-  if (parsedUrl.protocol !== 'https:') {
-    throw new AppError('视频分析服务地址必须使用 HTTPS', 400)
-  }
+  const resolvedBaseUrl = await resolveProviderBaseUrlAtRuntime(baseUrl, VIDEO_PROVIDER_URL_MESSAGES)
 
   return {
-    baseUrl: parsedUrl.toString(),
-    apiToken,
+    baseUrl: resolvedBaseUrl.baseUrl,
+    apiKey,
+    model,
+    dispatcher: resolvedBaseUrl.dispatcher,
   }
 }
 
-function summarizeEndpointForLog(endpoint: string): string {
-  try {
-    const parsedUrl = new URL(endpoint)
-    return parsedUrl.origin + parsedUrl.pathname
-  } catch {
-    return 'invalid-endpoint'
+export async function resolveFeatureProviderConfig(
+  feature: 'video' | 'image' | 'article' | 'imageGeneration',
+  providerId: AnalysisProvider,
+  userId?: string,
+  options?: { requireModel?: boolean },
+): Promise<{ baseUrl: string; apiKey?: string; model?: string; dispatcher?: import('undici').Dispatcher }> {
+  const settings = userId ? await loadSettingsForUser(userId) : loadSettings()
+
+  if (feature === 'video') {
+    return resolveProviderConfig(providerId, undefined, settings.features.video)
   }
-}
+  const featureSettings = settings.features[feature] ?? {}
+  const envBaseUrl = feature === 'imageGeneration'
+    ? resolveRequestConfigValue(env.IMAGE_GENERATION_BASE_URL)
+    : resolveRequestConfigValue(env.QWEN_ANALYSIS_BASE_URL)
+  const envApiKey = feature === 'imageGeneration'
+    ? resolveRequestConfigValue(env.IMAGE_GENERATION_API_KEY)
+    : resolveRequestConfigValue(env.QWEN_ANALYSIS_API_KEY)
+  const envModel = feature === 'imageGeneration'
+    ? resolveRequestConfigValue(env.IMAGE_GENERATION_MODEL)
+    : resolveRequestConfigValue(env.QWEN_ANALYSIS_MODEL)
+  const baseUrl = resolveRequestConfigValue(featureSettings.baseUrl) ?? envBaseUrl
+  const apiKey = resolveRequestConfigValue(featureSettings.apiKey) ?? envApiKey
+  const model = resolveRequestConfigValue(featureSettings.model)
+    ?? envModel
+    ?? (feature === 'imageGeneration' ? undefined : 'qwen3.5-flash')
 
-function buildVideoAnalysisHeaders(apiToken: string | undefined): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  if (!baseUrl) {
+    throw new AppError(
+      feature === 'image'
+        ? '未配置图片分析服务地址，请先在分析设置中配置图片分析模型服务'
+        : feature === 'article'
+          ? '未配置文章生成服务地址，请先在分析设置中配置文章模型服务'
+          : '未配置图片生成服务地址，请先在分析设置中配置图片生成模型服务',
+      400,
+    )
   }
 
-  if (apiToken) {
-    headers.Authorization = `Bearer ${apiToken}`
+  if (!model && feature === 'imageGeneration' && options?.requireModel !== false) {
+    throw new AppError('未配置图片生成模型，请先在分析设置中配置图片生成模型服务', 400)
   }
 
-  return headers
-}
+  const resolvedBaseUrl = await resolveProviderBaseUrlAtRuntime(baseUrl, getFeatureProviderBaseUrlMessages(feature))
 
-function describeAnalysisVideoUrlType(videoUrl: string): 'proxy' | 'analysis-media' | 'other' {
-  if (videoUrl.includes('/api/bilibili/proxy/') || videoUrl.includes('/api/douyin/proxy/')) {
-    return 'proxy'
+  return {
+    baseUrl: resolvedBaseUrl.baseUrl,
+    apiKey,
+    model,
+    dispatcher: resolvedBaseUrl.dispatcher,
   }
-
-  if (videoUrl.includes('/api/bilibili/analysis-media/') || videoUrl.includes('/api/douyin/analysis-media/')) {
-    return 'analysis-media'
-  }
-
-  return 'other'
-}
-
-function buildClientAbortedError(): AppError {
-  return new AppError('分析请求已取消', 499)
 }
 
 export async function analyzeVideoContent(
   videoUrl: string,
   options: AnalyzeVideoContentOptions = {},
 ): Promise<VideoAnalysisResult> {
-  const resolvedConfig = resolveVideoAnalysisConfig(options.analysisConfig)
-  const endpoint = resolvedConfig.baseUrl
-  const endpointSummary = summarizeEndpointForLog(endpoint)
-  const controller = new AbortController()
-  const startedAt = Date.now()
-  const videoUrlType = describeAnalysisVideoUrlType(videoUrl)
-  let abortReason: 'timeout' | 'client_disconnect' | null = null
-  let isClientDisconnected = false
-  const timeout = setTimeout(() => {
-    abortReason = 'timeout'
-    controller.abort()
-  }, env.VIDEO_ANALYSIS_API_TIMEOUT_MS)
+  const settings = options.userId ? await loadSettingsForUser(options.userId) : loadSettings()
+  const providerId = options.analysisConfig?.provider ?? settings.features.video.provider
 
-  const abortFromCaller = (): void => {
-    isClientDisconnected = true
-    abortReason = 'client_disconnect'
-    controller.abort()
+  logger.info({
+    provider: providerId,
+    videoUrlType: videoUrl.includes('/api/bilibili/') ? 'bilibili' : 'douyin',
+  }, 'Dispatching video analysis to provider')
+
+  const provider = getProvider(providerId)
+  const config = await resolveProviderConfig(providerId, options.analysisConfig, settings.features.video)
+
+  return provider.analyze(videoUrl, config, {
+    signal: options.signal,
+    timeoutMs: env.VIDEO_ANALYSIS_API_TIMEOUT_MS,
+  })
+}
+
+export async function analyzeVideoForRecreation(
+  videoUrl: string,
+  options: AnalyzeVideoContentOptions = {},
+): Promise<VideoRecreationResult> {
+  const settings = options.userId ? await loadSettingsForUser(options.userId) : loadSettings()
+  const providerId = options.analysisConfig?.provider ?? settings.features.video.provider
+
+  logger.info({
+    provider: providerId,
+    videoUrlType: videoUrl.includes('/api/bilibili/') ? 'bilibili' : 'douyin',
+  }, 'Dispatching video recreation analysis to provider')
+
+  const provider = getProvider(providerId)
+  const config = await resolveProviderConfig(providerId, options.analysisConfig, settings.features.video)
+  const callOptions = {
+    signal: options.signal,
+    timeoutMs: env.VIDEO_ANALYSIS_API_TIMEOUT_MS,
   }
 
-  if (options.signal?.aborted) {
-    abortFromCaller()
-  } else {
-    options.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  if (provider.analyzeForRecreation) {
+    return provider.analyzeForRecreation(videoUrl, config, callOptions)
   }
 
-  if (isClientDisconnected) {
-    logger.warn({
-      endpoint: endpointSummary,
-      videoUrlType,
-      durationMs: 0,
-    }, 'Video analysis request aborted before upstream fetch started')
-    clearTimeout(timeout)
-    throw buildClientAbortedError()
-  }
-
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: buildVideoAnalysisHeaders(resolvedConfig.apiToken),
-      body: JSON.stringify({
-        video_file: {
-          url: videoUrl,
-          file_type: 'video',
-        },
-      }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      const responseText = await response.text()
-
-      logger.error({
-        endpoint: endpointSummary,
-        status: response.status,
-        hasToken: Boolean(resolvedConfig.apiToken),
-        videoUrlType,
-        durationMs: Date.now() - startedAt,
-        responseTextLength: responseText.length,
-      }, 'Video analysis upstream returned non-ok response')
-
-      throw new AppError(`视频内容提取失败（状态码 ${response.status}）`, response.status >= 500 ? 502 : 400)
-    }
-
-    const result = await response.json() as unknown
-    return normalizeVideoAnalysisResult(result)
-  } catch (error: unknown) {
-    if (error instanceof AppError) {
-      throw error
-    }
-
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      if (isClientDisconnected) {
-        logger.warn({
-          endpoint: endpointSummary,
-          videoUrlType,
-          durationMs: Date.now() - startedAt,
-        }, 'Video analysis request aborted after client disconnected')
-        throw buildClientAbortedError()
-      }
-
-      logger.warn({
-        endpoint: endpointSummary,
-        videoUrlType,
-        durationMs: Date.now() - startedAt,
-        abortReason,
-      }, 'Video analysis request timed out')
-      throw new AppError('视频内容提取超时，请稍后重试', 504)
-    }
-
-    logger.error({
-      err: error,
-      endpoint: endpointSummary,
-      hasToken: Boolean(resolvedConfig.apiToken),
-      videoUrlType,
-      durationMs: Date.now() - startedAt,
-      abortReason,
-    }, 'Video analysis request failed')
-
-    throw new AppError('视频内容提取失败，请稍后重试', 502)
-  } finally {
-    clearTimeout(timeout)
-    options.signal?.removeEventListener('abort', abortFromCaller)
-  }
+  const legacyResult = await provider.analyze(videoUrl, config, callOptions)
+  return legacyResultToRecreationResult(legacyResult)
 }

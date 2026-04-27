@@ -1,4 +1,5 @@
 import { AppError } from '../lib/errors.js'
+import { getSessionUser } from '../lib/auth.js'
 import { createBilibiliMediaReadStream } from '../services/bilibili-media.service.js'
 import { getBilibiliAnalysisMediaSession } from '../services/bilibili-analysis-media.service.js'
 import type { NextFunction, Request, Response } from 'express'
@@ -110,10 +111,10 @@ export async function analyzeBilibiliVideoHandler(req: Request, res: Response, n
   res.once('close', abortAnalysis)
 
   try {
-    const { proxyVideoUrl, analysisConfig } = analyzeBilibiliVideoRequest.parse(req.body)
+    const { proxyVideoUrl } = analyzeBilibiliVideoRequest.parse(req.body)
     const data = await analyzeBilibiliVideoByProxyUrl(proxyVideoUrl, {
       signal: abortController.signal,
-      analysisConfig,
+      userId: getSessionUser(req)?.id,
     })
 
     res.json({

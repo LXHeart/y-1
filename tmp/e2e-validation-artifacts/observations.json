@@ -1,0 +1,41 @@
+{
+  "modalOutsideClick": true,
+  "initialMaskedHint": true,
+  "initialMaskedValue": "****5250",
+  "afterSaveMaskedHint": true,
+  "afterSaveMaskedValue": "****5250",
+  "analyzeErrorTitle": "视频内容提取失败",
+  "analyzeErrorMessage": "视频代理地址无效",
+  "requests": [
+    {
+      "method": "GET",
+      "url": "http://localhost:5174/api/douyin/session",
+      "postData": null
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:5174/api/settings/analysis",
+      "postData": null
+    },
+    {
+      "method": "PUT",
+      "url": "http://localhost:5174/api/settings/analysis",
+      "postData": "{\"provider\":\"qwen\",\"providers\":{\"qwen\":{\"baseUrl\":\"https://dashscope.aliyuncs.com/compatible-mode/v1\",\"apiKey\":\"sk-9bb88335cedd462d90c64a33fb525250\",\"model\":\"qwen3.5-flash\"}}}"
+    },
+    {
+      "method": "POST",
+      "url": "http://localhost:5174/api/bilibili/extract-video",
+      "postData": "{\"input\":\"https://www.bilibili.com/video/BV1ri9FBTES5\"}"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:3000/api/bilibili/proxy/fake-token",
+      "postData": null
+    },
+    {
+      "method": "POST",
+      "url": "http://localhost:5174/api/bilibili/analyze-video",
+      "postData": "{\"proxyVideoUrl\":\"http://localhost:3000/api/bilibili/proxy/fake-token\"}"
+    }
+  ]
+}

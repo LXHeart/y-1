@@ -13,7 +13,7 @@ import {
   type DouyinMediaClip,
 } from './douyin-media.service.js'
 import { buildPublicDouyinProxyUrl, parseDouyinProxyToken } from './douyin-proxy.service.js'
-import { analyzeVideoContent, type VideoAnalysisRequestConfig, type VideoAnalysisResult } from './video-analysis.service.js'
+import { analyzeVideoContent, analyzeVideoForRecreation, type VideoAnalysisRequestConfig, type VideoAnalysisResult, type VideoRecreationResult } from './video-analysis.service.js'
 
 const maxAnalysisDurationSeconds = 10 * 60
 const segmentedAnalysisClipDurationSeconds = 30
@@ -447,6 +447,7 @@ export async function analyzeDouyinVideoByProxyUrl(
   options: {
     signal?: AbortSignal
     analysisConfig?: VideoAnalysisRequestConfig
+    userId?: string
   } = {},
 ): Promise<VideoAnalysisResult> {
   throwIfAborted(options.signal)
@@ -472,6 +473,118 @@ export async function analyzeDouyinVideoByProxyUrl(
 
   try {
     return await analyzeDouyinSegmentedMedia({
+      mediaFile,
+      durationSeconds,
+      signal: options.signal,
+      options,
+    })
+  } finally {
+    await cleanupDouyinMediaFile(mediaFile.filePath)
+  }
+}
+
+function mergeSegmentedRecreationResults(results: VideoRecreationResult[]): VideoRecreationResult {
+  const allScenes = results.flatMap((r) => r.scenes)
+  const runIds = Array.from(new Set(results.flatMap((r) => r.runId ? [r.runId] : [])))
+
+  return {
+    scenes: allScenes,
+    overallStyle: results[0]?.overallStyle,
+    runId: runIds[0],
+    runIds: runIds.length > 1 ? runIds : undefined,
+    segmented: true,
+    clipCount: results.length,
+  }
+}
+
+async function analyzeDouyinSegmentedForRecreation(input: {
+  mediaFile: {
+    filePath: string
+    fileSize: number
+    filename: string
+    mimeType: string
+  }
+  durationSeconds: number
+  signal?: AbortSignal
+  options: {
+    signal?: AbortSignal
+    analysisConfig?: VideoAnalysisRequestConfig
+    userId?: string
+  }
+}): Promise<VideoRecreationResult> {
+  const clips = await createDouyinMediaClips({
+    sourceFilePath: input.mediaFile.filePath,
+    durationSeconds: input.durationSeconds,
+    filename: input.mediaFile.filename,
+    clipDurationSeconds: segmentedAnalysisClipDurationSeconds,
+  })
+  const results: VideoRecreationResult[] = []
+
+  try {
+    for (const clip of clips) {
+      throwIfAborted(input.signal)
+      const session = await createDouyinAnalysisMediaSession({
+        filePath: clip.filePath,
+        fileSize: clip.fileSize,
+        filename: clip.filename,
+        mimeType: clip.mimeType,
+      })
+
+      try {
+        const analysisMediaUrl = buildPublicDouyinAnalysisMediaUrl(session.id)
+        const result = await analyzeVideoForRecreation(analysisMediaUrl, input.options)
+        results.push(result)
+      } finally {
+        try {
+          await deleteDouyinAnalysisMediaSession(session.id)
+        } catch (cleanupError: unknown) {
+          logger.warn({
+            sessionId: session.id,
+            err: cleanupError instanceof Error
+              ? { name: cleanupError.name, message: cleanupError.message }
+              : { message: 'Unknown cleanup error' },
+          }, 'Failed to clean up Douyin analysis media session after segmented recreation analysis')
+        }
+      }
+    }
+
+    return mergeSegmentedRecreationResults(results)
+  } finally {
+    await cleanupDouyinMediaClips(clips)
+  }
+}
+
+export async function analyzeDouyinVideoForRecreation(
+  proxyVideoUrl: string,
+  options: {
+    signal?: AbortSignal
+    analysisConfig?: VideoAnalysisRequestConfig
+    userId?: string
+  } = {},
+): Promise<VideoRecreationResult> {
+  throwIfAborted(options.signal)
+
+  const token = extractTokenFromProxyUrl(proxyVideoUrl)
+  const target = parseDouyinProxyToken(token)
+  const durationSeconds = assertDouyinAnalysisDuration(target.durationSeconds)
+
+  if (durationSeconds <= segmentedAnalysisClipDurationSeconds) {
+    return analyzeVideoForRecreation(buildPublicDouyinProxyUrl(token), options)
+  }
+
+  assertDouyinAnalysisMediaPublicUrlAvailable()
+  throwIfAborted(options.signal)
+
+  const mediaFile = await prepareDouyinMediaFile({
+    playableVideoUrl: target.playableVideoUrl,
+    requestHeaders: target.requestHeaders,
+    filename: target.filename,
+    durationSeconds,
+  })
+  throwIfAborted(options.signal)
+
+  try {
+    return await analyzeDouyinSegmentedForRecreation({
       mediaFile,
       durationSeconds,
       signal: options.signal,
