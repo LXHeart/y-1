@@ -35,6 +35,8 @@ services:
       BILIBILI_PROXY_TOKEN_SECRET: ${BILIBILI_PROXY_TOKEN_SECRET}
       FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     volumes:
