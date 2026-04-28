@@ -5,7 +5,7 @@ import { getProvider } from './providers/index.js'
 import { loadSettings, loadSettingsForUser } from './analysis-settings.service.js'
 import { resolveProviderConfig } from './video-analysis.service.js'
 import type { AnalysisProvider } from '../schemas/settings.js'
-import type { VideoAdaptationResult } from './providers/types.js'
+import type { VideoAdaptationResult, VideoAdaptationUserInstructions, ProviderImageInput } from './providers/types.js'
 
 interface ExtractedContentInput {
   videoCaptions?: string
@@ -20,6 +20,8 @@ interface AdaptVideoContentInput {
   platform: 'douyin' | 'bilibili'
   proxyVideoUrl: string
   extractedContent: ExtractedContentInput
+  userInstructions?: VideoAdaptationUserInstructions
+  images?: ProviderImageInput[]
   userId?: string
   signal?: AbortSignal
 }
@@ -46,6 +48,8 @@ export async function adaptVideoContent(input: AdaptVideoContentInput): Promise<
     platform: input.platform,
     proxyVideoUrl: input.proxyVideoUrl,
     extractedContent: input.extractedContent,
+    userInstructions: input.userInstructions,
+    images: input.images,
   }, config, {
     signal: input.signal,
     timeoutMs: env.VIDEO_ANALYSIS_API_TIMEOUT_MS,

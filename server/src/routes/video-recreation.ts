@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import multer from 'multer'
 import {
   adaptContentHandler,
   generateAssetImageHandler,
@@ -8,6 +9,10 @@ import {
 } from '../controllers/video-recreation.controller.js'
 import { requireAuthenticatedUser } from '../lib/auth.js'
 import { createRateLimit } from '../lib/rate-limit.js'
+import { filterUploadedImageFile } from './image-analysis.js'
+
+const ADAPT_MAX_IMAGES = 4
+const ADAPT_MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 
 const videoRecreationRouter = Router()
 const videoRecreationRateLimit = createRateLimit({
@@ -25,9 +30,21 @@ const videoRecreationBatchRateLimit = createRateLimit({
   message: '批量出图请求过于频繁，请稍后再试。',
 })
 
+const adaptUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: filterUploadedImageFile,
+  limits: {
+    files: ADAPT_MAX_IMAGES,
+    fileSize: ADAPT_MAX_FILE_SIZE_BYTES,
+    fieldSize: 32 * 1024,
+    fields: 12,
+    parts: ADAPT_MAX_IMAGES + 12,
+  },
+})
+
 videoRecreationRouter.use(requireAuthenticatedUser)
 videoRecreationRouter.use(videoRecreationRateLimit)
-videoRecreationRouter.post('/adapt-content', adaptContentHandler)
+videoRecreationRouter.post('/adapt-content', adaptUpload.array('images', ADAPT_MAX_IMAGES), adaptContentHandler)
 videoRecreationRouter.post('/generate-asset-image', generateAssetImageHandler)
 videoRecreationRouter.post('/generate-all-asset-images', videoRecreationBatchRateLimit, generateAllAssetImagesHandler)
 videoRecreationRouter.post('/generate-scene-image', generateSceneImageHandler)

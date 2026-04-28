@@ -68,7 +68,7 @@
                 <p class="settings-section-kicker">视频分析</p>
                 <h3 class="settings-section-title">选择视频分析引擎</h3>
               </div>
-              <p class="settings-section-note">视频分析支持 Coze 工作流或 Qwen 大模型。</p>
+              <p class="settings-section-note">视频分析支持 Coze 工作流或大模型兼容接口；接入其他视频理解模型时，需要兼容当前请求格式。</p>
             </div>
 
             <div class="provider-switch" role="radiogroup" aria-label="视频分析引擎选择">
@@ -86,7 +86,7 @@
                 type="button"
                 @click="videoProvider = 'qwen'"
               >
-                Qwen（大模型）
+                大模型兼容接口
               </button>
             </div>
 

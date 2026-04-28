@@ -45,6 +45,7 @@
 
       <div class="video-shell">
         <video
+          :key="extractedVideo.proxyVideoUrl"
           :src="extractedVideo.proxyVideoUrl"
           :poster="extractedVideo.coverUrl"
           class="video-player"
@@ -113,6 +114,13 @@
 
         <p v-if="analysisRunIdText" class="analysis-run-id">{{ analysisRunIdText }}</p>
       </section>
+
+      <VideoAdaptationPanel
+        v-if="analysisHasContent && extractedVideo"
+        platform="douyin"
+        :proxy-video-url="extractedVideo.proxyVideoUrl"
+        :extracted-content="analysis"
+      />
     </template>
   </section>
 </template>
@@ -120,6 +128,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DouyinVideoAnalysisResult, ExtractedDouyinVideoPayload } from '../types/douyin'
+import { buildVideoAnalysisDisplayCards } from '../types/video-recreation'
+import VideoAdaptationPanel from './VideoAdaptationPanel.vue'
 
 const maxAnalysisDurationSeconds = 10 * 60
 
@@ -197,20 +207,7 @@ const segmentedAnalysisHint = computed(() => {
   return `该结果由 ${props.analysis.clipCount} 个最长 30 秒的片段合并生成。`
 })
 
-const analysisSections = computed(() => {
-  if (!props.analysis) {
-    return []
-  }
-
-  return [
-    { key: 'videoCaptions', label: '字幕提取', content: props.analysis.videoCaptions },
-    { key: 'videoScript', label: '视频脚本', content: props.analysis.videoScript },
-    { key: 'charactersDescription', label: '人物描述', content: props.analysis.charactersDescription },
-    { key: 'sceneDescription', label: '场景描述', content: props.analysis.sceneDescription },
-    { key: 'propsDescription', label: '道具描述', content: props.analysis.propsDescription },
-    { key: 'voiceDescription', label: '音色描述', content: props.analysis.voiceDescription },
-  ].filter((section): section is { key: string, label: string, content: string } => Boolean(section.content?.trim()))
-})
+const analysisSections = computed(() => buildVideoAnalysisDisplayCards(props.analysis))
 
 const analysisHasContent = computed(() => analysisSections.value.length > 0)
 

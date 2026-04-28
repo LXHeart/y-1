@@ -400,4 +400,140 @@ describe('article image service', () => {
       message: 'Request aborted',
     })
   })
+
+  it('generates an image with reference images using two-step pipeline', async () => {
+    const callLog: Array<{ url: string; body: string }> = []
+    const fetchMock = vi.fn(async (input: any, init: any) => {
+      const inputStr = String(input)
+      callLog.push({ url: inputStr, body: init?.body ?? '' })
+
+      if (inputStr.includes('/chat/completions')) {
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-describe',
+          choices: [{
+            message: {
+              content: '画面中心是一碗热腾腾的牛肉面，暖色调灯光，木桌纹理可见，背景虚化。',
+            },
+          }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        created: 1,
+        data: [{
+          url: 'https://images.example.com/ref-generated.png',
+          revised_prompt: '融合参考图的生成结果',
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    globalThis.fetch = fetchMock
+
+    const { generateImage } = await import('./article-image.service.js')
+    const result = await generateImage({
+      prompt: '一碗面，暖色调',
+      size: '1024x1024',
+      images: [{
+        mimeType: 'image/jpeg',
+        dataUrl: 'data:image/jpeg;base64,/9j/4AAQ',
+      }],
+      userId: 'user-1',
+    })
+
+    expect(result).toEqual({
+      imageUrl: 'https://images.example.com/ref-generated.png',
+      revisedPrompt: '融合参考图的生成结果',
+    })
+
+    expect(callLog).toHaveLength(2)
+    expect(callLog[0].url).toContain('/chat/completions')
+    expect(callLog[1].url).toContain('/images/generations')
+
+    const genBody = JSON.parse(callLog[1].body)
+    expect(genBody.prompt).toContain('[参考素材]')
+    expect(genBody.prompt).toContain('素材1')
+    expect(genBody.prompt).toContain('一碗面，暖色调')
+  })
+
+  it('describes each reference image separately', async () => {
+    const callLog: Array<{ url: string; body: string }> = []
+    const fetchMock = vi.fn(async (input: any, init: any) => {
+      callLog.push({ url: String(input), body: init?.body ?? '' })
+
+      if (String(input).includes('/chat/completions')) {
+        const body = JSON.parse(init?.body ?? '{}')
+        const content = body.messages?.[0]?.content
+        const hasTwoImages = Array.isArray(content) && content.filter((c: any) => c.type === 'image_url').length === 1
+        const descIndex = callLog.filter(c => c.url.includes('/chat/completions')).length - 1
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-describe',
+          choices: [{
+            message: {
+              content: hasTwoImages ? `描述${descIndex + 1}` : `描述${descIndex + 1}`,
+            },
+          }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        created: 1,
+        data: [{ url: 'https://images.example.com/multi-ref.png' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    globalThis.fetch = fetchMock
+
+    const { generateImage } = await import('./article-image.service.js')
+    await generateImage({
+      prompt: '融合两张素材',
+      size: '1024x1024',
+      images: [
+        { mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,img1' },
+        { mimeType: 'image/png', dataUrl: 'data:image/png;base64,img2' },
+      ],
+      userId: 'user-1',
+    })
+
+    const chatCalls = callLog.filter(c => c.url.includes('/chat/completions'))
+    expect(chatCalls).toHaveLength(2)
+
+    const genBody = JSON.parse(callLog[callLog.length - 1].body)
+    expect(genBody.prompt).toContain('素材1')
+    expect(genBody.prompt).toContain('素材2')
+  })
+
+  it('skips reference image pipeline when images array is empty', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      created: 1,
+      data: [{ url: 'https://images.example.com/no-ref.png' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    globalThis.fetch = fetchMock
+
+    const { generateImage } = await import('./article-image.service.js')
+    await generateImage({
+      prompt: '纯文字提示词',
+      size: '1024x1024',
+      images: [],
+      userId: 'user-1',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/images/generations'),
+      expect.anything(),
+    )
+  })
 })

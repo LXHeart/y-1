@@ -2,36 +2,73 @@
   <section class="image-gen-view">
     <header class="section-header">
       <h2 class="section-title">图片生成</h2>
-      <p class="section-desc">输入描述提示词，AI 帮你生成图片</p>
+      <p class="section-desc">输入描述提示词，上传参考素材，AI 帮你生成图片</p>
     </header>
 
     <div class="gen-card">
-      <div class="prompt-area">
+      <div v-if="materials.length > 0" class="materials-area">
+        <div class="materials-label">参考素材（{{ materials.length }}/4）</div>
+        <div class="materials-grid">
+          <div v-for="(mat, index) in materials" :key="index" class="material-thumb">
+            <img :src="mat.previewUrl" :alt="`素材${index + 1}`" class="material-img" />
+            <span class="material-tag">素材{{ index + 1 }}</span>
+            <button type="button" class="material-remove" :disabled="generating" @click="removeMaterial(index)" aria-label="删除素材">&times;</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="prompt-area" style="position: relative">
         <textarea
+          ref="promptRef"
           v-model="prompt"
           class="prompt-input"
-          placeholder="描述你想生成的图片，例如：一只橘色的猫坐在窗台上，窗外是夕阳，油画风格"
+          placeholder="描述你想生成的图片，例如：一只橘色的猫坐在窗台上，窗外是夕阳，油画风格。输入 @ 可引用素材"
           rows="4"
           :disabled="generating"
           @keydown.ctrl.enter="handleGenerate"
           @keydown.meta.enter="handleGenerate"
+          @input="onPromptInput"
         />
+        <div v-if="mentionVisible" class="mention-dropdown" :style="mentionStyle">
+          <button
+            v-for="(mat, idx) in materials"
+            :key="idx"
+            type="button"
+            class="mention-item"
+            @mousedown.prevent="insertMention(idx)"
+          >
+            素材{{ idx + 1 }}
+          </button>
+        </div>
         <div class="prompt-footer">
           <span class="char-count">{{ prompt.length }} / 4000</span>
-          <div class="size-selector">
-            <button
-              v-for="option in sizeOptions"
-              :key="option.value"
-              class="size-btn"
-              :class="{ 'size-btn-active': selectedSize === option.value }"
-              type="button"
-              :disabled="generating"
-              @click="selectedSize = option.value"
-            >
-              {{ option.label }}
+          <div class="prompt-actions">
+            <button type="button" class="upload-btn" :disabled="generating || materials.length >= 4" @click="triggerUpload">
+              + 上传素材
             </button>
+            <div class="size-selector">
+              <button
+                v-for="option in sizeOptions"
+                :key="option.value"
+                class="size-btn"
+                :class="{ 'size-btn-active': selectedSize === option.value }"
+                type="button"
+                :disabled="generating"
+                @click="selectedSize = option.value"
+              >
+                {{ option.label }}
+              </button>
+            </div>
           </div>
         </div>
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple
+          style="display: none"
+          @change="onFileSelected"
+        />
       </div>
 
       <button
@@ -76,14 +113,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 
 interface GenerateResult {
   imageUrl: string
   revisedPrompt?: string
 }
 
+interface MaterialItem {
+  file: File
+  previewUrl: string
+}
+
 const API_BASE = ''
+const MAX_MATERIALS = 4
 
 const prompt = ref('')
 const selectedSize = ref<'1024x1024' | '1024x1792' | '1792x1024'>('1024x1024')
@@ -91,6 +134,12 @@ const generating = ref(false)
 const error = ref('')
 const results = ref<GenerateResult[]>([])
 const lightboxUrl = ref('')
+const materials = ref<MaterialItem[]>([])
+const mentionVisible = ref(false)
+const mentionStyle = ref<Record<string, string>>({})
+
+const promptRef = ref<HTMLTextAreaElement | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const sizeOptions = [
   { value: '1024x1024' as const, label: '1:1' },
@@ -108,6 +157,84 @@ function openLightbox(url: string): void {
   lightboxUrl.value = url
 }
 
+function triggerUpload(): void {
+  fileInputRef.value?.click()
+}
+
+function onFileSelected(event: Event): void {
+  const input = event.target as HTMLInputElement
+  if (!input.files) return
+
+  for (const file of Array.from(input.files)) {
+    if (materials.value.length >= MAX_MATERIALS) break
+    if (!file.type.startsWith('image/')) continue
+
+    const previewUrl = URL.createObjectURL(file)
+    materials.value.push({ file, previewUrl })
+  }
+
+  input.value = ''
+}
+
+function removeMaterial(index: number): void {
+  const removed = materials.value.splice(index, 1)[0]
+  if (removed) URL.revokeObjectURL(removed.previewUrl)
+}
+
+function onPromptInput(): void {
+  const textarea = promptRef.value
+  if (!textarea || materials.value.length === 0) {
+    mentionVisible.value = false
+    return
+  }
+
+  const cursorPos = textarea.selectionStart
+  const textBefore = prompt.value.slice(0, cursorPos)
+  const atMatch = textBefore.match(/@[^@\s]*$/u)
+
+  if (atMatch) {
+    mentionVisible.value = true
+    const lineHeight = 22
+    const charsPerLine = Math.floor(textarea.clientWidth / 8)
+    const lines = textBefore.slice(0, textBefore.length - atMatch[0].length).split('\n')
+    const topLine = lines.length - 1
+    const topCharInLine = lines[lines.length - 1].length
+    const approxLeft = (topCharInLine % Math.max(charsPerLine, 1)) * 8
+    const approxTop = topLine * lineHeight + lineHeight + 4
+
+    mentionStyle.value = {
+      left: `${Math.min(approxLeft, textarea.clientWidth - 100)}px`,
+      top: `${approxTop}px`,
+    }
+  } else {
+    mentionVisible.value = false
+  }
+}
+
+function insertMention(index: number): void {
+  const textarea = promptRef.value
+  if (!textarea) return
+
+  const cursorPos = textarea.selectionStart
+  const textBefore = prompt.value.slice(0, cursorPos)
+  const textAfter = prompt.value.slice(cursorPos)
+  const atMatch = textBefore.match(/@[^@\s]*$/u)
+
+  if (atMatch) {
+    const before = textBefore.slice(0, textBefore.length - atMatch[0].length)
+    const insert = `@素材${index + 1} `
+    prompt.value = `${before}${insert}${textAfter}`
+
+    nextTick(() => {
+      const newPos = before.length + insert.length
+      textarea.setSelectionRange(newPos, newPos)
+      textarea.focus()
+    })
+  }
+
+  mentionVisible.value = false
+}
+
 async function handleGenerate(): Promise<void> {
   if (!canGenerate.value) return
 
@@ -116,11 +243,17 @@ async function handleGenerate(): Promise<void> {
   generating.value = true
 
   try {
+    const formData = new FormData()
+    formData.append('prompt', trimmed)
+    formData.append('size', selectedSize.value)
+    for (const mat of materials.value) {
+      formData.append('images', mat.file)
+    }
+
     const res = await fetch(`${API_BASE}/api/article-generation/generate-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ prompt: trimmed, size: selectedSize.value }),
+      body: formData,
     })
 
     const data = await res.json()
@@ -181,6 +314,86 @@ async function handleGenerate(): Promise<void> {
   box-shadow: var(--shadow-card);
 }
 
+.materials-area {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.materials-label {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.materials-grid {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.material-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: var(--surface-muted);
+}
+
+.material-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.material-tag {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 1px 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.65rem;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.material-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.material-remove:hover:not(:disabled) {
+  background: rgba(239, 107, 107, 0.8);
+}
+
+.material-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.prompt-area {
+  display: grid;
+  gap: var(--space-sm);
+}
+
 .prompt-input {
   width: 100%;
   min-height: 100px;
@@ -212,6 +425,35 @@ async function handleGenerate(): Promise<void> {
   cursor: not-allowed;
 }
 
+.mention-dropdown {
+  position: absolute;
+  z-index: 100;
+  min-width: 80px;
+  padding: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+}
+
+.mention-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.mention-item:hover {
+  background: var(--surface-hover);
+}
+
 .prompt-footer {
   display: flex;
   align-items: center;
@@ -222,6 +464,33 @@ async function handleGenerate(): Promise<void> {
 .char-count {
   font-size: 0.78rem;
   color: var(--color-text-muted);
+}
+
+.prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.upload-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.upload-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--color-border-accent);
+}
+
+.upload-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .size-selector {

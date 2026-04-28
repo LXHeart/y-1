@@ -9,6 +9,7 @@ import {
 } from '../schemas/video-recreation.js'
 import { adaptVideoContent } from '../services/video-recreation-adaptation.service.js'
 import * as videoRecreationImageService from '../services/video-recreation-image.service.js'
+import type { ProviderImageInput } from '../schemas/image-analysis.js'
 
 function createAbortContext(req: Request, res: Response): {
   signal: AbortSignal
@@ -35,7 +36,31 @@ export async function adaptContentHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { platform, proxyVideoUrl, extractedContent } = adaptContentRequestSchema.parse(req.body)
+    const files = Array.isArray(req.files) ? req.files : []
+
+    let bodyToParse = req.body
+    if (typeof req.body?.extractedContent === 'string') {
+      try {
+        bodyToParse = { ...req.body, extractedContent: JSON.parse(req.body.extractedContent) }
+      } catch {
+        bodyToParse = req.body
+      }
+    }
+    if (typeof req.body?.userInstructions === 'string') {
+      try {
+        bodyToParse = { ...bodyToParse, userInstructions: JSON.parse(req.body.userInstructions) }
+      } catch {
+        bodyToParse = { ...bodyToParse, userInstructions: undefined }
+      }
+    }
+
+    const { platform, proxyVideoUrl, extractedContent, userInstructions } = adaptContentRequestSchema.parse(bodyToParse)
+
+    const images: ProviderImageInput[] = files.map((file) => ({
+      mimeType: file.mimetype,
+      dataUrl: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+    }))
+
     const abortContext = createAbortContext(req, res)
 
     try {
@@ -43,6 +68,8 @@ export async function adaptContentHandler(
         platform,
         proxyVideoUrl,
         extractedContent,
+        userInstructions,
+        images: images.length > 0 ? images : undefined,
         userId: getAuthenticatedUser(req).id,
         signal: abortContext.signal,
       })

@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js'
 import { AppError } from '../lib/errors.js'
 import { providerFetch } from '../lib/fetch.js'
 import type { ResolvedProviderConfig } from './providers/types.js'
+import type { ProviderImageInput } from '../schemas/image-analysis.js'
 import { resolveFeatureProviderConfig } from './video-analysis.service.js'
 import type { ArticlePlatform } from '../schemas/article-creation.js'
 
@@ -80,6 +81,7 @@ interface SearchImagesInput {
 interface GenerateImageInput {
   prompt: string
   size: '1024x1024' | '1024x1792' | '1792x1024'
+  images?: ProviderImageInput[]
   userId?: string
   signal?: AbortSignal
 }
@@ -598,7 +600,15 @@ export async function generateImage(input: GenerateImageInput): Promise<Generate
   const config = await resolveImageGenerationConfig(input.userId)
   const endpoint = `${config.baseUrl.replace(/\/$/u, '')}/images/generations`
 
-  logger.info({ size: input.size }, 'Generating article image')
+  let prompt = input.prompt
+
+  if (input.images && input.images.length > 0) {
+    logger.info({ imageCount: input.images.length, size: input.size }, 'Generating article image with reference images')
+    const descriptions = await describeReferenceImages(input.images, input.signal)
+    prompt = buildEnhancedPrompt(input.prompt, descriptions)
+  } else {
+    logger.info({ size: input.size }, 'Generating article image')
+  }
 
   const body = await requestJson(
     endpoint,
@@ -610,7 +620,7 @@ export async function generateImage(input: GenerateImageInput): Promise<Generate
       },
       body: JSON.stringify({
         model: config.model,
-        prompt: input.prompt,
+        prompt,
         n: 1,
         size: input.size,
       }),
@@ -622,4 +632,59 @@ export async function generateImage(input: GenerateImageInput): Promise<Generate
   )
 
   return normalizeGeneratedImage(body)
+}
+
+async function describeReferenceImages(
+  images: ProviderImageInput[],
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const visionConfig = await resolveVisionConfig()
+  const descriptions: string[] = []
+
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i]
+    const content: unknown[] = [
+      { type: 'text', text: '请详细描述这张图片的视觉内容，包括：主体、构图、色调、风格、氛围。简洁精准地描述，用于辅助AI生图。不要输出多余说明。' },
+      { type: 'image_url', image_url: { url: img.dataUrl } },
+    ]
+
+    const body = await requestJson(
+      `${visionConfig.baseUrl.replace(/\/$/u, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(visionConfig.apiKey ? { Authorization: `Bearer ${visionConfig.apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: visionConfig.model || 'qwen2.5-vl-72b-instruct',
+          messages: [{ role: 'user', content }],
+        }),
+        dispatcher: visionConfig.dispatcher,
+      },
+      '参考图分析失败，请稍后重试',
+      ARTICLE_IMAGE_TIMEOUT_MS,
+      signal,
+    )
+
+    descriptions.push(extractContentFromChatCompletion(body))
+  }
+
+  return descriptions
+}
+
+async function resolveVisionConfig(): Promise<ResolvedProviderConfig> {
+  try {
+    return await resolveFeatureProviderConfig('article', 'qwen')
+  } catch {
+    return resolveImageGenerationConfig()
+  }
+}
+
+function buildEnhancedPrompt(userPrompt: string, descriptions: string[]): string {
+  const refSection = descriptions
+    .map((desc, i) => `素材${i + 1}: ${desc}`)
+    .join('\n')
+
+  return `[参考素材]\n${refSection}\n\n[创作要求]\n${userPrompt}`
 }

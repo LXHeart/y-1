@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto'
 import { env } from '../lib/env.js'
 import { isAllowedBilibiliPageHost, isAllowedBilibiliVideoHost } from '../lib/bilibili-hosts.js'
 import { AppError } from '../lib/errors.js'
 import type { BilibiliSourceMaterial } from './bilibili.types.js'
 
 const trailingBilibiliUrlPunctuationPattern = /[),.;!?，。！？；：、“”'’）\]】》〉」』]+$/g
-
+const BILIBILI_WBI_MIXIN_KEY_TABLE = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+  27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+  37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+  22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+] as const
 
 function extractBilibiliUrlCandidates(input: string): string[] {
   return (input.match(/https:\/\/[^\s]+/g) || [])
@@ -277,6 +283,167 @@ function extractDurationSeconds(initialState: Record<string, unknown>, playInfo:
   return undefined
 }
 
+function extractAid(initialState: Record<string, unknown>): number | undefined {
+  const directAid = readNumberCandidate(initialState.aid)
+  if (directAid) {
+    return directAid
+  }
+
+  const videoData = getNestedRecord(initialState, 'videoData')
+  return readNumberCandidate(videoData?.aid)
+}
+
+function extractRequestedPageNumber(initialState: Record<string, unknown>, resolvedUrl: string): number {
+  try {
+    const parsed = new URL(resolvedUrl)
+    const pageParam = Number.parseInt(parsed.searchParams.get('p') ?? '', 10)
+    if (Number.isInteger(pageParam) && pageParam > 0) {
+      return pageParam
+    }
+  } catch {
+    // ignore malformed URL and fall through to page-state defaults
+  }
+
+  return readNumberCandidate(initialState.p) ?? 1
+}
+
+function extractCid(initialState: Record<string, unknown>, resolvedUrl: string): number | undefined {
+  const directCid = readNumberCandidate(initialState.cid)
+  if (directCid) {
+    return directCid
+  }
+
+  const videoData = getNestedRecord(initialState, 'videoData')
+  const pages = videoData ? getNestedArray(videoData, 'pages') : []
+  const requestedPageNumber = extractRequestedPageNumber(initialState, resolvedUrl)
+  let firstCid: number | undefined
+
+  for (const page of pages) {
+    if (typeof page !== 'object' || page === null || Array.isArray(page)) {
+      continue
+    }
+
+    const record = page as Record<string, unknown>
+    const cid = readNumberCandidate(record.cid)
+    if (!cid) {
+      continue
+    }
+
+    firstCid ??= cid
+
+    if (readNumberCandidate(record.page) === requestedPageNumber) {
+      return cid
+    }
+  }
+
+  return firstCid
+}
+
+function extractWbiKeys(initialState: Record<string, unknown>): { imgKey: string, subKey: string } | undefined {
+  const defaultWbiKey = getNestedRecord(initialState, 'defaultWbiKey')
+  const imgKey = readTextCandidate(defaultWbiKey?.wbiImgKey)
+  const subKey = readTextCandidate(defaultWbiKey?.wbiSubKey)
+
+  if (!imgKey || !subKey) {
+    return undefined
+  }
+
+  return { imgKey, subKey }
+}
+
+function buildWbiMixinKey(imgKey: string, subKey: string): string {
+  return BILIBILI_WBI_MIXIN_KEY_TABLE
+    .map((index) => `${imgKey}${subKey}`[index])
+    .join('')
+    .slice(0, 32)
+}
+
+function buildSignedPlayurlQuery(params: Record<string, string | number>, imgKey: string, subKey: string): string {
+  const sanitizedEntries = Object.entries({
+    ...params,
+    wts: Math.floor(Date.now() / 1000),
+  })
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [key, String(value).replace(/[!'()*]/g, '')] as [string, string])
+
+  const query = new URLSearchParams(sanitizedEntries)
+  const mixinKey = buildWbiMixinKey(imgKey, subKey)
+  const wRid = createHash('md5').update(query.toString() + mixinKey).digest('hex')
+  query.set('w_rid', wRid)
+  return query.toString()
+}
+
+async function fetchPlayInfoByApi(
+  initialState: Record<string, unknown>,
+  referer: string,
+): Promise<Record<string, unknown>> {
+  const aid = extractAid(initialState)
+  const bvid = extractVideoId(initialState, referer)
+  const cid = extractCid(initialState, referer)
+  const wbiKeys = extractWbiKeys(initialState)
+
+  if (!aid || !bvid || !cid || !wbiKeys) {
+    throw new AppError('未能从 B 站页面中解析到可预览视频信息', 502)
+  }
+
+  const query = buildSignedPlayurlQuery({
+    avid: aid,
+    bvid,
+    cid,
+    qn: 0,
+    fnver: 0,
+    fnval: 16,
+    fourk: 1,
+  }, wbiKeys.imgKey, wbiKeys.subKey)
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), env.BILIBILI_FETCH_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(`https://api.bilibili.com/x/player/wbi/playurl?${query}`, {
+      method: 'GET',
+      headers: {
+        'User-Agent': env.BILIBILI_USER_AGENT,
+        Referer: referer,
+        Origin: 'https://www.bilibili.com',
+        Accept: 'application/json, text/plain, */*',
+      },
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new AppError('请求 B 站播放信息失败', response.status === 412 ? 502 : response.status)
+    }
+
+    const payload = await response.json() as unknown
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+      throw new AppError('B 站播放信息返回了无效数据', 502)
+    }
+
+    const record = payload as Record<string, unknown>
+    const code = typeof record.code === 'number' ? record.code : undefined
+    const data = getNestedRecord(record, 'data')
+
+    if (code !== 0 || !data) {
+      throw new AppError('请求 B 站播放信息失败', 502)
+    }
+
+    return record
+  } catch (error: unknown) {
+    if (error instanceof AppError) {
+      throw error
+    }
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new AppError('请求 B 站播放信息超时', 504)
+    }
+
+    throw new AppError('请求 B 站播放信息失败', 502)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export async function resolveBilibiliSource(url: string): Promise<BilibiliSourceMaterial> {
   const entryUrl = extractBilibiliEntryUrl(url)
   const { finalUrl, body } = await fetchHtml(entryUrl)
@@ -284,18 +451,28 @@ export async function resolveBilibiliSource(url: string): Promise<BilibiliSource
   const initialStateBlock = extractFirstJsonBlock(body, 'window.__INITIAL_STATE__=')
   const playInfoBlock = extractFirstJsonBlock(body, 'window.__playinfo__=')
 
-  if (!initialStateBlock || !playInfoBlock) {
+  if (!initialStateBlock) {
     throw new AppError('未能从 B 站页面中解析到可预览视频信息', 502)
   }
 
   let initialState: Record<string, unknown>
-  let playInfo: Record<string, unknown>
 
   try {
     initialState = JSON.parse(initialStateBlock) as Record<string, unknown>
-    playInfo = JSON.parse(playInfoBlock) as Record<string, unknown>
   } catch {
     throw new AppError('B 站页面返回了无法解析的视频数据', 502)
+  }
+
+  let playInfo: Record<string, unknown>
+
+  if (playInfoBlock) {
+    try {
+      playInfo = JSON.parse(playInfoBlock) as Record<string, unknown>
+    } catch {
+      throw new AppError('B 站页面返回了无法解析的视频数据', 502)
+    }
+  } else {
+    playInfo = await fetchPlayInfoByApi(initialState, finalUrl)
   }
 
   const progressiveUrl = extractProgressiveUrl(playInfo)

@@ -421,6 +421,15 @@ async function analyzeDouyinSegmentedMedia(input: {
       try {
         const analysisMediaUrl = buildPublicDouyinAnalysisMediaUrl(session.id)
         const result = await analyzeVideoContent(analysisMediaUrl, input.options)
+        logger.info({
+          clipIndex: clip.clipIndex,
+          startSeconds: clip.startSeconds,
+          endSeconds: clip.endSeconds,
+          hasVideoScript: Boolean(result.videoScript),
+          hasVideoCaptions: Boolean(result.videoCaptions),
+          scriptLength: result.videoScript?.length ?? 0,
+          captionsLength: result.videoCaptions?.length ?? 0,
+        }, 'Douyin segmented analysis clip result')
         results.push(result)
       } finally {
         try {

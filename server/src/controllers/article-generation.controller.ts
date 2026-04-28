@@ -11,6 +11,7 @@ import {
   imageSearchRequestSchema,
   imageGenerateRequestSchema,
 } from '../schemas/article-creation.js'
+import type { ProviderImageInput } from '../schemas/image-analysis.js'
 import * as dispatch from '../services/article-generation-dispatch.service.js'
 import * as articleImageService from '../services/article-image.service.js'
 
@@ -209,7 +210,16 @@ export async function generateImageHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { prompt, size } = imageGenerateRequestSchema.parse(req.body)
+    const { prompt, size } = imageGenerateRequestSchema.parse({
+      prompt: req.body?.prompt,
+      size: req.body?.size,
+    })
+    const files = Array.isArray(req.files) ? req.files : []
+    const images: ProviderImageInput[] = files.map((file) => ({
+      mimeType: file.mimetype,
+      dataUrl: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+    }))
+
     const controller = new AbortController()
     const abortOnClose = (): void => controller.abort()
     req.on('aborted', abortOnClose)
@@ -219,6 +229,7 @@ export async function generateImageHandler(
       const result = await articleImageService.generateImage({
         prompt,
         size,
+        images: images.length > 0 ? images : undefined,
         userId: getSessionUser(req)?.id,
         signal: controller.signal,
       })

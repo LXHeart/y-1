@@ -10,6 +10,7 @@ const VIDEO_ASSET_NAME_MAX_LENGTH = 200
 const VIDEO_ASSET_TEXT_MAX_LENGTH = 2_000
 const VIDEO_SCENE_TEXT_MAX_LENGTH = 2_000
 const VIDEO_SCENE_OPTIONAL_TEXT_MAX_LENGTH = 1_000
+const VIDEO_USER_INSTRUCTION_MAX_LENGTH = 2_000
 
 const trimmedOptionalStringSchema = z.string().trim().max(VIDEO_EXTRACTED_CONTENT_MAX_FIELD_LENGTH).optional()
 const assetIdSchema = z.string().trim().min(1).max(VIDEO_ASSET_ID_MAX_LENGTH)
@@ -79,10 +80,18 @@ function isAllowedProxyUrl(platform: 'douyin' | 'bilibili', value: string): bool
   return new RegExp(`^/api/${platform}/proxy/[^/]+$`, 'u').test(parsedUrl.pathname)
 }
 
+const userInstructionsSchema = z.object({
+  scriptInstruction: z.string().trim().max(VIDEO_USER_INSTRUCTION_MAX_LENGTH).optional(),
+  characterInstruction: z.string().trim().max(VIDEO_USER_INSTRUCTION_MAX_LENGTH).optional(),
+  scenePropsInstruction: z.string().trim().max(VIDEO_USER_INSTRUCTION_MAX_LENGTH).optional(),
+  voiceInstruction: z.string().trim().max(VIDEO_USER_INSTRUCTION_MAX_LENGTH).optional(),
+}).optional()
+
 export const adaptContentRequestSchema = z.object({
   platform: z.enum(['douyin', 'bilibili']),
   proxyVideoUrl: z.string().trim().min(1, '缺少视频代理地址'),
   extractedContent: extractedContentSchema,
+  userInstructions: userInstructionsSchema,
 }).superRefine((value, ctx) => {
   if (!isAllowedProxyUrl(value.platform, value.proxyVideoUrl)) {
     ctx.addIssue({
