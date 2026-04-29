@@ -13,6 +13,7 @@ import { douyinRouter } from './routes/douyin.js'
 import { imageAnalysisRouter } from './routes/image-analysis.js'
 import { articleGenerationRouter } from './routes/article-generation.js'
 import { videoRecreationRouter } from './routes/video-recreation.js'
+import { comedyGenerationRouter } from './routes/comedy-generation.js'
 import { settingsRouter } from './routes/settings.js'
 import { homepageRouter } from './routes/homepage.js'
 import { authRouter } from './routes/auth.js'
@@ -397,6 +398,7 @@ export function createApp() {
   app.use('/api/image-analysis', imageAnalysisRouter)
   app.use('/api/article-generation', articleGenerationRouter)
   app.use('/api/video-recreation', videoRecreationRouter)
+  app.use('/api/comedy-generation', comedyGenerationRouter)
   app.use('/api/settings', settingsRouter)
   app.use('/api/homepage', homepageRouter)
 

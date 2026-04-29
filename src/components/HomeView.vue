@@ -92,7 +92,10 @@
               </div>
             </div>
             <img v-if="item.cover" class="hot-cover" :src="item.cover" :alt="item.title">
-            <button class="hot-action-btn" type="button" @click.stop="emit('create-article', item.title)">写文章</button>
+            <div class="hot-actions">
+              <button class="hot-action-btn" type="button" @click.stop="emit('create-article', item.title)">写文章</button>
+              <button class="hot-action-btn hot-action-btn-comedy" type="button" @click.stop="emit('create-comedy', item.title)">写脱口秀</button>
+            </div>
           </li>
         </ol>
       </template>
@@ -109,7 +112,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useHomepageHotItems } from '../composables/useHomepageHotItems'
 
-type HomeFeatureView = 'video' | 'image' | 'article' | 'image-gen'
+type HomeFeatureView = 'video' | 'image' | 'article' | 'image-gen' | 'comedy'
 
 interface FeatureCard {
   view: HomeFeatureView
@@ -122,6 +125,7 @@ interface FeatureCard {
 const emit = defineEmits<{
   'open-view': [view: HomeFeatureView]
   'create-article': [topic: string]
+  'create-comedy': [topic: string]
 }>()
 
 const { items, groups, provider, loading, error, loadHotItems } = useHomepageHotItems()
@@ -184,6 +188,13 @@ const features: FeatureCard[] = [
     title: '输入描述提示词，AI 帮你生成图片',
     copy: '支持自定义图片比例，生成的图片可下载和放大查看。',
     points: ['支持多种尺寸比例', '可查看 AI 优化后的提示词', '点击放大和下载'],
+  },
+  {
+    view: 'comedy',
+    eyebrow: '脱口秀创作',
+    title: '输入题材，AI 帮你生成一分钟脱口秀文稿',
+    copy: '输入任意话题，流式生成包含笑点和表演提示的脱口秀段子。',
+    points: ['约一分钟表演时长', '标注停顿和互动提示', '一键复制全文'],
   },
 ]
 
@@ -510,6 +521,12 @@ onMounted(() => {
   border: 1px solid var(--color-border);
 }
 
+.hot-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .hot-action-btn {
   display: inline-flex;
   align-items: center;
@@ -528,8 +545,18 @@ onMounted(() => {
 }
 
 .hot-action-btn:hover {
-  background: var(--color-accent-2);
+  filter: brightness(1.1);
   transform: translateY(-1px);
+}
+
+.hot-action-btn-comedy {
+  background: transparent;
+  border: 1px solid var(--color-border-accent);
+  color: var(--color-accent);
+}
+
+.hot-action-btn-comedy:hover {
+  background: var(--color-surface-highlight);
 }
 
 .empty-card {

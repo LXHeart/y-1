@@ -123,12 +123,25 @@
           </svg>
           图片生成
         </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'comedy' }"
+          :aria-selected="currentView === 'comedy'"
+          type="button"
+          @click="currentView = 'comedy'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.5a4.5 4.5 0 00-1 8.9V12a1 1 0 001 0V10.4a4.5 4.5 0 00-0-8.9z" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M5 13.5h6M6.5 15h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          脱口秀创作
+        </button>
       </nav>
     </header>
 
     <main class="view-area">
       <KeepAlive>
-        <component :is="currentViewComponent" @open-view="handleOpenView" @create-article="handleCreateArticleFromTopic" />
+        <component :is="currentViewComponent" @open-view="handleOpenView" @create-article="handleCreateArticleFromTopic" @create-comedy="handleCreateComedyFromTopic" />
       </KeepAlive>
     </main>
 
@@ -164,6 +177,7 @@
 import { computed, onMounted, provide, ref, watch, type Component } from 'vue'
 import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
 import ArticleCreationView from './components/ArticleCreationView.vue'
+import ComedyWritingView from './components/ComedyWritingView.vue'
 import HomeView from './components/HomeView.vue'
 import ImageAnalysisView from './components/ImageAnalysisView.vue'
 import ImageGenerationView from './components/ImageGenerationView.vue'
@@ -176,11 +190,12 @@ import { useTheme, type ThemeMode } from './composables/useTheme'
 import type { LoginFormValues, RegisterFormValues } from './types/auth'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen'
+type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
 const currentView = ref<AppView>('home')
 const articleInitialTopic = ref('')
+const comedyInitialTopic = ref('')
 const showSettingsModal = ref(false)
 const showLoginModal = ref(false)
 const loginModalMessage = ref('')
@@ -289,6 +304,7 @@ const viewComponentMap: Record<AppView, Component> = {
   image: ImageAnalysisView,
   article: ArticleCreationView,
   'image-gen': ImageGenerationView,
+  comedy: ComedyWritingView,
 }
 
 const currentViewComponent = computed(() => viewComponentMap[currentView.value])
@@ -308,7 +324,13 @@ function handleCreateArticleFromTopic(topic: string): void {
   currentView.value = 'article'
 }
 
+function handleCreateComedyFromTopic(topic: string): void {
+  comedyInitialTopic.value = topic
+  currentView.value = 'comedy'
+}
+
 provide('articleInitialTopic', articleInitialTopic)
+provide('comedyInitialTopic', comedyInitialTopic)
 
 function handleVerifyModel(
   feature: AnalysisFeature,
