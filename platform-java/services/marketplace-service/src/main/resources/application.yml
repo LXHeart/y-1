@@ -1,6 +1,22 @@
 spring:
   application:
     name: marketplace-service
+  temporal:
+    # 连接：容器内用 service name（temporal:7233），本地 bootRun 注 localhost:7233。
+    connection:
+      target: ${TEMPORAL_TARGET:temporal:7233}
+    # 显式定义 worker：@ActivityImpl(workers) 按 name 引用，@WorkflowImpl(taskQueues) 按 task-queue 注册。
+    # 两者用相同值（grassland-demo）使 workflow 与其 activity 落在同一 worker。
+    workers:
+      - name: grassland-demo
+        task-queue: grassland-demo
+    # 自动发现 workflow/activity（v1.35+ 需显式开启包扫描）。
+    workers-auto-discovery:
+      packages:
+        - com.grassland.marketplace.workflow
+    # 测试隔离：IT/纯 context 测试置 true 用内存 test server，不依赖 temporal 容器。
+    test-server:
+      enabled: ${TEMPORAL_TEST_SERVER:false}
 server:
   port: ${SERVER_PORT:8083}
 management:

@@ -22,7 +22,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** 用 testcontainers MinIO 端到端验证 marketplace 三步上传 HTTP 流。 */
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = "spring.temporal.test-server.enabled=true")
 @Testcontainers
 class StorageUploadControllerIT {
 
