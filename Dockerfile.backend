@@ -11,7 +11,10 @@ RUN npm run build:server
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 
-RUN apt-get update \
+# 国内网络环境下切换 Debian 源到 USTC 镜像，避免 apt 拉取超时
+RUN sed -i 's|deb.debian.org|mirrors.ustc.edu.cn|g; s|security.debian.org|mirrors.ustc.edu.cn|g' \
+      /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
