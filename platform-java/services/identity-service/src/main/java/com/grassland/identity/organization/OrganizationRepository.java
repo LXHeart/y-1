@@ -18,7 +18,7 @@ import reactor.core.publisher.Mono;
 public class OrganizationRepository {
 
     private static final String SELECT_COLS =
-            "id::text, owner_account_id::text, name, status, created_at, updated_at";
+            "id::text, owner_account_id::text, name, status, permission_tier, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -49,12 +49,20 @@ public class OrganizationRepository {
                 .map(OrganizationRepository::map).all();
     }
 
+    /** 升级商家准入权限（Slice 2F）。返回受影响行数；幂等语义由调用方按单调升级校验保证。 */
+    public Mono<Long> updatePermissionTier(String id, String tier) {
+        return db.sql("UPDATE organization SET permission_tier = :tier, updated_at = now() WHERE id = CAST(:id AS uuid)")
+                .bind("tier", tier).bind("id", id)
+                .fetch().rowsUpdated();
+    }
+
     private static Organization map(Readable row) {
         return new Organization(
                 row.get("id", String.class),
                 row.get("owner_account_id", String.class),
                 row.get("name", String.class),
                 row.get("status", String.class),
+                row.get("permission_tier", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );

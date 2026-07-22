@@ -1,0 +1,118 @@
+package com.grassland.identity;
+
+import com.grassland.identity.security.CookieSigner;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeAll;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.MediaType;
+import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.reactive.server.WebTestClient;
+import org.testcontainers.containers.PostgreSQLContainer;
+
+/**
+ * identity-service 集成测试公共基座。草场身份域 Slice 2F。
+ *
+ * <p>{@code from-database-url=true} + {@code DATABASE_URL} 激活生产同款 {@code DataSourceConfig} → Flyway 跑 V1+V2
+ * 建 organization/store/organization_membership（含 permission_tier）；{@code @BeforeAll} 手建 app_users/session/outbox。
+ * 提供 {@link #seedAccount(String)} 生成登录态 + {@link #createOrg(String, String)} 建组织。
+ *
+ * <p><b>容器生命周期</b>：采用 testcontainers 单例容器模式——{@link #POSTGRES} 在 static 块启动一次、全程不重启，
+ * 端口稳定；多个子类 + Spring 缓存的 ApplicationContext 共享同一容器/同一端口（避免 {@code @Testcontainers} 按类重启
+ * 导致缓存上下文持有的旧端口失效、连接被拒）。
+ *
+ * <p>注意：单例容器在同类内跨 {@code @Test} 共享，数据累积；outbox 计数请按 orgId 限定以解耦顺序。
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+public abstract class IdentityItSupport {
+
+    /** 共享单例容器：类加载即启动一次，全程不重启 → 端口稳定。 */
+    public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+
+    static {
+        POSTGRES.start();
+    }
+
+    @LocalServerPort
+    protected int port;
+
+    @Autowired
+    protected DatabaseClient db;
+
+    @Autowired
+    protected CookieSigner cookieSigner;
+
+    @DynamicPropertySource
+    static void props(DynamicPropertyRegistry r) {
+        String host = POSTGRES.getHost();
+        Integer p = POSTGRES.getMappedPort(5432);
+        String name = POSTGRES.getDatabaseName();
+        r.add("identity.datasource.from-database-url", () -> "true");
+        r.add("DATABASE_URL", () -> "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword()
+                + "@" + host + ":" + p + "/" + name);
+        r.add("management.server.port", () -> "0");
+        r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
+    }
+
+    @BeforeAll
+    static void schema() throws Exception {
+        // organization/store/organization_membership 由 Flyway V1+V2 建；这里补 app_users/session/outbox（Flyway 不管）。
+        // IF NOT EXISTS：多个子类各自触发一次 @BeforeAll，需幂等。
+        try (var c = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+             var s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz)");
+            s.execute("CREATE TABLE IF NOT EXISTS session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
+            s.execute("CREATE TABLE IF NOT EXISTS outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id text NOT NULL UNIQUE, event_type text NOT NULL, aggregate_type text NOT NULL, aggregate_id text NOT NULL, payload json NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz)");
+        }
+    }
+
+    protected WebTestClient client() {
+        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+    }
+
+    /** seed 一个账号（app_users + session），返回 signed cookie value 与 accountId。 */
+    protected Seeded seedAccount(String email) {
+        String accountId = UUID.randomUUID().toString();
+        db.sql("INSERT INTO app_users(id, email, password_hash, display_name, role, status) "
+                + "VALUES (CAST(:id AS uuid), :email, 'x', 'Test Account', 'user', 'active')")
+                .bind("id", accountId).bind("email", email).then().block();
+        return new Seeded(signCookie(accountId), accountId);
+    }
+
+    /** 用已有 accountId 补一个 session，返回 signed cookie（用于把外部已知账号转成登录态）。 */
+    protected String cookieFor(String accountId) {
+        return signCookie(accountId);
+    }
+
+    private String signCookie(String accountId) {
+        String sid = UUID.randomUUID().toString();
+        String sess = "{\"user\":{\"id\":\"" + accountId + "\"}}";
+        db.sql("INSERT INTO session(sid, sess, expire) VALUES (:sid, CAST(:sess AS json), now() + interval '7 days')")
+                .bind("sid", sid).bind("sess", sess).then().block();
+        return URLEncoder.encode("s:" + cookieSigner.sign(sid), StandardCharsets.UTF_8);
+    }
+
+    /** 用给定 cookie 建一个组织，返回 orgId。 */
+    @SuppressWarnings("unchecked")
+    protected String createOrg(String cookie, String name) {
+        Map<String, Object> body = client().post().uri("/api/organizations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{\"name\":\"" + name + "\"}")
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) body.get("data");
+        return (String) data.get("id");
+    }
+
+    /** seeded 账号的登录态。 */
+    public record Seeded(String cookie, String accountId) {}
+}

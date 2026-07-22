@@ -56,6 +56,10 @@ public class DataSourceConfig {
     /**
      * 解析 DATABASE_URL。java.net.URI 以最后一个 {@code @} 分隔 userInfo 与 host，
      * 因此含 {@code @} 的密码（如 {@code Aa@111111}）能正确归属 userInfo：{@code lxh:Aa@111111} → user=lxh, pass=Aa@111111。
+     *
+     * <p>兼容无显式端口的 URL（如 neon pooler：{@code ...neon.tech/db}）——省略端口段，PG JDBC 默认 5432，
+     * 不再写出 {@code :-1}。保留查询串中的 {@code sslmode}（neon 要求 SSL），丢弃 JDBC 不识别的 {@code channel_binding}
+     * （JDBC 用 {@code channelBinding}；如需可另行配置）。
      */
     static JdbcParts parse(String databaseUrl) {
         int schemeEnd = databaseUrl.indexOf("://");
@@ -69,8 +73,27 @@ public class DataSourceConfig {
             user = colon < 0 ? userInfo : userInfo.substring(0, colon);
             password = colon < 0 ? "" : userInfo.substring(colon + 1);
         }
-        String jdbcUrl = "jdbc:postgresql://" + uri.getHost() + ":" + uri.getPort() + uri.getPath();
+        String portPart = uri.getPort() > 0 ? ":" + uri.getPort() : "";
+        String queryPart = toJdbcQuery(uri.getRawQuery());
+        String jdbcUrl = "jdbc:postgresql://" + uri.getHost() + portPart + uri.getPath() + queryPart;
         return new JdbcParts(jdbcUrl, user, password);
+    }
+
+    /** 保留 sslmode 等 JDBC 识别的查询参数，丢弃 channel_binding（JDBC 用 channelBinding，此名不识别）。 */
+    private static String toJdbcQuery(String rawQuery) {
+        if (rawQuery == null || rawQuery.isBlank()) {
+            return "";
+        }
+        StringBuilder qb = new StringBuilder();
+        String sep = "?";
+        for (String param : rawQuery.split("&")) {
+            if (param.startsWith("channel_binding")) {
+                continue;
+            }
+            qb.append(sep).append(param);
+            sep = "&";
+        }
+        return qb.toString();
     }
 
     record JdbcParts(String jdbcUrl, String user, String password) {}
