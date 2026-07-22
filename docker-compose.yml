@@ -118,5 +118,21 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
+  # Epic 3：对象存储（S3 兼容）。无 profile 常驻（与 kafka/redis 一致），service name minio。
+  # bucket 由 platform-storage 适配器在服务启动时幂等创建，无需 mc init 容器。
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
 volumes:
   backend_data:
+  minio_data:
