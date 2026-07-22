@@ -133,6 +133,24 @@ services:
       - minio_data:/data
     restart: unless-stopped
 
+  # Epic 3：Temporal 工作流引擎（dev server）。无 profile 常驻（与 kafka/redis/minio 一致）。
+  # CLI dev-server 自带 sqlite，零外部 DB 依赖；gRPC + Web UI 同在 :7233。
+  # 本地开发用；生产应换 temporalio/server + postgres + AUTO_SETUP。
+  temporal:
+    image: temporalio/cli:latest
+    command: ["server", "start-dev", "--log-level", "error", "--db-filename", "/tmp/temporal-dev.db"]
+    ports:
+      - "${TEMPORAL_GRPC_PORT:-7233}:7233"
+    volumes:
+      - temporal_dev_data:/tmp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "describe"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   backend_data:
   minio_data:
+  temporal_dev_data:

@@ -5,6 +5,7 @@ bcrypt = "0.10.2"
 bouncycastle = "1.81"
 testcontainers = "1.21.3"
 aws-sdk = "2.31.5"
+temporal = "1.37.0"
 
 [libraries]
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
@@ -21,6 +22,8 @@ testcontainers-postgresql = { module = "org.testcontainers:postgresql" }
 testcontainers-r2dbc = { module = "org.testcontainers:r2dbc" }
 aws-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
 aws-s3 = { module = "software.amazon.awssdk:s3" }
+temporal-spring-boot-starter = { module = "io.temporal:temporal-spring-boot-starter", version.ref = "temporal" }
+temporal-testing = { module = "io.temporal:temporal-testing", version.ref = "temporal" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
