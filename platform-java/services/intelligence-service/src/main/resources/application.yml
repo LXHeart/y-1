@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: intelligence-service
+server:
+  port: ${SERVER_PORT:8086}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

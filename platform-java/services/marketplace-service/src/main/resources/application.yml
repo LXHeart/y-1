@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: marketplace-service
+server:
+  port: ${SERVER_PORT:8083}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

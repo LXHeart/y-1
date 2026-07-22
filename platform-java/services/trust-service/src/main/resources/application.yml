@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: trust-service
+server:
+  port: ${SERVER_PORT:8085}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
