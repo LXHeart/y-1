@@ -8,7 +8,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.context.ApplicationContext;
 
 @SpringBootTest
-@TestPropertySource(properties = "spring.r2dbc.url=r2dbc:postgresql://localhost:1/nonexistent")
+@TestPropertySource(properties = "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:1/nonexistent")
 class IdentityServiceApplicationTest {
     @Test
     void startsApplicationContext(ApplicationContext context) {
