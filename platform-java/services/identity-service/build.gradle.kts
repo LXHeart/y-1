@@ -21,6 +21,9 @@ dependencies {
     implementation(libs.bcrypt)
     implementation(libs.bouncycastle)
     implementation("com.fasterxml.jackson.core:jackson-databind")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("org.postgresql:postgresql")
 
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.spring.boot.test)

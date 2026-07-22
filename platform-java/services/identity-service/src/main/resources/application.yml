@@ -3,6 +3,11 @@ spring:
     name: identity-service
   r2dbc:
     url: ${LEGACY_DATABASE_R2DBC_URL:}
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     producer:
