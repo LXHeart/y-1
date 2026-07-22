@@ -8,3 +8,16 @@ management:
     web:
       exposure:
         include: health,info
+
+# 对象存储（platform-storage 共享库，autoconfigure 在 enabled=true 时装配）。
+# endpoint 是服务端访问 MinIO 的地址；public-base-url 是浏览器直传地址（SigV4 签 Host 必须匹配）。
+object-storage:
+  enabled: ${OBJECT_STORAGE_ENABLED:true}
+  endpoint: ${MINIO_ENDPOINT:http://minio:9000}
+  public-base-url: ${MINIO_PUBLIC_BASE_URL:http://localhost:9000}
+  region: ${MINIO_REGION:us-east-1}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket: ${MINIO_BUCKET:grassland}
+  path-style-access: ${MINIO_PATH_STYLE:true}
+  auto-create-bucket: ${MINIO_AUTO_CREATE_BUCKET:true}

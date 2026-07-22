@@ -12,7 +12,13 @@ java {
 dependencies {
     implementation(platform(libs.spring.boot.dependencies))
     implementation(libs.spring.boot.actuator)
+    implementation(project(":platform-storage"))
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
     testImplementation(libs.spring.boot.test)
+    testImplementation(libs.reactor.test)
+    testImplementation(platform(libs.testcontainers.bom))
+    testImplementation("org.testcontainers:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {
