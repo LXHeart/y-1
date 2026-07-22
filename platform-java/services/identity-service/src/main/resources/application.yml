@@ -13,7 +13,9 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      retries: 3
+      properties:
+        # 原生 producer 覆盖（KafkaProperties.Producer 无 retries 便捷字段，须走 properties map）
+        retries: 3
   codec:
     max-in-memory-size: 256KB
   mail:
