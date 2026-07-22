@@ -3,10 +3,33 @@
     <header class="page-header">
       <div class="header-row">
         <div class="brand">
-          <span class="brand-dot" aria-hidden="true"></span>
+          <div class="brand-logo" aria-hidden="true">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="logo-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#8b5cf6"/>
+                  <stop offset="0.5" stop-color="#6366f1"/>
+                  <stop offset="1" stop-color="#4f46e5"/>
+                </linearGradient>
+                <linearGradient id="logo-accent" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#a78bfa"/>
+                  <stop offset="1" stop-color="#818cf8"/>
+                </linearGradient>
+              </defs>
+              <!-- 主背景圆角矩形 -->
+              <rect width="36" height="36" rx="10" fill="url(#logo-grad)"/>
+              <!-- 视频播放三角 -->
+              <path d="M11 10.5C11 9.67 11.67 9 12.5 9C12.9 9 13.27 9.16 13.53 9.43L23.53 18.43C24.15 19 24.15 19.97 23.53 20.54C23.27 20.78 22.93 20.91 22.57 20.91H12.5C11.67 20.91 11 20.24 11 19.41V10.5Z" fill="rgba(255,255,255,0.95)"/>
+              <!-- 文字/文章图标 -->
+              <rect x="11" y="23" width="14" height="1.8" rx="0.9" fill="rgba(255,255,255,0.5)"/>
+              <rect x="11" y="26.2" width="9" height="1.8" rx="0.9" fill="rgba(255,255,255,0.35)"/>
+              <!-- 装饰圆点 -->
+              <circle cx="27.5" cy="11.5" r="2.8" fill="url(#logo-accent)" opacity="0.7"/>
+            </svg>
+          </div>
           <div class="brand-copy">
-            <h1 class="brand-title">Extractor</h1>
-            <p class="brand-subtitle">视频提取、图片评价与文章创作工作台</p>
+            <h1 class="brand-title">全功能营销工具库</h1>
+            <p class="brand-subtitle">视频提取 · 图片评价 · 文章创作 · 脱口秀生成</p>
           </div>
         </div>
 
@@ -30,6 +53,17 @@
             <span class="auth-pill-label">已登录</span>
             <strong class="auth-pill-name">{{ currentUser.displayName || currentUser.email }}</strong>
           </div>
+
+          <span
+            v-if="isAuthenticated"
+            class="credits-badge"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M8 4.5v7M5.5 7.5h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            {{ currentBalance }} 次
+          </span>
 
           <button v-if="isAuthenticated" class="settings-trigger" type="button" @click="handleOpenSettings">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -136,6 +170,34 @@
           </svg>
           脱口秀创作
         </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'video-production' }"
+          :aria-selected="currentView === 'video-production'"
+          type="button"
+          @click="currentView = 'video-production'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 4.5a2 2 0 012-2h8a2 2 0 012 2v5a2 2 0 01-2 2H4a2 2 0 01-2-2v-5z" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M6 14h4M8 11.5V14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <circle cx="8" cy="7" r="1.5" stroke="currentColor" stroke-width="1"/>
+          </svg>
+          视频制作
+        </button>
+        <button
+          v-if="isAuthenticated && currentUser?.role === 'admin'"
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'admin' }"
+          :aria-selected="currentView === 'admin'"
+          type="button"
+          @click="currentView = 'admin'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M5.5 8.5h5M8 6v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          管理
+        </button>
       </nav>
     </header>
 
@@ -178,19 +240,22 @@ import { computed, onMounted, provide, ref, watch, type Component } from 'vue'
 import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
 import ArticleCreationView from './components/ArticleCreationView.vue'
 import ComedyWritingView from './components/ComedyWritingView.vue'
+import AdminView from './components/AdminView.vue'
 import HomeView from './components/HomeView.vue'
 import ImageAnalysisView from './components/ImageAnalysisView.vue'
 import ImageGenerationView from './components/ImageGenerationView.vue'
 import LoginModal from './components/LoginModal.vue'
 import VideoAnalysisView from './components/VideoAnalysisView.vue'
+import VideoProductionView from './components/VideoProductionView.vue'
 import { useAnalysisSettings } from './composables/useAnalysisSettings'
 import { useAuth } from './composables/useAuth'
 import { useHomepageSettings } from './composables/useHomepageSettings'
 import { useTheme, type ThemeMode } from './composables/useTheme'
+import { useCredits } from './composables/useCredits'
 import type { LoginFormValues, RegisterFormValues } from './types/auth'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy'
+type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
 const currentView = ref<AppView>('home')
@@ -223,6 +288,11 @@ const {
   register,
   logout,
 } = useAuth()
+
+const {
+  currentBalance,
+  loadBalance: loadCreditBalance,
+} = useCredits()
 
 const {
   settings: analysisSettings,
@@ -280,7 +350,13 @@ watch(authLoadError, (message) => {
 })
 
 onMounted(() => {
-  void loadCurrentUser()
+  void loadCurrentUser().then(() => {
+    if (isAuthenticated.value) void loadCreditBalance()
+  })
+})
+
+watch(isAuthenticated, (authed) => {
+  if (authed) void loadCreditBalance()
 })
 
 async function handleSaveSettings(newSettings: AnalysisSettings, newHomepageSettings: HomepageSettings): Promise<void> {
@@ -305,6 +381,8 @@ const viewComponentMap: Record<AppView, Component> = {
   article: ArticleCreationView,
   'image-gen': ImageGenerationView,
   comedy: ComedyWritingView,
+  'video-production': VideoProductionView,
+  admin: AdminView,
 }
 
 const currentViewComponent = computed(() => viewComponentMap[currentView.value])
@@ -421,64 +499,69 @@ async function handleOpenSettings(): Promise<void> {
 .app-shell {
   position: relative;
   z-index: 1;
-  width: min(1160px, calc(100% - 32px));
+  width: min(1160px, calc(100% - 40px));
   margin: 0 auto;
-  padding: clamp(20px, 3vw, 32px) 0 72px;
+  padding: calc(clamp(24px, 4vw, 40px) + env(safe-area-inset-top, 0px)) 0 80px;
 }
 
 .page-header {
   display: grid;
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
+  gap: var(--space-lg);
+  margin-bottom: var(--space-xl);
 }
 
 .header-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-lg);
 }
 
 .brand {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
   min-width: 0;
 }
 
-.brand-dot {
-  width: 12px;
-  height: 12px;
-  margin-top: 8px;
-  border-radius: 999px;
-  background: var(--color-accent);
+.brand-logo {
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
+  filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.4));
+  transition: filter 0.3s var(--ease-out);
+}
+
+.brand-logo:hover {
+  filter: drop-shadow(0 0 20px rgba(139, 92, 246, 0.6));
 }
 
 .brand-copy {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .brand-title {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: var(--text-display);
+  font-weight: 800;
+  letter-spacing: -0.04em;
   color: var(--color-text);
+  line-height: 1.1;
 }
 
 .brand-subtitle {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 0.86rem;
-  line-height: 1.45;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -487,22 +570,52 @@ async function handleOpenSettings(): Promise<void> {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
-  padding: 0 12px;
+  min-height: 38px;
+  padding: 0 14px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--surface-page);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .auth-pill-label {
   color: var(--color-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .auth-pill-name {
   color: var(--color-text);
   font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.credits-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(99, 102, 241, 0.1));
+  color: var(--color-accent-2);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.credits-badge:hover {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(99, 102, 241, 0.18));
+  box-shadow: 0 0 24px rgba(139, 92, 246, 0.2);
+  transform: translateY(-1px);
 }
 
 .settings-trigger,
@@ -512,11 +625,13 @@ async function handleOpenSettings(): Promise<void> {
   align-items: center;
   justify-content: center;
   gap: var(--space-xs);
-  min-height: 40px;
+  min-height: 38px;
   padding: 0 14px;
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   border: 1px solid var(--color-border);
   background: var(--surface-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 0.84rem;
@@ -531,7 +646,7 @@ async function handleOpenSettings(): Promise<void> {
 }
 
 .theme-toggle {
-  width: 40px;
+  width: 38px;
   padding: 0;
 }
 
@@ -542,36 +657,42 @@ async function handleOpenSettings(): Promise<void> {
   border-color: var(--color-border-hover);
   color: var(--color-text);
   transform: translateY(-1px);
+  box-shadow: var(--shadow-glow);
 }
 
 .auth-trigger-primary {
-  background: var(--color-accent);
-  border-color: transparent;
+  background: var(--gradient-accent);
+  border: none;
   color: #ffffff;
+  font-weight: 600;
+  box-shadow: var(--shadow-glow);
 }
 
 .auth-trigger-primary:hover {
-  background: var(--color-accent-2);
+  box-shadow: var(--shadow-glow-strong);
+  transform: translateY(-2px) scale(1.02);
   color: #ffffff;
 }
 
 .auth-banner {
   margin: 0;
-  padding: 12px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--color-border-accent);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-highlight);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), rgba(99, 102, 241, 0.04));
   color: var(--color-text-secondary);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   animation: fade-in var(--duration-normal) var(--ease-out);
 }
 
 .nav-tabs {
   display: flex;
-  gap: 6px;
-  padding: 6px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-page);
+  gap: 4px;
+  padding: 5px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--color-border);
   width: fit-content;
 }
@@ -579,43 +700,49 @@ async function handleOpenSettings(): Promise<void> {
 .nav-tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
+  gap: 7px;
+  min-height: 40px;
   padding: 0 16px;
   border: none;
-  border-radius: calc(var(--radius-lg) - 6px);
+  border-radius: 12px;
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 500;
   white-space: nowrap;
+  position: relative;
   transition:
     background var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
+    color var(--duration-fast) var(--ease-out);
 }
 
 .nav-tab:hover {
   color: var(--color-text-secondary);
-  background: var(--surface-hover);
+  background: rgba(139, 92, 246, 0.06);
 }
 
 .nav-tab-active {
-  background: var(--surface-card);
-  color: var(--color-text);
+  background: var(--gradient-accent);
+  color: #ffffff;
   font-weight: 600;
-  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3);
+}
+
+.nav-tab-active:hover {
+  background: var(--gradient-accent);
+  color: #ffffff;
 }
 
 .view-area {
-  animation: fade-in var(--duration-normal) var(--ease-out);
+  animation: slide-up var(--duration-dramatic) var(--ease-out);
 }
 
 @media (max-width: 900px) {
   .header-row {
     flex-direction: column;
     gap: var(--space-md);
+    align-items: flex-start;
   }
 
   .header-actions {
@@ -636,16 +763,31 @@ async function handleOpenSettings(): Promise<void> {
 
 @media (max-width: 560px) {
   .app-shell {
-    width: min(100%, calc(100% - 24px));
+    width: min(100%, calc(100% - 20px));
+  }
+
+  .brand-logo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .brand-title {
+    font-size: 1.2rem;
   }
 
   .brand-subtitle {
-    font-size: 0.82rem;
+    font-size: 0.8rem;
   }
 
   .auth-pill {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .nav-tab {
+    padding: 0 12px;
+    min-height: 36px;
+    font-size: 0.82rem;
   }
 }
 </style>

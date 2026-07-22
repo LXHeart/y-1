@@ -42,4 +42,5 @@ export interface ArticleImageSlot {
   selectedImage: ImageSearchResult | GeneratedImage | null
   generating: boolean
   searching: boolean
+  skipped: boolean
 }

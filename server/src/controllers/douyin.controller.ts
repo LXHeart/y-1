@@ -5,6 +5,7 @@ import type { NextFunction, Request, Response } from 'express'
 import { isAllowedDouyinVideoHost } from '../lib/douyin-hosts.js'
 import { AppError } from '../lib/errors.js'
 import { getSessionUser } from '../lib/auth.js'
+import { requireCredit } from '../lib/credits.js'
 import { logger } from '../lib/logger.js'
 import {
   analysisDouyinMediaRequestParams,
@@ -353,6 +354,7 @@ export async function analyzeDouyinVideoHandler(req: Request, res: Response, nex
 
   try {
     const { proxyVideoUrl } = analyzeDouyinVideoRequest.parse(req.body)
+    await requireCredit(getSessionUser(req)!.id, 'video_analysis')
     const data = await analyzeDouyinVideoByProxyUrl(proxyVideoUrl, {
       signal: abortController.signal,
       userId: getSessionUser(req)?.id,

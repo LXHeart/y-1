@@ -13,6 +13,7 @@ import {
 } from '../schemas/article-creation.js'
 import type { ProviderImageInput } from '../schemas/image-analysis.js'
 import * as dispatch from '../services/article-generation-dispatch.service.js'
+import { requireCredit } from '../lib/credits.js'
 import * as articleImageService from '../services/article-image.service.js'
 
 export async function generateTitlesHandler(
@@ -27,6 +28,7 @@ export async function generateTitlesHandler(
     const abortOnClose = (): void => controller.abort()
     res.on('close', abortOnClose)
 
+    await requireCredit(getSessionUser(req)!.id, 'article_generation')
     const titles = await dispatch.generateTitles(topic, {
       signal: controller.signal,
       userId: getSessionUser(req)?.id,

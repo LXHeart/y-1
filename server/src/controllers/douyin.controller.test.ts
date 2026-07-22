@@ -25,6 +25,7 @@ const {
   }
 })
 
+vi.mock('../lib/credits.js', () => ({ requireCredit: vi.fn().mockResolvedValue(undefined) }))
 beforeEach(() => {
   process.env.DOUYIN_PROXY_TOKEN_SECRET = 'douyin-proxy-test-secret-1234567890'
   createDouyinMediaReadStreamMock.mockClear()
@@ -268,6 +269,7 @@ describe('analyzeDouyinVideoHandler', () => {
   it('delegates proxy url analysis and returns json with abort signal', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: '/api/douyin/proxy/token',
       },
@@ -283,6 +285,7 @@ describe('analyzeDouyinVideoHandler', () => {
 
     expect(analyzeDouyinVideoByProxyUrl).toHaveBeenCalledWith('/api/douyin/proxy/token', {
       signal: expect.any(AbortSignal),
+      userId: 'test-user-id',
     })
     expect(res.json).toHaveBeenCalledWith({
       success: true,
@@ -299,6 +302,7 @@ describe('analyzeDouyinVideoHandler', () => {
   it('ignores request-scoped analysis config from public requests', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: '/api/douyin/proxy/token',
         analysisConfig: {
@@ -321,6 +325,7 @@ describe('analyzeDouyinVideoHandler', () => {
 
     expect(analyzeDouyinVideoByProxyUrl).toHaveBeenCalledWith('/api/douyin/proxy/token', {
       signal: expect.any(AbortSignal),
+      userId: 'test-user-id',
     })
     expect(analyzeDouyinVideoByProxyUrl).not.toHaveBeenCalledWith(
       '/api/douyin/proxy/token',
@@ -331,6 +336,7 @@ describe('analyzeDouyinVideoHandler', () => {
   it('rejects analyze requests with proxy urls from a different origin', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: 'https://evil.example/api/douyin/proxy/token',
       },
@@ -361,6 +367,7 @@ describe('analyzeDouyinVideoHandler', () => {
   it('forwards analysis errors to next', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: '/api/douyin/proxy/token',
       },
@@ -508,3 +515,4 @@ describe('downloadDouyinVideoHandler', () => {
     expect(next).not.toHaveBeenCalled()
   })
 })
+

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { AppError } from '../lib/errors.js'
 import { queryDb } from '../lib/db.js'
 import { hashPassword, verifyPassword } from '../lib/password.js'
+import { ensureCreditAccount, awardFreeCredits } from './credit.service.js'
+import { env } from '../lib/env.js'
 
 export interface AuthUserProfile {
   id: string
@@ -128,7 +130,18 @@ export async function createUser(input: CreateUserInput): Promise<AuthUserProfil
     throw new AppError('该邮箱已存在', 409)
   }
 
-  return toAuthUserProfile(mapUserRow(row))
+  const profile = toAuthUserProfile(mapUserRow(row))
+
+  try {
+    await ensureCreditAccount(profile.id)
+    if (env.FREE_CREDITS_ON_REGISTER > 0) {
+      await awardFreeCredits(profile.id, env.FREE_CREDITS_ON_REGISTER, '新用户注册赠送')
+    }
+  } catch {
+    // Credits setup failure should not block registration
+  }
+
+  return profile
 }
 
 export async function registerUser(input: RegisterUserInput): Promise<AuthUserProfile> {

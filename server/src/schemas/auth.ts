@@ -10,7 +10,7 @@ const displayNameSchema = z.string().trim().min(1, '请输入显示名称').max(
 
 export const loginRequestSchema = z.object({
   email: emailSchema,
-  password: passwordSchema,
+  password: z.string().min(1, '请输入密码'),
 })
 
 export const registerRequestSchema = z.object({

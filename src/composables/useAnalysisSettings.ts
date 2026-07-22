@@ -16,6 +16,7 @@ function createDefaultSettings(): AnalysisSettings {
       image: {},
       article: {},
       imageGeneration: {},
+      videoProduction: {},
     },
     integrations: {
       feishu: {},
@@ -40,6 +41,7 @@ function createDefaultFeatureStates(): FeatureModelStateMap {
     image: createFeatureModelState(),
     article: createFeatureModelState(),
     imageGeneration: createFeatureModelState(),
+    videoProduction: createFeatureModelState(),
   }
 }
 
@@ -64,6 +66,9 @@ function normalizeSettings(data: unknown): AnalysisSettings {
     : undefined
   const rawImageGeneration = typeof rawFeatures?.imageGeneration === 'object' && rawFeatures.imageGeneration !== null
     ? rawFeatures.imageGeneration as Record<string, unknown>
+    : undefined
+  const rawVideoProduction = typeof rawFeatures?.videoProduction === 'object' && rawFeatures.videoProduction !== null
+    ? rawFeatures.videoProduction as Record<string, unknown>
     : undefined
 
   const rawIntegrations = typeof record.integrations === 'object' && record.integrations !== null
@@ -103,6 +108,11 @@ function normalizeSettings(data: unknown): AnalysisSettings {
         baseUrl: typeof rawImageGeneration?.baseUrl === 'string' ? rawImageGeneration.baseUrl : undefined,
         apiKey: typeof rawImageGeneration?.apiKey === 'string' ? rawImageGeneration.apiKey : undefined,
         model: typeof rawImageGeneration?.model === 'string' ? rawImageGeneration.model : undefined,
+      },
+      videoProduction: {
+        baseUrl: typeof rawVideoProduction?.baseUrl === 'string' ? rawVideoProduction.baseUrl : undefined,
+        apiKey: typeof rawVideoProduction?.apiKey === 'string' ? rawVideoProduction.apiKey : undefined,
+        model: typeof rawVideoProduction?.model === 'string' ? rawVideoProduction.model : undefined,
       },
     },
   }

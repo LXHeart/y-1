@@ -23,6 +23,7 @@ const {
   }
 })
 
+vi.mock('../lib/credits.js', () => ({ requireCredit: vi.fn().mockResolvedValue(undefined) }))
 beforeEach(() => {
   process.env.BILIBILI_PROXY_TOKEN_SECRET = 'bilibili-proxy-test-secret-1234567890'
   createBilibiliMediaReadStreamMock.mockClear()
@@ -162,6 +163,7 @@ describe('analyzeBilibiliVideoHandler', () => {
   it('delegates proxy url analysis and returns json', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: '/api/bilibili/proxy/token',
       },
@@ -177,6 +179,7 @@ describe('analyzeBilibiliVideoHandler', () => {
 
     expect(analyzeBilibiliVideoByProxyUrl).toHaveBeenCalledWith('/api/bilibili/proxy/token', {
       signal: expect.any(AbortSignal),
+      userId: 'test-user-id',
     })
     expect(res.json).toHaveBeenCalledWith({
       success: true,
@@ -193,6 +196,7 @@ describe('analyzeBilibiliVideoHandler', () => {
   it('ignores request-scoped analysis config from public requests', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: '/api/bilibili/proxy/token',
         analysisConfig: {
@@ -215,6 +219,7 @@ describe('analyzeBilibiliVideoHandler', () => {
 
     expect(analyzeBilibiliVideoByProxyUrl).toHaveBeenCalledWith('/api/bilibili/proxy/token', {
       signal: expect.any(AbortSignal),
+      userId: 'test-user-id',
     })
     expect(analyzeBilibiliVideoByProxyUrl).not.toHaveBeenCalledWith(
       '/api/bilibili/proxy/token',
@@ -225,6 +230,7 @@ describe('analyzeBilibiliVideoHandler', () => {
   it('rejects analyze requests with proxy urls from a different origin', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: 'https://evil.example/api/bilibili/proxy/token',
       },
@@ -255,6 +261,7 @@ describe('analyzeBilibiliVideoHandler', () => {
   it('forwards analysis errors to next', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       body: {
         proxyVideoUrl: '/api/bilibili/proxy/token',
       },
@@ -367,3 +374,4 @@ describe('downloadBilibiliVideoHandler', () => {
     expect(next).not.toHaveBeenCalled()
   })
 })
+

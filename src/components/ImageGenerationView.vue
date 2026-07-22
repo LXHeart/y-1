@@ -109,11 +109,39 @@
       <button class="lightbox-close" type="button" @click="lightboxUrl = ''" aria-label="关闭">&times;</button>
       <img :src="lightboxUrl" class="lightbox-img" alt="放大查看" />
     </div>
+
+    <Teleport to="body">
+      <div v-if="showOversizedDialog" class="oversized-overlay" role="dialog" aria-modal="true">
+        <div class="oversized-modal glass-card">
+          <header class="oversized-head">
+            <p class="oversized-kicker">图片过大</p>
+            <h3 class="oversized-title">以下素材超过 5 MB 限制</h3>
+          </header>
+
+          <ul class="oversized-list">
+            <li v-for="file in oversizedFiles" :key="file.name" class="oversized-item">
+              <span class="oversized-name">{{ file.name }}</span>
+              <span class="oversized-size">{{ formatFileSize(file.size) }}</span>
+            </li>
+          </ul>
+
+          <div class="oversized-actions">
+            <button class="oversized-btn-primary" :disabled="compressing" @click="compressOversizedImages">
+              <span v-if="compressing" class="spinner-sm" />
+              {{ compressing ? '压缩中…' : '自动压缩' }}
+            </button>
+            <button class="oversized-btn-secondary" :disabled="compressing" @click="removeOversizedImages">跳过这些图片</button>
+            <button class="oversized-btn-secondary" :disabled="compressing" @click="cancelOversizedImages">取消</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
+import { compressImageToFile } from '../composables/compress-image'
 
 interface GenerateResult {
   imageUrl: string
@@ -127,6 +155,7 @@ interface MaterialItem {
 
 const API_BASE = ''
 const MAX_MATERIALS = 4
+const MAX_FILE_SIZE = 5 * 1024 * 1024
 
 const prompt = ref('')
 const selectedSize = ref<'1024x1024' | '1024x1792' | '1792x1024'>('1024x1024')
@@ -137,6 +166,11 @@ const lightboxUrl = ref('')
 const materials = ref<MaterialItem[]>([])
 const mentionVisible = ref(false)
 const mentionStyle = ref<Record<string, string>>({})
+
+const oversizedFiles = ref<File[]>([])
+const showOversizedDialog = ref(false)
+const compressing = ref(false)
+const pendingFiles = ref<File[]>([])
 
 const promptRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -165,15 +199,71 @@ function onFileSelected(event: Event): void {
   const input = event.target as HTMLInputElement
   if (!input.files) return
 
-  for (const file of Array.from(input.files)) {
-    if (materials.value.length >= MAX_MATERIALS) break
-    if (!file.type.startsWith('image/')) continue
+  const files = Array.from(input.files).filter(f => f.type.startsWith('image/'))
+  input.value = ''
 
-    const previewUrl = URL.createObjectURL(file)
-    materials.value.push({ file, previewUrl })
+  const availableSlots = MAX_MATERIALS - materials.value.length
+  if (availableSlots <= 0) return
+
+  const toProcess = files.slice(0, availableSlots)
+  const oversized: File[] = []
+  const normal: File[] = []
+
+  for (const file of toProcess) {
+    if (file.size > MAX_FILE_SIZE) {
+      oversized.push(file)
+    } else {
+      normal.push(file)
+    }
   }
 
-  input.value = ''
+  for (const file of normal) {
+    materials.value.push({ file, previewUrl: URL.createObjectURL(file) })
+  }
+
+  if (oversized.length > 0) {
+    oversizedFiles.value = oversized
+    pendingFiles.value = normal
+    showOversizedDialog.value = true
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  return (bytes / 1024).toFixed(0) + ' KB'
+}
+
+async function compressOversizedImages(): Promise<void> {
+  if (oversizedFiles.value.length === 0) return
+  compressing.value = true
+  try {
+    for (const file of oversizedFiles.value) {
+      if (materials.value.length >= MAX_MATERIALS) break
+      const compressed = await compressImageToFile(file, MAX_FILE_SIZE)
+      materials.value.push({ file: compressed, previewUrl: URL.createObjectURL(compressed) })
+    }
+  } finally {
+    oversizedFiles.value = []
+    showOversizedDialog.value = false
+    compressing.value = false
+  }
+}
+
+function removeOversizedImages(): void {
+  oversizedFiles.value = []
+  showOversizedDialog.value = false
+}
+
+function cancelOversizedImages(): void {
+  for (const mat of pendingFiles.value) {
+    const idx = materials.value.findIndex(m => m.file === mat)
+    if (idx !== -1) {
+      URL.revokeObjectURL(materials.value[idx].previewUrl)
+      materials.value.splice(idx, 1)
+    }
+  }
+  oversizedFiles.value = []
+  showOversizedDialog.value = false
 }
 
 function removeMaterial(index: number): void {
@@ -682,5 +772,139 @@ async function handleGenerate(): Promise<void> {
   object-fit: contain;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
+}
+
+.oversized-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--color-overlay);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.oversized-modal {
+  width: min(100%, 420px);
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  animation: fade-in var(--duration-normal) var(--ease-out);
+}
+
+.oversized-head {
+  display: grid;
+  gap: 6px;
+}
+
+.oversized-kicker {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.oversized-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.oversized-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.oversized-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  border: 1px solid var(--color-border);
+}
+
+.oversized-name {
+  font-size: 0.84rem;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.oversized-size {
+  font-size: 0.78rem;
+  color: var(--color-danger);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.oversized-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.oversized-btn-primary,
+.oversized-btn-secondary {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
+}
+
+.oversized-btn-primary {
+  background: var(--gradient-accent);
+  color: #fff;
+  border: none;
+}
+
+.oversized-btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.oversized-btn-secondary {
+  background: var(--surface-card);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.oversized-btn-secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--color-border-hover);
+}
+
+.oversized-btn-primary:disabled,
+.oversized-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
 }
 </style>

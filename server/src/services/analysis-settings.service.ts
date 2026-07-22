@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: AnalysisSettings = {
     image: {},
     article: {},
     imageGeneration: {},
+    videoProduction: {},
   },
   integrations: {
     feishu: {},
@@ -64,6 +65,13 @@ function normalizeLegacySettings(raw: unknown): AnalysisSettings {
   const image = normalizeQwenFeature(rawFeatures?.image, rawQwen, legacyQwenModel)
   const article = normalizeQwenFeature(rawFeatures?.article, rawQwen, legacyQwenModel)
   const imageGeneration = normalizeQwenFeature(rawFeatures?.imageGeneration, undefined, undefined)
+  const videoProduction = normalizeQwenFeature(
+    typeof rawFeatures === 'object' && rawFeatures !== null
+      ? (rawFeatures as Record<string, unknown>).videoProduction
+      : undefined,
+    undefined,
+    undefined,
+  )
 
   const rawIntegrations = typeof record.integrations === 'object' && record.integrations !== null
     ? record.integrations as Record<string, unknown>
@@ -85,6 +93,7 @@ function normalizeLegacySettings(raw: unknown): AnalysisSettings {
       image,
       article,
       imageGeneration,
+      videoProduction,
     },
   })
 }
@@ -202,7 +211,7 @@ export async function loadSettingsForUser(userId?: string): Promise<AnalysisSett
 
   const rawSettings = await loadUserSettingsRecord(userId, 'analysis')
   if (typeof rawSettings === 'undefined') {
-    return DEFAULT_SETTINGS
+    return loadSettings()
   }
 
   return normalizeLegacySettings(rawSettings)
@@ -372,6 +381,24 @@ export function mergeAnalysisSettings(
     ),
   })
 
+  const mergedVideoProduction = pruneQwenFeatureSettings({
+    baseUrl: resolveUpdatedValue(
+      currentSettings.features.videoProduction.baseUrl,
+      nextFeatures.videoProduction,
+      'baseUrl',
+    ),
+    apiKey: resolveUpdatedSecret(
+      currentSettings.features.videoProduction.apiKey,
+      nextFeatures.videoProduction,
+      'apiKey',
+    ),
+    model: resolveUpdatedValue(
+      currentSettings.features.videoProduction.model,
+      nextFeatures.videoProduction,
+      'model',
+    ),
+  })
+
   const nextIntegrations = nextSettings.integrations ?? {}
   const nextFeishu = nextIntegrations.feishu
 
@@ -390,6 +417,7 @@ export function mergeAnalysisSettings(
       image: mergedImage,
       article: mergedArticle,
       imageGeneration: mergedImageGeneration,
+      videoProduction: mergedVideoProduction,
     },
   })
 }
@@ -483,6 +511,11 @@ export function maskSettingsSecrets(settings: AnalysisSettings): AnalysisSetting
         ...(settings.features.imageGeneration.baseUrl ? { baseUrl: settings.features.imageGeneration.baseUrl } : {}),
         ...(settings.features.imageGeneration.apiKey ? { apiKey: maskSecret(settings.features.imageGeneration.apiKey) } : {}),
         ...(settings.features.imageGeneration.model ? { model: settings.features.imageGeneration.model } : {}),
+      },
+      videoProduction: {
+        ...(settings.features.videoProduction.baseUrl ? { baseUrl: settings.features.videoProduction.baseUrl } : {}),
+        ...(settings.features.videoProduction.apiKey ? { apiKey: maskSecret(settings.features.videoProduction.apiKey) } : {}),
+        ...(settings.features.videoProduction.model ? { model: settings.features.videoProduction.model } : {}),
       },
     },
   }

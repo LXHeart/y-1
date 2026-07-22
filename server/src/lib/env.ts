@@ -70,6 +70,13 @@ const envSchema = z.object({
   SMTP_USER: z.string().trim().optional().transform((value) => value || undefined),
   SMTP_PASS: z.string().trim().optional().transform((value) => value || undefined),
   SMTP_FROM: z.string().trim().optional().transform((value) => value || undefined),
+  FREE_CREDITS_ON_REGISTER: z.coerce.number().int().default(3),
+  VIDEO_PRODUCTION_SCRIPT_BASE_URL: z.string().trim().optional().transform((value) => value || undefined),
+  VIDEO_PRODUCTION_SCRIPT_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
+  VIDEO_PRODUCTION_SCRIPT_MODEL: z.string().trim().default('doubao-1.5-pro-256k-250115'),
+  SEEDANCE_BASE_URL: z.string().trim().optional().transform((value) => value || undefined),
+  SEEDANCE_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
+  TEMP_DIR: z.string().trim().default('server/.data/temp'),
 })
 
 export const env = envSchema.parse(process.env)

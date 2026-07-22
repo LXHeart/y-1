@@ -32,7 +32,9 @@ function resolveFeatureProvider(
       ? '图片分析'
       : feature === 'article'
         ? '文章创作'
-        : '图片生成'
+        : feature === 'videoProduction'
+          ? '视频制作'
+          : '图片生成'
     throw new AppError(`${featureLabel}仅支持 Qwen 模型`, 400)
   }
 

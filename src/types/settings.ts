@@ -1,5 +1,5 @@
 export type AnalysisProvider = 'coze' | 'qwen'
-export type AnalysisFeature = 'video' | 'image' | 'article' | 'imageGeneration'
+export type AnalysisFeature = 'video' | 'image' | 'article' | 'imageGeneration' | 'videoProduction'
 
 export interface FeishuIntegration {
   appId?: string
@@ -27,6 +27,11 @@ export interface AnalysisSettings {
       model?: string
     }
     imageGeneration: {
+      baseUrl?: string
+      apiKey?: string
+      model?: string
+    }
+    videoProduction: {
       baseUrl?: string
       apiKey?: string
       model?: string

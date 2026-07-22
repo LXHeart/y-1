@@ -67,3 +67,15 @@ export function requireAuthenticatedUser(req: Request, _res: Response, next: Nex
     next(error)
   }
 }
+
+export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
+  try {
+    const user = getAuthenticatedUser(req)
+    if (user.role !== 'admin') {
+      throw new AppError('权限不足', 403)
+    }
+    next()
+  } catch (error: unknown) {
+    next(error)
+  }
+}

@@ -59,6 +59,15 @@
           >
             首页热点
           </button>
+          <button
+            class="settings-tab"
+            :class="{ 'settings-tab-active': settingsTab === 'videoProduction' }"
+            :aria-selected="settingsTab === 'videoProduction'"
+            type="button"
+            @click="settingsTab = 'videoProduction'"
+          >
+            视频制作
+          </button>
         </nav>
 
         <div class="settings-body">
@@ -614,6 +623,121 @@
             </div>
           </section>
 
+          <section v-show="settingsTab === 'videoProduction'" class="settings-panel" role="tabpanel">
+            <div class="settings-section-head">
+              <div>
+                <p class="settings-section-kicker">视频制作</p>
+                <h3 class="settings-section-title">配置脚本生成模型</h3>
+              </div>
+              <p class="settings-section-note">视频制作脚本使用大模型兼容接口生成推广视频脚本。</p>
+            </div>
+
+            <div class="settings-group">
+              <div class="settings-group-head">
+                <h4 class="settings-group-title">连接配置</h4>
+                <p class="settings-group-copy">设置脚本生成接口地址与访问密钥。</p>
+              </div>
+
+              <div class="settings-fields">
+                <label class="settings-label" for="vp-base-url">服务地址</label>
+                <input
+                  id="vp-base-url"
+                  v-model="videoProductionBaseUrl"
+                  class="settings-input"
+                  type="url"
+                  inputmode="url"
+                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                  autocomplete="off"
+                  spellcheck="false"
+                >
+
+                <label class="settings-label" for="vp-api-key">API Key</label>
+                <p v-if="props.settings.features.videoProduction?.apiKey" class="settings-secret-hint">
+                  已保存，留空保持不变；输入空格后保存可清空。
+                </p>
+                <div class="token-row">
+                  <input
+                    id="vp-api-key"
+                    v-model="videoProductionApiKey"
+                    class="settings-input"
+                    :type="showVideoProductionApiKey ? 'text' : 'password'"
+                    placeholder="留空则保持现有 Key"
+                    autocomplete="off"
+                    spellcheck="false"
+                  >
+                  <button class="btn-secondary btn-sm" type="button" @click="showVideoProductionApiKey = !showVideoProductionApiKey">
+                    {{ showVideoProductionApiKey ? '隐藏' : '显示' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <div class="settings-group-head settings-group-head-inline">
+                <div>
+                  <h4 class="settings-group-title">模型配置</h4>
+                  <p class="settings-group-copy">如果已有模型列表，可直接选择后测试连通性。</p>
+                </div>
+                <button
+                  class="btn-fetch-models"
+                  type="button"
+                  :disabled="videoProductionState.loading || !canFetchVideoProductionModels"
+                  @click="handleFetchModels('videoProduction')"
+                >
+                  <svg v-if="videoProductionState.loading" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>
+                  </svg>
+                  {{ videoProductionState.loading ? '获取中…' : '刷新列表' }}
+                </button>
+              </div>
+
+              <p v-if="videoProductionState.error" class="settings-error settings-inline-status">{{ videoProductionState.error }}</p>
+
+              <div class="settings-fields">
+                <label class="settings-label" for="vp-model">模型</label>
+
+                <div v-if="videoProductionState.availableModels.length && !useCustomVideoProductionModel" class="model-row">
+                  <select id="vp-model" v-model="videoProductionModel" class="settings-input model-select">
+                    <option value="" disabled>请选择模型</option>
+                    <option v-for="m in videoProductionState.availableModels" :key="m.id" :value="m.id">{{ m.id }}</option>
+                    <option value="__custom__">自定义输入…</option>
+                  </select>
+                  <button
+                    class="btn-secondary btn-sm"
+                    type="button"
+                    :disabled="videoProductionState.verifying || !videoProductionModel.trim()"
+                    @click="handleVerifyModel('videoProduction')"
+                  >
+                    {{ videoProductionState.verifying ? '验证中' : '测试' }}
+                  </button>
+                </div>
+                <div v-else class="model-row">
+                  <input
+                    id="vp-model"
+                    v-model="videoProductionModel"
+                    class="settings-input"
+                    type="text"
+                    placeholder="doubao-1.5-pro-256k-250115"
+                    autocomplete="off"
+                    spellcheck="false"
+                    @focus="useCustomVideoProductionModel = true"
+                  >
+                  <button
+                    class="btn-secondary btn-sm"
+                    type="button"
+                    :disabled="videoProductionState.verifying || !videoProductionModel.trim()"
+                    @click="handleVerifyModel('videoProduction')"
+                  >
+                    {{ videoProductionState.verifying ? '验证中' : '测试' }}
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="videoProductionState.verifyResult === 'success'" class="verify-success settings-inline-status">模型可用</p>
+              <p v-if="videoProductionState.verifyResult === 'error'" class="settings-error settings-inline-status">{{ videoProductionState.verifyError }}</p>
+            </div>
+          </section>
+
           <section v-show="settingsTab === 'homepage'" class="settings-panel" role="tabpanel">
             <div class="settings-section-head">
               <div>
@@ -698,7 +822,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, FeatureModelStateMap, HomepageSettings, HotItemsProvider } from '../types/settings'
 
-type SettingsTab = 'video' | 'image' | 'article' | 'imageGeneration' | 'homepage'
+type SettingsTab = 'video' | 'image' | 'article' | 'imageGeneration' | 'homepage' | 'videoProduction'
 
 const props = defineProps<{
   visible: boolean
@@ -733,15 +857,20 @@ const articleModel = ref('')
 const imageGenerationBaseUrl = ref('')
 const imageGenerationApiKey = ref('')
 const imageGenerationModel = ref('')
+const videoProductionBaseUrl = ref('')
+const videoProductionApiKey = ref('')
+const videoProductionModel = ref('')
 const showVideoApiToken = ref(false)
 const showVideoApiKey = ref(false)
 const showImageApiKey = ref(false)
 const showArticleApiKey = ref(false)
 const showImageGenerationApiKey = ref(false)
+const showVideoProductionApiKey = ref(false)
 const useCustomVideoModel = ref(false)
 const useCustomImageModel = ref(false)
 const useCustomArticleModel = ref(false)
 const useCustomImageGenerationModel = ref(false)
+const useCustomVideoProductionModel = ref(false)
 const hotItemsProvider = ref<HotItemsProvider>('60s')
 const alapiToken = ref('')
 const showAlapiToken = ref(false)
@@ -767,10 +896,15 @@ const canFetchImageGenerationModels = computed(() => {
   return imageGenerationBaseUrl.value.trim().length > 0 && imageGenerationApiKey.value.trim().length > 0
 })
 
+const canFetchVideoProductionModels = computed(() => {
+  return videoProductionBaseUrl.value.trim().length > 0 && videoProductionApiKey.value.trim().length > 0
+})
+
 const videoState = computed(() => props.featureModelStates.video)
 const imageState = computed(() => props.featureModelStates.image)
 const articleState = computed(() => props.featureModelStates.article)
 const imageGenerationState = computed(() => props.featureModelStates.imageGeneration)
+const videoProductionState = computed(() => props.featureModelStates.videoProduction)
 
 function populateFormFromSettings(settings: AnalysisSettings): void {
   isHydratingForm = true
@@ -788,15 +922,20 @@ function populateFormFromSettings(settings: AnalysisSettings): void {
   imageGenerationBaseUrl.value = settings.features.imageGeneration.baseUrl ?? ''
   imageGenerationApiKey.value = settings.features.imageGeneration.apiKey ?? ''
   imageGenerationModel.value = settings.features.imageGeneration.model ?? ''
+  videoProductionBaseUrl.value = settings.features.videoProduction?.baseUrl ?? ''
+  videoProductionApiKey.value = settings.features.videoProduction?.apiKey ?? ''
+  videoProductionModel.value = settings.features.videoProduction?.model ?? ''
   showVideoApiToken.value = false
   showVideoApiKey.value = false
   showImageApiKey.value = false
   showArticleApiKey.value = false
   showImageGenerationApiKey.value = false
+  showVideoProductionApiKey.value = false
   useCustomVideoModel.value = false
   useCustomImageModel.value = false
   useCustomArticleModel.value = false
   useCustomImageGenerationModel.value = false
+  useCustomVideoProductionModel.value = false
   feishuAppId.value = settings.integrations?.feishu?.appId ?? ''
   feishuAppSecret.value = settings.integrations?.feishu?.appSecret ?? ''
   feishuFolderToken.value = settings.integrations?.feishu?.folderToken ?? ''
@@ -865,6 +1004,13 @@ watch(imageGenerationModel, (value) => {
   }
 })
 
+watch(videoProductionModel, (value) => {
+  if (value === '__custom__') {
+    videoProductionModel.value = ''
+    useCustomVideoProductionModel.value = true
+  }
+})
+
 function normalizeOptionalField(value: string): string {
   return value.trim()
 }
@@ -909,6 +1055,11 @@ function buildCurrentSettings(): AnalysisSettings {
         apiKey: normalizeOptionalSecret(imageGenerationApiKey.value),
         model: normalizeOptionalField(imageGenerationModel.value),
       },
+      videoProduction: {
+        baseUrl: normalizeOptionalField(videoProductionBaseUrl.value),
+        apiKey: normalizeOptionalSecret(videoProductionApiKey.value),
+        model: normalizeOptionalField(videoProductionModel.value),
+      },
     },
   }
 }
@@ -941,7 +1092,9 @@ function handleVerifyModel(feature: AnalysisFeature): void {
       ? imageModel.value.trim()
       : feature === 'article'
         ? articleModel.value.trim()
-        : imageGenerationModel.value.trim()
+        : feature === 'videoProduction'
+          ? videoProductionModel.value.trim()
+          : imageGenerationModel.value.trim()
 
   if (!model) {
     return

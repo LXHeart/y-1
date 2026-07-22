@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { getSessionUser } from '../lib/auth.js'
 import { AppError } from '../lib/errors.js'
 import { logger } from '../lib/logger.js'
+import { requireCredit } from '../lib/credits.js'
 import { comedyScriptRequestSchema } from '../schemas/comedy.js'
 import * as dispatch from '../services/comedy-generation.service.js'
 
@@ -12,6 +13,8 @@ export async function streamComedyScriptHandler(
 ): Promise<void> {
   try {
     const { topic, duration } = comedyScriptRequestSchema.parse(req.body)
+
+    await requireCredit(getSessionUser(req)!.id, 'comedy_generation')
 
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')

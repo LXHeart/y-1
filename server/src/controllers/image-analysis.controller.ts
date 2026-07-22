@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import { getSessionUser, getAuthenticatedUser, requireAuthenticatedUser } from '../lib/auth.js'
 import { AppError } from '../lib/errors.js'
+import { requireCredit } from '../lib/credits.js'
 import { logger } from '../lib/logger.js'
 import { imageReviewGenerationRequestSchema, imageReviewStepRequestSchema, imageReviewStylePreferencesUpdateSchema, imageReviewStylePreferencesOptimizeSchema, imageReviewStyleSaveRequestSchema, uploadedImageListSchema } from '../schemas/image-analysis.js'
 import { imageAnalysisExportRequestSchema } from '../schemas/image-analysis-export.js'
@@ -38,6 +39,7 @@ export async function analyzeImageContentHandler(req: Request, res: Response, ne
     }
 
     try {
+      await requireCredit(getSessionUser(req)!.id, 'image_analysis')
       const data = await analyzeUploadedImages(files.map((file) => ({
         originalName: file.originalname,
         mimeType: file.mimetype,

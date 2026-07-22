@@ -32,6 +32,7 @@ function createResponseMock() {
   return response
 }
 
+vi.mock('../lib/credits.js', () => ({ requireCredit: vi.fn().mockResolvedValue(undefined) }))
 describe('analyzeImageContentHandler', () => {
   beforeEach(() => {
     analyzeUploadedImagesMock.mockReset()
@@ -68,6 +69,7 @@ describe('analyzeImageContentHandler', () => {
   it('streams progress and final result events with abort signal', async () => {
     const reqEmitter = new EventEmitter()
     const req = {
+      session: { user: { id: 'test-user-id' } },
       files: [{
         originalname: 'cover.png',
         mimetype: 'image/png',
@@ -100,7 +102,7 @@ describe('analyzeImageContentHandler', () => {
       feelings: '看着就很有食欲',
       platform: 'taobao',
       signal: expect.any(AbortSignal),
-      userId: undefined,
+      userId: 'test-user-id',
       onProgress: expect.any(Function),
     }))
     expect(res.setHeader).toHaveBeenNthCalledWith(1, 'Content-Type', 'text/event-stream')

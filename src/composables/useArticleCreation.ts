@@ -236,50 +236,41 @@ export function useArticleCreation() {
   }
 
   async function loadImageRecommendations(): Promise<void> {
-    recommendationsController?.abort()
-    const controller = new AbortController()
-    recommendationsController = controller
-
     loadingRecommendations.value = true
     error.value = ''
 
     try {
-      const response = await fetch('/api/article-generation/image-recommendations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: content.value.trim(),
-          outline: outline.value.trim() || undefined,
-          platform: platform.value,
-        }),
-        signal: controller.signal,
-      })
+      const paragraphs = content.value
+        .split(/\n\n+/)
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
 
-      const body = await response.json() as {
-        success?: boolean
-        data?: ImageRecommendation
-        error?: string
+      if (paragraphs.length === 0) {
+        error.value = '文章内容为空'
+        return
       }
 
-      if (!response.ok || !body.success || !body.data) {
-        throw new Error(body.error || '配图推荐失败')
-      }
+      const placements = paragraphs.map((p, i) => ({
+        position: `第${i + 1}段`,
+        description: p.length > 80 ? p.slice(0, 80) + '…' : p,
+        searchKeywords: p.replace(/\n/g, ' ').slice(0, 100),
+        prompt: `基于以下内容生成插图：${p.replace(/\n/g, ' ').slice(0, 200)}`,
+      }))
 
-      imageRecommendations.value = body.data
-      imageSlots.value = body.data.placements.map((placement) => ({
+      imageRecommendations.value = { recommendedCount: paragraphs.length, placements }
+      imageSlots.value = placements.map((placement) => ({
         placement,
         mode: 'none' as const,
         searchResults: [],
         selectedImage: null,
         generating: false,
         searching: false,
+        skipped: false,
       }))
     } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
       error.value = err instanceof Error ? err.message : '配图推荐失败，请稍后重试'
     } finally {
       loadingRecommendations.value = false
-      if (recommendationsController === controller) recommendationsController = null
     }
   }
 
@@ -390,6 +381,12 @@ export function useArticleCreation() {
     )
   }
 
+  function toggleSlot(index: number): void {
+    imageSlots.value = imageSlots.value.map((s, i) =>
+      i === index ? { ...s, skipped: !s.skipped } : s,
+    )
+  }
+
   function clearImageForSlot(index: number): void {
     imageSlots.value = imageSlots.value.map((s, i) =>
       i === index ? { ...s, selectedImage: null } : s,
@@ -460,7 +457,7 @@ export function useArticleCreation() {
     selectTitle, confirmOutline,
     goToTitles, goToOutline, goToContent,
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
-    selectImageForSlot, clearImageForSlot,
+    selectImageForSlot, clearImageForSlot, toggleSlot,
     reset, cancel, setTopic, finish,
   }
 }

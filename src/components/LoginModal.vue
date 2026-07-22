@@ -296,18 +296,38 @@ function handleSubmit(): void {
   position: fixed;
   inset: 0;
   z-index: 30;
-  display: grid;
-  place-items: center;
-  padding: 20px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
   background: var(--color-overlay);
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .login-modal {
-  width: min(100%, 460px);
-  max-height: 90vh;
+  width: 100%;
+  max-width: 460px;
+  max-height: calc(100dvh - 20px);
+  max-height: calc(100vh - 20px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--color-border);
+  border-bottom: none;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+  animation: slide-up-modal 0.32s var(--ease-out);
+}
+
+@keyframes slide-up-modal {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .login-header {
@@ -316,6 +336,10 @@ function handleSubmit(): void {
   justify-content: space-between;
   gap: var(--space-md);
   margin-bottom: var(--space-lg);
+  position: sticky;
+  top: 0;
+  background: inherit;
+  padding-top: 4px;
 }
 
 .login-kicker {
@@ -341,15 +365,16 @@ function handleSubmit(): void {
 }
 
 .login-close-btn {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .login-close-btn:hover {
@@ -395,7 +420,7 @@ function handleSubmit(): void {
 
 .login-form {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .login-label {
@@ -406,12 +431,13 @@ function handleSubmit(): void {
 
 .login-input {
   width: 100%;
-  min-height: 44px;
-  padding: 11px 13px;
+  min-height: 48px;
+  padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
   color: var(--color-text);
+  font-size: 16px;
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
@@ -446,7 +472,7 @@ function handleSubmit(): void {
 .login-code-btn,
 .login-captcha-img {
   flex-shrink: 0;
-  min-height: 44px;
+  min-height: 48px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-card);
@@ -489,8 +515,8 @@ function handleSubmit(): void {
 
 .login-captcha-img :deep(svg) {
   display: block;
-  width: 160px;
-  height: 60px;
+  width: 140px;
+  height: 52px;
 }
 
 .login-error {
@@ -504,11 +530,12 @@ function handleSubmit(): void {
   justify-content: flex-end;
   gap: 10px;
   margin-top: var(--space-sm);
+  padding-bottom: 4px;
 }
 
 .login-secondary-btn,
 .login-primary-btn {
-  min-height: 40px;
+  min-height: 48px;
   padding: 0 16px;
   border-radius: var(--radius-md);
   font-weight: 600;
@@ -523,8 +550,10 @@ function handleSubmit(): void {
 }
 
 .login-primary-btn {
-  background: var(--color-accent);
+  background: var(--gradient-accent);
   color: white;
+  border: none;
+  box-shadow: var(--shadow-glow);
 }
 
 .login-secondary-btn:hover,
@@ -533,7 +562,7 @@ function handleSubmit(): void {
 }
 
 .login-primary-btn:hover {
-  background: var(--color-accent-2);
+  box-shadow: var(--shadow-glow-strong);
 }
 
 .login-secondary-btn:hover {
@@ -546,5 +575,19 @@ function handleSubmit(): void {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+@media (min-width: 560px) {
+  .login-overlay {
+    align-items: center;
+    padding: 20px;
+  }
+
+  .login-modal {
+    border-radius: var(--radius-xl);
+    border-bottom: 1px solid var(--color-border);
+    max-height: 90vh;
+    animation: fade-in 0.22s var(--ease-out);
+  }
 }
 </style>

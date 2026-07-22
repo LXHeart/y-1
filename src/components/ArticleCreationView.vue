@@ -22,15 +22,7 @@
       </header>
 
       <div class="completed-preview">
-        <div v-if="imageSlots[0]?.selectedImage" class="completed-image">
-          <img
-            :src="'imageUrl' in imageSlots[0].selectedImage ? imageSlots[0].selectedImage.imageUrl : imageSlots[0].selectedImage.thumbnailUrl"
-            :alt="imageSlots[0].placement?.description || '封面图'"
-            class="completed-cover-img clickable-img"
-            @click="openLightbox(($event.currentTarget as HTMLImageElement).src)"
-          />
-        </div>
-        <div class="completed-body" v-html="renderMarkdown(content)"></div>
+        <div class="completed-body" v-html="renderMarkdown(contentWithImages)"></div>
       </div>
 
       <div class="action-row">
@@ -253,8 +245,8 @@
           </button>
           <p class="eyebrow">第五步</p>
         </div>
-        <h2 class="card-title">为文章配上封面图</h2>
-        <p class="field-note">AI 根据文章内容推荐配图方案，你可以从网络搜图或用 AI 生成。</p>
+        <h2 class="card-title">为文章配图</h2>
+        <p class="field-note">AI 根据文章内容推荐封面图和正文插图，你可以从网络搜图或用 AI 生成。</p>
       </header>
 
       <div v-if="!imageRecommendations && !loadingRecommendations" class="action-row">
@@ -270,57 +262,62 @@
       </div>
 
       <div v-if="imageRecommendations && imageSlots.length > 0" class="images-layout">
-        <div class="image-slot-card">
+        <div v-for="(slot, slotIdx) in imageSlots" :key="slotIdx" class="image-slot-card" :class="{ 'slot-skipped': slot.skipped }">
           <div class="slot-head">
-            <span class="slot-position">{{ imageSlots[0].placement.position }}</span>
-            <span class="slot-desc">{{ imageSlots[0].placement.description }}</span>
+            <span class="slot-position">{{ slot.placement.position }}</span>
+            <span class="slot-desc">{{ slot.placement.description }}</span>
+            <button type="button" class="slot-toggle" @click="toggleSlot(slotIdx)">
+              {{ slot.skipped ? '需要配图' : '跳过' }}
+            </button>
           </div>
 
-          <div v-if="imageSlots[0].selectedImage" class="slot-selected">
+          <template v-if="!slot.skipped">
+          <div v-if="slot.selectedImage" class="slot-selected">
             <img
-              :src="'imageUrl' in imageSlots[0].selectedImage ? imageSlots[0].selectedImage.imageUrl : imageSlots[0].selectedImage.thumbnailUrl"
-              :alt="imageSlots[0].placement.description"
+              :src="'imageUrl' in slot.selectedImage ? slot.selectedImage.imageUrl : slot.selectedImage.thumbnailUrl"
+              :alt="slot.placement.description"
               class="slot-preview-img clickable-img"
               @click="openLightbox(($event.currentTarget as HTMLImageElement).src)"
             />
             <div class="slot-selected-actions">
-              <button class="btn-secondary btn-sm" type="button" @click="clearImageForSlot(0)">移除重选</button>
+              <button class="btn-secondary btn-sm" type="button" @click="clearImageForSlot(slotIdx)">移除重选</button>
             </div>
           </div>
 
-          <div v-if="!imageSlots[0].selectedImage" class="slot-actions">
+          <div v-if="!slot.selectedImage" class="slot-actions">
             <div class="slot-tabs">
               <button
                 type="button"
                 class="slot-tab"
-                :class="{ 'slot-tab-active': imageSlots[0].mode === 'search' }"
-                :disabled="imageSlots[0].searching"
-                @click="searchImageForSlot(0)"
+                :class="{ 'slot-tab-active': slot.mode === 'search' }"
+                :disabled="slot.searching"
+                @click="searchImageForSlot(slotIdx)"
               >搜图</button>
               <button
                 type="button"
                 class="slot-tab"
-                :class="{ 'slot-tab-active': imageSlots[0].mode === 'generate' }"
-                :disabled="imageSlots[0].generating"
-                @click="generateImageForSlot(0)"
+                :class="{ 'slot-tab-active': slot.mode === 'generate' }"
+                :disabled="slot.generating"
+                @click="generateImageForSlot(slotIdx)"
               >AI 生成</button>
             </div>
 
-            <div v-if="imageSlots[0].searching" class="loading-hint loading-hint-sm">
+            <div v-if="slot.searching" class="loading-hint loading-hint-sm">
               <span class="stream-dot"></span> 搜索中…
             </div>
-            <div v-else-if="imageSlots[0].generating" class="loading-hint loading-hint-sm">
+            <div v-else-if="slot.generating" class="loading-hint loading-hint-sm">
               <span class="stream-dot"></span> AI 生成中，可能需要 1-2 分钟…
             </div>
 
-            <div v-if="imageSlots[0].searchResults.length > 0 && !imageSlots[0].selectedImage" class="search-grid">
+            <div v-if="slot.searchResults.length > 0 && !slot.selectedImage" class="search-results-area">
+              <div class="search-grid">
               <div
-                v-for="(img, imgIdx) in imageSlots[0].searchResults"
+                v-for="(img, imgIdx) in slot.searchResults"
                 :key="imgIdx"
                 class="search-thumb-wrap"
               >
-                <button type="button" class="search-thumb" @click="selectImageForSlot(0, img)">
-                  <img :src="img.thumbnailUrl" :alt="img.description || imageSlots[0].placement.description" />
+                <button type="button" class="search-thumb" @click="selectImageForSlot(slotIdx, img)">
+                  <img :src="img.thumbnailUrl" :alt="img.description || slot.placement.description" />
                 </button>
                 <button type="button" class="thumb-zoom" @click="openLightbox(img.url)" title="放大查看">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -329,8 +326,16 @@
                   </svg>
                 </button>
               </div>
+              </div>
+              <button
+                type="button"
+                class="btn-secondary btn-sm btn-re-search"
+                :disabled="slot.searching"
+                @click="searchImageForSlot(slotIdx)"
+              >重新搜索</button>
             </div>
           </div>
+          </template>
         </div>
       </div>
 
@@ -357,7 +362,7 @@
 </template>
 
 <script setup lang="ts">
-import { inject, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import { useArticleCreation } from '../composables/useArticleCreation'
 
 const {
@@ -367,7 +372,7 @@ const {
   fetchTitles, streamOutline, streamContent,
   selectTitle, goToTitles, goToOutline, goToContent,
   loadImageRecommendations, searchImageForSlot, generateImageForSlot,
-  selectImageForSlot, clearImageForSlot,
+  selectImageForSlot, clearImageForSlot, toggleSlot,
   reset, cancel, setTopic, finish,
 } = useArticleCreation()
 
@@ -413,12 +418,12 @@ function stepIndex(s: string): number {
 
 async function copyContent(): Promise<void> {
   try {
-    await navigator.clipboard.writeText(content.value)
+    await navigator.clipboard.writeText(contentWithImages.value)
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
   } catch {
     const textarea = document.createElement('textarea')
-    textarea.value = content.value
+    textarea.value = contentWithImages.value
     textarea.style.cssText = 'position:fixed;opacity:0'
     document.body.appendChild(textarea)
     textarea.select()
@@ -438,11 +443,32 @@ function renderMarkdown(text: string): string {
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/!\[(.+?)\]\((.+?)\)/g, '</p><figure class="content-img-wrap"><img src="$2" alt="$1" class="content-img clickable-img" /></figure><p>')
     .replace(/\n{2,}/g, '</p><p>')
     .replace(/\n/g, '<br>')
     .replace(/^/, '<p>')
     .replace(/$/, '</p>')
+    .replace(/<p><\/p>/g, '')
 }
+
+const contentWithImages = computed(() => {
+  if (imageSlots.value.length === 0) return content.value
+
+  const paragraphs = content.value.split(/\n\n+/)
+  const parts: string[] = []
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    parts.push(paragraphs[i])
+    const slot = imageSlots.value[i]
+    if (slot && !slot.skipped && slot.selectedImage) {
+      const img = slot.selectedImage
+      const src = 'imageUrl' in img ? img.imageUrl : img.thumbnailUrl
+      parts.push(`![${slot.placement.description}](${src})`)
+    }
+  }
+
+  return parts.join('\n\n')
+})
 </script>
 
 <style scoped>
@@ -853,6 +879,30 @@ function renderMarkdown(text: string): string {
   gap: 12px;
 }
 
+.slot-skipped {
+  opacity: 0.5;
+}
+
+.slot-toggle {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.slot-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--color-border-accent);
+  color: var(--color-text);
+}
+
 .slot-head {
   display: flex;
   align-items: center;
@@ -940,6 +990,15 @@ function renderMarkdown(text: string): string {
   gap: 8px;
 }
 
+.search-results-area {
+  display: grid;
+  gap: 10px;
+}
+
+.btn-re-search {
+  justify-self: start;
+}
+
 .search-thumb {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -1011,6 +1070,26 @@ function renderMarkdown(text: string): string {
 
 .completed-body p {
   margin: 0.5em 0;
+}
+
+.content-img-wrap {
+  margin: 1.2em 0;
+  display: grid;
+  gap: 6px;
+}
+
+.content-img {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.content-img-wrap figcaption {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
 }
 
 .clickable-img {

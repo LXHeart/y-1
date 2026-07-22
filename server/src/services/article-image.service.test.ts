@@ -325,7 +325,7 @@ describe('article image service', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://www.bing.com/images/search?q=%E8%81%8C%E5%9C%BA%E6%B2%9F%E9%80%9A+%E6%8F%92%E7%94%BB',
+      expect.stringMatching(/^https:\/\/www\.bing\.com\/images\/search\?q=%E8%81%8C%E5%9C%BA%E6%B2%9F%E9%80%9A\+%E6%8F%92%E7%94%BB&first=\d+$/),
       expect.objectContaining({
         method: 'GET',
         redirect: 'follow',

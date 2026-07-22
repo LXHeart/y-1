@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { isSafeProviderBaseUrl } from '../lib/provider-url.js'
 
 export type AnalysisProvider = 'coze' | 'qwen'
-export type AnalysisFeature = 'video' | 'image' | 'article' | 'imageGeneration'
+export type AnalysisFeature = 'video' | 'image' | 'article' | 'imageGeneration' | 'videoProduction'
 
 export interface FeishuIntegration {
   appId?: string
@@ -34,6 +34,11 @@ export interface AnalysisSettings {
       apiKey?: string
       model?: string
     }
+    videoProduction: {
+      baseUrl?: string
+      apiKey?: string
+      model?: string
+    }
   }
   integrations?: {
     feishu?: FeishuIntegration
@@ -60,6 +65,11 @@ export interface UpdateAnalysisSettingsRequest {
       model?: string
     }
     imageGeneration?: {
+      baseUrl?: string
+      apiKey?: string
+      model?: string
+    }
+    videoProduction?: {
       baseUrl?: string
       apiKey?: string
       model?: string
@@ -171,6 +181,11 @@ export const analysisSettingsSchema = z.object({
       apiKey: undefined,
       model: undefined,
     }),
+    videoProduction: qwenFeatureSettingsSchema.default({
+      baseUrl: undefined,
+      apiKey: undefined,
+      model: undefined,
+    }),
   }).default({
     video: {
       provider: 'coze',
@@ -194,6 +209,11 @@ export const analysisSettingsSchema = z.object({
       apiKey: undefined,
       model: undefined,
     },
+    videoProduction: {
+      baseUrl: undefined,
+      apiKey: undefined,
+      model: undefined,
+    },
   }),
 })
 
@@ -206,16 +226,17 @@ export const updateAnalysisSettingsRequest = z.object({
     image: updateQwenFeatureSettingsSchema.optional(),
     article: updateQwenFeatureSettingsSchema.optional(),
     imageGeneration: updateQwenFeatureSettingsSchema.optional(),
+    videoProduction: updateQwenFeatureSettingsSchema.optional(),
   }).default({}),
 })
 
 export const listModelsRequestSchema = z.object({
-  feature: z.enum(['video', 'image', 'article', 'imageGeneration']),
+  feature: z.enum(['video', 'image', 'article', 'imageGeneration', 'videoProduction']),
   provider: z.enum(['coze', 'qwen']).optional(),
 })
 
 export const verifyModelRequestSchema = z.object({
-  feature: z.enum(['video', 'image', 'article', 'imageGeneration']),
+  feature: z.enum(['video', 'image', 'article', 'imageGeneration', 'videoProduction']),
   provider: z.enum(['coze', 'qwen']).optional(),
   model: z.string().trim().min(1, '模型名称不能为空'),
 })

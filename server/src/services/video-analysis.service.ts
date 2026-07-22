@@ -56,7 +56,7 @@ const VIDEO_PROVIDER_URL_MESSAGES = {
   dnsLookupFailed: '视频分析服务地址域名解析失败，请检查后重试',
 } as const
 
-function getFeatureProviderBaseUrlMessages(feature: 'image' | 'article' | 'imageGeneration'): {
+function getFeatureProviderBaseUrlMessages(feature: 'image' | 'article' | 'imageGeneration' | 'videoProduction'): {
   invalid: string
   protocol: string
   credentials: string
@@ -77,6 +77,15 @@ function getFeatureProviderBaseUrlMessages(feature: 'image' | 'article' | 'image
       protocol: '图片生成服务地址必须使用 HTTP 或 HTTPS',
       credentials: '图片生成服务地址不能包含用户名或密码',
       privateHost: '图片生成服务地址不能指向本地或私有网络地址',
+    }
+  }
+
+  if (feature === 'videoProduction') {
+    return {
+      invalid: '视频制作脚本服务地址无效',
+      protocol: '视频制作脚本服务地址必须使用 HTTP 或 HTTPS',
+      credentials: '视频制作脚本服务地址不能包含用户名或密码',
+      privateHost: '视频制作脚本服务地址不能指向本地或私有网络地址',
     }
   }
 
@@ -134,7 +143,7 @@ export async function resolveProviderConfig(
 }
 
 export async function resolveFeatureProviderConfig(
-  feature: 'video' | 'image' | 'article' | 'imageGeneration',
+  feature: 'video' | 'image' | 'article' | 'imageGeneration' | 'videoProduction',
   providerId: AnalysisProvider,
   userId?: string,
   options?: { requireModel?: boolean },
@@ -147,13 +156,19 @@ export async function resolveFeatureProviderConfig(
   const featureSettings = settings.features[feature] ?? {}
   const envBaseUrl = feature === 'imageGeneration'
     ? resolveRequestConfigValue(env.IMAGE_GENERATION_BASE_URL)
-    : resolveRequestConfigValue(env.QWEN_ANALYSIS_BASE_URL)
+    : feature === 'videoProduction'
+      ? resolveRequestConfigValue(env.VIDEO_PRODUCTION_SCRIPT_BASE_URL)
+      : resolveRequestConfigValue(env.QWEN_ANALYSIS_BASE_URL)
   const envApiKey = feature === 'imageGeneration'
     ? resolveRequestConfigValue(env.IMAGE_GENERATION_API_KEY)
-    : resolveRequestConfigValue(env.QWEN_ANALYSIS_API_KEY)
+    : feature === 'videoProduction'
+      ? resolveRequestConfigValue(env.VIDEO_PRODUCTION_SCRIPT_API_KEY)
+      : resolveRequestConfigValue(env.QWEN_ANALYSIS_API_KEY)
   const envModel = feature === 'imageGeneration'
     ? resolveRequestConfigValue(env.IMAGE_GENERATION_MODEL)
-    : resolveRequestConfigValue(env.QWEN_ANALYSIS_MODEL)
+    : feature === 'videoProduction'
+      ? resolveRequestConfigValue(env.VIDEO_PRODUCTION_SCRIPT_MODEL)
+      : resolveRequestConfigValue(env.QWEN_ANALYSIS_MODEL)
   const baseUrl = resolveRequestConfigValue(featureSettings.baseUrl) ?? envBaseUrl
   const apiKey = resolveRequestConfigValue(featureSettings.apiKey) ?? envApiKey
   const model = resolveRequestConfigValue(featureSettings.model)
@@ -166,7 +181,9 @@ export async function resolveFeatureProviderConfig(
         ? '未配置图片分析服务地址，请先在分析设置中配置图片分析模型服务'
         : feature === 'article'
           ? '未配置文章生成服务地址，请先在分析设置中配置文章模型服务'
-          : '未配置图片生成服务地址，请先在分析设置中配置图片生成模型服务',
+          : feature === 'videoProduction'
+            ? '未配置视频制作脚本服务地址，请先在分析设置中配置视频制作脚本模型服务'
+            : '未配置图片生成服务地址，请先在分析设置中配置图片生成模型服务',
       400,
     )
   }

@@ -85,6 +85,7 @@ describe('analysis-settings.service', () => {
           model: 'qwen-plus',
         },
         imageGeneration: {},
+        videoProduction: {},
       },
     })
   })
@@ -115,6 +116,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-key',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     }, {
       features: {
@@ -149,6 +151,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-key',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     })
   })
@@ -166,6 +169,7 @@ describe('analysis-settings.service', () => {
         image: {},
         article: {},
         imageGeneration: {},
+        videoProduction: {},
       },
     }, {
       features: {
@@ -204,6 +208,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-key',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     }, {
       features: {
@@ -236,6 +241,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-key',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     })
   })
@@ -283,6 +289,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-key',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     }, payload)
 
@@ -310,6 +317,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-key',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     })
   })
@@ -347,6 +355,7 @@ describe('analysis-settings.service', () => {
           apiKey: 'image-generation-secret',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     })
 
@@ -380,6 +389,7 @@ describe('analysis-settings.service', () => {
           apiKey: '****cret',
           model: 'wanx2.1-t2i-turbo',
         },
+        videoProduction: {},
       },
     })
   })
@@ -393,6 +403,7 @@ describe('analysis-settings.service', () => {
         image: {},
         article: {},
         imageGeneration: {},
+        videoProduction: {},
       },
     }, {
       features: {
@@ -412,6 +423,7 @@ describe('analysis-settings.service', () => {
         image: {},
         article: {},
         imageGeneration: {},
+        videoProduction: {},
       },
     }, {
       features: {
@@ -422,3 +434,4 @@ describe('analysis-settings.service', () => {
     })).toThrowError('分析服务地址必须是有效的 HTTP(S) URL，且不能包含用户名或密码')
   })
 })
+

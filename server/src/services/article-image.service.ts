@@ -266,12 +266,45 @@ function buildRecommendationPrompt(input: RecommendImagesInput): string {
       ? '知乎'
       : '小红书'
 
-  return `你是一位专业的中文内容编辑和视觉策划师。请根据文章内容，推荐最适合的一张封面配图。\n\n要求：\n- 结合平台：${platformLabel}\n- 只推荐 1 张图\n- position 填写图片位置，例如：开头\n- description 写图片要表达的视觉内容\n- searchKeywords 写中文搜图关键词，便于从网上搜图\n- prompt 写可直接用于 AI 生图的中文提示词\n- 只能返回 JSON，不要返回额外说明\n\n返回格式：\n{\n  \"recommendedCount\": 1,\n  \"placements\": [\n    {\n      \"position\": \"开头\",\n      \"description\": \"用于作为文章头图的概念图\",\n      \"searchKeywords\": \"职场沟通 商务 插画\",\n      \"prompt\": \"现代商务风格插画，展示高效沟通场景，蓝白色调\"\n    }\n  ]\n}\n\n文章正文：\n${input.content}${outlineSection}`
+  return `你是一位专业的中文内容编辑和视觉策划师。请根据文章内容，推荐 3-4 张配图（含 1 张封面图 + 2-3 张正文插图），用于丰富文章的视觉表现力。
+
+要求：
+- 结合平台：${platformLabel}
+- 第 1 张是封面图，position 填「封面」
+- 其余为正文插图，position 填写插入位置，例如「正文第一段后」「正文中间」「正文后半部分」
+- description 写图片要表达的视觉内容
+- searchKeywords 写中文搜图关键词，便于从网上搜图
+- prompt 写可直接用于 AI 生图的中文提示词
+- 只能返回 JSON，不要返回额外说明
+
+返回格式：
+{
+  "recommendedCount": 3,
+  "placements": [
+    {
+      "position": "封面",
+      "description": "用于作为文章头图的概念图",
+      "searchKeywords": "职场沟通 商务 插画",
+      "prompt": "现代商务风格插画，展示高效沟通场景，蓝白色调"
+    },
+    {
+      "position": "正文第一段后",
+      "description": "配图内容描述",
+      "searchKeywords": "相关搜图关键词",
+      "prompt": "AI 生图提示词"
+    }
+  ]
+}
+
+文章正文：
+${input.content}${outlineSection}`
 }
 
 function buildSearchEndpoint(keywords: string): string {
   const url = new URL(BING_IMAGE_SEARCH_URL)
   url.searchParams.set('q', keywords)
+  const offset = Math.floor(Math.random() * 30) + 1
+  url.searchParams.set('first', String(offset))
   return url.toString()
 }
 
@@ -429,8 +462,32 @@ async function requestJson(
 
     if (!response.ok) {
       const responseText = await response.text()
-      logger.error({ endpoint, status: response.status, responseTextLength: responseText.length }, 'Article image upstream returned non-ok response')
-      throw new AppError(failureMessage, response.status >= 500 ? 502 : 400)
+      logger.error({ endpoint, status: response.status, responseTextLength: responseText.length, responseText: responseText.slice(0, 500) }, 'Article image upstream returned non-ok response')
+
+      let detailedMessage = failureMessage
+      if (response.status === 402) {
+        detailedMessage = '图片生成服务配额不足，请联系管理员充值'
+      } else if (response.status === 429) {
+        detailedMessage = '图片生成请求过于频繁，请稍后重试'
+      } else if (response.status >= 500) {
+        detailedMessage = '图片生成服务暂时不可用，请稍后重试'
+      } else {
+        try {
+          const errorBody = JSON.parse(responseText) as Record<string, unknown>
+          const errMsg = typeof errorBody.error === 'string'
+            ? errorBody.error
+            : typeof errorBody.message === 'string'
+              ? errorBody.message
+              : null
+          if (errMsg) {
+            detailedMessage = `${failureMessage}（${errMsg.slice(0, 100)}）`
+          }
+        } catch {
+          // responseText is not JSON, use default message
+        }
+      }
+
+      throw new AppError(detailedMessage, response.status >= 500 ? 502 : 400)
     }
 
     return await response.json() as unknown
