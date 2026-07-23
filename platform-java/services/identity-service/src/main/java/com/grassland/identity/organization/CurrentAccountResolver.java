@@ -46,6 +46,16 @@ public class CurrentAccountResolver {
                 .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")));
     }
 
+    /**
+     * 要求当前账号为平台管理员（{@code role==admin}），放行返回该账号；非管理员 → 403；未登录 → 401（由 {@link #resolve} 抛）。
+     * 草场身份域 Slice 2H（D-05 平台 admin 门禁）。
+     */
+    public Mono<AuthUser> requireAdmin(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(user -> "admin".equalsIgnoreCase(user.role()))
+                .switchIfEmpty(Mono.error(new IdentityException(403, "需要平台管理员权限")));
+    }
+
     private String extractSid(ServerHttpRequest request) {
         HttpCookie cookie = request.getCookies().getFirst(cookieName);
         if (cookie == null) {
