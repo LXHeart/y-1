@@ -62,6 +62,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       IDENTITY_DATASOURCE_FROM_DATABASE_URL: "true"
+      # HLD 7.4 内部身份断言消费（与 edge-bff 同 secret/audience）；复用 SESSION_SECRET 保证一致。
+      IDENTITY_ASSERTION_ENABLED: "true"
+      IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
+      IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}
@@ -85,6 +89,14 @@ services:
       LEGACY_EXPRESS_BASE_URL: http://backend:3000
       IDENTITY_SERVICE_BASE_URL: http://identity-service:8082
       EDGE_ROUTE_AUTH_ME_IDENTITY: "true"
+      # HLD 7.4：直读 session 表签发内部身份断言（DATABASE_URL 复用 identity 库，只读；secret 与 identity-service 一致）。
+      EDGE_IDENTITY_FROM_DATABASE_URL: "true"
+      DATABASE_URL: ${DATABASE_URL:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-y1.sid}
+      IDENTITY_ASSERTION_ENABLED: "true"
+      IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
+      IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
     ports:
       - "${EDGE_BFF_PORT:-8081}:8080"
     depends_on:

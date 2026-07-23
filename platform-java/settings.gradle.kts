@@ -19,6 +19,7 @@ rootProject.name = "grassland-platform"
 
 include(
     "platform-storage",
+    "platform-identity-assertion",
     "services:edge-bff",
     "services:identity-service",
     "services:marketplace-service",

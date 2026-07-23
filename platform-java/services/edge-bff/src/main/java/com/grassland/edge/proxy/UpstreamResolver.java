@@ -16,14 +16,24 @@ public class UpstreamResolver {
     }
 
     public URI resolve(String method, String path) {
+        return properties.upstreams().get(resolveUpstreamName(method, path));
+    }
+
+    /** 命中 route 的上游名；未命中走 default-upstream。供断言 filter 判定 legacy/内部。 */
+    public String resolveUpstreamName(String method, String path) {
         if (method != null && path != null) {
             for (RouteProperties route : properties.routes()) {
                 if (route.enabled() && matches(route, method, path)) {
-                    return properties.upstreams().get(route.upstream());
+                    return route.upstream();
                 }
             }
         }
-        return properties.upstreams().get(properties.defaultUpstream());
+        return properties.defaultUpstream();
+    }
+
+    /** 内部 Java 上游 = 命中 route 的上游不是 legacy 默认上游。仅对这些上游签发断言（HLD 7.4「BFF → 内部服务」）。 */
+    public boolean isInternalUpstream(String method, String path) {
+        return !resolveUpstreamName(method, path).equals(properties.defaultUpstream());
     }
 
     boolean matches(RouteProperties route, String method, String path) {

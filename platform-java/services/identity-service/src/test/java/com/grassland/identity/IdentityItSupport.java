@@ -58,6 +58,10 @@ public abstract class IdentityItSupport {
                 + "@" + host + ":" + p + "/" + name);
         r.add("management.server.port", () -> "0");
         r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
+        // Slice 2K：启用内部身份断言消费（signer bean 注入）。仅在请求带断言头时触发，其余走 cookie 路径。
+        r.add("identity-assertion.enabled", () -> "true");
+        r.add("identity-assertion.secret", () -> "test-assertion-secret-32-chars!!");
+        r.add("identity-assertion.audience", () -> "grassland-internal");
     }
 
     @BeforeAll

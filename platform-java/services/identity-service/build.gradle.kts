@@ -17,6 +17,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
     implementation("org.springframework.boot:spring-boot-starter-mail")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
+    // HLD 7.4：消费 BFF 签发的内部身份断言（CurrentAccountResolver 优先断言头，回退 cookie）。
+    implementation(project(":platform-identity-assertion"))
     implementation(libs.r2dbc.postgresql)
     implementation(libs.bcrypt)
     implementation(libs.bouncycastle)
