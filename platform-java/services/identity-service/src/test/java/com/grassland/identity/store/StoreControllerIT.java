@@ -3,7 +3,6 @@ package com.grassland.identity.store;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.IdentityItSupport;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
@@ -94,15 +93,4 @@ class StoreControllerIT extends IdentityItSupport {
         client().get().uri("/api/organizations/" + orgId + "/stores").exchange().expectStatus().isUnauthorized();
     }
 
-    @SuppressWarnings("unchecked")
-    private String createStore(String orgId, String cookie, String name) {
-        Map<String, Object> body = client().post().uri("/api/organizations/" + orgId + "/stores")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-                .bodyValue("{\"name\":\"" + name + "\"}")
-                .exchange().expectStatus().isCreated()
-                .expectBody(Map.class)
-                .returnResult().getResponseBody();
-        Map<String, Object> data = (Map<String, Object>) body.get("data");
-        return (String) data.get("id");
-    }
 }

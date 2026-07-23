@@ -113,6 +113,21 @@ public abstract class IdentityItSupport {
         return (String) data.get("id");
     }
 
+    /** 用给定 cookie 在 org 下建一个门店，返回 storeId。 */
+    @SuppressWarnings("unchecked")
+    protected String createStore(String orgId, String cookie, String name) {
+        Map<String, Object> body = client().post().uri("/api/organizations/" + orgId + "/stores")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{\"name\":\"" + name + "\"}")
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) body.get("data");
+        return (String) data.get("id");
+    }
+
     /** seeded 账号的登录态。 */
     public record Seeded(String cookie, String accountId) {}
 }
