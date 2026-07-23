@@ -6,9 +6,11 @@ import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
 import com.grassland.identity.organization.CurrentAccountResolver;
+import com.grassland.identity.organization.SessionPrincipal;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
@@ -23,33 +25,36 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 /**
- * 身份档案 + 活动身份 HTTP 入口。草场身份域 Slice 2G（HLD 5.2 identity-profile / 1.3 事实 2）。
+ * 身份档案 + 活动身份 HTTP 入口。草场身份域 Slice 2G（开通）+ Slice 2I（活动身份 per-session/审计/多设备）。
  *
  * <ul>
  *   <li>GET /api/me/identities — 列已开通身份。</li>
  *   <li>POST /api/me/identities — 开通身份（merchant+orgId→校验 org owner；已开通 409；写 outbox {@code IdentityOpened}）。</li>
- *   <li>GET /api/me/active-identity — 当前活动身份（null=消费者）。</li>
- *   <li>POST /api/me/active-identity — 激活（须已开通，否则 409；写 outbox {@code ActiveIdentityChanged}）。</li>
- *   <li>DELETE /api/me/active-identity — 切回消费者（active 置 NULL）。</li>
+ *   <li>GET /api/me/active-identity — 当前 session 活动身份（per-session；无记录=消费者；刷新 last_seen）。</li>
+ *   <li>POST /api/me/active-identity — 激活（须已开通，否则 409；按当前 session 写入 + 审计 + outbox {@code ActiveIdentityChanged}）。</li>
+ *   <li>DELETE /api/me/active-identity — 切回消费者（当前 session active 置 NULL + 审计）。</li>
  * </ul>
  *
- * <p>所有端点经 {@link CurrentAccountResolver} 鉴权。活动身份账号级存储（HLD D-08 per-session/多设备规则延期）。
+ * <p>活动身份按 session（设备/标签）隔离（HLD D-08）：多设备互不影响；多设备清单与撤销见 {@code IdentitySessionController}。
+ * 开通端点经 {@link CurrentAccountResolver#resolve}；活动身份端点用 {@link CurrentAccountResolver#resolvePrincipal} 取 sid。
  */
 @RestController
 public class IdentityProfileController {
 
     private final CurrentAccountResolver accounts;
     private final IdentityProfileRepository profiles;
-    private final ActiveIdentityRepository activeIdentities;
+    private final IdentitySessionRepository sessions;
+    private final IdentityAuditLogRepository audit;
     private final OrgAuthorization authz;
     private final OutboxRepository outbox;
 
     public IdentityProfileController(CurrentAccountResolver accounts, IdentityProfileRepository profiles,
-                                     ActiveIdentityRepository activeIdentities, OrgAuthorization authz,
-                                     OutboxRepository outbox) {
+                                     IdentitySessionRepository sessions, IdentityAuditLogRepository audit,
+                                     OrgAuthorization authz, OutboxRepository outbox) {
         this.accounts = accounts;
         this.profiles = profiles;
-        this.activeIdentities = activeIdentities;
+        this.sessions = sessions;
+        this.audit = audit;
         this.authz = authz;
         this.outbox = outbox;
     }
@@ -88,40 +93,70 @@ public class IdentityProfileController {
 
     @GetMapping("/api/me/active-identity")
     public Mono<ResponseEntity<Map<String, Object>>> getActive(ServerHttpRequest request) {
-        return accounts.resolve(request)
-                .flatMap(account -> activeIdentities.findByAccount(account.id())
-                        .map(ai -> activeEnvelope(ai.activeIdentityType()))
-                        .switchIfEmpty(Mono.just(activeEnvelope(null))))
+        return accounts.resolvePrincipal(request)
+                .flatMap(principal -> sessions.touchLastSeen(principal.sid())
+                        .then(sessions.findByToken(principal.sid())
+                                .map(s -> activeEnvelope(s.activeIdentityType()))
+                                .switchIfEmpty(Mono.just(activeEnvelope(null)))))
                 .map(ResponseEntity::ok);
     }
 
     @PostMapping(value = "/api/me/active-identity", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> activate(@RequestBody ActivateIdentityRequest body, ServerHttpRequest request) {
-        return accounts.resolve(request)
-                .flatMap(account -> {
+        DeviceFingerprint fp = DeviceFingerprint.from(request);
+        return accounts.resolvePrincipal(request)
+                .flatMap(principal -> {
                     IdentityType type = IdentityType.fromDb(body.type());
-                    return profiles.findByAccountAndType(account.id(), type.dbValue())
+                    return profiles.findByAccountAndType(principal.user().id(), type.dbValue())
                             .switchIfEmpty(Mono.error(new IdentityException(409, "未开通该身份，请先开通")))
-                            .flatMap(p -> activeIdentities.setActive(account.id(), type.dbValue())
-                                    .flatMap(ai -> outbox.append(new EventEnvelope(
-                                            UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
-                                            account.id(), 1, Instant.now(), null,
-                                            Map.of("accountId", account.id(), "activeIdentityType", type.dbValue())))
-                                            .thenReturn(ai))
-                                    .map(ai -> ResponseEntity.ok(activeEnvelope(ai.activeIdentityType()))));
+                            .flatMap(p -> currentActive(principal.sid())
+                                    .flatMap(fromOpt -> applyActivate(principal, type, fromOpt.orElse(null), fp)))
+                            .map(s -> ResponseEntity.ok(activeEnvelope(s.activeIdentityType())));
                 });
     }
 
     @DeleteMapping("/api/me/active-identity")
     public Mono<ResponseEntity<Map<String, Object>>> deactivate(ServerHttpRequest request) {
-        return accounts.resolve(request)
-                .flatMap(account -> activeIdentities.clear(account.id())
-                        .flatMap(rows -> outbox.append(new EventEnvelope(
+        DeviceFingerprint fp = DeviceFingerprint.from(request);
+        return accounts.resolvePrincipal(request)
+                .flatMap(principal -> currentActive(principal.sid())
+                        .flatMap(fromOpt -> {
+                            String fromType = fromOpt.orElse(null);
+                            if (fromType == null) {
+                                return Mono.just(activeEnvelope(null));   // 本就消费者，幂等 no-op（不审计、不发事件）
+                            }
+                            return sessions.deactivate(principal.sid())
+                                    .then(audit.append(IdentityAuditAction.DEACTIVATE, principal.user().id(),
+                                            fromType, null, principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent()))
+                                    .then(outbox.append(new EventEnvelope(
+                                            UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
+                                            principal.user().id(), 1, Instant.now(), null,
+                                            Map.of("accountId", principal.user().id(), "activeIdentityType", "consumer",
+                                                    "sessionToken", principal.sid())))
+                                            .thenReturn(activeEnvelope(null)));
+                        }))
+                .map(ResponseEntity::ok);
+    }
+
+    /** 当前 session 的旧活动身份（包成 Optional：无行或已 NULL → empty；命中 → of(type)）。规避 reactor 禁发 null。 */
+    private Mono<Optional<String>> currentActive(String sid) {
+        return sessions.findByToken(sid)
+                .<Optional<String>>map(s -> Optional.ofNullable(s.activeIdentityType()))
+                .defaultIfEmpty(Optional.empty());
+    }
+
+    /** 写 per-session 活动身份 + 审计 + outbox（激活/切换共用）。 */
+    private Mono<IdentitySession> applyActivate(SessionPrincipal principal, IdentityType type, String fromType, DeviceFingerprint fp) {
+        return sessions.activate(principal.sid(), principal.user().id(), type.dbValue(),
+                        fp.deviceId(), fp.deviceLabel(), fp.ipAddress(), fp.userAgent())
+                .flatMap(s -> audit.append(IdentityAuditAction.ACTIVATE, principal.user().id(), fromType, type.dbValue(),
+                                principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent())
+                        .then(outbox.append(new EventEnvelope(
                                 UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
-                                account.id(), 1, Instant.now(), null,
-                                Map.of("accountId", account.id(), "activeIdentityType", "consumer")))
-                                .thenReturn(rows))
-                        .map(rows -> ResponseEntity.ok(activeEnvelope(null))));
+                                principal.user().id(), 1, Instant.now(), null,
+                                Map.of("accountId", principal.user().id(), "activeIdentityType", type.dbValue(),
+                                        "sessionToken", principal.sid())))
+                                .thenReturn(s)));
     }
 
     @ExceptionHandler(IdentityException.class)

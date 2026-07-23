@@ -36,6 +36,14 @@ public class CurrentAccountResolver {
     }
 
     public Mono<AuthUser> resolve(ServerHttpRequest request) {
+        return resolvePrincipal(request).map(SessionPrincipal::user);
+    }
+
+    /**
+     * 解析当前会话主体（账号 + sid）。草场身份域 Slice 2I（HLD D-08 per-session：活动身份按 session 隔离，端点需 sid）。
+     * cookie → unsign → sid → {@link LegacySessionBridge#findUserId} → {@link LegacyUserLookup#findById} → {@link SessionPrincipal}。
+     */
+    public Mono<SessionPrincipal> resolvePrincipal(ServerHttpRequest request) {
         String sid = extractSid(request);
         if (sid == null) {
             return Mono.error(new IdentityException(401, "请先登录"));
@@ -43,7 +51,8 @@ public class CurrentAccountResolver {
         return sessionBridge.findUserId(sid)
                 .switchIfEmpty(Mono.error(new IdentityException(401, "请先登录")))
                 .flatMap(userLookup::findById)
-                .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")));
+                .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")))
+                .map(user -> new SessionPrincipal(user, sid));
     }
 
     /**

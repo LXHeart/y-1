@@ -95,10 +95,10 @@ class IdentityProfileControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.activeIdentityType").isEqualTo("recommender");
 
-        // 切回消费者 → DB active_identity_type 为 NULL（用 COUNT 避免把可空列映射进 Flux 触发 reactor 禁止 null）
+        // 切回消费者 → per-session identity_session.active_identity_type 为 NULL（COUNT 避免可空列入 Flux）
         client().delete().uri("/api/me/active-identity").header("Cookie", "y1.sid=" + acc.cookie())
                 .exchange().expectStatus().isOk();
-        Long nullActive = db.sql("SELECT COUNT(*)::int AS c FROM account_active_identity"
+        Long nullActive = db.sql("SELECT COUNT(*)::int AS c FROM identity_session"
                         + " WHERE account_id = CAST(:acct AS uuid) AND active_identity_type IS NULL")
                 .bind("acct", acc.accountId())
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
