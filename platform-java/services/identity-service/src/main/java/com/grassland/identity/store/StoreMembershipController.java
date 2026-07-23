@@ -24,51 +24,55 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 /**
- * 门店粒度成员 HTTP 入口。草场身份域 Slice 2G（HLD store-membership）。
+ * 门店粒度成员 HTTP 入口。草场身份域 Slice 2G + Slice 2J（门店 MANAGER 级独立授权）。
  * 挂 {@code /api/organizations/{orgId}/stores/{storeId}/memberships}。
  *
  * <ul>
- *   <li>GET — 列门店成员，需 org MEMBER+。</li>
- *   <li>POST — 加成员，需 org ADMIN+；UNIQUE(store,account) 冲突 409；写 outbox {@code StoreMembershipGranted}。</li>
- *   <li>DELETE /{accountId} — 移除成员，需 org ADMIN+。</li>
+ *   <li>GET — 列门店成员，需门店 STAFF+（org OWNER/ADMIN 隐式满足）。</li>
+ *   <li>POST — 加成员：加 staff 需门店 MANAGER+；任命 manager 仅 org ADMIN+；UNIQUE(store,account) 冲突 → 409；写 outbox {@code StoreMembershipGranted}。</li>
+ *   <li>DELETE /{accountId} — 移除成员，需门店 MANAGER+；守卫最后一个 manager（不可移除）→ 409。</li>
  * </ul>
  *
- * <p>管理 authz 复用 org 级 {@link OrgAuthorization}（门店 MANAGER 级独立授权留后续）；增成员前校验 store 属于该 org（跨 org storeId → 404）。
+ * <p>authz 经 {@link StoreAuthorization}（门店粒度，org OWNER/ADMIN 隐式超管）；跨 org storeId → 404。
+ * 门店经理可独立管理本店 staff，无需 org ADMIN（HLD 5.2 store-membership 独立于 merchant-organization）。
  */
 @RestController
 @RequestMapping("/api/organizations/{orgId}/stores/{storeId}/memberships")
 public class StoreMembershipController {
 
-    private final OrgAuthorization authz;
+    private final StoreAuthorization storeAuthz;
+    private final OrgAuthorization orgAuthz;
     private final StoreMembershipRepository storeMemberships;
-    private final StoreRepository stores;
     private final OutboxRepository outbox;
 
-    public StoreMembershipController(OrgAuthorization authz, StoreMembershipRepository storeMemberships,
-                                     StoreRepository stores, OutboxRepository outbox) {
-        this.authz = authz;
+    public StoreMembershipController(StoreAuthorization storeAuthz, OrgAuthorization orgAuthz,
+                                     StoreMembershipRepository storeMemberships, OutboxRepository outbox) {
+        this.storeAuthz = storeAuthz;
+        this.orgAuthz = orgAuthz;
         this.storeMemberships = storeMemberships;
-        this.stores = stores;
         this.outbox = outbox;
     }
 
     @GetMapping
     public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String orgId, @PathVariable String storeId,
                                                           ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.MEMBER)
-                .flatMap(account -> ensureStoreInOrg(orgId, storeId)
-                        .then(storeMemberships.findByStore(storeId).collectList()
-                                .map(list -> ResponseEntity.ok(Map.of("success", true,
-                                        "data", list.stream().map(this::toBody).toList())))));
+        return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.STAFF)
+                .flatMap(account -> storeMemberships.findByStore(storeId).collectList()
+                        .map(list -> ResponseEntity.ok(Map.of("success", true,
+                                "data", list.stream().map(this::toBody).toList()))));
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> add(@PathVariable String orgId, @PathVariable String storeId,
                                                          @RequestBody CreateStoreMembershipRequest body,
                                                          ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> ensureStoreInOrg(orgId, storeId)
-                        .then(storeMemberships.create(storeId, body.accountId(), body.role()))
+        StoreRole targetRole = StoreRole.fromDb(body.role());
+        // 任命门店 manager 仅 org ADMIN+；管理 staff 需门店 MANAGER+（含 org 超管）。两者均经 ensureStoreInOrg（跨 org → 404）。
+        var gate = (targetRole == StoreRole.MANAGER)
+                ? orgAuthz.requireRole(request, orgId, MembershipRole.ADMIN)
+                    .flatMap(admin -> storeAuthz.ensureStoreInOrg(orgId, storeId).thenReturn(admin))
+                : storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER);
+        return gate.flatMap(account -> storeMemberships.create(storeId, body.accountId(), targetRole.dbValue())
                         .flatMap(m -> outbox.append(new EventEnvelope(
                                 UUID.randomUUID().toString(), "StoreMembershipGranted", "StoreMembership",
                                 m.id(), 1, Instant.now(), null,
@@ -82,19 +86,27 @@ public class StoreMembershipController {
     @DeleteMapping("/{accountId}")
     public Mono<ResponseEntity<Map<String, Object>>> remove(@PathVariable String orgId, @PathVariable String storeId,
                                                             @PathVariable String accountId, ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> ensureStoreInOrg(orgId, storeId)
+        return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER)
+                .flatMap(account -> guardLastManager(storeId, accountId)
                         .then(storeMemberships.deleteByStoreAndAccount(storeId, accountId))
                         .map(deleted -> deleted > 0
                                 ? ResponseEntity.ok(Map.<String, Object>of("success", true))
                                 : ResponseEntity.status(404).body(Map.<String, Object>of("success", false, "error", "门店成员不存在"))));
     }
 
-    /** 校验 store 属于该 org，否则 404（跨 org 隔离）。 */
-    private Mono<Void> ensureStoreInOrg(String orgId, String storeId) {
-        return stores.findByOrganizationAndId(orgId, storeId)
-                .switchIfEmpty(Mono.error(new IdentityException(404, "门店不存在")))
-                .then();
+    /** 阻止移除最后一个 manager，保证门店始终有 manager；非 manager 成员直接放行。 */
+    private Mono<Void> guardLastManager(String storeId, String accountId) {
+        return storeMemberships.findRole(storeId, accountId)
+                .flatMap(role -> {
+                    if (!StoreRole.MANAGER.dbValue().equalsIgnoreCase(role)) {
+                        return Mono.<Void>empty();
+                    }
+                    return storeMemberships.countByStoreAndRole(storeId, StoreRole.MANAGER.dbValue())
+                            .flatMap(count -> count <= 1
+                                    ? Mono.<Void>error(new IdentityException(409, "不能移除最后一个门店经理"))
+                                    : Mono.<Void>empty());
+                })
+                .switchIfEmpty(Mono.empty());
     }
 
     @ExceptionHandler(IdentityException.class)

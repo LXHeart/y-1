@@ -44,6 +44,14 @@ public class OrgAuthorization {
                 .flatMap(account -> roleOf(account.id(), organizationId));
     }
 
+    /**
+     * 解析指定账号在 org 的角色（成员表优先，owner_account_id 兜底）；非成员返回空 Mono。
+     * 草场身份域 Slice 2J：供门店鉴权（{@code StoreAuthorization}）判断 org 超管，无需重复 owner-fallback 逻辑。
+     */
+    public Mono<MembershipRole> roleOfAccount(String accountId, String organizationId) {
+        return roleOf(accountId, organizationId);
+    }
+
     private Mono<MembershipRole> roleOf(String accountId, String organizationId) {
         return memberships.findRole(organizationId, accountId)
                 .map(MembershipRole::fromDb)
