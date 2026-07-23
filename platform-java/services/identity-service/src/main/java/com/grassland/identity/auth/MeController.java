@@ -1,14 +1,9 @@
 package com.grassland.identity.auth;
 
-import com.grassland.identity.security.CookieSigner;
-import com.grassland.identity.session.LegacySessionBridge;
+import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.user.AuthUser;
-import com.grassland.identity.user.LegacyUserLookup;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -16,38 +11,27 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+/**
+ * GET /api/auth/me — 返回当前登录账号。
+ *
+ * <p>身份解析委托 {@link CurrentAccountResolver}（Slice 2K 起 assertion 优先、cookie 回退），
+ * 故 /api/auth/me 也能消费 edge-bff 签发的 {@code X-Grassland-Identity} 断言——不再各自重复 cookie 解析逻辑。
+ * 账号停用守卫（403）保留在本控制器（仅 /me 的展示策略，非所有受保护端点的统一策略）。
+ */
 @RestController
 public class MeController {
-    private final LegacySessionBridge sessionBridge;
-    private final LegacyUserLookup userLookup;
-    private final CookieSigner cookieSigner;
-    private final String cookieName;
+    private final CurrentAccountResolver accounts;
 
-    public MeController(LegacySessionBridge sessionBridge, LegacyUserLookup userLookup, CookieSigner cookieSigner,
-                        @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName) {
-        this.sessionBridge = sessionBridge;
-        this.userLookup = userLookup;
-        this.cookieSigner = cookieSigner;
-        this.cookieName = cookieName;
+    public MeController(CurrentAccountResolver accounts) {
+        this.accounts = accounts;
     }
 
     @GetMapping("/api/auth/me")
     public Mono<ResponseEntity<Map<String, Object>>> me(ServerHttpRequest request) {
-        String sid = extractSid(request);
-        if (sid == null) {
-            return Mono.error(new IdentityException(401, "请先登录"));
-        }
-        return sessionBridge.findUserId(sid)
-            .switchIfEmpty(Mono.error(new IdentityException(401, "请先登录")))
-            .flatMap(userLookup::findById)
-            .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")))
-            .flatMap(user -> {
-                if (!user.isActive()) {
-                    return Mono.error(new IdentityException(403, "当前账号不可用"));
-                }
-                return Mono.just(user);
-            })
-            .map(this::toResponse);
+        return accounts.resolve(request)
+                .filter(AuthUser::isActive)
+                .switchIfEmpty(Mono.error(new IdentityException(403, "当前账号不可用")))
+                .map(this::toResponse);
     }
 
     private ResponseEntity<Map<String, Object>> toResponse(AuthUser user) {
@@ -64,19 +48,6 @@ public class MeController {
     @ExceptionHandler(IdentityException.class)
     public ResponseEntity<Map<String, Object>> handleError(IdentityException error) {
         return ResponseEntity.status(error.status())
-            .body(Map.of("success", false, "error", error.getMessage()));
-    }
-
-    private String extractSid(ServerHttpRequest request) {
-        HttpCookie cookie = request.getCookies().getFirst(cookieName);
-        if (cookie == null) {
-            return null;
-        }
-        String value = cookie.getValue();
-        try {
-            value = java.net.URLDecoder.decode(value.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException ignored) {
-        }
-        return cookieSigner.unsign(value).orElse(null);
+                .body(Map.of("success", false, "error", error.getMessage()));
     }
 }
