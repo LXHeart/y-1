@@ -43,6 +43,10 @@ identity:
     session:
       cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
       secret: ${SESSION_SECRET:}
+  permission:
+    # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
+    sla-hours: ${PERMISSION_SLA_HOURS:72}
+    at-risk-hours: ${PERMISSION_AT_RISK_HOURS:12}
 
 # 内部身份断言（HLD 7.4 消费）：secret/audience 须与 edge-bff 完全一致。
 # enabled=true 时 CurrentAccountResolver 优先信任 BFF 断言头（回退 cookie）。

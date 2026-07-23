@@ -57,7 +57,7 @@ public class OrganizationController {
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> create(@RequestBody CreateOrganizationRequest body, ServerHttpRequest request) {
         return accounts.resolve(request)
-                .flatMap(owner -> organizations.create(owner.id(), body.name())
+                .flatMap(owner -> organizations.create(owner.id(), body.name(), normalizeIndustry(body.industry()))
                         .flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))
                         .flatMap(org -> outbox.append(new EventEnvelope(
                                 UUID.randomUUID().toString(), "OrganizationCreated", "Organization",
@@ -129,7 +129,13 @@ public class OrganizationController {
         m.put("name", org.name());
         m.put("status", org.status());
         m.put("permissionTier", org.permissionTier());
+        m.put("industry", org.industry());
         m.put("createdAt", org.createdAt() == null ? null : org.createdAt().toString());
         return m;
+    }
+
+    /** 归一化行业：null/空 → other；否则小写。合法性留权限申请时校验（避免 organization↔permission 循环）。 */
+    private static String normalizeIndustry(String industry) {
+        return (industry == null || industry.isBlank()) ? "other" : industry.trim().toLowerCase();
     }
 }

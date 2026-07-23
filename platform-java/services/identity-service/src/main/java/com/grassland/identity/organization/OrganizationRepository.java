@@ -18,7 +18,7 @@ import reactor.core.publisher.Mono;
 public class OrganizationRepository {
 
     private static final String SELECT_COLS =
-            "id::text, owner_account_id::text, name, status, permission_tier, created_at, updated_at";
+            "id::text, owner_account_id::text, name, status, permission_tier, industry, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -26,14 +26,14 @@ public class OrganizationRepository {
         this.db = db;
     }
 
-    public Mono<Organization> create(String ownerAccountId, String name) {
+    public Mono<Organization> create(String ownerAccountId, String name, String industry) {
         String id = UUID.randomUUID().toString();
         return db.sql("""
-                INSERT INTO organization(id, owner_account_id, name, status)
-                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), :name, 'active')
+                INSERT INTO organization(id, owner_account_id, name, status, industry)
+                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), :name, 'active', :industry)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("owner", ownerAccountId).bind("name", name)
+                .bind("id", id).bind("owner", ownerAccountId).bind("name", name).bind("industry", industry)
                 .map(OrganizationRepository::map).one();
     }
 
@@ -63,6 +63,7 @@ public class OrganizationRepository {
                 row.get("name", String.class),
                 row.get("status", String.class),
                 row.get("permission_tier", String.class),
+                row.get("industry", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );
