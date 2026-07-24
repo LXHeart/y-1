@@ -88,6 +88,8 @@ public class InternalAssertionFilter implements WebFilter {
                 identity.accountId(),
                 identity.activeIdentityType(),
                 identity.sessionToken(),
+                identity.organizationId(),
+                identity.permissionTier(),
                 "cookie-session",
                 "level1",
                 null,

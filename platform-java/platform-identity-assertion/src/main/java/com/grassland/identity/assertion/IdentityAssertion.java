@@ -14,6 +14,9 @@ import java.time.Instant;
  *   <li>{@code accountId} / {@code sessionToken}（sid）— 身份事实，验签后可信。</li>
  *   <li>{@code activeIdentityType} — 当前 session 活动身份（merchant/recommender/{@code null}=消费者）。
  *       来源 identity_session（identity-service 自管表），故信任断言值。</li>
+ *   <li>{@code organizationId} / {@code permissionTier} — 商家身份关联的 org 及其准入 tier
+ *       （edge-bff 经 identity_profile↔organization 解析；非商家或未关联为 null）。
+ *       marketplace 等下游据此做 org 级资源授权与限额，<b>不替代资源级自查</b>（HLD 7.4）。</li>
  *   <li>{@code authMethod} / {@code authStrength} / {@code reauthenticatedAt} — 认证方式/强度/最近重认证时间；
  *       当前 level1=密码 session，level2 留待 MFA（D-08）。</li>
  *   <li>{@code requestId} / {@code traceId} — 透传请求/链路追踪。</li>
@@ -26,6 +29,8 @@ public record IdentityAssertion(
         String accountId,
         String activeIdentityType,
         String sessionToken,
+        String organizationId,
+        String permissionTier,
         String authMethod,
         String authStrength,
         Instant reauthenticatedAt,

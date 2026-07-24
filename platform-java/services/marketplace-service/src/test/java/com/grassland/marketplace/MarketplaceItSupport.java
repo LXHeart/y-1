@@ -59,7 +59,7 @@ public abstract class MarketplaceItSupport {
     protected String sign(String accountId, String activeIdentityType) {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
-                accountId, activeIdentityType, "sid-" + accountId,
+                accountId, activeIdentityType, "sid-" + accountId, null, null,
                 "cookie-session", "level1", null, "r", "t",
                 "grassland-internal", now, now.plusSeconds(60)));
     }

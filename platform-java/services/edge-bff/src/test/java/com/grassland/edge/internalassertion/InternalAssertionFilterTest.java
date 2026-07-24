@@ -52,7 +52,9 @@ class InternalAssertionFilterTest {
                 .expectBody(String.class).returnResult().getResponseBody();
 
         String token = readToken(body);
-        assertThat(signer.verify(token, null)).as("assertion verifies").isPresent();
+        var decoded = signer.verify(token, null).orElseThrow();
+        assertThat(decoded.organizationId()).isEqualTo("org-from-bff");
+        assertThat(decoded.permissionTier()).isEqualTo("basic_publish");
     }
 
     @Test
@@ -129,7 +131,8 @@ class InternalAssertionFilterTest {
 
     private static ResolvedIdentity identity() {
         return new ResolvedIdentity(
-                "11111111-1111-1111-1111-111111111111", "user", "active", "merchant", "sid-1");
+                "11111111-1111-1111-1111-111111111111", "user", "active", "merchant", "sid-1",
+                "org-from-bff", "basic_publish");
     }
 
     /** 控制器返回 JSON {@code {"assertion":"<token>"}}；解析出 token（或 "none"）。 */

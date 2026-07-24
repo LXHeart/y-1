@@ -20,6 +20,8 @@ class IdentityAssertionSignerTest {
                 "11111111-1111-1111-1111-111111111111",
                 "merchant",
                 "sid-abc",
+                null,
+                null,
                 "cookie-session",
                 "level1",
                 null,
@@ -47,7 +49,7 @@ class IdentityAssertionSignerTest {
     @Test
     void consumerAssertion_hasNullableActiveIdentity() {
         var consumer = new IdentityAssertion(
-                "22222222-2222-2222-2222-222222222222", null, "sid-anon",
+                "22222222-2222-2222-2222-222222222222", null, "sid-anon", null, null,
                 "cookie-session", "level1", null, null, null,
                 "grassland-internal", NOW, NOW.plusSeconds(60));
         String token = signer.sign(consumer);

@@ -68,18 +68,36 @@ public class SessionIdentityResolver {
                         row.get("role", String.class),
                         row.get("status", String.class)))
                 .one()
-                .flatMap(account -> activeIdentityType(sid)
-                        .defaultIfEmpty("")
-                        .map(active -> new ResolvedIdentity(
+                .flatMap(account -> Mono.zip(
+                        activeIdentityType(sid).defaultIfEmpty(""),
+                        orgTier(accountId).defaultIfEmpty(OrgTier.EMPTY))
+                        .map(t -> new ResolvedIdentity(
                                 account.id(),
                                 account.role(),
                                 account.status(),
-                                active.isEmpty() ? null : active,
-                                sid)));
+                                t.getT1().isEmpty() ? null : t.getT1(),
+                                sid,
+                                t.getT2().orgId(),
+                                t.getT2().tier())));
     }
 
     /** 在 Row 仍有效期间提前抽取字段（r2dbc Row 生命周期仅限 map 阶段，不可透传到下游 flatMap）。 */
     private record AccountRow(String id, String role, String status) {}
+
+    private record OrgTier(String orgId, String tier) {
+        static final OrgTier EMPTY = new OrgTier(null, null);
+    }
+
+    /** 商家身份关联的 org + 该 org 的 tier（identity_profile↔organization；无商家档案 → empty，org/tier 为 null）。 */
+    private Mono<OrgTier> orgTier(String accountId) {
+        return db.sql("SELECT ip.organization_id::text AS org_id, o.permission_tier"
+                + " FROM identity_profile ip"
+                + " LEFT JOIN organization o ON o.id = ip.organization_id"
+                + " WHERE ip.account_id = CAST(:acct AS uuid) AND ip.identity_type = 'merchant'")
+                .bind("acct", accountId)
+                .map(row -> new OrgTier(row.get("org_id", String.class), row.get("permission_tier", String.class)))
+                .one();
+    }
 
     /** 读 identity_session.active_identity_type；无行/值为 null → empty（消费者，active 置 null）。 */
     private Mono<String> activeIdentityType(String sid) {

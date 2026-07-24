@@ -19,6 +19,8 @@ class IdentityAssertionCodecTest {
                 "11111111-1111-1111-1111-111111111111",
                 "recommender",
                 "sid-xyz",
+                "33333333-3333-3333-3333-333333333333",
+                "basic_publish",
                 "cookie-session",
                 "level1",
                 REAUTH,
@@ -36,7 +38,7 @@ class IdentityAssertionCodecTest {
     @Test
     void encodeDecode_preservesNullables() {
         var consumer = new IdentityAssertion(
-                "22222222-2222-2222-2222-222222222222", null, "sid-anon",
+                "22222222-2222-2222-2222-222222222222", null, "sid-anon", null, null,
                 "cookie-session", "level1", null, null, null,
                 "grassland-internal", ISSUED, EXPIRES);
 

@@ -46,6 +46,8 @@ class SessionIdentityResolverIT {
             s.execute("CREATE TABLE app_users (id uuid PRIMARY KEY, email text UNIQUE, password_hash text, display_name text, role text, status text)");
             s.execute("CREATE TABLE session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
             s.execute("CREATE TABLE identity_session (session_token text PRIMARY KEY, account_id uuid NOT NULL, active_identity_type varchar(32))");
+            s.execute("CREATE TABLE organization (id uuid PRIMARY KEY, owner_account_id uuid, name text, status text, permission_tier text, industry text)");
+            s.execute("CREATE TABLE identity_profile (id uuid PRIMARY KEY, account_id uuid NOT NULL, identity_type varchar(32) NOT NULL, organization_id uuid, status text, UNIQUE(account_id, identity_type))");
         }
     }
 
@@ -64,6 +66,25 @@ class SessionIdentityResolverIT {
                     assertThat(identity.accountId()).isEqualTo(seeded.accountId);
                     assertThat(identity.activeIdentityType()).isEqualTo("merchant");
                     assertThat(identity.sessionToken()).isEqualTo(seeded.sid);
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void resolvesOrgAndTierForMerchant() {
+        Seeded seeded = seed("org-merchant@grassland.local", "merchant");
+        String orgId = UUID.randomUUID().toString();
+        db.sql("INSERT INTO organization(id, owner_account_id, name, status, permission_tier) "
+                + "VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), 'Org', 'active', 'basic_publish')")
+                .bind("id", orgId).bind("owner", seeded.accountId).then().block();
+        db.sql("INSERT INTO identity_profile(id, account_id, identity_type, organization_id, status) "
+                + "VALUES (CAST(:pid AS uuid), CAST(:acct AS uuid), 'merchant', CAST(:org AS uuid), 'active')")
+                .bind("pid", UUID.randomUUID().toString()).bind("acct", seeded.accountId).bind("org", orgId).then().block();
+
+        StepVerifier.create(resolver.resolve(requestWithCookie(seeded.cookie)))
+                .assertNext(identity -> {
+                    assertThat(identity.organizationId()).isEqualTo(orgId);
+                    assertThat(identity.permissionTier()).isEqualTo("basic_publish");
                 })
                 .verifyComplete();
     }

@@ -161,7 +161,7 @@ class MeControllerIT {
     private String signAssertion(String accountId) {
         Instant now = Instant.now();
         return assertionSigner.sign(new IdentityAssertion(
-                accountId, null, "sid-me", "cookie-session", "level1", null, "r", "t",
+                accountId, null, "sid-me", null, null, "cookie-session", "level1", null, "r", "t",
                 "grassland-internal", now, now.plusSeconds(60)));
     }
 
