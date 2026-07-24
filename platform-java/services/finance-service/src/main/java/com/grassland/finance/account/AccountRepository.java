@@ -33,6 +33,31 @@ public class AccountRepository {
                 .map(AccountRepository::map).one();
     }
 
+    /** 充值（sandbox 自充，Slice 4E）：原子 `balance = balance + :amt`；org 不存在 → empty。 */
+    public Mono<Account> credit(String organizationId, long amountCents) {
+        return db.sql("""
+                UPDATE finance_account SET balance_cents = balance_cents + :amt, updated_at = now()
+                WHERE organization_id = CAST(:org AS uuid)
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("org", organizationId).bind("amt", amountCents)
+                .map(AccountRepository::map).one();
+    }
+
+    /**
+     * 预留扣减（Slice 4E）：原子条件 `balance = balance - :amt WHERE balance >= :amt`（语句级行锁，并发安全）。
+     * 0 行 = 余额不足或 org 不存在 → empty（调用方判 409 余额不足）。
+     */
+    public Mono<Account> decrement(String organizationId, long amountCents) {
+        return db.sql("""
+                UPDATE finance_account SET balance_cents = balance_cents - :amt, updated_at = now()
+                WHERE organization_id = CAST(:org AS uuid) AND balance_cents >= :amt
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("org", organizationId).bind("amt", amountCents)
+                .map(AccountRepository::map).one();
+    }
+
     /** 开户（余额 0）。UNIQUE(organization_id) 违例 → empty（调用方判并发，回退 findByOrganization）。 */
     public Mono<Account> create(String organizationId) {
         String id = UUID.randomUUID().toString();
