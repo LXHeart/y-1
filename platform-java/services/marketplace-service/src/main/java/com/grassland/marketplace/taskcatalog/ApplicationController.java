@@ -3,7 +3,15 @@ package com.grassland.marketplace.taskcatalog;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
+import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.workflow.saga.AcceptanceInput;
+import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
+import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
+import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowExecutionAlreadyStarted;
+import io.temporal.client.WorkflowOptions;
+import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -17,24 +25,26 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
- * application 聚合 HTTP 入口（草场 Epic 4 Slice 4B / HLD 5.3、10.2）。
+ * application 聚合 HTTP 入口（草场 Epic 4 Slice 4B / HLD 5.3、10.2；4F 资金预留 Saga 接线）。
  *
  * <ul>
- *   <li>POST /api/tasks/{id}/applications — 推荐官报名（requireRecommender；任务须 published；
- *       名额满 fail-fast 409；一人一报 409；outbox {@code ApplicationSubmitted}）。</li>
- *   <li>POST /api/tasks/{id}/applications/{appId}/accept — 商家接受（须任务 owner；名额 Java 层校验；
- *       pending 守卫条件 UPDATE；outbox {@code ApplicationAccepted}）。</li>
- *   <li>POST /api/tasks/{id}/applications/{appId}/reject — 商家拒绝（须任务 owner；outbox {@code ApplicationRejected}）。</li>
- *   <li>POST /api/tasks/{id}/applications/{appId}/withdraw — 推荐官撤销本人 pending（WHERE 含 recommender 自查；
- *       outbox {@code ApplicationWithdrawn}）。</li>
- *   <li>GET /api/tasks/{id}/applications — 任务 owner 列全部报名（非 owner 403）。</li>
+ *   <li>POST /api/tasks/{id}/applications — 推荐官报名（requireRecommender；任务须 published；名额满 fail-fast 409；
+ *       一人一报 409；outbox {@code ApplicationSubmitted}）。</li>
+ *   <li>POST /api/tasks/{id}/applications/{appId}/accept — 商家接受（须任务 owner；名额 Java 层校验）。
+ *       <b>资金型任务</b>（bounty&gt;0，Slice 4F）：启 {@code ApplicationReservationWorkflow} Saga → <b>202</b> Accepted
+ *       + workflowId（异步：pending→reserving→accepted/compensated）；<b>非资金型</b>（bounty null/0）：走 4B 原直连
+ *       pending→accepted 同步返回 200。双击去重：{@code WorkflowExecutionAlreadyStarted} → 复用既有 workflowId。</li>
+ *   <li>GET /api/tasks/{id}/applications/{appId}/reservation — owner 轮询预留结局（accepted/reserving/compensated+reason）。</li>
+ *   <li>POST .../reject — 商家拒绝（须任务 owner；outbox {@code ApplicationRejected}）。</li>
+ *   <li>POST .../withdraw — 推荐官撤销本人 pending（outbox {@code ApplicationWithdrawn}）。</li>
+ *   <li>GET /api/tasks/{id}/applications — 任务 owner 列全部报名。</li>
  * </ul>
  *
- * <p>身份靠 {@link MarketplaceCallerResolver}（BFF 断言）；资源级自查：accept/reject 校验 caller==task.owner，
- * withdraw 把 recommender 烧进 WHERE（HLD 7.4）。名额并发：单 owner acceptor 使 Java 计数足够（多 acceptor 再加事务，TODO）。
- * 错误统一由全局 {@code MarketplaceErrorHandler} 处理。
+ * <p>身份靠 {@link MarketplaceCallerResolver}（BFF 断言）；资源级自查：accept/reject/reservation 校验 caller==task.owner，
+ * withdraw 把 recommender 烧进 WHERE（HLD 7.4）。阻塞的 WorkflowClient 调用包 {@code boundedElastic} 避免卡事件循环。
  */
 @RestController
 public class ApplicationController {
@@ -43,13 +53,16 @@ public class ApplicationController {
     private final TaskRepository tasks;
     private final TaskApplicationRepository apps;
     private final OutboxRepository outbox;
+    private final WorkflowClient workflowClient;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
-                                 TaskApplicationRepository apps, OutboxRepository outbox) {
+                                 TaskApplicationRepository apps, OutboxRepository outbox,
+                                 WorkflowClient workflowClient) {
         this.callers = callers;
         this.tasks = tasks;
         this.apps = apps;
         this.outbox = outbox;
+        this.workflowClient = workflowClient;
     }
 
     @PostMapping(value = "/api/tasks/{id}/applications")
@@ -84,13 +97,78 @@ public class ApplicationController {
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
                         .flatMap(task -> loadPendingApp(id, appId)
                                 .flatMap(app -> slotsFull(task).flatMap(full -> full
-                                        ? Mono.<TaskApplication>error(new MarketplaceException(409, "名额已满"))
-                                        : apps.accept(appId, id, merchant.accountId())
-                                                .switchIfEmpty(Mono.error(new MarketplaceException(409, "该报名已处理")))))
-                                .flatMap(app -> outbox
-                                        .append(envelope("ApplicationAccepted", app, task.ownerAccountId()))
-                                        .thenReturn(app)))
-                        .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
+                                        ? Mono.<ResponseEntity<Map<String, Object>>>error(
+                                                new MarketplaceException(409, "名额已满"))
+                                        : isMonetary(task)
+                                                ? startReservationWorkflow(task, app, merchant)
+                                                : acceptDirectly(task, app, merchant)))));
+    }
+
+    /** 资金型任务（Slice 4F）：bounty_cents 非 null 且 &gt;0。 */
+    private boolean isMonetary(Task task) {
+        return task.bountyCents() != null && task.bountyCents() > 0;
+    }
+
+    /** 非资金型任务（bounty null/0）→ 4B 原直连：pending→accepted 同步返回 200。 */
+    private Mono<ResponseEntity<Map<String, Object>>> acceptDirectly(Task task, TaskApplication app, Caller merchant) {
+        return apps.accept(app.id(), app.taskId(), merchant.accountId())
+                .switchIfEmpty(fail(409, "该报名已处理"))
+                .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a))
+                .map(a -> ResponseEntity.ok(Map.of("success", true, "data", toBody(a))));
+    }
+
+    /** 资金型任务 → 启资金预留 Saga：202 Accepted + workflowId。双击去重（WorkflowExecutionAlreadyStarted → 复用 id）。 */
+    private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
+                                                                               Caller merchant) {
+        AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), merchant.accountId(),
+                task.organizationId(), task.bountyCents());
+        String workflowId = "accept-" + app.id();
+        return Mono.fromCallable(() -> {
+            ApplicationReservationWorkflow stub = workflowClient.newWorkflowStub(
+                    ApplicationReservationWorkflow.class,
+                    WorkflowOptions.newBuilder()
+                            .setWorkflowId(workflowId)
+                            .setTaskQueue(ApplicationReservationWorkflowImpl.TASK_QUEUE)
+                            .setWorkflowIdReusePolicy(
+                                    WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
+                            .build());
+            WorkflowClient.start(stub::run, input);
+            return workflowId;
+        })
+        .subscribeOn(Schedulers.boundedElastic())
+        .onErrorResume(WorkflowExecutionAlreadyStarted.class, alreadyStarted -> Mono.just(workflowId))
+        .map(wid -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("success", true, "data",
+                Map.of("workflowId", wid, "applicationId", app.id(), "status", "reserving"))));
+    }
+
+    @GetMapping("/api/tasks/{id}/applications/{appId}/reservation")
+    public Mono<ResponseEntity<Map<String, Object>>> reservation(@PathVariable String id, @PathVariable String appId,
+                                                                 ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> loadOwnedTask(id, caller.accountId())  // 仅 owner 可轮询预留状态
+                        .flatMap(task -> apps.findById(appId)
+                                .switchIfEmpty(fail(404, "报名不存在"))
+                                .flatMap(app -> {
+                                    if (!app.taskId().equals(id)) {
+                                        return fail(404, "报名不存在");
+                                    }
+                                    return reservationOutcome(app);
+                                })));
+    }
+
+    /** 映射 application DB 状态为预留结局：accepted / reserving；pending（含补偿回退）查最近失败 reason。 */
+    private Mono<ResponseEntity<Map<String, Object>>> reservationOutcome(TaskApplication app) {
+        String status = app.status();
+        if (ApplicationStatus.ACCEPTED.dbValue().equals(status)) {
+            return Mono.just(ok(Map.of("status", "accepted")));
+        }
+        if (ApplicationStatus.RESERVING.dbValue().equals(status)) {
+            return Mono.just(ok(Map.of("status", "reserving")));
+        }
+        // pending（含补偿回退）或其它：查最近 ApplicationReservationFailed 事件的 reason
+        return outbox.latestReservationFailureReason(app.id())
+                .map(reason -> ok(reasonBody("compensated", reason)))
+                .defaultIfEmpty(ok(Map.of("status", status)));  // 无失败记录 → 原状态（pending 等）
     }
 
     @PostMapping("/api/tasks/{id}/applications/{appId}/reject")
@@ -178,6 +256,17 @@ public class ApplicationController {
         }
         return new EventEnvelope(UUID.randomUUID().toString(), eventType, "TaskApplication",
                 app.id(), 1, Instant.now(), null, payload);
+    }
+
+    private ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    private Map<String, Object> reasonBody(String status, String reason) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("status", status);
+        m.put("reason", reason);
+        return m;
     }
 
     private Map<String, Object> toBody(TaskApplication app) {

@@ -147,6 +147,67 @@ class EscrowControllerIT extends FinanceItSupport {
                 .exchange().expectStatus().isUnauthorized();
     }
 
+    @Test
+    void reserveByMarketplaceServiceSucceeds() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+
+        // marketplace Saga 服务断言 reserve（HLD 11.1 服务身份）
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", ref, "amountCents", 600))
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.status").isEqualTo("reserved");
+        assertThat(balanceOf(org)).isEqualTo(400L);
+        assertThat(outboxCount("FundsReserved", org)).isEqualTo(1);
+
+        // 服务断言同样享受 engagement_ref 幂等
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", ref, "amountCents", 600))
+                .exchange().expectStatus().isOk();
+        assertThat(balanceOf(org)).isEqualTo(400L);
+    }
+
+    @Test
+    void reserveByWrongServicePrincipalForbidden() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        // 非 marketplace 的服务 principal → 403（finance 仅信任 marketplace 编排）
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(org, "imposter"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "eng-x", "amountCents", 100))
+                .exchange().expectStatus().isForbidden();
+        // org 不符的 marketplace 服务断言 → 403
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "eng-y", "amountCents", 100))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void releaseByMarketplaceServiceRestoresBalance() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        assertThat(balanceOf(org)).isEqualTo(400L);
+
+        // marketplace Saga 服务断言 release（compensation 退还）
+        client().post().uri("/api/finance/reservations/" + ref + "/release")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("released");
+        assertThat(balanceOf(org)).isEqualTo(1000L);
+    }
+
     // ---------- helpers ----------
 
     private void provision(String merchant, String org) {

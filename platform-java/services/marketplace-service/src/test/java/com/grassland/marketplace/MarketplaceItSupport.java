@@ -66,6 +66,6 @@ public abstract class MarketplaceItSupport {
         return signer.sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60)));
+                "grassland-internal", now, now.plusSeconds(60), null, null));
     }
 }

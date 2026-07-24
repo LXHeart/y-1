@@ -19,6 +19,7 @@ public record Task(
         String contentForm,
         String platform,
         Integer maxSlots,
+        Long bountyCents,
         Instant createdAt,
         Instant updatedAt
 ) {}

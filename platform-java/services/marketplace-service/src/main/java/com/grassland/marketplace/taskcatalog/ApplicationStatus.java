@@ -9,6 +9,7 @@ package com.grassland.marketplace.taskcatalog;
  */
 public enum ApplicationStatus {
     PENDING("pending"),
+    RESERVING("reserving"),
     ACCEPTED("accepted"),
     REJECTED("rejected"),
     WITHDRAWN("withdrawn");
@@ -37,8 +38,8 @@ public enum ApplicationStatus {
         throw new IllegalArgumentException("unknown application status: " + value);
     }
 
-    /** 是否终态（不可再 accept/reject/withdraw）。 */
+    /** 是否终态（不可再 accept/reject/withdraw）。RESERVING 是瞬态（Saga 进行中），非终态。 */
     public boolean isTerminal() {
-        return this != PENDING;
+        return this != PENDING && this != RESERVING;
     }
 }

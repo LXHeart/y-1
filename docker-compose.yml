@@ -114,6 +114,8 @@ services:
     build:
       context: ./platform-java
       dockerfile: services/marketplace-service/Dockerfile
+    ports:
+      - "8083:8083"
     environment:
       SERVER_PORT: "8083"
       DATABASE_URL: ${DATABASE_URL:-}
@@ -128,10 +130,13 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
       TEMPORAL_TARGET: temporal:7233
+      TEMPORAL_TEST_SERVER: ${TEMPORAL_TEST_SERVER:-false}
+      FINANCE_SERVICE_BASE_URL: http://finance-service:8084
     depends_on:
       - backend
       - minio
       - temporal
+      - finance-service
     restart: unless-stopped
 
   # 可选 Java finance-service（Epic 4 Slice 4D）：账户/余额地基。profile java-edge。
@@ -142,6 +147,8 @@ services:
     build:
       context: ./platform-java
       dockerfile: services/finance-service/Dockerfile
+    ports:
+      - "8084:8084"
     environment:
       SERVER_PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-}

@@ -1,24 +1,38 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.workflow.FinanceEscrowClient;
+import com.grassland.marketplace.workflow.saga.ReserveResult;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Mono;
 
 /**
- * application 聚合端到端（草场 Epic 4 Slice 4B）。继承 {@link MarketplaceItSupport}。
+ * application 聚合端到端（草场 Epic 4 Slice 4B / 4F）。继承 {@link MarketplaceItSupport}。
  *
- * <p>覆盖 apply / accept / reject / withdraw / list 全链路：身份门禁（recommender 报名、merchant 且 owner 接受）、
- * 名额控制（fail-fast at apply 基于 accepted 计数；accept 再校验）、去重（一人一报）、状态守卫、资源级自查、outbox 事件。
- * task 与 application 同库，org/account 用随机 UUID。
+ * <p>覆盖 apply / accept / reject / withdraw / list 全链路（4B）+ 资金预留 Saga（4F）。身份门禁（recommender 报名、
+ * merchant 且 owner 接受）、名额控制、去重、状态守卫、资源级自查、outbox 事件。
+ *
+ * <p>4F：资金型任务（bounty&gt;0）accept 走异步 Saga（202 + 轮询）。finance HTTP 边界用 {@code @MockBean} 替身——
+ * 全 Saga 编排（真 activity + 真 DB + temporal test-server）在测内跑通，仅 finance 出站 HTTP 被 mock。
+ * 非资金型任务（bounty null/0）仍走 4B 直连 accept（同步 200），故既有 4B 断言不回归。
  */
 class ApplicationControllerIT extends MarketplaceItSupport {
 
     private static final String ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+
+    /** finance 出站边界替身（Slice 4F）：真 Saga 跑通，仅 finance HTTP 被 mock，按用例桩 reserve 结果。 */
+    @MockitoBean
+    private FinanceEscrowClient financeClient;
 
     // ---------- apply ----------
 
@@ -108,18 +122,18 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isEqualTo(409);  // 已报名
     }
 
-    // ---------- accept ----------
+    // ---------- accept（非资金型：4B 直连同步 200） ----------
 
     @Test
     void merchantAcceptsAndEvent() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
-        String task = publishTask(merchant, org, null);
+        String task = publishTask(merchant, org, null);  // 无 bounty → 非资金型
         String app = apply(UUID.randomUUID().toString(), task);
 
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
-                .exchange().expectStatus().isOk().expectBody()
+                .exchange().expectStatus().isOk().expectBody()  // 同步 200（非资金型）
                 .jsonPath("$.data.status").isEqualTo("accepted")
                 .jsonPath("$.data.reviewedByAccountId").isEqualTo(merchant);
 
@@ -183,6 +197,61 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         client().post().uri("/api/tasks/" + task + "/applications/" + appB + "/accept")
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isEqualTo(409);
+    }
+
+    // ---------- accept（资金型：4F 异步 Saga 202 + 轮询） ----------
+
+    @Test
+    void monetaryAcceptStartsSagaAndActivates() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);  // bounty=500 → 资金型
+        String app = apply(UUID.randomUUID().toString(), task);
+
+        when(financeClient.reserve(org, app, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted().expectBody()  // 异步 202
+                .jsonPath("$.data.status").isEqualTo("reserving")
+                .jsonPath("$.data.applicationId").isEqualTo(app)
+                .jsonPath("$.data.workflowId").isEqualTo("accept-" + app);
+
+        awaitReservation(merchant, task, app, "accepted");
+        assertThat(appStatus(app)).isEqualTo("accepted");
+        assertThat(outboxCount("ApplicationAccepted", task)).isEqualTo(1);
+    }
+
+    @Test
+    void monetaryAcceptInsufficientFundsCompensates() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 600L);  // bounty=600，余额不足场景由 mock 决定
+        String app = apply(UUID.randomUUID().toString(), task);
+
+        when(financeClient.reserve(anyString(), anyString(), anyLong()))
+                .thenReturn(Mono.just(ReserveResult.insufficientFunds()));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+
+        awaitReservation(merchant, task, app, "compensated");
+        assertThat(appStatus(app)).isEqualTo("pending");  // 回退可重试
+        assertThat(failureReason(app)).isEqualTo("insufficient_funds");
+        assertThat(outboxCount("ApplicationReservationFailed", task)).isEqualTo(1);
+    }
+
+    @Test
+    void reservationPollRequiresOwner() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(UUID.randomUUID().toString(), task);
+        // 非 owner 轮询 → 403
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/reservation")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant"))
+                .exchange().expectStatus().isForbidden();
     }
 
     // ---------- reject ----------
@@ -297,6 +366,67 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String publishTaskBounty(String merchant, String org, Integer maxSlots, Long bountyCents) {
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("organizationId", org);
+        b.put("title", "赏金任务");
+        if (maxSlots != null) {
+            b.put("maxSlots", maxSlots);
+        }
+        if (bountyCents != null) {
+            b.put("bountyCents", bountyCents);
+        }
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    /** 轮询预留结局，至 expected 或超时（10s，temporal test-server 通常 ms 级完成）。 */
+    private void awaitReservation(String merchant, String task, String app, String expected) {
+        long deadline = System.currentTimeMillis() + 10_000L;
+        String status = null;
+        while (System.currentTimeMillis() < deadline) {
+            status = pollReservationStatus(merchant, task, app);
+            if (expected.equals(status)) {
+                return;
+            }
+            try {
+                Thread.sleep(100L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AssertionError("reservation did not reach " + expected + " (last=" + status + ")");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String pollReservationStatus(String merchant, String task, String app) {
+        Map<String, Object> resp = client().get()
+                .uri("/api/tasks/" + task + "/applications/" + app + "/reservation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("status");
+    }
+
+    private String appStatus(String app) {
+        return db.sql("SELECT status FROM task_application WHERE id = CAST(:id AS uuid)")
+                .bind("id", app)
+                .map(r -> r.get("status", String.class)).one().block();
+    }
+
+    private String failureReason(String app) {
+        return db.sql("SELECT payload->>'reason' AS r FROM marketplace_outbox"
+                        + " WHERE event_type = 'ApplicationReservationFailed' AND aggregate_id = :id")
+                .bind("id", app)
+                .map(r -> r.get("r", String.class)).one().block();
     }
 
     private long outboxCount(String eventType, String taskId) {

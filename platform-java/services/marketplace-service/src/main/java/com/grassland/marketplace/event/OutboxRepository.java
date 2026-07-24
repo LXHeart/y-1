@@ -37,4 +37,17 @@ public class OutboxRepository {
             return Mono.error(e);
         }
     }
+
+    /** 某报名最近一次资金预留失败原因（Slice 4F 轮询端点用：读 ApplicationReservationFailed outbox 事件的 reason）。
+     *  无 / reason 空 → empty Mono（调用方据此判「无补偿记录」）。 */
+    public Mono<String> latestReservationFailureReason(String applicationId) {
+        return db.sql("""
+                SELECT payload->>'reason' AS reason FROM marketplace_outbox
+                WHERE event_type = 'ApplicationReservationFailed' AND aggregate_id = :appId
+                ORDER BY id DESC LIMIT 1
+                """)
+                .bind("appId", applicationId)
+                .map(r -> r.get("reason", String.class)).one()
+                .filter(reason -> reason != null && !reason.isBlank());
+    }
 }

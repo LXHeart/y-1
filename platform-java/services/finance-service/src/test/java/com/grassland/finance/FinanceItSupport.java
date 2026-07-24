@@ -59,6 +59,16 @@ public abstract class FinanceItSupport {
         return signer.sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60)));
+                "grassland-internal", now, now.plusSeconds(60), null, null));
+    }
+
+    /** 签一个服务间断言（HLD 11.1 服务身份，Slice 4F）：callerKind=service + principal，带 org 上下文。 */
+    protected String signService(String organizationId, String principal) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                "service:" + principal, null, null, organizationId, null,
+                "service", "internal", null, "r", "t",
+                "grassland-internal", now, now.plusSeconds(30),
+                "service", principal));
     }
 }

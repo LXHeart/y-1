@@ -12,11 +12,12 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * task_application 数据访问（R2DBC {@link DatabaseClient} 手写 SQL，风格同 {@link TaskRepository}）。草场 Epic 4 Slice 4B。
+ * task_application 数据访问（R2DBC {@link DatabaseClient} 手写 SQL，风格同 {@link TaskRepository}）。草场 Epic 4 Slice 4B（4F 资金预留中间态）。
  *
- * <p>状态变更（accept/reject/withdraw）用条件 UPDATE（{@code status='pending'} 守卫）+ {@code RETURNING}：
- * 0 行 → {@link Mono#empty()}（调用方据此判 409「已处理」）。并发名额计数放 Java 层（见 ApplicationController），
- * 单一 owner 商家 accept 使其无实际并发风险（多 acceptor 时再加事务/counter 表，TODO）。
+ * <p>状态变更用条件 UPDATE（{@code status = :from} 守卫，泛化自 4B 的硬编码 {@code 'pending'}）+ {@code RETURNING}：
+ * 0 行 → {@link Mono#empty()}（调用方据此判 409「已处理」或幂等跳过）。4F 新增 reserving 流转：
+ * {@code beginAcceptance}（pending→reserving）、{@code acceptFromReserving}（reserving→accepted，不重写 reviewer）、
+ * {@code revertReserving}（reserving→pending 补偿，清空 reviewer/decided_at 回可重试态）。并发名额计数放 Java 层（见 ApplicationController）。
  */
 @Component
 public class TaskApplicationRepository {
@@ -67,14 +68,55 @@ public class TaskApplicationRepository {
                 .map(TaskApplicationRepository::map).all();
     }
 
-    /** 接受：pending → accepted，记录操作商家 + decided_at。0 行（非 pending / 不属该 task）→ empty。 */
+    /** 接受（4B 直连路径）：pending → accepted，记录操作商家 + decided_at。0 行（非 pending / 不属该 task）→ empty。 */
     public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId) {
-        return transition(id, taskId, "accepted", reviewerAccountId);
+        return transition(id, taskId, ApplicationStatus.PENDING.dbValue(), ApplicationStatus.ACCEPTED.dbValue(),
+                reviewerAccountId);
     }
 
     /** 拒绝：pending → rejected。 */
     public Mono<TaskApplication> reject(String id, String taskId, String reviewerAccountId) {
-        return transition(id, taskId, "rejected", reviewerAccountId);
+        return transition(id, taskId, ApplicationStatus.PENDING.dbValue(), ApplicationStatus.REJECTED.dbValue(),
+                reviewerAccountId);
+    }
+
+    /** 开始接受（Slice 4F Saga beginAcceptance）：pending → reserving，记录操作商家 + decided_at。0 行 → empty。 */
+    public Mono<TaskApplication> beginAcceptance(String id, String taskId, String reviewerAccountId) {
+        return transition(id, taskId, ApplicationStatus.PENDING.dbValue(), ApplicationStatus.RESERVING.dbValue(),
+                reviewerAccountId);
+    }
+
+    /** 激活（Slice 4F Saga activate）：reserving → accepted。不重写 reviewer/decided_at（beginAcceptance 已记录）。
+     *  0 行（非 reserving）→ empty（幂等：重试或已变迁）。 */
+    public Mono<TaskApplication> acceptFromReserving(String id, String taskId) {
+        return db.sql("""
+                UPDATE task_application SET status = :status, updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = :from
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .bind("from", ApplicationStatus.RESERVING.dbValue())
+                .bind("status", ApplicationStatus.ACCEPTED.dbValue())
+                .map(TaskApplicationRepository::map).one();
+    }
+
+    /** 补偿回退（Slice 4F Saga compensate）：reserving → pending，清空 reviewer/decided_at（回可重试态）。
+     *  0 行（非 reserving）→ empty（幂等：重试或已回退）。 */
+    public Mono<TaskApplication> revertReserving(String id, String taskId) {
+        return db.sql("""
+                UPDATE task_application
+                SET status = :status, reviewed_by_account_id = NULL, decided_at = NULL, updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = :from
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .bind("from", ApplicationStatus.RESERVING.dbValue())
+                .bind("status", ApplicationStatus.PENDING.dbValue())
+                .map(TaskApplicationRepository::map).one();
     }
 
     /** 撤销：本人 pending → withdrawn（无 reviewer）。WHERE 含 recommender 即资源级自查（HLD 7.4）。 */
@@ -99,17 +141,19 @@ public class TaskApplicationRepository {
                 .map(r -> r.get("c", Integer.class)).one();
     }
 
-    private Mono<TaskApplication> transition(String id, String taskId, String toStatus, String reviewerAccountId) {
+    private Mono<TaskApplication> transition(String id, String taskId, String fromStatus, String toStatus,
+                                             String reviewerAccountId) {
         return db.sql("""
                 UPDATE task_application
                 SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid),
                     decided_at = now(), updated_at = now()
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
-                  AND status = 'pending'
+                  AND status = :from
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("taskId", taskId).bind("status", toStatus).bind("reviewer", reviewerAccountId)
+                .bind("id", id).bind("taskId", taskId).bind("from", fromStatus)
+                .bind("status", toStatus).bind("reviewer", reviewerAccountId)
                 .map(TaskApplicationRepository::map).one();
     }
 

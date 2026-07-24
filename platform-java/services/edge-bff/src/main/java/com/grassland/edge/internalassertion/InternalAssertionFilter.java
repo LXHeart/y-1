@@ -97,7 +97,8 @@ public class InternalAssertionFilter implements WebFilter {
                 headerOrUuid(exchange, "X-Trace-Id"),
                 properties.audience(),
                 now,
-                now.plus(properties.ttl()));
+                now.plus(properties.ttl()),
+                "user", null);
     }
 
     private static String headerOrUuid(ServerWebExchange exchange, String headerName) {

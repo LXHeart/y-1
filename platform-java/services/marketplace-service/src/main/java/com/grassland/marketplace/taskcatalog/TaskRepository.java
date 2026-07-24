@@ -11,14 +11,14 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * task 数据访问（R2DBC {@link DatabaseClient} 手写 SQL，风格同 identity 各 repository）。草场 Epic 4 Slice 4A。
+ * task 数据访问（R2DBC {@link DatabaseClient} 手写 SQL，风格同 identity 各 repository）。草场 Epic 4 Slice 4A（4B 名额、4F 赏金）。
  */
 @Component
 public class TaskRepository {
 
     private static final String SELECT_COLS =
             "id::text, owner_account_id::text, organization_id::text, title, description, status,"
-                    + " content_form, platform, max_slots, created_at, updated_at";
+                    + " content_form, platform, max_slots, bounty_cents, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -26,14 +26,16 @@ public class TaskRepository {
         this.db = db;
     }
 
-    /** 创建任务（status=published）。description/contentForm/platform/maxSlots 可空（maxSlots=null=不限名额）。 */
+    /** 创建任务（status=published）。description/contentForm/platform/maxSlots/bountyCents 可空
+     * （maxSlots=null=不限名额；bountyCents=null/0=非资金型任务，>0=资金型赏金，Slice 4F Saga reserve 金额）。 */
     public Mono<Task> create(String ownerAccountId, String organizationId, String title,
-                             String description, String contentForm, String platform, Integer maxSlots) {
+                             String description, String contentForm, String platform, Integer maxSlots,
+                             Long bountyCents) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO task(id, owner_account_id, organization_id, title, description, status, content_form, platform, max_slots)
+                INSERT INTO task(id, owner_account_id, organization_id, title, description, status, content_form, platform, max_slots, bounty_cents)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), :title,
-                        :desc, 'published', :contentForm, :platform, :maxSlots)
+                        :desc, 'published', :contentForm, :platform, :maxSlots, :bountyCents)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
@@ -41,6 +43,7 @@ public class TaskRepository {
         spec = bindNullable(spec, "contentForm", contentForm);
         spec = bindNullable(spec, "platform", platform);
         spec = bindNullableInt(spec, "maxSlots", maxSlots);
+        spec = bindNullableLong(spec, "bountyCents", bountyCents);
         return spec.map(TaskRepository::map).one();
     }
 
@@ -83,6 +86,7 @@ public class TaskRepository {
                 row.get("content_form", String.class),
                 row.get("platform", String.class),
                 row.get("max_slots", Integer.class),
+                row.get("bounty_cents", Long.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );
@@ -98,5 +102,9 @@ public class TaskRepository {
 
     private static GenericExecuteSpec bindNullableInt(GenericExecuteSpec spec, String name, Integer value) {
         return value == null ? spec.bindNull(name, Integer.class) : spec.bind(name, value);
+    }
+
+    private static GenericExecuteSpec bindNullableLong(GenericExecuteSpec spec, String name, Long value) {
+        return value == null ? spec.bindNull(name, Long.class) : spec.bind(name, value);
     }
 }

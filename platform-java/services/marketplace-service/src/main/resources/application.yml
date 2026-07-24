@@ -8,11 +8,13 @@ spring:
     connection:
       target: ${TEMPORAL_TARGET:temporal:7233}
     # 显式定义 worker：@ActivityImpl(workers) 按 name 引用，@WorkflowImpl(taskQueues) 按 task-queue 注册。
-    # 两者用相同值（grassland-demo）使 workflow 与其 activity 落在同一 worker。
+    # grassland-demo：3C demo；marketplace-saga：4F 接受报名资金预留 Saga（workflow 与其 activity 落同 worker）。
     workers:
       - name: grassland-demo
         task-queue: grassland-demo
-    # 自动发现 workflow/activity（v1.35+ 需显式开启包扫描）。
+      - name: marketplace-saga
+        task-queue: marketplace-saga
+    # 自动发现 workflow/activity（v1.35+ 需显式开启包扫描；saga 子包 com.grassland.marketplace.workflow.saga 递归覆盖）。
     workers-auto-discovery:
       packages:
         - com.grassland.marketplace.workflow
@@ -51,3 +53,8 @@ identity-assertion:
   secret: ${IDENTITY_ASSERTION_SECRET:}
   audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+
+# 跨服务调 finance（Slice 4F Saga ReserveFunds/ReleaseFunds 出站 base url）。
+finance:
+  service:
+    base-url: ${FINANCE_SERVICE_BASE_URL:http://finance-service:8084}

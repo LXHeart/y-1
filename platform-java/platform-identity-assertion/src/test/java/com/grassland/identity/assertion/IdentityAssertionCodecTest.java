@@ -28,7 +28,8 @@ class IdentityAssertionCodecTest {
                 "trace-9",
                 "grassland-internal",
                 ISSUED,
-                EXPIRES);
+                EXPIRES,
+                "user", null);
 
         IdentityAssertion decoded = IdentityAssertionCodec.decodePayload(IdentityAssertionCodec.encodePayload(original));
 
@@ -36,11 +37,29 @@ class IdentityAssertionCodecTest {
     }
 
     @Test
+    void encodeDecode_roundTripsServiceAssertion() {
+        var service = new IdentityAssertion(
+                "44444444-4444-4444-4444-444444444444",
+                null, null,
+                "33333333-3333-3333-3333-333333333333",
+                null,
+                "service", "internal", null, "req-svc", "trace-svc",
+                "grassland-internal", ISSUED, EXPIRES,
+                "service", "marketplace");
+
+        IdentityAssertion decoded = IdentityAssertionCodec.decodePayload(IdentityAssertionCodec.encodePayload(service));
+
+        assertThat(decoded).isEqualTo(service);
+        assertThat(decoded.isService()).isTrue();
+        assertThat(decoded.principal()).isEqualTo("marketplace");
+    }
+
+    @Test
     void encodeDecode_preservesNullables() {
         var consumer = new IdentityAssertion(
                 "22222222-2222-2222-2222-222222222222", null, "sid-anon", null, null,
                 "cookie-session", "level1", null, null, null,
-                "grassland-internal", ISSUED, EXPIRES);
+                "grassland-internal", ISSUED, EXPIRES, null, null);
 
         IdentityAssertion decoded = IdentityAssertionCodec.decodePayload(IdentityAssertionCodec.encodePayload(consumer));
 

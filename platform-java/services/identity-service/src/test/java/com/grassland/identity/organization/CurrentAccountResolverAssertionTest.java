@@ -70,7 +70,7 @@ class CurrentAccountResolverAssertionTest extends IdentityItSupport {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
                 accountId, active, sid, null, null, "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60)));
+                "grassland-internal", now, now.plusSeconds(60), null, null));
     }
 
     private static ServerHttpRequest request(String assertion, String cookie) {

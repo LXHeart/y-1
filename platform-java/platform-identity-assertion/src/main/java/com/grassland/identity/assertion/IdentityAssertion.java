@@ -21,6 +21,11 @@ import java.time.Instant;
  *       当前 level1=密码 session，level2 留待 MFA（D-08）。</li>
  *   <li>{@code requestId} / {@code traceId} — 透传请求/链路追踪。</li>
  *   <li>{@code audience} / {@code issuedAt} / {@code expiresAt} — 限缩受众与短时窗口。</li>
+ *   <li>{@code callerKind} / {@code principal} — 调用方种类（HLD 11.1「服务身份」）：
+ *       {@code null}/{@code "user"} = BFF 签发的终端用户断言（识人靠 {@code accountId}）；
+ *       {@code "service"} = 领域服务现签的服务间断言（{@code principal} 为服务名，如 {@code "marketplace"}，
+ *       带 {@code organizationId} 上下文供下游做 org 级授权）。下游须据 {@link #isService()} 区分两类，
+ *       不允许服务断言冒充 merchant 用户（HLD 7.4 末句）。字段末尾追加，旧 token 反序列化为 {@code null}（前向兼容）。</li>
  * </ul>
  *
  * <p>record + Jackson（JavaTimeModule）序列化为 JSON，base64url 编码后作 token payload。
@@ -38,5 +43,19 @@ public record IdentityAssertion(
         String traceId,
         String audience,
         Instant issuedAt,
-        Instant expiresAt) {
+        Instant expiresAt,
+        String callerKind,
+        String principal) {
+
+    private static final String SERVICE = "service";
+
+    /** 是否为领域服务现签的服务间断言（HLD 11.1）。 */
+    public boolean isService() {
+        return SERVICE.equalsIgnoreCase(callerKind);
+    }
+
+    /** 是否为 BFF 签发的终端用户断言（{@code callerKind} 缺省视为 user）。 */
+    public boolean isUser() {
+        return !isService();
+    }
 }

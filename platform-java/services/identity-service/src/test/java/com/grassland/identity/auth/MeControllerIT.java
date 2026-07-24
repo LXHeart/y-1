@@ -162,7 +162,7 @@ class MeControllerIT {
         Instant now = Instant.now();
         return assertionSigner.sign(new IdentityAssertion(
                 accountId, null, "sid-me", null, null, "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60)));
+                "grassland-internal", now, now.plusSeconds(60), null, null));
     }
 
     private String seedUser(String status, String email) {

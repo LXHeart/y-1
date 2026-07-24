@@ -29,7 +29,8 @@ class IdentityAssertionSignerTest {
                 "trace-1",
                 "grassland-internal",
                 issued,
-                expires);
+                expires,
+                null, null);
     }
 
     @Test
@@ -51,7 +52,7 @@ class IdentityAssertionSignerTest {
         var consumer = new IdentityAssertion(
                 "22222222-2222-2222-2222-222222222222", null, "sid-anon", null, null,
                 "cookie-session", "level1", null, null, null,
-                "grassland-internal", NOW, NOW.plusSeconds(60));
+                "grassland-internal", NOW, NOW.plusSeconds(60), null, null);
         String token = signer.sign(consumer);
 
         assertThat(signer.verify(token, NOW))

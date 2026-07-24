@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 /**
- * task-catalog HTTP 入口。草场 Epic 4 Slice 4A（HLD 5.3）。
+ * task-catalog HTTP 入口。草场 Epic 4 Slice 4A（HLD 5.3；4B 名额/限额；4F 赏金）。
  *
  * <ul>
  *   <li>POST /api/tasks — 商家发布任务（断言 caller 须 merchant；owner=caller；organizationId 取请求体；
@@ -62,7 +62,8 @@ public class TaskController {
                             .flatMap(count -> count >= maxActive
                                     ? Mono.<Task>error(new MarketplaceException(409, "已达本组织发布上限"))
                                     : tasks.create(merchant.accountId(), body.organizationId(), body.title(),
-                                            body.description(), body.contentForm(), body.platform(), body.maxSlots()));
+                                            body.description(), body.contentForm(), body.platform(), body.maxSlots(),
+                                            body.bountyCents()));
                 })
                 .flatMap(task -> outbox.append(new EventEnvelope(
                         UUID.randomUUID().toString(), "TaskPublished", "Task",
@@ -102,6 +103,7 @@ public class TaskController {
         m.put("contentForm", task.contentForm());
         m.put("platform", task.platform());
         m.put("maxSlots", task.maxSlots());
+        m.put("bountyCents", task.bountyCents());
         m.put("createdAt", task.createdAt() == null ? null : task.createdAt().toString());
         return m;
     }

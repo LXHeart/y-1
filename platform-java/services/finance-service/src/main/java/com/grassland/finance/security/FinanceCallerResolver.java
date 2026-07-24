@@ -8,14 +8,24 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * finance 调用者解析（Epic 4 Slice 4D / HLD 7.4）：**仅**信任 edge-bff 签发的 {@code X-Grassland-Identity} 断言，
- * 无 cookie 回退（finance 是纯下游，识人完全靠 BFF 断言，不读 identity 库）。
+ * finance 调用者解析（Epic 4 Slice 4D/4F / HLD 7.4、11.1）：**仅**信任 {@code X-Grassland-Identity} 断言，
+ * 无 cookie 回退（finance 是纯下游，识人完全靠断言，不读 identity 库）。
  *
- * <p>断言缺/失效 → 401；{@link #requireMerchant} 额外要求 activeIdentityType=merchant（断言携带）→ 403。
- * 资源级授权（如 merchant 确属某 org）仍须服务端用 {@code caller.organizationId} 自查（HLD 7.4 末句）。
+ * <p>两类断言（HLD 11.1「服务身份」）：
+ * <ul>
+ *   <li><b>用户断言</b>（edge-bff 签发，{@code callerKind=user/null}）— 终端商家/推荐官，识人靠 {@code accountId}。</li>
+ *   <li><b>服务断言</b>（领域服务现签，{@code callerKind=service} + {@code principal}）— 如 marketplace Saga 调 finance
+ *       预留/释放。带 {@code organizationId} 上下文供 org 级授权。</li>
+ * </ul>
+ *
+ * <p>断言缺/失效 → 401。资源级授权（如确属某 org）仍须服务端用 {@code caller.organizationId} 自查（HLD 7.4 末句）。
+ * {@link Caller#isMerchant()} 对服务断言恒为 false——服务断言不可凭 activeIdentityType 冒充商家用户（防冒充）。
  */
 @Component
 public class FinanceCallerResolver {
+
+    /** 受信任的 Saga 编排服务 principal（marketplace AcceptApplicationReservationWorkflow）。 */
+    public static final String MARKETPLACE_SERVICE = "marketplace";
 
     private final IdentityAssertionSigner signer;
     private final String headerName;
@@ -32,21 +42,57 @@ public class FinanceCallerResolver {
             return Mono.error(new FinanceException(401, "未登录"));
         }
         return Mono.justOrEmpty(signer.verify(header, Instant.now()))
-                .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(), a.permissionTier()))
+                .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(),
+                        a.permissionTier(), a.callerKind(), a.principal()))
                 .switchIfEmpty(Mono.error(new FinanceException(401, "未登录")));
     }
 
+    /** 仅终端商家用户（服务断言被拒）。用于 sandbox 充值等人工动作。 */
     public Mono<Caller> requireMerchant(ServerHttpRequest request) {
         return resolve(request)
                 .filter(Caller::isMerchant)
                 .switchIfEmpty(Mono.error(new FinanceException(403, "需要商家身份")));
     }
 
-    /** 断言解析出的调用者。{@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），
-     *  供 org 级资源授权（如账户归属）自查。 */
-    public record Caller(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
+    /**
+     * 接受 (终端商家用户 + {@code org==orgId}) 或 (服务 {@code principal==servicePrincipal} + {@code org==orgId})。
+     * 供 Saga 跨服务 reserve（HLD 11.1）。org 不符或非授权调用方 → 403。
+     */
+    public Mono<Caller> authorizeForOrg(ServerHttpRequest request, String orgId, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> orgId.equals(c.organizationId())
+                        && (c.isMerchant() || c.isServicePrincipal(servicePrincipal)))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "无权操作该组织账户")));
+    }
+
+    /**
+     * 接受终端商家用户或指定服务 principal（org 由调用方按已加载资源自查）。供 Saga 跨服务 release
+     * （release 的 org 在加载 reservation 后才知，故 org 校验留在 controller）。
+     */
+    public Mono<Caller> resolveMerchantOrService(ServerHttpRequest request, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> c.isMerchant() || c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "无权操作该组织预留")));
+    }
+
+    /** 断言解析出的调用者。
+     *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级资源授权自查。
+     *  {@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）。 */
+    public record Caller(String accountId, String activeIdentityType, String organizationId,
+                         String permissionTier, String callerKind, String principal) {
+        /** 终端商家用户。服务断言（callerKind=service）恒为 false——防止服务断言凭 activeIdentityType 冒充商家。 */
         public boolean isMerchant() {
-            return "merchant".equalsIgnoreCase(activeIdentityType);
+            return !"service".equalsIgnoreCase(callerKind)
+                    && "merchant".equalsIgnoreCase(activeIdentityType);
+        }
+
+        public boolean isService() {
+            return "service".equalsIgnoreCase(callerKind);
+        }
+
+        /** 是否为指定服务 principal 的服务断言。 */
+        public boolean isServicePrincipal(String expectedPrincipal) {
+            return isService() && expectedPrincipal != null && expectedPrincipal.equalsIgnoreCase(principal);
         }
     }
 }

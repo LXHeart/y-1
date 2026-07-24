@@ -28,8 +28,9 @@ import reactor.core.publisher.Mono;
  *   <li>POST /api/finance/reservations/{engagementRef}/release — 释放（reserved→released + 还原余额）。</li>
  * </ul>
  *
- * <p>身份靠 {@link FinanceCallerResolver}（BFF 断言）；org 归属用 caller.organizationId 自查（HLD 7.4）。
- * 预留幂等按 engagement_ref（Saga 重试安全）。本 slice 经 BFF 断言鉴权；Temporal Saga 的跨服务调用鉴权留后续 slice。
+ * <p>身份靠 {@link FinanceCallerResolver}（BFF 断言 + 服务断言）；org 归属用 caller.organizationId 自查（HLD 7.4）。
+ * 预留幂等按 engagement_ref（Saga 重试安全）。reserve/release 同时接受终端商家用户断言与 marketplace 服务断言
+ * （HLD 11.1 服务身份，Slice 4F Saga 跨服务调用）；credit 仅商家用户（sandbox 人工充值）。
  * 错误统一由全局 {@code FinanceErrorHandler} 处理。
  */
 @RestController
@@ -66,9 +67,7 @@ public class EscrowController {
                                                              @RequestBody ReserveRequest body, ServerHttpRequest request) {
         String ref = body.engagementRef();
         long amount = body.amountCents();
-        return callers.requireMerchant(request)
-                .filter(caller -> orgId.equals(caller.organizationId()))
-                .switchIfEmpty(fail(403, "无权操作该组织账户"))
+        return callers.authorizeForOrg(request, orgId, FinanceCallerResolver.MARKETPLACE_SERVICE)
                 .flatMap(caller -> reservations.findByEngagementRef(ref)
                         .<Reserved>map(r -> new Reserved(r, false))  // 幂等：既有 → 200
                         .switchIfEmpty(accounts.decrement(orgId, amount)
@@ -86,7 +85,7 @@ public class EscrowController {
 
     @PostMapping("/api/finance/reservations/{engagementRef}/release")
     public Mono<ResponseEntity<Map<String, Object>>> release(@PathVariable String engagementRef, ServerHttpRequest request) {
-        return callers.requireMerchant(request)
+        return callers.resolveMerchantOrService(request, FinanceCallerResolver.MARKETPLACE_SERVICE)
                 .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
                         .switchIfEmpty(fail(404, "预留不存在"))
                         .flatMap(r -> {
