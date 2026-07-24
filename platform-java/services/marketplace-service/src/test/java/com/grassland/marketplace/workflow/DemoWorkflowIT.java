@@ -20,7 +20,10 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 @TestPropertySource(properties = {
         "object-storage.enabled=false",
-        "spring.temporal.test-server.enabled=true"
+        "spring.temporal.test-server.enabled=true",
+        "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:1/nonexistent",
+        "identity-assertion.enabled=true",
+        "identity-assertion.secret=test-secret-32-chars-min!!!"
 })
 class DemoWorkflowIT {
 

@@ -1,6 +1,8 @@
 spring:
   application:
     name: marketplace-service
+  r2dbc:
+    url: ${MARKETPLACE_R2DBC_URL:}
   temporal:
     # 连接：容器内用 service name（temporal:7233），本地 bootRun 注 localhost:7233。
     connection:
@@ -37,3 +39,15 @@ object-storage:
   bucket: ${MINIO_BUCKET:grassland}
   path-style-access: ${MINIO_PATH_STYLE:true}
   auto-create-bucket: ${MINIO_AUTO_CREATE_BUCKET:true}
+
+# DB 地基（Epic 4 Slice 4A）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 marketplace_flyway_schema。
+marketplace:
+  datasource:
+    from-database-url: ${MARKETPLACE_DATASOURCE_FROM_DATABASE_URL:false}
+
+# BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
+identity-assertion:
+  enabled: ${IDENTITY_ASSERTION_ENABLED:false}
+  secret: ${IDENTITY_ASSERTION_SECRET:}
+  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
+  header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}

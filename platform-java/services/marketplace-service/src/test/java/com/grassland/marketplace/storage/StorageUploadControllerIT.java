@@ -39,6 +39,10 @@ class StorageUploadControllerIT {
         String url = "http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000);
         registry.add("object-storage.endpoint", () -> url);
         registry.add("object-storage.public-base-url", () -> url);
+        // Slice 4A：marketplace 加 DB + 断言消费后，context 需 DatabaseClient/signer bean 才能装；本测试不碰 DB，给占位值。
+        registry.add("spring.r2dbc.url", () -> "r2dbc:postgresql://u:p@localhost:1/nonexistent");
+        registry.add("identity-assertion.enabled", () -> "true");
+        registry.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
     }
 
     @LocalServerPort

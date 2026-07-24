@@ -104,6 +104,33 @@ services:
       - identity-service
     restart: unless-stopped
 
+  # 可选 Java marketplace-service（Epic 4）：任务/报名/履约。profile java-edge。
+  # 独立 Flyway 历史（marketplace_flyway_schema）；与 identity 共用 neon；消费 BFF 断言。
+  marketplace-service:
+    profiles: ["java-edge"]
+    build:
+      context: ./platform-java
+      dockerfile: services/marketplace-service/Dockerfile
+    environment:
+      SERVER_PORT: "8083"
+      DATABASE_URL: ${DATABASE_URL:-}
+      MARKETPLACE_DATASOURCE_FROM_DATABASE_URL: "true"
+      IDENTITY_ASSERTION_ENABLED: "true"
+      IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
+      IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
+      OBJECT_STORAGE_ENABLED: "true"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
+      TEMPORAL_TARGET: temporal:7233
+    depends_on:
+      - backend
+      - minio
+      - temporal
+    restart: unless-stopped
+
   # Epic 3：事件基础设施
   kafka:
     image: apache/kafka:latest
