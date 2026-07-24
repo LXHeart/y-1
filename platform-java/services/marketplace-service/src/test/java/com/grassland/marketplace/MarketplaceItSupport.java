@@ -55,11 +55,16 @@ public abstract class MarketplaceItSupport {
         return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
     }
 
-    /** 签一个断言（merchant 用于发布；其它 activeType 用于 403 场景）。 */
+    /** 签一个断言（org/tier 为 null——4B 发布限额/tier 闸门前用于非发布场景或预期 403）。 */
     protected String sign(String accountId, String activeIdentityType) {
+        return sign(accountId, activeIdentityType, null, null);
+    }
+
+    /** 签一个带 org/tier 的断言（Slice 4B：发布限额按 tier、org 归属校验按 organizationId）。 */
+    protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
-                accountId, activeIdentityType, "sid-" + accountId, null, null,
+                accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
                 "cookie-session", "level1", null, "r", "t",
                 "grassland-internal", now, now.plusSeconds(60)));
     }

@@ -11,7 +11,6 @@ import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,15 +47,30 @@ public class TaskController {
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> create(@RequestBody CreateTaskRequest body, ServerHttpRequest request) {
         return callers.requireMerchant(request)
-                .flatMap(merchant -> tasks.create(merchant.accountId(), body.organizationId(), body.title(),
-                                body.description(), body.contentForm(), body.platform())
-                        .flatMap(task -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "TaskPublished", "Task",
-                                task.id(), 1, Instant.now(), null,
-                                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                                        "ownerAccountId", task.ownerAccountId(), "title", task.title())))
-                                .thenReturn(task))
-                        .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task)))));
+                .flatMap(merchant -> {
+                    // 闸门 1：org 归属自查——发布 org 须等于 caller 断言的 org（HLD 7.4，不只信 body 声明）。
+                    if (!body.organizationId().equals(merchant.organizationId())) {
+                        return Mono.<Task>error(new MarketplaceException(403, "无权为该组织发布任务"));
+                    }
+                    // 闸门 2：tier 须允许发布（DRAFT=0 → 403）。
+                    int maxActive = PublishQuotaPolicy.maxActiveTasks(MerchantTier.fromDb(merchant.permissionTier()));
+                    if (maxActive == 0) {
+                        return Mono.<Task>error(new MarketplaceException(403, "当前等级不可发布任务"));
+                    }
+                    // 闸门 3：按 org tier 的发布限额——活跃任务数已达上限 → 409。
+                    return tasks.countActiveByOrganization(merchant.organizationId())
+                            .flatMap(count -> count >= maxActive
+                                    ? Mono.<Task>error(new MarketplaceException(409, "已达本组织发布上限"))
+                                    : tasks.create(merchant.accountId(), body.organizationId(), body.title(),
+                                            body.description(), body.contentForm(), body.platform(), body.maxSlots()));
+                })
+                .flatMap(task -> outbox.append(new EventEnvelope(
+                        UUID.randomUUID().toString(), "TaskPublished", "Task",
+                        task.id(), 1, Instant.now(), null,
+                        Map.of("taskId", task.id(), "organizationId", task.organizationId(),
+                                "ownerAccountId", task.ownerAccountId(), "title", task.title())))
+                        .thenReturn(task))
+                .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
     @GetMapping("/api/tasks")
@@ -77,17 +91,6 @@ public class TaskController {
                         .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在"))));
     }
 
-    @ExceptionHandler(MarketplaceException.class)
-    public ResponseEntity<Map<String, Object>> handleError(MarketplaceException error) {
-        return ResponseEntity.status(error.status()).body(Map.of("success", false, "error", error.getMessage()));
-    }
-
-    /** 非法请求体（缺 organizationId/title）→ 400。 */
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, Object>> handleBadInput(IllegalArgumentException error) {
-        return ResponseEntity.badRequest().body(Map.of("success", false, "error", error.getMessage()));
-    }
-
     private Map<String, Object> toBody(Task task) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", task.id());
@@ -98,6 +101,7 @@ public class TaskController {
         m.put("status", task.status());
         m.put("contentForm", task.contentForm());
         m.put("platform", task.platform());
+        m.put("maxSlots", task.maxSlots());
         m.put("createdAt", task.createdAt() == null ? null : task.createdAt().toString());
         return m;
     }

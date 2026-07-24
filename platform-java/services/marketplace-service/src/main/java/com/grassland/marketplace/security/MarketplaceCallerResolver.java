@@ -43,12 +43,23 @@ public class MarketplaceCallerResolver {
                 .switchIfEmpty(Mono.error(new MarketplaceException(403, "需要商家身份")));
     }
 
-    /** 断言解析出的调用者。{@code activeIdentityType} 为 null=消费者；merchant 才可发布任务。
+    /** 推荐官报名等动作要求 activeIdentityType=recommender，否则 403。草场 Epic 4 Slice 4B。 */
+    public Mono<Caller> requireRecommender(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(Caller::isRecommender)
+                .switchIfEmpty(Mono.error(new MarketplaceException(403, "需要推荐官身份")));
+    }
+
+    /** 断言解析出的调用者。{@code activeIdentityType} 为 null=消费者；merchant 发布任务 / recommender 报名。
      *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级授权/限额（4B+）。 */
     public record Caller(String accountId, String activeIdentityType, String sessionToken,
                          String organizationId, String permissionTier) {
         public boolean isMerchant() {
             return "merchant".equalsIgnoreCase(activeIdentityType);
+        }
+
+        public boolean isRecommender() {
+            return "recommender".equalsIgnoreCase(activeIdentityType);
         }
     }
 }

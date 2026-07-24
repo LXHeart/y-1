@@ -18,7 +18,7 @@ public class TaskRepository {
 
     private static final String SELECT_COLS =
             "id::text, owner_account_id::text, organization_id::text, title, description, status,"
-                    + " content_form, platform, created_at, updated_at";
+                    + " content_form, platform, max_slots, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -26,20 +26,21 @@ public class TaskRepository {
         this.db = db;
     }
 
-    /** 创建任务（status=published）。description/contentForm/platform 可空。 */
+    /** 创建任务（status=published）。description/contentForm/platform/maxSlots 可空（maxSlots=null=不限名额）。 */
     public Mono<Task> create(String ownerAccountId, String organizationId, String title,
-                             String description, String contentForm, String platform) {
+                             String description, String contentForm, String platform, Integer maxSlots) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO task(id, owner_account_id, organization_id, title, description, status, content_form, platform)
+                INSERT INTO task(id, owner_account_id, organization_id, title, description, status, content_form, platform, max_slots)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), :title,
-                        :desc, 'published', :contentForm, :platform)
+                        :desc, 'published', :contentForm, :platform, :maxSlots)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
         spec = bindNullable(spec, "desc", description);
         spec = bindNullable(spec, "contentForm", contentForm);
         spec = bindNullable(spec, "platform", platform);
+        spec = bindNullableInt(spec, "maxSlots", maxSlots);
         return spec.map(TaskRepository::map).one();
     }
 
@@ -63,6 +64,14 @@ public class TaskRepository {
                 .map(TaskRepository::map).all();
     }
 
+    /** 某 org 的活跃（非 closed）任务数——发布限额执行用（Slice 4B）。 */
+    public Mono<Integer> countActiveByOrganization(String organizationId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM task"
+                + " WHERE organization_id = CAST(:org AS uuid) AND status <> 'closed'")
+                .bind("org", organizationId)
+                .map(r -> r.get("c", Integer.class)).one();
+    }
+
     private static Task map(Readable row) {
         return new Task(
                 row.get("id", String.class),
@@ -73,6 +82,7 @@ public class TaskRepository {
                 row.get("status", String.class),
                 row.get("content_form", String.class),
                 row.get("platform", String.class),
+                row.get("max_slots", Integer.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );
@@ -84,5 +94,9 @@ public class TaskRepository {
 
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
         return (value == null || value.isBlank()) ? spec.bindNull(name, String.class) : spec.bind(name, value);
+    }
+
+    private static GenericExecuteSpec bindNullableInt(GenericExecuteSpec spec, String name, Integer value) {
+        return value == null ? spec.bindNull(name, Integer.class) : spec.bind(name, value);
     }
 }
