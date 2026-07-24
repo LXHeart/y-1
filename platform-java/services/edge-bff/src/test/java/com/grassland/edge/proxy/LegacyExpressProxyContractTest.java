@@ -52,6 +52,7 @@ class LegacyExpressProxyContractTest {
     static void configureUpstream(DynamicPropertyRegistry registry) {
         registry.add("edge.upstreams.legacy", () -> "http://localhost:" + UPSTREAM.port());
         registry.add("edge.upstreams.identity", () -> "http://localhost:" + UPSTREAM.port());
+        registry.add("edge.upstreams.marketplace", () -> "http://localhost:" + UPSTREAM.port());
         registry.add("edge.default-upstream", () -> "legacy");
         registry.add("management.server.port", () -> "0");
     }
@@ -142,6 +143,20 @@ class LegacyExpressProxyContractTest {
         assertThat(CAPTURED).doesNotContainKey("GET:/not-proxied");
     }
 
+    @Test
+    void routesTasksToMarketplaceUpstream() {
+        // Slice 4C：/api/tasks 经 RouteManifest 路由到 marketplace 上游（透传到 stub）
+        client.post()
+            .uri("/api/tasks")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("{\"organizationId\":\"x\",\"title\":\"y\"}")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class).isEqualTo("{\"success\":true,\"data\":{\"id\":\"marketplace-routed\"}}");
+
+        assertThat(CAPTURED).containsKey("POST:/api/tasks");
+    }
+
     private static Mono<Void> route(HttpServerRequest request, HttpServerResponse response) {
         String key = request.method().name() + ":" + pathOnly(request);
         if ("/api/example".equals(pathOnly(request))) {
@@ -177,6 +192,13 @@ class LegacyExpressProxyContractTest {
                 r.responseHeaders().add(HttpHeaders.CACHE_CONTROL, "no-cache");
                 r.responseHeaders().add("X-Accel-Buffering", "no");
                 return r.sendString(Mono.just("data: {\"content\":\"first\"}\n\ndata: [DONE]\n\n")).then();
+            });
+        }
+        // Slice 4C：/api/tasks 路由到 marketplace 上游（此处 stub 模拟 marketplace-service）
+        if ("/api/tasks".equals(pathOnly(request))) {
+            return captureAndRespond(request, response, key, r -> {
+                r.responseHeaders().add(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+                return r.sendString(Mono.just("{\"success\":true,\"data\":{\"id\":\"marketplace-routed\"}}")).then();
             });
         }
         return response.status(404).send();

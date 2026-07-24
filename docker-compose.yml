@@ -88,7 +88,9 @@ services:
       SERVER_PORT: "8080"
       LEGACY_EXPRESS_BASE_URL: http://backend:3000
       IDENTITY_SERVICE_BASE_URL: http://identity-service:8082
+      MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
       EDGE_ROUTE_AUTH_ME_IDENTITY: "true"
+      EDGE_ROUTE_TASKS_MARKETPLACE: "true"
       # HLD 7.4：直读 session 表签发内部身份断言（DATABASE_URL 复用 identity 库，只读；secret 与 identity-service 一致）。
       EDGE_IDENTITY_FROM_DATABASE_URL: "true"
       DATABASE_URL: ${DATABASE_URL:-}
@@ -102,6 +104,7 @@ services:
     depends_on:
       - backend
       - identity-service
+      - marketplace-service
     restart: unless-stopped
 
   # 可选 Java marketplace-service（Epic 4）：任务/报名/履约。profile java-edge。

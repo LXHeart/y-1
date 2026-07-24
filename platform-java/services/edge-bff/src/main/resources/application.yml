@@ -25,6 +25,7 @@ edge:
   upstreams:
     legacy: ${LEGACY_EXPRESS_BASE_URL:http://localhost:3000}
     identity: ${IDENTITY_SERVICE_BASE_URL:http://localhost:8082}
+    marketplace: ${MARKETPLACE_SERVICE_BASE_URL:http://localhost:8083}
   routes:
     - method: GET
       path: /api/auth/me
@@ -50,6 +51,12 @@ edge:
       path: /api/auth/register
       upstream: identity
       enabled: ${EDGE_ROUTE_AUTH_REGISTER_IDENTITY:true}
+    # 任务大厅（task-catalog + application，Epic 4 Slice 4A/4B）→ marketplace-service。
+    # 无 method：匹配所有方法；path 前缀覆盖 /api/tasks 与 /api/tasks/{id}/applications/* 全部子路径。
+    # marketplace 为内部上游 → InternalAssertionFilter 签发 X-Grassland-Identity（HLD 7.4）。
+    - path: /api/tasks
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_TASKS_MARKETPLACE:true}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
 identity-assertion:
