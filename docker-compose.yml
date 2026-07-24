@@ -134,6 +134,25 @@ services:
       - temporal
     restart: unless-stopped
 
+  # 可选 Java finance-service（Epic 4 Slice 4D）：账户/余额地基。profile java-edge。
+  # 独立 Flyway 历史（finance_flyway_schema）；与 identity/marketplace 共用 neon；消费 BFF 断言。
+  # 为后续「接受报名→资金预留→激活/补偿」Saga 扫清依赖（ReserveFunds/escrow 留后续 slice）。
+  finance-service:
+    profiles: ["java-edge"]
+    build:
+      context: ./platform-java
+      dockerfile: services/finance-service/Dockerfile
+    environment:
+      SERVER_PORT: "8084"
+      DATABASE_URL: ${DATABASE_URL:-}
+      FINANCE_DATASOURCE_FROM_DATABASE_URL: "true"
+      IDENTITY_ASSERTION_ENABLED: "true"
+      IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
+      IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   # Epic 3：事件基础设施
   kafka:
     image: apache/kafka:latest
