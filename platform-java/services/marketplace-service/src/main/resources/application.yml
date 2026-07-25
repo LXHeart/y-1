@@ -1,6 +1,11 @@
 spring:
   application:
     name: marketplace-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
   r2dbc:
     url: ${MARKETPLACE_R2DBC_URL:}
   temporal:
@@ -49,6 +54,10 @@ marketplace:
   # 结算窗口（Slice 5A）：商家确认后等待的结算窗口（概念 T+2；dev/test 短默认 5s 便于 e2e）。
   settlement:
     window-seconds: ${SETTLEMENT_WINDOW_SECONDS:5}
+  outbox:
+    topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
+    enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}
+    poll-interval-ms: ${MARKETPLACE_OUTBOX_POLL_INTERVAL_MS:2000}
 
 # BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
 identity-assertion:

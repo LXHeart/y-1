@@ -1,6 +1,11 @@
 spring:
   application:
     name: finance-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 server:
   port: ${SERVER_PORT:8084}
 management:
@@ -13,6 +18,10 @@ management:
 finance:
   datasource:
     from-database-url: ${FINANCE_DATASOURCE_FROM_DATABASE_URL:false}
+  outbox:
+    topic: ${FINANCE_OUTBOX_TOPIC:grassland.finance.events}
+    enabled: ${FINANCE_OUTBOX_ENABLED:true}
+    poll-interval-ms: ${FINANCE_OUTBOX_POLL_INTERVAL_MS:2000}
 
 # BFF 内部身份断言消费（与 edge-bff/identity/marketplace 同 secret/audience）。
 identity-assertion:

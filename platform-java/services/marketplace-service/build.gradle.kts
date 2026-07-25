@@ -15,6 +15,7 @@ dependencies {
     implementation(project(":platform-storage"))
     implementation(project(":platform-identity-assertion"))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
     implementation(libs.temporal.spring.boot.starter)
     implementation(libs.r2dbc.postgresql)

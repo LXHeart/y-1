@@ -40,6 +40,31 @@ public class OutboxRepository {
 
     /** 某报名最近一次资金预留失败原因（Slice 4F 轮询端点用：读 ApplicationReservationFailed outbox 事件的 reason）。
      *  无 / reason 空 → empty Mono（调用方据此判「无补偿记录」）。 */
+    /** 未发布的 outbox 行（published_at IS NULL），按 id 升序取 limit 条。OutboxPublisher 轮询用。 */
+    public reactor.core.publisher.Flux<OutboxRow> findUnpublished(int limit) {
+        return db.sql("""
+                SELECT id::text, event_id, event_type, aggregate_type, aggregate_id, payload::text
+                FROM marketplace_outbox WHERE published_at IS NULL
+                ORDER BY id LIMIT :limit
+                """)
+                .bind("limit", limit)
+                .map(r -> new OutboxRow(
+                        r.get("id", String.class), r.get("event_id", String.class),
+                        r.get("event_type", String.class), r.get("aggregate_type", String.class),
+                        r.get("aggregate_id", String.class), r.get("payload", String.class)))
+                .all();
+    }
+
+    /** 标记已发布（OutboxPublisher 发 Kafka 成功后调用）。 */
+    public Mono<Void> markPublished(String id) {
+        return db.sql("UPDATE marketplace_outbox SET published_at = now() WHERE id = CAST(:id AS bigint)")
+                .bind("id", id).then();
+    }
+
+    /** outbox 行（发布器用）。{@code payloadJson} 为 payload 的 JSON 字符串。 */
+    public record OutboxRow(String id, String eventId, String eventType,
+                            String aggregateType, String aggregateId, String payloadJson) {}
+
     public Mono<String> latestReservationFailureReason(String applicationId) {
         return db.sql("""
                 SELECT payload->>'reason' AS reason FROM marketplace_outbox
