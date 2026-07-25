@@ -205,8 +205,8 @@ services:
   # CLI dev-server 自带 sqlite，零外部 DB 依赖；gRPC + Web UI 同在 :7233。
   # 本地开发用；生产应换 temporalio/server + postgres + AUTO_SETUP。
   temporal:
-    image: temporalio/cli:latest
-    command: ["server", "start-dev", "--log-level", "error", "--db-filename", "/tmp/temporal-dev.db"]
+    image: temporalio/temporal:latest
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--log-level", "error", "--db-filename", "/tmp/temporal-dev.db"]
     ports:
       - "${TEMPORAL_GRPC_PORT:-7233}:7233"
     volumes:
