@@ -50,7 +50,7 @@ public class SettlementActivityImpl implements SettlementActivity {
         if (!"accepted".equals(app.status()) || app.confirmedAt() == null) {
             return SettlementOutcome.aborted();  // 非 accepted+confirmed（被回退/未确认/已结算）
         }
-        if (disputes.hasOpenDispute(input.applicationId())) {
+        if (disputes.hasOpenDispute(input.organizationId(), input.applicationId())) {
             outbox.append(envelope("SettlementHeld", app, "open_dispute")).block();
             return SettlementOutcome.held("open_dispute");  // HLD 16：结算执行前重新检查 Hold
         }

@@ -61,3 +61,8 @@ identity-assertion:
 finance:
   service:
     base-url: ${FINANCE_SERVICE_BASE_URL:http://finance-service:8084}
+
+# 跨服务调 trust（Slice 6A 结算窗口查开放争议出站 base url）。
+trust:
+  service:
+    base-url: ${TRUST_SERVICE_BASE_URL:http://trust-service:8085}

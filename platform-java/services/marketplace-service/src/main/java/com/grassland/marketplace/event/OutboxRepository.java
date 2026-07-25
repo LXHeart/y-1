@@ -51,15 +51,23 @@ public class OutboxRepository {
                 .filter(reason -> reason != null && !reason.isBlank());
     }
 
-    /** 某报名最近一次结算结局（Slice 5A 轮询用）：EngagementSettled→"settled"，SettlementHeld→"held"；无→empty。 */
-    public Mono<String> latestSettlementStatus(String applicationId) {
+    /** 某报名最近一次结算结局（Slice 5A/6A 轮询用）：EngagementSettled→{status:settled}，
+     *  SettlementHeld→{status:held, reason}（reason 来自 outbox payload，如 open_dispute）；无→empty。 */
+    public Mono<java.util.Map<String, Object>> latestSettlementStatus(String applicationId) {
         return db.sql("""
-                SELECT event_type AS et FROM marketplace_outbox
+                SELECT event_type AS et, payload->>'reason' AS reason FROM marketplace_outbox
                 WHERE event_type IN ('EngagementSettled','SettlementHeld') AND aggregate_id = :appId
                 ORDER BY id DESC LIMIT 1
                 """)
                 .bind("appId", applicationId)
-                .map(r -> r.get("et", String.class)).one()
-                .map(et -> "EngagementSettled".equals(et) ? "settled" : "held");
+                .map(r -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("status", "EngagementSettled".equals(r.get("et", String.class)) ? "settled" : "held");
+                    String reason = r.get("reason", String.class);
+                    if (reason != null) {
+                        m.put("reason", reason);
+                    }
+                    return m;
+                }).one();
     }
 }

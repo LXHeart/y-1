@@ -34,6 +34,10 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     @MockitoBean
     private FinanceEscrowClient financeClient;
 
+    /** 争议检查替身（Slice 6A）：默认 false（无争议→settled）；held 用例桩 true。真实现 HttpDisputeChecker 调 trust。 */
+    @MockitoBean
+    private com.grassland.marketplace.workflow.saga.DisputeChecker disputeChecker;
+
     // ---------- apply ----------
 
     @Test
@@ -293,6 +297,26 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(409);  // 非 accepted
+    }
+
+    @Test
+    void confirmHeldWhenDisputeOpen() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(UUID.randomUUID().toString(), task);
+        when(financeClient.reserve(org, app, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(disputeChecker.hasOpenDispute(anyString(), anyString())).thenReturn(true);  // 开争议 → held
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitSettlement(merchant, task, app, "held");  // 窗口到期查到争议 → held（不 capture）
     }
 
     // ---------- reject ----------

@@ -8,3 +8,15 @@ management:
     web:
       exposure:
         include: health,info
+
+# DB 地基（Epic 6 Slice 6A）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 trust_flyway_schema。
+trust:
+  datasource:
+    from-database-url: ${TRUST_DATASOURCE_FROM_DATABASE_URL:false}
+
+# BFF 内部身份断言消费（与 edge-bff/identity/marketplace/finance 同 secret/audience）。
+identity-assertion:
+  enabled: ${IDENTITY_ASSERTION_ENABLED:false}
+  secret: ${IDENTITY_ASSERTION_SECRET:}
+  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
+  header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}

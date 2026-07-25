@@ -236,7 +236,7 @@ public class ApplicationController {
             return Mono.just(ok(Map.of("status", "not_confirmed")));
         }
         return outbox.latestSettlementStatus(app.id())
-                .map(status -> ok(Map.of("status", status)))
+                .map(this::ok)  // {status, reason?}
                 .defaultIfEmpty(ok(Map.of("status", "settling")));
     }
 

@@ -8,6 +8,6 @@ package com.grassland.marketplace.workflow.saga;
  */
 public interface DisputeChecker {
 
-    /** 该 engagement（applicationId）是否有未决争议阻止结算。 */
-    boolean hasOpenDispute(String engagementRef);
+    /** 该 engagement（applicationId）是否有未决争议阻止结算。{@code organizationId} 用于现签调 trust 的服务断言。 */
+    boolean hasOpenDispute(String organizationId, String engagementRef);
 }

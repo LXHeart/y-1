@@ -1,0 +1,142 @@
+package com.grassland.trust.dispute;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.grassland.trust.TrustItSupport;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+
+/**
+ * 争议端到端（草场 Epic 6 Slice 6A）。继承 {@link TrustItSupport}。
+ * 覆盖：open（成功+幂等/角色门禁）、开放争议查询（marketplace 服务断言 200 / 404 / org 自查）、decide（open→decided/重复 409）。
+ */
+class DisputeControllerIT extends TrustItSupport {
+
+    @Test
+    void merchantOpensDisputeAndEvent() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String eng = "app-" + UUID.randomUUID();
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng, "reason", "未履约"))
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.status").isEqualTo("open")
+                .jsonPath("$.data.openedByRole").isEqualTo("merchant")
+                .jsonPath("$.data.engagementRef").isEqualTo(eng)
+                .jsonPath("$.data.organizationId").isEqualTo(org);
+        assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(1);
+    }
+
+    @Test
+    void openIsIdempotentPerEngagement() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String eng = "app-" + UUID.randomUUID();
+        client().post().uri("/api/trust/disputes").header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng)).exchange().expectStatus().isCreated();
+        client().post().uri("/api/trust/disputes").header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng)).exchange().expectStatus().isOk();
+        assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(1);  // 不再写事件
+    }
+
+    @Test
+    void openRequiresPartyRole() {
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "consumer", null, null))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "app-x"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void marketplaceServiceQueriesOpenDispute() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String eng = "app-" + UUID.randomUUID();
+        open(merchant, org, eng);
+        client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.engagementRef").isEqualTo(eng)
+                .jsonPath("$.data.status").isEqualTo("open");
+    }
+
+    @Test
+    void openDisputeQuery404WhenNone() {
+        client().get().uri("/api/trust/engagements/app-missing/open-dispute")
+                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "marketplace"))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void decideFlipsToDecidedAndClearsOpen() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String eng = "app-" + UUID.randomUUID();
+        String id = open(merchant, org, eng);
+        client().post().uri("/api/trust/disputes/" + id + "/decide")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("decided")
+                .jsonPath("$.data.decision").isEqualTo("in_merchant_favor");
+        assertThat(outboxCount("DisputeDecided", eng)).isEqualTo(1);
+        // decide 后开放争议查询 → 404（DisputeChecker 将返 false，结算不再 held）
+        client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void decideAlreadyDecidedConflict() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String eng = "app-" + UUID.randomUUID();
+        String id = open(merchant, org, eng);
+        decide(merchant, org, id);
+        client().post().uri("/api/trust/disputes/" + id + "/decide")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void decideOtherOrgForbidden() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String eng = "app-" + UUID.randomUUID();
+        String id = open(merchant, org, eng);
+        client().post().uri("/api/trust/disputes/" + id + "/decide")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    // ---------- helpers ----------
+
+    @SuppressWarnings("unchecked")
+    private String open(String merchant, String org, String eng) {
+        Map<String, Object> resp = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    private void decide(String merchant, String org, String id) {
+        client().post().uri("/api/trust/disputes/" + id + "/decide")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor"))
+                .exchange().expectStatus().isOk();
+    }
+
+    private long outboxCount(String eventType, String engagementRef) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM trust_outbox"
+                        + " WHERE event_type = :et AND payload->>'engagementRef' = :ref")
+                .bind("et", eventType).bind("ref", engagementRef)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+}

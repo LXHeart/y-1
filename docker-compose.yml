@@ -133,11 +133,13 @@ services:
       TEMPORAL_TEST_SERVER: ${TEMPORAL_TEST_SERVER:-false}
       SETTLEMENT_WINDOW_SECONDS: ${SETTLEMENT_WINDOW_SECONDS:-5}
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
+      TRUST_SERVICE_BASE_URL: http://trust-service:8085
     depends_on:
       - backend
       - minio
       - temporal
       - finance-service
+      - trust-service
     restart: unless-stopped
 
   # 可选 Java finance-service（Epic 4 Slice 4D）：账户/余额地基。profile java-edge。
@@ -154,6 +156,26 @@ services:
       SERVER_PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-}
       FINANCE_DATASOURCE_FROM_DATABASE_URL: "true"
+      IDENTITY_ASSERTION_ENABLED: "true"
+      IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
+      IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # 可选 Java trust-service（Epic 6 Slice 6A）：争议受理（dispute-case）。profile java-edge。
+  # 独立 Flyway 历史（trust_flyway_schema）；与 identity/marketplace/finance 共用 neon；消费 BFF/服务断言。
+  trust-service:
+    profiles: ["java-edge"]
+    build:
+      context: ./platform-java
+      dockerfile: services/trust-service/Dockerfile
+    ports:
+      - "8085:8085"
+    environment:
+      SERVER_PORT: "8085"
+      DATABASE_URL: ${DATABASE_URL:-}
+      TRUST_DATASOURCE_FROM_DATABASE_URL: "true"
       IDENTITY_ASSERTION_ENABLED: "true"
       IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}

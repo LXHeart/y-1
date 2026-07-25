@@ -47,7 +47,7 @@ class SettlementActivityImplTest {
     @Test
     void settledWhenAcceptedConfirmedNoDispute() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
-        when(disputes.hasOpenDispute(APP_ID)).thenReturn(false);
+        when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
         when(finance.capture(ORG, APP_ID)).thenReturn(Mono.empty());
         when(outbox.append(any())).thenReturn(Mono.empty());
 
@@ -58,7 +58,7 @@ class SettlementActivityImplTest {
     @Test
     void heldWhenDisputeOpen() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
-        when(disputes.hasOpenDispute(APP_ID)).thenReturn(true);
+        when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(true);
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         SettlementOutcome r = activity.captureSettlement(input);
@@ -71,14 +71,14 @@ class SettlementActivityImplTest {
     void abortedWhenNotAccepted() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("pending", Instant.now())));
         assertThat(activity.captureSettlement(input).status()).isEqualTo("aborted");
-        verify(disputes, never()).hasOpenDispute(anyString());
+        verify(disputes, never()).hasOpenDispute(anyString(), anyString());
     }
 
     @Test
     void abortedWhenNotConfirmed() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", null)));  // confirmedAt null
         assertThat(activity.captureSettlement(input).status()).isEqualTo("aborted");
-        verify(disputes, never()).hasOpenDispute(anyString());
+        verify(disputes, never()).hasOpenDispute(anyString(), anyString());
     }
 
     @Test

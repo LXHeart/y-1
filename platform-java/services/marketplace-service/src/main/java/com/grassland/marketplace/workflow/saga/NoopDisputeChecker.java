@@ -1,19 +1,15 @@
 package com.grassland.marketplace.workflow.saga;
 
-import org.springframework.stereotype.Component;
-
 /**
- * 默认争议检查（草场 Epic 5 Slice 5A 占位）：恒返回 false（无开放争议）。
+ * 争议检查占位实现（草场 Epic 4 Slice 4F 引入；Epic 6 Slice 6A 后生产 bean 已由 {@link HttpDisputeChecker} 取代）。
  *
- * <p>trust-service 落地后以其 {@link DisputeChecker} bean 替代——届时改本类为 {@code @ConditionalOnProperty} 开关或
- * 直接移除由 Trust 提供唯一实现。本 slice 仅占位，故用普通 {@code @Component}（不用 {@code @ConditionalOnMissingBean}，
- * 该注解对 component-scan 的 {@code @Component} 不可靠）。
+ * <p>保留为非 bean 工具类（无 {@code @Component}），供测试/手动场景显式 new 作「无争议」fallback。
+ * 生产装配用 {@link HttpDisputeChecker}（唯一 DisputeChecker bean，经 trust HTTP 查真争议）。
  */
-@Component
 public class NoopDisputeChecker implements DisputeChecker {
 
     @Override
-    public boolean hasOpenDispute(String engagementRef) {
+    public boolean hasOpenDispute(String organizationId, String engagementRef) {
         return false;
     }
 }
