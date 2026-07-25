@@ -61,6 +61,17 @@ public class ReservationRepository {
                 .map(ReservationRepository::map).one();
     }
 
+    /** 捕获（结算确认，Slice 5A）：reserved → captured，无余额变动（扣款在 reserve 时已发生）。0 行（非 reserved）→ empty。 */
+    public Mono<FundsReservation> capture(String id) {
+        return db.sql("""
+                UPDATE funds_reservation SET status = 'captured', updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'reserved'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id)
+                .map(ReservationRepository::map).one();
+    }
+
     private static FundsReservation map(Readable row) {
         return new FundsReservation(
                 row.get("id", String.class),

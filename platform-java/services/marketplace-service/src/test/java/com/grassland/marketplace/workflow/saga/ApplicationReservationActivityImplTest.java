@@ -154,6 +154,6 @@ class ApplicationReservationActivityImplTest {
     }
 
     private TaskApplication app(String status) {
-        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null);
+        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null, null);
     }
 }

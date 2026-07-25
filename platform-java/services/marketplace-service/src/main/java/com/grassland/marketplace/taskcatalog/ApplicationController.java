@@ -8,6 +8,8 @@ import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.workflow.saga.AcceptanceInput;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
+import com.grassland.marketplace.workflow.saga.SettlementInput;
+import com.grassland.marketplace.workflow.saga.SettlementWindowWorkflow;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
@@ -16,6 +18,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -54,15 +57,18 @@ public class ApplicationController {
     private final TaskApplicationRepository apps;
     private final OutboxRepository outbox;
     private final WorkflowClient workflowClient;
+    private final long settlementWindowSeconds;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
-                                 WorkflowClient workflowClient) {
+                                 WorkflowClient workflowClient,
+                                 @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds) {
         this.callers = callers;
         this.tasks = tasks;
         this.apps = apps;
         this.outbox = outbox;
         this.workflowClient = workflowClient;
+        this.settlementWindowSeconds = settlementWindowSeconds;
     }
 
     @PostMapping(value = "/api/tasks/{id}/applications")
@@ -169,6 +175,79 @@ public class ApplicationController {
         return outbox.latestReservationFailureReason(app.id())
                 .map(reason -> ok(reasonBody("compensated", reason)))
                 .defaultIfEmpty(ok(Map.of("status", status)));  // 无失败记录 → 原状态（pending 等）
+    }
+
+    @PostMapping("/api/tasks/{id}/applications/{appId}/confirm")
+    public Mono<ResponseEntity<Map<String, Object>>> confirm(@PathVariable String id, @PathVariable String appId,
+                                                             ServerHttpRequest request) {
+        return callers.requireMerchant(request)
+                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+                        .flatMap(task -> loadAcceptedApp(id, appId)
+                                .flatMap(app -> apps.confirm(appId, id)
+                                        .switchIfEmpty(fail(409, "该报名未接受或已确认"))
+                                        .flatMap(confirmed -> outbox
+                                                .append(envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
+                                                .thenReturn(confirmed)))
+                                .flatMap(app -> startSettlementWorkflow(task, app))));
+    }
+
+    @GetMapping("/api/tasks/{id}/applications/{appId}/settlement")
+    public Mono<ResponseEntity<Map<String, Object>>> settlement(@PathVariable String id, @PathVariable String appId,
+                                                                ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> loadOwnedTask(id, caller.accountId())  // 仅 owner 可轮询结算状态
+                        .flatMap(task -> apps.findById(appId)
+                                .switchIfEmpty(fail(404, "报名不存在"))
+                                .flatMap(app -> {
+                                    if (!app.taskId().equals(id)) {
+                                        return fail(404, "报名不存在");
+                                    }
+                                    return settlementOutcome(app);
+                                })));
+    }
+
+    /** 资金型任务已确认 → 启结算窗口 Saga：202 settling（Timer 后 capture）。双击去重。 */
+    private Mono<ResponseEntity<Map<String, Object>>> startSettlementWorkflow(Task task, TaskApplication app) {
+        long amount = task.bountyCents() == null ? 0L : task.bountyCents();
+        SettlementInput input = new SettlementInput(app.id(), task.id(), app.reviewedByAccountId(),
+                task.organizationId(), amount, settlementWindowSeconds);
+        String workflowId = "settle-" + app.id();
+        return Mono.fromCallable(() -> {
+            SettlementWindowWorkflow stub = workflowClient.newWorkflowStub(
+                    SettlementWindowWorkflow.class,
+                    WorkflowOptions.newBuilder()
+                            .setWorkflowId(workflowId)
+                            .setTaskQueue(ApplicationReservationWorkflowImpl.TASK_QUEUE)
+                            .setWorkflowIdReusePolicy(
+                                    WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
+                            .build());
+            WorkflowClient.start(stub::run, input);
+            return workflowId;
+        })
+        .subscribeOn(Schedulers.boundedElastic())
+        .onErrorResume(WorkflowExecutionAlreadyStarted.class, alreadyStarted -> Mono.just(workflowId))
+        .map(wid -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("success", true, "data",
+                Map.of("workflowId", wid, "applicationId", app.id(), "status", "settling"))));
+    }
+
+    /** 映射 application 为结算结局：未确认→not_confirmed；有 settled/held 事件→对应；否则 settling。 */
+    private Mono<ResponseEntity<Map<String, Object>>> settlementOutcome(TaskApplication app) {
+        if (app.confirmedAt() == null) {
+            return Mono.just(ok(Map.of("status", "not_confirmed")));
+        }
+        return outbox.latestSettlementStatus(app.id())
+                .map(status -> ok(Map.of("status", status)))
+                .defaultIfEmpty(ok(Map.of("status", "settling")));
+    }
+
+    /** 加载报名并校验属该 task + accepted：不存在/越界→404，非 accepted→409。 */
+    private Mono<TaskApplication> loadAcceptedApp(String taskId, String appId) {
+        return apps.findById(appId)
+                .switchIfEmpty(fail(404, "报名不存在"))
+                .filter(app -> app.taskId().equals(taskId))
+                .switchIfEmpty(fail(404, "报名不存在"))
+                .filter(app -> "accepted".equals(app.status()))
+                .switchIfEmpty(fail(409, "该报名未接受"));
     }
 
     @PostMapping("/api/tasks/{id}/applications/{appId}/reject")

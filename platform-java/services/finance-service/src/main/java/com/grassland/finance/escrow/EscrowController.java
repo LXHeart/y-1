@@ -104,6 +104,25 @@ public class EscrowController {
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
     }
 
+    @PostMapping("/api/finance/reservations/{engagementRef}/capture")
+    public Mono<ResponseEntity<Map<String, Object>>> capture(@PathVariable String engagementRef, ServerHttpRequest request) {
+        return callers.resolveMerchantOrService(request, FinanceCallerResolver.MARKETPLACE_SERVICE)
+                .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
+                        .switchIfEmpty(fail(404, "预留不存在"))
+                        .flatMap(r -> {
+                            if (!r.organizationId().equals(caller.organizationId())) {
+                                return fail(403, "无权操作该组织预留");
+                            }
+                            if (!"reserved".equals(r.status())) {
+                                return fail(409, "该预留已处理");
+                            }
+                            return reservations.capture(r.id())  // 结算确认：reserved→captured，无余额变动（扣款在 reserve 时已发生）
+                                    .switchIfEmpty(fail(409, "该预留已处理"));
+                        })
+                        .flatMap(r -> outbox.append(reservationEnvelope("FundsCaptured", r)).thenReturn(r))
+                        .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
+    }
+
     private EventEnvelope reservationEnvelope(String eventType, FundsReservation r) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("reservationId", r.id());

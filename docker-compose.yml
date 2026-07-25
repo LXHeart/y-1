@@ -131,6 +131,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
       TEMPORAL_TARGET: temporal:7233
       TEMPORAL_TEST_SERVER: ${TEMPORAL_TEST_SERVER:-false}
+      SETTLEMENT_WINDOW_SECONDS: ${SETTLEMENT_WINDOW_SECONDS:-5}
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
     depends_on:
       - backend

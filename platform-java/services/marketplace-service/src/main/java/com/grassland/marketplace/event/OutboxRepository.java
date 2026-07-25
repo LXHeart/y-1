@@ -50,4 +50,16 @@ public class OutboxRepository {
                 .map(r -> r.get("reason", String.class)).one()
                 .filter(reason -> reason != null && !reason.isBlank());
     }
+
+    /** 某报名最近一次结算结局（Slice 5A 轮询用）：EngagementSettled→"settled"，SettlementHeld→"held"；无→empty。 */
+    public Mono<String> latestSettlementStatus(String applicationId) {
+        return db.sql("""
+                SELECT event_type AS et FROM marketplace_outbox
+                WHERE event_type IN ('EngagementSettled','SettlementHeld') AND aggregate_id = :appId
+                ORDER BY id DESC LIMIT 1
+                """)
+                .bind("appId", applicationId)
+                .map(r -> r.get("et", String.class)).one()
+                .map(et -> "EngagementSettled".equals(et) ? "settled" : "held");
+    }
 }

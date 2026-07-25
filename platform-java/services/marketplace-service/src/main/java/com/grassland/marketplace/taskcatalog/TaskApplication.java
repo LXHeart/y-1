@@ -18,5 +18,6 @@ public record TaskApplication(
         String reviewedByAccountId,
         Instant decidedAt,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        Instant confirmedAt
 ) {}

@@ -46,6 +46,9 @@ object-storage:
 marketplace:
   datasource:
     from-database-url: ${MARKETPLACE_DATASOURCE_FROM_DATABASE_URL:false}
+  # 结算窗口（Slice 5A）：商家确认后等待的结算窗口（概念 T+2；dev/test 短默认 5s 便于 e2e）。
+  settlement:
+    window-seconds: ${SETTLEMENT_WINDOW_SECONDS:5}
 
 # BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
 identity-assertion:

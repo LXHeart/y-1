@@ -208,6 +208,86 @@ class EscrowControllerIT extends FinanceItSupport {
         assertThat(balanceOf(org)).isEqualTo(1000L);
     }
 
+    // ---------- capture（Slice 5A） ----------
+
+    @Test
+    void captureFlipsStatusWithoutBalanceChange() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        assertThat(balanceOf(org)).isEqualTo(400L);  // reserve 扣 600
+
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("captured");
+        assertThat(balanceOf(org)).isEqualTo(400L);  // capture 无余额变动
+        assertThat(outboxCount("FundsCaptured", org)).isEqualTo(1);
+    }
+
+    @Test
+    void captureNonReservedConflict() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        client().post().uri("/api/finance/reservations/" + ref + "/release")  // 先 release
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")  // 再 capture → 409（非 reserved）
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void captureAlreadyCapturedConflict() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")  // 再 capture → 409（已 captured）
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void captureByMarketplaceServiceSucceeds() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("captured");
+        assertThat(balanceOf(org)).isEqualTo(400L);  // 无余额变动
+    }
+
+    @Test
+    void captureOtherOrgForbidden() {
+        String merchant = UUID.randomUUID().toString();
+        String ownOrg = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, ownOrg);
+        credit(merchant, ownOrg, 1000);
+        reserve(merchant, ownOrg, ref, 600);
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))
+                .exchange().expectStatus().isForbidden();
+    }
+
     // ---------- helpers ----------
 
     private void provision(String merchant, String org) {

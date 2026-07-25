@@ -75,4 +75,21 @@ public class FinanceEscrowClient {
                                     new FinanceEscrowException("release failed: HTTP " + code + ": " + b)));
                 });
     }
+
+    /** 捕获（结算确认，Slice 5A）：reserved→captured，无余额变动。镜像 {@link #release} 的状态映射。 */
+    public Mono<Void> capture(String orgId, String engagementRef) {
+        return webClient.post()
+                .uri("/api/finance/reservations/{ref}/capture", engagementRef)
+                .header(headerName, issuer.issueForOrg(orgId))
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    log.info("capture HTTP {} org={} ref={}", code, orgId, engagementRef);
+                    if (code == 200 || code == 404 || code == 409) {
+                        return Mono.<Void>empty();  // 成功 / 不存在 / 已终态(captured 或 released) → 幂等成功
+                    }
+                    return resp.bodyToMono(String.class).defaultIfEmpty("")
+                            .flatMap(b -> Mono.<Void>error(
+                                    new FinanceEscrowException("capture failed: HTTP " + code + ": " + b)));
+                });
+    }
 }

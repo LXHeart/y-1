@@ -24,7 +24,7 @@ public class TaskApplicationRepository {
 
     private static final String SELECT_COLS =
             "id::text, task_id::text, recommender_account_id::text, status, note,"
-                    + " reviewed_by_account_id::text, decided_at, created_at, updated_at";
+                    + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at";
 
     private final DatabaseClient db;
 
@@ -72,6 +72,21 @@ public class TaskApplicationRepository {
     public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId) {
         return transition(id, taskId, ApplicationStatus.PENDING.dbValue(), ApplicationStatus.ACCEPTED.dbValue(),
                 reviewerAccountId);
+    }
+
+    /** 结算确认（Slice 5A）：accepted + 未确认 → 设 confirmed_at（商家 ConfirmEngagement）。0 行（非 accepted / 已确认）→ empty。
+     *  商家身份由上游 loadOwnedTask 校验为 task owner，故不另存 confirmed_by。 */
+    public Mono<TaskApplication> confirm(String id, String taskId) {
+        return db.sql("""
+                UPDATE task_application SET confirmed_at = now(), updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = 'accepted'
+                  AND confirmed_at IS NULL
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .map(TaskApplicationRepository::map).one();
     }
 
     /** 拒绝：pending → rejected。 */
@@ -167,7 +182,8 @@ public class TaskApplicationRepository {
                 row.get("reviewed_by_account_id", String.class),
                 toInstant(row.get("decided_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
-                toInstant(row.get("updated_at", OffsetDateTime.class))
+                toInstant(row.get("updated_at", OffsetDateTime.class)),
+                toInstant(row.get("confirmed_at", OffsetDateTime.class))
         );
     }
 

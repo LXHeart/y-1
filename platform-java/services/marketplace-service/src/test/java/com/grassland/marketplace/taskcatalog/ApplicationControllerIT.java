@@ -254,6 +254,47 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    // ---------- confirm / settlement（Slice 5A） ----------
+
+    @Test
+    void monetaryConfirmSettlesAfterWindow() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(UUID.randomUUID().toString(), task);
+
+        when(financeClient.reserve(org, app, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+
+        // 4F accept → 202 → 轮询 accepted（reserve 成功）
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        // 5A confirm → 202 settling
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted().expectBody()
+                .jsonPath("$.data.status").isEqualTo("settling")
+                .jsonPath("$.data.workflowId").isEqualTo("settle-" + app);
+
+        // 轮询 settlement → settled（窗口到期后 capture）
+        awaitSettlement(merchant, task, app, "settled");
+        assertThat(outboxCount("EngagementSettled", task)).isEqualTo(1);
+    }
+
+    @Test
+    void confirmRejectedWhenNotAccepted() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(UUID.randomUUID().toString(), task);  // 仍 pending
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(409);  // 非 accepted
+    }
+
     // ---------- reject ----------
 
     @Test
@@ -410,6 +451,35 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     private String pollReservationStatus(String merchant, String task, String app) {
         Map<String, Object> resp = client().get()
                 .uri("/api/tasks/" + task + "/applications/" + app + "/reservation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("status");
+    }
+
+    /** 轮询结算结局，至 expected 或超时（窗口 + activity；test-server + mock finance 通常 <10s）。 */
+    private void awaitSettlement(String merchant, String task, String app, String expected) {
+        long deadline = System.currentTimeMillis() + 30_000L;
+        String status = null;
+        while (System.currentTimeMillis() < deadline) {
+            status = pollSettlementStatus(merchant, task, app);
+            if (expected.equals(status)) {
+                return;
+            }
+            try {
+                Thread.sleep(300L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AssertionError("settlement did not reach " + expected + " (last=" + status + ")");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String pollSettlementStatus(String merchant, String task, String app) {
+        Map<String, Object> resp = client().get()
+                .uri("/api/tasks/" + task + "/applications/" + app + "/settlement")
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
