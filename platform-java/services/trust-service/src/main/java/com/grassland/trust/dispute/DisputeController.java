@@ -19,15 +19,15 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 /**
- * 争议 HTTP 入口（草场 Epic 6 Slice 6A / HLD 10.5）。
+ * 争议 HTTP 入口（草场 Epic 6 Slice 6A / HLD 10.5；6C 扩活跃查询 + 终局状态）。
  *
  * <ul>
- *   <li>POST /api/trust/disputes — 开争议（requireMerchantOrRecommender；org 取 caller；幂等：每 engagement 至多一个 open；
+ *   <li>POST /api/trust/disputes — 开争议（requireMerchantOrRecommender；org 取 caller；幂等：每 engagement 至多一个活跃争议；
  *       outbox {@code DisputeOpened}；201 首次 / 200 既有）。</li>
- *   <li>POST /api/trust/disputes/{id}/decide — 手动裁决（requireMerchant + org 自查；open→decided；outbox {@code DisputeDecided}）。
+ *   <li>POST /api/trust/disputes/{id}/decide — 手动裁决（requireMerchant + org 自查；open→final 终局；outbox {@code DisputeDecided}）。
  *       授权 provisional——真裁决来自后续审判 slice。</li>
- *   <li>GET /api/trust/engagements/{engagementRef}/open-dispute — 开放争议查询（marketplace DisputeChecker 调；
- *       接受 marketplace 服务断言或商家；200 body 或 404）。</li>
+ *   <li>GET /api/trust/engagements/{engagementRef}/open-dispute — 活跃（未终局）争议查询（marketplace DisputeChecker 调；
+ *       接受 marketplace 服务断言或商家；200 body 或 404）。终局争议不在此查得 → 结算不再 held。</li>
  * </ul>
  *
  * <p>身份靠 {@link TrustCallerResolver}（BFF/服务断言）；org 归属自查（HLD 7.4）。错误统一由 {@code TrustErrorHandler} 处理。
@@ -50,11 +50,11 @@ public class DisputeController {
         return callers.requireMerchantOrRecommender(request)
                 .filter(caller -> caller.organizationId() != null)
                 .switchIfEmpty(fail(403, "无组织归属，无法开争议"))
-                .flatMap(caller -> disputes.findOpenByEngagementRef(body.engagementRef())
-                        .<Opened>map(d -> new Opened(d, false))  // 幂等：既有 open → 200
+                .flatMap(caller -> disputes.findActiveByEngagementRef(body.engagementRef())
+                        .<Opened>map(d -> new Opened(d, false))  // 幂等：既有活跃争议 → 200
                         .switchIfEmpty(disputes.create(body.engagementRef(), caller.organizationId(),
                                         caller.accountId(), caller.activeIdentityType(), body.reason())
-                                .<Opened>map(d -> new Opened(d, true))))  // 幂等：既有 open
+                                .<Opened>map(d -> new Opened(d, true))))
                 .flatMap(o -> (o.created()
                         ? outbox.append(envelope("DisputeOpened", o.dispute()))
                         : Mono.<Void>empty()).thenReturn(o))
@@ -78,12 +78,12 @@ public class DisputeController {
                         .map(d -> ResponseEntity.ok(Map.of("success", true, "data", toBody(d)))));
     }
 
-    /** 开放争议查询（marketplace DisputeChecker 调）：200 body 或 404。服务 principal 信任；商家查须 org 自查。 */
+    /** 活跃（未终局）争议查询（marketplace DisputeChecker 调）：200 body 或 404。服务 principal 信任；商家查须 org 自查。 */
     @GetMapping("/api/trust/engagements/{engagementRef}/open-dispute")
     public Mono<ResponseEntity<Map<String, Object>>> openDispute(@PathVariable String engagementRef, ServerHttpRequest request) {
         return callers.resolveMerchantOrService(request, TrustCallerResolver.MARKETPLACE_SERVICE)
-                .flatMap(caller -> disputes.findOpenByEngagementRef(engagementRef)
-                        .switchIfEmpty(fail(404, "无开放争议"))
+                .flatMap(caller -> disputes.findActiveByEngagementRef(engagementRef)
+                        .switchIfEmpty(fail(404, "无活跃争议"))
                         .filter(d -> caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)
                                 || d.organizationId().equals(caller.organizationId()))
                         .switchIfEmpty(fail(403, "无权查询该组织争议"))
@@ -102,7 +102,7 @@ public class DisputeController {
             payload.put("decision", d.decision());
         }
         return new EventEnvelope(UUID.randomUUID().toString(), eventType, "DisputeCase",
-                d.id(), 1, Instant.now(), null, payload);
+                d.id(), d.version(), Instant.now(), null, payload);
     }
 
     private Map<String, Object> toBody(DisputeCase d) {
@@ -116,6 +116,10 @@ public class DisputeController {
         m.put("reason", d.reason());
         m.put("decision", d.decision());
         m.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());
+        m.put("round", d.round());
+        m.put("version", d.version());
+        m.put("appealState", d.appealState());
+        m.put("finalDecision", d.finalDecision());
         m.put("createdAt", d.createdAt() == null ? null : d.createdAt().toString());
         return m;
     }

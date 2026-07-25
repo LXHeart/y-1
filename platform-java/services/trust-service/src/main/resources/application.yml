@@ -6,6 +6,21 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  temporal:
+    # 连接：容器内 service name（temporal:7233），本地 bootRun 注 localhost:7233。
+    connection:
+      target: ${TEMPORAL_TARGET:temporal:7233}
+    # 显式 worker：trust-adjudication 承载审判 workflow 与其 activity。
+    workers:
+      - name: trust-adjudication
+        task-queue: trust-adjudication
+    # 自动发现 workflow/activity（com.grassland.trust.workflow 递归覆盖）。
+    workers-auto-discovery:
+      packages:
+        - com.grassland.trust.workflow
+    # 测试隔离：IT/纯 context 测试置 true 用内存 test server，不依赖 temporal 容器。
+    test-server:
+      enabled: ${TEMPORAL_TEST_SERVER:false}
 server:
   port: ${SERVER_PORT:8085}
 management:
@@ -22,6 +37,18 @@ trust:
     topic: ${TRUST_OUTBOX_TOPIC:grassland.trust.events}
     enabled: ${TRUST_OUTBOX_ENABLED:true}
     poll-interval-ms: ${TRUST_OUTBOX_POLL_INTERVAL_MS:2000}
+  # 审判 adjudication（Slice 6C）：7 官面板 / 24h 投票 / 平票重开轮次 / 上诉窗口 / 审判官资格阈值（声誉模块未建，占位）。
+  adjudication:
+    panel-size: ${TRUST_ADJUDICATION_PANEL_SIZE:7}
+    vote-window-hours: ${TRUST_ADJUDICATION_VOTE_WINDOW_HOURS:24}
+    max-rounds: ${TRUST_ADJUDICATION_MAX_ROUNDS:2}
+    appeal-window-hours: ${TRUST_ADJUDICATION_APPEAL_WINDOW_HOURS:48}
+    judge-eligibility-tier: ${TRUST_ADJUDICATION_JUDGE_ELIGIBILITY_TIER:1}
+
+# 跨服务调 finance（Slice 6C ReleaseHoldAndApplyDecision 出站 base url）。
+finance:
+  service:
+    base-url: ${FINANCE_SERVICE_BASE_URL:http://finance-service:8084}
 
 # BFF 内部身份断言消费（与 edge-bff/identity/marketplace/finance 同 secret/audience）。
 identity-assertion:

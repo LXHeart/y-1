@@ -1,6 +1,5 @@
 package com.grassland.trust.dispute;
 
-import io.r2dbc.spi.R2dbcDataIntegrityViolationException;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -11,17 +10,22 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * dispute_case 数据访问（草场 Epic 6 Slice 6A，风格同 finance ReservationRepository）。
+ * dispute_case 数据访问（草场 Epic 6 Slice 6A 受理 + 6C 审判扩字段，风格同 finance ReservationRepository）。
  *
- * <p>{@link #create} 用 partial unique(engagement_ref WHERE status='open') 保幂等：每 engagement 至多一个 open 争议，
- * 重开触发违例 → empty（调用方判既有）。{@link #decide} 条件 UPDATE（status='open' 守卫）。
+ * <p>{@link #create} 用 partial unique(engagement_ref WHERE status<>'final') 保幂等：每 engagement 至多一个<b>未终局</b>争议，
+ * 中间态（open/voting/decided/appealed）持续占用活跃槽阻塞结算；终局后可再开新争议。并发违例 → empty（调用方判既有）。
+ * {@link #decide} 手动终局（open→final，version+1）；{@link #findActiveByEngagementRef} 查活跃（非 final）争议。
+ *
+ * <p>审判 workflow 用的状态迁移方法（startAdjudication/reopen/recordDecision/markAppealed/finalize）随各 activity 落地时再加；
+ * 本 slice 先提供受理 + 手动终局 + 活跃查询三件套，避免未接线的投机代码。
  */
 @Component
 public class DisputeCaseRepository {
 
     private static final String SELECT_COLS =
             "id::text, engagement_ref, organization_id::text, opened_by_account_id::text, opened_by_role,"
-                    + " status, reason, decision, decided_at, created_at, updated_at";
+                    + " status, reason, decision, decided_at, created_at, updated_at,"
+                    + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref";
 
     private final DatabaseClient db;
 
@@ -29,7 +33,7 @@ public class DisputeCaseRepository {
         this.db = db;
     }
 
-    /** 开争议（status=open）。partial unique 违例 → empty（幂等：已有 open）。 */
+    /** 开争议（status=open）。新列取默认（round=0, version=1, appeal_state='none'）。partial unique 违例 → empty（幂等：已有活跃）。 */
     public Mono<DisputeCase> create(String engagementRef, String organizationId, String openedBy, String role, String reason) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
@@ -44,8 +48,7 @@ public class DisputeCaseRepository {
                 .onErrorResume(DisputeCaseRepository::isDuplicateKey, e -> Mono.empty());
     }
 
-    /** 并发竞态下 partial-unique 违例兜底（常规幂等由 controller 预查 findOpen 处理）。
-     *  r2dbc-postgresql 的违例异常类型未必匹配 {@code R2dbcDataIntegrityViolationException}，故按消息判定（robust）。 */
+    /** 并发竞态下 partial-unique 违例兜底（常规幂等由 controller 预查 findActive 处理）。按消息判定 duplicate key（robust）。 */
     private static boolean isDuplicateKey(Throwable e) {
         return e != null && e.getMessage() != null && e.getMessage().contains("duplicate key");
     }
@@ -56,18 +59,19 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
-    /** 某 engagement 的开放争议（DisputeChecker 用）。无 → empty。 */
-    public Mono<DisputeCase> findOpenByEngagementRef(String engagementRef) {
+    /** 某 engagement 的<b>活跃</b>（未终局，status<>'final'）争议（DisputeChecker + 开争议幂等用）。无 → empty。 */
+    public Mono<DisputeCase> findActiveByEngagementRef(String engagementRef) {
         return db.sql("SELECT " + SELECT_COLS
-                + " FROM dispute_case WHERE engagement_ref = :ref AND status = 'open'")
+                + " FROM dispute_case WHERE engagement_ref = :ref AND status <> 'final'")
                 .bind("ref", engagementRef)
                 .map(DisputeCaseRepository::map).one();
     }
 
-    /** 裁决（手动）：open→decided，记 decision + decided_at。0 行（非 open）→ empty。 */
+    /** 手动裁决（终局）：open→final，记 decision + decided_at + final_decision + version+1。0 行（非 open）→ empty。 */
     public Mono<DisputeCase> decide(String id, String decision) {
         return db.sql("""
-                UPDATE dispute_case SET status = 'decided', decision = :decision, decided_at = now(), updated_at = now()
+                UPDATE dispute_case SET status = 'final', decision = :decision, final_decision = :decision,
+                        decided_at = now(), version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'open'
                 RETURNING %s
                 """.formatted(SELECT_COLS))
@@ -87,7 +91,13 @@ public class DisputeCaseRepository {
                 row.get("decision", String.class),
                 toInstant(row.get("decided_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
-                toInstant(row.get("updated_at", OffsetDateTime.class))
+                toInstant(row.get("updated_at", OffsetDateTime.class)),
+                row.get("round", Integer.class),
+                row.get("version", Long.class),
+                row.get("appeal_state", String.class),
+                row.get("final_decision", String.class),
+                row.get("final_decided_by", String.class),
+                row.get("evidence_ref", String.class)
         );
     }
 

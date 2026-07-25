@@ -16,6 +16,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    implementation(libs.temporal.spring.boot.starter)
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
@@ -24,6 +25,7 @@ dependencies {
 
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.reactor.test)
+    testImplementation(libs.temporal.testing)
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.r2dbc)

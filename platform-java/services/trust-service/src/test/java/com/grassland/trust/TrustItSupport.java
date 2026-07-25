@@ -45,6 +45,8 @@ public abstract class TrustItSupport {
         r.add("identity-assertion.enabled", () -> "true");
         r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
         r.add("identity-assertion.audience", () -> "grassland-internal");
+        // 6C 起 trust-service 引入 Temporal：IT 用内存 test-server（免 temporal 容器），镜像 marketplace。
+        r.add("spring.temporal.test-server.enabled", () -> "true");
     }
 
     protected WebTestClient client() {

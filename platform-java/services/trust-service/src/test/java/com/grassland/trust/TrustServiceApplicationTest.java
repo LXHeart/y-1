@@ -15,7 +15,8 @@ import org.springframework.context.ApplicationContext;
         "identity-assertion.enabled=true",
         "identity-assertion.secret=test-secret-32-chars-min!!!",
         "identity-assertion.audience=grassland-internal",
-        "management.server.port=0"
+        "management.server.port=0",
+        "spring.temporal.test-server.enabled=true"
 })
 class TrustServiceApplicationTest {
 

@@ -10,7 +10,7 @@ import org.springframework.http.MediaType;
 
 /**
  * 争议端到端（草场 Epic 6 Slice 6A）。继承 {@link TrustItSupport}。
- * 覆盖：open（成功+幂等/角色门禁）、开放争议查询（marketplace 服务断言 200 / 404 / org 自查）、decide（open→decided/重复 409）。
+ * 覆盖：open（成功+幂等/角色门禁）、活跃争议查询（marketplace 服务断言 200 / 404 / org 自查）、decide（open→final 手动终局/重复 409）。
  */
 class DisputeControllerIT extends TrustItSupport {
 
@@ -71,7 +71,7 @@ class DisputeControllerIT extends TrustItSupport {
     }
 
     @Test
-    void decideFlipsToDecidedAndClearsOpen() {
+    void decideFlipsToFinalAndClearsActive() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String eng = "app-" + UUID.randomUUID();
@@ -80,10 +80,11 @@ class DisputeControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.status").isEqualTo("decided")
-                .jsonPath("$.data.decision").isEqualTo("in_merchant_favor");
+                .jsonPath("$.data.status").isEqualTo("final")
+                .jsonPath("$.data.decision").isEqualTo("in_merchant_favor")
+                .jsonPath("$.data.finalDecision").isEqualTo("in_merchant_favor");
         assertThat(outboxCount("DisputeDecided", eng)).isEqualTo(1);
-        // decide 后开放争议查询 → 404（DisputeChecker 将返 false，结算不再 held）
+        // decide 终局后活跃争议查询 → 404（DisputeChecker 返 false，结算不再 held）
         client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isNotFound();
