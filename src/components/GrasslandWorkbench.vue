@@ -63,12 +63,31 @@ async function loadOrganizations(): Promise<void> {
   orgs.value = list
   if (!activeOrgId.value && list.length > 0) {
     activeOrgId.value = list[0].id
+  }
+  // 无条件刷新：此前只在「首次选中组织」时拉数据，导致重新进入草场标签页时
+  // 列表仍是旧的（App.vue 用 <component :is> 复用组件，onMounted 不必然重跑，
+  // 且期间可能有新任务）。浏览器实测发现：后端 3 个任务、UI 只显示 2 个。
+  if (activeOrgId.value) {
     await refreshAccount()
     await refreshTasks()
   }
 }
 
-onMounted(loadOrganizations)
+/**
+ * 挂载时必须**先激活活动身份**再拉数据。
+ *
+ * 活动身份按 session 存（identity_session），新登录的 session 是「消费者」——
+ * 此时直接调 /api/finance/accounts 等会 403「需要商家身份」，余额显示成 `—`。
+ * 此前只有点视角切换按钮才激活，导致首次进入工作台数据全空（浏览器实测发现）。
+ */
+onMounted(async () => {
+  await grassland.activateIdentity(side.value)
+  grassland.clearError()  // 激活失败不该以红条吓用户，后续请求会给出更具体的错误
+  await loadOrganizations()
+})
+
+// 注：openIdentity 对商家需带 org。挂载时 org 尚未加载，故此处只做激活；
+// 未开通的情况留给 switchSide（那时 activeOrgId 已就绪）。
 
 // ---------- 商家：组织 / 账户 ----------
 
@@ -206,10 +225,34 @@ async function dispute(app: TaskApplication): Promise<void> {
   setNotice(`争议已开启（状态 ${opened.status}），结算将被暂停`)
 }
 
+/**
+ * 切换视角。活动身份按 session 隔离，必须同步切后端，否则 requireMerchant/requireRecommender 会 403。
+ *
+ * 关键：**激活失败必须回滚 UI**。此前无论成败都切视角，账号若未开通对应身份，
+ * 会出现「UI 显示推荐官、后端仍是商家、所有操作 403」且用户看不出原因（浏览器实测发现）。
+ * 未开通时后端返回 409，这里自动尝试开通一次（推荐官无需 org，可直接开通）。
+ */
 async function switchSide(next: Side): Promise<void> {
+  const previous = side.value
   side.value = next
-  // 活动身份按 session 隔离；切换视角同时切换后端身份，否则 requireMerchant/requireRecommender 会 403
-  await grassland.activateIdentity(next)
+
+  let activated = await grassland.activateIdentity(next)
+  if (activated === null) {
+    // 多半是「未开通该身份」——推荐官不需要 org，可就地开通后重试
+    const opened = await grassland.openIdentity(
+      next, next === 'merchant' ? activeOrgId.value || undefined : undefined)
+    if (opened !== null) {
+      activated = await grassland.activateIdentity(next)
+    }
+  }
+
+  if (activated === null) {
+    side.value = previous  // 回滚，避免 UI 与后端身份不一致
+    setNotice('')
+    return
+  }
+
+  grassland.clearError()
   if (next === 'merchant') {
     await refreshTasks()
   }
