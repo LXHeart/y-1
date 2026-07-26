@@ -11,6 +11,13 @@ import com.grassland.trust.judge.VoteChoice;
 import com.grassland.trust.judge.VoteTally;
 import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
+import com.grassland.trust.workflow.AdjudicationInput;
+import com.grassland.trust.workflow.DisputeAdjudicationWorkflow;
+import com.grassland.trust.workflow.DisputeAdjudicationWorkflowImpl;
+import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
+import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowExecutionAlreadyStarted;
+import io.temporal.client.WorkflowOptions;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -26,6 +33,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 审判 HTTP 入口（草场 Epic 6 Slice 6C Phase B / HLD §5.5、§9.3、§10.5）。
@@ -52,14 +60,17 @@ public class AdjudicationController {
     private final JudgeRepository judges;
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
+    private final WorkflowClient workflowClient;
 
     public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
-                                  JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props) {
+                                  JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props,
+                                  WorkflowClient workflowClient) {
         this.callers = callers;
         this.disputes = disputes;
         this.judges = judges;
         this.outbox = outbox;
         this.props = props;
+        this.workflowClient = workflowClient;
     }
 
     @PostMapping("/api/trust/disputes/{id}/adjudicate")
@@ -79,15 +90,49 @@ public class AdjudicationController {
                             // 新启争议：先抽面板（fail-fast：无可用审判官 → 503，争议保持 open 可重试），
                             //   再 open→voting + 写面板 + 发事件；避免「先翻 voting 再抽签失败」的半提交。
                             // 已审判（voting/decided/appealed）：幂等——补齐缺失面板（自愈）后返回当前态。
+                            // 而后启动 DisputeAdjudicationWorkflow（24h Timer→tally→重开/上诉/终审 lifecycle）。
                             boolean fresh = "open".equals(d.status());
+                            String workflowId = "adjudicate-" + d.id();
                             Mono<DisputeCase> outcome = fresh
                                     ? startFreshAdjudication(d)
                                     : ensurePanelAndEvent(d, d.round()).thenReturn(d);
                             return outcome
+                                    .flatMap(voting -> startWorkflow(voting, workflowId).thenReturn(voting))
                                     .flatMap(this::snapshot)
                                     .map(snap -> ResponseEntity.status(fresh ? HttpStatus.ACCEPTED : HttpStatus.OK)
-                                            .body(Map.of("success", true, "data", snap)));
+                                            .body(adjudicateBody(snap, workflowId)));
                         }));
+    }
+
+    /** 启 DisputeAdjudicationWorkflow（双击去重：WorkflowExecutionAlreadyStarted → 复用 id）。阻塞调用包 boundedElastic。 */
+    private Mono<String> startWorkflow(DisputeCase d, String workflowId) {
+        AdjudicationInput input = new AdjudicationInput(
+                d.id(),
+                Math.max(0, props.voteWindowHours()) * 3600L,
+                Math.max(0, props.appealWindowHours()) * 3600L,
+                props.maxRounds(),
+                Math.max(0, props.csAwaitHours()) * 3600L,
+                Math.max(1, props.csPollSeconds()));
+        return Mono.fromCallable(() -> {
+            DisputeAdjudicationWorkflow stub = workflowClient.newWorkflowStub(
+                    DisputeAdjudicationWorkflow.class,
+                    WorkflowOptions.newBuilder()
+                            .setWorkflowId(workflowId)
+                            .setTaskQueue(DisputeAdjudicationWorkflowImpl.TASK_QUEUE)
+                            .setWorkflowIdReusePolicy(
+                                    WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
+                            .build());
+            WorkflowClient.start(stub::run, input);
+            return workflowId;
+        })
+        .subscribeOn(Schedulers.boundedElastic())
+        .onErrorResume(WorkflowExecutionAlreadyStarted.class, already -> Mono.just(workflowId));
+    }
+
+    private Map<String, Object> adjudicateBody(Map<String, Object> snap, String workflowId) {
+        Map<String, Object> data = new LinkedHashMap<>(snap);
+        data.put("workflowId", workflowId);
+        return Map.of("success", true, "data", data);
     }
 
     /** 新启：抽面板 → open→voting → 写面板 + 发 DisputeAssigned。抽签失败先于状态翻转 → 争议保持 open。 */

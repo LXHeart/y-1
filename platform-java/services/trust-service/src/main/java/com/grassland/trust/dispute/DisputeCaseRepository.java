@@ -129,6 +129,24 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
+    /** 标记升级客服终审（超 maxRounds 无判决；dispute 保持 voting，appeal_state='escalated'）。0 行（非 voting）→ empty。 */
+    public Mono<DisputeCase> markEscalated(String id) {
+        return db.sql("""
+                UPDATE dispute_case SET appeal_state = 'escalated', version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'voting'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** dispute_appeal 是否已记录（Phase C 上诉/升级判定用）。 */
+    public Mono<Boolean> hasAppeal(String id) {
+        return db.sql("SELECT EXISTS(SELECT 1 FROM dispute_appeal WHERE dispute_id = CAST(:id AS uuid)) AS present")
+                .bind("id", id)
+                .map(r -> r.get("present", Boolean.class)).one().defaultIfEmpty(false);
+    }
+
     /** 终局（decided/appealed→final，记 final_decision + final_decided_by，version+1）。客服终审/上诉窗口平淡落定。
      * {@code finalDecidedBy} 可空（上诉窗口平淡终局无客服）。0 行（已 final 或未到 decided/appealed）→ empty。 */
     public Mono<DisputeCase> finalize(String id, String finalDecision, String finalDecidedBy) {

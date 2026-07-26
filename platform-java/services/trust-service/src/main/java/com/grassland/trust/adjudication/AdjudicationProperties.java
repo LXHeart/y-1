@@ -22,7 +22,9 @@ public record AdjudicationProperties(
         int voteWindowHours,
         int maxRounds,
         int appealWindowHours,
-        int judgeEligibilityTier) {
+        int judgeEligibilityTier,
+        int csAwaitHours,
+        int csPollSeconds) {
 
     public AdjudicationProperties {
         if (panelSize <= 0) {
@@ -39,6 +41,12 @@ public record AdjudicationProperties(
         }
         if (judgeEligibilityTier <= 0) {
             judgeEligibilityTier = 1;
+        }
+        if (csAwaitHours <= 0) {
+            csAwaitHours = 168;  // 客服终审最长等待（7 天，dev/test 经 env 缩短）
+        }
+        if (csPollSeconds <= 0) {
+            csPollSeconds = 60;
         }
     }
 }
