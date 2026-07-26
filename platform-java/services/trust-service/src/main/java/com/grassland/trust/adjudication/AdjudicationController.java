@@ -168,6 +168,12 @@ public class AdjudicationController {
                                                               @RequestBody CastVoteRequest body, ServerHttpRequest request) {
         VoteChoice choice = VoteChoice.fromDb(body.vote());  // 非法 → IllegalArgumentException → 400
         return callers.requireJudge(request)
+                // 门禁第二道：须已入 judge 池且未退池（审判官 = 推荐官 + 入池，见 requireJudge 注释）。
+                // 放在此处而非 resolver：避免 TrustCallerResolver 依赖 JudgeRepository。
+                .filterWhen(caller -> judges.findByAccountId(caller.accountId())
+                        .map(Judge::active)
+                        .defaultIfEmpty(false))
+                .switchIfEmpty(fail(403, "需要先加入审判官池"))
                 .flatMap(judge -> disputes.findById(id)
                         .switchIfEmpty(fail(404, "争议不存在"))
                         .flatMap(d -> {

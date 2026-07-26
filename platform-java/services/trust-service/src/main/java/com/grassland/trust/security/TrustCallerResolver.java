@@ -55,11 +55,20 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "需要商家或推荐官身份")));
     }
 
-    /** 审判官（投票：HLD 5.5 adjudication panel）。仅信任断言 activeIdentityType=judge；面板成员资格由调用方按资源自查。 */
+    /**
+     * 审判官候选（投票门禁第一道：HLD 3.1「符合条件的推荐官」）。
+     *
+     * <p><b>语义变更（e2e 联调修正）</b>：原实现要求断言 {@code activeIdentityType=judge}，但 identity 的
+     * {@code IdentityType} 只有 merchant/recommender——judge 身份<b>无法通过任何正常途径获得</b>，
+     * 导致投票端点在真实链路恒 403（IT 直接 mint judge 断言才通过，掩盖了这个集成缺口）。
+     *
+     * <p>现改为：审判官 = 推荐官 + 已入 {@code judge} 池。此处只校验推荐官身份，
+     * <b>入池校验由调用方查 {@code JudgeRepository} 完成</b>（避免 resolver 依赖 repo）。
+     */
     public Mono<Caller> requireJudge(ServerHttpRequest request) {
         return resolve(request)
-                .filter(Caller::isJudge)
-                .switchIfEmpty(Mono.error(new TrustException(403, "需要审判官身份")));
+                .filter(Caller::isRecommender)
+                .switchIfEmpty(Mono.error(new TrustException(403, "需要推荐官身份")));
     }
 
     /** 客服（终审/覆盖判决：HLD §11.2 客服兜底）。仅信任断言 activeIdentityType=customer_service。 */

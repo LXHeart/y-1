@@ -6,11 +6,14 @@ import type {
   FinanceAccount,
   GrasslandResponse,
   IdentityType,
+  Judge,
+  JudgeVote,
   Organization,
   ReservationOutcome,
   SettlementOutcome,
   Task,
   TaskApplication,
+  VoteChoice,
 } from '../types/grassland'
 
 /**
@@ -234,6 +237,43 @@ export function useGrassland() {
       body: JSON.stringify(note ? { note } : {}),
     }))
 
+  // ---------- trust：审判官池 + 投票 ----------
+
+  /** 推荐官报名成为审判官（幂等；商家会 403——不得自任裁判）。入池后才可能被抽进面板。 */
+  const enrollAsJudge = () =>
+    run(() => request<Judge>('/api/trust/judges', { method: 'POST' }))
+
+  /** 查本人入池状态；未入池后端返回 404 → 此处转为 null（不当作错误）。 */
+  async function getMyJudgeStatus(): Promise<Judge | null> {
+    try {
+      return await request<Judge>('/api/trust/judges/me')
+    } catch {
+      return null  // 404 = 尚未入池，属正常状态
+    }
+  }
+
+  const leaveJudgePool = () =>
+    run(() => request<Judge>('/api/trust/judges/me', { method: 'DELETE' }))
+
+  /** 审判官投票（每官每轮一票，不可改；非面板成员 403）。字段名 `vote`/`rationale`。 */
+  const castVote = (disputeId: string, vote: VoteChoice, rationale?: string) =>
+    run(() => request<JudgeVote>(`/api/trust/disputes/${disputeId}/votes`, {
+      method: 'POST',
+      body: JSON.stringify(rationale ? { vote, rationale } : { vote }),
+    }))
+
+  /**
+   * 客服终审（覆盖面板判决）。
+   *
+   * ⚠️ **当前必然 403**：后端要求断言的 `reauthenticatedAt` 在 5 分钟内（MFA 近期性），
+   * 但现有登录链路不产生该字段（edge-bff 签发时恒 null）。需先补 MFA 重认证流程才能真正可用。
+   */
+  const finalDecision = (disputeId: string, decision: string) =>
+    run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/final-decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    }))
+
   return {
     loading,
     error,
@@ -262,5 +302,11 @@ export function useGrassland() {
     startAdjudication,
     getAdjudication,
     appealDispute,
+    // trust：审判官池 + 投票
+    enrollAsJudge,
+    getMyJudgeStatus,
+    leaveJudgePool,
+    castVote,
+    finalDecision,
   }
 }

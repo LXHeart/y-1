@@ -4,6 +4,7 @@ import io.r2dbc.spi.Readable;
 import java.time.OffsetDateTime;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -32,6 +33,44 @@ public class JudgeRepository {
 
     public JudgeRepository(DatabaseClient db) {
         this.db = db;
+    }
+
+    /**
+     * 报名入池（幂等）：{@code UNIQUE(account_id)} 冲突 → 复活并返回既有行（退池后可再报名）。
+     * {@code eligibilityTier} 固定 1——声誉模块未建，资格阈值现由配置占位（HLD 3.1）。
+     */
+    public Mono<Judge> enroll(String accountId, String organizationId) {
+        var spec = db.sql("""
+                INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active)
+                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), 1, true)
+                ON CONFLICT (account_id) DO UPDATE
+                    SET active = true, organization_id = EXCLUDED.organization_id
+                RETURNING id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at
+                """)
+                .bind("id", UUID.randomUUID().toString()).bind("acct", accountId);
+        spec = (organizationId == null || organizationId.isBlank())
+                ? spec.bindNull("org", String.class)
+                : spec.bind("org", organizationId);
+        return spec.map(JudgeRepository::mapJudge).one();
+    }
+
+    /** 查本人审判官记录（含已退池的 active=false 行）。无 → empty。 */
+    public Mono<Judge> findByAccountId(String accountId) {
+        return db.sql("SELECT id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at"
+                + " FROM judge WHERE account_id = CAST(:acct AS uuid)")
+                .bind("acct", accountId)
+                .map(JudgeRepository::mapJudge).one();
+    }
+
+    /** 退池（软删：active=false，保留历史面板/投票的外键完整性）。0 行（未入池）→ empty。 */
+    public Mono<Judge> deactivate(String accountId) {
+        return db.sql("""
+                UPDATE judge SET active = false
+                WHERE account_id = CAST(:acct AS uuid) AND active = true
+                RETURNING id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at
+                """)
+                .bind("acct", accountId)
+                .map(JudgeRepository::mapJudge).one();
     }
 
     /** 抽符合资格且与争议组织无冲突的审判官池（随机），取 {@code size} 名。返回顺序即抽签顺序。 */

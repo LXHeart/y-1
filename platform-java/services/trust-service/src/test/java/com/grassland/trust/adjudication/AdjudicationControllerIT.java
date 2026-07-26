@@ -164,17 +164,42 @@ class AdjudicationControllerIT extends TrustItSupport {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String id = open(merchant, org, "app-" + UUID.randomUUID());  // 未 adjudicate → open
+        String judge = UUID.randomUUID().toString();
+        seedJudge(judge);  // 须已入池，否则先被入池门禁拦成 403，测不到「非投票阶段」这条
         client().post().uri("/api/trust/disputes/" + id + "/votes")
-                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "judge", null, null))
+                .header("X-Grassland-Identity", sign(judge, "recommender", null, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
                 .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void voteRejectsJudgeNotInPool() {
+        // 新门禁（e2e 联调修正）：审判官 = 推荐官 + 已入池。未入池的推荐官不可投票。
+        Panel panel = startPanel();
+        client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender", null, null))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void voteRejectsJudgeWhoLeftPool() {
+        Panel panel = startPanel();
+        String judge = panel.judges.get(0);
+        // 退池后即失去投票权（入池状态即权限开关）
+        db.sql("UPDATE judge SET active = false WHERE account_id = CAST(:a AS uuid)")
+                .bind("a", judge).then().block();
+        client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
+                .header("X-Grassland-Identity", sign(judge, "recommender", null, null))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
+                .exchange().expectStatus().isForbidden();
     }
 
     @Test
     void voteRejectsInvalidChoice() {
         Panel panel = startPanel();
         client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
-                .header("X-Grassland-Identity", sign(panel.judges.get(0), "judge", null, null))
+                .header("X-Grassland-Identity", sign(panel.judges.get(0), "recommender", null, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "bogus"))
                 .exchange().expectStatus().isBadRequest();
     }
@@ -361,7 +386,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 ? Map.of("vote", vote)
                 : Map.of("vote", vote, "rationale", rationale);
         return client().post().uri("/api/trust/disputes/" + disputeId + "/votes")
-                .header("X-Grassland-Identity", sign(judgeAccountId, "judge", null, null))
+                .header("X-Grassland-Identity", sign(judgeAccountId, "recommender", null, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange();
     }

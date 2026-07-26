@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import AdjudicationPanel from './AdjudicationPanel.vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   FinanceAccount,
@@ -30,6 +31,8 @@ const tasks = ref<Task[]>([])
 const applications = ref<TaskApplication[]>([])
 const selectedTaskId = ref('')
 const notice = ref('')
+/** 当前查看的争议 id——开争议后挂载审判看板。 */
+const activeDisputeId = ref('')
 
 /** 每个 application 的异步结局（accept 预留 / confirm 结算），key = applicationId。 */
 const outcomes = ref<Record<string, string>>({})
@@ -199,6 +202,7 @@ async function apply(taskId: string): Promise<void> {
 async function dispute(app: TaskApplication): Promise<void> {
   const opened = await grassland.openDispute(app.id, '履约存在争议')
   if (!opened) return
+  activeDisputeId.value = opened.id  // 挂载审判看板
   setNotice(`争议已开启（状态 ${opened.status}），结算将被暂停`)
 }
 
@@ -379,6 +383,16 @@ function statusLabel(status: string): string {
         </table>
       </article>
     </div>
+
+    <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
+    <article class="gl-card gl-card-wide">
+      <h3>争议审判</h3>
+      <div class="gl-row">
+        <input v-model="activeDisputeId" placeholder="争议 ID（开启争议后自动填入）" />
+      </div>
+      <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
+      <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
+    </article>
   </section>
 </template>
 
