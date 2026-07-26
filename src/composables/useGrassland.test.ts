@@ -76,6 +76,76 @@ describe('身份端点请求契约', () => {
   })
 })
 
+describe('202 异步轮询终态判据', () => {
+  /** 按序返回若干轮询响应；用尽后固定返回最后一个。 */
+  function mockFetchSequence(statuses: Array<Record<string, unknown>>): ReturnType<typeof vi.fn> {
+    let call = 0
+    const spy = vi.fn().mockImplementation(async () => {
+      const data = statuses[Math.min(call, statuses.length - 1)]
+      call += 1
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('pollReservation 不把 pending 当终态（accept 202 后的竞态窗口）', async () => {
+    // 浏览器实测缺陷：Saga 的 beginAcceptance(pending→reserving) 执行前，后端回 pending。
+    // 旧判据「≠reserving 即终态」只轮询一次就收工，UI 永久停在「处理中…」。
+    const spy = mockFetchSequence([
+      { status: 'pending' },
+      { status: 'reserving' },
+      { status: 'accepted' },
+    ])
+    const { pollReservation } = useGrassland()
+
+    const outcome = await pollReservation('task-1', 'app-1')
+
+    expect(outcome).toEqual({ status: 'accepted' })
+    expect(spy).toHaveBeenCalledTimes(3)  // pending 与 reserving 都必须继续轮询
+  })
+
+  test('pollReservation 在 compensated 终态停止并带出 reason', async () => {
+    const spy = mockFetchSequence([
+      { status: 'pending' },
+      { status: 'compensated', reason: 'insufficient_funds' },
+    ])
+    const { pollReservation } = useGrassland()
+
+    const outcome = await pollReservation('task-1', 'app-1')
+
+    expect(outcome).toEqual({ status: 'compensated', reason: 'insufficient_funds' })
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  test('pollSettlement 不把 not_confirmed 当终态（confirm 202 后的同款竞态）', async () => {
+    const spy = mockFetchSequence([
+      { status: 'not_confirmed' },
+      { status: 'settling' },
+      { status: 'settled' },
+    ])
+    const { pollSettlement } = useGrassland()
+
+    const outcome = await pollSettlement('task-1', 'app-1')
+
+    expect(outcome).toEqual({ status: 'settled' })
+    expect(spy).toHaveBeenCalledTimes(3)
+  })
+
+  test('pollSettlement 在 held 终态停止（存在未终局争议）', async () => {
+    const spy = mockFetchSequence([
+      { status: 'settling' },
+      { status: 'held', reason: 'open_dispute' },
+    ])
+    const { pollSettlement } = useGrassland()
+
+    const outcome = await pollSettlement('task-1', 'app-1')
+
+    expect(outcome).toEqual({ status: 'held', reason: 'open_dispute' })
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('错误处理', () => {
   test('后端 {success:false,error} 被提取为 error 消息', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({

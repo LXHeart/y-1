@@ -48,6 +48,25 @@ function startTicker(): void {
   }, 1000)
 }
 
+/**
+ * 落地一份快照：**同时**同步倒计时。所有写 `snapshot` 的路径都必须走这里。
+ *
+ * 浏览器实测发现：`startAdjudication` / `appeal` / `submitFinalDecision` 各自直接赋值
+ * `snapshot.value`，只有 `refresh` 会重置 `remaining` 并起表——于是「启动审判」后
+ * 倒计时根本不出现（要手点一次「刷新」才显形），上诉/终审后还会残留上一阶段的旧秒数。
+ * 阶段切换（vote→appeal→none）本就意味着换了窗口，必须跟着快照一起更新。
+ */
+function applySnapshot(snap: AdjudicationSnapshot): void {
+  snapshot.value = snap
+  remaining.value = snap.window?.remainingSeconds ?? null
+  if (remaining.value !== null) {
+    startTicker()
+  } else if (ticker) {
+    clearInterval(ticker)  // 终局无窗口：停表，避免空转
+    ticker = undefined
+  }
+}
+
 onUnmounted(() => {
   if (ticker) clearInterval(ticker)
 })
@@ -101,12 +120,8 @@ const decisionLabel = (value: string | null): string => {
 
 async function refresh(): Promise<void> {
   const snap = await grassland.getAdjudication(props.disputeId)
-  if (snap) {
-    snapshot.value = snap
-    // 以后端值为准重置倒计时（本地 tick 只做平滑，不作权威）
-    remaining.value = snap.window?.remainingSeconds ?? null
-    if (remaining.value !== null) startTicker()
-  }
+  // 以后端值为准重置倒计时（本地 tick 只做平滑，不作权威）
+  if (snap) applySnapshot(snap)
   judge.value = await grassland.getMyJudgeStatus()
 }
 
@@ -116,7 +131,7 @@ async function startAdjudication(): Promise<void> {
   localNotice.value = ''
   const started = await grassland.startAdjudication(props.disputeId)
   if (!started) return
-  snapshot.value = started
+  applySnapshot(started)
   localNotice.value = `审判已启动（第 ${started.round} 轮，面板 ${started.panel.size} 人）`
 }
 
@@ -148,7 +163,7 @@ async function appeal(): Promise<void> {
   localNotice.value = ''
   const appealed = await grassland.appealDispute(props.disputeId, '对判决有异议')
   if (!appealed) return
-  snapshot.value = appealed
+  applySnapshot(appealed)
   localNotice.value = '上诉已提交，等待客服终审'
 }
 
@@ -166,7 +181,7 @@ async function submitFinalDecision(): Promise<void> {
   localNotice.value = ''
   const finalized = await grassland.finalDecision(props.disputeId, csDecision.value)
   if (!finalized) return
-  snapshot.value = finalized
+  applySnapshot(finalized)
   localNotice.value = '终审已生效'
 }
 </script>

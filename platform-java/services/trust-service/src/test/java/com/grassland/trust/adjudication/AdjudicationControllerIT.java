@@ -237,6 +237,56 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .exchange().expectStatus().isOk();
     }
 
+    /**
+     * 面板审判官必须能读快照——否则「能投票却看不见要投什么」。
+     *
+     * 浏览器实测抓到的集成缺口：castVote 用 requireJudge + 面板成员放行，
+     * 而 getAdjudication 只认「当事方 org / marketplace 服务」，审判官恒 403，
+     * 前端看板显示「无权查询该争议」，投票按钮组渲染不出来。
+     * 这与 judge 身份、customer_service 角色属同一类跨服务不一致——写路径放行、读路径没跟上。
+     */
+    @Test
+    void getAdjudicationAllowsPanelJudge() {
+        Panel panel = startPanel();
+        String judge = panel.judges.get(0);
+
+        String body = client().get().uri("/api/trust/disputes/" + panel.id + "/adjudication")
+                // 审判官 = 推荐官 + 已入池，且不属于当事方 org
+                .header("X-Grassland-Identity", sign(judge, "recommender", null, null))
+                .exchange().expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+
+        assertThat(body).contains("\"status\":\"voting\"");
+        assertThat(body).doesNotContain(judge);  // 对审判官本人也保持脱敏
+    }
+
+    /**
+     * 客服必须能读快照——否则「能覆盖判决却看不见判的是什么」。
+     *
+     * 浏览器实测抓到：客服既非 merchant 也非 recommender，被 resolvePartyOrService 直接过滤，
+     * 前端看板恒显示「无权查询争议」，连「客服终审」折叠区都渲染不出来，终审在 UI 上完全不可达。
+     * 这是 judge 身份、customer_service 角色之后，同一类「写路径放行、读路径没跟上」的第三次出现。
+     */
+    @Test
+    void getAdjudicationAllowsCustomerService() {
+        Panel panel = startPanel();
+
+        String body = client().get().uri("/api/trust/disputes/" + panel.id + "/adjudication")
+                // 客服无 org，跨 org 亦须可读（平台职能，HLD §11.2 兜底）
+                .header("X-Grassland-Identity", signCs(UUID.randomUUID().toString(), Instant.now()))
+                .exchange().expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+
+        assertThat(body).contains("\"status\":\"voting\"");
+    }
+
+    /** 放行仅限**本轮面板成员**：非面板推荐官仍须 403（不能靠改 URL 围观任意争议）。 */
+    @Test
+    void getAdjudicationRejectsNonPanelRecommender() {
+        Panel panel = startPanel();
+        client().get().uri("/api/trust/disputes/" + panel.id + "/adjudication")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender", null, null))
+                .exchange().expectStatus().isForbidden();
+    }
+
     @Test
     void getAdjudicationRejectsOtherOrg() {
         Panel panel = startPanel();

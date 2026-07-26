@@ -46,7 +46,8 @@ import reactor.core.scheduler.Schedulers;
  *       （{@code WorkflowClient.start}，timer → tally → 重开/上诉/终审 loop）。投票窗口到期 tally/decide/reopen 随 Phase C。</li>
  *   <li>POST /api/trust/disputes/{id}/votes — 审判官投票（{@code requireJudge} + 面板成员自查 + 当前轮；
  *       幂等 UNIQUE，每官每轮一票不可改；201 新投 / 200 既有；返回累计 tally）。</li>
- *   <li>GET /api/trust/disputes/{id}/adjudication — 审判状态轮询（当事方或 marketplace 服务 + org 自查）：
+ *   <li>GET /api/trust/disputes/{id}/adjudication — 审判状态轮询（当事方 + org 自查 / marketplace 服务 /
+ *       <b>本轮面板审判官</b>——快照已脱敏，审判官是其目标读者，否则「能投票却看不见案情」）：
  *       {status, round, panel{size,voted}, tallies{...,majority}, decision, appealState, finalDecision}。
  *       默认脱敏——不暴露审判官 account_id / 个票 rationale（D-10）。</li>
  * </ul>
@@ -199,8 +200,19 @@ public class AdjudicationController {
         return callers.resolvePartyOrService(request, TrustCallerResolver.MARKETPLACE_SERVICE)
                 .flatMap(caller -> disputes.findById(id)
                         .switchIfEmpty(fail(404, "争议不存在"))
-                        .filter(d -> caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)
-                                || d.organizationId().equals(caller.organizationId()))
+                        .filterWhen(d -> {
+                            if (caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)
+                                    // 客服跨 org：平台职能，本就有权覆盖任意争议的判决（HLD §11.2 兜底）
+                                    || caller.isCustomerService()
+                                    || d.organizationId().equals(caller.organizationId())) {
+                                return Mono.just(true);
+                            }
+                            // 本轮面板审判官：快照本就是**脱敏**的（DesensitizedCase，D-10），
+                            // 审判官正是它的目标读者——不让读等于「能投票却看不见要投什么」。
+                            // 浏览器实测发现：投票端点对审判官放行、快照端点却按 org 拒绝，
+                            // 看板恒显示「无权查询该争议」，投票按钮组根本渲染不出来。
+                            return judges.isPanelMember(d.id(), d.round(), caller.accountId());
+                        })
                         .switchIfEmpty(fail(403, "无权查询该争议"))
                         .flatMap(this::snapshot)
                         .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));

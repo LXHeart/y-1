@@ -95,10 +95,19 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "无权查询争议")));
     }
 
-    /** 接受当事方（商家/推荐官）或指定服务 principal（org 由调用方按已加载资源自查）。审判状态查询用。 */
+    /**
+     * 接受当事方（商家/推荐官）、客服，或指定服务 principal（org 由调用方按已加载资源自查）。审判状态查询用。
+     *
+     * <p><b>客服（浏览器实测修正，与 requireJudge/requireCustomerService 同类问题的第三次出现）</b>：
+     * 客服能执行终审（{@code requireCustomerService}），却读不到自己要覆盖的那份判决——
+     * 客服既非 merchant 也非 recommender，在此被直接过滤掉，前端看板恒显示「无权查询争议」，
+     * 连「客服终审」折叠区都渲染不出来，终审在 UI 上完全不可达。
+     * 读（已脱敏的）快照严格弱于「覆盖判决」这一已授权的写动作，故一并放行。
+     */
     public Mono<Caller> resolvePartyOrService(ServerHttpRequest request, String servicePrincipal) {
         return resolve(request)
-                .filter(c -> c.isMerchant() || c.isRecommender() || c.isServicePrincipal(servicePrincipal))
+                .filter(c -> c.isMerchant() || c.isRecommender()
+                        || c.isCustomerService() || c.isServicePrincipal(servicePrincipal))
                 .switchIfEmpty(Mono.error(new TrustException(403, "无权查询争议")));
     }
 

@@ -63,9 +63,16 @@ export interface TaskApplication {
   createdAt: string | null
 }
 
-/** 资金预留轮询结果。compensated = 预留失败已补偿（reason 说明原因，如 insufficient_funds）。 */
+/**
+ * 资金预留轮询结果。compensated = 预留失败已补偿（reason 说明原因，如 insufficient_funds）。
+ *
+ * ⚠️ `pending` 是**真实可能的返回值**：accept 返回 202 后、Saga 的 `beginAcceptance`
+ * （pending→reserving）尚未执行的窗口内，后端原样回 application 状态
+ * （见 `ApplicationController.reservationOutcome` 的 `defaultIfEmpty`）。
+ * 它与 `reserving` 同属「在途」，**不是结局**——轮询必须继续。
+ */
 export interface ReservationOutcome {
-  status: 'accepted' | 'reserving' | 'compensated'
+  status: 'accepted' | 'reserving' | 'compensated' | 'pending'
   reason?: string
 }
 

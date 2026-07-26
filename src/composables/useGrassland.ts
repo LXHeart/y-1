@@ -163,13 +163,21 @@ export function useGrassland() {
   const rejectApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reject`, { method: 'POST' }))
 
-  /** 轮询资金预留结局，直到脱离 reserving 中间态或超时。 */
+  /**
+   * 轮询资金预留结局，直到到达**终态**（accepted / compensated）或超时。
+   *
+   * ⚠️ 判据必须是「到达终态」而非「脱离 reserving」。accept 返回 202 后，
+   * Saga 的 `beginAcceptance`（pending→reserving）还要几百毫秒才执行，
+   * 这段窗口内后端回的是 `pending`——按「≠reserving 即终态」会在竞态窗口里**提前收工**，
+   * UI 永久停在「处理中…」（浏览器实测：首次轮询即拿到 pending，全程只发了 1 次请求就退出，
+   * 而后端其实已正确 accepted + 预留 ¥300）。
+   */
   async function pollReservation(taskId: string, appId: string): Promise<ReservationOutcome | null> {
     return run(async () => {
       for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
         const outcome = await request<ReservationOutcome>(
           `/api/tasks/${taskId}/applications/${appId}/reservation`)
-        if (outcome.status !== 'reserving') {
+        if (outcome.status === 'accepted' || outcome.status === 'compensated') {
           return outcome
         }
         await sleep(POLL_INTERVAL_MS)
@@ -193,13 +201,19 @@ export function useGrassland() {
     return result === true
   }
 
-  /** 轮询结算结局，直到 settled/held 或超时（settling 为中间态）。 */
+  /**
+   * 轮询结算结局，直到到达**终态**（settled / held）或超时。
+   *
+   * ⚠️ 与 {@link pollReservation} 同款竞态：confirm 返回 202 后 `confirmed_at` 落库前，
+   * 后端回 `not_confirmed`（见 `ApplicationController.settlementOutcome`）。
+   * 它和 `settling` 一样属于在途，按「≠settling 即终态」会让 UI 卡在「尚未确认履约」。
+   */
   async function pollSettlement(taskId: string, appId: string): Promise<SettlementOutcome | null> {
     return run(async () => {
       for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
         const outcome = await request<SettlementOutcome>(
           `/api/tasks/${taskId}/applications/${appId}/settlement`)
-        if (outcome.status !== 'settling') {
+        if (outcome.status === 'settled' || outcome.status === 'held') {
           return outcome
         }
         await sleep(POLL_INTERVAL_MS)
