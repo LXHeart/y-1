@@ -93,18 +93,23 @@ export function useGrassland() {
       body: JSON.stringify(industry ? { name, industry } : { name }),
     }))
 
-  /** 开通身份（商家须带 org；推荐官不需要）。 */
-  const openIdentity = (identityType: IdentityType, organizationId?: string) =>
+  /**
+   * 开通身份（商家须带 org；推荐官不需要）。
+   *
+   * ⚠️ 请求字段名是 `type`（后端 `OpenIdentityRequest(type, organizationId)`），
+   * 但**响应**返回的是 `identityType`——请求/响应字段名不对称，e2e 联调时踩过（写成 identityType 会 400）。
+   */
+  const openIdentity = (type: IdentityType, organizationId?: string) =>
     run(() => request<unknown>('/api/me/identities', {
       method: 'POST',
-      body: JSON.stringify(organizationId ? { identityType, organizationId } : { identityType }),
+      body: JSON.stringify(organizationId ? { type, organizationId } : { type }),
     }))
 
-  /** 切换当前 session 的活动身份（多设备互不影响）。 */
-  const activateIdentity = (identityType: IdentityType) =>
+  /** 切换当前 session 的活动身份（多设备互不影响）。请求字段同为 `type`。 */
+  const activateIdentity = (type: IdentityType) =>
     run(() => request<unknown>('/api/me/active-identity', {
       method: 'POST',
-      body: JSON.stringify({ identityType }),
+      body: JSON.stringify({ type }),
     }))
 
   // ---------- marketplace：任务 + 报名 ----------
