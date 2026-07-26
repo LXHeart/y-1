@@ -11,14 +11,23 @@ class UpstreamResolverTest {
     private static final URI LEGACY = URI.create("http://legacy:3000");
     private static final URI IDENTITY = URI.create("http://identity:8082");
     private static final URI MARKETPLACE = URI.create("http://marketplace:8083");
+    private static final URI FINANCE = URI.create("http://finance:8084");
+    private static final URI TRUST = URI.create("http://trust:8085");
 
     private final EdgeRoutingProperties properties = new EdgeRoutingProperties(
-        Map.of("legacy", LEGACY, "identity", IDENTITY, "marketplace", MARKETPLACE),
+        Map.of("legacy", LEGACY, "identity", IDENTITY, "marketplace", MARKETPLACE,
+            "finance", FINANCE, "trust", TRUST),
         List.of(
             new RouteProperties("GET", "/api/auth/me", "identity", true),
             new RouteProperties(null, "/api/v2/**", "identity", true),
             // Slice 4C：/api/tasks** 全方法 → marketplace（无 method；前缀覆盖子路径）
-            new RouteProperties(null, "/api/tasks", "marketplace", true)),
+            new RouteProperties(null, "/api/tasks", "marketplace", true),
+            // P0-1：身份域非 auth 端点 + finance + trust 全量经 BFF
+            new RouteProperties(null, "/api/organizations", "identity", true),
+            new RouteProperties(null, "/api/me", "identity", true),
+            new RouteProperties(null, "/api/admin/permission-requests", "identity", true),
+            new RouteProperties(null, "/api/finance", "finance", true),
+            new RouteProperties(null, "/api/trust", "trust", true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -81,6 +90,49 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("GET", "/api/douyin/proxy/token")).isFalse();
     }
 
+    // ---------- P0-1: 身份域非 auth + finance + trust 经 BFF ----------
+
+    @Test
+    void routesIdentityDomainEndpoints() {
+        assertThat(resolver.resolve("POST", "/api/organizations")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/organizations/" + ORG_ID + "/stores")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/organizations/" + ORG_ID + "/quota")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/me/identities")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/me/active-identity")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("DELETE", "/api/me/sessions/sid-x")).isEqualTo(IDENTITY);
+    }
+
+    @Test
+    void routesFinanceAndTrust() {
+        assertThat(resolver.resolve("POST", "/api/finance/accounts")).isEqualTo(FINANCE);
+        assertThat(resolver.resolve("POST", "/api/finance/reservations/eng-1/release")).isEqualTo(FINANCE);
+        assertThat(resolver.resolve("POST", "/api/trust/disputes")).isEqualTo(TRUST);
+        assertThat(resolver.resolve("POST", "/api/trust/disputes/d-1/votes")).isEqualTo(TRUST);
+    }
+
+    @Test
+    void adminPermissionRequestsGoesToIdentityButLegacyAdminStays() {
+        // identity 的权限审核队列 → identity
+        assertThat(resolver.resolve("GET", "/api/admin/permission-requests")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/admin/permission-requests/req-1")).isEqualTo(IDENTITY);
+        // ⚠️ 回归防护：legacy Express 的 /api/admin/users、/api/admin/adjust-credits 必须仍走 legacy。
+        // 若路由误配为前缀 /api/admin，这两条会被抢走 → 旧后台功能挂掉。
+        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void newRoutesAreInternalUpstreamsSoAssertionGetsSigned() {
+        assertThat(resolver.isInternalUpstream("POST", "/api/organizations")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/me/identities")).isTrue();
+        assertThat(resolver.isInternalUpstream("POST", "/api/finance/accounts")).isTrue();
+        assertThat(resolver.isInternalUpstream("POST", "/api/trust/disputes")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/permission-requests")).isTrue();
+        // legacy admin 不是内部上游 → 不签断言（伪造头仍被 filter 剥离）
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/users")).isFalse();
+    }
+
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";
     private static final String APP_ID = "22222222-2222-2222-2222-222222222222";
+    private static final String ORG_ID = "33333333-3333-3333-3333-333333333333";
 }

@@ -1,0 +1,261 @@
+import { ref } from 'vue'
+import type {
+  AdjudicationSnapshot,
+  CreateTaskInput,
+  DisputeCase,
+  FinanceAccount,
+  GrasslandResponse,
+  IdentityType,
+  Organization,
+  ReservationOutcome,
+  SettlementOutcome,
+  Task,
+  TaskApplication,
+} from '../types/grassland'
+
+/**
+ * 草场 Java 域请求封装（经 edge-bff）。
+ *
+ * 与旧 Express composable 的差异：
+ * - 资金型 accept / confirm 返回 **202**，真实结果需轮询（{@link pollReservation} / {@link pollSettlement}）。
+ * - 身份靠 cookie session → edge-bff 换发内部断言，故所有请求须 `credentials: 'include'`。
+ * - 后端错误信封为 `{success:false, error}`，与 legacy 一致。
+ */
+
+/** 轮询上限：Saga 经 Temporal + 跨服务 HTTP，本地通常 <2s；给 30 次 × 1s 容错。 */
+const POLL_MAX_ATTEMPTS = 30
+const POLL_INTERVAL_MS = 1000
+
+async function readError(response: Response, fallback: string): Promise<string> {
+  const contentType = response.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    const body = await response.json() as { error?: string }
+    return body.error || fallback
+  }
+  const text = await response.text()
+  return text.trim() || fallback
+}
+
+/** 统一请求：注入 cookie、解信封、非 2xx 抛带后端消息的 Error。 */
+async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, {
+    credentials: 'include',
+    ...init,
+    headers: init.body
+      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
+      : init.headers || {},
+  })
+
+  if (!response.ok) {
+    throw new Error(await readError(response, `请求失败（${response.status}）`))
+  }
+
+  const body = await response.json() as GrasslandResponse<T>
+  if (!body.success) {
+    throw new Error(body.error || '请求失败')
+  }
+  return body.data as T
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export function useGrassland() {
+  const loading = ref(false)
+  const error = ref('')
+
+  function clearError(): void {
+    error.value = ''
+  }
+
+  /** 包装：统一 loading / error 处理，失败返回 null（调用方按 null 判定，不需 try-catch）。 */
+  async function run<T>(operation: () => Promise<T>): Promise<T | null> {
+    loading.value = true
+    error.value = ''
+    try {
+      return await operation()
+    } catch (caught: unknown) {
+      error.value = caught instanceof Error ? caught.message : '未知错误'
+      return null
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ---------- identity：组织 + 活动身份 ----------
+
+  const listOrganizations = () => run(() => request<Organization[]>('/api/organizations'))
+
+  const createOrganization = (name: string, industry?: string) =>
+    run(() => request<Organization>('/api/organizations', {
+      method: 'POST',
+      body: JSON.stringify(industry ? { name, industry } : { name }),
+    }))
+
+  /** 开通身份（商家须带 org；推荐官不需要）。 */
+  const openIdentity = (identityType: IdentityType, organizationId?: string) =>
+    run(() => request<unknown>('/api/me/identities', {
+      method: 'POST',
+      body: JSON.stringify(organizationId ? { identityType, organizationId } : { identityType }),
+    }))
+
+  /** 切换当前 session 的活动身份（多设备互不影响）。 */
+  const activateIdentity = (identityType: IdentityType) =>
+    run(() => request<unknown>('/api/me/active-identity', {
+      method: 'POST',
+      body: JSON.stringify({ identityType }),
+    }))
+
+  // ---------- marketplace：任务 + 报名 ----------
+
+  const listTasks = (organizationId: string, status = 'published') =>
+    run(() => request<Task[]>(
+      `/api/tasks?organizationId=${encodeURIComponent(organizationId)}&status=${encodeURIComponent(status)}`))
+
+  const createTask = (input: CreateTaskInput) =>
+    run(() => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }))
+
+  const listApplications = (taskId: string) =>
+    run(() => request<TaskApplication[]>(`/api/tasks/${taskId}/applications`))
+
+  const applyToTask = (taskId: string, note?: string) =>
+    run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications`, {
+      method: 'POST',
+      body: JSON.stringify(note ? { note } : {}),
+    }))
+
+  /**
+   * 商家接受报名。**资金型任务返回 202**（预留 Saga 异步执行），非资金型直接 200。
+   * 两种情况都返回后立即用 {@link pollReservation} 取最终结果。
+   */
+  async function acceptApplication(taskId: string, appId: string): Promise<boolean> {
+    const result = await run(async () => {
+      const response = await fetch(`/api/tasks/${taskId}/applications/${appId}/accept`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!response.ok) {
+        throw new Error(await readError(response, `接受失败（${response.status}）`))
+      }
+      return true
+    })
+    return result === true
+  }
+
+  const rejectApplication = (taskId: string, appId: string) =>
+    run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reject`, { method: 'POST' }))
+
+  /** 轮询资金预留结局，直到脱离 reserving 中间态或超时。 */
+  async function pollReservation(taskId: string, appId: string): Promise<ReservationOutcome | null> {
+    return run(async () => {
+      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        const outcome = await request<ReservationOutcome>(
+          `/api/tasks/${taskId}/applications/${appId}/reservation`)
+        if (outcome.status !== 'reserving') {
+          return outcome
+        }
+        await sleep(POLL_INTERVAL_MS)
+      }
+      throw new Error('预留结果轮询超时，请稍后刷新查看')
+    })
+  }
+
+  /** 商家确认履约 → 启动结算窗口 workflow（202）。 */
+  async function confirmEngagement(taskId: string, appId: string): Promise<boolean> {
+    const result = await run(async () => {
+      const response = await fetch(`/api/tasks/${taskId}/applications/${appId}/confirm`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!response.ok) {
+        throw new Error(await readError(response, `确认失败（${response.status}）`))
+      }
+      return true
+    })
+    return result === true
+  }
+
+  /** 轮询结算结局，直到 settled/held 或超时（settling 为中间态）。 */
+  async function pollSettlement(taskId: string, appId: string): Promise<SettlementOutcome | null> {
+    return run(async () => {
+      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        const outcome = await request<SettlementOutcome>(
+          `/api/tasks/${taskId}/applications/${appId}/settlement`)
+        if (outcome.status !== 'settling') {
+          return outcome
+        }
+        await sleep(POLL_INTERVAL_MS)
+      }
+      throw new Error('结算结果轮询超时，请稍后刷新查看')
+    })
+  }
+
+  // ---------- finance：账户 + sandbox 充值 ----------
+
+  const provisionAccount = () =>
+    run(() => request<FinanceAccount>('/api/finance/accounts', { method: 'POST' }))
+
+  const getAccount = (orgId: string) =>
+    run(() => request<FinanceAccount>(`/api/finance/accounts/${orgId}`))
+
+  /** sandbox 充值（非生产资金流；真实充值走 payment-intent，尚未接入）。 */
+  const creditAccount = (orgId: string, amountCents: number) =>
+    run(() => request<FinanceAccount>(`/api/finance/accounts/${orgId}/credit`, {
+      method: 'POST',
+      body: JSON.stringify({ amountCents }),
+    }))
+
+  // ---------- trust：争议 + 审判 ----------
+
+  /** 开争议（engagementRef = marketplace applicationId）。每 engagement 至多一个活跃争议（幂等）。 */
+  const openDispute = (engagementRef: string, reason?: string) =>
+    run(() => request<DisputeCase>('/api/trust/disputes', {
+      method: 'POST',
+      body: JSON.stringify(reason ? { engagementRef, reason } : { engagementRef }),
+    }))
+
+  /** 启动审判（抽 7 官面板 + 启 workflow）。无可用审判官时后端返回 503。 */
+  const startAdjudication = (disputeId: string) =>
+    run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/adjudicate`, { method: 'POST' }))
+
+  const getAdjudication = (disputeId: string) =>
+    run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/adjudication`))
+
+  /** 当事方上诉（须处于 decided 态，即在上诉窗口内）。 */
+  const appealDispute = (disputeId: string, note?: string) =>
+    run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/appeal`, {
+      method: 'POST',
+      body: JSON.stringify(note ? { note } : {}),
+    }))
+
+  return {
+    loading,
+    error,
+    clearError,
+    // identity
+    listOrganizations,
+    createOrganization,
+    openIdentity,
+    activateIdentity,
+    // marketplace
+    listTasks,
+    createTask,
+    listApplications,
+    applyToTask,
+    acceptApplication,
+    rejectApplication,
+    pollReservation,
+    confirmEngagement,
+    pollSettlement,
+    // finance
+    provisionAccount,
+    getAccount,
+    creditAccount,
+    // trust
+    openDispute,
+    startAdjudication,
+    getAdjudication,
+    appealDispute,
+  }
+}

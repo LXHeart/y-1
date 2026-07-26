@@ -185,6 +185,20 @@
           视频制作
         </button>
         <button
+          v-if="isAuthenticated"
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'grassland' }"
+          :aria-selected="currentView === 'grassland'"
+          type="button"
+          @click="currentView = 'grassland'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 13V6.5l6-4 6 4V13" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M6 13V9h4v4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+          草场
+        </button>
+        <button
           v-if="isAuthenticated && currentUser?.role === 'admin'"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'admin' }"
@@ -241,6 +255,7 @@ import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
 import ArticleCreationView from './components/ArticleCreationView.vue'
 import ComedyWritingView from './components/ComedyWritingView.vue'
 import AdminView from './components/AdminView.vue'
+import GrasslandWorkbench from './components/GrasslandWorkbench.vue'
 import HomeView from './components/HomeView.vue'
 import ImageAnalysisView from './components/ImageAnalysisView.vue'
 import ImageGenerationView from './components/ImageGenerationView.vue'
@@ -255,7 +270,7 @@ import { useCredits } from './composables/useCredits'
 import type { LoginFormValues, RegisterFormValues } from './types/auth'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'admin'
+type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
 const currentView = ref<AppView>('home')
@@ -382,6 +397,7 @@ const viewComponentMap: Record<AppView, Component> = {
   'image-gen': ImageGenerationView,
   comedy: ComedyWritingView,
   'video-production': VideoProductionView,
+  grassland: GrasslandWorkbench,
   admin: AdminView,
 }
 

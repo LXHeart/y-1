@@ -26,6 +26,8 @@ edge:
     legacy: ${LEGACY_EXPRESS_BASE_URL:http://localhost:3000}
     identity: ${IDENTITY_SERVICE_BASE_URL:http://localhost:8082}
     marketplace: ${MARKETPLACE_SERVICE_BASE_URL:http://localhost:8083}
+    finance: ${FINANCE_SERVICE_BASE_URL:http://localhost:8084}
+    trust: ${TRUST_SERVICE_BASE_URL:http://localhost:8085}
   routes:
     - method: GET
       path: /api/auth/me
@@ -57,6 +59,28 @@ edge:
     - path: /api/tasks
       upstream: marketplace
       enabled: ${EDGE_ROUTE_TASKS_MARKETPLACE:true}
+    # ---- 身份域非 auth 端点（Slice 2E–2L）→ identity-service。legacy Express 无这些前缀，纯增量不抢旧流量。----
+    # 组织/门店/成员/权限申请/额度（前缀覆盖全部子路径）。
+    - path: /api/organizations
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ORGANIZATIONS_IDENTITY:true}
+    # 活动身份 + 多设备 session（/api/me/identities、/api/me/active-identity、/api/me/sessions）。
+    - path: /api/me
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ME_IDENTITY:true}
+    # 平台 admin 权限审核队列。⚠️ 必须用精确前缀 /api/admin/permission-requests——
+    # legacy Express 的 /api/admin（用户管理/积分调整）仍在旧库，配 /api/admin 会前缀匹配抢走它。
+    - path: /api/admin/permission-requests
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_PERMREQ_IDENTITY:true}
+    # ---- finance（Epic 4 Slice 4D/4E + 6C Phase D）→ finance-service。账户/余额/escrow。----
+    - path: /api/finance
+      upstream: finance
+      enabled: ${EDGE_ROUTE_FINANCE:true}
+    # ---- trust（Epic 6 Slice 6A/6C）→ trust-service。争议受理/审判/投票/上诉/客服终审。----
+    - path: /api/trust
+      upstream: trust
+      enabled: ${EDGE_ROUTE_TRUST:true}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
 identity-assertion:
