@@ -7,6 +7,9 @@ import java.time.Instant;
  *
  * <p>{@code sessionToken} 为 cookie 里的 sid；{@code activeIdentityType} 为 null 表示该 session 为消费者。
  * 同一账号多设备 = 多行，活动身份互不影响（设备 A 商家 / 设备 B 消费者）。
+ *
+ * <p>{@code reauthenticatedAt}/{@code authStrength}（V7）：MFA 重认证证明，同样按 session 隔离——
+ * 一个设备重认证不提升另一设备权限。edge-bff 签发断言时取出，供 trust 客服终审校验近期性（HLD §11.2）。
  */
 public record IdentitySession(
         String sessionToken,
@@ -18,5 +21,7 @@ public record IdentitySession(
         String userAgent,
         Instant issuedAt,
         Instant lastSeenAt,
-        Instant expiresAt
+        Instant expiresAt,
+        Instant reauthenticatedAt,
+        String authStrength
 ) {}

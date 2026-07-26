@@ -45,7 +45,10 @@ class SessionIdentityResolverIT {
              var s = c.createStatement()) {
             s.execute("CREATE TABLE app_users (id uuid PRIMARY KEY, email text UNIQUE, password_hash text, display_name text, role text, status text)");
             s.execute("CREATE TABLE session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
-            s.execute("CREATE TABLE identity_session (session_token text PRIMARY KEY, account_id uuid NOT NULL, active_identity_type varchar(32))");
+            // 与 identity V7 对齐：MFA 重认证证明（reauthenticated_at/auth_strength）也由 BFF 读出签进断言
+            s.execute("CREATE TABLE identity_session (session_token text PRIMARY KEY, account_id uuid NOT NULL,"
+                    + " active_identity_type varchar(32), reauthenticated_at timestamptz,"
+                    + " auth_strength varchar(16) NOT NULL DEFAULT 'level1')");
             s.execute("CREATE TABLE organization (id uuid PRIMARY KEY, owner_account_id uuid, name text, status text, permission_tier text, industry text)");
             s.execute("CREATE TABLE identity_profile (id uuid PRIMARY KEY, account_id uuid NOT NULL, identity_type varchar(32) NOT NULL, organization_id uuid, status text, UNIQUE(account_id, identity_type))");
         }

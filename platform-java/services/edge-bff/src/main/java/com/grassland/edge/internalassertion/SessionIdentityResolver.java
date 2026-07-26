@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpCookie;
@@ -69,16 +71,18 @@ public class SessionIdentityResolver {
                         row.get("status", String.class)))
                 .one()
                 .flatMap(account -> Mono.zip(
-                        activeIdentityType(sid).defaultIfEmpty(""),
+                        sessionState(sid).defaultIfEmpty(SessionState.EMPTY),
                         orgTier(accountId).defaultIfEmpty(OrgTier.EMPTY))
                         .map(t -> new ResolvedIdentity(
                                 account.id(),
                                 account.role(),
                                 account.status(),
-                                t.getT1().isEmpty() ? null : t.getT1(),
+                                t.getT1().activeIdentityType(),
                                 sid,
                                 t.getT2().orgId(),
-                                t.getT2().tier())));
+                                t.getT2().tier(),
+                                t.getT1().reauthenticatedAt(),
+                                t.getT1().authStrength())));
     }
 
     /** 在 Row 仍有效期间提前抽取字段（r2dbc Row 生命周期仅限 map 阶段，不可透传到下游 flatMap）。 */
@@ -99,12 +103,28 @@ public class SessionIdentityResolver {
                 .one();
     }
 
-    /** 读 identity_session.active_identity_type；无行/值为 null → empty（消费者，active 置 null）。 */
-    private Mono<String> activeIdentityType(String sid) {
-        return db.sql("SELECT active_identity_type FROM identity_session WHERE session_token = :sid")
+    /**
+     * 读 identity_session 的活动身份 + MFA 重认证证明（V7）。
+     * 无行 → empty（消费者：active 为 null，authStrength 回落 level1）。
+     */
+    private Mono<SessionState> sessionState(String sid) {
+        return db.sql("SELECT active_identity_type, reauthenticated_at, auth_strength"
+                + " FROM identity_session WHERE session_token = :sid")
                 .bind("sid", sid)
-                .map(row -> row.get("active_identity_type", String.class))
+                .map(row -> new SessionState(
+                        row.get("active_identity_type", String.class),
+                        toInstant(row.get("reauthenticated_at", OffsetDateTime.class)),
+                        row.get("auth_strength", String.class)))
                 .one();
+    }
+
+    /** session 侧状态（活动身份 + 重认证证明）。 */
+    private record SessionState(String activeIdentityType, Instant reauthenticatedAt, String authStrength) {
+        static final SessionState EMPTY = new SessionState(null, null, null);
+    }
+
+    private static Instant toInstant(OffsetDateTime value) {
+        return value == null ? null : value.toInstant();
     }
 
     String extractUserId(String sessJson) {

@@ -58,6 +58,39 @@ class InternalAssertionFilterTest {
     }
 
     @Test
+    void reauthenticatedSession_assertionCarriesMfaProof() {
+        // 回归防护：此前 buildAssertion 硬编码 authStrength=level1 / reauthenticatedAt=null，
+        // 导致 trust 客服终审的 MFA 近期性校验恒失败（403）。现须从 identity_session 透传。
+        java.time.Instant reauthAt = java.time.Instant.now().minusSeconds(30);
+        SessionIdentityResolver resolver = resolverReturning(reauthenticatedIdentity(reauthAt));
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"));
+
+        String token = readToken(client(filter)
+                .get().uri("/internal/me").cookie("y1.sid", "anything")
+                .exchange().expectStatus().isOk()
+                .expectBody(String.class).returnResult().getResponseBody());
+
+        var decoded = signer.verify(token, null).orElseThrow();
+        assertThat(decoded.authStrength()).isEqualTo("level2");
+        assertThat(decoded.reauthenticatedAt()).isEqualTo(reauthAt);
+    }
+
+    @Test
+    void plainLoginSession_hasNoMfaProof() {
+        SessionIdentityResolver resolver = resolverReturning(identity());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"));
+
+        String token = readToken(client(filter)
+                .get().uri("/internal/me").cookie("y1.sid", "anything")
+                .exchange().expectStatus().isOk()
+                .expectBody(String.class).returnResult().getResponseBody());
+
+        var decoded = signer.verify(token, null).orElseThrow();
+        assertThat(decoded.authStrength()).isEqualTo("level1");
+        assertThat(decoded.reauthenticatedAt()).isNull();  // 未重认证 → 敏感操作应被拒
+    }
+
+    @Test
     void clientForgedHeader_isStrippedAndReplaced() {
         SessionIdentityResolver resolver = resolverReturning(identity());
         UpstreamResolver upstream = upstreamInternal("/internal");
@@ -130,9 +163,17 @@ class InternalAssertionFilterTest {
     }
 
     private static ResolvedIdentity identity() {
+        // 普通登录：未重认证（reauthenticatedAt=null，authStrength=level1）
         return new ResolvedIdentity(
                 "11111111-1111-1111-1111-111111111111", "user", "active", "merchant", "sid-1",
-                "org-from-bff", "basic_publish");
+                "org-from-bff", "basic_publish", null, "level1");
+    }
+
+    /** 已 MFA 重认证的 session（V7）：断言须带上时刻与 level2，否则 trust 客服终审恒 403。 */
+    private static ResolvedIdentity reauthenticatedIdentity(java.time.Instant reauthAt) {
+        return new ResolvedIdentity(
+                "11111111-1111-1111-1111-111111111111", "user", "active", "customer_service", "sid-1",
+                null, null, reauthAt, "level2");
     }
 
     /** 控制器返回 JSON {@code {"assertion":"<token>"}}；解析出 token（或 "none"）。 */

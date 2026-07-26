@@ -14,5 +14,9 @@ public record ResolvedIdentity(
         String activeIdentityType,
         String sessionToken,
         String organizationId,
-        String permissionTier) {
+        String permissionTier,
+        /** MFA 重认证时刻（V7）；null=从未重认证。下游按近期性判定敏感操作（如 trust 客服终审）。 */
+        java.time.Instant reauthenticatedAt,
+        /** level1=普通登录 / level2=已重认证；null 视作 level1。 */
+        String authStrength) {
 }

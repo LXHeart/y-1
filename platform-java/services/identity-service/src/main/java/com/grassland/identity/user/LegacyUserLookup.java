@@ -24,6 +24,24 @@ public class LegacyUserLookup {
             .one();
     }
 
+    /**
+     * 按 id 查（含 password_hash）——重认证（MFA）校验当前登录用户的密码用。
+     * 与 {@link #findById} 的区别：那个不带哈希（供一般身份解析，避免哈希外泄到调用链）。
+     */
+    public Mono<LoginUser> findLoginUserById(String id) {
+        return db.sql("SELECT id, email, display_name, role, status, password_hash"
+                + " FROM app_users WHERE id = CAST(:id AS uuid)")
+            .bind("id", id)
+            .map((row) -> new LoginUser(
+                row.get("id", String.class),
+                row.get("email", String.class),
+                row.get("display_name", String.class),
+                row.get("role", String.class),
+                row.get("status", String.class),
+                row.get("password_hash", String.class)))
+            .one();
+    }
+
     public Mono<LoginUser> findByEmail(String email) {
         return db.sql("SELECT id, email, display_name, role, status, password_hash FROM app_users WHERE email = :email")
             .bind("email", email == null ? null : email.trim().toLowerCase())

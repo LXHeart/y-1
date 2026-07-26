@@ -91,8 +91,10 @@ public class InternalAssertionFilter implements WebFilter {
                 identity.organizationId(),
                 identity.permissionTier(),
                 "cookie-session",
-                "level1",
-                null,
+                // 认证强度与重认证时刻取自 identity_session（V7）——此前硬编码 level1/null，
+                // 导致 trust 客服终审的 MFA 近期性校验恒失败（403）。
+                identity.authStrength() == null ? "level1" : identity.authStrength(),
+                identity.reauthenticatedAt(),
                 headerOrUuid(exchange, "X-Request-Id"),
                 headerOrUuid(exchange, "X-Trace-Id"),
                 properties.audience(),

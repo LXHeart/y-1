@@ -22,6 +22,9 @@ const judge = ref<Judge | null>(null)
 const voteRationale = ref('')
 const csDecision = ref<'for_merchant' | 'for_recommender'>('for_merchant')
 const localNotice = ref('')
+const reauthPassword = ref('')
+/** 本次会话重认证时刻（本地展示用；权威值在 session，由断言透传给后端）。 */
+const reauthAt = ref('')
 
 const isVoting = computed(() => snapshot.value?.status === 'voting')
 const isDecided = computed(() => snapshot.value?.status === 'decided')
@@ -101,6 +104,16 @@ async function appeal(): Promise<void> {
   if (!appealed) return
   snapshot.value = appealed
   localNotice.value = '上诉已提交，等待客服终审'
+}
+
+async function doReauthenticate(): Promise<void> {
+  localNotice.value = ''
+  if (!reauthPassword.value) return
+  const result = await grassland.reauthenticate(reauthPassword.value)
+  reauthPassword.value = ''
+  if (!result) return
+  reauthAt.value = result.reauthenticatedAt ? new Date(result.reauthenticatedAt).toLocaleTimeString() : ''
+  localNotice.value = `重认证成功（${result.authStrength}），5 分钟内可执行敏感操作`
 }
 
 async function submitFinalDecision(): Promise<void> {
@@ -194,6 +207,11 @@ async function submitFinalDecision(): Promise<void> {
         <details>
           <summary>客服终审（覆盖判决）</summary>
           <div class="adj-row">
+            <input v-model="reauthPassword" type="password" placeholder="密码（重认证）" />
+            <button type="button" :disabled="grassland.loading.value" @click="doReauthenticate">重认证</button>
+            <span v-if="reauthAt" class="adj-hint">已重认证 {{ reauthAt }}</span>
+          </div>
+          <div class="adj-row">
             <select v-model="csDecision">
               <option value="for_merchant">判商家方胜诉</option>
               <option value="for_recommender">判推荐官方胜诉</option>
@@ -201,8 +219,9 @@ async function submitFinalDecision(): Promise<void> {
             <button type="button" :disabled="grassland.loading.value" @click="submitFinalDecision">提交终审</button>
           </div>
           <p class="adj-warn">
-            ⚠️ 需客服身份 + 近期 MFA 重认证。当前登录链路尚未产生 <code>reauthenticatedAt</code>，
-            此操作会返回 403——待补 MFA 重认证流程后可用。
+            ⚠️ MFA 重认证已可用（上方按钮），但终审仍需<strong>客服身份</strong>——
+            identity 的身份枚举只有商家/推荐官，客服身份暂无法获得，此操作仍会 403。
+            拟改为按账号 role 判定，需先扩展断言契约携带 role。
           </p>
         </details>
       </div>

@@ -115,6 +115,15 @@ export function useGrassland() {
       body: JSON.stringify({ type }),
     }))
 
+  /**
+   * MFA 重认证（HLD §11.2）：校验密码 → 写入当前 session 的重认证时刻，
+   * 使后续断言带 `authStrength=level2` + `reauthenticatedAt`，满足敏感操作的近期性要求。
+   * 按 session 记录——一个设备重认证不提升另一设备权限。
+   */
+  const reauthenticate = (password: string) =>
+    run(() => request<{ authStrength: string; reauthenticatedAt: string | null }>(
+      '/api/me/reauthenticate', { method: 'POST', body: JSON.stringify({ password }) }))
+
   // ---------- marketplace：任务 + 报名 ----------
 
   const listTasks = (organizationId: string, status = 'published') =>
@@ -265,8 +274,11 @@ export function useGrassland() {
   /**
    * 客服终审（覆盖面板判决）。
    *
-   * ⚠️ **当前必然 403**：后端要求断言的 `reauthenticatedAt` 在 5 分钟内（MFA 近期性），
-   * 但现有登录链路不产生该字段（edge-bff 签发时恒 null）。需先补 MFA 重认证流程才能真正可用。
+   * ⚠️ **当前仍会 403，但卡点已从 MFA 转移到身份**：
+   * - MFA 侧已打通：调 {@link reauthenticate} 后断言会带 `authStrength=level2` + `reauthenticatedAt`（已实测）
+   * - 剩余阻塞：trust 的 `requireCustomerService` 要求断言 `activeIdentityType=customer_service`，
+   *   但 identity 的 `IdentityType` 只有 merchant/recommender——客服身份无法获得（与 judge 同类问题）。
+   *   拟改为按 `app_users.role` 判定，但断言当前**不携带 role**，需先扩展共享断言契约。
    */
   const finalDecision = (disputeId: string, decision: string) =>
     run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/final-decision`, {
@@ -283,6 +295,7 @@ export function useGrassland() {
     createOrganization,
     openIdentity,
     activateIdentity,
+    reauthenticate,
     // marketplace
     listTasks,
     createTask,
