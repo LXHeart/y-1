@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
@@ -83,17 +83,45 @@ async function loadOrganizations(): Promise<void> {
 }
 
 /**
- * 挂载时必须**先激活活动身份**再拉数据。
+ * 初始化必须**先激活活动身份**再拉数据。
  *
  * 活动身份按 session 存（identity_session），新登录的 session 是「消费者」——
  * 此时直接调 /api/finance/accounts 等会 403「需要商家身份」，余额显示成 `—`。
  * 此前只有点视角切换按钮才激活，导致首次进入工作台数据全空（浏览器实测发现）。
  */
-onMounted(async () => {
+async function initForAccount(): Promise<void> {
   await grassland.activateIdentity(side.value)
   grassland.clearError()  // 激活失败不该以红条吓用户，后续请求会给出更具体的错误
   await loadOrganizations()
-})
+}
+
+/** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
+function resetAccountState(): void {
+  orgs.value = []
+  activeOrgId.value = ''
+  account.value = null
+  tasks.value = []
+  applications.value = []
+  selectedTaskId.value = ''
+  activeDisputeId.value = ''
+  outcomes.value = {}
+  notice.value = ''
+}
+
+/**
+ * 按**账号**初始化，而不是 onMounted 跑一次。
+ *
+ * 工作台在未登录时也已挂载，且 App.vue 用 `<component :is>` 复用组件、切标签页不重挂载：
+ * 只在 mounted 初始化的话，同一页面内登录/换账号后，组织列表、余额、任务全是上一个账号的
+ * （或空白），必须手动刷新整页才正确——浏览器实测发现。活动身份也按 session 存，
+ * 换账号后必须重新激活，否则商家操作 403。
+ */
+watch(() => currentUser.value?.id, (accountId) => {
+  resetAccountState()
+  if (accountId) {
+    initForAccount()
+  }
+}, { immediate: true })
 
 // 注：openIdentity 对商家需带 org。挂载时 org 尚未加载，故此处只做激活；
 // 未开通的情况留给 switchSide（那时 activeOrgId 已就绪）。

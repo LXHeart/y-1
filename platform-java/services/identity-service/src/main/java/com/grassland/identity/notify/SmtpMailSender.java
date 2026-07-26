@@ -11,10 +11,32 @@ public class SmtpMailSender {
     private final JavaMailSender mailSender;
     private final String from;
 
+    /**
+     * 发件人解析：{@code SMTP_FROM} → SMTP 登录账号 → 占位地址。
+     *
+     * <p>两处修正（实测「邮件没发出去」的根因）：
+     * <ul>
+     *   <li>原来读的 {@code spring.mail.properties.mail.from} <b>这个 key 根本不存在</b>——
+     *       application.yml 里配的是 {@code mail.smtp.from}，于是永远落到占位地址；</li>
+     *   <li>QQ/163 等 SMTP 要求发件人 <b>必须等于认证账号</b>，发 {@code noreply@grassland.local}
+     *       会被服务器直接断开连接（表现为 {@code MessagingException: Exception reading response}）。
+     *       故 SMTP_FROM 未配时回落到 {@code spring.mail.username}，而不是占位地址。</li>
+     * </ul>
+     */
     public SmtpMailSender(@Autowired(required = false) JavaMailSender mailSender,
-                          @Value("${spring.mail.properties.mail.from:noreply@grassland.local}") String from) {
+                          @Value("${SMTP_FROM:}") String configuredFrom,
+                          @Value("${spring.mail.username:}") String smtpUsername) {
         this.mailSender = mailSender;
-        this.from = from;
+        this.from = firstNonBlank(configuredFrom, smtpUsername, "noreply@grassland.local");
+    }
+
+    private static String firstNonBlank(String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate != null && !candidate.isBlank()) {
+                return candidate.trim();
+            }
+        }
+        return "";
     }
 
     public boolean isConfigured() { return mailSender != null; }

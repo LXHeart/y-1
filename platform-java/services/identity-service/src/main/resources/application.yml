@@ -25,7 +25,13 @@ spring:
     password: ${SMTP_PASS:}
     properties:
       mail.smtp.ssl.enable: true
-      mail.smtp.from: ${SMTP_FROM:noreply@grassland.local}
+      # 信封发件人：QQ/163 等要求必须等于认证账号，故默认取 SMTP_USER 而非占位地址
+      # （发占位地址会被服务器断连：MessagingException: Exception reading response）。
+      mail.smtp.from: ${SMTP_FROM:${SMTP_USER:}}
+      # 不设超时的话，SMTP 卡住会一直占住 boundedElastic 线程。
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
 
 server:
   port: ${SERVER_PORT:8082}
