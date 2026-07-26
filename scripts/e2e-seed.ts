@@ -62,6 +62,21 @@ async function upsertOrganization(ownerAccountId: string): Promise<string> {
 }
 
 /**
+ * 组织成员：给 owner 补一行 OWNER 记录。
+ *
+ * 真实创建路径（`POST /api/organizations`）会顺带种这行，而种子此前直接 INSERT organization、
+ * 跳过了它 —— 鉴权靠 `owner_account_id` 兜底所以一直没暴露，但**成员列表是空的**，
+ * 与真实创建出来的组织行为不一致（浏览器实测「成员与门店」卡片时发现）。
+ */
+async function upsertOwnerMembership(organizationId: string, accountId: string): Promise<void> {
+  await queryDb(
+    `INSERT INTO organization_membership(id, organization_id, account_id, role)
+     VALUES (gen_random_uuid(), $1, $2, 'owner')
+     ON CONFLICT (organization_id, account_id) DO UPDATE SET role = 'owner'`,
+    [organizationId, accountId])
+}
+
+/**
  * 身份档案。UNIQUE(account_id, identity_type) 冲突时**更新 organization_id**——
  * 这正是手工建数据时踩过的坑：商家档案先以无 org 建出，之后无法经 API 改绑（409）。
  */
@@ -102,6 +117,7 @@ async function reset(): Promise<void> {
   // 先删引用方，再删被引用方
   await queryDb('DELETE FROM judge WHERE account_id = ANY($1::uuid[])', [ids])
   await queryDb('DELETE FROM identity_profile WHERE account_id = ANY($1::uuid[])', [ids])
+  await queryDb('DELETE FROM organization_membership WHERE account_id = ANY($1::uuid[])', [ids])
   await queryDb('DELETE FROM identity_session WHERE account_id = ANY($1::uuid[])', [ids])
   const orgs = await queryDb<{ id: string }>(
     'SELECT id FROM organization WHERE owner_account_id = ANY($1::uuid[])', [ids])
@@ -120,6 +136,7 @@ async function seed(): Promise<SeedResult> {
   // 商家（也是组织 owner）
   const merchantId = await upsertUser(MERCHANT_EMAIL, 'user', passwordHash)
   const orgId = await upsertOrganization(merchantId)
+  await upsertOwnerMembership(orgId, merchantId)
   await upsertIdentityProfile(merchantId, 'merchant', orgId)
   await upsertFinanceAccount(orgId, 1_000_000)  // ¥10000，够跑多轮资金型任务
 

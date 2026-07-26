@@ -284,6 +284,42 @@ export function parsePermissionMaterials(raw: string | null): Record<string, str
 /** 活动身份：merchant/recommender；null = 消费者。按 session 隔离（多设备互不影响）。 */
 export type IdentityType = 'merchant' | 'recommender'
 
+// ---------- identity：组织成员 / 门店 / 门店成员（Slice 2F/2G/2J）----------
+
+/**
+ * 组织成员角色。owner 只能在建组织时产生——
+ * `POST /memberships` 显式拒绝授予 owner（「cannot grant owner role via this endpoint」）。
+ */
+export type MembershipRole = 'owner' | 'admin' | 'member'
+
+/** 门店成员角色。org 的 OWNER/ADMIN 隐式视为门店 MANAGER（超管）。 */
+export type StoreRole = 'manager' | 'staff'
+
+export interface Membership {
+  id: string
+  organizationId: string
+  accountId: string
+  role: MembershipRole
+  createdAt: string | null
+}
+
+export interface Store {
+  id: string
+  organizationId: string
+  name: string
+  status: string
+  createdAt: string | null
+}
+
+/** 门店成员。注意归属字段是 `storeId`（不是 organizationId）。 */
+export interface StoreMembership {
+  id: string
+  storeId: string
+  accountId: string
+  role: StoreRole
+  createdAt: string | null
+}
+
 // ---------- trust：审判官池 + 投票 ----------
 
 /** 审判官入池记录。active=false 为已退池（软删，保留历史面板/投票完整性）。 */

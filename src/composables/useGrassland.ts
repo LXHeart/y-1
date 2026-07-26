@@ -9,12 +9,16 @@ import type {
   Judge,
   JudgeVote,
   CreatePermissionRequestInput,
+  Membership,
   Organization,
   OrganizationQuota,
   PermissionRequest,
   PermissionTier,
   ReservationOutcome,
   ReviewDecision,
+  Store,
+  StoreMembership,
+  StoreRole,
   TaskUsage,
   SettlementOutcome,
   Task,
@@ -182,6 +186,57 @@ export function useGrassland() {
       method: 'POST',
       body: JSON.stringify(note ? { decision, note } : { decision }),
     }))
+
+  // ---------- identity：组织成员 / 门店 / 门店成员（Slice 2F/2G/2J）----------
+
+  /** 列组织成员（需 org MEMBER+）。 */
+  const listMemberships = (orgId: string) =>
+    run(() => request<Membership[]>(`/api/organizations/${orgId}/memberships`))
+
+  /**
+   * 加组织成员（需 org **OWNER**）。role 仅 admin/member——
+   * 后端显式拒绝经此端点授予 owner；重复添加 409。
+   */
+  const addMembership = (orgId: string, accountId: string, role: 'admin' | 'member') =>
+    run(() => request<Membership>(`/api/organizations/${orgId}/memberships`, {
+      method: 'POST',
+      body: JSON.stringify({ accountId, role }),
+    }))
+
+  /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
+  const removeMembership = (orgId: string, accountId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+
+  /** 列门店（需 org MEMBER+）。 */
+  const listStores = (orgId: string) =>
+    run(() => request<Store[]>(`/api/organizations/${orgId}/stores`))
+
+  /** 建门店（需 org ADMIN+）。 */
+  const createStore = (orgId: string, name: string) =>
+    run(() => request<Store>(`/api/organizations/${orgId}/stores`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }))
+
+  /** 列门店成员（需门店 STAFF+；org OWNER/ADMIN 隐式为门店 MANAGER）。 */
+  const listStoreMemberships = (orgId: string, storeId: string) =>
+    run(() => request<StoreMembership[]>(`/api/organizations/${orgId}/stores/${storeId}/memberships`))
+
+  /**
+   * 加门店成员。授权分档（Slice 2J）：
+   * 任命 `manager` 需 **org ADMIN+**；加 `staff` 只需**门店 MANAGER+**（店长可自管本店员工）。
+   */
+  const addStoreMembership = (orgId: string, storeId: string, accountId: string, role: StoreRole) =>
+    run(() => request<StoreMembership>(
+      `/api/organizations/${orgId}/stores/${storeId}/memberships`, {
+        method: 'POST',
+        body: JSON.stringify({ accountId, role }),
+      }))
+
+  /** 移除门店成员（需门店 MANAGER+）。移除唯一经理 → 409（末位 MANAGER 守卫）。 */
+  const removeStoreMembership = (orgId: string, storeId: string, accountId: string) =>
+    run(() => request<unknown>(
+      `/api/organizations/${orgId}/stores/${storeId}/memberships/${accountId}`, { method: 'DELETE' }))
 
   // ---------- marketplace：任务 + 报名 ----------
 
@@ -375,6 +430,15 @@ export function useGrassland() {
     appealPermissionRequest,
     listPendingPermissionRequests,
     reviewPermissionRequest,
+    // identity：组织成员 / 门店 / 门店成员
+    listMemberships,
+    addMembership,
+    removeMembership,
+    listStores,
+    createStore,
+    listStoreMemberships,
+    addStoreMembership,
+    removeStoreMembership,
     // marketplace
     listTasks,
     createTask,

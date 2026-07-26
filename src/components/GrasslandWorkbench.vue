@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
+import OrgTeamCard from './OrgTeamCard.vue'
 import PermissionReviewPanel from './PermissionReviewPanel.vue'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
@@ -329,6 +330,11 @@ function statusLabel(status: string): string {
           :industry="activeOrg.industry"
           @changed="loadOrganizations"
         />
+      </article>
+
+      <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
+      <article v-if="activeOrg" class="gl-card gl-card-wide">
+        <OrgTeamCard :org-id="activeOrg.id" />
       </article>
 
       <article class="gl-card">
