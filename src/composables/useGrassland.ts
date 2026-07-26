@@ -8,8 +8,14 @@ import type {
   IdentityType,
   Judge,
   JudgeVote,
+  CreatePermissionRequestInput,
   Organization,
+  OrganizationQuota,
+  PermissionRequest,
+  PermissionTier,
   ReservationOutcome,
+  ReviewDecision,
+  TaskUsage,
   SettlementOutcome,
   Task,
   TaskApplication,
@@ -123,6 +129,59 @@ export function useGrassland() {
   const reauthenticate = (password: string) =>
     run(() => request<{ authStrength: string; reauthenticatedAt: string | null }>(
       '/api/me/reauthenticate', { method: 'POST', body: JSON.stringify({ password }) }))
+
+  // ---------- identity：额度 + 商家权限升级审核流（D-05）----------
+
+  /**
+   * 组织额度**上限**。
+   *
+   * ⚠️ 线上返回是嵌套的 `{tier, quota:{...}}`，这里拍平成 {@link OrganizationQuota} 再给 UI——
+   * 拍平点只此一处，避免每个调用方各拆一次。
+   */
+  const getQuota = async (orgId: string): Promise<OrganizationQuota | null> =>
+    run(async () => {
+      const raw = await request<{ tier: PermissionTier; quota: Omit<OrganizationQuota, 'tier'> }>(
+        `/api/organizations/${orgId}/quota`)
+      return { tier: raw.tier, ...raw.quota }
+    })
+
+  /** 发布用量（额度的「已用」侧，来自 marketplace；与 {@link getQuota} 的上限合并展示）。 */
+  const getUsage = (orgId: string) =>
+    run(() => request<TaskUsage>(`/api/tasks/usage?organizationId=${encodeURIComponent(orgId)}`))
+
+  /**
+   * 提交权限升级申请（须 org OWNER）。
+   *
+   * 后端校验：`requestedTier` 须**高于**当前 tier（否则 409）；材料按 tier+行业必填，缺料 400。
+   */
+  const createPermissionRequest = (orgId: string, input: CreatePermissionRequestInput) =>
+    run(() => request<PermissionRequest>(`/api/organizations/${orgId}/permission-requests`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  /** 列本组织的申请（含历史与申诉件，须 org MEMBER+）。 */
+  const listPermissionRequests = (orgId: string) =>
+    run(() => request<PermissionRequest[]>(`/api/organizations/${orgId}/permission-requests`))
+
+  /** 申诉（须 org OWNER，且原申请为 rejected）→ 新建一条 pending 走同一审核队列。 */
+  const appealPermissionRequest = (orgId: string, id: string, materials: Record<string, string>, note?: string) =>
+    run(() => request<PermissionRequest>(
+      `/api/organizations/${orgId}/permission-requests/${id}/appeal`, {
+        method: 'POST',
+        body: JSON.stringify(note ? { materials, note } : { materials }),
+      }))
+
+  /** 平台 admin：待审队列（`app_users.role=='admin'`，否则 403）。 */
+  const listPendingPermissionRequests = () =>
+    run(() => request<PermissionRequest[]>('/api/admin/permission-requests'))
+
+  /** 平台 admin：审核。approve → 升级 org tier；reject → tier 不变。终态再审 409。 */
+  const reviewPermissionRequest = (id: string, decision: ReviewDecision, note?: string) =>
+    run(() => request<PermissionRequest>(`/api/admin/permission-requests/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify(note ? { decision, note } : { decision }),
+    }))
 
   // ---------- marketplace：任务 + 报名 ----------
 
@@ -308,6 +367,14 @@ export function useGrassland() {
     openIdentity,
     activateIdentity,
     reauthenticate,
+    // identity：额度 + 权限升级审核流（D-05）
+    getQuota,
+    getUsage,
+    createPermissionRequest,
+    listPermissionRequests,
+    appealPermissionRequest,
+    listPendingPermissionRequests,
+    reviewPermissionRequest,
     // marketplace
     listTasks,
     createTask,

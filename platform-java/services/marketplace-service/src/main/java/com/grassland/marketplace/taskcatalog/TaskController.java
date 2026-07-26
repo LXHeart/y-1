@@ -98,6 +98,38 @@ public class TaskController {
                                 "data", list.stream().map(this::toBody).toList()))));
     }
 
+    /**
+     * 本组织的发布用量（D-05 额度的「已用」侧）。
+     *
+     * <p>补 identity {@code GET /api/organizations/{orgId}/quota} 的缺口——那里只给**上限**
+     * （策略归 identity 的 {@code PermissionQuotaPolicy} 所有），用量在 marketplace 这侧。
+     * 前端把两者合并展示为「已用 N / 上限 M」。
+     *
+     * <p>刻意<b>只回用量、不回上限</b>：上限已在 identity 与本服务的 {@link PublishQuotaPolicy}
+     * 两处镜像（靠单测锁值防漂移），再加第三处只会多一个漂移点。
+     *
+     * <p>路由放在 {@code /api/tasks/*} 下，命中 edge-bff 既有的 {@code /api/tasks**} 前缀，无需新增 BFF 路由。
+     * 字面量段 {@code usage} 在 PathPattern 里优先级高于 {@code {id}} 模板，不会被详情端点抢走。
+     */
+    @GetMapping("/api/tasks/usage")
+    public Mono<ResponseEntity<Map<String, Object>>> usage(@RequestParam String organizationId,
+                                                           ServerHttpRequest request) {
+        return callers.requireMerchant(request)
+                .flatMap(merchant -> {
+                    // org 归属自查，与发布闸门 1 同口径：不能查别家组织的用量。
+                    if (!organizationId.equals(merchant.organizationId())) {
+                        return Mono.<ResponseEntity<Map<String, Object>>>error(
+                                new MarketplaceException(403, "无权查询该组织用量"));
+                    }
+                    return tasks.countActiveByOrganization(organizationId)
+                            .flatMap(active -> tasks.countCreatedThisMonthByOrganization(organizationId)
+                                    .map(monthly -> ResponseEntity.ok(Map.of("success", true, "data", Map.of(
+                                            "organizationId", organizationId,
+                                            "activeTasks", active,
+                                            "monthlyTasks", monthly)))));
+                });
+    }
+
     @GetMapping("/api/tasks/{id}")
     public Mono<ResponseEntity<Map<String, Object>>> get(@PathVariable String id, ServerHttpRequest request) {
         return callers.resolve(request)

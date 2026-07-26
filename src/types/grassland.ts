@@ -176,12 +176,109 @@ export interface Organization {
   createdAt: string | null
 }
 
-/** 额度策略（identity 暴露上限；执行在 marketplace/finance）。 */
+/**
+ * 额度策略（identity 暴露**上限**；执行在 marketplace/finance）。
+ *
+ * ⚠️ 这是**拍平后**的形状。后端线上格式是嵌套的 `{tier, quota:{maxActiveTasks,...}}`
+ * （见 `PermissionRequestController.quota`），由 `useGrassland.getQuota` 拍平后再给 UI。
+ */
 export interface OrganizationQuota {
   tier: PermissionTier
   maxActiveTasks: number
   maxMonthlyTasks: number
+  /** 单笔交易上限（分）；0 = 该等级不可交易。 */
   maxTxAmountCents: number
+}
+
+/**
+ * 发布用量（额度的「已用」侧，来自 marketplace）。
+ *
+ * identity 的 `/quota` 只给上限、不给用量（策略与用量分属两个服务），
+ * 前端把二者合并展示为「已用 N / 上限 M」。
+ */
+export interface TaskUsage {
+  organizationId: string
+  /** 活跃任务数（status <> closed）。 */
+  activeTasks: number
+  /** 本月新建任务数（按 DB 时区 date_trunc('month')，跨月自动重置）。 */
+  monthlyTasks: number
+}
+
+// ---------- identity：商家权限升级审核流（D-05）----------
+
+/** 申请状态。approved/rejected 为终态；appeal 会新建一条 pending 引用原申请。 */
+export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected'
+
+/**
+ * 审核时效状态（后端按 `review_deadline` 实时计算，仅展示不自动批准）。
+ * completed = 已终态；overdue = 已超时；at_risk = 临近截止。
+ */
+export type SlaStatus = 'within' | 'at_risk' | 'overdue' | 'completed'
+
+/** 材料类型。必填集合由 tier + 行业决定（见 `PermissionMaterialPolicy`）。 */
+export type MaterialType =
+  | 'business_license'
+  | 'legal_representative'
+  | 'financial_qualification'
+  | 'industry_license'
+  | 'contact_info'
+
+/** 行业。beauty/education 为受监管行业，额外要求行业许可证。 */
+export type Industry = 'catering' | 'retail' | 'beauty' | 'education' | 'e_commerce' | 'other'
+
+/** 商家权限升级申请。materials 为 {材料类型: 文本}。 */
+export interface PermissionRequest {
+  id: string
+  organizationId: string
+  requesterAccountId: string
+  requestedTier: PermissionTier
+  status: PermissionRequestStatus
+  /** 提交时的行业快照（驱动材料要求）。 */
+  industry: Industry | null
+  /**
+   * ⚠️ **响应里是 JSON 字符串，不是对象**——后端按 `materials::text` 取出原始 jsonb
+   * （见 `MerchantPermissionRequestRepository` 的 SELECT_COLS）。
+   *
+   * 请求侧却收**对象**（`CreatePermissionRequest.materials` 是 `Map<String,String>`）——
+   * 又一处请求/响应不对称，与 P0-1 的 `type`/`identityType` 同类。
+   * 用 `parsePermissionMaterials()` 解析，别直接 `Object.entries`
+   * （对字符串会逐字符展开，浏览器实测踩到过）。
+   */
+  materials: string | null
+  reviewDeadline: string | null
+  slaStatus: SlaStatus
+  reviewerAccountId: string | null
+  reviewNote: string | null
+  /** 申诉件指向的原申请 id；null = 首次申请。 */
+  originalRequestId: string | null
+  appealNote: string | null
+  createdAt: string | null
+}
+
+/** 提交升级申请。⚠️ 字段名是 `requestedTier`/`materials`/`industry`（后端 `CreatePermissionRequest`）。 */
+export interface CreatePermissionRequestInput {
+  requestedTier: PermissionTier
+  materials: Record<string, string>
+  industry?: string
+}
+
+/** 审核决定。仅 approve/reject 两值（后端 compact constructor 校验，其它值 400）。 */
+export type ReviewDecision = 'approve' | 'reject'
+
+/**
+ * 解析 {@link PermissionRequest.materials}（JSON 字符串 → 材料表）。
+ *
+ * 坏 JSON / null 一律返回空对象——审核界面不该因为一条脏数据整块炸掉。
+ */
+export function parsePermissionMaterials(raw: string | null): Record<string, string> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return parsed as Record<string, string>
+  } catch {
+    return {}
+  }
 }
 
 /** 活动身份：merchant/recommender；null = 消费者。按 session 隔离（多设备互不影响）。 */

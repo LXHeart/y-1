@@ -9,6 +9,7 @@ import com.grassland.trust.judge.JudgeRepository;
 import com.grassland.trust.judge.JudgeVote;
 import com.grassland.trust.judge.VoteChoice;
 import com.grassland.trust.judge.VoteTally;
+import com.grassland.trust.security.DisputeAudience;
 import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
 import com.grassland.trust.workflow.AdjudicationInput;
@@ -63,10 +64,13 @@ public class AdjudicationController {
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
     private final WorkflowClient workflowClient;
+    /** 读争议的受众口径（当事方 / marketplace 服务 / 本轮面板审判官 / 客服），见 {@link DisputeAudience}。 */
+    private final DisputeAudience audience;
 
     public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
                                   JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props,
-                                  WorkflowClient workflowClient) {
+                                  WorkflowClient workflowClient, DisputeAudience audience) {
+        this.audience = audience;
         this.callers = callers;
         this.disputes = disputes;
         this.judges = judges;
@@ -200,19 +204,9 @@ public class AdjudicationController {
         return callers.resolvePartyOrService(request, TrustCallerResolver.MARKETPLACE_SERVICE)
                 .flatMap(caller -> disputes.findById(id)
                         .switchIfEmpty(fail(404, "争议不存在"))
-                        .filterWhen(d -> {
-                            if (caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)
-                                    // 客服跨 org：平台职能，本就有权覆盖任意争议的判决（HLD §11.2 兜底）
-                                    || caller.isCustomerService()
-                                    || d.organizationId().equals(caller.organizationId())) {
-                                return Mono.just(true);
-                            }
-                            // 本轮面板审判官：快照本就是**脱敏**的（DesensitizedCase，D-10），
-                            // 审判官正是它的目标读者——不让读等于「能投票却看不见要投什么」。
-                            // 浏览器实测发现：投票端点对审判官放行、快照端点却按 org 拒绝，
-                            // 看板恒显示「无权查询该争议」，投票按钮组根本渲染不出来。
-                            return judges.isPanelMember(d.id(), d.round(), caller.accountId());
-                        })
+                        // 受众口径统一在 DisputeAudience（当事方 / marketplace 服务 / 本轮面板审判官 / 客服）。
+                        // 不要在此就地展开——「读争议是谁的权限」只应有一个答案，见该类 javadoc 记的四次同类缺陷。
+                        .filterWhen(d -> audience.canRead(caller, d))
                         .switchIfEmpty(fail(403, "无权查询该争议"))
                         .flatMap(this::snapshot)
                         .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));

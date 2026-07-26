@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
+import MerchantPermissionCard from './MerchantPermissionCard.vue'
+import PermissionReviewPanel from './PermissionReviewPanel.vue'
+import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   FinanceAccount,
@@ -20,6 +23,10 @@ import type {
  */
 
 const grassland = useGrassland()
+const { currentUser } = useAuth()
+
+/** 平台 admin 才看得到审核队列。真正的门禁在服务端（identity 查 app_users.role）。 */
+const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
 
 type Side = 'merchant' | 'recommender'
 
@@ -314,6 +321,16 @@ function statusLabel(status: string): string {
         </p>
       </article>
 
+      <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
+      <article v-if="activeOrg" class="gl-card gl-card-wide">
+        <MerchantPermissionCard
+          :org-id="activeOrg.id"
+          :tier="activeOrg.permissionTier"
+          :industry="activeOrg.industry"
+          @changed="loadOrganizations"
+        />
+      </article>
+
       <article class="gl-card">
         <h3>2. 资金账户</h3>
         <p class="gl-balance">余额 <strong>¥{{ balanceYuan }}</strong></p>
@@ -435,6 +452,11 @@ function statusLabel(status: string): string {
       </div>
       <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
       <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
+    </article>
+
+    <!-- 平台审核队列：仅 admin 可见（服务端另有 role 门禁），与商家/推荐官视角无关故放在切换之外 -->
+    <article v-if="isPlatformAdmin" class="gl-card gl-card-wide">
+      <PermissionReviewPanel @reviewed="loadOrganizations" />
     </article>
   </section>
 </template>

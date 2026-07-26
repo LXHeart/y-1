@@ -193,6 +193,49 @@ class TaskControllerIT extends MarketplaceItSupport {
         return m;
     }
 
+    /**
+     * 用量端点（D-05 额度的「已用」侧）：发布 2 条后 active/monthly 均为 2。
+     *
+     * <p>identity 的 {@code /quota} 只给上限，用量在 marketplace 这侧；前端合并为「已用 N / 上限 M」。
+     */
+    @Test
+    void usageReportsActiveAndMonthlyCounts() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        publish(merchant, org, "basic_publish", "用量任务1", null);
+        publish(merchant, org, "basic_publish", "用量任务2", null);
+
+        client().get().uri("/api/tasks/usage?organizationId=" + org)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.organizationId").isEqualTo(org)
+                .jsonPath("$.data.activeTasks").isEqualTo(2)
+                .jsonPath("$.data.monthlyTasks").isEqualTo(2);
+    }
+
+    /** org 归属自查：不能查别家组织的用量（与发布闸门 1 同口径）。 */
+    @Test
+    void usageRejectsOtherOrg() {
+        String merchant = UUID.randomUUID().toString();
+        client().get().uri("/api/tasks/usage?organizationId=" + UUID.randomUUID())
+                .header("X-Grassland-Identity", sign(merchant, "merchant", UUID.randomUUID().toString(), "basic_publish"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    /**
+     * 路由优先级回归：{@code /api/tasks/usage} 不能被 {@code /api/tasks/{id}} 详情端点抢走。
+     * 若被抢走，这里会得到 404「任务不存在」而非 200 用量体。
+     */
+    @Test
+    void usagePathNotShadowedByTaskDetail() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        client().get().uri("/api/tasks/usage?organizationId=" + org)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.activeTasks").isEqualTo(0);
+    }
+
     @SuppressWarnings("unchecked")
     private String publish(String merchant, String org, String tier, String title, Integer maxSlots) {
         Map<String, Object> resp = client().post().uri("/api/tasks")

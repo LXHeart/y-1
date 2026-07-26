@@ -18,12 +18,15 @@ import { queryDb } from '../server/src/lib/db'
 const PASSWORD = 'E2ePass!2026'
 const MERCHANT_EMAIL = 'e2e-merchant@test.local'
 const CS_EMAIL = 'e2e-cs@test.local'
+/** 平台管理员：D-05 权限审核队列的门禁是 `app_users.role == 'admin'`。 */
+const ADMIN_EMAIL = 'e2e-admin@test.local'
 const JUDGE_COUNT = 7
 const ORG_NAME = 'E2E 测试商家'
 
 interface SeedResult {
   merchantId: string
   csId: string
+  adminId: string
   orgId: string
   judgeIds: string[]
 }
@@ -123,6 +126,9 @@ async function seed(): Promise<SeedResult> {
   // 客服（role 判定，非业务身份；终审还需 5 分钟内重认证）
   const csId = await upsertUser(CS_EMAIL, 'customer_service', passwordHash)
 
+  // 平台管理员（D-05 权限审核队列 `/api/admin/permission-requests` 的门禁）
+  const adminId = await upsertUser(ADMIN_EMAIL, 'admin', passwordHash)
+
   // 审判官池：平台级，且各自具备 recommender 身份（投票门禁要求「推荐官 + 已入池」）
   const judgeIds: string[] = []
   for (let i = 1; i <= JUDGE_COUNT; i += 1) {
@@ -132,7 +138,7 @@ async function seed(): Promise<SeedResult> {
     judgeIds.push(id)
   }
 
-  return { merchantId, csId, orgId, judgeIds }
+  return { merchantId, csId, adminId, orgId, judgeIds }
 }
 
 async function main(): Promise<void> {
@@ -146,6 +152,7 @@ async function main(): Promise<void> {
   console.log(`商家:   ${MERCHANT_EMAIL}  (${result.merchantId})`)
   console.log(`组织:   ${ORG_NAME}  (${result.orgId})  tier=finance_transaction  余额=¥10000`)
   console.log(`客服:   ${CS_EMAIL}  (${result.csId})  role=customer_service`)
+  console.log(`管理员: ${ADMIN_EMAIL}  (${result.adminId})  role=admin（权限审核队列）`)
   console.log(`审判官: e2e-judge1..${JUDGE_COUNT}@test.local  (${result.judgeIds.length} 名，均已入池)`)
   console.log('\n提示：')
   console.log('  · 审判官投票需先激活 recommender 活动身份（POST /api/me/active-identity {"type":"recommender"}）')
