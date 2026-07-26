@@ -27,6 +27,9 @@ public class FinanceCallerResolver {
     /** 受信任的 Saga 编排服务 principal（marketplace AcceptApplicationReservationWorkflow）。 */
     public static final String MARKETPLACE_SERVICE = "marketplace";
 
+    /** 受信任的争议处置服务 principal（trust ReleaseHoldAndApplyDecisionActivity，Slice 6C Phase D）。 */
+    public static final String TRUST_SERVICE = "trust";
+
     private final IdentityAssertionSigner signer;
     private final String headerName;
 
@@ -75,6 +78,13 @@ public class FinanceCallerResolver {
                 .switchIfEmpty(Mono.error(new FinanceException(403, "无权操作该组织预留")));
     }
 
+    /** 接受终端商家用户或<b>任一</b>指定服务 principal（release/capture 现接受 marketplace 与 trust，Slice 6C Phase D）。 */
+    public Mono<Caller> resolveMerchantOrServices(ServerHttpRequest request, String... servicePrincipals) {
+        return resolve(request)
+                .filter(c -> c.isMerchant() || c.isServicePrincipalAny(servicePrincipals))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "无权操作该组织预留")));
+    }
+
     /** 断言解析出的调用者。
      *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级资源授权自查。
      *  {@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）。 */
@@ -93,6 +103,19 @@ public class FinanceCallerResolver {
         /** 是否为指定服务 principal 的服务断言。 */
         public boolean isServicePrincipal(String expectedPrincipal) {
             return isService() && expectedPrincipal != null && expectedPrincipal.equalsIgnoreCase(principal);
+        }
+
+        /** 是否为任一指定服务 principal 的服务断言（Slice 6C Phase D：release/capture 接受多 principal）。 */
+        public boolean isServicePrincipalAny(String... principals) {
+            if (!isService() || principals == null) {
+                return false;
+            }
+            for (String p : principals) {
+                if (p != null && p.equalsIgnoreCase(principal)) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

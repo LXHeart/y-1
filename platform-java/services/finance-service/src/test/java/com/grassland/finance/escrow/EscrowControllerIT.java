@@ -288,6 +288,77 @@ class EscrowControllerIT extends FinanceItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    // ---------- reverse（Slice 6C Phase D / D-06）----------
+
+    @Test
+    void reverseRefundsCapturedAndRestoresBalance() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        capture(merchant, org, ref);  // reserved→captured（余额仍 400）
+        assertThat(balanceOf(org)).isEqualTo(400L);
+
+        // trust 服务断言 reverse（D-06：captured→refunded + 还原余额）
+        client().post().uri("/api/finance/reservations/" + ref + "/reverse")
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("refunded");
+        assertThat(balanceOf(org)).isEqualTo(1000L);  // 还原
+        assertThat(outboxCount("FundsReversed", org)).isEqualTo(1);
+
+        // 再 reverse → 409（已 refunded）
+        client().post().uri("/api/finance/reservations/" + ref + "/reverse")
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void reverseRejectsNonCaptured() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);  // reserved（未 capture）
+        client().post().uri("/api/finance/reservations/" + ref + "/reverse")
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .exchange().expectStatus().isEqualTo(409);  // 须 captured
+        assertThat(balanceOf(org)).isEqualTo(400L);  // 未动
+    }
+
+    @Test
+    void reverseOnlyTrustServiceAllowed() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        capture(merchant, org, ref);
+        // marketplace 服务断言不可 reverse（仅 trust）→ 403
+        client().post().uri("/api/finance/reservations/" + ref + "/reverse")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void captureByTrustServiceSucceeds() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        // release/capture 现接受 trust 服务断言（Phase D 放宽）
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("captured");
+    }
+
     // ---------- helpers ----------
 
     private void provision(String merchant, String org) {
@@ -308,6 +379,12 @@ class EscrowControllerIT extends FinanceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", ref, "amountCents", amount))
                 .exchange().expectStatus().isCreated();
+    }
+
+    private void capture(String merchant, String org, String ref) {
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk();
     }
 
     private long balanceOf(String org) {

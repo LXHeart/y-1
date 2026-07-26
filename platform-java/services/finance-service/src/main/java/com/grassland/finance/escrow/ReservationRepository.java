@@ -72,6 +72,18 @@ public class ReservationRepository {
                 .map(ReservationRepository::map).one();
     }
 
+    /** 冲正（D-06 争议处置，Slice 6C Phase D）：captured → refunded。余额还原由 controller 调 accounts.credit（镜像 release）。
+     *  0 行（非 captured）→ empty。 */
+    public Mono<FundsReservation> reverse(String id) {
+        return db.sql("""
+                UPDATE funds_reservation SET status = 'refunded', updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'captured'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id)
+                .map(ReservationRepository::map).one();
+    }
+
     private static FundsReservation map(Readable row) {
         return new FundsReservation(
                 row.get("id", String.class),

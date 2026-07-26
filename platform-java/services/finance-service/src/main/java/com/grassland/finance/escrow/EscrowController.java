@@ -85,7 +85,7 @@ public class EscrowController {
 
     @PostMapping("/api/finance/reservations/{engagementRef}/release")
     public Mono<ResponseEntity<Map<String, Object>>> release(@PathVariable String engagementRef, ServerHttpRequest request) {
-        return callers.resolveMerchantOrService(request, FinanceCallerResolver.MARKETPLACE_SERVICE)
+        return callers.resolveMerchantOrServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE, FinanceCallerResolver.TRUST_SERVICE)
                 .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
                         .switchIfEmpty(fail(404, "预留不存在"))
                         .flatMap(r -> {
@@ -106,7 +106,7 @@ public class EscrowController {
 
     @PostMapping("/api/finance/reservations/{engagementRef}/capture")
     public Mono<ResponseEntity<Map<String, Object>>> capture(@PathVariable String engagementRef, ServerHttpRequest request) {
-        return callers.resolveMerchantOrService(request, FinanceCallerResolver.MARKETPLACE_SERVICE)
+        return callers.resolveMerchantOrServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE, FinanceCallerResolver.TRUST_SERVICE)
                 .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
                         .switchIfEmpty(fail(404, "预留不存在"))
                         .flatMap(r -> {
@@ -120,6 +120,29 @@ public class EscrowController {
                                     .switchIfEmpty(fail(409, "该预留已处理"));
                         })
                         .flatMap(r -> outbox.append(reservationEnvelope("FundsCaptured", r)).thenReturn(r))
+                        .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
+    }
+
+    /** 冲正（D-06 争议处置，Slice 6C Phase D）：captured → refunded + 还原余额（判商家方胜诉、资金已 capture 时退还商家）。
+     *  仅 trust 服务可调（争议终局钱侧分派）。镜像 release，守卫态为 captured。 */
+    @PostMapping("/api/finance/reservations/{engagementRef}/reverse")
+    public Mono<ResponseEntity<Map<String, Object>>> reverse(@PathVariable String engagementRef, ServerHttpRequest request) {
+        return callers.resolveMerchantOrService(request, FinanceCallerResolver.TRUST_SERVICE)
+                .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
+                        .switchIfEmpty(fail(404, "预留不存在"))
+                        .flatMap(r -> {
+                            if (!r.organizationId().equals(caller.organizationId())) {
+                                return fail(403, "无权操作该组织预留");
+                            }
+                            if (!"captured".equals(r.status())) {
+                                return fail(409, "该预留不可冲正（须 captured）");
+                            }
+                            return reservations.reverse(r.id())  // captured→refunded
+                                    .switchIfEmpty(fail(409, "该预留不可冲正（须 captured）"))
+                                    .flatMap(refunded -> accounts.credit(r.organizationId(), r.amountCents())  // 余额还原
+                                            .thenReturn(refunded));
+                        })
+                        .flatMap(r -> outbox.append(reservationEnvelope("FundsReversed", r)).thenReturn(r))
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
     }
 
