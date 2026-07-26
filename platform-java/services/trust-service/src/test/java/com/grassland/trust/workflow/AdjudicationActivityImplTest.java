@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.grassland.trust.adjudication.AdjudicationProperties;
@@ -29,8 +30,9 @@ class AdjudicationActivityImplTest {
     private final DisputeCaseRepository disputes = mock(DisputeCaseRepository.class);
     private final JudgeRepository judges = mock(JudgeRepository.class);
     private final OutboxRepository outbox = mock(OutboxRepository.class);
+    private final FinanceDecisionClient finance = mock(FinanceDecisionClient.class);
     private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(
-            disputes, judges, outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 168, 60));
+            disputes, judges, outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 168, 60), finance);
 
     @Test
     void tallyVotesMapsMajorityAndTie() {
@@ -87,6 +89,47 @@ class AdjudicationActivityImplTest {
         activity.escalate("d2");
         verify(disputes).markEscalated("d2");
         verify(outbox).append(any());
+    }
+
+    // ---------- releaseHoldAndApplyDecision 矩阵（Phase D / D-06）----------
+
+    @Test
+    void merchantFavorReleasesWhenReserved() {
+        when(disputes.findById("d1")).thenReturn(Mono.just(finalDispute("d1", "for_merchant")));
+        when(finance.releaseIfReserved("org-1", "eng-d1")).thenReturn(Mono.just(true));
+        activity.releaseHoldAndApplyDecision("d1");
+        verify(finance).releaseIfReserved("org-1", "eng-d1");
+        verify(finance, never()).reverseIfCaptured(anyString(), anyString());
+    }
+
+    @Test
+    void merchantFavorReversesWhenNotReserved() {
+        when(disputes.findById("d1")).thenReturn(Mono.just(finalDispute("d1", "for_merchant")));
+        when(finance.releaseIfReserved("org-1", "eng-d1")).thenReturn(Mono.just(false));  // 非 reserved
+        when(finance.reverseIfCaptured("org-1", "eng-d1")).thenReturn(Mono.just(true));
+        activity.releaseHoldAndApplyDecision("d1");
+        verify(finance).reverseIfCaptured("org-1", "eng-d1");
+    }
+
+    @Test
+    void recommenderFavorCaptures() {
+        when(disputes.findById("d1")).thenReturn(Mono.just(finalDispute("d1", "for_recommender")));
+        when(finance.captureIfReserved("org-1", "eng-d1")).thenReturn(Mono.just(true));
+        activity.releaseHoldAndApplyDecision("d1");
+        verify(finance).captureIfReserved("org-1", "eng-d1");
+        verify(finance, never()).releaseIfReserved(anyString(), anyString());
+    }
+
+    @Test
+    void holdReleaseSkipsNonFinal() {
+        when(disputes.findById("d1")).thenReturn(Mono.just(dispute("d1", "voting")));  // 非 final
+        activity.releaseHoldAndApplyDecision("d1");
+        verifyNoInteractions(finance);
+    }
+
+    private DisputeCase finalDispute(String id, String decision) {
+        return new DisputeCase(id, "eng-" + id, "org-1", UUID.randomUUID().toString(), "merchant",
+                "final", "未履约", decision, null, null, null, 1, 2L, "none", decision, null, null);
     }
 
     private DisputeCase dispute(String id, String status) {

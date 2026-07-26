@@ -37,6 +37,7 @@ public class DisputeAdjudicationWorkflowImpl implements DisputeAdjudicationWorkf
             Workflow.sleep(Duration.ofSeconds(Math.max(0, input.appealWindowSeconds())));
         }
         awaitResolution(input);
+        activity.releaseHoldAndApplyDecision(input.disputeId());  // 终局判决 → 钱侧分派（D-06 矩阵）
         activity.publishFinalStatus(input.disputeId());
     }
 

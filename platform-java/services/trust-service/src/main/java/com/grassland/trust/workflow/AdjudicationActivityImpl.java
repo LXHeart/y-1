@@ -35,13 +35,16 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
     private final JudgeRepository judges;
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
+    private final FinanceDecisionClient finance;
 
     public AdjudicationActivityImpl(DisputeCaseRepository disputes, JudgeRepository judges,
-                                    OutboxRepository outbox, AdjudicationProperties props) {
+                                    OutboxRepository outbox, AdjudicationProperties props,
+                                    FinanceDecisionClient finance) {
         this.disputes = disputes;
         this.judges = judges;
         this.outbox = outbox;
         this.props = props;
+        this.finance = finance;
     }
 
     @Override
@@ -128,6 +131,31 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
         }
         // 用面板判决（decision 列）finalize（decided→final）；decidedBy=null（非客服终审）。
         disputes.finalize(disputeId, d.decision() != null ? d.decision() : "no_decision", null).block();
+    }
+
+    @Override
+    public void releaseHoldAndApplyDecision(String disputeId) {
+        DisputeCase d = disputes.findById(disputeId).block();
+        if (d == null || !"final".equals(d.status())) {
+            return;  // 未终局 → 不动钱
+        }
+        String decision = d.finalDecision() != null ? d.finalDecision() : d.decision();
+        if (decision == null) {
+            return;  // 无判决（理论上不应发生：escalate 必经客服 final-decision 带 decision）
+        }
+        String org = d.organizationId();
+        String ref = d.engagementRef();
+        // 判决×reservation 状态矩阵（D-06）：每步幂等，finance 404（无 reservation=非资金型）/409（非目标态）→ noop。
+        if ("for_merchant".equalsIgnoreCase(decision)) {
+            // 商家方胜诉：资金退还商家。先尝试 release（reserved）；非 reserved 再 reverse（captured）。
+            Boolean released = finance.releaseIfReserved(org, ref).block();
+            if (!Boolean.TRUE.equals(released)) {
+                finance.reverseIfCaptured(org, ref).block();
+            }
+        } else if ("for_recommender".equalsIgnoreCase(decision)) {
+            // 推荐官方胜诉：资金判给推荐官（= capture 确认扣款）。已 captured/released → noop。
+            finance.captureIfReserved(org, ref).block();
+        }
     }
 
     @Override

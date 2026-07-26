@@ -41,6 +41,11 @@ public interface AdjudicationActivity {
     @ActivityMethod
     void applyPanelDecision(String disputeId);
 
+    /** 按终局判决×reservation 状态矩阵分派钱侧（Phase D / D-06）：merchant_favor+reserved→release /
+     *  merchant_favor+captured→reverse / recommender_favor+reserved→capture / 其余→幂等 noop。 */
+    @ActivityMethod
+    void releaseHoldAndApplyDecision(String disputeId);
+
     @ActivityMethod
     void publishFinalStatus(String disputeId);
 }

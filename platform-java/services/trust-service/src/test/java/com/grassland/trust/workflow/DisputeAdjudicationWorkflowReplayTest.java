@@ -117,6 +117,7 @@ class DisputeAdjudicationWorkflowReplayTest {
         String recordedDecision;
         boolean escalated;
         boolean appliedPanelDecision;
+        boolean heldReleased;
         boolean published;
         boolean hasAppealOrEscalation;
         int finalAfterPolls = Integer.MAX_VALUE;  // 默认 isFinal 恒 false
@@ -156,6 +157,11 @@ class DisputeAdjudicationWorkflowReplayTest {
         @Override
         public void applyPanelDecision(String disputeId) {
             appliedPanelDecision = true;
+        }
+
+        @Override
+        public void releaseHoldAndApplyDecision(String disputeId) {
+            heldReleased = true;
         }
 
         @Override
