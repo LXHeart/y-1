@@ -2,6 +2,7 @@ package com.grassland.marketplace.workflow.saga;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -96,11 +97,15 @@ class ApplicationReservationActivityImplTest {
         verify(apps, never()).beginAcceptance(anyString(), anyString(), anyString());
     }
 
+    /** 预留时要把**收款推荐官**一并告知 finance，否则 capture 阶段无从分账（钱会停在平台账上）。 */
     @Test
-    void reserveFunds_delegatesToFinance() {
-        when(finance.reserve(ORG, APP_ID, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500)));
+    void reserveFunds_delegatesToFinanceWithPayee() {
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
+        when(finance.reserve(eq(ORG), eq(APP_ID), eq(500L), eq(RECOMMENDER)))
+                .thenReturn(Mono.just(ReserveResult.reserved(500)));
 
         assertThat(activity.reserveFunds(input).reserved()).isTrue();
+        verify(finance).reserve(ORG, APP_ID, 500L, RECOMMENDER);
     }
 
     @Test

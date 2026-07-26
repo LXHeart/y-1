@@ -16,6 +16,10 @@ public record FundsReservation(
         String engagementRef,
         long amountCents,
         String status,
+        /** 收款推荐官（V3）。由 marketplace 在预留时传入；null = 无分账对象（存量预留或非撮合场景）。 */
+        String payeeAccountId,
+        /** capture 时实际打入推荐官钱包的净额（毛额 - 平台抽成）；未 capture 或无收款人时为 null。 */
+        Long payoutCents,
         Instant createdAt,
         Instant updatedAt
 ) {}

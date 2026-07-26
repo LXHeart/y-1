@@ -4,6 +4,7 @@ import AdjudicationPanel from './AdjudicationPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
 import MySessionsCard from './MySessionsCard.vue'
+import MyWalletCard from './MyWalletCard.vue'
 import OrgTeamCard from './OrgTeamCard.vue'
 import PermissionReviewPanel from './PermissionReviewPanel.vue'
 import { useAuth } from '../composables/useAuth'
@@ -442,6 +443,11 @@ function statusLabel(status: string): string {
 
     <!-- ============ 推荐官视角 ============ -->
     <div v-else class="gl-grid">
+      <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
+      <article class="gl-card gl-card-wide">
+        <MyWalletCard />
+      </article>
+
       <article class="gl-card gl-card-wide">
         <h3>任务大厅</h3>
         <div class="gl-row">

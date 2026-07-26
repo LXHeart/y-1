@@ -27,6 +27,7 @@ import type {
   SettlementOutcome,
   Task,
   TaskApplication,
+  Wallet,
   VoteChoice,
 } from '../types/grassland'
 
@@ -210,6 +211,21 @@ export function useGrassland() {
   /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
   const removeMembership = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+
+  // ---------- finance：推荐官钱包 ----------
+
+  /** 我的钱包（余额 + 最近流水）。accountId 由 BFF 断言决定，只能读到自己的。 */
+  const getMyWallet = () => run(() => request<Wallet>('/api/finance/wallets/me'))
+
+  /**
+   * 提现（sandbox：立即出账，未接真实支付通道）。余额不足 → 409。
+   * 返回提现后的钱包（余额与流水都已更新），调用方直接用返回值刷新即可。
+   */
+  const withdrawFromWallet = (amountCents: number) =>
+    run(() => request<Wallet>('/api/finance/wallets/me/withdrawals', {
+      method: 'POST',
+      body: JSON.stringify({ amountCents }),
+    }))
 
   // ---------- identity：多设备登录会话（Slice 2I）----------
 
@@ -501,6 +517,8 @@ export function useGrassland() {
     declineInvitation,
     listMySessions,
     revokeSession,
+    getMyWallet,
+    withdrawFromWallet,
     listStores,
     createStore,
     listStoreMemberships,

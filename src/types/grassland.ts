@@ -311,6 +311,35 @@ export interface Store {
   createdAt: string | null
 }
 
+// ---------- finance：推荐官钱包 ----------
+
+/** 钱包流水类型。金额符号由类型决定：入账为正，提现/冲正为负。 */
+export type WalletEntryType = 'task_payout' | 'withdrawal' | 'clawback'
+
+/**
+ * 钱包流水行。
+ *
+ * ⚠️ `amountCents` **带符号**（提现/冲正是负数），展示时不要再自己加负号。
+ * `feeCents` 是该笔入账被平台抽走的部分，毛额 = amountCents + feeCents。
+ */
+export interface WalletEntry {
+  id: string
+  entryType: WalletEntryType
+  amountCents: number
+  feeCents: number
+  engagementRef: string | null
+  memo: string | null
+  createdAt: string | null
+}
+
+/** 推荐官钱包（账号级）。从未入过账时后端返回余额 0 而非 404。 */
+export interface Wallet {
+  accountId: string
+  balanceCents: number
+  updatedAt: string | null
+  entries: WalletEntry[]
+}
+
 // ---------- identity：多设备登录会话（Slice 2I / HLD D-08）----------
 
 /**

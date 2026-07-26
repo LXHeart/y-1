@@ -3,6 +3,7 @@ package com.grassland.marketplace.taskcatalog;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
@@ -212,7 +213,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String task = publishTaskBounty(merchant, org, null, 500L);  // bounty=500 → 资金型
         String app = apply(UUID.randomUUID().toString(), task);
 
-        when(financeClient.reserve(org, app, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
 
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -233,7 +234,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String task = publishTaskBounty(merchant, org, null, 600L);  // bounty=600，余额不足场景由 mock 决定
         String app = apply(UUID.randomUUID().toString(), task);
 
-        when(financeClient.reserve(anyString(), anyString(), anyLong()))
+        when(financeClient.reserve(anyString(), anyString(), anyLong(), anyString()))
                 .thenReturn(Mono.just(ReserveResult.insufficientFunds()));
 
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
@@ -267,7 +268,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String task = publishTaskBounty(merchant, org, null, 500L);
         String app = apply(UUID.randomUUID().toString(), task);
 
-        when(financeClient.reserve(org, app, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
         when(financeClient.capture(org, app)).thenReturn(Mono.empty());
 
         // 4F accept → 202 → 轮询 accepted（reserve 成功）
@@ -305,7 +306,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String org = UUID.randomUUID().toString();
         String task = publishTaskBounty(merchant, org, null, 500L);
         String app = apply(UUID.randomUUID().toString(), task);
-        when(financeClient.reserve(org, app, 500L)).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
         when(disputeChecker.hasOpenDispute(anyString(), anyString())).thenReturn(true);  // 开争议 → held
 
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")

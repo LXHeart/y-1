@@ -21,7 +21,7 @@ public class ReservationRepository {
 
     private static final String SELECT_COLS =
             "id::text, account_id::text, organization_id::text, engagement_ref, amount_cents, status,"
-                    + " created_at, updated_at";
+                    + " payee_account_id::text, payout_cents, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -30,16 +30,20 @@ public class ReservationRepository {
     }
 
     /** 创建预留（status=reserved）。UNIQUE(engagement_ref) 违例 → empty（调用方判既有/幂等）。 */
-    public Mono<FundsReservation> create(String accountId, String organizationId, String engagementRef, long amountCents) {
+    public Mono<FundsReservation> create(String accountId, String organizationId, String engagementRef,
+                                         long amountCents, String payeeAccountId) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO funds_reservation(id, account_id, organization_id, engagement_ref, amount_cents, status)
-                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), :ref, :amt, 'reserved')
+                INSERT INTO funds_reservation(id, account_id, organization_id, engagement_ref, amount_cents, status,
+                                              payee_account_id)
+                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), :ref, :amt, 'reserved',
+                        CAST(:payee AS uuid))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("acct", accountId).bind("org", organizationId)
                 .bind("amt", amountCents);
         spec = bindNullable(spec, "ref", engagementRef);
+        spec = bindNullable(spec, "payee", payeeAccountId);
         return spec.map(ReservationRepository::map).one()
                 .onErrorResume(R2dbcDataIntegrityViolationException.class, e -> Mono.empty());
     }
@@ -61,15 +65,21 @@ public class ReservationRepository {
                 .map(ReservationRepository::map).one();
     }
 
-    /** 捕获（结算确认，Slice 5A）：reserved → captured，无余额变动（扣款在 reserve 时已发生）。0 行（非 reserved）→ empty。 */
-    public Mono<FundsReservation> capture(String id) {
-        return db.sql("""
-                UPDATE funds_reservation SET status = 'captured', updated_at = now()
+    /**
+     * 捕获（结算确认）：reserved → captured，并记下分账净额。0 行（非 reserved）→ empty。
+     *
+     * <p>商家余额在 reserve 时就已扣掉，故这里不动商家余额；{@code payoutCents} 是随后要打进推荐官钱包的净额
+     * （无收款人时为 null = 不分账，钱留在平台账上，与本次改动前的行为一致）。
+     */
+    public Mono<FundsReservation> capture(String id, Long payoutCents) {
+        var spec = db.sql("""
+                UPDATE funds_reservation SET status = 'captured', payout_cents = :payout, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'reserved'
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id)
-                .map(ReservationRepository::map).one();
+                .bind("id", id);
+        spec = payoutCents == null ? spec.bindNull("payout", Long.class) : spec.bind("payout", payoutCents);
+        return spec.map(ReservationRepository::map).one();
     }
 
     /** 冲正（D-06 争议处置，Slice 6C Phase D）：captured → refunded。余额还原由 controller 调 accounts.credit（镜像 release）。
@@ -92,6 +102,8 @@ public class ReservationRepository {
                 row.get("engagement_ref", String.class),
                 row.get("amount_cents", Long.class),
                 row.get("status", String.class),
+                row.get("payee_account_id", String.class),
+                row.get("payout_cents", Long.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );

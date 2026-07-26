@@ -82,7 +82,12 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     public ReserveResult reserveFunds(AcceptanceInput input) {
         log.info("reserveFunds START org={} ref={} amount={}", input.organizationId(), input.applicationId(), input.amountCents());
         try {
-            ReserveResult r = finance.reserve(input.organizationId(), input.applicationId(), input.amountCents()).block();
+            // 收款人从报名记录现查，而不是加进 AcceptanceInput——workflow 入参变更会影响在途实例的反序列化，
+            // 而这里本来就要读库，多取一个字段是零成本。
+            TaskApplication payeeApp = apps.findById(input.applicationId()).block();
+            String payee = payeeApp == null ? null : payeeApp.recommenderAccountId();
+            ReserveResult r = finance.reserve(
+                    input.organizationId(), input.applicationId(), input.amountCents(), payee).block();
             log.info("reserveFunds RESULT {}", r);
             return r;
         } catch (RuntimeException e) {

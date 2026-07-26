@@ -6,6 +6,9 @@ import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
+import com.grassland.finance.wallet.PlatformFeePolicy;
+import com.grassland.finance.wallet.WalletEntryType;
+import com.grassland.finance.wallet.WalletRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -40,13 +43,64 @@ public class EscrowController {
     private final AccountRepository accounts;
     private final ReservationRepository reservations;
     private final OutboxRepository outbox;
+    private final WalletRepository wallets;
+    private final PlatformFeePolicy fees;
 
     public EscrowController(FinanceCallerResolver callers, AccountRepository accounts,
-                            ReservationRepository reservations, OutboxRepository outbox) {
+                            ReservationRepository reservations, OutboxRepository outbox,
+                            WalletRepository wallets, PlatformFeePolicy fees) {
         this.callers = callers;
         this.accounts = accounts;
         this.reservations = reservations;
         this.outbox = outbox;
+        this.wallets = wallets;
+        this.fees = fees;
+    }
+
+    /**
+     * 分账：把 capture 下来的净额打进推荐官钱包 + 记流水 + 发 {@code SplitCompleted}。
+     *
+     * <p>无收款人（存量预留 / 非撮合场景）→ 原样返回，不动任何余额，与本次改动前行为一致。
+     */
+    private Mono<FundsReservation> splitToPayee(FundsReservation captured) {
+        if (captured.payeeAccountId() == null || captured.payoutCents() == null || captured.payoutCents() <= 0) {
+            return Mono.just(captured);
+        }
+        long payout = captured.payoutCents();
+        long fee = captured.amountCents() - payout;
+        return wallets.credit(captured.payeeAccountId(), payout)
+                .then(wallets.appendEntry(captured.payeeAccountId(), WalletEntryType.TASK_PAYOUT,
+                        payout, fee, captured.engagementRef(), "任务结算入账"))
+                .then(outbox.append(new EventEnvelope(
+                        UUID.randomUUID().toString(), "SplitCompleted", "FundsReservation",
+                        captured.id(), 1, Instant.now(), null,
+                        Map.of("engagementRef", String.valueOf(captured.engagementRef()),
+                                "payeeAccountId", captured.payeeAccountId(),
+                                "grossCents", captured.amountCents(),
+                                "payoutCents", payout,
+                                "platformFeeCents", fee))))
+                .thenReturn(captured);
+    }
+
+    /**
+     * 冲正前从推荐官钱包扣回已分账的净额（D-06：已 capture 后判商家胜诉）。
+     *
+     * <p>扣的是 {@code payoutCents} 而非 {@code amountCents}——推荐官本来就没拿到平台抽成那部分，
+     * 按毛额扣会多扣他一笔。钱包余额不足（多半是已提现）→ **409 中止整个冲正**，宁可挂起等人工处理，
+     * 也不能一边给商家退款一边让推荐官账上凭空少钱或变负。
+     */
+    private Mono<Void> clawbackFromPayee(FundsReservation reservation) {
+        if (reservation.payeeAccountId() == null || reservation.payoutCents() == null
+                || reservation.payoutCents() <= 0) {
+            return Mono.empty();
+        }
+        long payout = reservation.payoutCents();
+        return wallets.debit(reservation.payeeAccountId(), payout)
+                .switchIfEmpty(Mono.error(new FinanceException(409,
+                        "推荐官余额不足以冲正（可能已提现），需人工处理")))
+                .flatMap(wallet -> wallets.appendEntry(reservation.payeeAccountId(), WalletEntryType.CLAWBACK,
+                        -payout, 0, reservation.engagementRef(), "争议冲正扣回"))
+                .then();
     }
 
     @PostMapping("/api/finance/accounts/{orgId}/credit")
@@ -77,7 +131,7 @@ public class EscrowController {
                         .<Reserved>map(r -> new Reserved(r, false))  // 幂等：既有 → 200
                         .switchIfEmpty(accounts.decrement(orgId, amount)
                                 .switchIfEmpty(fail(409, "余额不足"))
-                                .flatMap(acct -> reservations.create(acct.id(), orgId, ref, amount)
+                                .flatMap(acct -> reservations.create(acct.id(), orgId, ref, amount, body.payeeAccountId())
                                         .<Reserved>map(r -> new Reserved(r, true))
                                         .switchIfEmpty(reservations.findByEngagementRef(ref)
                                                 .<Reserved>map(r -> new Reserved(r, false))))))  // 并发冲突 → 既有
@@ -121,8 +175,11 @@ public class EscrowController {
                             if (!"reserved".equals(r.status())) {
                                 return fail(409, "该预留已处理");
                             }
-                            return reservations.capture(r.id())  // 结算确认：reserved→captured，无余额变动（扣款在 reserve 时已发生）
-                                    .switchIfEmpty(fail(409, "该预留已处理"));
+                            // 商家余额在 reserve 时已扣；这里把钱**分给推荐官**（无收款人则维持旧行为，钱留平台账）
+                            Long payout = r.payeeAccountId() == null ? null : fees.payoutFor(r.amountCents());
+                            return reservations.capture(r.id(), payout)
+                                    .switchIfEmpty(fail(409, "该预留已处理"))
+                                    .flatMap(this::splitToPayee);
                         })
                         .flatMap(r -> outbox.append(reservationEnvelope("FundsCaptured", r)).thenReturn(r))
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
@@ -142,7 +199,9 @@ public class EscrowController {
                             if (!"captured".equals(r.status())) {
                                 return fail(409, "该预留不可冲正（须 captured）");
                             }
-                            return reservations.reverse(r.id())  // captured→refunded
+                            // 先从推荐官钱包扣回已分账的净额，再退商家——顺序反了就等于凭空造钱
+                            return clawbackFromPayee(r)
+                                    .then(reservations.reverse(r.id()))  // captured→refunded
                                     .switchIfEmpty(fail(409, "该预留不可冲正（须 captured）"))
                                     .flatMap(refunded -> accounts.credit(r.organizationId(), r.amountCents())  // 余额还原
                                             .thenReturn(refunded));
@@ -181,6 +240,8 @@ public class EscrowController {
         m.put("engagementRef", r.engagementRef());
         m.put("amountCents", r.amountCents());
         m.put("status", r.status());
+        m.put("payeeAccountId", r.payeeAccountId());
+        m.put("payoutCents", r.payoutCents());   // capture 后 = 实际打给推荐官的净额；null = 未分账
         m.put("createdAt", r.createdAt() == null ? null : r.createdAt().toString());
         return m;
     }

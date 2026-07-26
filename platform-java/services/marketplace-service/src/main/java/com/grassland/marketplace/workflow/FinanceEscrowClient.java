@@ -42,12 +42,17 @@ public class FinanceEscrowClient {
         this.webClient = WebClient.builder().baseUrl(baseUrl).build();
     }
 
-    public Mono<ReserveResult> reserve(String orgId, String engagementRef, long amountCents) {
+    /**
+     * 预留资金。{@code payeeAccountId} = 该 engagement 的报名推荐官——finance 只认 engagementRef，
+     * 不知道钱将来该付给谁，故由 marketplace 在预留时一并告知，capture 时按它分账。
+     */
+    public Mono<ReserveResult> reserve(String orgId, String engagementRef, long amountCents, String payeeAccountId) {
         return webClient.post()
                 .uri("/api/finance/accounts/{orgId}/reservations", orgId)
                 .header(headerName, issuer.issueForOrg(orgId))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("engagementRef", engagementRef, "amountCents", amountCents))
+                .bodyValue(Map.of("engagementRef", engagementRef, "amountCents", amountCents,
+                        "payeeAccountId", payeeAccountId))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("reserve HTTP {} org={} ref={}", code, orgId, engagementRef);
