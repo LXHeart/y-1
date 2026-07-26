@@ -19,6 +19,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -199,7 +200,76 @@ public class AdjudicationController {
                         .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
     }
 
+    @PostMapping("/api/trust/disputes/{id}/appeal")
+    public Mono<ResponseEntity<Map<String, Object>>> appeal(@PathVariable String id,
+                                                            @RequestBody(required = false) AppealRequest body,
+                                                            ServerHttpRequest request) {
+        return callers.requireMerchantOrRecommender(request)
+                .flatMap(caller -> disputes.findById(id)
+                        .switchIfEmpty(fail(404, "争议不存在"))
+                        .flatMap(d -> {
+                            if (!d.organizationId().equals(caller.organizationId())) {
+                                return fail(403, "无权操作该争议");
+                            }
+                            // 仅 decided 态可上诉（= 在上诉窗口内；workflow Timer 控制 decided→final，过期则不可上诉）。
+                            if (!"decided".equals(d.status())) {
+                                return fail(409, "该争议当前不可上诉");
+                            }
+                            return disputes.fileAppeal(id, caller.accountId())  // 幂等：dispute_id PK
+                                    .filter(Boolean::booleanValue)
+                                    .switchIfEmpty(fail(409, "该争议已上诉"))
+                                    .then(disputes.markAppealed(id))             // decided→appealed
+                                    .switchIfEmpty(fail(409, "上诉失败：状态已变"))
+                                    .flatMap(appealed -> outbox.append(disputeEnvelope("DisputeAppealed", appealed))
+                                            .thenReturn(appealed))
+                                    .flatMap(this::snapshot)
+                                    .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)));
+                        }));
+    }
+
+    @PostMapping("/api/trust/disputes/{id}/final-decision")
+    public Mono<ResponseEntity<Map<String, Object>>> finalDecision(@PathVariable String id,
+                                                                   @RequestBody FinalDecisionRequest body,
+                                                                   ServerHttpRequest request) {
+        return callers.requireCustomerService(request)
+                // MFA 近期性：断言 reauthenticatedAt 须在窗口内（HLD §11.2 客服覆盖判决须重新认证）。
+                .filter(cs -> cs.reauthenticatedAt() != null
+                        && Duration.between(cs.reauthenticatedAt(), Instant.now()).toMinutes() <= CS_MFA_WINDOW_MINUTES)
+                .switchIfEmpty(fail(403, "需要客服近期重新认证（MFA）"))
+                .flatMap(cs -> disputes.findById(id)
+                        .switchIfEmpty(fail(404, "争议不存在"))
+                        // 客服终审范围：已上诉（panel 判决+上诉）或升级（超轮无判决，appeal_state=escalated）。
+                        .filter(d -> "appealed".equals(d.status())
+                                || ("voting".equals(d.status()) && "escalated".equals(d.appealState())))
+                        .switchIfEmpty(fail(409, "该争议不在客服终审范围"))
+                        .flatMap(d -> disputes.forceFinalize(id, body.decision(), cs.accountId())  // CS 覆盖终局
+                                .switchIfEmpty(fail(409, "争议已终局"))
+                                .flatMap(fin -> outbox.append(disputeEnvelope("DisputeFinalized", fin)).thenReturn(fin))
+                                .flatMap(this::snapshot)
+                                .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)))));
+    }
+
+    /** 通用争议事件信封（确定性 type-3 eventId：eventType:disputeId:round）。 */
+    private EventEnvelope disputeEnvelope(String eventType, DisputeCase d) {
+        String eventId = UUID.nameUUIDFromBytes(
+                (eventType + ":" + d.id() + ":" + d.round()).getBytes(StandardCharsets.UTF_8)).toString();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("disputeId", d.id());
+        payload.put("engagementRef", d.engagementRef());
+        payload.put("organizationId", d.organizationId());
+        payload.put("round", d.round());
+        payload.put("status", d.status());
+        if (d.finalDecision() != null) {
+            payload.put("finalDecision", d.finalDecision());
+        }
+        return new EventEnvelope(eventId, eventType, "DisputeCase",
+                d.id(), d.version(), Instant.now(), null, payload);
+    }
+
     // ---------- helpers ----------
+
+    /** 客服终审 MFA 近期性窗口（HLD §11.2：覆盖判决须近期重新认证）。 */
+    private static final int CS_MFA_WINDOW_MINUTES = 5;
 
     private EventEnvelope assignedEnvelope(DisputeCase d, int round, int panelSize) {
         String eventId = UUID.nameUUIDFromBytes(

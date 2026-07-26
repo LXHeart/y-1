@@ -2,22 +2,30 @@ package com.grassland.trust.adjudication;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.trust.TrustItSupport;
+import com.grassland.trust.dispute.DisputeCaseRepository;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 
 /**
- * 审判端到端（草场 Epic 6 Slice 6C Phase B）。继承 {@link TrustItSupport}。
+ * 审判端到端（草场 Epic 6 Slice 6C Phase B + C-2）。继承 {@link TrustItSupport}。
  *
  * <p>覆盖：adjudicate（202 分配面板 + DisputeAssigned / 幂等 200 / 角色门禁 / 409 终局 / 503 无审判官）、
  * votes（201 + tally 累计 / 幂等 200 / 非面板 403 / 非审判官 403 / 非 voting 409 / 非法选项 400 / 4-of-7 多数）、
- * getAdjudication（快照 + 脱敏 + 服务断言 / 跨 org 403 / 404）。
+ * getAdjudication（快照 + 脱敏 + 服务断言 / 跨 org 403 / 404）、
+ * appeal（decided→appealed / 非 decided 409 / 重复 409）、final-decision（客服覆盖 appealed/escalated + MFA / 非客服 403 / MFA 过期 403）。
  */
 class AdjudicationControllerIT extends TrustItSupport {
+
+    @Autowired
+    private DisputeCaseRepository disputes;
 
     private static final int PANEL_SIZE = 7;
 
@@ -219,6 +227,106 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .exchange().expectStatus().isNotFound();
     }
 
+    // ----- Phase C-2: appeal + 客服终审 -----
+
+    @Test
+    void partyAppealsDecidedDispute() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toDecided(id);  // open→voting→decided（repo 直置，绕过 24h Timer）
+
+        client().post().uri("/api/trust/disputes/" + id + "/appeal")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "不服判决"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("appealed");
+        assertThat(outboxCount("DisputeAppealed", id)).isEqualTo(1);
+    }
+
+    @Test
+    void appealRejectsNonDecided() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());  // open，未判决
+        client().post().uri("/api/trust/disputes/" + id + "/appeal")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void appealIsOncePerDispute() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toDecided(id);
+        client().post().uri("/api/trust/disputes/" + id + "/appeal")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of()).exchange().expectStatus().isOk();
+        client().post().uri("/api/trust/disputes/" + id + "/appeal")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of()).exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void customerServiceFinalDecisionOverridesAppealed() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toAppealed(id);  // decided→appealed
+        String cs = UUID.randomUUID().toString();
+
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", signCs(cs, Instant.now()))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("final")
+                .jsonPath("$.data.finalDecision").isEqualTo("for_recommender");
+        assertThat(outboxCount("DisputeFinalized", id)).isEqualTo(1);
+    }
+
+    @Test
+    void customerServiceFinalDecisionOnEscalated() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toEscalated(id);  // voting + appeal_state=escalated（超轮无判决）
+        String cs = UUID.randomUUID().toString();
+
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", signCs(cs, Instant.now()))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("final");
+    }
+
+    @Test
+    void finalDecisionRejectsNonCustomerService() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toAppealed(id);
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void finalDecisionRequiresRecentMfa() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toAppealed(id);
+        // reauthenticatedAt 为 1 小时前（超出 5 分钟窗口）→ 403
+        Instant stale = Instant.now().minusSeconds(3600);
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", signCs(UUID.randomUUID().toString(), stale))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isForbidden();
+    }
+
     // ---------- helpers ----------
 
     private record Panel(String id, String merchant, String org, List<String> judges, String leftOut) {}
@@ -299,5 +407,31 @@ class AdjudicationControllerIT extends TrustItSupport {
                         + " WHERE event_type = :et AND payload->>'disputeId' = :id")
                 .bind("et", eventType).bind("id", disputeId)
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
+    // ----- 状态前置（绕过 24h Timer，repo 直置）-----
+
+    private void toDecided(String id) {
+        disputes.startAdjudication(id, 1).block();          // open→voting
+        disputes.recordDecision(id, "for_merchant").block(); // voting→decided
+    }
+
+    private void toAppealed(String id) {
+        toDecided(id);
+        disputes.markAppealed(id).block();                  // decided→appealed
+    }
+
+    private void toEscalated(String id) {
+        disputes.startAdjudication(id, 1).block();          // open→voting
+        disputes.markEscalated(id).block();                 // appeal_state=escalated（保持 voting）
+    }
+
+    /** 签一个客服断言（activeIdentityType=customer_service），reauthenticatedAt 控制近期性（MFA）。 */
+    private String signCs(String accountId, Instant reauthenticatedAt) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                accountId, "customer_service", "sid-" + accountId, null, null,
+                "cookie-session", "level2", reauthenticatedAt, "r", "t",
+                "grassland-internal", now, now.plusSeconds(60), null, null));
     }
 }

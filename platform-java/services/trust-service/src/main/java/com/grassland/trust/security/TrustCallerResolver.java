@@ -37,7 +37,7 @@ public class TrustCallerResolver {
         }
         return Mono.justOrEmpty(signer.verify(header, Instant.now()))
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(),
-                        a.callerKind(), a.principal()))
+                        a.callerKind(), a.principal(), a.reauthenticatedAt()))
                 .switchIfEmpty(Mono.error(new TrustException(401, "未登录")));
     }
 
@@ -83,9 +83,10 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "无权查询争议")));
     }
 
-    /** 断言解析出的调用者。{@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）。 */
+    /** 断言解析出的调用者。{@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）；
+     *  {@code reauthenticatedAt} 用于客服终审 MFA 近期性校验（HLD §11.2，可空=未再认证）。 */
     public record Caller(String accountId, String activeIdentityType, String organizationId,
-                         String callerKind, String principal) {
+                         String callerKind, String principal, Instant reauthenticatedAt) {
         public boolean isMerchant() {
             return !"service".equalsIgnoreCase(callerKind)
                     && "merchant".equalsIgnoreCase(activeIdentityType);

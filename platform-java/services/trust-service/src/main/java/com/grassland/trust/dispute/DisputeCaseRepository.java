@@ -147,6 +147,32 @@ public class DisputeCaseRepository {
                 .map(r -> r.get("present", Boolean.class)).one().defaultIfEmpty(false);
     }
 
+    /** 记录上诉（dispute_appeal，dispute_id PK 幂等：已存在 → 返回 false）。 */
+    public Mono<Boolean> fileAppeal(String id, String appealedBy) {
+        return db.sql("""
+                INSERT INTO dispute_appeal(dispute_id, appealed_by, status)
+                VALUES (CAST(:id AS uuid), CAST(:by AS uuid), 'filed')
+                ON CONFLICT (dispute_id) DO NOTHING
+                """)
+                .bind("id", id).bind("by", appealedBy)
+                .fetch().rowsUpdated().map(n -> n > 0).defaultIfEmpty(false);
+    }
+
+    /** 客服强制终局（CS 终审覆盖，HLD §11.2）：任意非 final 态 → final。0 行（已 final）→ empty。 */
+    public Mono<DisputeCase> forceFinalize(String id, String finalDecision, String decidedBy) {
+        var spec = db.sql("""
+                UPDATE dispute_case SET status = 'final', final_decision = :decision,
+                        final_decided_by = CAST(:by AS uuid), decided_at = now(),
+                        version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status <> 'final'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id);
+        spec = bindNullable(spec, "decision", finalDecision);
+        spec = bindNullableAccountId(spec, "by", decidedBy);
+        return spec.map(DisputeCaseRepository::map).one();
+    }
+
     /** 终局（decided/appealed→final，记 final_decision + final_decided_by，version+1）。客服终审/上诉窗口平淡落定。
      * {@code finalDecidedBy} 可空（上诉窗口平淡终局无客服）。0 行（已 final 或未到 decided/appealed）→ empty。 */
     public Mono<DisputeCase> finalize(String id, String finalDecision, String finalDecidedBy) {
