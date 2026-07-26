@@ -6,6 +6,13 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    # trust 事件消费方（Slice 6C Phase E，平台首个消费方）。consumer factory 由 Boot auto-config 提供。
+    # 默认不启用（测试/本地无 Kafka 时跳过，避免连接噪声）；compose 置 MARKETPLACE_TRUST_CONSUMER_ENABLED=true。
+    consumer:
+      group-id: ${MARKETPLACE_TRUST_CONSUMER_GROUP:marketplace-trust-consumer}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
   r2dbc:
     url: ${MARKETPLACE_R2DBC_URL:}
   temporal:
@@ -58,6 +65,13 @@ marketplace:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}
     poll-interval-ms: ${MARKETPLACE_OUTBOX_POLL_INTERVAL_MS:2000}
+  # trust 事件消费方（Slice 6C Phase E）：消费 grassland.trust.events 的 DisputeFinalized → 同步结算态。
+  # 默认 false：测试/本地无 Kafka 不启用（@ConditionalOnProperty）；compose 置 true。
+  trust-consumer:
+    enabled: ${MARKETPLACE_TRUST_CONSUMER_ENABLED:false}
+    topic: ${MARKETPLACE_TRUST_CONSUMER_TOPIC:grassland.trust.events}
+    group-id: ${MARKETPLACE_TRUST_CONSUMER_GROUP:marketplace-trust-consumer}
+    auto-startup: ${MARKETPLACE_TRUST_CONSUMER_AUTOSTARTUP:true}
 
 # BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
 identity-assertion:

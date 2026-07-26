@@ -134,6 +134,7 @@ services:
       SETTLEMENT_WINDOW_SECONDS: ${SETTLEMENT_WINDOW_SECONDS:-5}
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
       TRUST_SERVICE_BASE_URL: http://trust-service:8085
+      MARKETPLACE_TRUST_CONSUMER_ENABLED: ${MARKETPLACE_TRUST_CONSUMER_ENABLED:-true}
     depends_on:
       - backend
       - minio
