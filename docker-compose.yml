@@ -250,21 +250,18 @@ services:
       timeout: 5s
       retries: 10
 
-  # 本地 postgres（profile local-db）：给 e2e 用，替代远程 neon。
+  # 本地 postgres —— **默认数据库**（无 profile 常驻，同 kafka/redis/minio）。
   #
-  # 起因：neon 连接不稳（实测宿主机直连 3 次 2 失败、成功一次 15.9s），且每次活动 ~10s 延迟——
-  # 两者都使 e2e 无法可靠完成（时间驱动的 workflow 链路尤其受影响）。本地库消除这两个变量。
+  # 起因：neon 连接不稳（实测宿主机直连 3 次 2 失败、成功一次 15.9s）、每次活动 ~10s 延迟，
+  # 使 e2e 无法可靠完成。本地库实测 40/40 成功、3s 完成同一压测。生产另行换库。
   #
-  # 用法（起全栈 + 本地库）：
-  #   docker compose --profile java-edge --profile local-db up -d
-  #   DATABASE_URL=postgresql://grassland:grassland@postgres-local:5432/grassland \
-  #     docker compose --profile java-edge --profile local-db up -d
+  # 用法：docker compose --profile java-edge up -d   （DATABASE_URL 见 .env）
   # 宿主机连（跑脚本/psql）：postgresql://grassland:grassland@localhost:55432/grassland
   #
-  # 各服务 Flyway 会在空库上自建全部表，无需手工初始化。
-  # 版本对齐 neon 的 PostgreSQL 18.x，避免行为差异。
+  # ⚠️ 空库初始化顺序：Java 服务 Flyway 只建草场表；session/app_users 等 legacy 表由
+  # server/sql/ 管理，须先跑 `npm run db:migrate:local`，否则 identity 报 relation "session" does not exist。
+  # 一键种 e2e 数据：`npm run e2e:seed`
   postgres-local:
-    profiles: ["local-db"]
     image: postgres:18-alpine
     container_name: y-1-postgres-local
     environment:

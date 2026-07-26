@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "config": {
+    "//": "本地 postgres（docker-compose 的 postgres-local）宿主机侧地址——容器服务名在宿主机不可解析",
+    "localDbUrl": "postgresql://grassland:grassland@localhost:55432/grassland"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
     "dev:client": "vite",
@@ -15,6 +19,8 @@
     "typecheck": "vue-tsc --noEmit && tsc -p server/tsconfig.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "db:migrate": "tsx server/src/scripts/run-migrations.ts",
+    "db:migrate:local": "DATABASE_URL=$npm_package_config_localDbUrl tsx server/src/scripts/run-migrations.ts",
+    "e2e:seed": "DATABASE_URL=$npm_package_config_localDbUrl tsx scripts/e2e-seed.ts",
     "admin:create": "tsx server/src/scripts/create-admin.ts"
   },
   "dependencies": {
