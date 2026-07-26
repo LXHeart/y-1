@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type { AdjudicationSnapshot, Judge, VoteChoice } from '../types/grassland'
 
@@ -33,6 +33,47 @@ const isEnrolledJudge = computed(() => judge.value?.active === true)
 
 const tallies = computed(() => snapshot.value?.tallies ?? null)
 
+/**
+ * 窗口倒计时。后端给的 remainingSeconds 是拉取瞬间的快照，本地每秒递减做平滑显示，
+ * 避免为了走秒去轮询后端。归零后提示「等待系统处理」——真正的到期由 Temporal Timer 驱动，
+ * 可能有秒级偏差，故不据此断言状态已变。
+ */
+const remaining = ref<number | null>(null)
+let ticker: ReturnType<typeof setInterval> | undefined
+
+function startTicker(): void {
+  if (ticker) clearInterval(ticker)
+  ticker = setInterval(() => {
+    if (remaining.value !== null && remaining.value > 0) remaining.value -= 1
+  }, 1000)
+}
+
+onUnmounted(() => {
+  if (ticker) clearInterval(ticker)
+})
+
+const windowLabel = computed(() => {
+  const phase = snapshot.value?.window?.phase
+  if (phase === 'vote') return '投票窗口'
+  if (phase === 'appeal') return '上诉窗口'
+  return ''
+})
+
+/** 剩余时长的人类可读形式（1天2小时 / 5分30秒 / 已到期）。 */
+const remainingText = computed(() => {
+  const value = remaining.value
+  if (value === null) return ''
+  if (value <= 0) return '已到期，等待系统处理'
+  const days = Math.floor(value / 86400)
+  const hours = Math.floor((value % 86400) / 3600)
+  const minutes = Math.floor((value % 3600) / 60)
+  const seconds = value % 60
+  if (days > 0) return `剩余 ${days} 天 ${hours} 小时`
+  if (hours > 0) return `剩余 ${hours} 小时 ${minutes} 分`
+  if (minutes > 0) return `剩余 ${minutes} 分 ${seconds} 秒`
+  return `剩余 ${seconds} 秒`
+})
+
 /** 计票条宽度（按面板满员算，未投票部分留白 → 直观看出投票进度）。 */
 function barWidth(count: number): string {
   const size = tallies.value?.panelSize ?? 0
@@ -60,7 +101,12 @@ const decisionLabel = (value: string | null): string => {
 
 async function refresh(): Promise<void> {
   const snap = await grassland.getAdjudication(props.disputeId)
-  if (snap) snapshot.value = snap
+  if (snap) {
+    snapshot.value = snap
+    // 以后端值为准重置倒计时（本地 tick 只做平滑，不作权威）
+    remaining.value = snap.window?.remainingSeconds ?? null
+    if (remaining.value !== null) startTicker()
+  }
   judge.value = await grassland.getMyJudgeStatus()
 }
 
@@ -144,6 +190,15 @@ async function submitFinalDecision(): Promise<void> {
         <div><dt>判决</dt><dd>{{ decisionLabel(snapshot.decision) }}</dd></div>
         <div v-if="snapshot.finalDecision"><dt>终审</dt><dd>{{ decisionLabel(snapshot.finalDecision) }}</dd></div>
       </dl>
+
+      <!-- 窗口倒计时：让用户知道当前阶段还要等多久（生产 24h/48h，dev 可配秒级） -->
+      <div v-if="windowLabel && remaining !== null" class="adj-window">
+        <span class="adj-window-label">{{ windowLabel }}</span>
+        <span class="adj-window-time" :class="{ expired: remaining <= 0 }">{{ remainingText }}</span>
+        <span v-if="snapshot.window.deadline" class="adj-hint">
+          （截止 {{ new Date(snapshot.window.deadline).toLocaleString() }}）
+        </span>
+      </div>
 
       <!-- 计票条 -->
       <div v-if="tallies && tallies.panelSize > 0" class="adj-tally">
@@ -242,6 +297,13 @@ async function submitFinalDecision(): Promise<void> {
 .adj-meta div { display: flex; flex-direction: column; gap: 2px; }
 .adj-meta dt { font-size: 11px; opacity: 0.6; }
 .adj-meta dd { margin: 0; font-size: 13px; font-weight: 500; }
+.adj-window {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 11px; border-radius: 6px; background: var(--tag-bg, #eef1f5); font-size: 13px;
+}
+.adj-window-label { font-weight: 500; }
+.adj-window-time { font-variant-numeric: tabular-nums; }
+.adj-window-time.expired { color: #8a6d1f; }
 .adj-tally { display: flex; flex-direction: column; gap: 6px; }
 .adj-tally-row { display: flex; align-items: center; gap: 8px; }
 .adj-tally-label { flex: 0 0 62px; font-size: 12px; opacity: 0.75; }

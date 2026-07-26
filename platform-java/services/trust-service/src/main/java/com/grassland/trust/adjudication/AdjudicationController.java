@@ -109,8 +109,8 @@ public class AdjudicationController {
     private Mono<String> startWorkflow(DisputeCase d, String workflowId) {
         AdjudicationInput input = new AdjudicationInput(
                 d.id(),
-                Math.max(0, props.voteWindowHours()) * 3600L,
-                Math.max(0, props.appealWindowHours()) * 3600L,
+                props.voteWindowSecondsEffective(),
+                props.appealWindowSecondsEffective(),
                 props.maxRounds(),
                 Math.max(0, props.csAwaitHours()) * 3600L,
                 Math.max(1, props.csPollSeconds()));
@@ -300,6 +300,7 @@ public class AdjudicationController {
         base.put("appealState", d.appealState());
         base.put("finalDecision", d.finalDecision());
         base.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());
+        base.put("window", windowInfo(d));
         if (d.round() <= 0) {
             base.put("panel", Map.of("size", 0, "voted", 0));
             base.put("tallies", emptyTally());
@@ -310,6 +311,48 @@ public class AdjudicationController {
             base.put("tallies", tallyMap(tally));
             return base;
         });
+    }
+
+    /**
+     * 当前阶段的时间窗信息（可观测性）——UI 据此显示「还剩多久」，
+     * 否则用户看到 {@code voting} 不知要等 1 分钟还是 24 小时。
+     *
+     * <p>窗口起点用 {@code updatedAt}（每次状态迁移刷新，即当前阶段的进入时刻）。
+     * {@code remainingSeconds} 为估算值：真正的到期由 Temporal Timer 驱动，
+     * 二者可能有秒级偏差（workflow 重放/重试），故仅作展示不作判定依据。
+     */
+    private Map<String, Object> windowInfo(DisputeCase d) {
+        Map<String, Object> w = new LinkedHashMap<>();
+        String phase;
+        long durationSeconds;
+        switch (d.status() == null ? "" : d.status()) {
+            case "voting" -> {
+                phase = "vote";
+                durationSeconds = props.voteWindowSecondsEffective();
+            }
+            case "decided" -> {
+                phase = "appeal";
+                durationSeconds = props.appealWindowSecondsEffective();
+            }
+            default -> {
+                // open（未开庭）/ appealed（等客服，无固定窗口）/ final（已结束）
+                phase = "none";
+                durationSeconds = 0;
+            }
+        }
+        w.put("phase", phase);
+        w.put("durationSeconds", durationSeconds);
+        if (durationSeconds > 0 && d.updatedAt() != null) {
+            Instant deadline = d.updatedAt().plusSeconds(durationSeconds);
+            w.put("startedAt", d.updatedAt().toString());
+            w.put("deadline", deadline.toString());
+            w.put("remainingSeconds", Math.max(0, Duration.between(Instant.now(), deadline).toSeconds()));
+        } else {
+            w.put("startedAt", null);
+            w.put("deadline", null);
+            w.put("remainingSeconds", null);
+        }
+        return w;
     }
 
     private Map<String, Object> voteBody(JudgeVote v, int round, VoteTally tally) {

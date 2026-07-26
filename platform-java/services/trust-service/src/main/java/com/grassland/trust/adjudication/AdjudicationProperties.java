@@ -24,7 +24,11 @@ public record AdjudicationProperties(
         int appealWindowHours,
         int judgeEligibilityTier,
         int csAwaitHours,
-        int csPollSeconds) {
+        int csPollSeconds,
+        /** 投票窗口秒级覆盖（>0 时优先于 {@code voteWindowHours}）。dev/e2e 用，见 {@link #voteWindowSecondsEffective()}。 */
+        long voteWindowSeconds,
+        /** 上诉窗口秒级覆盖（>0 时优先于 {@code appealWindowHours}）。 */
+        long appealWindowSeconds) {
 
     public AdjudicationProperties {
         if (panelSize <= 0) {
@@ -48,5 +52,28 @@ public record AdjudicationProperties(
         if (csPollSeconds <= 0) {
             csPollSeconds = 60;
         }
+        // 秒级覆盖不设默认：0/负 = 未覆盖，回落小时换算（见下方 *Effective 方法）
+        if (voteWindowSeconds < 0) {
+            voteWindowSeconds = 0;
+        }
+        if (appealWindowSeconds < 0) {
+            appealWindowSeconds = 0;
+        }
+    }
+
+    /**
+     * 投票窗口实际秒数：秒级覆盖优先，否则小时换算。
+     *
+     * <p>窗口原本只有小时粒度，最小非零值 1 小时——dev/e2e 无法验证「窗口到期自动 tally →
+     * decided → 上诉窗口 → 终局」这条<b>时间驱动主链路</b>。秒级覆盖对齐 marketplace 的
+     * {@code SETTLEMENT_WINDOW_SECONDS} 既有约定（dev 默认 5s）。生产不设该项即用小时值。
+     */
+    public long voteWindowSecondsEffective() {
+        return voteWindowSeconds > 0 ? voteWindowSeconds : Math.max(0, voteWindowHours) * 3600L;
+    }
+
+    /** 上诉窗口实际秒数：秒级覆盖优先，否则小时换算。 */
+    public long appealWindowSecondsEffective() {
+        return appealWindowSeconds > 0 ? appealWindowSeconds : Math.max(0, appealWindowHours) * 3600L;
     }
 }

@@ -115,6 +115,20 @@ export interface AdjudicationSnapshot {
     /** 过半方；平票/票数不足时为 null。 */
     majority: 'for_merchant' | 'for_recommender' | null
   }
+  /**
+   * 当前阶段的时间窗（可观测性）。`phase`: vote=投票窗口 / appeal=上诉窗口 /
+   * none=无固定窗口（未开庭、等客服、已终局）。
+   *
+   * `remainingSeconds` 是**估算展示值**——真正到期由 Temporal Timer 驱动，
+   * 二者可能有秒级偏差，不可作判定依据。
+   */
+  window: {
+    phase: 'vote' | 'appeal' | 'none'
+    durationSeconds: number
+    startedAt: string | null
+    deadline: string | null
+    remainingSeconds: number | null
+  }
   /** 仅 adjudicate 端点返回。 */
   workflowId?: string
 }

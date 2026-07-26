@@ -32,7 +32,9 @@ class AdjudicationActivityImplTest {
     private final OutboxRepository outbox = mock(OutboxRepository.class);
     private final FinanceDecisionClient finance = mock(FinanceDecisionClient.class);
     private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(
-            disputes, judges, outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 168, 60), finance);
+            disputes, judges, outbox,
+            new AdjudicationProperties(7, 24, 2, 48, 1, 168, 60, 0, 0),  // 末两参=秒级覆盖，0=用小时值
+            finance);
 
     @Test
     void tallyVotesMapsMajorityAndTie() {
