@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
+import MySessionsCard from './MySessionsCard.vue'
 import OrgTeamCard from './OrgTeamCard.vue'
 import PermissionReviewPanel from './PermissionReviewPanel.vue'
 import { useAuth } from '../composables/useAuth'
@@ -331,9 +332,13 @@ function statusLabel(status: string): string {
     </p>
     <p v-if="notice" class="gl-alert gl-alert-ok">{{ notice }}</p>
 
-    <!-- 我的邀请：任何账号都可能被邀请入组织，与商家/推荐官视角无关，故在切换之外 -->
+    <!-- 我的邀请 / 登录设备：都是账号级能力，与商家/推荐官视角无关，故在切换之外 -->
     <article class="gl-card gl-card-wide">
       <MyInvitationsCard @joined="loadOrganizations" />
+    </article>
+
+    <article class="gl-card gl-card-wide">
+      <MySessionsCard />
     </article>
 
     <!-- ============ 商家视角 ============ -->

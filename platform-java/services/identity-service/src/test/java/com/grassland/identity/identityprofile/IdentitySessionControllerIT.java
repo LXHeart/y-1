@@ -51,8 +51,14 @@ class IdentitySessionControllerIT extends IdentityItSupport {
 
         client().delete().uri("/api/me/sessions/" + token).header("Cookie", "y1.sid=" + acc.cookie())
                 .exchange().expectStatus().isOk();
+        // 撤销的是**自己这台**，于是自己也被登出——这正是「撤销=真登出」的语义，
+        // 前端据 current 标记提示用户「撤销这条会把你登出」。
         client().get().uri("/api/me/sessions").header("Cookie", "y1.sid=" + acc.cookie())
-                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.length()").isEqualTo(0);
+                .exchange().expectStatus().isUnauthorized();
+        Long remaining = db.sql("SELECT COUNT(*)::int AS c FROM identity_session"
+                        + " WHERE account_id = CAST(:acct AS uuid)")
+                .bind("acct", acc.accountId()).map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(remaining).isZero();
 
         Long revoked = db.sql("SELECT COUNT(*)::int AS c FROM identity_audit_log"
                         + " WHERE account_id = CAST(:acct AS uuid) AND action = 'revoke_session'")
@@ -79,6 +85,83 @@ class IdentitySessionControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    /**
+     * 只登录、从没切换过身份的设备**也必须出现在清单里**。
+     *
+     * <p>`identity_session` 是懒创建的，早先按它列清单会漏掉这类设备——安全界面上给出一个
+     * 看起来完整的子集，用户会据此认定「没有异常登录」，比不做更危险。浏览器实测正是栽在这里：
+     * 卡片在本机激活身份之前就拉了列表，于是一条「本机」都没标出来。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void listsDeviceThatNeverActivatedAnIdentity() {
+        var acc = seedAccount("is-never-activated@example.com");
+        String device2 = cookieFor(acc.accountId());   // 只登录，不激活任何身份
+
+        Map<String, Object> body = client().get().uri("/api/me/sessions")
+                .header("Cookie", "y1.sid=" + device2).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
+
+        assertThat(data).hasSize(2);   // 两台设备都在（都只是登录过）
+        Map<String, Object> self = data.stream()
+                .filter(s -> Boolean.TRUE.equals(s.get("current"))).findFirst().orElseThrow();
+        assertThat(self.get("activeIdentityType")).isNull();   // 消费者：右表无行
+    }
+
+    /** 设备列表要能认出「这台就是我」，否则前端无从提示「撤销这条会把自己登出」。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void listMarksOnlyTheRequestingDeviceAsCurrent() {
+        var acc = seedAccount("is-current@example.com");
+        String device2 = cookieFor(acc.accountId());
+        openIdentity(acc.cookie(), "recommender");
+        activate(acc.cookie());
+        activate(device2);
+
+        Map<String, Object> body = client().get().uri("/api/me/sessions")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
+
+        assertThat(data).hasSize(2);
+        assertThat(data.stream().filter(s -> Boolean.TRUE.equals(s.get("current"))).count()).isEqualTo(1);
+    }
+
+    /**
+     * 撤销另一台设备后，那台设备必须**真的登出**（登录会话行被删），而不只是清掉活动身份——
+     * 只清活动身份的话对方 cookie 依然有效、照样能操作，「撤销」名不副实。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void revokingAnotherDeviceLogsItOut() {
+        var acc = seedAccount("is-logout@example.com");
+        String device2 = cookieFor(acc.accountId());
+        openIdentity(acc.cookie(), "recommender");
+        activate(device2);
+
+        // 撤销前：设备2 已登录
+        client().get().uri("/api/auth/me").header("Cookie", "y1.sid=" + device2)
+                .exchange().expectStatus().isOk();
+
+        Map<String, Object> body = client().get().uri("/api/me/sessions")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        // 按 current 挑出「不是本机」的那台，不依赖列表顺序
+        String device2Token = (String) ((List<Map<String, Object>>) body.get("data")).stream()
+                .filter(s -> !Boolean.TRUE.equals(s.get("current")))
+                .findFirst().orElseThrow().get("sessionToken");
+
+        client().delete().uri("/api/me/sessions/" + device2Token)
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk();
+
+        // 撤销后：设备2 登出，发起撤销的设备1 不受影响
+        client().get().uri("/api/auth/me").header("Cookie", "y1.sid=" + device2)
+                .exchange().expectStatus().isUnauthorized();
+        client().get().uri("/api/auth/me").header("Cookie", "y1.sid=" + acc.cookie())
+                .exchange().expectStatus().isOk();
+    }
+
     @Test
     void activateWritesAuditRow() {
         var acc = seedAccount("is-audit@example.com");
@@ -97,6 +180,13 @@ class IdentitySessionControllerIT extends IdentityItSupport {
     @Test
     void rejectsRequestsWithoutSessionCookie() {
         client().get().uri("/api/me/sessions").exchange().expectStatus().isUnauthorized();
+    }
+
+    /** 激活 recommender：identity_session 行是懒创建的，不激活就不会出现在设备列表里。 */
+    private void activate(String cookie) {
+        client().post().uri("/api/me/active-identity")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{\"type\":\"recommender\"}").exchange().expectStatus().isOk();
     }
 
     private void openIdentity(String cookie, String type) {

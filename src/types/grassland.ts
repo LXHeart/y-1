@@ -311,6 +311,29 @@ export interface Store {
   createdAt: string | null
 }
 
+// ---------- identity：多设备登录会话（Slice 2I / HLD D-08）----------
+
+/**
+ * 一台已登录设备（`GET /api/me/sessions`）。
+ *
+ * 来源是**登录会话**表（登录即有行）左连 `identity_session`，所以没切换过身份的设备也在列表里，
+ * 只是 `activeIdentityType` / `deviceId` / `ipAddress` 等为 null（右表无行）。
+ */
+export interface LoginSession {
+  /** 该设备的 session id；撤销时作为路径参数。 */
+  sessionToken: string
+  /** 该设备当前的活动身份；null = 消费者。活动身份按设备隔离。 */
+  activeIdentityType: IdentityType | null
+  /** sha256(User-Agent) 前 16 位，用于区分设备。 */
+  deviceId: string | null
+  /** 客户端自报的 `X-Device-Label`，通常为 null。 */
+  deviceLabel: string | null
+  ipAddress: string | null
+  lastSeenAt: string | null
+  /** 是否就是当前这台设备——撤销它等于把自己登出。 */
+  current: boolean
+}
+
 // ---------- identity：按邮箱邀请成员 ----------
 
 /** 邀请状态。pending 是唯一非终态；过期不是状态（由 `expired` 字段按 expiresAt 算出）。 */

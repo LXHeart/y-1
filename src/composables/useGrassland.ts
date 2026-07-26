@@ -10,6 +10,7 @@ import type {
   JudgeVote,
   CreatePermissionRequestInput,
   InvitationAcceptResult,
+  LoginSession,
   Membership,
   MyInvitation,
   Organization,
@@ -209,6 +210,22 @@ export function useGrassland() {
   /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
   const removeMembership = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+
+  // ---------- identity：多设备登录会话（Slice 2I）----------
+
+  /**
+   * 列本账号当前有效的登录会话（= 已登录设备）。
+   *
+   * 没切换过身份的设备也在其中，只是 `activeIdentityType`/`deviceId`/`ipAddress` 为 null。
+   */
+  const listMySessions = () => run(() => request<LoginSession[]>('/api/me/sessions'))
+
+  /**
+   * 撤销某台设备：清掉它的活动身份 **并删除其登录会话（该设备真的登出）**。
+   * 撤销 `current: true` 的那条 = 把自己登出。撤销他人 session → 403，不存在 → 404。
+   */
+  const revokeSession = (sessionToken: string) =>
+    run(() => request<unknown>(`/api/me/sessions/${encodeURIComponent(sessionToken)}`, { method: 'DELETE' }))
 
   // ---------- identity：按邮箱邀请成员 ----------
 
@@ -482,6 +499,8 @@ export function useGrassland() {
     listMyInvitations,
     acceptInvitation,
     declineInvitation,
+    listMySessions,
+    revokeSession,
     listStores,
     createStore,
     listStoreMemberships,

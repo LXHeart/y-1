@@ -43,6 +43,32 @@ public class IdentitySessionRepository {
                 .map(IdentitySessionRepository::map).all();
     }
 
+    /**
+     * 列该账号**所有未过期的登录会话**（设备清单的真正来源），左连 identity_session 取活动身份与设备信息。
+     *
+     * <p>为什么不用 {@link #findByAccount}：{@code identity_session} 行是**首次激活身份时才懒创建**的，
+     * 只登录、没切过身份的设备根本不在里面。安全界面里列一个「看起来是全部、其实是子集」的设备清单，
+     * 比不做更危险——用户会据此判断「没有异常登录」。故以 legacy {@code session} 表为准（登录即有行），
+     * 设备信息缺失时留空，由前端显示「未知设备」。
+     *
+     * <p>{@code sess} 是 connect-pg-simple 写的 JSON，用户 id 在 {@code sess->'user'->>'id'}。
+     */
+    public Flux<IdentitySession> findLoginSessionsByAccount(String accountId) {
+        return db.sql("""
+                SELECT s.sid AS session_token,
+                       :acct AS account_id,
+                       i.active_identity_type, i.device_id, i.device_label, i.ip_address, i.user_agent,
+                       i.issued_at, i.last_seen_at,
+                       i.reauthenticated_at, i.auth_strength
+                FROM session s
+                LEFT JOIN identity_session i ON i.session_token = s.sid
+                WHERE s.sess->'user'->>'id' = :acct AND s.expire > now()
+                ORDER BY i.last_seen_at DESC NULLS LAST, s.expire DESC
+                """)
+                .bind("acct", accountId)
+                .map(IdentitySessionRepository::mapLoginSession).all();
+    }
+
     /** 激活/upsert：覆盖 active_identity_type + 设备指纹 + last_seen；返回更新后行。设备字段可空（COALESCE 保留旧值）。 */
     public Mono<IdentitySession> activate(String sessionToken, String accountId, String identityType,
                                           String deviceId, String deviceLabel, String ipAddress, String userAgent) {
@@ -128,6 +154,28 @@ public class IdentitySessionRepository {
                 toInstant(row.get("issued_at", OffsetDateTime.class)),
                 toInstant(row.get("last_seen_at", OffsetDateTime.class)),
                 toInstant(row.get("expires_at", OffsetDateTime.class)),
+                toInstant(row.get("reauthenticated_at", OffsetDateTime.class)),
+                row.get("auth_strength", String.class)
+        );
+    }
+
+    /**
+     * 登录会话行（session LEFT JOIN identity_session）。identity_session 侧全部可空——
+     * 只登录、没激活过身份的设备在右表没有行。{@code expiresAt} 不取（legacy {@code session.expire} 是
+     * {@code timestamp} 而非 {@code timestamptz}，类型口径不同，设备清单也用不到），留 null。
+     */
+    private static IdentitySession mapLoginSession(Readable row) {
+        return new IdentitySession(
+                row.get("session_token", String.class),
+                row.get("account_id", String.class),
+                row.get("active_identity_type", String.class),
+                row.get("device_id", String.class),
+                row.get("device_label", String.class),
+                row.get("ip_address", String.class),
+                row.get("user_agent", String.class),
+                toInstant(row.get("issued_at", OffsetDateTime.class)),
+                toInstant(row.get("last_seen_at", OffsetDateTime.class)),
+                null,
                 toInstant(row.get("reauthenticated_at", OffsetDateTime.class)),
                 row.get("auth_strength", String.class)
         );
