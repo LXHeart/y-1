@@ -272,13 +272,11 @@ export function useGrassland() {
     }))
 
   /**
-   * 客服终审（覆盖面板判决）。
+   * 客服终审（覆盖面板判决）。**已打通并实测**。
    *
-   * ⚠️ **当前仍会 403，但卡点已从 MFA 转移到身份**：
-   * - MFA 侧已打通：调 {@link reauthenticate} 后断言会带 `authStrength=level2` + `reauthenticatedAt`（已实测）
-   * - 剩余阻塞：trust 的 `requireCustomerService` 要求断言 `activeIdentityType=customer_service`，
-   *   但 identity 的 `IdentityType` 只有 merchant/recommender——客服身份无法获得（与 judge 同类问题）。
-   *   拟改为按 `app_users.role` 判定，但断言当前**不携带 role**，需先扩展共享断言契约。
+   * 前置：① 账号 `role` 为 `customer_service` 或 `admin`（平台角色，非业务身份）；
+   * ② 5 分钟内调过 {@link reauthenticate}（MFA 近期性）。任一不满足 → 403。
+   * 范围：争议须为 appealed 或 escalated-voting 态，否则 409。
    */
   const finalDecision = (disputeId: string, decision: string) =>
     run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/final-decision`, {

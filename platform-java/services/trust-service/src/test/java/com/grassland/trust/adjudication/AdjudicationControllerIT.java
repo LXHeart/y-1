@@ -339,6 +339,44 @@ class AdjudicationControllerIT extends TrustItSupport {
     }
 
     @Test
+    void adminRoleCanAlsoFinalize() {
+        // admin 是客服超集（平台管理员可执行客服动作）
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toAppealed(id);
+        Instant now = Instant.now();
+        String adminAssertion = signer.sign(new IdentityAssertion(
+                UUID.randomUUID().toString(), null, "sid-admin", null, null,
+                "cookie-session", "level2", now, "r", "t",
+                "grassland-internal", now, now.plusSeconds(60), null, null, "admin"));
+
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", adminAssertion)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void serviceAssertionCannotImpersonateCustomerService() {
+        // 防冒充：服务断言即便带 role 也不得执行客服动作（服务不是人）
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        toAppealed(id);
+        Instant now = Instant.now();
+        String serviceWithRole = signer.sign(new IdentityAssertion(
+                "service:marketplace", null, null, org, null,
+                "service", "internal", now, "r", "t",
+                "grassland-internal", now, now.plusSeconds(30), "service", "marketplace", "customer_service"));
+
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", serviceWithRole)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
     void finalDecisionRequiresRecentMfa() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
@@ -452,11 +490,15 @@ class AdjudicationControllerIT extends TrustItSupport {
     }
 
     /** 签一个客服断言（activeIdentityType=customer_service），reauthenticatedAt 控制近期性（MFA）。 */
+    /**
+     * 客服断言：按<b>平台角色</b>（末位 role 参数）而非 activeIdentityType——
+     * customer_service 不是 identity 支持的业务身份（与 judge 同类问题，e2e 联调发现）。
+     */
     private String signCs(String accountId, Instant reauthenticatedAt) {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
-                accountId, "customer_service", "sid-" + accountId, null, null,
+                accountId, null, "sid-" + accountId, null, null,
                 "cookie-session", "level2", reauthenticatedAt, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-internal", now, now.plusSeconds(60), null, null, "customer_service"));
     }
 }

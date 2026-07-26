@@ -37,7 +37,7 @@ public class TrustCallerResolver {
         }
         return Mono.justOrEmpty(signer.verify(header, Instant.now()))
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(),
-                        a.callerKind(), a.principal(), a.reauthenticatedAt()))
+                        a.callerKind(), a.principal(), a.reauthenticatedAt(), a.role()))
                 .switchIfEmpty(Mono.error(new TrustException(401, "未登录")));
     }
 
@@ -71,7 +71,17 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "需要推荐官身份")));
     }
 
-    /** 客服（终审/覆盖判决：HLD §11.2 客服兜底）。仅信任断言 activeIdentityType=customer_service。 */
+    /**
+     * 客服（终审/覆盖判决：HLD §11.2 客服兜底）。
+     *
+     * <p><b>语义变更（e2e 联调修正，同 requireJudge 的问题）</b>：原实现要求断言
+     * {@code activeIdentityType=customer_service}，但 identity 的 {@code IdentityType} 只有
+     * merchant/recommender——客服身份无法通过任何正常途径获得，客服终审恒 403。
+     *
+     * <p>现改按<b>平台角色</b>判定（{@code app_users.role}）：客服是账号在平台侧的职能，
+     * 与「当前 session 选了哪个业务视角」正交，不该建模为业务身份。
+     * {@code admin} 视作客服超集（平台管理员可执行客服动作）。
+     */
     public Mono<Caller> requireCustomerService(ServerHttpRequest request) {
         return resolve(request)
                 .filter(Caller::isCustomerService)
@@ -95,7 +105,8 @@ public class TrustCallerResolver {
     /** 断言解析出的调用者。{@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）；
      *  {@code reauthenticatedAt} 用于客服终审 MFA 近期性校验（HLD §11.2，可空=未再认证）。 */
     public record Caller(String accountId, String activeIdentityType, String organizationId,
-                         String callerKind, String principal, Instant reauthenticatedAt) {
+                         String callerKind, String principal, Instant reauthenticatedAt,
+                         String role) {
         public boolean isMerchant() {
             return !"service".equalsIgnoreCase(callerKind)
                     && "merchant".equalsIgnoreCase(activeIdentityType);
@@ -106,16 +117,19 @@ public class TrustCallerResolver {
                     && "recommender".equalsIgnoreCase(activeIdentityType);
         }
 
-        /** 审判官（HLD 5.5）。服务断言不可冒充——callerKind=service 恒 false。 */
-        public boolean isJudge() {
-            return !"service".equalsIgnoreCase(callerKind)
-                    && "judge".equalsIgnoreCase(activeIdentityType);
-        }
+        // 注：原 isJudge()（按 activeIdentityType=judge 判定）已删除——judge 不是 identity 支持的身份类型，
+        // 该方法永远返回 false。审判官现按「推荐官 + 已入 judge 池」判定，见 requireJudge + AdjudicationController。
 
-        /** 客服（HLD §11.2 终审）。服务断言不可冒充——callerKind=service 恒 false。 */
+        /**
+         * 客服（HLD §11.2 终审）。按<b>平台角色</b>判定（{@code app_users.role}），非业务身份——
+         * 见 {@code requireCustomerService} 注释。{@code admin} 为客服超集。
+         * 服务断言不可冒充——callerKind=service 恒 false。
+         */
         public boolean isCustomerService() {
-            return !"service".equalsIgnoreCase(callerKind)
-                    && "customer_service".equalsIgnoreCase(activeIdentityType);
+            if ("service".equalsIgnoreCase(callerKind)) {
+                return false;
+            }
+            return "customer_service".equalsIgnoreCase(role) || "admin".equalsIgnoreCase(role);
         }
 
         public boolean isService() {

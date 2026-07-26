@@ -26,6 +26,10 @@ import java.time.Instant;
  *       {@code "service"} = 领域服务现签的服务间断言（{@code principal} 为服务名，如 {@code "marketplace"}，
  *       带 {@code organizationId} 上下文供下游做 org 级授权）。下游须据 {@link #isService()} 区分两类，
  *       不允许服务断言冒充 merchant 用户（HLD 7.4 末句）。字段末尾追加，旧 token 反序列化为 {@code null}（前向兼容）。</li>
+ *   <li>{@code role} — 账号平台角色（{@code app_users.role}：user/admin/customer_service）。
+ *       与 {@code activeIdentityType}（业务身份：商家/推荐官）<b>正交</b>：前者是账号在平台侧的职能，
+ *       后者是当前 session 选择的业务视角。客服终审等平台侧动作据此判定（trust {@code requireCustomerService}）。
+ *       同样字段末尾追加，旧 token 解出 {@code null}（前向兼容）；服务断言无此值。</li>
  * </ul>
  *
  * <p>record + Jackson（JavaTimeModule）序列化为 JSON，base64url 编码后作 token payload。
@@ -45,13 +49,39 @@ public record IdentityAssertion(
         Instant issuedAt,
         Instant expiresAt,
         String callerKind,
-        String principal) {
+        String principal,
+        String role) {
 
     private static final String SERVICE = "service";
+
+    /**
+     * 15 参便捷构造器（{@code role=null}）——服务间断言与既有测试夹具用。
+     *
+     * <p>服务断言天然没有用户 role（{@code callerKind=service} 的调用方不是人），
+     * 故此重载语义即「无 role」，不是权宜之计。保留它使 role 的加入只波及真正需要 role 的构造点，
+     * 而非全部 19 处（HLD 7.4 契约演进：新 claim 末尾追加 + 旧调用方零改动）。
+     */
+    public IdentityAssertion(String accountId, String activeIdentityType, String sessionToken,
+                             String organizationId, String permissionTier, String authMethod,
+                             String authStrength, Instant reauthenticatedAt, String requestId,
+                             String traceId, String audience, Instant issuedAt, Instant expiresAt,
+                             String callerKind, String principal) {
+        this(accountId, activeIdentityType, sessionToken, organizationId, permissionTier, authMethod,
+                authStrength, reauthenticatedAt, requestId, traceId, audience, issuedAt, expiresAt,
+                callerKind, principal, null);
+    }
 
     /** 是否为领域服务现签的服务间断言（HLD 11.1）。 */
     public boolean isService() {
         return SERVICE.equalsIgnoreCase(callerKind);
+    }
+
+    /**
+     * 是否具备指定平台角色（大小写不敏感）。服务断言恒 false——
+     * 服务不是人，不该凭 role 执行平台侧动作（同 {@code isMerchant} 的防冒充原则）。
+     */
+    public boolean hasRole(String expectedRole) {
+        return !isService() && expectedRole != null && expectedRole.equalsIgnoreCase(role);
     }
 
     /** 是否为 BFF 签发的终端用户断言（{@code callerKind} 缺省视为 user）。 */

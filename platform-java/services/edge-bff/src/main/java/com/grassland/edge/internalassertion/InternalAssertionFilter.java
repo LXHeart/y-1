@@ -100,7 +100,10 @@ public class InternalAssertionFilter implements WebFilter {
                 properties.audience(),
                 now,
                 now.plus(properties.ttl()),
-                "user", null);
+                "user", null,
+                // 平台角色（app_users.role）：与业务身份正交，供下游做平台侧授权
+                // （trust 客服终审等）。此前未签入，导致客服身份无法认定。
+                identity.role());
     }
 
     private static String headerOrUuid(ServerWebExchange exchange, String headerName) {

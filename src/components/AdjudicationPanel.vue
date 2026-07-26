@@ -218,10 +218,8 @@ async function submitFinalDecision(): Promise<void> {
             </select>
             <button type="button" :disabled="grassland.loading.value" @click="submitFinalDecision">提交终审</button>
           </div>
-          <p class="adj-warn">
-            ⚠️ MFA 重认证已可用（上方按钮），但终审仍需<strong>客服身份</strong>——
-            identity 的身份枚举只有商家/推荐官，客服身份暂无法获得，此操作仍会 403。
-            拟改为按账号 role 判定，需先扩展断言契约携带 role。
+          <p class="adj-hint">
+            需账号角色为客服（或管理员）+ 5 分钟内完成过重认证。终审可<strong>覆盖</strong>面板判决。
           </p>
         </details>
       </div>
