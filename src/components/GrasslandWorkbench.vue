@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
+import MyInvitationsCard from './MyInvitationsCard.vue'
 import OrgTeamCard from './OrgTeamCard.vue'
 import PermissionReviewPanel from './PermissionReviewPanel.vue'
 import { useAuth } from '../composables/useAuth'
@@ -301,6 +302,11 @@ function statusLabel(status: string): string {
       {{ grassland.error.value }}
     </p>
     <p v-if="notice" class="gl-alert gl-alert-ok">{{ notice }}</p>
+
+    <!-- 我的邀请：任何账号都可能被邀请入组织，与商家/推荐官视角无关，故在切换之外 -->
+    <article class="gl-card gl-card-wide">
+      <MyInvitationsCard @joined="loadOrganizations" />
+    </article>
 
     <!-- ============ 商家视角 ============ -->
     <div v-if="side === 'merchant'" class="gl-grid">

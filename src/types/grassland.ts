@@ -311,6 +311,48 @@ export interface Store {
   createdAt: string | null
 }
 
+// ---------- identity：按邮箱邀请成员 ----------
+
+/** 邀请状态。pending 是唯一非终态；过期不是状态（由 `expired` 字段按 expiresAt 算出）。 */
+export type InvitationStatus = 'pending' | 'accepted' | 'revoked' | 'declined'
+
+/**
+ * 组织侧看到的邀请（`GET/POST /api/organizations/{orgId}/invitations`）。
+ *
+ * ⚠️ 与被邀请人侧的 {@link MyInvitation} **字段不对称**：这边有 email/status，
+ * 那边有 organizationName 而没有 email/status。别把两个类型混用。
+ */
+export interface OrgInvitation {
+  id: string
+  organizationId: string
+  email: string
+  role: Exclude<MembershipRole, 'owner'>
+  status: InvitationStatus
+  expiresAt: string | null
+  createdAt: string | null
+  /** 后端按 expiresAt 现算：pending 且已过期才为 true。 */
+  expired: boolean
+  /** **仅创建响应带**——列表读不出「当时是否发出了邮件」，故列表项无此字段。 */
+  emailSent?: boolean
+}
+
+/** 被邀请人侧看到的待接受邀请（`GET /api/me/invitations`）。只列未过期的 pending。 */
+export interface MyInvitation {
+  id: string
+  organizationId: string
+  organizationName: string
+  role: Exclude<MembershipRole, 'owner'>
+  expiresAt: string | null
+  createdAt: string | null
+}
+
+/** 接受邀请的结果。alreadyMember=true 表示本就是成员（幂等成功，非报错）。 */
+export interface InvitationAcceptResult {
+  organizationId: string
+  role: Exclude<MembershipRole, 'owner'>
+  alreadyMember: boolean
+}
+
 /** 门店成员。注意归属字段是 `storeId`（不是 organizationId）。 */
 export interface StoreMembership {
   id: string

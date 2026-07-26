@@ -1,15 +1,26 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
-import type { Membership, MembershipRole, Store, StoreMembership, StoreRole } from '../types/grassland'
+import type {
+  InvitationStatus,
+  Membership,
+  MembershipRole,
+  OrgInvitation,
+  Store,
+  StoreMembership,
+  StoreRole,
+} from '../types/grassland'
 
 /**
  * 组织成员 + 门店 + 门店成员管理（Slice 2F / 2G / 2J 的前端）。
  *
  * 后端三级权限早已建好且全测通，但此前零 UI——多门店、多成员的商家没法自助管理。
  *
+ * 加成员的主路径是**按邮箱邀请**（identity 没有、也刻意不做「按邮箱查人」——那等于账号枚举探针）：
+ * 邀请只记邮箱，由对方登录后在「我的邀请」里自行接受。填 UUID 直接添加保留为次要入口。
+ *
  * 授权分档（后端口径，UI 只做提示，真正门禁在服务端）：
- * - 组织成员增删：org **OWNER**（且不能经此端点授予 owner）
+ * - 组织成员增删 / 发邀请 / 撤销邀请：org **OWNER**（且不能经此端点授予 owner）
  * - 建门店：org **ADMIN+**
  * - 门店列表：org MEMBER+；门店成员列表：门店 STAFF+
  * - 任命门店 manager：org **ADMIN+**；加 staff：**门店 MANAGER+**（店长可自管本店员工）
@@ -21,11 +32,13 @@ const props = defineProps<{ orgId: string }>()
 const grassland = useGrassland()
 
 const members = ref<Membership[]>([])
+const invitations = ref<OrgInvitation[]>([])
 const stores = ref<Store[]>([])
 const selectedStoreId = ref('')
 const storeMembers = ref<StoreMembership[]>([])
 const notice = ref('')
 
+const newMemberEmail = ref('')
 const newMemberAccount = ref('')
 const newMemberRole = ref<'admin' | 'member'>('member')
 const newStoreName = ref('')
@@ -43,13 +56,22 @@ const STORE_ROLE_LABEL: Record<StoreRole, string> = {
   staff: '店员',
 }
 
+const INVITATION_STATUS_LABEL: Record<InvitationStatus, string> = {
+  pending: '待接受',
+  accepted: '已接受',
+  revoked: '已撤销',
+  declined: '已谢绝',
+}
+
 async function refresh(): Promise<void> {
   if (!props.orgId) return
   selectedStoreId.value = ''
   storeMembers.value = []
   const m = await grassland.listMemberships(props.orgId)
+  const i = await grassland.listInvitations(props.orgId)
   const s = await grassland.listStores(props.orgId)
   if (m) members.value = m
+  if (i) invitations.value = i
   if (s) stores.value = s
 }
 
@@ -69,6 +91,33 @@ async function addMember(): Promise<void> {
   newMemberAccount.value = ''
   notice.value = `已添加${ROLE_LABEL[newMemberRole.value]}`
   await reloadMembers()
+}
+
+async function reloadInvitations(): Promise<void> {
+  const list = await grassland.listInvitations(props.orgId)
+  if (list) invitations.value = list
+}
+
+async function sendInvite(): Promise<void> {
+  const email = newMemberEmail.value.trim()
+  if (!email) return
+  notice.value = ''
+  const created = await grassland.inviteMember(props.orgId, email, newMemberRole.value)
+  if (!created) return
+  newMemberEmail.value = ''
+  // emailSent 如实反映后端是否真的发出邮件：本地未配 SMTP 时为 false，此时必须由邀请人自己通知对方
+  notice.value = created.emailSent
+    ? `已向 ${created.email} 发出邀请邮件`
+    : `已记录对 ${created.email} 的邀请（未配置邮件服务，请自行通知对方登录后接受）`
+  await reloadInvitations()
+}
+
+async function revokeInvite(invitation: OrgInvitation): Promise<void> {
+  notice.value = ''
+  const revoked = await grassland.revokeInvitation(props.orgId, invitation.id)
+  if (revoked === null) return  // 已被接受/谢绝等 409 由 error 条呈现
+  notice.value = '邀请已撤销'
+  await reloadInvitations()
 }
 
 async function removeMember(m: Membership): Promise<void> {
@@ -151,19 +200,59 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
       </table>
 
       <div class="team-row">
-        <input v-model="newMemberAccount" placeholder="账号 ID（UUID）" />
+        <input v-model="newMemberEmail" type="email" placeholder="对方邮箱" @keyup.enter="sendInvite" />
         <select v-model="newMemberRole">
           <option value="member">成员</option>
           <option value="admin">管理员</option>
         </select>
-        <button type="button" :disabled="grassland.loading.value || !newMemberAccount.trim()" @click="addMember">
-          添加成员
+        <button type="button" :disabled="grassland.loading.value || !newMemberEmail.trim()" @click="sendInvite">
+          发出邀请
         </button>
       </div>
       <p class="team-hint">
         需组织所有者权限；所有者角色只能在建组织时产生，不能在此授予。
-        目前只能填账号 UUID —— identity 尚无「按邮箱查人/邀请」端点。
+        <strong>系统不会告诉你该邮箱是否已注册</strong>——无论如何都记下邀请，由对方登录后自行接受（防账号枚举）。
       </p>
+
+      <details class="team-adv">
+        <summary>已知账号 ID？直接添加</summary>
+        <div class="team-row">
+          <input v-model="newMemberAccount" placeholder="账号 ID（UUID）" />
+          <button
+            type="button"
+            :disabled="grassland.loading.value || !newMemberAccount.trim()"
+            @click="addMember"
+          >直接添加</button>
+        </div>
+        <p class="team-hint">跳过邀请直接入组，仅在你确知对方账号 ID 时可用；角色取上方下拉框的选择。</p>
+      </details>
+    </section>
+
+    <!-- 邀请 -->
+    <section class="team-sec">
+      <h4>邀请记录</h4>
+      <p v-if="invitations.length === 0" class="team-hint">暂无邀请。</p>
+      <table v-else class="team-table">
+        <thead><tr><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-for="i in invitations" :key="i.id">
+            <td>{{ i.email }}</td>
+            <td>{{ ROLE_LABEL[i.role] || i.role }}</td>
+            <td>
+              {{ INVITATION_STATUS_LABEL[i.status] || i.status }}
+              <span v-if="i.expired" class="team-tag">已过期</span>
+            </td>
+            <td>
+              <button
+                v-if="i.status === 'pending'"
+                type="button" class="team-quiet"
+                :disabled="grassland.loading.value"
+                @click="revokeInvite(i)"
+              >撤销</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <!-- 门店 -->
@@ -248,6 +337,9 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
 .team-link.active { color: var(--color-accent); font-weight: 500; }
 .team-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); }
 .team-hint { margin: 0; font-size: 12px; opacity: 0.62; }
+.team-adv { font-size: 12px; }
+.team-adv summary { cursor: pointer; opacity: 0.7; padding: 2px 0; }
+.team-adv > .team-row { margin-top: 6px; }
 input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
 input { min-width: 200px; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }

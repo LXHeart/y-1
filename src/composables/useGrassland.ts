@@ -9,8 +9,11 @@ import type {
   Judge,
   JudgeVote,
   CreatePermissionRequestInput,
+  InvitationAcceptResult,
   Membership,
+  MyInvitation,
   Organization,
+  OrgInvitation,
   OrganizationQuota,
   PermissionRequest,
   PermissionTier,
@@ -206,6 +209,45 @@ export function useGrassland() {
   /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
   const removeMembership = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+
+  // ---------- identity：按邮箱邀请成员 ----------
+
+  /**
+   * 按邮箱邀请成员（需 org **OWNER**）。
+   *
+   * ⚠️ 请求体字段是 `email` + `role`（后端 `CreateInvitationRequest(email, role)`），
+   * 与直接加成员的 `accountId` 不同；role 仅 admin/member。
+   *
+   * 后端**不回答该邮箱是否已注册**——存在与否都返回 201（防账号枚举）。
+   * 响应的 `emailSent` 表示是否真的发出了通知邮件（本地未配 SMTP 时为 false，需邀请人自行告知对方）。
+   */
+  const inviteMember = (orgId: string, email: string, role: 'admin' | 'member') =>
+    run(() => request<OrgInvitation>(`/api/organizations/${orgId}/invitations`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    }))
+
+  /** 列本组织的邀请（含终态，需 org MEMBER+）。列表项**不带** `emailSent`。 */
+  const listInvitations = (orgId: string) =>
+    run(() => request<OrgInvitation[]>(`/api/organizations/${orgId}/invitations`))
+
+  /** 撤销待接受邀请（需 org OWNER）。已被接受/谢绝/撤销 → 409。 */
+  const revokeInvitation = (orgId: string, invitationId: string) =>
+    run(() => request<unknown>(
+      `/api/organizations/${orgId}/invitations/${invitationId}`, { method: 'DELETE' }))
+
+  /** 列发给「我这个邮箱」的待接受邀请。响应带 `organizationName`，**不带** email/status。 */
+  const listMyInvitations = () =>
+    run(() => request<MyInvitation[]>('/api/me/invitations'))
+
+  /** 接受邀请（无请求体）。本就是成员时不报错，返回 `alreadyMember: true`。 */
+  const acceptInvitation = (invitationId: string) =>
+    run(() => request<InvitationAcceptResult>(
+      `/api/me/invitations/${invitationId}/accept`, { method: 'POST' }))
+
+  /** 谢绝邀请（无请求体）。 */
+  const declineInvitation = (invitationId: string) =>
+    run(() => request<unknown>(`/api/me/invitations/${invitationId}/decline`, { method: 'POST' }))
 
   /** 列门店（需 org MEMBER+）。 */
   const listStores = (orgId: string) =>
@@ -434,6 +476,12 @@ export function useGrassland() {
     listMemberships,
     addMembership,
     removeMembership,
+    inviteMember,
+    listInvitations,
+    revokeInvitation,
+    listMyInvitations,
+    acceptInvitation,
+    declineInvitation,
     listStores,
     createStore,
     listStoreMemberships,

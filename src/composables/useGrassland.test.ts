@@ -106,6 +106,69 @@ describe('materials 解析（响应是 JSON 字符串，不是对象）', () => 
   })
 })
 
+describe('成员邀请请求契约', () => {
+  function mockFetchData(data: unknown): ReturnType<typeof vi.fn> {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data }),
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('inviteMember 发送 email 而非 accountId', async () => {
+    const spy = mockFetchData({})
+    const { inviteMember } = useGrassland()
+
+    await inviteMember('org-1', 'someone@example.com', 'admin')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/invitations')
+    const body = bodyOf(spy)
+    expect(body.email).toBe('someone@example.com')
+    expect(body.role).toBe('admin')
+    // 与 addMembership 的请求体不同——写成 accountId 后端会 400
+    expect(body).not.toHaveProperty('accountId')
+  })
+
+  test('accept / decline 打到 /api/me/invitations 且不带请求体', async () => {
+    const spy = mockFetchData({ organizationId: 'org-1', role: 'member', alreadyMember: false })
+    const { acceptInvitation, declineInvitation } = useGrassland()
+
+    await acceptInvitation('inv-1')
+    await declineInvitation('inv-2')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/me/invitations/inv-1/accept')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect((spy.mock.calls[0][1] as RequestInit).body).toBeUndefined()
+    expect(spy.mock.calls[1][0]).toBe('/api/me/invitations/inv-2/decline')
+  })
+
+  /** 两个视角字段不对称：org 侧回 email/status，被邀请人侧回 organizationName 且没有 email。 */
+  test('被邀请人侧列表读 organizationName（org 侧的 email/status 在这里不存在）', async () => {
+    mockFetchData([{
+      id: 'inv-1', organizationId: 'org-1', organizationName: '示例商家',
+      role: 'member', expiresAt: '2026-08-03T10:00:00Z', createdAt: '2026-07-27T10:00:00Z',
+    }])
+    const { listMyInvitations } = useGrassland()
+
+    const list = await listMyInvitations()
+
+    expect(list?.[0].organizationName).toBe('示例商家')
+    expect(list?.[0]).not.toHaveProperty('email')
+  })
+
+  test('撤销邀请用 DELETE 打到组织侧路径', async () => {
+    const spy = mockFetchData(null)
+    const { revokeInvitation } = useGrassland()
+
+    await revokeInvitation('org-1', 'inv-9')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/invitations/inv-9')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('DELETE')
+  })
+})
+
 describe('权限升级审核流 + 额度请求契约', () => {
   function mockFetchData(data: unknown): ReturnType<typeof vi.fn> {
     const spy = vi.fn().mockResolvedValue({
