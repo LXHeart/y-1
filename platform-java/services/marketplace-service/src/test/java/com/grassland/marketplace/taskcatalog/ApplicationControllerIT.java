@@ -444,8 +444,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         if (bountyCents != null) {
             b.put("bountyCents", bountyCents);
         }
+        // D-05：资金型任务（bountyCents>0）须由可交易 tier 发布——basic_publish 的 maxTxAmountCents=0 → 403。
         Map<String, Object> resp = client().post().uri("/api/tasks")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();

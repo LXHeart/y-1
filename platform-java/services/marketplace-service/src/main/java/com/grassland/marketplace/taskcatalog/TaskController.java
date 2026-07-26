@@ -53,14 +53,28 @@ public class TaskController {
                         return Mono.<Task>error(new MarketplaceException(403, "无权为该组织发布任务"));
                     }
                     // 闸门 2：tier 须允许发布（DRAFT=0 → 403）。
-                    int maxActive = PublishQuotaPolicy.maxActiveTasks(MerchantTier.fromDb(merchant.permissionTier()));
+                    MerchantTier tier = MerchantTier.fromDb(merchant.permissionTier());
+                    int maxActive = PublishQuotaPolicy.maxActiveTasks(tier);
                     if (maxActive == 0) {
                         return Mono.<Task>error(new MarketplaceException(403, "当前等级不可发布任务"));
                     }
-                    // 闸门 3：按 org tier 的发布限额——活跃任务数已达上限 → 409。
+                    // 闸门 3（D-05）：资金型任务须有交易权限，且赏金不超单笔上限。
+                    long bounty = body.bountyCents() == null ? 0L : body.bountyCents();
+                    long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
+                    if (bounty > 0 && maxTx == 0) {
+                        return Mono.<Task>error(new MarketplaceException(403, "当前等级不可发布资金型任务"));
+                    }
+                    if (bounty > maxTx) {
+                        return Mono.<Task>error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
+                    }
+                    // 闸门 4+5（D-05）：活跃任务数上限 + 本月新建任务数上限 → 409。
+                    int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
                     return tasks.countActiveByOrganization(merchant.organizationId())
-                            .flatMap(count -> count >= maxActive
-                                    ? Mono.<Task>error(new MarketplaceException(409, "已达本组织发布上限"))
+                            .flatMap(active -> active >= maxActive
+                                    ? Mono.<Integer>error(new MarketplaceException(409, "已达本组织发布上限"))
+                                    : tasks.countCreatedThisMonthByOrganization(merchant.organizationId()))
+                            .flatMap(monthly -> monthly >= maxMonthly
+                                    ? Mono.<Task>error(new MarketplaceException(409, "已达本组织本月发布上限"))
                                     : tasks.create(merchant.accountId(), body.organizationId(), body.title(),
                                             body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                             body.bountyCents()));

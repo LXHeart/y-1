@@ -75,6 +75,16 @@ public class TaskRepository {
                 .map(r -> r.get("c", Integer.class)).one();
     }
 
+    /** 某 org <b>本自然月</b>新建的任务数（含已 closed）——月度发布限额执行用（D-05）。
+     *  月份边界按 DB 时区 {@code date_trunc('month', now())}；跨月自动重置，无需定时清算。 */
+    public Mono<Integer> countCreatedThisMonthByOrganization(String organizationId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM task"
+                + " WHERE organization_id = CAST(:org AS uuid)"
+                + " AND created_at >= date_trunc('month', now())")
+                .bind("org", organizationId)
+                .map(r -> r.get("c", Integer.class)).one();
+    }
+
     private static Task map(Readable row) {
         return new Task(
                 row.get("id", String.class),

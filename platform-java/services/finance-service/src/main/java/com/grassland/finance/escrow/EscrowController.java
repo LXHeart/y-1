@@ -68,6 +68,11 @@ public class EscrowController {
         String ref = body.engagementRef();
         long amount = body.amountCents();
         return callers.authorizeForOrg(request, orgId, FinanceCallerResolver.MARKETPLACE_SERVICE)
+                // D-05 单笔交易上限：仅对终端商家用户断言执行；服务断言（Saga，tier=null）豁免——
+                // 其金额已在 marketplace 发布任务时按同值 maxTxAmountCents 校验，此处按 null→0 会拦死 4F Saga。
+                .filter(caller -> caller.isService()
+                        || FinanceTxQuotaPolicy.isWithinLimit(caller.permissionTier(), amount))
+                .switchIfEmpty(fail(409, "交易金额超出本组织单笔上限"))
                 .flatMap(caller -> reservations.findByEngagementRef(ref)
                         .<Reserved>map(r -> new Reserved(r, false))  // 幂等：既有 → 200
                         .switchIfEmpty(accounts.decrement(orgId, amount)

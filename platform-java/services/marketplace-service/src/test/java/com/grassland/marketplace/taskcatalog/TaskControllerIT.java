@@ -154,6 +154,45 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isNotFound();
     }
 
+    // ---------- D-05 硬限额执行 ----------
+
+    @Test
+    void basicTierCannotPublishBountyTask() {
+        String org = UUID.randomUUID().toString();
+        // BASIC_PUBLISH 可发布普通任务，但 maxTxAmountCents=0 → 资金型任务 403
+        client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(bountyBody(org, "资金型任务", 500L))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void bountyWithinCapIsAccepted() {
+        String org = UUID.randomUUID().toString();
+        client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(bountyBody(org, "上限内赏金", 10_000_000L))  // 等于上限 → 允许
+                .exchange().expectStatus().isCreated();
+    }
+
+    @Test
+    void bountyOverCapConflict() {
+        String org = UUID.randomUUID().toString();
+        client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(bountyBody(org, "超额赏金", 10_000_001L))  // 超一分 → 409
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    private static Map<String, Object> bountyBody(String org, String title, long bountyCents) {
+        Map<String, Object> m = body(org, title, null, null);
+        m.put("bountyCents", bountyCents);
+        return m;
+    }
+
     @SuppressWarnings("unchecked")
     private String publish(String merchant, String org, String tier, String title, Integer maxSlots) {
         Map<String, Object> resp = client().post().uri("/api/tasks")
