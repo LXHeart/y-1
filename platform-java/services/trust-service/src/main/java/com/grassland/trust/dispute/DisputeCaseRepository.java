@@ -79,6 +79,72 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
+    // ---------- 审判 adjudication 状态机（草场 Epic 6 Slice 6C）----------
+    // 5 态 open→voting→decided→(appealed→)final；平票按 round 重开（voting→voting 下一轮）。
+    // 全部 guarded-UPDATE-with-RETURNING（风格同 decide）：仅符合前置状态时迁移并 version+1，否则 0 行 → empty
+    // （调用方/Phase C workflow activity 据此判幂等短路）。终态 final 解除 settlement hold（partial unique 释放活跃槽）。
+
+    /** 启动审判（open→voting，置 round，version+1）。0 行（非 open，如已启动/已终局）→ empty。 */
+    public Mono<DisputeCase> startAdjudication(String id, int round) {
+        return db.sql("""
+                UPDATE dispute_case SET status = 'voting', round = :round, version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'open'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("round", round)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 平票重开（voting→voting 下一轮，round+1，version+1）。0 行（非 voting）→ empty。 */
+    public Mono<DisputeCase> reopen(String id, int nextRound) {
+        return db.sql("""
+                UPDATE dispute_case SET round = :round, version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'voting'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("round", nextRound)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 记面板多数判决（voting→decided，记 decision，version+1）。0 行（非 voting）→ empty。 */
+    public Mono<DisputeCase> recordDecision(String id, String decision) {
+        return db.sql("""
+                UPDATE dispute_case SET status = 'decided', decision = :decision, version = version + 1,
+                        decided_at = now(), updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'voting'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("decision", decision)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 当事方上诉（decided→appealed，appeal_state='filed'）。0 行（非 decided）→ empty。 */
+    public Mono<DisputeCase> markAppealed(String id) {
+        return db.sql("""
+                UPDATE dispute_case SET status = 'appealed', appeal_state = 'filed', version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'decided'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 终局（decided/appealed→final，记 final_decision + final_decided_by，version+1）。客服终审/上诉窗口平淡落定。
+     * {@code finalDecidedBy} 可空（上诉窗口平淡终局无客服）。0 行（已 final 或未到 decided/appealed）→ empty。 */
+    public Mono<DisputeCase> finalize(String id, String finalDecision, String finalDecidedBy) {
+        var spec = db.sql("""
+                UPDATE dispute_case SET status = 'final', final_decision = :decision,
+                        final_decided_by = CAST(:by AS uuid), decided_at = now(),
+                        version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status IN ('decided', 'appealed')
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id);
+        spec = bindNullable(spec, "decision", finalDecision);
+        spec = bindNullableAccountId(spec, "by", finalDecidedBy);
+        return spec.map(DisputeCaseRepository::map).one();
+    }
+
     private static DisputeCase map(Readable row) {
         return new DisputeCase(
                 row.get("id", String.class),
@@ -106,6 +172,11 @@ public class DisputeCaseRepository {
     }
 
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
+        return (value == null || value.isBlank()) ? spec.bindNull(name, String.class) : spec.bind(name, value);
+    }
+
+    /** uuid 账号列可空绑定（null/blank → SQL NULL，SQL 侧 CAST(:name AS uuid)）。 */
+    private static GenericExecuteSpec bindNullableAccountId(GenericExecuteSpec spec, String name, String value) {
         return (value == null || value.isBlank()) ? spec.bindNull(name, String.class) : spec.bind(name, value);
     }
 }

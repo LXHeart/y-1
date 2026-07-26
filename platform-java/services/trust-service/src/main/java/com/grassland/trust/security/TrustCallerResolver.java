@@ -11,8 +11,9 @@ import reactor.core.publisher.Mono;
  * trust 调用者解析（草场 Epic 6 Slice 6A / HLD 7.4、11.1）：**仅**信任 {@code X-Grassland-Identity} 断言，
  * 无 cookie 回退（trust 是纯下游）。复刻 finance 的 {@code FinanceCallerResolver}。
  *
- * <p>接受用户断言（merchant/recommender，OpenDispute/Decide）与 marketplace 服务断言（principal=marketplace，
- * 开放争议查询）。{@link Caller#isMerchant()} 对 service callerKind 恒 false（防服务断言冒充商家）。
+ * <p>接受用户断言（merchant/recommender，OpenDispute/Decide；judge 投票；customer_service 客服终审）与 marketplace 服务断言
+ * （principal=marketplace，开放争议查询）。{@link Caller#isMerchant()} 等 party/judge/cs 判定对 service callerKind 恒 false
+ * （防服务断言冒充终端身份）。
  */
 @Component
 public class TrustCallerResolver {
@@ -47,17 +48,38 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "需要商家身份")));
     }
 
-    /** 商家或推荐官（OpenDispute：HLD 10.5 Party = 商家/推荐官）。 */
+    /** 商家或推荐官（OpenDispute / 启动审判：HLD 10.5 Party = 商家/推荐官）。 */
     public Mono<Caller> requireMerchantOrRecommender(ServerHttpRequest request) {
         return resolve(request)
                 .filter(c -> c.isMerchant() || c.isRecommender())
                 .switchIfEmpty(Mono.error(new TrustException(403, "需要商家或推荐官身份")));
     }
 
+    /** 审判官（投票：HLD 5.5 adjudication panel）。仅信任断言 activeIdentityType=judge；面板成员资格由调用方按资源自查。 */
+    public Mono<Caller> requireJudge(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(Caller::isJudge)
+                .switchIfEmpty(Mono.error(new TrustException(403, "需要审判官身份")));
+    }
+
+    /** 客服（终审/覆盖判决：HLD §11.2 客服兜底）。仅信任断言 activeIdentityType=customer_service。 */
+    public Mono<Caller> requireCustomerService(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(Caller::isCustomerService)
+                .switchIfEmpty(Mono.error(new TrustException(403, "需要客服身份")));
+    }
+
     /** 接受终端商家或指定服务 principal（org 由调用方按已加载资源自查）。开放争议查询用（marketplace 调）。 */
     public Mono<Caller> resolveMerchantOrService(ServerHttpRequest request, String servicePrincipal) {
         return resolve(request)
                 .filter(c -> c.isMerchant() || c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new TrustException(403, "无权查询争议")));
+    }
+
+    /** 接受当事方（商家/推荐官）或指定服务 principal（org 由调用方按已加载资源自查）。审判状态查询用。 */
+    public Mono<Caller> resolvePartyOrService(ServerHttpRequest request, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> c.isMerchant() || c.isRecommender() || c.isServicePrincipal(servicePrincipal))
                 .switchIfEmpty(Mono.error(new TrustException(403, "无权查询争议")));
     }
 
@@ -72,6 +94,18 @@ public class TrustCallerResolver {
         public boolean isRecommender() {
             return !"service".equalsIgnoreCase(callerKind)
                     && "recommender".equalsIgnoreCase(activeIdentityType);
+        }
+
+        /** 审判官（HLD 5.5）。服务断言不可冒充——callerKind=service 恒 false。 */
+        public boolean isJudge() {
+            return !"service".equalsIgnoreCase(callerKind)
+                    && "judge".equalsIgnoreCase(activeIdentityType);
+        }
+
+        /** 客服（HLD §11.2 终审）。服务断言不可冒充——callerKind=service 恒 false。 */
+        public boolean isCustomerService() {
+            return !"service".equalsIgnoreCase(callerKind)
+                    && "customer_service".equalsIgnoreCase(activeIdentityType);
         }
 
         public boolean isService() {
