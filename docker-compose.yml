@@ -96,6 +96,9 @@ services:
       INTELLIGENCE_SERVICE_BASE_URL: http://intelligence-service:8086
       EDGE_ROUTE_AUTH_ME_IDENTITY: "true"
       EDGE_ROUTE_TASKS_MARKETPLACE: "true"
+      EDGE_ROUTE_ARTICLE_IMAGE_RECOMMENDATIONS_INTELLIGENCE: "true"
+      EDGE_ROUTE_ARTICLE_SEARCH_IMAGES_INTELLIGENCE: "true"
+      EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE: "true"
       # HLD 7.4：直读 session 表签发内部身份断言（DATABASE_URL 复用 identity 库，只读；secret 与 identity-service 一致）。
       EDGE_IDENTITY_FROM_DATABASE_URL: "true"
       DATABASE_URL: ${DATABASE_URL:-}
@@ -218,11 +221,17 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:-}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
       QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+      IMAGE_GENERATION_BASE_URL: ${IMAGE_GENERATION_BASE_URL:-}
+      IMAGE_GENERATION_API_KEY: ${IMAGE_GENERATION_API_KEY:-}
+      IMAGE_GENERATION_MODEL: ${IMAGE_GENERATION_MODEL:-}
+      ARTICLE_GENERATED_IMAGES_DIR: /app/data/generated-images
       # 积分扣减走 legacy 内部端点（共享 INTERNAL_API_KEY；legacy 不认 BFF 断言）。
       LEGACY_CREDITS_BASE_URL: http://backend:3000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     depends_on:
       - backend
+    volumes:
+      - intelligence_generated_images:/app/data/generated-images
     restart: unless-stopped
 
   # Epic 3：事件基础设施
@@ -317,6 +326,7 @@ services:
 
 volumes:
   backend_data:
+  intelligence_generated_images:
   minio_data:
   temporal_dev_data:
   postgres_local_data:

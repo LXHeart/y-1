@@ -1,9 +1,11 @@
 package com.grassland.intelligence.security;
 
 import java.util.Map;
+import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.UnsupportedMediaTypeStatusException;
 
 /**
  * intelligence 全局错误处理（草场 intelligence Slice 1）。统一 legacy 兼容信封 {@code {success:false,error}}。
@@ -24,5 +26,15 @@ public class IntelligenceErrorHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleBadInput(IllegalArgumentException error) {
         return ResponseEntity.badRequest().body(Map.of("success", false, "error", error.getMessage()));
+    }
+
+    @ExceptionHandler(DataBufferLimitException.class)
+    public ResponseEntity<Map<String, Object>> handleBodyLimit(DataBufferLimitException error) {
+        return ResponseEntity.badRequest().body(Map.of("success", false, "error", "单张图片不能超过 5 MB"));
+    }
+
+    @ExceptionHandler(UnsupportedMediaTypeStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleMediaType(UnsupportedMediaTypeStatusException error) {
+        return ResponseEntity.badRequest().body(Map.of("success", false, "error", "图片上传失败，请检查文件后重试"));
     }
 }

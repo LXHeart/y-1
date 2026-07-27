@@ -45,6 +45,9 @@ public class UpstreamResolver {
         if (routePath == null || routePath.isBlank()) {
             return true;
         }
+        if (route.exact()) {
+            return path.equals(routePath);
+        }
         if (routePath.endsWith("/**")) {
             String prefix = routePath.substring(0, routePath.length() - 3);
             return path.equals(prefix) || path.startsWith(prefix + "/");

@@ -114,6 +114,45 @@ class LegacyExpressProxyContractTest {
     }
 
     @Test
+    void preservesArticleGenerateImageMultipartBytesAndBoundary() {
+        byte[] payload = new byte[96 * 1024];
+        java.util.Arrays.fill(payload, (byte) 0x5a);
+        byte[] prefix = ("--article-boundary\r\n"
+                + "Content-Disposition: form-data; name=\"prompt\"\r\n\r\n"
+                + "生成图片\r\n"
+                + "--article-boundary\r\n"
+                + "Content-Disposition: form-data; name=\"images\"; filename=\"sample.png\"\r\n"
+                + "Content-Type: image/png\r\n\r\n").getBytes(StandardCharsets.UTF_8);
+        byte[] suffix = "\r\n--article-boundary--\r\n".getBytes(StandardCharsets.UTF_8);
+        byte[] body = new byte[prefix.length + payload.length + suffix.length];
+        System.arraycopy(prefix, 0, body, 0, prefix.length);
+        System.arraycopy(payload, 0, body, prefix.length, payload.length);
+        System.arraycopy(suffix, 0, body, prefix.length + payload.length, suffix.length);
+
+        client.post()
+            .uri("/api/article-generation/generate-image")
+            .header(HttpHeaders.CONTENT_TYPE, "multipart/form-data; boundary=article-boundary")
+            .bodyValue(body)
+            .exchange()
+            .expectStatus().isOk();
+
+        CapturedRequest captured = CAPTURED.get("POST:/api/article-generation/generate-image").get();
+        assertThat(captured.header(HttpHeaders.CONTENT_TYPE))
+            .isEqualTo("multipart/form-data; boundary=article-boundary");
+        assertThat(captured.body()).isEqualTo(body);
+    }
+
+    @Test
+    void proxiesGeneratedImageBytesAndCacheHeaders() {
+        byte[] expected = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47};
+        client.get().uri("/api/article-generation/generated-images/11111111-1111-1111-1111-111111111111")
+            .exchange().expectStatus().isOk()
+            .expectHeader().contentType(MediaType.IMAGE_PNG)
+            .expectHeader().valueEquals(HttpHeaders.CACHE_CONTROL, "private, max-age=1800")
+            .expectBody(byte[].class).isEqualTo(expected);
+    }
+
+    @Test
     void preservesRangeStatusAndDownloadHeaders() {
         byte[] body = "0123456789".getBytes(StandardCharsets.UTF_8);
         client.get()
@@ -178,6 +217,19 @@ class LegacyExpressProxyContractTest {
             return captureAndRespond(request, response, key, r -> {
                 r.responseHeaders().add(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
                 return r.sendString(Mono.just("{\"success\":true}")).then();
+            });
+        }
+        if ("/api/article-generation/generate-image".equals(pathOnly(request))) {
+            return captureAndRespond(request, response, key, r -> {
+                r.responseHeaders().add(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+                return r.sendString(Mono.just("{\"success\":true}")).then();
+            });
+        }
+        if (pathOnly(request).startsWith("/api/article-generation/generated-images/")) {
+            return captureAndRespond(request, response, key, r -> {
+                r.responseHeaders().add(HttpHeaders.CONTENT_TYPE, MediaType.IMAGE_PNG_VALUE);
+                r.responseHeaders().add(HttpHeaders.CACHE_CONTROL, "private, max-age=1800");
+                return r.sendByteArray(Mono.just(new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47})).then();
             });
         }
         if ("/api/douyin/proxy/synthetic".equals(pathOnly(request))) {

@@ -15,8 +15,10 @@ import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.PlatformModelConfig;
+import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.security.IntelligenceException;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -122,6 +124,26 @@ class QwenClientTest {
                 .willReturn(aResponse().withStatus(503).withBody("down")));
         assertThatThrownBy(() -> client.startTextRun(command()).collectList().block())
                 .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(502));
+    }
+
+    @Test
+    @DisplayName("非流式 completion 解析 message.content 并保持多模态 wire contract")
+    void completesNonStreamingMultimodalText() {
+        wireMock.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"choices\":[{\"message\":{\"content\":\"图片描述\"}}]}")));
+        TextCompletionCommand command = new TextCompletionCommand(List.of(
+                ChatMessage.user(List.of(
+                        ContentPart.text("描述图片"),
+                        ContentPart.image("data:image/png;base64,AAAA")))),
+                "参考图分析失败，请稍后重试",
+                Duration.ofSeconds(2));
+
+        assertThat(client.completeText(command).block()).isEqualTo("图片描述");
+        wireMock.verify(postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("\"stream\":false"))
+                .withRequestBody(containing("\"enable_thinking\":false"))
+                .withRequestBody(containing("\"type\":\"image_url\"")));
     }
 
     @Test

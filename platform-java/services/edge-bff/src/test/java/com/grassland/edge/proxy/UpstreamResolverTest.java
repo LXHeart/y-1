@@ -37,11 +37,16 @@ class UpstreamResolverTest {
             // intelligence Slice 2：/api/comedy-generation 前缀 → intelligence（脱口秀迁入，路径沿用 legacy）
             new RouteProperties(null, "/api/comedy-generation", "intelligence", true),
             // intelligence Slice 3：文章生成三文本端点 method+path 精确路由（图片端点与该前缀共享，仍走 legacy）
-            new RouteProperties("POST", "/api/article-generation/titles", "intelligence", true),
-            new RouteProperties("POST", "/api/article-generation/outline", "intelligence", true),
-            new RouteProperties("POST", "/api/article-generation/content", "intelligence", true),
+            new RouteProperties("POST", "/api/article-generation/titles", "intelligence", true, true),
+            new RouteProperties("POST", "/api/article-generation/outline", "intelligence", true, true),
+            new RouteProperties("POST", "/api/article-generation/content", "intelligence", true, true),
+            // intelligence Slice 5：文章图片三个 POST 精确叶子 + generated-images GET 前缀
+            new RouteProperties("POST", "/api/article-generation/image-recommendations", "intelligence", true, true),
+            new RouteProperties("POST", "/api/article-generation/search-images", "intelligence", true, true),
+            new RouteProperties("POST", "/api/article-generation/generate-image", "intelligence", true, true),
+            new RouteProperties("GET", "/api/article-generation/generated-images", "intelligence", true),
             // intelligence Slice 4：视频制作脚本精确切换；generate-video stub 仍 legacy
-            new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true)),
+            new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true, true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -183,18 +188,29 @@ class UpstreamResolverTest {
     }
 
     @Test
-    void routesArticleTextToIntelligenceButImagesStayLegacy() {
-        // Slice 3：三文本端点 → intelligence。
+    void routesArticleTextAndImagesToIntelligenceWithoutStealingSiblings() {
         assertThat(resolver.resolve("POST", "/api/article-generation/titles")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/article-generation/outline")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/article-generation/content")).isEqualTo(INTELLIGENCE);
-        assertThat(resolver.isInternalUpstream("POST", "/api/article-generation/titles")).isTrue();
-        // ⚠️ 回归防护：图片端点与文本端点共享 /api/article-generation 前缀，必须仍走 legacy（未迁）。
-        // 若误把整段前缀路由到 intelligence，这些 legacy 图片功能会被抢走 → 404。
-        assertThat(resolver.resolve("POST", "/api/article-generation/image-recommendations")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/article-generation/search-images")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/article-generation/generate-image")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/api/article-generation/generated-images/img-1")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/image-recommendations"))
+                .isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/article-generation/search-images"))
+                .isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/article-generation/generate-image"))
+                .isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/article-generation/generated-images/" + APP_ID))
+                .isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/article-generation/generate-image")).isTrue();
+
+        // method 与相近 sibling 必须回 legacy；精确叶子不能捕获子路径。
+        assertThat(resolver.resolve("GET", "/api/article-generation/generate-image")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/generated-images/" + APP_ID))
+                .isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/generate-image/other"))
+                .isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/search-images-preview"))
+                .isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/article-generation/unknown")).isEqualTo(LEGACY);
     }
 
     @Test

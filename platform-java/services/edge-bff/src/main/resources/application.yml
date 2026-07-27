@@ -110,20 +110,46 @@ edge:
     - method: POST
       path: /api/article-generation/titles
       upstream: intelligence
+      exact: true
       enabled: ${EDGE_ROUTE_ARTICLE_TITLES_INTELLIGENCE:true}
     - method: POST
       path: /api/article-generation/outline
       upstream: intelligence
+      exact: true
       enabled: ${EDGE_ROUTE_ARTICLE_OUTLINE_INTELLIGENCE:true}
     - method: POST
       path: /api/article-generation/content
       upstream: intelligence
+      exact: true
       enabled: ${EDGE_ROUTE_ARTICLE_CONTENT_INTELLIGENCE:true}
+    # ---- 文章图片（草场 intelligence Slice 5）→ intelligence-service。推荐/搜图各自回滚，
+    # 生图与生成图片读取共享一个回滚开关，避免本地文件落在一端却从另一端读取；
+    # 三个 POST 为精确叶子，generated-images 保持前缀以匹配 UUID 子路径。
+    - method: POST
+      path: /api/article-generation/image-recommendations
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_ARTICLE_IMAGE_RECOMMENDATIONS_INTELLIGENCE:true}
+    - method: POST
+      path: /api/article-generation/search-images
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_ARTICLE_SEARCH_IMAGES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/article-generation/generate-image
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE:true}
+    - method: GET
+      path: /api/article-generation/generated-images
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE:true}
     # ---- 视频制作脚本（草场 intelligence Slice 4）→ intelligence-service。仅精确切 generate-script；
     # /api/video-production/generate-video 仍是 legacy Seedance stub，不得被抢走。回滚开关默认开。
     - method: POST
       path: /api/video-production/generate-script
       upstream: intelligence
+      exact: true
       enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。

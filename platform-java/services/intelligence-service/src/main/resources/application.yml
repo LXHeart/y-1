@@ -6,6 +6,13 @@ spring:
   http:
     codecs:
       max-in-memory-size: 10MB
+  webflux:
+    multipart:
+      # generate-image：最多 4 张 × 5MB；大文件落临时盘，controller 再按字节严格校验。
+      max-in-memory-size: 32KB
+      max-disk-usage-per-part: 5MB
+      max-parts: 12
+      streaming: false
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     producer:
@@ -50,6 +57,22 @@ ai:
     model: ${QWEN_MODEL:qwen-plus}
     connect-timeout-ms: ${QWEN_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${QWEN_READ_TIMEOUT_MS:120000}
+  # 图片生成可使用独立 OpenAI-compatible provider；未配时回落上面的平台 Qwen。
+  image-generation:
+    base-url: ${IMAGE_GENERATION_BASE_URL:}
+    api-key: ${IMAGE_GENERATION_API_KEY:}
+    model: ${IMAGE_GENERATION_MODEL:}
+    connect-timeout-ms: ${IMAGE_GENERATION_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${IMAGE_GENERATION_READ_TIMEOUT_MS:300000}
+
+article-images:
+  search:
+    endpoint: ${ARTICLE_IMAGE_SEARCH_ENDPOINT:https://www.bing.com/images/search}
+    timeout-ms: ${ARTICLE_IMAGE_SEARCH_TIMEOUT_MS:15000}
+  generated:
+    directory: ${ARTICLE_GENERATED_IMAGES_DIR:/tmp/grassland-intelligence/generated-images}
+    ttl-seconds: ${ARTICLE_GENERATED_IMAGE_TTL_SECONDS:1800}
+    cleanup-interval-ms: ${ARTICLE_GENERATED_IMAGE_CLEANUP_INTERVAL_MS:300000}
 
 # 积分扣减：经 legacy 内部端点（过渡期；legacy 不认 X-Grassland-Identity，用共享密钥）。
 credits:
