@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatChunk;
+import com.grassland.intelligence.ai.ChatMessage;
+import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -71,12 +73,31 @@ public class QwenClient implements AiCapabilityAdapter {
     private Map<String, Object> buildBody(TextRunCommand command) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.model());
-        body.put("messages", command.messages().stream()
-                .map(m -> Map.<String, Object>of("role", m.role(), "content", m.content()))
-                .toList());
+        body.put("messages", command.messages().stream().map(QwenClient::toMessageMap).toList());
         body.put("stream", true);
         body.put("enable_thinking", false);
         return body;
+    }
+
+    /** content 多模态时序列化为 text/image_url 片断数组，否则明文字符串（与 legacy OpenAI 兼容格式一致）。 */
+    private static Map<String, Object> toMessageMap(ChatMessage message) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("role", message.role());
+        if (message.multimodal()) {
+            result.put("content", message.parts().stream().map(QwenClient::toPartMap).toList());
+        } else {
+            result.put("content", message.content());
+        }
+        return result;
+    }
+
+    private static Map<String, Object> toPartMap(ContentPart part) {
+        return switch (part) {
+            case ContentPart.Text text -> Map.of("type", "text", "text", text.text());
+            case ContentPart.Image image -> Map.of(
+                    "type", "image_url",
+                    "image_url", Map.of("url", image.url()));
+        };
     }
 
     private ChatChunk extractContent(String json) {

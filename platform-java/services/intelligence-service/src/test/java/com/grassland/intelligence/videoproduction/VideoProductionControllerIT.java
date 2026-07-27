@@ -1,0 +1,146 @@
+package com.grassland.intelligence.videoproduction;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.ChatChunk;
+import com.grassland.intelligence.ai.ContentPart;
+import com.grassland.intelligence.ai.TextRunCommand;
+import com.grassland.intelligence.credits.CreditFeature;
+import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.InsufficientCreditsException;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+/** 视频制作脚本端到端：断言→校验→扣费→多模态 command→SSE。 */
+class VideoProductionControllerIT extends IntelligenceItSupport {
+
+    @MockitoBean
+    private AiCapabilityAdapter ai;
+
+    @MockitoBean
+    private CreditsClient credits;
+
+    @BeforeEach
+    void setUp() {
+        reset(ai, credits);
+        when(credits.consume(any(), any())).thenReturn(Mono.empty());
+    }
+
+    private String signed() {
+        return sign(UUID.randomUUID().toString(), "merchant");
+    }
+
+    @Test
+    @DisplayName("无断言 → 401；不扣积分")
+    void unauthenticatedRejected() {
+        client().post().uri("/api/video-production/generate-script")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(validBody())
+                .exchange().expectStatus().isUnauthorized();
+        verify(credits, never()).consume(any(), any());
+    }
+
+    @Test
+    @DisplayName("无图片 / 非法行业 / 非法风格 → 400；校验在扣费前")
+    void validationRejectsInvalidRequest() {
+        Map<String, Object> body = validBody();
+        body.put("images", List.of());
+        client().post().uri("/api/video-production/generate-script")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isBadRequest();
+        verify(credits, never()).consume(any(), any());
+    }
+
+    @Test
+    @DisplayName("积分不足 → 402；不调 AI")
+    void insufficientCreditsRejected() {
+        when(credits.consume(any(), any())).thenReturn(Mono.error(new InsufficientCreditsException()));
+        client().post().uri("/api/video-production/generate-script")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(validBody())
+                .exchange().expectStatus().isEqualTo(402);
+        verify(ai, never()).startTextRun(any());
+    }
+
+    @Test
+    @DisplayName("超过 WebFlux 默认 256KB 的合法 base64 图片仍可达 controller（10MB codec 契约）")
+    void acceptsPayloadLargerThanDefaultWebFluxLimit() {
+        when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk("脚本")));
+        Map<String, Object> body = validBody();
+        body.put("images", List.of("A".repeat(300 * 1024)));
+
+        client().post().uri("/api/video-production/generate-script")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isOk();
+
+        verify(ai).startTextRun(any());
+    }
+
+    @Test
+    @DisplayName("成功 → 扣 video_production_script + 多模态 text/image parts + SSE")
+    void streamsMultimodalVideoScript() {
+        ArgumentCaptor<CreditFeature> feature = ArgumentCaptor.forClass(CreditFeature.class);
+        when(credits.consume(any(), feature.capture())).thenReturn(Mono.empty());
+        ArgumentCaptor<TextRunCommand> command = ArgumentCaptor.forClass(TextRunCommand.class);
+        when(ai.startTextRun(command.capture())).thenReturn(Flux.just(
+                new ChatChunk("【镜头1】"), new ChatChunk("旁白：欢迎光临")));
+
+        byte[] body = client().post().uri("/api/video-production/generate-script")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(validBody())
+                .exchange().expectStatus().isOk()
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .expectHeader().valueEquals("X-Accel-Buffering", "no")
+                .expectBody().returnResult().getResponseBody();
+
+        assertThat(new String(body, UTF_8)).isEqualTo(
+                "data: {\"content\":\"【镜头1】\"}\n\n"
+                + "data: {\"content\":\"旁白：欢迎光临\"}\n\n"
+                + "data: [DONE]\n\n");
+        assertThat(feature.getValue()).isEqualTo(CreditFeature.VIDEO_PRODUCTION_SCRIPT);
+
+        TextRunCommand cmd = command.getValue();
+        assertThat(cmd.messages()).hasSize(2);
+        assertThat(cmd.messages().get(0).content()).contains("烟火纪实").contains("餐饮");
+        assertThat(cmd.messages().get(1).multimodal()).isTrue();
+        List<ContentPart> parts = cmd.messages().get(1).parts();
+        assertThat(parts).hasSize(3);
+        assertThat(((ContentPart.Text) parts.get(0)).text())
+                .contains("店铺名称：草场咖啡").contains("店铺地址：测试路 1 号")
+                .contains("店铺描述：社区咖啡店").contains("用户要求：突出手冲咖啡")
+                .contains("2 张素材图片");
+        assertThat(((ContentPart.Image) parts.get(1)).url()).isEqualTo("data:image/jpeg;base64,AAAA");
+        assertThat(((ContentPart.Image) parts.get(2)).url()).isEqualTo("data:image/png;base64,BBBB");
+    }
+
+    private static Map<String, Object> validBody() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("images", List.of("AAAA", "data:image/png;base64,BBBB"));
+        body.put("shopName", " 草场咖啡 ");
+        body.put("industryType", "餐饮");
+        body.put("shopAddress", " 测试路 1 号 ");
+        body.put("shopDescription", "社区咖啡店");
+        body.put("videoStyle", "烟火纪实");
+        body.put("customPrompt", "突出手冲咖啡");
+        return body;
+    }
+}

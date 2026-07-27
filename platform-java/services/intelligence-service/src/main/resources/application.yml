@@ -1,6 +1,11 @@
 spring:
   application:
     name: intelligence-service
+  # 视频制作通过 JSON 携带 1-9 张 base64 图片；对齐 legacy express.json({limit:'10mb'}) 契约。
+  # Boot 4 属性前缀是 spring.http.codecs（不是 Boot 3 的 spring.codec）；默认 256KB 会在 controller 前 413。
+  http:
+    codecs:
+      max-in-memory-size: 10MB
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     producer:

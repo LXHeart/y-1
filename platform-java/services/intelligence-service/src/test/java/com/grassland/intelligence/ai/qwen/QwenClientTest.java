@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
+import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -83,6 +84,26 @@ class QwenClientTest {
                 .withRequestBody(containing("\"enable_thinking\":false"))
                 .withRequestBody(containing("\"role\":\"system\""))
                 .withRequestBody(containing("\"content\":\"你好\"")));
+    }
+
+    @Test
+    @DisplayName("多模态消息序列化为 OpenAI text/image_url content parts")
+    void serializesMultimodalContentParts() {
+        wireMock.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(aResponse().withStatus(200).withBody("data: [DONE]\n\n")));
+        TextRunCommand command = new TextRunCommand(List.of(
+                ChatMessage.system("system"),
+                ChatMessage.user(List.of(
+                        ContentPart.text("店铺信息"),
+                        ContentPart.image("data:image/jpeg;base64,AAAA")))));
+
+        client.startTextRun(command).collectList().block();
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("\"type\":\"text\""))
+                .withRequestBody(containing("\"text\":\"店铺信息\""))
+                .withRequestBody(containing("\"type\":\"image_url\""))
+                .withRequestBody(containing("\"url\":\"data:image/jpeg;base64,AAAA\"")));
     }
 
     @Test

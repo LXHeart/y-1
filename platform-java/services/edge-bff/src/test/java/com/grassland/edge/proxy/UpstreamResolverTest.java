@@ -39,7 +39,9 @@ class UpstreamResolverTest {
             // intelligence Slice 3：文章生成三文本端点 method+path 精确路由（图片端点与该前缀共享，仍走 legacy）
             new RouteProperties("POST", "/api/article-generation/titles", "intelligence", true),
             new RouteProperties("POST", "/api/article-generation/outline", "intelligence", true),
-            new RouteProperties("POST", "/api/article-generation/content", "intelligence", true)),
+            new RouteProperties("POST", "/api/article-generation/content", "intelligence", true),
+            // intelligence Slice 4：视频制作脚本精确切换；generate-video stub 仍 legacy
+            new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -193,6 +195,14 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("POST", "/api/article-generation/search-images")).isEqualTo(LEGACY);
         assertThat(resolver.resolve("POST", "/api/article-generation/generate-image")).isEqualTo(LEGACY);
         assertThat(resolver.resolve("GET", "/api/article-generation/generated-images/img-1")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void routesVideoScriptToIntelligenceButVideoGenerationStaysLegacy() {
+        assertThat(resolver.resolve("POST", "/api/video-production/generate-script")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/video-production/generate-script")).isTrue();
+        // Seedance 集成仍是 legacy stub；精确路由不能抢走它。
+        assertThat(resolver.resolve("POST", "/api/video-production/generate-video")).isEqualTo(LEGACY);
     }
 
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";
