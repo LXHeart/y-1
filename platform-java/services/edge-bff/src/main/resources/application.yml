@@ -97,6 +97,12 @@ edge:
     - path: /api/intelligence
       upstream: intelligence
       enabled: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:true}
+    # ---- comedy 生成（草场 intelligence Slice 2）→ intelligence-service。路径沿用 legacy
+    # /api/comedy-generation/generate-script，前端零改动；扣积分 + 李继刚 prompt 在 intelligence。
+    # legacy 同名端点随本路由开启而退役（回滚：EDGE_ROUTE_COMEDY_INTELLIGENCE=false 即回退 legacy）。
+    - path: /api/comedy-generation
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_COMEDY_INTELLIGENCE:true}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
 identity-assertion:
