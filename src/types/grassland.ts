@@ -82,6 +82,78 @@ export interface SettlementOutcome {
   reason?: string
 }
 
+// ---------- 推荐官画像（identity）+ 声誉（marketplace）----------
+
+/**
+ * 自报的社交账号（PRD 六「社交平台」）。
+ *
+ * ⚠️ `followers` 是**推荐官自己填的**，平台没有核验过——UI 必须标明「自报」，
+ * 否则商家会当成平台数据来决策。真核验属 PRD 九自动核实引擎，未做。
+ */
+export interface SocialAccount {
+  platform: string
+  handle: string | null
+  followers: number | null
+}
+
+/**
+ * 推荐官画像（identity 域）。没填过资料时后端返回**空画像而非 404**——
+ * 「这人没填」本身就是商家要的事实。
+ */
+export interface RecommenderProfile {
+  accountId: string
+  displayName: string | null
+  bio: string | null
+  contentTags: string[]
+  domainTags: string[]
+  socialAccounts: SocialAccount[]
+  updatedAt: string | null
+}
+
+/** PUT 整份覆盖：数组给空数组即清空；标签与社交账号收的是**数组**而非逗号串。 */
+export interface UpdateRecommenderProfileInput {
+  displayName?: string
+  bio?: string
+  contentTags: string[]
+  domainTags: string[]
+  socialAccounts: SocialAccount[]
+}
+
+/** 等级（PRD 五）。Lv5 是邀请制，后端策略永不自动授予。 */
+export type RecommenderLevel = 'Lv1' | 'Lv2' | 'Lv3' | 'Lv4' | 'Lv5'
+
+/**
+ * 声誉指标（PRD 六「数据面板」，marketplace 从撮合事实实时派生）。
+ *
+ * ⚠️ `averageScore` / `averageResponseSeconds` **可能为 null**——分别表示「还没人评过」
+ * 与「还没有接单→提交的样本」。不能显示成 0，那会被读成「评分极低 / 秒回」。
+ * PRD 六的「平均曝光数据」后端明确不做（需平台数据采集）。
+ */
+export interface RecommenderReputation {
+  accountId: string
+  level: RecommenderLevel
+  levelTitle: string
+  acceptedCount: number
+  completedCount: number
+  /** 0–1 的小数（完成/已接单）；无接单时为 0。 */
+  completionRate: number
+  ratingCount: number
+  averageScore: number | null
+  averageResponseSeconds: number | null
+}
+
+/** 商家对一次履约的评分（1-5 星）。一次履约只能评一次，重复评价后端 409。 */
+export interface EngagementRating {
+  id: string
+  applicationId: string
+  taskId: string
+  recommenderAccountId: string
+  ratedByAccountId: string
+  score: number
+  comment: string | null
+  createdAt: string | null
+}
+
 // ---------- trust（争议 / 审判）----------
 
 /** 争议状态机（5 态）。非 final 均阻塞结算。 */

@@ -48,6 +48,11 @@ public abstract class MarketplaceItSupport {
         r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
         r.add("identity-assertion.audience", () -> "grassland-internal");
         r.add("object-storage.enabled", () -> "false");
+        // outbox 发布器在 IT 里必须关掉：默认 bootstrap 是 `kafka:9092`（compose 内部名），
+        // 测试跑在宿主机上解析不到，KafkaTemplate 会在**事件循环线程**上阻塞等 metadata 到 60s 超时，
+        // 把整个 WebFlux 服务饿死 → 所有请求「Timeout on blocking read」。
+        // 各 IT 断言的是 outbox **表里的行**（见 outboxCount），从不校验真实投递，故关掉不削弱任何覆盖。
+        r.add("marketplace.outbox.enabled", () -> "false");
         r.add("spring.temporal.test-server.enabled", () -> "true");
     }
 

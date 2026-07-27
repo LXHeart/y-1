@@ -57,12 +57,13 @@ public class ApplicationController {
     private final TaskApplicationRepository apps;
     private final OutboxRepository outbox;
     private final SubmissionRepository submissions;
+    private final RatingRepository ratings;
     private final WorkflowClient workflowClient;
     private final long settlementWindowSeconds;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
-                                 SubmissionRepository submissions,
+                                 SubmissionRepository submissions, RatingRepository ratings,
                                  WorkflowClient workflowClient,
                                  @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds) {
         this.callers = callers;
@@ -70,6 +71,7 @@ public class ApplicationController {
         this.apps = apps;
         this.outbox = outbox;
         this.submissions = submissions;
+        this.ratings = ratings;
         this.workflowClient = workflowClient;
         this.settlementWindowSeconds = settlementWindowSeconds;
     }
@@ -267,6 +269,65 @@ public class ApplicationController {
                                 .flatMap(app -> startSettlementWorkflow(task, app))));
     }
 
+    /**
+     * 商家给推荐官打分（PRD 五：等级门槛全部依赖评分）。
+     *
+     * <p><b>必须已确认履约</b>（{@code confirmed_at} 非空）才能评——评分是对「已完成的活」的评价，
+     * 允许未完成就打分等于把等级体系的输入变成主观意见。一次履约只评一份（DB UNIQUE → 409），
+     * 商家不能反复改分刷高/压低某个推荐官。
+     *
+     * <p>时序上这是「确认履约」之后紧接着的一步（前端在 confirm 成功后就地展示星级表单），
+     * 但它是**独立端点**而非 confirm 的请求体：confirm 返回 202 且触发结算 Saga，
+     * 把评分塞进去会让「结算启动了但评分写失败」这种半成功状态无处安放。
+     */
+    @PostMapping("/api/tasks/{id}/applications/{appId}/rating")
+    public Mono<ResponseEntity<Map<String, Object>>> rate(@PathVariable String id, @PathVariable String appId,
+                                                          @RequestBody RateEngagementRequest body,
+                                                          ServerHttpRequest request) {
+        return callers.requireMerchant(request)
+                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+                        .flatMap(task -> loadConfirmedApp(id, appId)
+                                .flatMap(app -> ratings.create(app.id(), task.id(), app.recommenderAccountId(),
+                                                merchant.accountId(), body.score(), body.comment())
+                                        .switchIfEmpty(fail(409, "该履约已评价过"))
+                                        .flatMap(rating -> outbox
+                                                .append(ratingEnvelope(app, rating))
+                                                .thenReturn(rating))
+                                        .map(rating -> ResponseEntity.status(HttpStatus.CREATED)
+                                                .body(Map.of("success", true, "data", toBody(rating)))))));
+    }
+
+    /** 查该履约的评分。商家（任务 owner）与本人推荐官可见；未评价 → {@code data: null}（不是 404）。 */
+    @GetMapping("/api/tasks/{id}/applications/{appId}/rating")
+    public Mono<ResponseEntity<Map<String, Object>>> ratingOf(@PathVariable String id, @PathVariable String appId,
+                                                              ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> apps.findById(appId)
+                        .switchIfEmpty(fail(404, "报名不存在"))
+                        .filter(app -> app.taskId().equals(id))
+                        .switchIfEmpty(fail(404, "报名不存在"))
+                        .flatMap(app -> tasks.findById(id)
+                                .switchIfEmpty(fail(404, "任务不存在"))
+                                .flatMap(task -> {
+                                    boolean isOwner = caller.accountId().equals(task.ownerAccountId());
+                                    boolean isRecommender = caller.accountId().equals(app.recommenderAccountId());
+                                    if (!isOwner && !isRecommender) {
+                                        return fail(403, "无权查看该履约的评分");
+                                    }
+                                    return ratings.findByApplication(appId)
+                                            .map(rating -> ResponseEntity.ok(Map.<String, Object>of(
+                                                    "success", true, "data", toBody(rating))))
+                                            .defaultIfEmpty(ResponseEntity.ok(nullData()));
+                                })));
+    }
+
+    /** 加载报名并校验属该 task + 已确认履约：不存在/越界→404，未确认→409。 */
+    private Mono<TaskApplication> loadConfirmedApp(String taskId, String appId) {
+        return loadAcceptedApp(taskId, appId)
+                .filter(app -> app.confirmedAt() != null)
+                .switchIfEmpty(fail(409, "尚未确认履约，暂不能评价"));
+    }
+
     @GetMapping("/api/tasks/{id}/applications/{appId}/settlement")
     public Mono<ResponseEntity<Map<String, Object>>> settlement(@PathVariable String id, @PathVariable String appId,
                                                                 ServerHttpRequest request) {
@@ -455,6 +516,39 @@ public class ApplicationController {
         m.put("reviewNote", submission.reviewNote());
         m.put("reviewedAt", submission.reviewedAt() == null ? null : submission.reviewedAt().toString());
         m.put("createdAt", submission.createdAt() == null ? null : submission.createdAt().toString());
+        return m;
+    }
+
+    /** 评分事件：带上被评人与分数，供下游（声誉/风控）消费。 */
+    private EventEnvelope ratingEnvelope(TaskApplication app, EngagementRating rating) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", app.taskId());
+        payload.put("applicationId", app.id());
+        payload.put("recommenderAccountId", rating.recommenderAccountId());
+        payload.put("ratedByAccountId", rating.ratedByAccountId());
+        payload.put("score", rating.score());
+        return new EventEnvelope(UUID.randomUUID().toString(), "EngagementRated", "EngagementRating",
+                rating.id(), 1, Instant.now(), null, payload);
+    }
+
+    private Map<String, Object> toBody(EngagementRating rating) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", rating.id());
+        m.put("applicationId", rating.applicationId());
+        m.put("taskId", rating.taskId());
+        m.put("recommenderAccountId", rating.recommenderAccountId());
+        m.put("ratedByAccountId", rating.ratedByAccountId());
+        m.put("score", rating.score());
+        m.put("comment", rating.comment());
+        m.put("createdAt", rating.createdAt() == null ? null : rating.createdAt().toString());
+        return m;
+    }
+
+    /** {@code {success:true, data:null}}——Map.of 不收 null 值，故手写。 */
+    private static Map<String, Object> nullData() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("success", true);
+        m.put("data", null);
         return m;
     }
 

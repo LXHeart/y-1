@@ -27,7 +27,10 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/me", "identity", true),
             new RouteProperties(null, "/api/admin/permission-requests", "identity", true),
             new RouteProperties(null, "/api/finance", "finance", true),
-            new RouteProperties(null, "/api/trust", "trust", true)),
+            new RouteProperties(null, "/api/trust", "trust", true),
+            // 推荐官画像 → identity，声誉 → marketplace（两个不同上游，前缀不得互相抢占）
+            new RouteProperties(null, "/api/recommenders", "identity", true),
+            new RouteProperties(null, "/api/reputation", "marketplace", true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -132,7 +135,25 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("GET", "/api/admin/users")).isFalse();
     }
 
+    // ---------- 推荐官画像 + 声誉（PRD 五/六）：两条前缀分别落到不同上游 ----------
+
+    @Test
+    void routesRecommenderProfileToIdentityAndReputationToMarketplace() {
+        assertThat(resolver.resolve("GET", "/api/recommenders/" + ACCOUNT_ID + "/profile")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/reputation/" + ACCOUNT_ID)).isEqualTo(MARKETPLACE);
+        // 自维护画像走既有 /api/me 前缀 → identity（不需要单独一条路由）
+        assertThat(resolver.resolve("GET", "/api/me/recommender-profile")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("PUT", "/api/me/recommender-profile")).isEqualTo(IDENTITY);
+    }
+
+    @Test
+    void reputationAndRecommendersAreInternalUpstreams() {
+        assertThat(resolver.isInternalUpstream("GET", "/api/recommenders/" + ACCOUNT_ID + "/profile")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/reputation/" + ACCOUNT_ID)).isTrue();
+    }
+
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";
     private static final String APP_ID = "22222222-2222-2222-2222-222222222222";
     private static final String ORG_ID = "33333333-3333-3333-3333-333333333333";
+    private static final String ACCOUNT_ID = "44444444-4444-4444-4444-444444444444";
 }

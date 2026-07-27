@@ -3,7 +3,11 @@ import type {
   AdjudicationSnapshot,
   CreateTaskInput,
   DisputeCase,
+  EngagementRating,
   EngagementSubmission,
+  RecommenderProfile,
+  RecommenderReputation,
+  UpdateRecommenderProfileInput,
   FinanceAccount,
   GrasslandResponse,
   IdentityType,
@@ -246,6 +250,49 @@ export function useGrassland() {
         method: 'POST',
         body: JSON.stringify({ note: note || '' }),
       }))
+
+  // ---------- 推荐官画像（identity）+ 声誉 / 评分（marketplace）----------
+
+  /** 我的画像。没填过也返回空画像（不是 404），可直接绑到表单上。 */
+  const getMyRecommenderProfile = () =>
+    run(() => request<RecommenderProfile>('/api/me/recommender-profile'))
+
+  /**
+   * 保存我的画像（PUT **整份覆盖**：没带的字段等于清空，不是不改）。
+   *
+   * ⚠️ `contentTags`/`domainTags`/`socialAccounts` 是**数组**，不是逗号串——
+   * 拆分留在输入框那一处做，别让前后端各拆一次。
+   */
+  const updateMyRecommenderProfile = (input: UpdateRecommenderProfileInput) =>
+    run(() => request<RecommenderProfile>('/api/me/recommender-profile', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  /** 看某人的画像（商家审核报名时用）。只回画像字段，不含邮箱等账号信息。 */
+  const getRecommenderProfile = (accountId: string) =>
+    run(() => request<RecommenderProfile>(`/api/recommenders/${encodeURIComponent(accountId)}/profile`))
+
+  /**
+   * 看某人的声誉指标与等级（PRD 五/六）。
+   *
+   * 商家侧要按等级/完成率筛选报名者，故通常是对「本任务的报名者」逐个并发取——
+   * 后端没有、也刻意不提供「按条件搜人」的入口（那会把平台变成人肉数据库）。
+   */
+  const getReputation = (accountId: string) =>
+    run(() => request<RecommenderReputation>(`/api/reputation/${encodeURIComponent(accountId)}`))
+
+  /** 商家评分（1-5 星）。**须先确认履约**（否则 409），且一次履约只能评一次（重复 409）。 */
+  const rateEngagement = (taskId: string, applicationId: string, score: number, comment?: string) =>
+    run(() => request<EngagementRating>(`/api/tasks/${taskId}/applications/${applicationId}/rating`, {
+      method: 'POST',
+      body: JSON.stringify(comment ? { score, comment } : { score }),
+    }))
+
+  /** 查该履约的评分。未评价时后端返回 `data: null`（不是 404），此处如实回 null。 */
+  const getEngagementRating = (taskId: string, applicationId: string) =>
+    run(() => request<EngagementRating | null>(
+      `/api/tasks/${taskId}/applications/${applicationId}/rating`))
 
   // ---------- finance：推荐官钱包 ----------
 
@@ -554,6 +601,13 @@ export function useGrassland() {
     revokeSession,
     getMyWallet,
     withdrawFromWallet,
+    // 画像 + 声誉 + 评分
+    getMyRecommenderProfile,
+    updateMyRecommenderProfile,
+    getRecommenderProfile,
+    getReputation,
+    rateEngagement,
+    getEngagementRating,
     submitDeliverable,
     listDeliverables,
     rejectDeliverable,

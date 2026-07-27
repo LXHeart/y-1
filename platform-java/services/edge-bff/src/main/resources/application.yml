@@ -73,6 +73,15 @@ edge:
     - path: /api/admin/permission-requests
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_PERMREQ_IDENTITY:true}
+    # 推荐官画像（PRD 六）→ identity。/api/recommenders/{accountId}/profile；
+    # 自维护那半边走已有的 /api/me 前缀，无需另配。
+    - path: /api/recommenders
+      upstream: identity
+      enabled: ${EDGE_ROUTE_RECOMMENDERS_IDENTITY:true}
+    # 推荐官声誉（PRD 五/六）→ marketplace。声誉指标全部从撮合事实派生，故落在 marketplace 而非 identity。
+    - path: /api/reputation
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_REPUTATION_MARKETPLACE:true}
     # ---- finance（Epic 4 Slice 4D/4E + 6C Phase D）→ finance-service。账户/余额/escrow。----
     - path: /api/finance
       upstream: finance

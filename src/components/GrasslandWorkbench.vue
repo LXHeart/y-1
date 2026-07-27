@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
+import EngagementRatingPanel from './EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from './EngagementSubmissionPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
+import MyRecommenderProfileCard from './MyRecommenderProfileCard.vue'
 import MySessionsCard from './MySessionsCard.vue'
 import MyWalletCard from './MyWalletCard.vue'
 import OrgTeamCard from './OrgTeamCard.vue'
 import PermissionReviewPanel from './PermissionReviewPanel.vue'
+import RecommenderReputationBadge from './RecommenderReputationBadge.vue'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   FinanceAccount,
   Organization,
+  RecommenderProfile,
+  RecommenderReputation,
   Task,
   TaskApplication,
 } from '../types/grassland'
@@ -54,10 +59,43 @@ const creditAmountYuan = ref(1000)
 const taskForm = ref({ title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0 })
 const applyNote = ref('')
 
+// ---------- 商家筛选报名者（PRD 五等级 + 完成率）----------
+//
+// 声誉/画像是**按报名者**并发拉的——后端刻意不提供「按条件搜人」入口（那会把平台变成
+// 人肉数据库），故筛选在拉到全量报名后于前端做。key = recommenderAccountId。
+const applicantReputation = ref<Record<string, RecommenderReputation>>({})
+const applicantProfile = ref<Record<string, RecommenderProfile>>({})
+/** 等级筛选下限（'' = 不限）。Lv 是邀请制、永不自动授予，故筛选项到 Lv4。 */
+const levelFilter = ref('')
+/** 完成率筛选下限（0-100 百分比；0 = 不限）。 */
+const rateFilterPct = ref(0)
+/** 已确认履约的 applicationId 集合——评分前置（确认后才显示评分表单）。内存态。 */
+const confirmedAppIds = ref<Set<string>>(new Set())
+
+/** Lv 字符串 → 序号，用于「等级 ≥」比较。 */
+const LEVEL_ORDER: Record<string, number> = { Lv1: 1, Lv2: 2, Lv3: 3, Lv4: 4, Lv5: 5 }
+
 const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.value) || null)
 const canPublishBounty = computed(() => activeOrg.value?.permissionTier === 'finance_transaction')
 const balanceYuan = computed(() =>
   account.value ? (account.value.balanceCents / 100).toFixed(2) : '—')
+
+/**
+ * 报名列表按等级 / 完成率筛选。
+ *
+ * 无声誉数据的报名者（还在拉取）在有筛选时**不展示**——筛选语义是「只看达标的」，
+ * 数据没回来不能默认达标。无筛选时全量展示。
+ */
+const filteredApplications = computed<TaskApplication[]>(() => {
+  const levelMin = levelFilter.value ? LEVEL_ORDER[levelFilter.value] : 0
+  const rateMin = rateFilterPct.value / 100
+  return applications.value.filter((a) => {
+    const rep = applicantReputation.value[a.recommenderAccountId]
+    if (levelMin > 0 && (!rep || (LEVEL_ORDER[rep.level] || 0) < levelMin)) return false
+    if (rateMin > 0 && (!rep || rep.completionRate < rateMin)) return false
+    return true
+  })
+})
 
 function yuanToCents(yuan: number): number {
   return Math.round(yuan * 100)
@@ -109,6 +147,11 @@ function resetAccountState(): void {
   activeDisputeId.value = ''
   outcomes.value = {}
   notice.value = ''
+  applicantReputation.value = {}
+  applicantProfile.value = {}
+  levelFilter.value = ''
+  rateFilterPct.value = 0
+  confirmedAppIds.value = new Set()
 }
 
 /**
@@ -191,8 +234,39 @@ async function publishTask(): Promise<void> {
 async function selectTask(taskId: string): Promise<void> {
   selectedTaskId.value = taskId
   applications.value = []
+  // 切任务即清空上一份报名者的声誉/画像与已确认集合——否则筛选会串数据。
+  applicantReputation.value = {}
+  applicantProfile.value = {}
+  confirmedAppIds.value = new Set()
   const list = await grassland.listApplications(taskId)
   if (list) applications.value = list
+  await loadApplicantProfiles()
+}
+
+/**
+ * 并发拉取本任务所有报名者的声誉 + 画像。
+ *
+ * 按唯一 accountId 去重后 Promise.all——同一推荐官报多个任务时只拉一次。
+ * 后端无「按条件搜人」，筛选只能在前端对全量报名做。
+ */
+async function loadApplicantProfiles(): Promise<void> {
+  const accountIds = Array.from(new Set(applications.value.map((a) => a.recommenderAccountId)))
+  if (accountIds.length === 0) return
+  const results = await Promise.all(accountIds.map(async (id) => {
+    const [rep, prof] = await Promise.all([
+      grassland.getReputation(id),
+      grassland.getRecommenderProfile(id),
+    ])
+    return { id, rep, prof }
+  }))
+  const repMap: Record<string, RecommenderReputation> = {}
+  const profMap: Record<string, RecommenderProfile> = {}
+  for (const r of results) {
+    if (r.rep) repMap[r.id] = r.rep
+    if (r.prof) profMap[r.id] = r.prof
+  }
+  applicantReputation.value = repMap
+  applicantProfile.value = profMap
 }
 
 /** 接受报名：202 后立即轮询预留结局（资金型任务可能因余额不足被补偿）。 */
@@ -237,6 +311,10 @@ async function confirm(app: TaskApplication): Promise<void> {
   if (!outcome) {
     outcomes.value = { ...outcomes.value, [app.id]: '' }
     return
+  }
+  // settled / held 都意味着履约已确认（held 只是结算被争议暂扣）——此时商家可评分。
+  if (outcome.status === 'settled' || outcome.status === 'held') {
+    confirmedAppIds.value = new Set([...confirmedAppIds.value, app.id])
   }
   const label = outcome.status === 'settled'
     ? '已结算（资金已确认扣款）'
@@ -423,30 +501,60 @@ function statusLabel(status: string): string {
         <div v-if="selectedTaskId" class="gl-apps">
           <h4>报名列表</h4>
           <p v-if="applications.length === 0" class="gl-empty">该任务暂无报名</p>
-          <table v-else class="gl-table">
-            <thead><tr><th>推荐官</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
-            <tbody>
-              <tr v-for="a in applications" :key="a.id">
-                <td><code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></td>
-                <td>{{ statusLabel(a.status) }}</td>
-                <td class="gl-actions">
-                  <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
-                  <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
-                  <button v-if="a.status === 'accepted'" type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
-                </td>
-                <td class="gl-outcome">{{ outcomes[a.id] || '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <!-- 交付物：确认履约前必须有一份待核验的（后端 409 守卫），故与报名列表放在一起 -->
-          <template v-for="a in applications" :key="`sub-${a.id}`">
-            <div v-if="a.status === 'accepted'" class="gl-sub-block">
-              <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
-              <EngagementSubmissionPanel
-                :task-id="selectedTaskId" :application-id="a.id" role="merchant"
-              />
+          <template v-else>
+            <!-- 筛选：等级 ≥ / 完成率 ≥（前端对全量报名筛选，后端无搜人入口） -->
+            <div class="gl-filter">
+              <label>等级 ≥
+                <select v-model="levelFilter">
+                  <option value="">不限</option>
+                  <option v-for="lv in ['Lv2','Lv3','Lv4']" :key="lv" :value="lv">{{ lv }}</option>
+                </select>
+              </label>
+              <label>完成率 ≥
+                <select v-model.number="rateFilterPct">
+                  <option :value="0">不限</option>
+                  <option v-for="p in [60,70,80,90]" :key="p" :value="p">{{ p }}%</option>
+                </select>
+              </label>
             </div>
+
+            <p v-if="filteredApplications.length === 0" class="gl-empty">无符合筛选条件的报名</p>
+            <table v-else class="gl-table">
+              <thead><tr><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
+              <tbody>
+                <tr v-for="a in filteredApplications" :key="a.id">
+                  <td><code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></td>
+                  <td>
+                    <RecommenderReputationBadge
+                      compact
+                      :reputation="applicantReputation[a.recommenderAccountId] || null"
+                      :profile="applicantProfile[a.recommenderAccountId] || null"
+                    />
+                  </td>
+                  <td>{{ statusLabel(a.status) }}</td>
+                  <td class="gl-actions">
+                    <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
+                    <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
+                    <button v-if="a.status === 'accepted'" type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
+                  </td>
+                  <td class="gl-outcome">{{ outcomes[a.id] || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- 交付物 + 评分：确认履约前必须有一份待核验的（后端 409 守卫）；评分须先确认履约。 -->
+            <template v-for="a in applications" :key="`sub-${a.id}`">
+              <div v-if="a.status === 'accepted'" class="gl-sub-block">
+                <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
+                <EngagementSubmissionPanel
+                  :task-id="selectedTaskId" :application-id="a.id" role="merchant"
+                />
+                <EngagementRatingPanel
+                  :task-id="selectedTaskId" :application-id="a.id" role="merchant"
+                  :can-rate="confirmedAppIds.has(a.id)"
+                />
+              </div>
+            </template>
           </template>
         </div>
       </article>
@@ -454,6 +562,11 @@ function statusLabel(status: string): string {
 
     <!-- ============ 推荐官视角 ============ -->
     <div v-else class="gl-grid">
+      <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
+      <article class="gl-card gl-card-wide">
+        <MyRecommenderProfileCard />
+      </article>
+
       <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
       <article class="gl-card gl-card-wide">
         <MyWalletCard />
@@ -513,6 +626,10 @@ function statusLabel(status: string): string {
           <div v-if="a.status === 'accepted'" class="gl-sub-block">
             <h5>提交履约 · <code>{{ a.id.slice(0, 8) }}…</code></h5>
             <EngagementSubmissionPanel
+              :task-id="selectedTaskId" :application-id="a.id" role="recommender"
+            />
+            <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
+            <EngagementRatingPanel
               :task-id="selectedTaskId" :application-id="a.id" role="recommender"
             />
           </div>
@@ -582,4 +699,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-table th, .gl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
 .gl-actions { display: flex; gap: 6px; }
 .gl-outcome { font-size: 12px; opacity: 0.8; }
+.gl-filter { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.gl-filter label { display: flex; align-items: center; gap: 6px; opacity: 0.85; }
+.gl-filter select { padding: 4px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
 </style>
