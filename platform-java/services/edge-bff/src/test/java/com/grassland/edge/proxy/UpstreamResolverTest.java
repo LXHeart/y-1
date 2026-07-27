@@ -35,7 +35,11 @@ class UpstreamResolverTest {
             // intelligence Slice 1：/api/intelligence 前缀 → intelligence（冒烟端点 + 后续业务）
             new RouteProperties(null, "/api/intelligence", "intelligence", true),
             // intelligence Slice 2：/api/comedy-generation 前缀 → intelligence（脱口秀迁入，路径沿用 legacy）
-            new RouteProperties(null, "/api/comedy-generation", "intelligence", true)),
+            new RouteProperties(null, "/api/comedy-generation", "intelligence", true),
+            // intelligence Slice 3：文章生成三文本端点 method+path 精确路由（图片端点与该前缀共享，仍走 legacy）
+            new RouteProperties("POST", "/api/article-generation/titles", "intelligence", true),
+            new RouteProperties("POST", "/api/article-generation/outline", "intelligence", true),
+            new RouteProperties("POST", "/api/article-generation/content", "intelligence", true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -163,9 +167,8 @@ class UpstreamResolverTest {
     void routesIntelligenceSmokeToIntelligenceAndKeepsLegacyAiOnLegacy() {
         assertThat(resolver.resolve("POST", "/api/intelligence/smoke/chat")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/intelligence/smoke/chat")).isTrue();
-        // 回归防护：legacy AI 工具路径（脱口秀已迁入 intelligence，其余仍走 legacy default upstream）。
+        // 回归防护：脱口秀/文章文本端点已迁入 intelligence；图片评价等 legacy AI 工具仍走 legacy default upstream。
         assertThat(resolver.resolve("POST", "/api/image-analysis/analyze")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/article-generation/outline")).isEqualTo(LEGACY);
         // legacy 内部扣费端点（草场 intelligence → legacy credits，不经 BFF）即便经 BFF 也应落 legacy。
         assertThat(resolver.resolve("POST", "/api/internal/credits/consume")).isEqualTo(LEGACY);
     }
@@ -175,6 +178,21 @@ class UpstreamResolverTest {
         // Slice 2：脱口秀迁入 intelligence，路径沿用 legacy → 前端零改动。
         assertThat(resolver.resolve("POST", "/api/comedy-generation/generate-script")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/comedy-generation/generate-script")).isTrue();
+    }
+
+    @Test
+    void routesArticleTextToIntelligenceButImagesStayLegacy() {
+        // Slice 3：三文本端点 → intelligence。
+        assertThat(resolver.resolve("POST", "/api/article-generation/titles")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/article-generation/outline")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/article-generation/content")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/article-generation/titles")).isTrue();
+        // ⚠️ 回归防护：图片端点与文本端点共享 /api/article-generation 前缀，必须仍走 legacy（未迁）。
+        // 若误把整段前缀路由到 intelligence，这些 legacy 图片功能会被抢走 → 404。
+        assertThat(resolver.resolve("POST", "/api/article-generation/image-recommendations")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/search-images")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/generate-image")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/article-generation/generated-images/img-1")).isEqualTo(LEGACY);
     }
 
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";

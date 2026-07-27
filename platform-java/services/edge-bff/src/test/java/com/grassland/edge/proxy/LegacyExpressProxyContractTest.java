@@ -53,6 +53,11 @@ class LegacyExpressProxyContractTest {
         registry.add("edge.upstreams.legacy", () -> "http://localhost:" + UPSTREAM.port());
         registry.add("edge.upstreams.identity", () -> "http://localhost:" + UPSTREAM.port());
         registry.add("edge.upstreams.marketplace", () -> "http://localhost:" + UPSTREAM.port());
+        // 契约测试聚焦 edge-bff 透传机制，与上游归属无关——所有内部上游都指向同一个 mock，
+        // 故某条路由从 legacy 切到 intelligence（如文章 outline/content）后，SSE 透传断言仍成立。
+        registry.add("edge.upstreams.finance", () -> "http://localhost:" + UPSTREAM.port());
+        registry.add("edge.upstreams.trust", () -> "http://localhost:" + UPSTREAM.port());
+        registry.add("edge.upstreams.intelligence", () -> "http://localhost:" + UPSTREAM.port());
         registry.add("edge.default-upstream", () -> "legacy");
         registry.add("management.server.port", () -> "0");
     }

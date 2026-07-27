@@ -103,6 +103,22 @@ edge:
     - path: /api/comedy-generation
       upstream: intelligence
       enabled: ${EDGE_ROUTE_COMEDY_INTELLIGENCE:true}
+    # ---- 文章生成（草场 intelligence Slice 3）→ intelligence-service。⚠️ 前缀 /api/article-generation
+    # 与 legacy 图片端点（image-recommendations/search-images/generate-image/generated-images）共享，
+    # 故只把三个文本端点用 method+path 精确路由到 intelligence；图片端点仍走 legacy default upstream。
+    # 各带回滚开关；legacy 同名文本端点随路由开启退役。
+    - method: POST
+      path: /api/article-generation/titles
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ARTICLE_TITLES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/article-generation/outline
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ARTICLE_OUTLINE_INTELLIGENCE:true}
+    - method: POST
+      path: /api/article-generation/content
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ARTICLE_CONTENT_INTELLIGENCE:true}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
 identity-assertion:
