@@ -12,9 +12,35 @@ java {
 dependencies {
     implementation(platform(libs.spring.boot.dependencies))
     implementation(libs.spring.boot.actuator)
+    implementation(project(":platform-identity-assertion"))
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-kafka")
+    implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    implementation(libs.r2dbc.postgresql)
+    implementation("com.fasterxml.jackson.core:jackson-databind")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("org.postgresql:postgresql")
+
     testImplementation(libs.spring.boot.test)
+    testImplementation(libs.reactor.test)
+    testImplementation(platform(libs.testcontainers.bom))
+    testImplementation(libs.testcontainers.postgresql)
+    testImplementation(libs.testcontainers.r2dbc)
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.postgresql:postgresql")
+    testImplementation("org.wiremock:wiremock-standalone:3.9.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.jar {
+    enabled = false
+}
+
+tasks.bootJar {
+    archiveFileName = "intelligence-service.jar"
 }

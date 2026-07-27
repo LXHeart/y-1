@@ -1,10 +1,54 @@
 spring:
   application:
     name: intelligence-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  r2dbc:
+    url: ${INTELLIGENCE_R2DBC_URL:}
 server:
   port: ${SERVER_PORT:8086}
+  # SSE 流式透传不能压缩/缓冲（与 edge-bff 一致：块到块透传）。
+  compression:
+    enabled: false
+  max-http-request-header-size: 16KB
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+
+# DB 地基：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 intelligence_flyway_schema。
+intelligence:
+  datasource:
+    from-database-url: ${INTELLIGENCE_DATASOURCE_FROM_DATABASE_URL:false}
+  outbox:
+    topic: ${INTELLIGENCE_OUTBOX_TOPIC:grassland.intelligence.events}
+    enabled: ${INTELLIGENCE_OUTBOX_ENABLED:true}
+    poll-interval-ms: ${INTELLIGENCE_OUTBOX_POLL_INTERVAL_MS:2000}
+
+# BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
+identity-assertion:
+  enabled: ${IDENTITY_ASSERTION_ENABLED:false}
+  secret: ${IDENTITY_ASSERTION_SECRET:}
+  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
+  header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+
+# 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
+# intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。
+ai:
+  qwen:
+    base-url: ${QWEN_BASE_URL:}
+    api-key: ${QWEN_API_KEY:}
+    model: ${QWEN_MODEL:qwen-plus}
+    connect-timeout-ms: ${QWEN_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${QWEN_READ_TIMEOUT_MS:120000}
+
+# 积分扣减：经 legacy 内部端点（过渡期；legacy 不认 X-Grassland-Identity，用共享密钥）。
+credits:
+  legacy:
+    base-url: ${LEGACY_CREDITS_BASE_URL:http://backend:3000}
+    internal-key: ${INTERNAL_API_KEY:}
+    consume-path: /api/internal/credits/consume

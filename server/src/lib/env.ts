@@ -77,6 +77,7 @@ const envSchema = z.object({
   SEEDANCE_BASE_URL: z.string().trim().optional().transform((value) => value || undefined),
   SEEDANCE_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
   TEMP_DIR: z.string().trim().default('server/.data/temp'),
+  INTERNAL_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
 })
 
 export const env = envSchema.parse(process.env)

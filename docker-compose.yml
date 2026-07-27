@@ -44,6 +44,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # 草场 intelligence → legacy credits 过渡通道的共享密钥（两端同值；未配则 legacy 端点 fail-closed 503）。
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     volumes:
@@ -91,6 +93,7 @@ services:
       MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
       TRUST_SERVICE_BASE_URL: http://trust-service:8085
+      INTELLIGENCE_SERVICE_BASE_URL: http://intelligence-service:8086
       EDGE_ROUTE_AUTH_ME_IDENTITY: "true"
       EDGE_ROUTE_TASKS_MARKETPLACE: "true"
       # HLD 7.4：直读 session 表签发内部身份断言（DATABASE_URL 复用 identity 库，只读；secret 与 identity-service 一致）。
@@ -109,6 +112,7 @@ services:
       - marketplace-service
       - finance-service
       - trust-service
+      - intelligence-service
     restart: unless-stopped
 
   # 可选 Java marketplace-service（Epic 4）：任务/报名/履约。profile java-edge。
@@ -188,6 +192,35 @@ services:
       IDENTITY_ASSERTION_ENABLED: "true"
       IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # 可选 Java intelligence-service（草场 intelligence Slice 1）：AI 基建层 + 冒烟端点。profile java-edge。
+  # 独立 Flyway 历史（intelligence_flyway_schema）；平台默认 Qwen（env 注入，不读 legacy per-user 设置）；
+  # 积分经共享密钥走 legacy 内部端点（直连 backend，不经 BFF，避免 intelligence↔BFF 循环）。
+  intelligence-service:
+    profiles: ["java-edge"]
+    build:
+      context: ./platform-java
+      dockerfile: services/intelligence-service/Dockerfile
+    ports:
+      - "8086:8086"
+    environment:
+      SERVER_PORT: "8086"
+      DATABASE_URL: ${DATABASE_URL:-}
+      INTELLIGENCE_DATASOURCE_FROM_DATABASE_URL: "true"
+      IDENTITY_ASSERTION_ENABLED: "true"
+      IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
+      IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # 平台默认 Qwen（HLD §12.3 第一步）；QWEN_API_KEY 未配则 PlatformModelConfig 启动 fail-fast。
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+      # 积分扣减走 legacy 内部端点（共享 INTERNAL_API_KEY；legacy 不认 BFF 断言）。
+      LEGACY_CREDITS_BASE_URL: http://backend:3000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     depends_on:
       - backend
     restart: unless-stopped

@@ -20,6 +20,7 @@ import { adminRouter } from './routes/admin.js'
 import { settingsRouter } from './routes/settings.js'
 import { homepageRouter } from './routes/homepage.js'
 import { authRouter } from './routes/auth.js'
+import { internalCreditsRouter } from './routes/internal-credits.js'
 import { createSessionMiddleware } from './lib/session.js'
 import { attachAuthenticatedUser } from './lib/auth.js'
 import { createRateLimit } from './lib/rate-limit.js'
@@ -404,6 +405,7 @@ export function createApp() {
   app.use('/api/comedy-generation', comedyGenerationRouter)
   app.use('/api/video-production', videoProductionRouter)
   app.use('/api/credits', creditsRouter)
+  app.use('/api/internal/credits', internalCreditsRouter)
   app.use('/api/admin', adminRouter)
   app.use('/api/settings', settingsRouter)
   app.use('/api/homepage', homepageRouter)

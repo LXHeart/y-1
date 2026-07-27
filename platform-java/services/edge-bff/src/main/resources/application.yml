@@ -28,6 +28,7 @@ edge:
     marketplace: ${MARKETPLACE_SERVICE_BASE_URL:http://localhost:8083}
     finance: ${FINANCE_SERVICE_BASE_URL:http://localhost:8084}
     trust: ${TRUST_SERVICE_BASE_URL:http://localhost:8085}
+    intelligence: ${INTELLIGENCE_SERVICE_BASE_URL:http://localhost:8086}
   routes:
     - method: GET
       path: /api/auth/me
@@ -90,6 +91,12 @@ edge:
     - path: /api/trust
       upstream: trust
       enabled: ${EDGE_ROUTE_TRUST:true}
+    # ---- intelligence（草场 intelligence Slice 1）→ intelligence-service。AI 基建 + 冒烟端点。----
+    # legacy AI 工具（/api/image-analysis、/api/article-generation、/api/douyin 等）仍走 legacy，
+    # 本路由只接管 /api/intelligence 前缀；后续业务模块迁入时再逐族加路由（各带回滚开关）。
+    - path: /api/intelligence
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:true}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
 identity-assertion:

@@ -13,10 +13,11 @@ class UpstreamResolverTest {
     private static final URI MARKETPLACE = URI.create("http://marketplace:8083");
     private static final URI FINANCE = URI.create("http://finance:8084");
     private static final URI TRUST = URI.create("http://trust:8085");
+    private static final URI INTELLIGENCE = URI.create("http://intelligence:8086");
 
     private final EdgeRoutingProperties properties = new EdgeRoutingProperties(
         Map.of("legacy", LEGACY, "identity", IDENTITY, "marketplace", MARKETPLACE,
-            "finance", FINANCE, "trust", TRUST),
+            "finance", FINANCE, "trust", TRUST, "intelligence", INTELLIGENCE),
         List.of(
             new RouteProperties("GET", "/api/auth/me", "identity", true),
             new RouteProperties(null, "/api/v2/**", "identity", true),
@@ -30,7 +31,9 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/trust", "trust", true),
             // 推荐官画像 → identity，声誉 → marketplace（两个不同上游，前缀不得互相抢占）
             new RouteProperties(null, "/api/recommenders", "identity", true),
-            new RouteProperties(null, "/api/reputation", "marketplace", true)),
+            new RouteProperties(null, "/api/reputation", "marketplace", true),
+            // intelligence Slice 1：/api/intelligence 前缀 → intelligence（冒烟端点 + 后续业务）
+            new RouteProperties(null, "/api/intelligence", "intelligence", true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -150,6 +153,20 @@ class UpstreamResolverTest {
     void reputationAndRecommendersAreInternalUpstreams() {
         assertThat(resolver.isInternalUpstream("GET", "/api/recommenders/" + ACCOUNT_ID + "/profile")).isTrue();
         assertThat(resolver.isInternalUpstream("GET", "/api/reputation/" + ACCOUNT_ID)).isTrue();
+    }
+
+    // ---------- intelligence Slice 1：/api/intelligence → intelligence（内部上游）----------
+
+    @Test
+    void routesIntelligenceSmokeToIntelligenceAndKeepsLegacyAiOnLegacy() {
+        assertThat(resolver.resolve("POST", "/api/intelligence/smoke/chat")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/intelligence/smoke/chat")).isTrue();
+        // 回归防护：legacy AI 工具路径（后续 slice 才迁入 intelligence）仍走 legacy default upstream。
+        assertThat(resolver.resolve("POST", "/api/image-analysis/analyze")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/article-generation/outline")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/comedy-generation/generate-script")).isEqualTo(LEGACY);
+        // legacy 内部扣费端点（草场 intelligence → legacy credits，不经 BFF）即便经 BFF 也应落 legacy。
+        assertThat(resolver.resolve("POST", "/api/internal/credits/consume")).isEqualTo(LEGACY);
     }
 
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";
