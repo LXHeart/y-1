@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
+import EngagementSubmissionPanel from './EngagementSubmissionPanel.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
 import MySessionsCard from './MySessionsCard.vue'
@@ -437,6 +438,16 @@ function statusLabel(status: string): string {
               </tr>
             </tbody>
           </table>
+
+          <!-- 交付物：确认履约前必须有一份待核验的（后端 409 守卫），故与报名列表放在一起 -->
+          <template v-for="a in applications" :key="`sub-${a.id}`">
+            <div v-if="a.status === 'accepted'" class="gl-sub-block">
+              <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
+              <EngagementSubmissionPanel
+                :task-id="selectedTaskId" :application-id="a.id" role="merchant"
+              />
+            </div>
+          </template>
         </div>
       </article>
     </div>
@@ -462,7 +473,11 @@ function statusLabel(status: string): string {
           <thead><tr><th>任务</th><th>平台</th><th>赏金</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="t in tasks" :key="t.id">
-              <td>{{ t.title }}</td>
+              <!-- 点标题选中任务 → 下方「我的履约与争议」才能加载自己的报名（进而提交履约） -->
+              <td>
+                <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }"
+                        @click="selectTask(t.id)">{{ t.title }}</button>
+              </td>
               <td>{{ t.platform || '—' }}</td>
               <td>{{ t.bountyCents ? `¥${(t.bountyCents / 100).toFixed(2)}` : '无' }}</td>
               <td>
@@ -492,6 +507,16 @@ function statusLabel(status: string): string {
             </tr>
           </tbody>
         </table>
+
+        <!-- 提交履约凭证：商家确认前必须先有这一步 -->
+        <template v-for="a in applications" :key="`mysub-${a.id}`">
+          <div v-if="a.status === 'accepted'" class="gl-sub-block">
+            <h5>提交履约 · <code>{{ a.id.slice(0, 8) }}…</code></h5>
+            <EngagementSubmissionPanel
+              :task-id="selectedTaskId" :application-id="a.id" role="recommender"
+            />
+          </div>
+        </template>
       </article>
     </div>
 
@@ -526,6 +551,8 @@ function statusLabel(status: string): string {
 .gl-alert { margin: 0; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
 .gl-alert-error { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .gl-alert-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
+.gl-sub-block { margin-top: 10px; }
+.gl-sub-block h5 { margin: 0; font-size: 12px; opacity: 0.75; }
 .gl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
 .gl-card {
   border: 1px solid var(--color-border); border-radius: 10px;

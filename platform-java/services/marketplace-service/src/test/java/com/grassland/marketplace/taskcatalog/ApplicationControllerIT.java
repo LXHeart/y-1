@@ -15,6 +15,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 
 /**
@@ -265,8 +266,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     void monetaryConfirmSettlesAfterWindow() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
         String task = publishTaskBounty(merchant, org, null, 500L);
-        String app = apply(UUID.randomUUID().toString(), task);
+        String app = apply(recommender, task);
 
         when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
         when(financeClient.capture(org, app)).thenReturn(Mono.empty());
@@ -276,6 +278,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isAccepted();
         awaitReservation(merchant, task, app, "accepted");
+
+        // 确认前必须有交付物（V5：confirm 不再是凭空点的）
+        submit(recommender, task, app);
 
         // 5A confirm → 202 settling
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
@@ -304,8 +309,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     void confirmHeldWhenDisputeOpen() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
         String task = publishTaskBounty(merchant, org, null, 500L);
-        String app = apply(UUID.randomUUID().toString(), task);
+        String app = apply(recommender, task);
         when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
         when(disputeChecker.hasOpenDispute(anyString(), anyString())).thenReturn(true);  // 开争议 → held
 
@@ -313,11 +319,106 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isAccepted();
         awaitReservation(merchant, task, app, "accepted");
+        submit(recommender, task, app);
 
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isAccepted();
         awaitSettlement(merchant, task, app, "held");  // 窗口到期查到争议 → held（不 capture）
+    }
+
+    // ---------- 履约交付物（V5） ----------
+
+    /**
+     * 完整循环：提交 → 商家退回补交 → 修改重交 → 确认。
+     *
+     * <p>被退回的交付物不占 partial unique 的位，所以推荐官能改好重交——这正是「退回补交」要成立的前提。
+     */
+    @Test
+    void submitRejectResubmitThenConfirm() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        String first = submit(recommender, task, app);
+        // 已有待核验的一份 → 重复提交 409
+        submitRaw(recommender, task, app, "https://example.com/again").expectStatus().isEqualTo(409);
+
+        // 商家退回补交（带原因）
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + first + "/reject")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "缺少门店实拍"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("rejected")
+                .jsonPath("$.data.reviewNote").isEqualTo("缺少门店实拍");
+        assertThat(outboxCountByType("DeliverableRejected")).isGreaterThanOrEqualTo(1);
+
+        // 退回后可以重交
+        submit(recommender, task, app);
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        // 确认即核验通过：历史两条 = 一条 rejected + 一条 accepted
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.submissions.length()").isEqualTo(2)
+                .jsonPath("$.data.submissions[0].status").isEqualTo("accepted");
+    }
+
+    /** 没有交付物就确认 → 409。此前 confirm 是凭空点的，这条守卫是本 slice 的要点。 */
+    @Test
+    void confirmRejectedWithoutSubmission() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void submissionRejectsForeignRecommenderAndBadUrl() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        // 别人的履约 → 403
+        submitRaw(UUID.randomUUID().toString(), task, app, "https://example.com/x")
+                .expectStatus().isForbidden();
+        // 非 http(s) 链接 → 4xx（凭证必须可核验）
+        submitRaw(recommender, task, app, "已经发布了").expectStatus().is4xxClientError();
+        // 无关第三方查看交付物 → 403
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isForbidden();
     }
 
     // ---------- reject ----------
@@ -350,14 +451,32 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.length()").value(l -> assertThat((Integer) l).isEqualTo(2));
     }
 
+    /**
+     * 非 owner 只看得到**自己的**报名，不相干的人看到空列表。
+     *
+     * <p>此前是一律 403，后果是推荐官在自己的工作台里永远看不到自己报了什么——
+     * 提交履约、开争议这些本该由推荐官发起的动作也就无从挂载（浏览器实测发现）。
+     */
     @Test
-    void nonOwnerListForbidden() {
+    void nonOwnerSeesOnlyOwnApplication() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        String mine = UUID.randomUUID().toString();
         String task = publishTask(merchant, org, null);
+        apply(mine, task);
+        apply(UUID.randomUUID().toString(), task);   // 别人的报名
+
         client().get().uri("/api/tasks/" + task + "/applications")
-                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant"))
-                .exchange().expectStatus().isForbidden();
+                .header("X-Grassland-Identity", sign(mine, "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].recommenderAccountId").isEqualTo(mine);
+
+        // 与该任务无关的账号：空列表（不泄露有几个人报名）
+        client().get().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(0);
     }
 
     // ---------- withdraw ----------
@@ -406,6 +525,28 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isOk();
+    }
+
+    /** 提交一份交付物，返回 submissionId。 */
+    @SuppressWarnings("unchecked")
+    private String submit(String recommender, String task, String app) {
+        Map<String, Object> resp = submitRaw(recommender, task, app, "https://example.com/post/" + app)
+                .expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    private WebTestClient.ResponseSpec submitRaw(String recommender, String task, String app, String url) {
+        return client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(recommender, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("contentUrl", url, "note", "已按要求发布"))
+                .exchange();
+    }
+
+    private long outboxCountByType(String eventType) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM marketplace_outbox WHERE event_type = :et")
+                .bind("et", eventType).map(r -> r.get("c", Integer.class)).one().block().longValue();
     }
 
     @SuppressWarnings("unchecked")

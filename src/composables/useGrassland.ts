@@ -3,6 +3,7 @@ import type {
   AdjudicationSnapshot,
   CreateTaskInput,
   DisputeCase,
+  EngagementSubmission,
   FinanceAccount,
   GrasslandResponse,
   IdentityType,
@@ -211,6 +212,40 @@ export function useGrassland() {
   /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
   const removeMembership = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+
+  // ---------- marketplace：履约交付物 ----------
+
+  /**
+   * 推荐官提交履约凭证（须本人、已接受的报名）。
+   *
+   * ⚠️ `contentUrl` 必须是 http(s) 链接，后端会校验；已有待核验的一份时 409（被退回后才可重交）。
+   */
+  const submitDeliverable = (taskId: string, applicationId: string, contentUrl: string, note?: string) =>
+    run(() => request<EngagementSubmission>(
+      `/api/tasks/${taskId}/applications/${applicationId}/submissions`, {
+        method: 'POST',
+        body: JSON.stringify(note ? { contentUrl, note } : { contentUrl }),
+      }))
+
+  /**
+   * 列交付物（含历史，新的在前）。商家与本人推荐官可见。
+   *
+   * ⚠️ 响应是 `{ submissions: [...] }`，这里拆开只此一处，调用方直接拿数组。
+   */
+  const listDeliverables = async (taskId: string, applicationId: string) =>
+    run(async () => {
+      const raw = await request<{ submissions: EngagementSubmission[] }>(
+        `/api/tasks/${taskId}/applications/${applicationId}/submissions`)
+      return raw.submissions
+    })
+
+  /** 商家退回补交（带原因）。退回后推荐官可修改重交。 */
+  const rejectDeliverable = (taskId: string, applicationId: string, submissionId: string, note?: string) =>
+    run(() => request<EngagementSubmission>(
+      `/api/tasks/${taskId}/applications/${applicationId}/submissions/${submissionId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ note: note || '' }),
+      }))
 
   // ---------- finance：推荐官钱包 ----------
 
@@ -519,6 +554,9 @@ export function useGrassland() {
     revokeSession,
     getMyWallet,
     withdrawFromWallet,
+    submitDeliverable,
+    listDeliverables,
+    rejectDeliverable,
     listStores,
     createStore,
     listStoreMemberships,

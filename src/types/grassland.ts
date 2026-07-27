@@ -311,6 +311,30 @@ export interface Store {
   createdAt: string | null
 }
 
+// ---------- marketplace：履约交付物 ----------
+
+/** 交付物状态。submitted=待商家核验；accepted=商家确认履约时置；rejected=被退回，可修改重交。 */
+export type SubmissionStatus = 'submitted' | 'accepted' | 'rejected'
+
+/**
+ * 履约交付物（推荐官提交的凭证）。
+ *
+ * ⚠️ 列表端点返回的是 `{ submissions: [...] }` 而**不是**裸数组——与其它列表端点不同，别直接当数组用。
+ */
+export interface EngagementSubmission {
+  id: string
+  applicationId: string
+  recommenderAccountId: string
+  /** 发布链接，核实的主证据。后端要求 http(s)，非链接会 400。 */
+  contentUrl: string
+  note: string | null
+  status: SubmissionStatus
+  /** 商家退回原因。 */
+  reviewNote: string | null
+  reviewedAt: string | null
+  createdAt: string | null
+}
+
 // ---------- finance：推荐官钱包 ----------
 
 /** 钱包流水类型。金额符号由类型决定：入账为正，提现/冲正为负。 */

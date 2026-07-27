@@ -57,7 +57,10 @@ public class OutboxRepository {
 
     /** 标记已发布（OutboxPublisher 发 Kafka 成功后调用）。 */
     public Mono<Void> markPublished(String id) {
-        return db.sql("UPDATE marketplace_outbox SET published_at = now() WHERE id = CAST(:id AS bigint)")
+        // ⚠️ 这里曾写成 CAST(:id AS bigint)，而 marketplace_outbox.id 是 **uuid**（trust_outbox.id 才是 bigint）。
+        // 后果不是「发不出去」而是更隐蔽的**发了但标不上**：每轮调度把同一批事件重发一次，
+        // at-least-once 退化成「永远重发」，日志里只有一串 BadSqlGrammarException。
+        return db.sql("UPDATE marketplace_outbox SET published_at = now() WHERE id = CAST(:id AS uuid)")
                 .bind("id", id).then();
     }
 

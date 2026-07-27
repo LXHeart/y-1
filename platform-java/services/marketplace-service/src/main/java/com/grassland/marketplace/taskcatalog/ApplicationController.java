@@ -56,17 +56,20 @@ public class ApplicationController {
     private final TaskRepository tasks;
     private final TaskApplicationRepository apps;
     private final OutboxRepository outbox;
+    private final SubmissionRepository submissions;
     private final WorkflowClient workflowClient;
     private final long settlementWindowSeconds;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
+                                 SubmissionRepository submissions,
                                  WorkflowClient workflowClient,
                                  @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds) {
         this.callers = callers;
         this.tasks = tasks;
         this.apps = apps;
         this.outbox = outbox;
+        this.submissions = submissions;
         this.workflowClient = workflowClient;
         this.settlementWindowSeconds = settlementWindowSeconds;
     }
@@ -177,12 +180,85 @@ public class ApplicationController {
                 .defaultIfEmpty(ok(Map.of("status", status)));  // 无失败记录 → 原状态（pending 等）
     }
 
+    /**
+     * 推荐官提交履约交付物（PRD 九第一步）。须是**本人**的、**已接受**的报名；
+     * 已有一份待核验的交付物时 409（防重复提交刷屏，被退回后可重交）。
+     */
+    @PostMapping("/api/tasks/{id}/applications/{appId}/submissions")
+    public Mono<ResponseEntity<Map<String, Object>>> submitDeliverable(
+            @PathVariable String id, @PathVariable String appId,
+            @RequestBody CreateSubmissionRequest body, ServerHttpRequest request) {
+        return callers.requireRecommender(request)
+                .flatMap(caller -> loadAcceptedApp(id, appId)
+                        .filter(app -> caller.accountId().equals(app.recommenderAccountId()))
+                        .switchIfEmpty(fail(403, "只能提交自己的履约"))
+                        .flatMap(app -> submissions.create(appId, caller.accountId(), body.contentUrl(), body.note())
+                                .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
+                                .flatMap(created -> outbox
+                                        .append(submissionEnvelope("DeliverableSubmitted", app, created))
+                                        .thenReturn(created))
+                                .map(created -> ResponseEntity.status(HttpStatus.CREATED)
+                                        .body(Map.of("success", true, "data", toBody(created))))));
+    }
+
+    /** 列交付物（含历史）。商家（任务 owner）与本人推荐官可见。 */
+    @GetMapping("/api/tasks/{id}/applications/{appId}/submissions")
+    public Mono<ResponseEntity<Map<String, Object>>> listSubmissions(
+            @PathVariable String id, @PathVariable String appId, ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> apps.findById(appId)
+                        .switchIfEmpty(fail(404, "报名不存在"))
+                        .filter(app -> app.taskId().equals(id))
+                        .switchIfEmpty(fail(404, "报名不存在"))
+                        .flatMap(app -> tasks.findById(id)
+                                .switchIfEmpty(fail(404, "任务不存在"))
+                                .flatMap(task -> {
+                                    boolean isOwner = caller.accountId().equals(task.ownerAccountId());
+                                    boolean isSubmitter = caller.accountId().equals(app.recommenderAccountId());
+                                    if (!isOwner && !isSubmitter) {
+                                        return fail(403, "无权查看该履约的交付物");
+                                    }
+                                    return submissions.findByApplication(appId).collectList()
+                                            .map(list -> ok(Map.of("submissions",
+                                                    list.stream().map(this::toBody).toList())));
+                                })));
+    }
+
+    /** 商家退回补交：submitted → rejected（带原因）。退回后推荐官可修改重交。 */
+    @PostMapping("/api/tasks/{id}/applications/{appId}/submissions/{submissionId}/reject")
+    public Mono<ResponseEntity<Map<String, Object>>> rejectDeliverable(
+            @PathVariable String id, @PathVariable String appId, @PathVariable String submissionId,
+            @RequestBody(required = false) ReviewSubmissionRequest body, ServerHttpRequest request) {
+        String note = body == null ? null : body.note();
+        return callers.requireMerchant(request)
+                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+                        .flatMap(task -> loadAcceptedApp(id, appId)
+                                .flatMap(app -> submissions.review(submissionId, SubmissionStatus.REJECTED, note)
+                                        .switchIfEmpty(fail(409, "该交付物已处理"))
+                                        .flatMap(rejected -> outbox
+                                                .append(submissionEnvelope("DeliverableRejected", app, rejected))
+                                                .thenReturn(rejected))
+                                        .map(rejected -> ok(toBody(rejected))))));
+    }
+
+    /**
+     * 商家确认履约 → 启结算窗口。
+     *
+     * <p><b>必须先有待核验的交付物</b>：此前 confirm 是凭空点的——推荐官交了什么、商家在确认什么，
+     * 系统里没有任何记录。现在确认即等于「核验通过这份交付物」，同时把它置为 accepted。
+     */
     @PostMapping("/api/tasks/{id}/applications/{appId}/confirm")
     public Mono<ResponseEntity<Map<String, Object>>> confirm(@PathVariable String id, @PathVariable String appId,
                                                              ServerHttpRequest request) {
         return callers.requireMerchant(request)
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
                         .flatMap(task -> loadAcceptedApp(id, appId)
+                                .flatMap(app -> submissions.findPending(appId)
+                                        .switchIfEmpty(fail(409, "推荐官尚未提交履约凭证，无法确认"))
+                                        .flatMap(pending -> submissions
+                                                .review(pending.id(), SubmissionStatus.ACCEPTED, null))
+                                        .switchIfEmpty(fail(409, "该交付物已处理"))
+                                        .thenReturn(app))
                                 .flatMap(app -> apps.confirm(appId, id)
                                         .switchIfEmpty(fail(409, "该报名未接受或已确认"))
                                         .flatMap(confirmed -> outbox
@@ -287,13 +363,27 @@ public class ApplicationController {
                         .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
     }
 
+    /**
+     * 列报名。**商家（任务 owner）看全部；其他人只看得到自己的那条**。
+     *
+     * <p>此前是 owner-only（非 owner 一律 403），后果是推荐官在自己的工作台里
+     * <b>永远看不到自己报了什么</b>——提交履约、开争议这些本该由推荐官发起的动作也就无从挂载。
+     * 改成按调用者过滤：不相干的人拿到空列表，不泄露任何信息，也不必再开一个 /api/me/applications。
+     */
     @GetMapping("/api/tasks/{id}/applications")
     public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String id, ServerHttpRequest request) {
         return callers.resolve(request)
-                .flatMap(caller -> loadOwnedTask(id, caller.accountId())
+                .flatMap(caller -> tasks.findById(id)
+                        .switchIfEmpty(fail(404, "任务不存在"))
                         .flatMap(task -> apps.findByTaskId(id).collectList()
-                                .map(list -> ResponseEntity.ok(Map.of("success", true,
-                                        "data", list.stream().map(this::toBody).toList())))));
+                                .map(list -> {
+                                    boolean isOwner = caller.accountId().equals(task.ownerAccountId());
+                                    var visible = isOwner ? list : list.stream()
+                                            .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
+                                            .toList();
+                                    return ResponseEntity.ok(Map.of("success", true,
+                                            "data", visible.stream().map(this::toBody).toList()));
+                                })));
     }
 
     /** 加载任务并校验 caller 为 owner（资源级自查，HLD 7.4）：不存在→404，非 owner→403。 */
@@ -339,6 +429,33 @@ public class ApplicationController {
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /** 交付物事件：带上 application 与交付物两侧的关键字段，供下游（核实引擎/通知）消费。 */
+    private EventEnvelope submissionEnvelope(String eventType, TaskApplication app, EngagementSubmission submission) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", app.taskId());
+        payload.put("applicationId", app.id());
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        payload.put("submissionId", submission.id());
+        payload.put("contentUrl", submission.contentUrl());
+        payload.put("status", submission.status());
+        return new EventEnvelope(UUID.randomUUID().toString(), eventType, "EngagementSubmission",
+                submission.id(), 1, Instant.now(), null, payload);
+    }
+
+    private Map<String, Object> toBody(EngagementSubmission submission) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", submission.id());
+        m.put("applicationId", submission.applicationId());
+        m.put("recommenderAccountId", submission.recommenderAccountId());
+        m.put("contentUrl", submission.contentUrl());
+        m.put("note", submission.note());
+        m.put("status", submission.status());
+        m.put("reviewNote", submission.reviewNote());
+        m.put("reviewedAt", submission.reviewedAt() == null ? null : submission.reviewedAt().toString());
+        m.put("createdAt", submission.createdAt() == null ? null : submission.createdAt().toString());
+        return m;
     }
 
     private Map<String, Object> reasonBody(String status, String reason) {
