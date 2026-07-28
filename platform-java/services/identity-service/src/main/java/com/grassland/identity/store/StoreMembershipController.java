@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -44,13 +45,16 @@ public class StoreMembershipController {
     private final OrgAuthorization orgAuthz;
     private final StoreMembershipRepository storeMemberships;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
     public StoreMembershipController(StoreAuthorization storeAuthz, OrgAuthorization orgAuthz,
-                                     StoreMembershipRepository storeMemberships, OutboxRepository outbox) {
+                                     StoreMembershipRepository storeMemberships, OutboxRepository outbox,
+                                     TransactionalOperator transactions) {
         this.storeAuthz = storeAuthz;
         this.orgAuthz = orgAuthz;
         this.storeMemberships = storeMemberships;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @GetMapping
@@ -72,12 +76,13 @@ public class StoreMembershipController {
                 ? orgAuthz.requireRole(request, orgId, MembershipRole.ADMIN)
                     .flatMap(admin -> storeAuthz.ensureStoreInOrg(orgId, storeId).thenReturn(admin))
                 : storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER);
-        return gate.flatMap(account -> storeMemberships.create(storeId, body.accountId(), targetRole.dbValue())
-                        .flatMap(m -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "StoreMembershipGranted", "StoreMembership",
-                                m.id(), 1, Instant.now(), null,
-                                Map.of("storeId", storeId, "accountId", m.accountId(), "role", m.role())))
-                                .thenReturn(m))
+        return gate.flatMap(account -> transactions.transactional(
+                        storeMemberships.create(storeId, body.accountId(), targetRole.dbValue())
+                                .flatMap(m -> outbox.append(new EventEnvelope(
+                                        UUID.randomUUID().toString(), "StoreMembershipGranted", "StoreMembership",
+                                        m.id(), 1, Instant.now(), null,
+                                        Map.of("storeId", storeId, "accountId", m.accountId(), "role", m.role())))
+                                        .thenReturn(m)))
                         .map(m -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(m)))))
                 .onErrorResume(DataIntegrityViolationException.class, e ->
                         Mono.just(ResponseEntity.status(409).body(Map.of("success", false, "error", "该账号已是门店成员"))));

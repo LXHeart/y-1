@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -37,11 +38,14 @@ public class MembershipController {
     private final OrgAuthorization authz;
     private final MembershipRepository memberships;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public MembershipController(OrgAuthorization authz, MembershipRepository memberships, OutboxRepository outbox) {
+    public MembershipController(OrgAuthorization authz, MembershipRepository memberships, OutboxRepository outbox,
+                                TransactionalOperator transactions) {
         this.authz = authz;
         this.memberships = memberships;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -49,12 +53,13 @@ public class MembershipController {
                                                          @RequestBody CreateMembershipRequest body,
                                                          ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.OWNER)
-                .flatMap(owner -> memberships.create(orgId, body.accountId(), body.role())
-                        .flatMap(m -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "MembershipGranted", "Membership",
-                                m.id(), 1, Instant.now(), null,
-                                Map.of("organizationId", orgId, "accountId", m.accountId(), "role", m.role())))
-                                .thenReturn(m))
+                .flatMap(owner -> transactions.transactional(
+                        memberships.create(orgId, body.accountId(), body.role())
+                                .flatMap(m -> outbox.append(new EventEnvelope(
+                                        UUID.randomUUID().toString(), "MembershipGranted", "Membership",
+                                        m.id(), 1, Instant.now(), null,
+                                        Map.of("organizationId", orgId, "accountId", m.accountId(), "role", m.role())))
+                                        .thenReturn(m)))
                         .map(m -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(m)))))
                 .onErrorResume(DataIntegrityViolationException.class, e ->
                         Mono.just(ResponseEntity.status(409).body(Map.of("success", false, "error", "该账号已是组织成员"))));

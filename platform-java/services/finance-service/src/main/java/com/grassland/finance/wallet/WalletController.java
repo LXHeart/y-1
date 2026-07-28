@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -37,11 +38,14 @@ public class WalletController {
     private final FinanceCallerResolver callers;
     private final WalletRepository wallets;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public WalletController(FinanceCallerResolver callers, WalletRepository wallets, OutboxRepository outbox) {
+    public WalletController(FinanceCallerResolver callers, WalletRepository wallets, OutboxRepository outbox,
+                            TransactionalOperator transactions) {
         this.callers = callers;
         this.wallets = wallets;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @GetMapping("/api/finance/wallets/me")
@@ -60,15 +64,16 @@ public class WalletController {
                                                               ServerHttpRequest request) {
         long amount = body.amountCents();
         return requireUser(request)
-                .flatMap(accountId -> wallets.debit(accountId, amount)
-                        .switchIfEmpty(Mono.error(new FinanceException(409, "余额不足")))
-                        .flatMap(wallet -> wallets
-                                .appendEntry(accountId, WalletEntryType.WITHDRAWAL, -amount, 0, null, "sandbox 提现")
-                                .then(outbox.append(new EventEnvelope(
-                                        UUID.randomUUID().toString(), "WithdrawalCompleted", "Wallet",
-                                        accountId, 1, Instant.now(), null,
-                                        Map.of("accountId", accountId, "amountCents", amount))))
-                                .thenReturn(wallet))
+                .flatMap(accountId -> transactions.transactional(
+                        wallets.debit(accountId, amount)
+                                .switchIfEmpty(Mono.error(new FinanceException(409, "余额不足")))
+                                .flatMap(wallet -> wallets
+                                        .appendEntry(accountId, WalletEntryType.WITHDRAWAL, -amount, 0, null, "sandbox 提现")
+                                        .then(outbox.append(new EventEnvelope(
+                                                UUID.randomUUID().toString(), "WithdrawalCompleted", "Wallet",
+                                                accountId, 1, Instant.now(), null,
+                                                Map.of("accountId", accountId, "amountCents", amount))))
+                                        .thenReturn(wallet)))
                         .flatMap(wallet -> wallets.findEntries(accountId, RECENT_ENTRIES).collectList()
                                 .map(entries -> ResponseEntity.ok(Map.of("success", true,
                                         "data", toBody(wallet, entries))))));

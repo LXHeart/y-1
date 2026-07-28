@@ -18,6 +18,7 @@ import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.event.EventEnvelope;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 @RestController
@@ -26,9 +27,12 @@ public class RegisterController {
     private final DatabaseClient db;
     private final SessionWriter sessionWriter;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public RegisterController(EmailVerificationService codeService, DatabaseClient db, SessionWriter sessionWriter, OutboxRepository outbox) {
+    public RegisterController(EmailVerificationService codeService, DatabaseClient db, SessionWriter sessionWriter,
+                              OutboxRepository outbox, TransactionalOperator transactions) {
         this.codeService = codeService; this.db = db; this.sessionWriter = sessionWriter; this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping(value = "/api/auth/register", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -47,7 +51,8 @@ public class RegisterController {
                 if (!valid) return Mono.just(error(400, "\u9a8c\u8bc1\u7801\u65e0\u6548\u6216\u5df2\u8fc7\u671f"));
                 String userId = UUID.randomUUID().toString();
                 String hash = BCrypt.withDefaults().hashToString(12, password.toCharArray());
-                return db.sql("INSERT INTO app_users(id, email, password_hash, display_name, role, status) "
+                return transactions.transactional(
+                    db.sql("INSERT INTO app_users(id, email, password_hash, display_name, role, status) "
                     + "VALUES (CAST(:id AS uuid), :email, :hash, :name, 'user', 'active') ON CONFLICT (email) DO NOTHING RETURNING id")
                     .bind("id", userId).bind("email", normalizedEmail).bind("hash", hash).bind("name", displayName.trim())
                     .map(r -> r.get("id", String.class)).one()
@@ -57,7 +62,7 @@ public class RegisterController {
                         new AuthUser(uid, normalizedEmail, displayName.trim(), "user", "active")))
                         .map(session -> ResponseEntity.status(201)
                             .header("Set-Cookie", session.setCookieHeader())
-                            .body(Map.of("success", true, "data", Map.of("user", buildUser(uid, normalizedEmail, displayName.trim()))))))
+                            .body(Map.of("success", true, "data", Map.of("user", buildUser(uid, normalizedEmail, displayName.trim())))))))
                     .switchIfEmpty(Mono.just(error(409, "\u8be5\u90ae\u7bb1\u5df2\u5b58\u5728")));
             });
     }

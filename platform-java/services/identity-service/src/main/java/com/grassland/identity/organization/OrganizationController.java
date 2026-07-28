@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -44,26 +45,30 @@ public class OrganizationController {
     private final MembershipRepository memberships;
     private final OrgAuthorization authz;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
     public OrganizationController(CurrentAccountResolver accounts, OrganizationRepository organizations,
-                                  MembershipRepository memberships, OrgAuthorization authz, OutboxRepository outbox) {
+                                  MembershipRepository memberships, OrgAuthorization authz, OutboxRepository outbox,
+                                  TransactionalOperator transactions) {
         this.accounts = accounts;
         this.organizations = organizations;
         this.memberships = memberships;
         this.authz = authz;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> create(@RequestBody CreateOrganizationRequest body, ServerHttpRequest request) {
         return accounts.resolve(request)
-                .flatMap(owner -> organizations.create(owner.id(), body.name(), normalizeIndustry(body.industry()))
-                        .flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))
-                        .flatMap(org -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "OrganizationCreated", "Organization",
-                                org.id(), 1, Instant.now(), null,
-                                Map.of("organizationId", org.id(), "ownerAccountId", owner.id(), "name", org.name())))
-                                .thenReturn(org))
+                .flatMap(owner -> transactions.transactional(
+                        organizations.create(owner.id(), body.name(), normalizeIndustry(body.industry()))
+                                .flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))
+                                .flatMap(org -> outbox.append(new EventEnvelope(
+                                        UUID.randomUUID().toString(), "OrganizationCreated", "Organization",
+                                        org.id(), 1, Instant.now(), null,
+                                        Map.of("organizationId", org.id(), "ownerAccountId", owner.id(), "name", org.name())))
+                                        .thenReturn(org)))
                         .map(org -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(org)))));
     }
 
@@ -100,14 +105,15 @@ public class OrganizationController {
                                 return Mono.<Organization>error(new IdentityException(409,
                                         target == current ? "已是该权限等级" : "权限只能升级"));
                             }
-                            return organizations.updatePermissionTier(id, target.dbValue())
-                                    .then(organizations.findById(id));
+                            return transactions.transactional(
+                                    organizations.updatePermissionTier(id, target.dbValue())
+                                            .then(organizations.findById(id))
+                                            .flatMap(updated -> outbox.append(new EventEnvelope(
+                                                    UUID.randomUUID().toString(), "MerchantPermissionGranted", "Organization",
+                                                    updated.id(), 1, Instant.now(), null,
+                                                    Map.of("organizationId", updated.id(), "tier", updated.permissionTier())))
+                                                    .thenReturn(updated)));
                         })
-                        .flatMap(updated -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "MerchantPermissionGranted", "Organization",
-                                updated.id(), 1, Instant.now(), null,
-                                Map.of("organizationId", updated.id(), "tier", updated.permissionTier())))
-                                .thenReturn(updated))
                         .map(updated -> ResponseEntity.ok(Map.of("success", true, "data", toBody(updated)))));
     }
 

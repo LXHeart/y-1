@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -38,11 +39,14 @@ public class DisputeController {
     private final TrustCallerResolver callers;
     private final DisputeCaseRepository disputes;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox) {
+    public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
+                             TransactionalOperator transactions) {
         this.callers = callers;
         this.disputes = disputes;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping("/api/trust/disputes")
@@ -52,12 +56,12 @@ public class DisputeController {
                 .switchIfEmpty(fail(403, "无组织归属，无法开争议"))
                 .flatMap(caller -> disputes.findActiveByEngagementRef(body.engagementRef())
                         .<Opened>map(d -> new Opened(d, false))  // 幂等：既有活跃争议 → 200
-                        .switchIfEmpty(disputes.create(body.engagementRef(), caller.organizationId(),
-                                        caller.accountId(), caller.activeIdentityType(), body.reason())
-                                .<Opened>map(d -> new Opened(d, true))))
-                .flatMap(o -> (o.created()
-                        ? outbox.append(envelope("DisputeOpened", o.dispute()))
-                        : Mono.<Void>empty()).thenReturn(o))
+                        .switchIfEmpty(transactions.transactional(
+                                disputes.create(body.engagementRef(), caller.organizationId(),
+                                                caller.accountId(), caller.activeIdentityType(), body.reason())
+                                        .<Opened>map(d -> new Opened(d, true))
+                                        .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
+                                                .thenReturn(opened)))))
                 .map(o -> ResponseEntity.status(o.created() ? HttpStatus.CREATED : HttpStatus.OK)
                         .body(Map.of("success", true, "data", toBody(o.dispute()))));
     }
@@ -72,9 +76,10 @@ public class DisputeController {
                             if (!d.organizationId().equals(caller.organizationId())) {
                                 return fail(403, "无权操作该争议");
                             }
-                            return disputes.decide(id, body.decision()).switchIfEmpty(fail(409, "该争议已裁决"));
+                            return transactions.transactional(
+                                    disputes.decide(id, body.decision()).switchIfEmpty(fail(409, "该争议已裁决"))
+                                            .flatMap(decided -> outbox.append(envelope("DisputeDecided", decided)).thenReturn(decided)));
                         })
-                        .flatMap(d -> outbox.append(envelope("DisputeDecided", d)).thenReturn(d))
                         .map(d -> ResponseEntity.ok(Map.of("success", true, "data", toBody(d)))));
     }
 

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -37,11 +38,14 @@ public class StoreController {
     private final OrgAuthorization authz;
     private final StoreRepository stores;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public StoreController(OrgAuthorization authz, StoreRepository stores, OutboxRepository outbox) {
+    public StoreController(OrgAuthorization authz, StoreRepository stores, OutboxRepository outbox,
+                           TransactionalOperator transactions) {
         this.authz = authz;
         this.stores = stores;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -49,12 +53,13 @@ public class StoreController {
                                                             @RequestBody CreateStoreRequest body,
                                                             ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> stores.create(orgId, body.name())
-                        .flatMap(store -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "StoreCreated", "Store",
-                                store.id(), 1, Instant.now(), null,
-                                Map.of("storeId", store.id(), "organizationId", orgId, "name", store.name())))
-                                .thenReturn(store))
+                .flatMap(account -> transactions.transactional(
+                        stores.create(orgId, body.name())
+                                .flatMap(store -> outbox.append(new EventEnvelope(
+                                        UUID.randomUUID().toString(), "StoreCreated", "Store",
+                                        store.id(), 1, Instant.now(), null,
+                                        Map.of("storeId", store.id(), "organizationId", orgId, "name", store.name())))
+                                        .thenReturn(store)))
                         .map(store -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(store)))));
     }
 

@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -61,13 +62,15 @@ public class ApplicationController {
     private final WorkflowClient workflowClient;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
     private final long settlementWindowSeconds;
+    private final TransactionalOperator transactions;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
                                  SubmissionRepository submissions, RatingRepository ratings,
                                  WorkflowClient workflowClient,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
-                                 @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds) {
+                                 @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds,
+                                 TransactionalOperator transactions) {
         this.callers = callers;
         this.tasks = tasks;
         this.apps = apps;
@@ -77,6 +80,7 @@ public class ApplicationController {
         this.workflowClient = workflowClient;
         this.reconciliations = reconciliations;
         this.settlementWindowSeconds = settlementWindowSeconds;
+        this.transactions = transactions;
     }
 
     @PostMapping(value = "/api/tasks/{id}/applications")
@@ -96,10 +100,11 @@ public class ApplicationController {
                                     : apps.findByTaskAndRecommender(id, rec.accountId())
                                             .<TaskApplication>flatMap(existing ->
                                                     Mono.error(new MarketplaceException(409, "已报名该任务")))
-                                            .switchIfEmpty(apps.create(id, rec.accountId(), note)
-                                                    .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))));
+                                            .switchIfEmpty(transactions.transactional(
+                                                    apps.create(id, rec.accountId(), note)
+                                                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
+                                                            .flatMap(created -> outbox.append(envelope("ApplicationSubmitted", created, null)).thenReturn(created)))));
                         })
-                        .flatMap(app -> outbox.append(envelope("ApplicationSubmitted", app, null)).thenReturn(app))
                         .map(app -> ResponseEntity.status(HttpStatus.CREATED)
                                 .body(Map.of("success", true, "data", toBody(app)))));
     }
@@ -125,9 +130,10 @@ public class ApplicationController {
 
     /** 非资金型任务（bounty null/0）→ 4B 原直连：pending→accepted 同步返回 200。 */
     private Mono<ResponseEntity<Map<String, Object>>> acceptDirectly(Task task, TaskApplication app, Caller merchant) {
-        return apps.accept(app.id(), app.taskId(), merchant.accountId())
-                .switchIfEmpty(fail(409, "该报名已处理"))
-                .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a))
+        return transactions.transactional(
+                apps.accept(app.id(), app.taskId(), merchant.accountId())
+                        .switchIfEmpty(fail(409, "该报名已处理"))
+                        .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a)))
                 .map(a -> ResponseEntity.ok(Map.of("success", true, "data", toBody(a))));
     }
 
@@ -444,10 +450,11 @@ public class ApplicationController {
                             if (!ApplicationStatus.PENDING.dbValue().equals(app.status())) {
                                 return fail(409, "该报名已处理");
                             }
-                            return apps.withdraw(appId, id, rec.accountId())
-                                    .switchIfEmpty(fail(409, "该报名已处理"));
+                            return transactions.transactional(
+                                    apps.withdraw(appId, id, rec.accountId())
+                                            .switchIfEmpty(fail(409, "该报名已处理"))
+                                            .flatMap(withdrawn -> outbox.append(envelope("ApplicationWithdrawn", withdrawn, null)).thenReturn(withdrawn)));
                         })
-                        .flatMap(app -> outbox.append(envelope("ApplicationWithdrawn", app, null)).thenReturn(app))
                         .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
     }
 

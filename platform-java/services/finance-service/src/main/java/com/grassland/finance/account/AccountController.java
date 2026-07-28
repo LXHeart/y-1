@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -36,11 +37,14 @@ public class AccountController {
     private final FinanceCallerResolver callers;
     private final AccountRepository accounts;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public AccountController(FinanceCallerResolver callers, AccountRepository accounts, OutboxRepository outbox) {
+    public AccountController(FinanceCallerResolver callers, AccountRepository accounts, OutboxRepository outbox,
+                             TransactionalOperator transactions) {
         this.callers = callers;
         this.accounts = accounts;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping("/api/finance/accounts")
@@ -48,12 +52,13 @@ public class AccountController {
         return callers.requireMerchant(request)
                 .filter(caller -> caller.organizationId() != null)
                 .switchIfEmpty(fail(403, "无组织归属，无法开户"))
-                .flatMap(caller -> provision(caller.organizationId()))
-                .flatMap(p -> (p.created()
-                        ? outbox.append(envelope("AccountProvisioned", p.account())).thenReturn(p.account())
-                        : Mono.just(p.account()))
-                        .map(a -> ResponseEntity.status(p.created() ? HttpStatus.CREATED : HttpStatus.OK)
-                                .body(Map.of("success", true, "data", toBody(a)))));
+                .flatMap(caller -> transactions.transactional(
+                        provision(caller.organizationId())
+                                .flatMap(p -> (p.created()
+                                                ? outbox.append(envelope("AccountProvisioned", p.account())).thenReturn(p.account())
+                                                : Mono.just(p.account()))
+                                        .map(a -> ResponseEntity.status(p.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                                                .body(Map.of("success", true, "data", toBody(a)))))));
     }
 
     @GetMapping("/api/finance/accounts/{orgId}")

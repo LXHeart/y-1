@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -46,11 +47,12 @@ public class EscrowController {
     private final WalletRepository wallets;
     private final PlatformFeePolicy fees;
     private final EscrowLifecycleService lifecycle;
+    private final TransactionalOperator transactions;
 
     public EscrowController(FinanceCallerResolver callers, AccountRepository accounts,
                             ReservationRepository reservations, OutboxRepository outbox,
                             WalletRepository wallets, PlatformFeePolicy fees,
-                            EscrowLifecycleService lifecycle) {
+                            EscrowLifecycleService lifecycle, TransactionalOperator transactions) {
         this.callers = callers;
         this.accounts = accounts;
         this.reservations = reservations;
@@ -58,6 +60,7 @@ public class EscrowController {
         this.wallets = wallets;
         this.fees = fees;
         this.lifecycle = lifecycle;
+        this.transactions = transactions;
     }
 
     @PostMapping("/api/finance/accounts/{orgId}/credit")
@@ -67,9 +70,10 @@ public class EscrowController {
         return callers.requireMerchant(request)
                 .filter(caller -> orgId.equals(caller.organizationId()))
                 .switchIfEmpty(fail(403, "无权操作该组织账户"))
-                .flatMap(caller -> accounts.credit(orgId, amount)
-                        .switchIfEmpty(fail(404, "账户不存在，请先开户"))
-                        .flatMap(acct -> outbox.append(accountEnvelope("AccountCredited", acct, amount)).thenReturn(acct))
+                .flatMap(caller -> transactions.transactional(
+                        accounts.credit(orgId, amount)
+                                .switchIfEmpty(fail(404, "账户不存在，请先开户"))
+                                .flatMap(acct -> outbox.append(accountEnvelope("AccountCredited", acct, amount)).thenReturn(acct)))
                         .map(acct -> ResponseEntity.ok(Map.of("success", true, "data", toBody(acct)))));
     }
 
@@ -84,19 +88,24 @@ public class EscrowController {
                 .filter(caller -> caller.isService()
                         || FinanceTxQuotaPolicy.isWithinLimit(caller.permissionTier(), amount))
                 .switchIfEmpty(fail(409, "交易金额超出本组织单笔上限"))
-                .flatMap(caller -> reservations.findByEngagementRef(ref)
-                        .<Reserved>map(r -> new Reserved(r, false))  // 幂等：既有 → 200
-                        .switchIfEmpty(accounts.decrement(orgId, amount)
-                                .switchIfEmpty(fail(409, "余额不足"))
-                                .flatMap(acct -> reservations.create(acct.id(), orgId, ref, amount, body.payeeAccountId())
-                                        .<Reserved>map(r -> new Reserved(r, true))
-                                        .switchIfEmpty(reservations.findByEngagementRef(ref)
-                                                .<Reserved>map(r -> new Reserved(r, false))))))  // 并发冲突 → 既有
+                .flatMap(caller -> transactions.transactional(reserveWork(orgId, ref, amount, body.payeeAccountId())))
+                .map(res -> ResponseEntity.status(res.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                        .body(Map.of("success", true, "data", toBody(res.reservation()))));
+    }
+
+    /** 预留领域写（扣余额 + 建预留）+ outbox append，绑进同一事务（Slice 7C）。幂等：engagementRef 既有→200；并发冲突→既有。 */
+    private Mono<Reserved> reserveWork(String orgId, String ref, long amount, String payeeAccountId) {
+        return reservations.findByEngagementRef(ref)
+                .<Reserved>map(r -> new Reserved(r, false))  // 幂等：既有 → 200
+                .switchIfEmpty(accounts.decrement(orgId, amount)
+                        .switchIfEmpty(fail(409, "余额不足"))
+                        .flatMap(acct -> reservations.create(acct.id(), orgId, ref, amount, payeeAccountId)
+                                .<Reserved>map(r -> new Reserved(r, true))
+                                .switchIfEmpty(reservations.findByEngagementRef(ref)
+                                        .<Reserved>map(r -> new Reserved(r, false)))))  // 并发冲突 → 既有
                 .flatMap(res -> (res.created()
-                        ? outbox.append(reservationEnvelope("FundsReserved", res.reservation())).thenReturn(res.reservation())
-                        : Mono.just(res.reservation()))
-                        .map(r -> ResponseEntity.status(res.created() ? HttpStatus.CREATED : HttpStatus.OK)
-                                .body(Map.of("success", true, "data", toBody(r)))));
+                        ? outbox.append(reservationEnvelope("FundsReserved", res.reservation())).thenReturn(res)
+                        : Mono.just(res)));
     }
 
     @PostMapping("/api/finance/reservations/{engagementRef}/release")

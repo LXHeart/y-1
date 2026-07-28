@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -45,13 +46,16 @@ public class MyInvitationController {
     private final InvitationRepository invitations;
     private final MembershipRepository memberships;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
     public MyInvitationController(CurrentAccountResolver accounts, InvitationRepository invitations,
-                                  MembershipRepository memberships, OutboxRepository outbox) {
+                                  MembershipRepository memberships, OutboxRepository outbox,
+                                  TransactionalOperator transactions) {
         this.accounts = accounts;
         this.invitations = invitations;
         this.memberships = memberships;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @GetMapping
@@ -67,6 +71,9 @@ public class MyInvitationController {
                                                             ServerHttpRequest request) {
         return accounts.resolve(request)
                 .flatMap(account -> requireMine(invitationId, account)
+                        // 不套事务：joinOrganization 靠捕获 memberships.create 的 DataIntegrityViolation
+                        // 做「已是成员→幂等」语义；被捕获的 INSERT 失败会把 R2DBC 事务置为 rollback-only，
+                        // 致后续 outbox 写失败。需改 joinOrganization 为 ON CONFLICT 预判才能事务化（留 7C-2）。
                         .flatMap(invitation -> invitations.accept(invitationId, account.id())
                                 .flatMap(rows -> rows == 0
                                         ? Mono.<ResponseEntity<Map<String, Object>>>error(
@@ -79,16 +86,17 @@ public class MyInvitationController {
                                                              ServerHttpRequest request) {
         return accounts.resolve(request)
                 .flatMap(account -> requireMine(invitationId, account)
-                        .flatMap(invitation -> invitations
-                                .transitionFromPending(invitationId, InvitationStatus.DECLINED)
-                                .flatMap(rows -> rows == 0
-                                        ? Mono.<ResponseEntity<Map<String, Object>>>error(
-                                                new IdentityException(409, "邀请已处理"))
-                                        : outbox.append(event("MembershipInvitationDeclined", invitation,
-                                                        Map.of("organizationId", invitation.organizationId(),
-                                                                "accountId", account.id())))
-                                                .thenReturn(ResponseEntity.ok(
-                                                        Map.<String, Object>of("success", true))))));
+                        .flatMap(invitation -> transactions.transactional(
+                                invitations
+                                        .transitionFromPending(invitationId, InvitationStatus.DECLINED)
+                                        .flatMap(rows -> rows == 0
+                                                ? Mono.<ResponseEntity<Map<String, Object>>>error(
+                                                        new IdentityException(409, "邀请已处理"))
+                                                : outbox.append(event("MembershipInvitationDeclined", invitation,
+                                                                Map.of("organizationId", invitation.organizationId(),
+                                                                        "accountId", account.id())))
+                                                        .thenReturn(ResponseEntity.ok(
+                                                                Map.<String, Object>of("success", true)))))));
     }
 
     /**

@@ -34,6 +34,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -66,10 +67,12 @@ public class AdjudicationController {
     private final WorkflowClient workflowClient;
     /** 读争议的受众口径（当事方 / marketplace 服务 / 本轮面板审判官 / 客服），见 {@link DisputeAudience}。 */
     private final DisputeAudience audience;
+    private final TransactionalOperator transactions;
 
     public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
                                   JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props,
-                                  WorkflowClient workflowClient, DisputeAudience audience) {
+                                  WorkflowClient workflowClient, DisputeAudience audience,
+                                  TransactionalOperator transactions) {
         this.audience = audience;
         this.callers = callers;
         this.disputes = disputes;
@@ -77,6 +80,7 @@ public class AdjudicationController {
         this.outbox = outbox;
         this.props = props;
         this.workflowClient = workflowClient;
+        this.transactions = transactions;
     }
 
     @PostMapping("/api/trust/disputes/{id}/adjudicate")
@@ -144,10 +148,11 @@ public class AdjudicationController {
     /** 新启：抽面板 → open→voting → 写面板 + 发 DisputeAssigned。抽签失败先于状态翻转 → 争议保持 open。 */
     private Mono<DisputeCase> startFreshAdjudication(DisputeCase d) {
         return drawPanelAccounts(d.organizationId(), props.panelSize())
-                .flatMap(accountIds -> disputes.startAdjudication(d.id(), 1)
-                        .flatMap(voting -> judges.assignPanel(d.id(), 1, accountIds)
-                                .then(outbox.append(assignedEnvelope(voting, 1, accountIds.size())))
-                                .thenReturn(voting)));
+                .flatMap(accountIds -> transactions.transactional(
+                        disputes.startAdjudication(d.id(), 1)
+                                .flatMap(voting -> judges.assignPanel(d.id(), 1, accountIds)
+                                        .then(outbox.append(assignedEnvelope(voting, 1, accountIds.size())))
+                                        .thenReturn(voting))));
     }
 
     /** 抽 panel-size 无冲突审判官账号；空池 → 503。 */
@@ -164,8 +169,9 @@ public class AdjudicationController {
         return judges.countPanel(d.id(), round).flatMap(count -> count > 0
                 ? Mono.<Void>empty()
                 : drawPanelAccounts(d.organizationId(), props.panelSize())
-                        .flatMap(accountIds -> judges.assignPanel(d.id(), round, accountIds)
-                                .then(outbox.append(assignedEnvelope(d, round, accountIds.size())))));
+                        .flatMap(accountIds -> transactions.transactional(
+                                judges.assignPanel(d.id(), round, accountIds)
+                                        .then(outbox.append(assignedEnvelope(d, round, accountIds.size()))))));
     }
 
     @PostMapping("/api/trust/disputes/{id}/votes")
@@ -227,13 +233,14 @@ public class AdjudicationController {
                             if (!"decided".equals(d.status())) {
                                 return fail(409, "该争议当前不可上诉");
                             }
-                            return disputes.fileAppeal(id, caller.accountId())  // 幂等：dispute_id PK
-                                    .filter(Boolean::booleanValue)
-                                    .switchIfEmpty(fail(409, "该争议已上诉"))
-                                    .then(disputes.markAppealed(id))             // decided→appealed
-                                    .switchIfEmpty(fail(409, "上诉失败：状态已变"))
-                                    .flatMap(appealed -> outbox.append(disputeEnvelope("DisputeAppealed", appealed))
-                                            .thenReturn(appealed))
+                            return transactions.transactional(
+                                    disputes.fileAppeal(id, caller.accountId())  // 幂等：dispute_id PK
+                                            .filter(Boolean::booleanValue)
+                                            .switchIfEmpty(fail(409, "该争议已上诉"))
+                                            .then(disputes.markAppealed(id))             // decided→appealed
+                                            .switchIfEmpty(fail(409, "上诉失败：状态已变"))
+                                            .flatMap(appealed -> outbox.append(disputeEnvelope("DisputeAppealed", appealed))
+                                                    .thenReturn(appealed)))
                                     .flatMap(this::snapshot)
                                     .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)));
                         }));
@@ -254,9 +261,10 @@ public class AdjudicationController {
                         .filter(d -> "appealed".equals(d.status())
                                 || ("voting".equals(d.status()) && "escalated".equals(d.appealState())))
                         .switchIfEmpty(fail(409, "该争议不在客服终审范围"))
-                        .flatMap(d -> disputes.forceFinalize(id, body.decision(), cs.accountId())  // CS 覆盖终局
-                                .switchIfEmpty(fail(409, "争议已终局"))
-                                .flatMap(fin -> outbox.append(disputeEnvelope("DisputeFinalized", fin)).thenReturn(fin))
+                        .flatMap(d -> transactions.transactional(
+                                disputes.forceFinalize(id, body.decision(), cs.accountId())  // CS 覆盖终局
+                                        .switchIfEmpty(fail(409, "争议已终局"))
+                                        .flatMap(fin -> outbox.append(disputeEnvelope("DisputeFinalized", fin)).thenReturn(fin)))
                                 .flatMap(this::snapshot)
                                 .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)))));
     }

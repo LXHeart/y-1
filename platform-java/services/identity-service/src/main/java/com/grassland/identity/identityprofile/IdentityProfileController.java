@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -47,16 +48,18 @@ public class IdentityProfileController {
     private final IdentityAuditLogRepository audit;
     private final OrgAuthorization authz;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
     public IdentityProfileController(CurrentAccountResolver accounts, IdentityProfileRepository profiles,
                                      IdentitySessionRepository sessions, IdentityAuditLogRepository audit,
-                                     OrgAuthorization authz, OutboxRepository outbox) {
+                                     OrgAuthorization authz, OutboxRepository outbox, TransactionalOperator transactions) {
         this.accounts = accounts;
         this.profiles = profiles;
         this.sessions = sessions;
         this.audit = audit;
         this.authz = authz;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @GetMapping("/api/me/identities")
@@ -79,12 +82,13 @@ public class IdentityProfileController {
                             ? authz.requireRole(request, orgId, MembershipRole.OWNER).then()
                             : Mono.empty();
                     return ownershipGate
-                            .then(profiles.create(account.id(), type.dbValue(), orgId))
-                            .flatMap(p -> outbox.append(new EventEnvelope(
-                                    UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
-                                    p.id(), 1, Instant.now(), null,
-                                    profileEventPayload(p, account.id())))
-                                    .thenReturn(p))
+                            .then(transactions.transactional(
+                                    profiles.create(account.id(), type.dbValue(), orgId)
+                                            .flatMap(p -> outbox.append(new EventEnvelope(
+                                                    UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
+                                                    p.id(), 1, Instant.now(), null,
+                                                    profileEventPayload(p, account.id())))
+                                                    .thenReturn(p))))
                             .map(p -> ResponseEntity.status(201).body(Map.of("success", true, "data", profileBody(p))));
                 })
                 .onErrorResume(DataIntegrityViolationException.class, e ->
@@ -125,15 +129,16 @@ public class IdentityProfileController {
                             if (fromType == null) {
                                 return Mono.just(activeEnvelope(null));   // 本就消费者，幂等 no-op（不审计、不发事件）
                             }
-                            return sessions.deactivate(principal.sid())
-                                    .then(audit.append(IdentityAuditAction.DEACTIVATE, principal.user().id(),
-                                            fromType, null, principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent()))
-                                    .then(outbox.append(new EventEnvelope(
-                                            UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
-                                            principal.user().id(), 1, Instant.now(), null,
-                                            Map.of("accountId", principal.user().id(), "activeIdentityType", "consumer",
-                                                    "sessionToken", principal.sid())))
-                                            .thenReturn(activeEnvelope(null)));
+                            return transactions.transactional(
+                                    sessions.deactivate(principal.sid())
+                                            .then(audit.append(IdentityAuditAction.DEACTIVATE, principal.user().id(),
+                                                    fromType, null, principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent()))
+                                            .then(outbox.append(new EventEnvelope(
+                                                    UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
+                                                    principal.user().id(), 1, Instant.now(), null,
+                                                    Map.of("accountId", principal.user().id(), "activeIdentityType", "consumer",
+                                                            "sessionToken", principal.sid())))
+                                                    .thenReturn(activeEnvelope(null))));
                         }))
                 .map(ResponseEntity::ok);
     }
@@ -147,16 +152,17 @@ public class IdentityProfileController {
 
     /** 写 per-session 活动身份 + 审计 + outbox（激活/切换共用）。 */
     private Mono<IdentitySession> applyActivate(SessionPrincipal principal, IdentityType type, String fromType, DeviceFingerprint fp) {
-        return sessions.activate(principal.sid(), principal.user().id(), type.dbValue(),
-                        fp.deviceId(), fp.deviceLabel(), fp.ipAddress(), fp.userAgent())
-                .flatMap(s -> audit.append(IdentityAuditAction.ACTIVATE, principal.user().id(), fromType, type.dbValue(),
-                                principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent())
-                        .then(outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
-                                principal.user().id(), 1, Instant.now(), null,
-                                Map.of("accountId", principal.user().id(), "activeIdentityType", type.dbValue(),
-                                        "sessionToken", principal.sid())))
-                                .thenReturn(s)));
+        return transactions.transactional(
+                sessions.activate(principal.sid(), principal.user().id(), type.dbValue(),
+                                fp.deviceId(), fp.deviceLabel(), fp.ipAddress(), fp.userAgent())
+                        .flatMap(s -> audit.append(IdentityAuditAction.ACTIVATE, principal.user().id(), fromType, type.dbValue(),
+                                        principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent())
+                                .then(outbox.append(new EventEnvelope(
+                                        UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
+                                        principal.user().id(), 1, Instant.now(), null,
+                                        Map.of("accountId", principal.user().id(), "activeIdentityType", type.dbValue(),
+                                                "sessionToken", principal.sid())))
+                                        .thenReturn(s))));
     }
 
     @ExceptionHandler(IdentityException.class)

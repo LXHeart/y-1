@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -53,19 +54,21 @@ public class PermissionRequestController {
     private final OrganizationRepository organizations;
     private final OutboxRepository outbox;
     private final PermissionSla sla;
+    private final TransactionalOperator transactions;
     // 本地 ObjectMapper（Spring Boot 4 的 Jackson autoconfig 在独立模块，identity 未引入；与 LegacySessionBridge 同模式）。
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PermissionRequestController(CurrentAccountResolver accounts, OrgAuthorization authz,
                                        MerchantPermissionRequestRepository requests,
                                        OrganizationRepository organizations, OutboxRepository outbox,
-                                       PermissionSla sla) {
+                                       PermissionSla sla, TransactionalOperator transactions) {
         this.accounts = accounts;
         this.authz = authz;
         this.requests = requests;
         this.organizations = organizations;
         this.outbox = outbox;
         this.sla = sla;
+        this.transactions = transactions;
     }
 
     @PostMapping(value = "/api/organizations/{orgId}/permission-requests", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -85,15 +88,16 @@ public class PermissionRequestController {
                             Industry industry = resolveIndustry(body.industry(), org.industry());
                             String materialsJson = validateAndSerialize(target, industry, body.materials());
                             Instant deadline = sla.deadlineFor(Instant.now());
-                            return requests.create(orgId, owner.id(), target.dbValue(), materialsJson,
-                                    industry.dbValue(), deadline);
+                            return transactions.transactional(
+                                    requests.create(orgId, owner.id(), target.dbValue(), materialsJson,
+                                            industry.dbValue(), deadline)
+                                            .flatMap(req -> outbox.append(new EventEnvelope(
+                                                    UUID.randomUUID().toString(), "PermissionRequested", "MerchantPermissionRequest",
+                                                    req.id(), 1, Instant.now(), null,
+                                                    Map.of("organizationId", orgId, "requesterAccountId", owner.id(),
+                                                            "requestedTier", req.requestedTier(), "industry", req.industry())))
+                                                    .thenReturn(req)));
                         })
-                        .flatMap(req -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "PermissionRequested", "MerchantPermissionRequest",
-                                req.id(), 1, Instant.now(), null,
-                                Map.of("organizationId", orgId, "requesterAccountId", owner.id(),
-                                        "requestedTier", req.requestedTier(), "industry", req.industry())))
-                                .thenReturn(req))
                         .map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(req)))));
     }
 
@@ -113,15 +117,16 @@ public class PermissionRequestController {
                             Industry industry = resolveIndustry(null, original.industry());
                             String materialsJson = validateAndSerialize(target, industry, body.materials());
                             Instant deadline = sla.deadlineFor(Instant.now());
-                            return requests.createAppeal(orgId, owner.id(), target.dbValue(), materialsJson,
-                                    industry.dbValue(), deadline, original.id(), body.note());
+                            return transactions.transactional(
+                                    requests.createAppeal(orgId, owner.id(), target.dbValue(), materialsJson,
+                                            industry.dbValue(), deadline, original.id(), body.note())
+                                            .flatMap(req -> outbox.append(new EventEnvelope(
+                                                    UUID.randomUUID().toString(), "PermissionRequested", "MerchantPermissionRequest",
+                                                    req.id(), 1, Instant.now(), null,
+                                                    Map.of("organizationId", orgId, "requesterAccountId", owner.id(),
+                                                            "requestedTier", req.requestedTier(), "originalRequestId", id)))
+                                                    .thenReturn(req)));
                         })
-                        .flatMap(req -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "PermissionRequested", "MerchantPermissionRequest",
-                                req.id(), 1, Instant.now(), null,
-                                Map.of("organizationId", orgId, "requesterAccountId", owner.id(),
-                                        "requestedTier", req.requestedTier(), "originalRequestId", id)))
-                                .thenReturn(req))
                         .map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(req)))));
     }
 
@@ -190,13 +195,14 @@ public class PermissionRequestController {
                                                 req.organizationId(), 1, Instant.now(), null,
                                                 Map.of("organizationId", req.organizationId(), "tier", req.requestedTier()))).then())
                                     : Mono.empty();
-                            return grant.then(requests.updateStatus(id, newStatus, admin.id(), body.note()))
-                                    .flatMap(updated -> outbox.append(new EventEnvelope(
-                                            UUID.randomUUID().toString(), "PermissionReviewed", "MerchantPermissionRequest",
-                                            id, 1, Instant.now(), null,
-                                            Map.of("organizationId", req.organizationId(),
-                                                    "decision", body.decision().trim().toLowerCase())))
-                                            .thenReturn(updated));
+                            return transactions.transactional(
+                                    grant.then(requests.updateStatus(id, newStatus, admin.id(), body.note()))
+                                            .flatMap(updated -> outbox.append(new EventEnvelope(
+                                                    UUID.randomUUID().toString(), "PermissionReviewed", "MerchantPermissionRequest",
+                                                    id, 1, Instant.now(), null,
+                                                    Map.of("organizationId", req.organizationId(),
+                                                            "decision", body.decision().trim().toLowerCase())))
+                                                    .thenReturn(updated)));
                         })
                         .map(updated -> ResponseEntity.ok(Map.of("success", true, "data", toBody(updated)))));
     }

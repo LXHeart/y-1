@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -55,17 +56,20 @@ public class OrganizationInvitationController {
     private final OutboxRepository outbox;
     private final SmtpMailSender mailSender;
     private final Duration ttl;
+    private final TransactionalOperator transactions;
 
     public OrganizationInvitationController(OrgAuthorization authz, InvitationRepository invitations,
                                             OrganizationRepository organizations, OutboxRepository outbox,
                                             SmtpMailSender mailSender,
-                                            @Value("${identity.invitation.ttl-hours:168}") long ttlHours) {
+                                            @Value("${identity.invitation.ttl-hours:168}") long ttlHours,
+                                            TransactionalOperator transactions) {
         this.authz = authz;
         this.invitations = invitations;
         this.organizations = organizations;
         this.outbox = outbox;
         this.mailSender = mailSender;
         this.ttl = Duration.ofHours(ttlHours > 0 ? ttlHours : 168);
+        this.transactions = transactions;
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -77,13 +81,14 @@ public class OrganizationInvitationController {
                         .flatMap(existing -> Mono.<Invitation>error(
                                 new IdentityException(409, "该邮箱已有待接受的邀请")))
                         .switchIfEmpty(Mono.defer(() ->
-                                invitations.create(orgId, body.email(), body.role(), owner.id(), ttl)))
-                        .flatMap(invitation -> outbox.append(new EventEnvelope(
-                                UUID.randomUUID().toString(), "MembershipInvited", "OrganizationInvitation",
-                                invitation.id(), 1, Instant.now(), null,
-                                Map.of("organizationId", orgId, "email", invitation.email(),
-                                        "role", invitation.role(), "invitedBy", owner.id())))
-                                .thenReturn(invitation))
+                                transactions.transactional(
+                                        invitations.create(orgId, body.email(), body.role(), owner.id(), ttl)
+                                                .flatMap(invitation -> outbox.append(new EventEnvelope(
+                                                        UUID.randomUUID().toString(), "MembershipInvited", "OrganizationInvitation",
+                                                        invitation.id(), 1, Instant.now(), null,
+                                                        Map.of("organizationId", orgId, "email", invitation.email(),
+                                                                "role", invitation.role(), "invitedBy", owner.id())))
+                                                        .thenReturn(invitation)))))
                         .flatMap(invitation -> notifyInvitee(orgId, invitation)
                                 .map(sent -> ResponseEntity.status(201).body(Map.of(
                                         "success", true, "data", toBody(invitation, sent))))))
@@ -112,17 +117,18 @@ public class OrganizationInvitationController {
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> doRevoke(String orgId, Invitation invitation) {
-        return invitations.transitionFromPending(invitation.id(), InvitationStatus.REVOKED)
-                .flatMap(rows -> {
-                    if (rows == 0) {
-                        return Mono.error(new IdentityException(409, "邀请已处理，无法撤销"));
-                    }
-                    return outbox.append(new EventEnvelope(
-                                    UUID.randomUUID().toString(), "MembershipInvitationRevoked",
-                                    "OrganizationInvitation", invitation.id(), 2, Instant.now(), null,
-                                    Map.of("organizationId", orgId, "email", invitation.email())))
-                            .thenReturn(ResponseEntity.ok(Map.<String, Object>of("success", true)));
-                });
+        return transactions.transactional(
+                invitations.transitionFromPending(invitation.id(), InvitationStatus.REVOKED)
+                        .flatMap(rows -> {
+                            if (rows == 0) {
+                                return Mono.error(new IdentityException(409, "邀请已处理，无法撤销"));
+                            }
+                            return outbox.append(new EventEnvelope(
+                                            UUID.randomUUID().toString(), "MembershipInvitationRevoked",
+                                            "OrganizationInvitation", invitation.id(), 2, Instant.now(), null,
+                                            Map.of("organizationId", orgId, "email", invitation.email())))
+                                    .thenReturn(ResponseEntity.ok(Map.<String, Object>of("success", true)));
+                        }));
     }
 
     /**

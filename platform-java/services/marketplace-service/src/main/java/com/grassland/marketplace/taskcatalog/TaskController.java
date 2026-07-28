@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -37,11 +38,14 @@ public class TaskController {
     private final MarketplaceCallerResolver callers;
     private final TaskRepository tasks;
     private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
 
-    public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, OutboxRepository outbox) {
+    public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, OutboxRepository outbox,
+                          TransactionalOperator transactions) {
         this.callers = callers;
         this.tasks = tasks;
         this.outbox = outbox;
+        this.transactions = transactions;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -75,16 +79,12 @@ public class TaskController {
                                     : tasks.countCreatedThisMonthByOrganization(merchant.organizationId()))
                             .flatMap(monthly -> monthly >= maxMonthly
                                     ? Mono.<Task>error(new MarketplaceException(409, "已达本组织本月发布上限"))
-                                    : tasks.create(merchant.accountId(), body.organizationId(), body.title(),
-                                            body.description(), body.contentForm(), body.platform(), body.maxSlots(),
-                                            body.bountyCents()));
+                                    : transactions.transactional(
+                                            tasks.create(merchant.accountId(), body.organizationId(), body.title(),
+                                                    body.description(), body.contentForm(), body.platform(), body.maxSlots(),
+                                                    body.bountyCents())
+                                                    .flatMap(task -> outbox.append(taskPublishedEnvelope(task)).thenReturn(task))));
                 })
-                .flatMap(task -> outbox.append(new EventEnvelope(
-                        UUID.randomUUID().toString(), "TaskPublished", "Task",
-                        task.id(), 1, Instant.now(), null,
-                        Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                                "ownerAccountId", task.ownerAccountId(), "title", task.title())))
-                        .thenReturn(task))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -136,6 +136,14 @@ public class TaskController {
                 .flatMap(caller -> tasks.findById(id)
                         .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))))
                         .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在"))));
+    }
+
+    private EventEnvelope taskPublishedEnvelope(Task task) {
+        return new EventEnvelope(
+                UUID.randomUUID().toString(), "TaskPublished", "Task",
+                task.id(), 1, Instant.now(), null,
+                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
+                        "ownerAccountId", task.ownerAccountId(), "title", task.title()));
     }
 
     private Map<String, Object> toBody(Task task) {
