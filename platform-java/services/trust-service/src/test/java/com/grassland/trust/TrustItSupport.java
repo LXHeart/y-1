@@ -42,6 +42,7 @@ public abstract class TrustItSupport {
         r.add("trust.datasource.from-database-url", () -> "true");
         r.add("DATABASE_URL", () -> dbUrl);
         r.add("management.server.port", () -> "0");
+        r.add("trust.outbox.enabled", () -> "false");
         r.add("identity-assertion.enabled", () -> "true");
         r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
         r.add("identity-assertion.audience", () -> "grassland-internal");

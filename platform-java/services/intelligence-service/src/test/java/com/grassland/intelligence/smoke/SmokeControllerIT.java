@@ -57,10 +57,15 @@ class SmokeControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("outbox 表已由 Flyway 建好（DB 地基通；冒烟不写事件 → 0 行）")
+    @DisplayName("outbox 表已由 Flyway 建好（DB 地基通）")
     void outboxTableMigrated() {
-        Integer count = db.sql("SELECT COUNT(*)::int AS c FROM intelligence_outbox")
+        Integer count = db.sql("""
+                        SELECT COUNT(*)::int AS c
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'intelligence_outbox'
+                        """)
                 .map(r -> r.get("c", Integer.class)).one().block();
-        assertThat(count).isZero();
+        assertThat(count).isEqualTo(1);
     }
 }

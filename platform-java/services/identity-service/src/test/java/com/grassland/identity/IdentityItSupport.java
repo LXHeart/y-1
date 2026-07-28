@@ -20,7 +20,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * identity-service 集成测试公共基座。草场身份域 Slice 2F。
  *
  * <p>{@code from-database-url=true} + {@code DATABASE_URL} 激活生产同款 {@code DataSourceConfig} → Flyway 跑 V1+V2
- * 建 organization/store/organization_membership（含 permission_tier）；{@code @BeforeAll} 手建 app_users/session/outbox。
+ * 建 organization/store/organization_membership（含 permission_tier）与 outbox；{@code @BeforeAll} 手建 app_users/session。
  * 提供 {@link #seedAccount(String)} 生成登录态 + {@link #createOrg(String, String)} 建组织。
  *
  * <p><b>容器生命周期</b>：采用 testcontainers 单例容器模式——{@link #POSTGRES} 在 static 块启动一次、全程不重启，
@@ -57,6 +57,7 @@ public abstract class IdentityItSupport {
         r.add("DATABASE_URL", () -> "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword()
                 + "@" + host + ":" + p + "/" + name);
         r.add("management.server.port", () -> "0");
+        r.add("identity.outbox.enabled", () -> "false");
         r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
         // Slice 2K：启用内部身份断言消费（signer bean 注入）。仅在请求带断言头时触发，其余走 cookie 路径。
         r.add("identity-assertion.enabled", () -> "true");
@@ -66,13 +67,12 @@ public abstract class IdentityItSupport {
 
     @BeforeAll
     static void schema() throws Exception {
-        // organization/store/organization_membership 由 Flyway V1+V2 建；这里补 app_users/session/outbox（Flyway 不管）。
+        // organization/store/organization_membership/outbox 由 Flyway 建；这里仅补 legacy app_users/session。
         // IF NOT EXISTS：多个子类各自触发一次 @BeforeAll，需幂等。
         try (var c = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              var s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz)");
             s.execute("CREATE TABLE IF NOT EXISTS session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
-            s.execute("CREATE TABLE IF NOT EXISTS outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id text NOT NULL UNIQUE, event_type text NOT NULL, aggregate_type text NOT NULL, aggregate_id text NOT NULL, payload json NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz)");
         }
     }
 

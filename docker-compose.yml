@@ -75,7 +75,10 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     restart: unless-stopped
 
   # 可选 Java Edge BFF 评估入口。
@@ -147,11 +150,18 @@ services:
       TRUST_SERVICE_BASE_URL: http://trust-service:8085
       MARKETPLACE_TRUST_CONSUMER_ENABLED: ${MARKETPLACE_TRUST_CONSUMER_ENABLED:-true}
     depends_on:
-      - backend
-      - minio
-      - temporal
-      - finance-service
-      - trust-service
+      backend:
+        condition: service_started
+      minio:
+        condition: service_started
+      temporal:
+        condition: service_started
+      finance-service:
+        condition: service_started
+      trust-service:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     restart: unless-stopped
 
   # 可选 Java finance-service（Epic 4 Slice 4D）：账户/余额地基。profile java-edge。
@@ -172,7 +182,10 @@ services:
       IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     restart: unless-stopped
 
   # 可选 Java trust-service（Epic 6 Slice 6A）：争议受理（dispute-case）。profile java-edge。
@@ -196,7 +209,10 @@ services:
       IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     restart: unless-stopped
 
   # 可选 Java intelligence-service（草场 intelligence Slice 1）：AI 基建层 + 冒烟端点。profile java-edge。
@@ -229,14 +245,17 @@ services:
       LEGACY_CREDITS_BASE_URL: http://backend:3000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     volumes:
       - intelligence_generated_images:/app/data/generated-images
     restart: unless-stopped
 
   # Epic 3：事件基础设施
   kafka:
-    image: apache/kafka:latest
+    image: apache/kafka:4.2.1
     ports:
       - "9092:9092"
     environment:
@@ -252,6 +271,12 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
   redis:

@@ -13,9 +13,14 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
       properties:
-        # 原生 producer 覆盖（KafkaProperties.Producer 无 retries 便捷字段，须走 properties map）
-        retries: 3
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 10000
+        max.block.ms: 5000
+        retries: 5
   codec:
     max-in-memory-size: 256KB
   mail:
@@ -49,6 +54,16 @@ identity:
     session:
       cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
       secret: ${SESSION_SECRET:}
+  outbox:
+    topic: ${IDENTITY_OUTBOX_TOPIC:grassland.identity.events}
+    enabled: ${IDENTITY_OUTBOX_ENABLED:true}
+    poll-interval-ms: ${IDENTITY_OUTBOX_POLL_INTERVAL_MS:2000}
+    batch-size: ${IDENTITY_OUTBOX_BATCH_SIZE:50}
+    max-concurrency: ${IDENTITY_OUTBOX_MAX_CONCURRENCY:8}
+    ack-timeout-ms: ${IDENTITY_OUTBOX_ACK_TIMEOUT_MS:10000}
+    claim-lease-ms: ${IDENTITY_OUTBOX_CLAIM_LEASE_MS:300000}
+    initial-backoff-ms: ${IDENTITY_OUTBOX_INITIAL_BACKOFF_MS:1000}
+    max-backoff-ms: ${IDENTITY_OUTBOX_MAX_BACKOFF_MS:60000}
   permission:
     # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
     sla-hours: ${PERMISSION_SLA_HOURS:72}

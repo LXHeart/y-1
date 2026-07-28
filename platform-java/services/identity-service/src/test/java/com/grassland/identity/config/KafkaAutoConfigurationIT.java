@@ -36,7 +36,9 @@ class KafkaAutoConfigurationIT extends IdentityItSupport {
         assertThat(String.valueOf(cfg.get(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG))).contains("kafka:9092");
         assertThat(cfg.get(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG)).isEqualTo(StringSerializer.class);
         assertThat(cfg.get(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG)).isEqualTo(StringSerializer.class);
-        // retries 经 spring.kafka.producer.properties.retries 流入（原生 producer 属性存为 String，Kafka 内部强转）
-        assertThat(cfg.get(ProducerConfig.RETRIES_CONFIG)).isEqualTo("3");
+        assertThat(cfg.get(ProducerConfig.RETRIES_CONFIG)).isEqualTo("5");
+        assertThat(cfg.get(ProducerConfig.ACKS_CONFIG)).isEqualTo("all");
+        assertThat(cfg.get(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG)).isEqualTo("true");
+        assertThat(cfg.get(ProducerConfig.MAX_BLOCK_MS_CONFIG)).isEqualTo("5000");
     }
 }

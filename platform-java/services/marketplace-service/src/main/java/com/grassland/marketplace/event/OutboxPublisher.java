@@ -1,60 +1,169 @@
 package com.grassland.marketplace.event;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.time.Duration;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-/**
- * marketplace outbox → Kafka 发布器（草场 Epic 6 Slice 6B）。复刻 identity 的 OutboxPublisher。
- *
- * <p>{@code @Scheduled} 轮询未发布（published_at IS NULL）的 outbox 行，发到 topic（默认 grassland.marketplace.events），
- * 发送成功后 markPublished（published_at=now()）。失败仅记日志、下次重试（at-least-once；消费方须幂等）。
- * Kafka 未配置时 KafkaTemplate 为 null → 跳过（本地/测试可禁）。
- */
 @Component
 public class OutboxPublisher {
 
+    static final String KAFKA_SEND_ERROR = "KAFKA_SEND_ERROR";
+    static final String OUTBOX_ACK_ERROR = "OUTBOX_ACK_ERROR";
+    static final String SERIALIZATION_ERROR = "SERIALIZATION_ERROR";
+
     private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
 
-    private final OutboxRepository repo;
+    private final OutboxRepository repository;
     private final KafkaTemplate<String, String> kafka;
-    private final String topic;
-    private final boolean enabled;
+    private final MarketplaceOutboxProperties properties;
+    private final OutboxPublisherMetrics metrics;
+    private final ObjectMapper mapper;
+    private final AtomicBoolean isPublishing = new AtomicBoolean();
 
-    public OutboxPublisher(OutboxRepository repo,
-                           @Autowired(required = false) KafkaTemplate<String, String> kafka,
-                           @Value("${marketplace.outbox.topic:grassland.marketplace.events}") String topic,
-                           @Value("${marketplace.outbox.enabled:true}") boolean enabled) {
-        this.repo = repo;
+    public OutboxPublisher(
+            OutboxRepository repository,
+            KafkaTemplate<String, String> kafka,
+            MarketplaceOutboxProperties properties,
+            OutboxPublisherMetrics metrics,
+            ObjectMapper mapper) {
+        this.repository = repository;
         this.kafka = kafka;
-        this.topic = topic;
-        this.enabled = enabled;
+        this.properties = properties;
+        this.metrics = metrics;
+        this.mapper = mapper;
     }
 
     @Scheduled(fixedDelayString = "${marketplace.outbox.poll-interval-ms:2000}")
     public void publishPending() {
-        if (!enabled || kafka == null) {
+        if (!properties.enabled() || !isPublishing.compareAndSet(false, true)) {
             return;
         }
-        repo.findUnpublished(50)
-                .flatMap(row -> Mono.fromCallable(() -> {
-                            kafka.send(topic, row.aggregateId(), buildEnvelope(row));
-                            return row;
-                        })
-                        .doOnSuccess(r -> repo.markPublished(r.id()).subscribe())
-                        .doOnError(e -> log.error("publish failed for event {}", row.eventId(), e))
-                        .onErrorResume(e -> Mono.empty()))
-                .subscribe();
+        publishBatch()
+                .doFinally(ignored -> isPublishing.set(false))
+                .subscribe(
+                        ignored -> {},
+                        error -> log.error("marketplace outbox batch failed", error));
+    }
+
+    Mono<Void> publishBatch() {
+        if (!properties.enabled()) {
+            return Mono.empty();
+        }
+        String claimToken = UUID.randomUUID().toString();
+        return repository
+                .claimBatch(claimToken, properties.batchSize(), properties.claimDuration())
+                .doOnNext(ignored -> metrics.claimed())
+                .flatMap(this::publishOne, properties.maxConcurrency())
+                .then();
+    }
+
+    private Mono<Void> publishOne(OutboxRepository.OutboxRow row) {
+        long startedAt = System.nanoTime();
+        return Mono.fromCallable(() -> kafka.send(
+                        properties.topic(), row.aggregateId(), buildEnvelope(row)))
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                .flatMap(Mono::fromFuture)
+                .timeout(properties.ackTimeout())
+                .flatMap(ignored -> repository
+                        .markPublished(row.id(), row.claimToken())
+                        .onErrorMap(OutboxAckException::new))
+                .doOnNext(updated -> {
+                    if (updated) {
+                        metrics.published(elapsedSince(startedAt));
+                    } else {
+                        metrics.staleClaim();
+                    }
+                })
+                .then()
+                .onErrorResume(error -> markFailed(row, error, startedAt));
+    }
+
+    private Mono<Void> markFailed(OutboxRepository.OutboxRow row, Throwable error, long startedAt) {
+        String errorCode = errorCode(error);
+        Duration retryBackoff = retryBackoff(row.attemptCount());
+        log.warn(
+                "marketplace outbox publish failed: eventId={}, errorCode={}, attempt={}, retryIn={}",
+                row.eventId(),
+                errorCode,
+                row.attemptCount() + 1,
+                retryBackoff,
+                error);
+        return repository
+                .markFailed(row.id(), row.claimToken(), errorCode, retryBackoff)
+                .doOnNext(updated -> {
+                    if (updated) {
+                        metrics.failed(errorCode, elapsedSince(startedAt));
+                    } else {
+                        metrics.staleClaim();
+                    }
+                })
+                .then();
+    }
+
+    private Duration retryBackoff(int completedAttempts) {
+        Duration backoff = properties.initialBackoff();
+        for (int attempt = 0;
+                attempt < completedAttempts && backoff.compareTo(properties.maxBackoff()) < 0;
+                attempt++) {
+            Duration doubled = backoff.multipliedBy(2);
+            backoff = doubled.compareTo(properties.maxBackoff()) > 0
+                    ? properties.maxBackoff()
+                    : doubled;
+        }
+        return backoff;
     }
 
     private String buildEnvelope(OutboxRepository.OutboxRow row) {
-        return "{\"eventId\":\"" + row.eventId() + "\",\"eventType\":\"" + row.eventType()
-                + "\",\"aggregateType\":\"" + row.aggregateType() + "\",\"aggregateId\":\"" + row.aggregateId()
-                + "\",\"payload\":" + row.payloadJson() + "}";
+        try {
+            ObjectNode envelope = mapper.createObjectNode();
+            envelope.put("eventId", row.eventId());
+            envelope.put("eventType", row.eventType());
+            envelope.put("aggregateType", row.aggregateType());
+            envelope.put("aggregateId", row.aggregateId());
+            JsonNode payload = mapper.readTree(row.payloadJson());
+            envelope.set("payload", payload);
+            return mapper.writeValueAsString(envelope);
+        } catch (Exception error) {
+            throw new OutboxSerializationException(error);
+        }
+    }
+
+    private static String errorCode(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof OutboxSerializationException) {
+                return SERIALIZATION_ERROR;
+            }
+            if (current instanceof OutboxAckException) {
+                return OUTBOX_ACK_ERROR;
+            }
+            current = current.getCause();
+        }
+        return KAFKA_SEND_ERROR;
+    }
+
+    private static Duration elapsedSince(long startedAt) {
+        return Duration.ofNanos(System.nanoTime() - startedAt);
+    }
+
+    private static final class OutboxSerializationException extends RuntimeException {
+        private OutboxSerializationException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    private static final class OutboxAckException extends RuntimeException {
+        private OutboxAckException(Throwable cause) {
+            super(cause);
+        }
     }
 }

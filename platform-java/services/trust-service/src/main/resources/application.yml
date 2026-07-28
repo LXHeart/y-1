@@ -6,6 +6,14 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 10000
+        max.block.ms: 5000
+        retries: 5
   temporal:
     # 连接：容器内 service name（temporal:7233），本地 bootRun 注 localhost:7233。
     connection:
@@ -37,6 +45,12 @@ trust:
     topic: ${TRUST_OUTBOX_TOPIC:grassland.trust.events}
     enabled: ${TRUST_OUTBOX_ENABLED:true}
     poll-interval-ms: ${TRUST_OUTBOX_POLL_INTERVAL_MS:2000}
+    batch-size: ${TRUST_OUTBOX_BATCH_SIZE:50}
+    max-concurrency: ${TRUST_OUTBOX_MAX_CONCURRENCY:8}
+    ack-timeout-ms: ${TRUST_OUTBOX_ACK_TIMEOUT_MS:10000}
+    claim-lease-ms: ${TRUST_OUTBOX_CLAIM_LEASE_MS:300000}
+    initial-backoff-ms: ${TRUST_OUTBOX_INITIAL_BACKOFF_MS:1000}
+    max-backoff-ms: ${TRUST_OUTBOX_MAX_BACKOFF_MS:60000}
   # 审判 adjudication（Slice 6C）：7 官面板 / 24h 投票 / 平票重开轮次 / 上诉窗口 / 审判官资格阈值（声誉模块未建，占位）。
   adjudication:
     panel-size: ${TRUST_ADJUDICATION_PANEL_SIZE:7}

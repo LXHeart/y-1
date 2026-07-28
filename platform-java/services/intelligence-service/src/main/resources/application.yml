@@ -18,6 +18,14 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 10000
+        max.block.ms: 5000
+        retries: 5
   r2dbc:
     url: ${INTELLIGENCE_R2DBC_URL:}
 server:
@@ -40,6 +48,12 @@ intelligence:
     topic: ${INTELLIGENCE_OUTBOX_TOPIC:grassland.intelligence.events}
     enabled: ${INTELLIGENCE_OUTBOX_ENABLED:true}
     poll-interval-ms: ${INTELLIGENCE_OUTBOX_POLL_INTERVAL_MS:2000}
+    batch-size: ${INTELLIGENCE_OUTBOX_BATCH_SIZE:50}
+    max-concurrency: ${INTELLIGENCE_OUTBOX_MAX_CONCURRENCY:8}
+    ack-timeout-ms: ${INTELLIGENCE_OUTBOX_ACK_TIMEOUT_MS:10000}
+    claim-lease-ms: ${INTELLIGENCE_OUTBOX_CLAIM_LEASE_MS:300000}
+    initial-backoff-ms: ${INTELLIGENCE_OUTBOX_INITIAL_BACKOFF_MS:1000}
+    max-backoff-ms: ${INTELLIGENCE_OUTBOX_MAX_BACKOFF_MS:60000}
 
 # BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
 identity-assertion:

@@ -1,73 +1,79 @@
 package com.grassland.marketplace.event;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.UUID;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.springframework.kafka.support.Acknowledgment;
 import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
-/**
- * {@link TrustEventConsumer} 单元测试（草场 Epic 6 Slice 6C Phase E，Mockito）。直接调 {@code handle}（绕过 Kafka）：
- * DisputeFinalized → 补 EngagementSettled（aggregate_id=engagementRef）；幂等（trust eventId 决定派生 event_id）；
- * 非 DisputeFinalized / 不可解析 → 忽略。
- */
 class TrustEventConsumerTest {
 
-    private final OutboxRepository outbox = mock(OutboxRepository.class);
-    private final TrustEventConsumer consumer = new TrustEventConsumer(outbox);
+    private final TrustEventProcessor processor = mock(TrustEventProcessor.class);
+    private final Acknowledgment acknowledgment = mock(Acknowledgment.class);
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final TrustEventConsumer consumer = new TrustEventConsumer(
+            processor, new TrustEventConsumerMetrics(meterRegistry));
 
     @Test
-    void disputeFinalizedAppendsEngagementSettled() {
-        when(outbox.append(any())).thenReturn(Mono.empty());
-        consumer.handle(envelope("ev-1", "DisputeFinalized", "app-42", "for_recommender"));
+    void acknowledgesOnlyAfterReactiveProcessingCompletes() {
+        ConsumerRecord<String, String> record = record();
+        reactor.core.publisher.Sinks.One<TrustEventProcessingResult> result = reactor.core.publisher.Sinks.one();
+        when(processor.process(record)).thenReturn(result.asMono());
 
-        ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(outbox).append(captor.capture());
-        EventEnvelope e = captor.getValue();
-        assertThat(e.eventType()).isEqualTo("EngagementSettled");
-        assertThat(e.aggregateId()).isEqualTo("app-42");
-        assertThat(e.payload().get("reason")).isEqualTo("adjudication:for_recommender");
+        consumer.onEvent(record, acknowledgment).subscribe();
+
+        verify(acknowledgment, never()).acknowledge();
+
+        result.tryEmitValue(TrustEventProcessingResult.PROCESSED);
+
+        verify(acknowledgment).acknowledge();
+        assertThat(meterRegistry.counter(
+                        "marketplace.trust.consumer.records", "outcome", "processed")
+                .count()).isEqualTo(1.0);
     }
 
     @Test
-    void derivedEventIdIsDeterministicForIdempotency() {
-        when(outbox.append(any())).thenReturn(Mono.empty());
-        // Kafka 至少一次重投同一 trust 事件 → 消费方两次 append，派生 event_id 相同（outbox ON CONFLICT 去重）
-        consumer.handle(envelope("ev-1", "DisputeFinalized", "app-42", "for_merchant"));
-        consumer.handle(envelope("ev-1", "DisputeFinalized", "app-42", "for_merchant"));
+    void processingFailurePropagatesWithoutAcknowledging() {
+        ConsumerRecord<String, String> record = record();
+        when(processor.process(record)).thenReturn(Mono.error(new IllegalStateException("database unavailable")));
 
-        ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(outbox, times(2)).append(captor.capture());
-        String first = captor.getAllValues().get(0).eventId();
-        assertThat(captor.getAllValues().get(1).eventId()).isEqualTo(first);  // 确定性 → DB 去重生效
-        assertThat(first).isEqualTo(UUID.nameUUIDFromBytes("SettlementResolved:ev-1".getBytes()).toString());
+        StepVerifier.create(consumer.onEvent(record, acknowledgment))
+                .expectErrorMessage("database unavailable")
+                .verify();
+
+        verify(acknowledgment, never()).acknowledge();
+        assertThat(meterRegistry.counter(
+                        "marketplace.trust.consumer.records", "outcome", "failed")
+                .count()).isEqualTo(1.0);
     }
 
     @Test
-    void ignoresNonFinalizedEvents() {
-        consumer.handle(envelope("ev-2", "DisputeDecided", "app-42", "for_merchant"));
-        consumer.handle(envelope("ev-3", "DisputeOpened", "app-42", null));
-        verify(outbox, never()).append(any());
+    void duplicateAndIgnoredResultsHaveDistinctMetrics() {
+        ConsumerRecord<String, String> duplicate = record();
+        ConsumerRecord<String, String> ignored = new ConsumerRecord<>(
+                "grassland.trust.events", 0, 18L, "d-2", "{}");
+        when(processor.process(duplicate)).thenReturn(Mono.just(TrustEventProcessingResult.DUPLICATE));
+        when(processor.process(ignored)).thenReturn(Mono.just(TrustEventProcessingResult.IGNORED));
+
+        StepVerifier.create(consumer.onEvent(duplicate, acknowledgment)).verifyComplete();
+        StepVerifier.create(consumer.onEvent(ignored, acknowledgment)).verifyComplete();
+
+        assertThat(meterRegistry.counter(
+                        "marketplace.trust.consumer.records", "outcome", "duplicate")
+                .count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter(
+                        "marketplace.trust.consumer.records", "outcome", "ignored")
+                .count()).isEqualTo(1.0);
     }
 
-    @Test
-    void ignoresUnparseableJson() {
-        consumer.handle("not-json{");
-        verify(outbox, never()).append(any());
-    }
-
-    /** 构造与 OutboxPublisher.buildEnvelope 同形的 JSON 信封。 */
-    private String envelope(String eventId, String eventType, String engagementRef, String decision) {
-        String payload = "{\"disputeId\":\"d-1\",\"engagementRef\":\"" + engagementRef + "\""
-                + (decision == null ? "" : ",\"finalDecision\":\"" + decision + "\"") + "}";
-        return "{\"eventId\":\"" + eventId + "\",\"eventType\":\"" + eventType
-                + "\",\"aggregateType\":\"DisputeCase\",\"aggregateId\":\"d-1\",\"payload\":" + payload + "}";
+    private ConsumerRecord<String, String> record() {
+        return new ConsumerRecord<>("grassland.trust.events", 0, 17L, "d-1", "{}");
     }
 }

@@ -6,6 +6,14 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 10000
+        max.block.ms: 5000
+        retries: 5
     # trust 事件消费方（Slice 6C Phase E，平台首个消费方）。consumer factory 由 Boot auto-config 提供。
     # 默认不启用（测试/本地无 Kafka 时跳过，避免连接噪声）；compose 置 MARKETPLACE_TRUST_CONSUMER_ENABLED=true。
     consumer:
@@ -13,6 +21,8 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 1
   r2dbc:
     url: ${MARKETPLACE_R2DBC_URL:}
   temporal:
@@ -65,6 +75,12 @@ marketplace:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}
     poll-interval-ms: ${MARKETPLACE_OUTBOX_POLL_INTERVAL_MS:2000}
+    batch-size: ${MARKETPLACE_OUTBOX_BATCH_SIZE:50}
+    max-concurrency: ${MARKETPLACE_OUTBOX_MAX_CONCURRENCY:8}
+    ack-timeout: ${MARKETPLACE_OUTBOX_ACK_TIMEOUT:10s}
+    claim-duration: ${MARKETPLACE_OUTBOX_CLAIM_DURATION:5m}
+    initial-backoff: ${MARKETPLACE_OUTBOX_INITIAL_BACKOFF:1s}
+    max-backoff: ${MARKETPLACE_OUTBOX_MAX_BACKOFF:5m}
   # trust 事件消费方（Slice 6C Phase E）：消费 grassland.trust.events 的 DisputeFinalized → 同步结算态。
   # 默认 false：测试/本地无 Kafka 不启用（@ConditionalOnProperty）；compose 置 true。
   trust-consumer:

@@ -1,16 +1,19 @@
 package com.grassland.marketplace.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-/**
- * marketplace outbox 写入（复刻 identity 2A 精简版）。表由 Flyway V1 建；本 slice 仅 append，Kafka 发布器留 4B。
- * payload 用本地 {@link ObjectMapper} 序列化为 JSON（Boot 4 的 Jackson autoconfig 在独立模块，marketplace 未引入）。
- */
 @Component
 public class OutboxRepository {
+
+    private static final int MAX_ERROR_CODE_LENGTH = 64;
 
     private final DatabaseClient db;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -23,79 +26,159 @@ public class OutboxRepository {
         try {
             String payload = mapper.writeValueAsString(event.payload());
             return db.sql("""
-                    INSERT INTO marketplace_outbox (event_id, event_type, aggregate_type, aggregate_id, payload)
-                    VALUES (:eventId, :eventType, :aggType, :aggId, CAST(:payload AS json))
-                    ON CONFLICT (event_id) DO NOTHING
-                    """)
+                            INSERT INTO marketplace_outbox
+                                (event_id, event_type, aggregate_type, aggregate_id, payload)
+                            VALUES (:eventId, :eventType, :aggType, :aggId, CAST(:payload AS json))
+                            ON CONFLICT (event_id) DO NOTHING
+                            """)
                     .bind("eventId", event.eventId())
                     .bind("eventType", event.eventType())
                     .bind("aggType", event.aggregateType())
                     .bind("aggId", event.aggregateId())
                     .bind("payload", payload)
                     .then();
-        } catch (Exception e) {
-            return Mono.error(e);
+        } catch (Exception error) {
+            return Mono.error(error);
         }
     }
 
-    /** 某报名最近一次资金预留失败原因（Slice 4F 轮询端点用：读 ApplicationReservationFailed outbox 事件的 reason）。
-     *  无 / reason 空 → empty Mono（调用方据此判「无补偿记录」）。 */
-    /** 未发布的 outbox 行（published_at IS NULL），按 id 升序取 limit 条。OutboxPublisher 轮询用。 */
-    public reactor.core.publisher.Flux<OutboxRow> findUnpublished(int limit) {
+    public Flux<OutboxRow> claimBatch(String claimToken, int limit, Duration claimDuration) {
         return db.sql("""
-                SELECT id::text, event_id, event_type, aggregate_type, aggregate_id, payload::text
-                FROM marketplace_outbox WHERE published_at IS NULL
-                ORDER BY id LIMIT :limit
-                """)
+                        WITH candidates AS (
+                            SELECT candidate.id
+                            FROM marketplace_outbox AS candidate
+                            WHERE candidate.published_at IS NULL
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM marketplace_outbox AS earlier
+                                  WHERE earlier.aggregate_id = candidate.aggregate_id
+                                    AND earlier.published_at IS NULL
+                                    AND (earlier.created_at, earlier.id)
+                                        < (candidate.created_at, candidate.id)
+                              )
+                              AND candidate.next_attempt_at <= now()
+                              AND (candidate.claimed_until IS NULL OR candidate.claimed_until <= now())
+                            ORDER BY created_at, id
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT :limit
+                        )
+                        UPDATE marketplace_outbox AS outbox
+                        SET claim_token = CAST(:claimToken AS uuid),
+                            claimed_until = now() + CAST(:claimMillis AS bigint) * interval '1 millisecond',
+                            attempt_count = outbox.attempt_count + 1,
+                            last_error_code = NULL
+                        FROM candidates
+                        WHERE outbox.id = candidates.id
+                        RETURNING outbox.id::text, outbox.event_id, outbox.event_type,
+                                  outbox.aggregate_type, outbox.aggregate_id, outbox.payload::text,
+                                  outbox.attempt_count, outbox.claim_token::text, outbox.claimed_until
+                        """)
                 .bind("limit", limit)
-                .map(r -> new OutboxRow(
-                        r.get("id", String.class), r.get("event_id", String.class),
-                        r.get("event_type", String.class), r.get("aggregate_type", String.class),
-                        r.get("aggregate_id", String.class), r.get("payload", String.class)))
+                .bind("claimToken", claimToken)
+                .bind("claimMillis", claimDuration.toMillis())
+                .map(row -> new OutboxRow(
+                        row.get("id", String.class),
+                        row.get("event_id", String.class),
+                        row.get("event_type", String.class),
+                        row.get("aggregate_type", String.class),
+                        row.get("aggregate_id", String.class),
+                        row.get("payload", String.class),
+                        valueOrZero(row.get("attempt_count", Integer.class)),
+                        row.get("claim_token", String.class),
+                        row.get("claimed_until", Instant.class)))
                 .all();
     }
 
-    /** 标记已发布（OutboxPublisher 发 Kafka 成功后调用）。 */
-    public Mono<Void> markPublished(String id) {
-        // ⚠️ 这里曾写成 CAST(:id AS bigint)，而 marketplace_outbox.id 是 **uuid**（trust_outbox.id 才是 bigint）。
-        // 后果不是「发不出去」而是更隐蔽的**发了但标不上**：每轮调度把同一批事件重发一次，
-        // at-least-once 退化成「永远重发」，日志里只有一串 BadSqlGrammarException。
-        return db.sql("UPDATE marketplace_outbox SET published_at = now() WHERE id = CAST(:id AS uuid)")
-                .bind("id", id).then();
+    public Mono<Boolean> markPublished(String id, String claimToken) {
+        return db.sql("""
+                        UPDATE marketplace_outbox
+                        SET published_at = now(), claim_token = NULL, claimed_until = NULL, last_error_code = NULL
+                        WHERE id = CAST(:id AS uuid)
+                          AND published_at IS NULL
+                          AND claim_token = CAST(:claimToken AS uuid)
+                        """)
+                .bind("id", id)
+                .bind("claimToken", claimToken)
+                .fetch()
+                .rowsUpdated()
+                .map(updated -> updated > 0);
     }
 
-    /** outbox 行（发布器用）。{@code payloadJson} 为 payload 的 JSON 字符串。 */
-    public record OutboxRow(String id, String eventId, String eventType,
-                            String aggregateType, String aggregateId, String payloadJson) {}
+    public Mono<Boolean> markFailed(
+            String id, String claimToken, String errorCode, Duration retryBackoff) {
+        String safeCode = normalizeErrorCode(errorCode);
+        return db.sql("""
+                        UPDATE marketplace_outbox
+                        SET next_attempt_at = now() + CAST(:backoffMillis AS bigint) * interval '1 millisecond',
+                            claim_token = NULL,
+                            claimed_until = NULL,
+                            last_error_code = :errorCode
+                        WHERE id = CAST(:id AS uuid)
+                          AND published_at IS NULL
+                          AND claim_token = CAST(:claimToken AS uuid)
+                        """)
+                .bind("id", id)
+                .bind("claimToken", claimToken)
+                .bind("backoffMillis", retryBackoff.toMillis())
+                .bind("errorCode", safeCode)
+                .fetch()
+                .rowsUpdated()
+                .map(updated -> updated > 0);
+    }
+
+    public record OutboxRow(
+            String id,
+            String eventId,
+            String eventType,
+            String aggregateType,
+            String aggregateId,
+            String payloadJson,
+            int attemptCount,
+            String claimToken,
+            Instant claimedUntil) {}
 
     public Mono<String> latestReservationFailureReason(String applicationId) {
         return db.sql("""
-                SELECT payload->>'reason' AS reason FROM marketplace_outbox
-                WHERE event_type = 'ApplicationReservationFailed' AND aggregate_id = :appId
-                ORDER BY id DESC LIMIT 1
-                """)
+                        SELECT payload->>'reason' AS reason FROM marketplace_outbox
+                        WHERE event_type = 'ApplicationReservationFailed' AND aggregate_id = :appId
+                        ORDER BY id DESC LIMIT 1
+                        """)
                 .bind("appId", applicationId)
-                .map(r -> r.get("reason", String.class)).one()
+                .map(row -> row.get("reason", String.class))
+                .one()
                 .filter(reason -> reason != null && !reason.isBlank());
     }
 
-    /** 某报名最近一次结算结局（Slice 5A/6A 轮询用）：EngagementSettled→{status:settled}，
-     *  SettlementHeld→{status:held, reason}（reason 来自 outbox payload，如 open_dispute）；无→empty。 */
-    public Mono<java.util.Map<String, Object>> latestSettlementStatus(String applicationId) {
+    public Mono<Map<String, Object>> latestSettlementStatus(String applicationId) {
         return db.sql("""
-                SELECT event_type AS et, payload->>'reason' AS reason FROM marketplace_outbox
-                WHERE event_type IN ('EngagementSettled','SettlementHeld') AND aggregate_id = :appId
-                ORDER BY id DESC LIMIT 1
-                """)
+                        SELECT event_type AS et, payload->>'reason' AS reason FROM marketplace_outbox
+                        WHERE event_type IN ('EngagementSettled','SettlementHeld') AND aggregate_id = :appId
+                        ORDER BY id DESC LIMIT 1
+                        """)
                 .bind("appId", applicationId)
-                .map(r -> {
-                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("status", "EngagementSettled".equals(r.get("et", String.class)) ? "settled" : "held");
-                    String reason = r.get("reason", String.class);
+                .map(row -> {
+                    Map<String, Object> status = new LinkedHashMap<>();
+                    status.put("status", "EngagementSettled".equals(row.get("et", String.class))
+                            ? "settled"
+                            : "held");
+                    String reason = row.get("reason", String.class);
                     if (reason != null) {
-                        m.put("reason", reason);
+                        status.put("reason", reason);
                     }
-                    return m;
-                }).one();
+                    return status;
+                })
+                .one();
+    }
+
+    private static String normalizeErrorCode(String errorCode) {
+        String normalized = errorCode == null || errorCode.isBlank()
+                ? "UNKNOWN_PUBLISH_ERROR"
+                : errorCode.replaceAll("[^A-Z0-9_]", "_");
+        return normalized.length() <= MAX_ERROR_CODE_LENGTH
+                ? normalized
+                : normalized.substring(0, MAX_ERROR_CODE_LENGTH);
+    }
+
+    private static int valueOrZero(Integer value) {
+        return value == null ? 0 : value;
     }
 }
