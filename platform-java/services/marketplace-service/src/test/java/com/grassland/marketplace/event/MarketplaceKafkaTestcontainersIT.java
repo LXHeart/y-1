@@ -88,7 +88,7 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
     private OutboxRepository outboxRepository;
 
     @Autowired
-    private FaultInjectingOutboxRepository faultOutbox;
+    private FaultInjectingSettlementReconciliationRepository faultReconciliations;
 
     private AdminClient admin;
 
@@ -122,14 +122,15 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
 
     @BeforeEach
     void resetState() {
-        faultOutbox.resetFaults();
+        faultReconciliations.resetFaults();
         db.sql("DELETE FROM marketplace_inbox").then().block(AWAIT_TIMEOUT);
         db.sql("DELETE FROM marketplace_outbox").then().block(AWAIT_TIMEOUT);
+        db.sql("DELETE FROM settlement_reconciliation").then().block(AWAIT_TIMEOUT);
     }
 
     @Test
     @Order(1)
-    void duplicateEventCreatesOneInboxAndOneDerivedOutbox() throws Exception {
+    void duplicateEventCreatesOneInboxAndOneReconciliationRequest() throws Exception {
         String sourceEventId = "duplicate-" + RUN_ID;
         String value = envelope(sourceEventId, "app-duplicate", "for_recommender");
 
@@ -138,7 +139,7 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
 
         await().atMost(AWAIT_TIMEOUT).untilAsserted(() -> {
             assertThat(inboxCount(sourceEventId)).isEqualTo(1);
-            assertThat(outboxCount("app-duplicate", "EngagementSettled")).isEqualTo(1);
+            assertThat(reconciliationCount("app-duplicate")).isEqualTo(1);
         });
     }
 
@@ -165,7 +166,7 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
 
         await().atMost(AWAIT_TIMEOUT).untilAsserted(() -> {
             assertThat(inboxCount(validEventId)).isEqualTo(1);
-            assertThat(outboxCount("app-after-poison", "EngagementSettled")).isEqualTo(1);
+            assertThat(reconciliationCount("app-after-poison")).isEqualTo(1);
         });
     }
 
@@ -174,14 +175,14 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
     void transientDatabaseFailureRetriesTwiceThenSucceedsWithoutDlt() throws Exception {
         String eventId = "retry-" + RUN_ID;
         String key = "dispute-retry";
-        faultOutbox.failNextAppends(2);
+        faultReconciliations.failNextEnqueues(2);
 
         send(SOURCE_TOPIC, key, envelope(eventId, "app-retry", "for_recommender"));
 
         await().atMost(AWAIT_TIMEOUT).untilAsserted(() -> {
-            assertThat(faultOutbox.appendAttempts()).isEqualTo(3);
+            assertThat(faultReconciliations.enqueueAttempts()).isEqualTo(3);
             assertThat(inboxCount(eventId)).isEqualTo(1);
-            assertThat(outboxCount("app-retry", "EngagementSettled")).isEqualTo(1);
+            assertThat(reconciliationCount("app-retry")).isEqualTo(1);
         });
         assertThat(consumeByKey(DLT_TOPIC, key, Duration.ofSeconds(2))).isNull();
     }
@@ -190,7 +191,7 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
     @Order(4)
     void asyncMonoDoesNotCommitKafkaOffsetBeforeDatabaseTransactionCompletes() throws Exception {
         String eventId = "async-" + RUN_ID;
-        faultOutbox.holdNextTransactionOpen();
+        faultReconciliations.holdNextTransactionOpen();
 
         var metadata = kafkaTemplate
                 .send(SOURCE_TOPIC, "dispute-async", envelope(eventId, "app-async", "for_merchant"))
@@ -198,16 +199,16 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
                 .getRecordMetadata();
         TopicPartition partition = new TopicPartition(SOURCE_TOPIC, metadata.partition());
 
-        assertThat(faultOutbox.awaitTransactionOpen(Duration.ofSeconds(10))).isTrue();
+        assertThat(faultReconciliations.awaitTransactionOpen(Duration.ofSeconds(10))).isTrue();
         assertThat(inboxCount(eventId)).isZero();
-        assertThat(outboxCount("app-async", "EngagementSettled")).isZero();
+        assertThat(reconciliationCount("app-async")).isZero();
         assertThat(committedOffset(partition)).isLessThanOrEqualTo(metadata.offset());
 
-        faultOutbox.releaseTransaction();
+        faultReconciliations.releaseTransaction();
 
         await().atMost(AWAIT_TIMEOUT).untilAsserted(() -> {
             assertThat(inboxCount(eventId)).isEqualTo(1);
-            assertThat(outboxCount("app-async", "EngagementSettled")).isEqualTo(1);
+            assertThat(reconciliationCount("app-async")).isEqualTo(1);
             assertThat(committedOffset(partition)).isGreaterThanOrEqualTo(metadata.offset() + 1);
         });
     }
@@ -312,6 +313,18 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
         return count == null ? 0 : count;
     }
 
+    private long reconciliationCount(String applicationId) {
+        Long count = db.sql("""
+                        SELECT count(*) AS count FROM settlement_reconciliation
+                        WHERE application_id = :applicationId
+                        """)
+                .bind("applicationId", applicationId)
+                .map(row -> row.get("count", Long.class))
+                .one()
+                .block(AWAIT_TIMEOUT);
+        return count == null ? 0 : count;
+    }
+
     private boolean isPublished(String eventId) {
         Boolean published = db.sql("""
                         SELECT published_at IS NOT NULL AS published
@@ -395,7 +408,7 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
     private static String envelope(String eventId, String applicationId, String decision) {
         return """
                 {"eventId":"%s","eventType":"DisputeFinalized","aggregateType":"DisputeCase",
-                 "aggregateId":"dispute-1","payload":{"engagementRef":"%s","finalDecision":"%s"}}
+                 "aggregateId":"dispute-1","payload":{"disputeId":"dispute-1","engagementRef":"%s","finalDecision":"%s"}}
                 """.formatted(eventId, applicationId, decision);
     }
 
@@ -404,44 +417,50 @@ class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
 
         @Bean
         @Primary
-        FaultInjectingOutboxRepository faultInjectingOutboxRepository(DatabaseClient databaseClient) {
-            return new FaultInjectingOutboxRepository(databaseClient);
+        FaultInjectingSettlementReconciliationRepository faultInjectingSettlementReconciliationRepository(
+                DatabaseClient databaseClient) {
+            return new FaultInjectingSettlementReconciliationRepository(databaseClient);
         }
     }
 
-    static final class FaultInjectingOutboxRepository extends OutboxRepository {
+    /** processor 现消费侧调 reconciliation.enqueue（不再是 outbox.append），故故障注入挂在 reconciliation 仓库。 */
+    static final class FaultInjectingSettlementReconciliationRepository
+            extends com.grassland.marketplace.settlement.SettlementReconciliationRepository {
 
         private final AtomicInteger remainingFailures = new AtomicInteger();
         private final AtomicInteger attempts = new AtomicInteger();
         private volatile CountDownLatch transactionOpen = new CountDownLatch(0);
         private volatile Sinks.One<Void> transactionGate;
 
-        FaultInjectingOutboxRepository(DatabaseClient databaseClient) {
+        FaultInjectingSettlementReconciliationRepository(DatabaseClient databaseClient) {
             super(databaseClient);
         }
 
         @Override
-        public Mono<Void> append(EventEnvelope event) {
+        public Mono<Boolean> enqueue(
+                String sourceEventId, String disputeId, String applicationId,
+                String organizationId, String finalDecision, String workflowId) {
             attempts.incrementAndGet();
             if (remainingFailures.getAndUpdate(value -> Math.max(0, value - 1)) > 0) {
                 return Mono.error(new TransientDataAccessResourceException("injected transient DB failure"));
             }
-            Mono<Void> append = super.append(event);
+            Mono<Boolean> enqueue = super.enqueue(sourceEventId, disputeId, applicationId,
+                    organizationId, finalDecision, workflowId);
             Sinks.One<Void> gate = transactionGate;
             if (gate == null) {
-                return append;
+                return enqueue;
             }
-            return append.then(Mono.defer(() -> {
+            return enqueue.then(Mono.defer(() -> {
                 transactionOpen.countDown();
                 return gate.asMono();
-            }));
+            })).thenReturn(true);
         }
 
-        void failNextAppends(int count) {
+        void failNextEnqueues(int count) {
             remainingFailures.set(count);
         }
 
-        int appendAttempts() {
+        int enqueueAttempts() {
             return attempts.get();
         }
 

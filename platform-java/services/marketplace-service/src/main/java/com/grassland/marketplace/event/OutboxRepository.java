@@ -140,7 +140,7 @@ public class OutboxRepository {
         return db.sql("""
                         SELECT payload->>'reason' AS reason FROM marketplace_outbox
                         WHERE event_type = 'ApplicationReservationFailed' AND aggregate_id = :appId
-                        ORDER BY id DESC LIMIT 1
+                        ORDER BY created_at DESC, id DESC LIMIT 1
                         """)
                 .bind("appId", applicationId)
                 .map(row -> row.get("reason", String.class))
@@ -152,7 +152,7 @@ public class OutboxRepository {
         return db.sql("""
                         SELECT event_type AS et, payload->>'reason' AS reason FROM marketplace_outbox
                         WHERE event_type IN ('EngagementSettled','SettlementHeld') AND aggregate_id = :appId
-                        ORDER BY id DESC LIMIT 1
+                        ORDER BY created_at DESC, id DESC LIMIT 1
                         """)
                 .bind("appId", applicationId)
                 .map(row -> {

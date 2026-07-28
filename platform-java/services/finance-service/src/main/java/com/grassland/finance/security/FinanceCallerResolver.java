@@ -68,6 +68,15 @@ public class FinanceCallerResolver {
                 .switchIfEmpty(Mono.error(new FinanceException(403, "无权操作该组织账户")));
     }
 
+    /** 仅指定服务 principal 且组织匹配。高价值内部编排命令不得由终端用户直接调用。 */
+    public Mono<Caller> requireServiceForOrg(
+            ServerHttpRequest request, String orgId, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> orgId.equals(c.organizationId())
+                        && c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "无权执行内部资金对账")));
+    }
+
     /**
      * 接受终端商家用户或指定服务 principal（org 由调用方按已加载资源自查）。供 Saga 跨服务 release
      * （release 的 org 在加载 reservation 后才知，故 org 校验留在 controller）。

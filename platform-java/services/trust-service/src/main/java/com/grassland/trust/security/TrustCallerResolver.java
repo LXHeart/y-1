@@ -88,6 +88,15 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "需要客服身份")));
     }
 
+    /** 仅指定服务 principal 且组织匹配。供权威对账读取，终端用户不可调用。 */
+    public Mono<Caller> requireServiceForOrg(
+            ServerHttpRequest request, String organizationId, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> organizationId.equals(c.organizationId())
+                        && c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new TrustException(403, "无权读取内部争议终局")));
+    }
+
     /** 接受终端商家或指定服务 principal（org 由调用方按已加载资源自查）。开放争议查询用（marketplace 调）。 */
     public Mono<Caller> resolveMerchantOrService(ServerHttpRequest request, String servicePrincipal) {
         return resolve(request)

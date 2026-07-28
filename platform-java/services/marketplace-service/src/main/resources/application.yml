@@ -88,6 +88,14 @@ marketplace:
     topic: ${MARKETPLACE_TRUST_CONSUMER_TOPIC:grassland.trust.events}
     group-id: ${MARKETPLACE_TRUST_CONSUMER_GROUP:marketplace-trust-consumer}
     auto-startup: ${MARKETPLACE_TRUST_CONSUMER_AUTOSTARTUP:true}
+  # 结算对账派发器（Slice 7B）：争议终局后确定性地启对账 workflow，确认资金到位才发布结算。
+  # dispatcher-enabled 默认开（生产）；测试基座关闭。redispatch-seconds 控制 started 行多久后可重派发。
+  reconciliation:
+    dispatcher-enabled: ${MARKETPLACE_RECONCILIATION_DISPATCHER_ENABLED:true}
+    poll-ms: ${MARKETPLACE_RECONCILIATION_POLL_MS:2000}
+    batch-size: ${MARKETPLACE_RECONCILIATION_BATCH_SIZE:16}
+    redispatch-seconds: ${MARKETPLACE_RECONCILIATION_REDISPATCH_SECONDS:30}
+    start-failure-backoff-seconds: ${MARKETPLACE_RECONCILIATION_START_FAILURE_BACKOFF_SECONDS:10}
 
 # BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
 identity-assertion:

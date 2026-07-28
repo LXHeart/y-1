@@ -45,62 +45,19 @@ public class EscrowController {
     private final OutboxRepository outbox;
     private final WalletRepository wallets;
     private final PlatformFeePolicy fees;
+    private final EscrowLifecycleService lifecycle;
 
     public EscrowController(FinanceCallerResolver callers, AccountRepository accounts,
                             ReservationRepository reservations, OutboxRepository outbox,
-                            WalletRepository wallets, PlatformFeePolicy fees) {
+                            WalletRepository wallets, PlatformFeePolicy fees,
+                            EscrowLifecycleService lifecycle) {
         this.callers = callers;
         this.accounts = accounts;
         this.reservations = reservations;
         this.outbox = outbox;
         this.wallets = wallets;
         this.fees = fees;
-    }
-
-    /**
-     * 分账：把 capture 下来的净额打进推荐官钱包 + 记流水 + 发 {@code SplitCompleted}。
-     *
-     * <p>无收款人（存量预留 / 非撮合场景）→ 原样返回，不动任何余额，与本次改动前行为一致。
-     */
-    private Mono<FundsReservation> splitToPayee(FundsReservation captured) {
-        if (captured.payeeAccountId() == null || captured.payoutCents() == null || captured.payoutCents() <= 0) {
-            return Mono.just(captured);
-        }
-        long payout = captured.payoutCents();
-        long fee = captured.amountCents() - payout;
-        return wallets.credit(captured.payeeAccountId(), payout)
-                .then(wallets.appendEntry(captured.payeeAccountId(), WalletEntryType.TASK_PAYOUT,
-                        payout, fee, captured.engagementRef(), "任务结算入账"))
-                .then(outbox.append(new EventEnvelope(
-                        UUID.randomUUID().toString(), "SplitCompleted", "FundsReservation",
-                        captured.id(), 1, Instant.now(), null,
-                        Map.of("engagementRef", String.valueOf(captured.engagementRef()),
-                                "payeeAccountId", captured.payeeAccountId(),
-                                "grossCents", captured.amountCents(),
-                                "payoutCents", payout,
-                                "platformFeeCents", fee))))
-                .thenReturn(captured);
-    }
-
-    /**
-     * 冲正前从推荐官钱包扣回已分账的净额（D-06：已 capture 后判商家胜诉）。
-     *
-     * <p>扣的是 {@code payoutCents} 而非 {@code amountCents}——推荐官本来就没拿到平台抽成那部分，
-     * 按毛额扣会多扣他一笔。钱包余额不足（多半是已提现）→ **409 中止整个冲正**，宁可挂起等人工处理，
-     * 也不能一边给商家退款一边让推荐官账上凭空少钱或变负。
-     */
-    private Mono<Void> clawbackFromPayee(FundsReservation reservation) {
-        if (reservation.payeeAccountId() == null || reservation.payoutCents() == null
-                || reservation.payoutCents() <= 0) {
-            return Mono.empty();
-        }
-        long payout = reservation.payoutCents();
-        return wallets.debit(reservation.payeeAccountId(), payout)
-                .switchIfEmpty(Mono.error(new FinanceException(409,
-                        "推荐官余额不足以冲正（可能已提现），需人工处理")))
-                .flatMap(wallet -> wallets.appendEntry(reservation.payeeAccountId(), WalletEntryType.CLAWBACK,
-                        -payout, 0, reservation.engagementRef(), "争议冲正扣回"))
-                .then();
+        this.lifecycle = lifecycle;
     }
 
     @PostMapping("/api/finance/accounts/{orgId}/credit")
@@ -154,12 +111,8 @@ public class EscrowController {
                             if (!"reserved".equals(r.status())) {
                                 return fail(409, "该预留已处理");
                             }
-                            return reservations.release(r.id())
-                                    .switchIfEmpty(fail(409, "该预留已处理"))
-                                    .flatMap(released -> accounts.credit(r.organizationId(), r.amountCents())
-                                            .thenReturn(released));
+                            return lifecycle.release(r);
                         })
-                        .flatMap(r -> outbox.append(reservationEnvelope("FundsReleased", r)).thenReturn(r))
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
     }
 
@@ -175,13 +128,8 @@ public class EscrowController {
                             if (!"reserved".equals(r.status())) {
                                 return fail(409, "该预留已处理");
                             }
-                            // 商家余额在 reserve 时已扣；这里把钱**分给推荐官**（无收款人则维持旧行为，钱留平台账）
-                            Long payout = r.payeeAccountId() == null ? null : fees.payoutFor(r.amountCents());
-                            return reservations.capture(r.id(), payout)
-                                    .switchIfEmpty(fail(409, "该预留已处理"))
-                                    .flatMap(this::splitToPayee);
+                            return lifecycle.capture(r);
                         })
-                        .flatMap(r -> outbox.append(reservationEnvelope("FundsCaptured", r)).thenReturn(r))
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
     }
 
@@ -199,15 +147,29 @@ public class EscrowController {
                             if (!"captured".equals(r.status())) {
                                 return fail(409, "该预留不可冲正（须 captured）");
                             }
-                            // 先从推荐官钱包扣回已分账的净额，再退商家——顺序反了就等于凭空造钱
-                            return clawbackFromPayee(r)
-                                    .then(reservations.reverse(r.id()))  // captured→refunded
-                                    .switchIfEmpty(fail(409, "该预留不可冲正（须 captured）"))
-                                    .flatMap(refunded -> accounts.credit(r.organizationId(), r.amountCents())  // 余额还原
-                                            .thenReturn(refunded));
+                            return lifecycle.reverse(r);
                         })
-                        .flatMap(r -> outbox.append(reservationEnvelope("FundsReversed", r)).thenReturn(r))
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
+    }
+
+    @PostMapping("/api/finance/reservations/{engagementRef}/reconcile")
+    public Mono<ResponseEntity<Map<String, Object>>> reconcile(
+            @PathVariable String engagementRef,
+            @RequestBody ReconciliationRequest body,
+            ServerHttpRequest request) {
+        return callers.requireServiceForOrg(
+                        request, body.organizationId(), FinanceCallerResolver.MARKETPLACE_SERVICE)
+                .flatMap(caller -> lifecycle.reconcile(
+                        body.organizationId(), engagementRef, body.finalDecision()))
+                .map(result -> {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("outcome", result.outcome());
+                    data.put("reason", result.reason());
+                    if (result.reservation() != null) {
+                        data.put("reservation", toBody(result.reservation()));
+                    }
+                    return ResponseEntity.ok(Map.of("success", true, "data", data));
+                });
     }
 
     private EventEnvelope reservationEnvelope(String eventType, FundsReservation r) {

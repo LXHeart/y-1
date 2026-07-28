@@ -2,13 +2,11 @@ package com.grassland.marketplace.event;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
+import com.grassland.marketplace.settlement.SettlementReconciliationRepository;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -21,19 +19,19 @@ public class TrustEventProcessor {
     private static final String DISPUTE_FINALIZED = "DisputeFinalized";
 
     private final InboxRepository inbox;
-    private final OutboxRepository outbox;
+    private final SettlementReconciliationRepository reconciliations;
     private final TransactionalOperator transactions;
     private final ObjectMapper mapper;
     private final String consumerName;
 
     public TrustEventProcessor(
             InboxRepository inbox,
-            OutboxRepository outbox,
+            SettlementReconciliationRepository reconciliations,
             TransactionalOperator transactions,
             ObjectMapper mapper,
             @Value("${marketplace.trust-consumer.group-id:marketplace-trust-consumer}") String consumerName) {
         this.inbox = inbox;
-        this.outbox = outbox;
+        this.reconciliations = reconciliations;
         this.transactions = transactions;
         this.mapper = mapper;
         this.consumerName = consumerName;
@@ -50,31 +48,24 @@ public class TrustEventProcessor {
             Mono<TrustEventProcessingResult> work = inbox
                     .recordIfAbsent(consumerName, record, envelope, payloadSha256)
                     .flatMap(inserted -> inserted
-                            ? appendDerivedEvent(envelope, payload)
+                            ? enqueueReconciliation(envelope, payload)
                             : Mono.just(TrustEventProcessingResult.DUPLICATE));
             return transactions.transactional(work);
         });
     }
 
-    private Mono<TrustEventProcessingResult> appendDerivedEvent(
+    /**
+     * 落一行对账请求（pending），**不**在此写 EngagementSettled——「争议终局」≠「钱已到位」。
+     * 由 {@code SettlementReconciliationDispatcher} 确定性地启动对账 workflow，核对 trust/finance 权威状态、
+     * 幂等补执行钱动作、确认后才写 EngagementSettled。workflow id 派生自 disputeId（一争议一对账）。
+     */
+    private Mono<TrustEventProcessingResult> enqueueReconciliation(
             TrustEventEnvelope source, DisputeFinalizedPayload payload) {
-        String derivedId = UUID.nameUUIDFromBytes(
-                        ("SettlementResolved:" + source.eventId()).getBytes(StandardCharsets.UTF_8))
-                .toString();
-        String decision = payload.finalDecision();
-        String reason = decision == null || decision.isBlank()
-                ? "adjudication"
-                : "adjudication:" + decision;
-        EventEnvelope derived = new EventEnvelope(
-                derivedId,
-                "EngagementSettled",
-                "TaskApplication",
-                payload.engagementRef(),
-                1,
-                Instant.now(),
-                source.eventId(),
-                Map.of("applicationId", payload.engagementRef(), "reason", reason));
-        return outbox.append(derived).thenReturn(TrustEventProcessingResult.PROCESSED);
+        String workflowId = "settlement-reconcile-" + payload.disputeId();
+        return reconciliations
+                .enqueue(source.eventId(), payload.disputeId(), payload.engagementRef(),
+                        payload.organizationId(), payload.finalDecision(), workflowId)
+                .thenReturn(TrustEventProcessingResult.PROCESSED);
     }
 
     private TrustEventEnvelope parseEnvelope(ConsumerRecord<String, String> record) {
@@ -105,8 +96,9 @@ public class TrustEventProcessor {
     private DisputeFinalizedPayload parseDisputeFinalized(TrustEventEnvelope envelope) {
         JsonNode payload = envelope.payload();
         return new DisputeFinalizedPayload(
-                optionalText(payload, "disputeId"),
+                requiredText(payload, "disputeId"),
                 requiredText(payload, "engagementRef"),
+                optionalText(payload, "organizationId"),
                 requiredText(payload, "finalDecision"));
     }
 

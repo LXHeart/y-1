@@ -44,6 +44,7 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
                         """)
                 .then()
                 .block();
+        db.sql("DELETE FROM settlement_reconciliation WHERE source_event_id LIKE 'slice7a-test-%'").then().block();
     }
 
     @Test
@@ -166,7 +167,7 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
     }
 
     @Test
-    void processorCommitsInboxAndDerivedOutboxAtomicallyAndDeduplicates() {
+    void processorCommitsInboxAndReconciliationAtomicallyAndDeduplicates() {
         ConsumerRecord<String, String> record = record("slice7a-test-process", "slice7a-app-42");
 
         StepVerifier.create(processor.process(record))
@@ -177,27 +178,41 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
                 .verifyComplete();
 
         assertThat(count("marketplace_inbox", "event_id", "slice7a-test-process")).isEqualTo(1L);
-        String derivedId = java.util.UUID.nameUUIDFromBytes("SettlementResolved:slice7a-test-process".getBytes()).toString();
-        assertThat(count("marketplace_outbox", "event_id", derivedId)).isEqualTo(1L);
+        assertThat(count("settlement_reconciliation", "source_event_id", "slice7a-test-process")).isEqualTo(1L);
+        // Slice 7B：消费侧不再写 EngagementSettled——由对账 workflow 确认资金后才写。
+        assertThat(outboxSettledCount("slice7a-app-42")).isZero();
     }
 
     @Test
-    void processorRollsBackInboxWhenDerivedOutboxAppendFails() {
-        OutboxRepository failingOutbox = new OutboxRepository(db) {
-            @Override
-            public Mono<Void> append(EventEnvelope event) {
-                return Mono.error(new IllegalStateException("outbox unavailable"));
-            }
-        };
+    void processorRollsBackInboxWhenReconciliationEnqueueFails() {
+        com.grassland.marketplace.settlement.SettlementReconciliationRepository failingReconciliations =
+                new com.grassland.marketplace.settlement.SettlementReconciliationRepository(db) {
+                    @Override
+                    public Mono<Boolean> enqueue(
+                            String sourceEventId, String disputeId, String applicationId,
+                            String organizationId, String finalDecision, String workflowId) {
+                        return Mono.error(new IllegalStateException("reconciliation unavailable"));
+                    }
+                };
         TrustEventProcessor failingProcessor = new TrustEventProcessor(
-                inbox, failingOutbox, transactions, new ObjectMapper(), CONSUMER_NAME);
+                inbox, failingReconciliations, transactions, new ObjectMapper(), CONSUMER_NAME);
         ConsumerRecord<String, String> record = record("slice7a-test-rollback", "slice7a-app-99");
 
         StepVerifier.create(failingProcessor.process(record))
-                .expectErrorMessage("outbox unavailable")
+                .expectErrorMessage("reconciliation unavailable")
                 .verify();
 
         assertThat(count("marketplace_inbox", "event_id", "slice7a-test-rollback")).isZero();
+        assertThat(count("settlement_reconciliation", "source_event_id", "slice7a-test-rollback")).isZero();
+    }
+
+    private long outboxSettledCount(String applicationId) {
+        return db.sql("SELECT count(*) AS c FROM marketplace_outbox"
+                        + " WHERE event_type = 'EngagementSettled' AND aggregate_id = :appId")
+                .bind("appId", applicationId)
+                .map(row -> row.get("c", Long.class))
+                .one()
+                .block();
     }
 
     private long count(String table, String column, String value) {

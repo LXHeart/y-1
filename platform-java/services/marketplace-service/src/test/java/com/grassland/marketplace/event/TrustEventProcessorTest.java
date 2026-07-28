@@ -10,10 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.UUID;
+import com.grassland.marketplace.settlement.SettlementReconciliationRepository;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -21,18 +20,18 @@ import reactor.test.StepVerifier;
 class TrustEventProcessorTest {
 
     private final InboxRepository inbox = mock(InboxRepository.class);
-    private final OutboxRepository outbox = mock(OutboxRepository.class);
+    private final SettlementReconciliationRepository reconciliations = mock(SettlementReconciliationRepository.class);
     private final TransactionalOperator transactions = mock(TransactionalOperator.class);
     private final TrustEventProcessor processor;
 
     TrustEventProcessorTest() {
         when(transactions.transactional(any(Mono.class))).thenAnswer(invocation -> invocation.getArgument(0));
         processor = new TrustEventProcessor(
-                inbox, outbox, transactions, new ObjectMapper(), "marketplace-trust-consumer");
+                inbox, reconciliations, transactions, new ObjectMapper(), "marketplace-trust-consumer");
     }
 
     @Test
-    void validDisputeFinalizedRecordsInboxAndDerivedOutbox() {
+    void validDisputeFinalizedEnqueuesReconciliationWithoutSettledOutbox() {
         ConsumerRecord<String, String> record = record(envelope("event-1", "DisputeFinalized", "app-42", "for_recommender"));
         when(inbox.recordIfAbsent(
                         eq("marketplace-trust-consumer"),
@@ -40,24 +39,23 @@ class TrustEventProcessorTest {
                         any(TrustEventEnvelope.class),
                         anyString()))
                 .thenReturn(Mono.just(true));
-        when(outbox.append(any())).thenReturn(Mono.empty());
+        when(reconciliations.enqueue(
+                        eq("event-1"), eq("d-1"), eq("app-42"), any(), eq("for_recommender"),
+                        eq("settlement-reconcile-d-1")))
+                .thenReturn(Mono.just(true));
 
         StepVerifier.create(processor.process(record))
                 .expectNext(TrustEventProcessingResult.PROCESSED)
                 .verifyComplete();
 
-        ArgumentCaptor<EventEnvelope> event = ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(outbox).append(event.capture());
-        assertThat(event.getValue().eventId())
-                .isEqualTo(UUID.nameUUIDFromBytes("SettlementResolved:event-1".getBytes()).toString());
-        assertThat(event.getValue().eventType()).isEqualTo("EngagementSettled");
-        assertThat(event.getValue().aggregateId()).isEqualTo("app-42");
-        assertThat(event.getValue().payload().get("reason"))
-                .isEqualTo("adjudication:for_recommender");
+        // 不再在消费侧写 EngagementSettled——由对账 workflow 确认资金后才写。
+        verify(reconciliations).enqueue(
+                eq("event-1"), eq("d-1"), eq("app-42"), any(), eq("for_recommender"),
+                eq("settlement-reconcile-d-1"));
     }
 
     @Test
-    void duplicateInboxRecordDoesNotAppendDerivedOutbox() {
+    void duplicateInboxRecordDoesNotEnqueue() {
         ConsumerRecord<String, String> record = record(envelope("event-1", "DisputeFinalized", "app-42", "for_merchant"));
         when(inbox.recordIfAbsent(
                         eq("marketplace-trust-consumer"),
@@ -70,7 +68,7 @@ class TrustEventProcessorTest {
                 .expectNext(TrustEventProcessingResult.DUPLICATE)
                 .verifyComplete();
 
-        verify(outbox, never()).append(any());
+        verify(reconciliations, never()).enqueue(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -82,7 +80,7 @@ class TrustEventProcessorTest {
                 .verifyComplete();
 
         verify(inbox, never()).recordIfAbsent(any(), any(), any(), any());
-        verify(outbox, never()).append(any());
+        verify(reconciliations, never()).enqueue(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -117,7 +115,7 @@ class TrustEventProcessorTest {
     void missingEventIdIsAContractError() {
         String json = """
                 {"eventType":"DisputeFinalized","aggregateType":"DisputeCase","aggregateId":"d-1",
-                 "payload":{"engagementRef":"app-42","finalDecision":"for_merchant"}}
+                 "payload":{"disputeId":"d-1","engagementRef":"app-42","finalDecision":"for_merchant"}}
                 """;
 
         StepVerifier.create(processor.process(record(json)))
@@ -135,6 +133,21 @@ class TrustEventProcessorTest {
                 .expectErrorSatisfies(error -> assertThat(error)
                         .isInstanceOf(EventContractException.class)
                         .hasMessageContaining("engagementRef"))
+                .verify();
+    }
+
+    @Test
+    void missingDisputeIdIsAContractError() {
+        // Slice 7B：disputeId 必填（对账 workflow id 派生自它）
+        String json = """
+                {"eventId":"event-x","eventType":"DisputeFinalized","aggregateType":"DisputeCase","aggregateId":"d-1",
+                 "payload":{"engagementRef":"app-42","finalDecision":"for_merchant"}}
+                """;
+
+        StepVerifier.create(processor.process(record(json)))
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(EventContractException.class)
+                        .hasMessageContaining("disputeId"))
                 .verify();
     }
 

@@ -59,12 +59,14 @@ public class ApplicationController {
     private final SubmissionRepository submissions;
     private final RatingRepository ratings;
     private final WorkflowClient workflowClient;
+    private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
     private final long settlementWindowSeconds;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
                                  SubmissionRepository submissions, RatingRepository ratings,
                                  WorkflowClient workflowClient,
+                                 com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
                                  @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds) {
         this.callers = callers;
         this.tasks = tasks;
@@ -73,6 +75,7 @@ public class ApplicationController {
         this.submissions = submissions;
         this.ratings = ratings;
         this.workflowClient = workflowClient;
+        this.reconciliations = reconciliations;
         this.settlementWindowSeconds = settlementWindowSeconds;
     }
 
@@ -367,14 +370,38 @@ public class ApplicationController {
                 Map.of("workflowId", wid, "applicationId", app.id(), "status", "settling"))));
     }
 
-    /** 映射 application 为结算结局：未确认→not_confirmed；有 settled/held 事件→对应；否则 settling。 */
+    /**
+     * 映射 application 为结算结局（Slice 7B 优先对账行）：
+     * <ul>
+     *   <li>未确认 → not_confirmed；</li>
+     *   <li>有对账行：reconciled→settled（钱已确认到位）、blocked/pending/started→held（reason 区分阻断/进行中）；</li>
+     *   <li>无对账行（无争议的正常结算）→ 回退 outbox 的 EngagementSettled/SettlementHeld，否则 settling。</li>
+     * </ul>
+     * 争议结算必须经对账确认才显 settled——避免「争议终局≠钱已到位」时误报已结算。
+     */
     private Mono<ResponseEntity<Map<String, Object>>> settlementOutcome(TaskApplication app) {
         if (app.confirmedAt() == null) {
             return Mono.just(ok(Map.of("status", "not_confirmed")));
         }
-        return outbox.latestSettlementStatus(app.id())
-                .map(this::ok)  // {status, reason?}
-                .defaultIfEmpty(ok(Map.of("status", "settling")));
+        return reconciliations.findLatestForApplication(app.id())
+                .map(this::reconciliationOutcome)
+                .switchIfEmpty(outbox.latestSettlementStatus(app.id())
+                        .map(this::ok)
+                        .defaultIfEmpty(ok(Map.of("status", "settling"))));
+    }
+
+    private ResponseEntity<Map<String, Object>> reconciliationOutcome(
+            com.grassland.marketplace.settlement.SettlementReconciliation rec) {
+        return switch (rec.status()) {
+            case "reconciled" -> {
+                String reason = rec.finalDecision() == null || rec.finalDecision().isBlank()
+                        ? "adjudication" : "adjudication:" + rec.finalDecision();
+                yield ok(Map.of("status", "settled", "reason", reason));
+            }
+            case "blocked" -> ok(Map.of("status", "held",
+                    "reason", rec.reason() == null ? "blocked" : rec.reason()));
+            default -> ok(Map.of("status", "held", "reason", "reconciliation_pending"));
+        };
     }
 
     /** 加载报名并校验属该 task + accepted：不存在/越界→404，非 accepted→409。 */
