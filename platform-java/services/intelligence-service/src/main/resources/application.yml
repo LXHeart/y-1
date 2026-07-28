@@ -8,10 +8,10 @@ spring:
       max-in-memory-size: 10MB
   webflux:
     multipart:
-      # generate-image：最多 4 张 × 5MB；大文件落临时盘，controller 再按字节严格校验。
+      # generate-image 最多 4 张；image-analysis/analyze 等最多 6 张图片 + 8 文本字段 = 14 parts。大文件落临时盘，controller 再按字节严格校验。
       max-in-memory-size: 32KB
       max-disk-usage-per-part: 5MB
-      max-parts: 12
+      max-parts: 16
       streaming: false
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}

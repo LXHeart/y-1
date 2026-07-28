@@ -46,7 +46,17 @@ class UpstreamResolverTest {
             new RouteProperties("POST", "/api/article-generation/generate-image", "intelligence", true, true),
             new RouteProperties("GET", "/api/article-generation/generated-images", "intelligence", true),
             // intelligence Slice 4：视频制作脚本精确切换；generate-video stub 仍 legacy
-            new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true, true)),
+            new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true, true),
+            // intelligence Slice 6：图片评价文案 9 端点精确切换（分三域回滚开关；前缀 /api/image-analysis 未整体路由）
+            new RouteProperties("POST", "/api/image-analysis/analyze", "intelligence", true, true),
+            new RouteProperties("POST", "/api/image-analysis/step/draft", "intelligence", true, true),
+            new RouteProperties("POST", "/api/image-analysis/step/optimize", "intelligence", true, true),
+            new RouteProperties("POST", "/api/image-analysis/step/style-refine", "intelligence", true, true),
+            new RouteProperties("GET", "/api/image-analysis/style-preferences", "intelligence", true, true),
+            new RouteProperties("PUT", "/api/image-analysis/style-preferences", "intelligence", true, true),
+            new RouteProperties("POST", "/api/image-analysis/style-preferences/optimize", "intelligence", true, true),
+            new RouteProperties("POST", "/api/image-analysis/save-style-memory", "intelligence", true, true),
+            new RouteProperties("POST", "/api/image-analysis/export-feishu", "intelligence", true, true)),
         "legacy");
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
@@ -174,8 +184,10 @@ class UpstreamResolverTest {
     void routesIntelligenceSmokeToIntelligenceAndKeepsLegacyAiOnLegacy() {
         assertThat(resolver.resolve("POST", "/api/intelligence/smoke/chat")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/intelligence/smoke/chat")).isTrue();
-        // 回归防护：脱口秀/文章文本端点已迁入 intelligence；图片评价等 legacy AI 工具仍走 legacy default upstream。
-        assertThat(resolver.resolve("POST", "/api/image-analysis/analyze")).isEqualTo(LEGACY);
+        // 回归防护：脱口秀/文章/图片评价/视频脚本已迁入 intelligence；抖音等 legacy AI 工具仍走 legacy default upstream。
+        assertThat(resolver.resolve("POST", "/api/douyin/extract")).isEqualTo(LEGACY);
+        // 图片评价未整体路由：精确 leaf 之外的子路径仍走 legacy。
+        assertThat(resolver.resolve("POST", "/api/image-analysis/unknown-leaf")).isEqualTo(LEGACY);
         // legacy 内部扣费端点（草场 intelligence → legacy credits，不经 BFF）即便经 BFF 也应落 legacy。
         assertThat(resolver.resolve("POST", "/api/internal/credits/consume")).isEqualTo(LEGACY);
     }
@@ -219,6 +231,28 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("POST", "/api/video-production/generate-script")).isTrue();
         // Seedance 集成仍是 legacy stub；精确路由不能抢走它。
         assertThat(resolver.resolve("POST", "/api/video-production/generate-video")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void routesImageAnalysisLeavesToIntelligenceWithoutStealingSiblings() {
+        // 9 精确叶子 → intelligence
+        assertThat(resolver.resolve("POST", "/api/image-analysis/analyze")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/step/draft")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/step/optimize")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/step/style-refine")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/image-analysis/style-preferences")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("PUT", "/api/image-analysis/style-preferences")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/style-preferences/optimize")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/save-style-memory")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/export-feishu")).isEqualTo(INTELLIGENCE);
+        // 内部上游 → 断言签发
+        assertThat(resolver.isInternalUpstream("POST", "/api/image-analysis/analyze")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/image-analysis/style-preferences")).isTrue();
+        // method+path 精确：兄弟/未知子路径不抢
+        assertThat(resolver.resolve("GET", "/api/image-analysis/style-preferences")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("DELETE", "/api/image-analysis/style-preferences")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/image-analysis/style-preferences/optimize/extra")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/image-analysis/unknown")).isEqualTo(LEGACY);
     }
 
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";

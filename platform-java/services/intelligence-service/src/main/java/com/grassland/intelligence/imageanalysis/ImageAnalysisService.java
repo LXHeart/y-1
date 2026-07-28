@@ -1,0 +1,308 @@
+package com.grassland.intelligence.imageanalysis;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.ChatMessage;
+import com.grassland.intelligence.ai.ContentPart;
+import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.imageanalysis.ImageAnalysisPrompts.ImageReviewInput;
+import com.grassland.intelligence.security.IntelligenceException;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+/**
+ * 图片评价生成编排（草场 intelligence Slice 6）。移植 legacy {@code image-analysis-dispatch.service.ts} +
+ * {@code qwen-provider.analyzeImages/draftStep/optimizeStep/styleRefineStep}。
+ *
+ * <p>{@link #analyze} 为多轮 pipeline（draft→optimize→可选 style-refine），每轮 {@link AiCapabilityAdapter#completeText}
+ * （非流式，解析 JSON 结果），发 {@code {type:progress}} 帧；{@link #draft} 单轮；{@link #optimize}/{@link #styleRefine} 单轮 JSON。
+ * 图片校验（MIME 白名单 + magic byte + 数量 + 单张 5MB）镜像 legacy {@code uploadedImageListSchema}，
+ * 在 Flux 订阅时执行（SSE headers 已提交→失败发 {@code {type:error}} 帧）。
+ *
+ * <p>与 legacy 的已知偏差：{@code completeText} 仅回 content，不暴露上游 {@code id}，故结果不带 {@code runId}（legacy 可选字段）。
+ */
+@Component
+public class ImageAnalysisService {
+
+    static final Duration GENERATION_TIMEOUT = Duration.ofSeconds(180); // 镜像 legacy VIDEO_ANALYSIS_API_TIMEOUT_MS
+    static final int OPTIMIZATION_ROUNDS = 1;
+    static final int MAX_IMAGES = 6;
+    static final int MAX_FILE_BYTES = 5 * 1024 * 1024;
+    static final Set<String> ALLOWED_MIME = Set.of("image/jpeg", "image/png", "image/webp");
+
+    private final AiCapabilityAdapter ai;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public ImageAnalysisService(AiCapabilityAdapter ai) {
+        this.ai = ai;
+    }
+
+    /** 多轮生成 → 事件流（progress/result，错误以 onError 信号抛出，由 controller 转 error 帧）。 */
+    public Flux<String> analyze(List<UploadedImage> images, ImageReviewInput input) {
+        return Flux.defer(() -> {
+            List<String> dataUrls = validateAndEncode(images);
+            boolean hasStyle = input.stylePreferences() != null && !input.stylePreferences().isBlank();
+            int totalRounds = 1 + OPTIMIZATION_ROUNDS + (hasStyle ? 1 : 0);
+            ImageAnalysisResult[] latest = new ImageAnalysisResult[]{null};
+
+            Flux<String> stages = Flux.range(0, totalRounds).concatMap(i -> {
+                int attempt = i + 1;
+                String stage = stageType(i, hasStyle);
+                String prevReview = latest[0] == null ? "" : latest[0].review();
+                Mono<Void> call = runStage(stage, dataUrls, input, prevReview, attempt)
+                        .doOnNext(result -> latest[0] = result)
+                        .then();
+                String message = describeStage(stage, attempt, totalRounds);
+                return Flux.concat(
+                        Mono.just(progressFrame(stage, attempt, totalRounds, message)),
+                        call.thenMany(Flux.<String>empty()));
+            });
+
+            return Flux.concat(
+                    Mono.just(prepareFrame(totalRounds, images.size())),
+                    stages,
+                    Mono.just(progressFrame("complete", totalRounds, totalRounds, "文案生成完成，正在返回结果")),
+                    Mono.fromSupplier(() -> resultFrame(latest[0], images.size())));
+        });
+    }
+
+    /** 单轮初稿（multipart 图片→SSE）。镜像 legacy {@code draftStep}。 */
+    public Flux<String> draft(List<UploadedImage> images, ImageReviewInput input) {
+        return Flux.defer(() -> {
+            List<String> dataUrls = validateAndEncode(images);
+            ImageAnalysisResult[] latest = new ImageAnalysisResult[]{null};
+            Mono<Void> call = completeMultimodal(dataUrls,
+                            ImageAnalysisPrompts.buildImageReviewPrompt(input), "图片评价生成")
+                    .doOnNext(result -> latest[0] = result)
+                    .then();
+            return Flux.concat(
+                    Mono.just(prepareFrame(1, images.size())),
+                    Mono.just(progressFrame("draft", 1, 1, describeStage("draft", 1, 1))),
+                    call.thenMany(Flux.<String>empty()),
+                    Mono.fromSupplier(() -> resultFrame(latest[0], images.size())));
+        });
+    }
+
+    /** 单轮润色（JSON 请求，previousReview 为待优化文案）。 */
+    public Mono<ImageAnalysisResult> optimize(String previousReview, ImageReviewInput input) {
+        return completeText(ImageAnalysisPrompts.buildImageReviewOptimizationPrompt(input, previousReview, 1), "图片评价润色");
+    }
+
+    /** 单轮风格优化（JSON 请求，注入用户风格偏好）。 */
+    public Mono<ImageAnalysisResult> styleRefine(String previousReview, ImageReviewInput input) {
+        return completeText(ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, previousReview), "图片评价风格优化");
+    }
+
+    private Mono<ImageAnalysisResult> runStage(String stage, List<String> dataUrls, ImageReviewInput input,
+                                               String prevReview, int attempt) {
+        return switch (stage) {
+            case "draft" -> completeMultimodal(dataUrls, ImageAnalysisPrompts.buildImageReviewPrompt(input), "图片评价生成");
+            case "optimize" -> completeMultimodal(dataUrls,
+                    ImageAnalysisPrompts.buildImageReviewOptimizationPrompt(input, prevReview, attempt), "图片评价润色");
+            case "style-refine" -> completeMultimodal(dataUrls,
+                    ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, prevReview), "图片评价风格优化");
+            default -> Mono.error(new IllegalStateException("unknown stage: " + stage));
+        };
+    }
+
+    private static String stageType(int index, boolean hasStyle) {
+        if (index == 0) {
+            return "draft";
+        }
+        if (hasStyle && index == 1 + OPTIMIZATION_ROUNDS) {
+            return "style-refine";
+        }
+        return "optimize";
+    }
+
+    private Mono<ImageAnalysisResult> completeMultimodal(List<String> dataUrls, String prompt, String label) {
+        List<ContentPart> parts = new ArrayList<>();
+        for (String url : dataUrls) {
+            parts.add(ContentPart.image(url));
+        }
+        parts.add(ContentPart.text(prompt));
+        return ai.completeText(new TextCompletionCommand(
+                List.of(ChatMessage.user(parts)), label + "失败，请稍后重试", GENERATION_TIMEOUT))
+                .map(this::parseResult);
+    }
+
+    private Mono<ImageAnalysisResult> completeText(String prompt, String label) {
+        return ai.completeText(new TextCompletionCommand(
+                List.of(ChatMessage.user(prompt)), label + "失败，请稍后重试", GENERATION_TIMEOUT))
+                .map(this::parseResult);
+    }
+
+    /** 镜像 legacy {@code normalizeImageAnalysisResult} + {@code parseJsonContent}：剥 code fence→解析→校验 review 非空。 */
+    ImageAnalysisResult parseResult(String content) {
+        String stripped = stripCodeFence(content == null ? "" : content).trim();
+        JsonNode node;
+        try {
+            node = mapper.readTree(stripped);
+        } catch (Exception e) {
+            throw new IntelligenceException(502, "图片评价生成服务返回了无法解析的内容");
+        }
+        if (!node.isObject()) {
+            throw new IntelligenceException(502, "图片评价生成服务返回了无效数据");
+        }
+        String review = optionalText(node.get("review"));
+        if (review == null) {
+            throw new IntelligenceException(502, "图片评价生成服务返回了空结果");
+        }
+        String title = optionalText(node.get("title"));
+        List<String> tags = null;
+        JsonNode tagsNode = node.get("tags");
+        if (tagsNode != null && tagsNode.isArray()) {
+            List<String> list = new ArrayList<>();
+            for (JsonNode t : tagsNode) {
+                if (t.isTextual()) {
+                    String text = t.asText().trim();
+                    if (!text.isEmpty()) {
+                        list.add(text);
+                    }
+                }
+            }
+            if (!list.isEmpty()) {
+                tags = List.copyOf(list);
+            }
+        }
+        return new ImageAnalysisResult(review, title, tags);
+    }
+
+    private static String optionalText(JsonNode node) {
+        if (node == null || node.isNull() || !node.isTextual()) {
+            return null;
+        }
+        String text = node.asText().trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private static String stripCodeFence(String text) {
+        int start = text.indexOf("```");
+        if (start < 0) {
+            return text;
+        }
+        int newline = text.indexOf('\n', start);
+        int contentStart = newline < 0 ? start + 3 : newline + 1;
+        int end = text.lastIndexOf("```");
+        if (end <= contentStart) {
+            return text;
+        }
+        return text.substring(contentStart, end);
+    }
+
+    /** 镜像 legacy {@code uploadedImageListSchema}：数量 1-6、MIME 白名单、magic byte、单张 5MB、文件名非空。 */
+    List<String> validateAndEncode(List<UploadedImage> images) {
+        if (images == null || images.isEmpty()) {
+            throw new IntelligenceException(400, "请至少上传 1 张图片");
+        }
+        if (images.size() > MAX_IMAGES) {
+            throw new IntelligenceException(400, "最多上传 6 张图片");
+        }
+        List<String> dataUrls = new ArrayList<>(images.size());
+        for (UploadedImage image : images) {
+            String name = image.originalName() == null ? "" : image.originalName().trim();
+            if (name.isEmpty()) {
+                throw new IntelligenceException(400, "缺少图片文件名");
+            }
+            String mime = image.mimeType() == null ? "" : image.mimeType().trim();
+            if (!ALLOWED_MIME.contains(mime)) {
+                throw new IntelligenceException(400, "仅支持 JPG、PNG、WebP 图片");
+            }
+            byte[] bytes = image.bytes();
+            if (bytes == null || bytes.length == 0 || bytes.length > MAX_FILE_BYTES) {
+                throw new IntelligenceException(400, "单张图片不能超过 5 MB");
+            }
+            if (!matchesSignature(mime, bytes)) {
+                throw new IntelligenceException(400, "图片文件内容与类型不匹配");
+            }
+            dataUrls.add("data:" + mime + ";base64," + Base64.getEncoder().encodeToString(bytes));
+        }
+        return List.copyOf(dataUrls);
+    }
+
+    private static boolean matchesSignature(String mime, byte[] bytes) {
+        return switch (mime) {
+            case "image/jpeg" -> bytes.length >= 3 && (bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8 && (bytes[2] & 0xff) == 0xff;
+            case "image/png" -> bytes.length >= 8 && (bytes[0] & 0xff) == 0x89 && (bytes[1] & 0xff) == 0x50
+                    && (bytes[2] & 0xff) == 0x4e && (bytes[3] & 0xff) == 0x47 && (bytes[4] & 0xff) == 0x0d
+                    && (bytes[5] & 0xff) == 0x0a && (bytes[6] & 0xff) == 0x1a && (bytes[7] & 0xff) == 0x0a;
+            case "image/webp" -> bytes.length >= 12 && ascii(bytes, 0, 4).equals("RIFF") && ascii(bytes, 8, 12).equals("WEBP");
+            default -> false;
+        };
+    }
+
+    private static String ascii(byte[] bytes, int from, int to) {
+        return new String(bytes, from, to - from, StandardCharsets.US_ASCII);
+    }
+
+    private static String describeStage(String stage, int attempt, int totalRounds) {
+        return switch (stage) {
+            case "draft" -> "正在分析图片并生成初稿（第 " + attempt + " / " + totalRounds + " 步）";
+            case "optimize" -> "正在润色文案口吻（第 " + attempt + " / " + totalRounds + " 步）";
+            default -> "正在根据个人风格偏好优化文案（第 " + attempt + " / " + totalRounds + " 步）";
+        };
+    }
+
+    private String prepareFrame(int totalRounds, int imageCount) {
+        Map<String, Object> event = baseProgress("prepare", null, totalRounds);
+        event.put("message", "已接收 " + imageCount + " 张图片，准备开始生成");
+        event.put("startedAt", Instant.now().toString());
+        return frame(event);
+    }
+
+    private String progressFrame(String stage, Integer attempt, int totalRounds, String message) {
+        Map<String, Object> event = baseProgress(stage, attempt, totalRounds);
+        event.put("message", message);
+        event.put("startedAt", Instant.now().toString());
+        return frame(event);
+    }
+
+    private static Map<String, Object> baseProgress(String stage, Integer attempt, int totalRounds) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("type", "progress");
+        event.put("stage", stage);
+        if (attempt != null) {
+            event.put("attempt", attempt);
+        }
+        event.put("totalAttempts", totalRounds);
+        return event;
+    }
+
+    private String resultFrame(ImageAnalysisResult result, int imageCount) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("review", result.review());
+        if (result.title() != null) {
+            data.put("title", result.title());
+        }
+        if (result.tags() != null) {
+            data.put("tags", result.tags());
+        }
+        data.put("imageCount", imageCount);
+        return frame(Map.of("type", "result", "data", data));
+    }
+
+    private String frame(Object event) {
+        try {
+            return mapper.writeValueAsString(event);
+        } catch (Exception e) {
+            return "{\"type\":\"error\",\"error\":\"评价生成失败，请稍后重试\"}";
+        }
+    }
+
+    /** 上传图片（multipart 解析后传入）。 */
+    public record UploadedImage(String mimeType, String originalName, byte[] bytes) {}
+
+    /** 图片评价生成结果（镜像 legacy {@code ImageAnalysisResult}；不含 runId）。 */
+    public record ImageAnalysisResult(String review, String title, List<String> tags) {}
+}
