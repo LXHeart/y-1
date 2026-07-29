@@ -97,6 +97,11 @@ edge:
     - path: /api/intelligence
       upstream: intelligence
       enabled: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:true}
+    # ---- media-reference（草场 Slice 8 第二步）→ intelligence-service。----
+    # 鉴权三步上传 / confirm / 签名读 / 删除审计；内部上游自动签发身份断言。
+    - path: /api/media
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_MEDIA_INTELLIGENCE:true}
     # ---- comedy 生成（草场 intelligence Slice 2）→ intelligence-service。路径沿用 legacy
     # /api/comedy-generation/generate-script，前端零改动；扣积分 + 李继刚 prompt 在 intelligence。
     # legacy 同名端点随本路由开启而退役（回滚：EDGE_ROUTE_COMEDY_INTELLIGENCE=false 即回退 legacy）。

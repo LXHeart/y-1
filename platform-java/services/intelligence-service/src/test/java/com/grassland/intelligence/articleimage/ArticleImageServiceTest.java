@@ -1,0 +1,129 @@
+package com.grassland.intelligence.articleimage;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.media.MediaOwner;
+import com.grassland.intelligence.media.MediaReference;
+import com.grassland.intelligence.media.MediaReferenceRepository;
+import com.grassland.intelligence.media.MediaStatus;
+import java.util.Base64;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Mono;
+
+/** ArticleImageService 生成图登记 media 资产的单元测试（草场 Slice 8 第二步，Part B）。 */
+@ExtendWith(MockitoExtension.class)
+class ArticleImageServiceTest {
+
+    private static final byte[] PNG = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 1, 2, 3};
+
+    @Mock
+    private AiCapabilityAdapter ai;
+    @Mock
+    private BingImageSearchClient search;
+    @Mock
+    private ImageGenerationClient generation;
+    @Mock
+    private GeneratedImageStore store;
+    @Mock
+    private MediaReferenceRepository mediaRefs;
+
+    @Captor
+    private ArgumentCaptor<MediaReference> mediaCaptor;
+
+    private ArticleImageService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new ArticleImageService(ai, search, generation, store, mediaRefs, 1800);
+    }
+
+    @Test
+    void generateRegistersMediaAssetWithOwnerAndMetadata() {
+        String b64 = Base64.getEncoder().encodeToString(PNG);
+        String objectKey = "article-generated/abc.png";
+        String id = UUID.randomUUID().toString();
+        when(generation.generate(any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "优化后")));
+        when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, objectKey)));
+        when(mediaRefs.insert(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0, MediaReference.class)));
+
+        GeneratedImageResponse response = service.generate(
+                new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
+                new MediaOwner("acct-1", "org-1")).block();
+
+        assertThat(response).isNotNull();
+        assertThat(response.imageUrl()).isEqualTo("/api/article-generation/generated-images/" + id);
+        verify(mediaRefs).insert(mediaCaptor.capture());
+        MediaReference media = mediaCaptor.getValue();
+        assertThat(media.id()).isEqualTo(UUID.fromString(id));
+        assertThat(media.ownerAccountId()).isEqualTo("acct-1");
+        assertThat(media.organizationId()).isEqualTo("org-1");
+        assertThat(media.objectKey()).isEqualTo(objectKey);
+        assertThat(media.mimeType()).isEqualTo("image/png");
+        assertThat(media.sizeBytes()).isEqualTo(PNG.length);
+        assertThat(media.source()).isEqualTo("generated");
+        assertThat(media.status()).isEqualTo(MediaStatus.ACTIVE);
+        assertThat(media.checksum()).hasSize(64); // sha256 hex
+        assertThat(media.expiresAt()).isNotNull();
+    }
+
+    @Test
+    void generateRejectsProviderUrlThatCannotEnterManagedStorage() {
+        when(generation.generate(any(), any())).thenReturn(
+                Mono.just(new GeneratedImage("https://cdn.example/x.png", null, "p")));
+
+        assertThatThrownBy(() -> service.generate(
+                        new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
+                        new MediaOwner("acct-1", null)).block())
+                .isInstanceOfSatisfying(com.grassland.intelligence.security.IntelligenceException.class,
+                        error -> assertThat(error.status()).isEqualTo(502));
+
+        verify(store, never()).store(any());
+        verify(mediaRefs, never()).insert(any());
+    }
+
+    @Test
+    void generateFailsAfterRegistrationRetriesInsteadOfReturningBareObject() {
+        String b64 = Base64.getEncoder().encodeToString(PNG);
+        String id = UUID.randomUUID().toString();
+        when(generation.generate(any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
+        when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, "k")));
+        when(mediaRefs.insert(any())).thenReturn(Mono.error(new RuntimeException("db down")));
+
+        assertThatThrownBy(() -> service.generate(
+                        new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
+                        new MediaOwner("acct-1", null)).block())
+                .hasMessage("db down");
+        verify(mediaRefs, org.mockito.Mockito.times(3)).insert(any());
+    }
+
+    @Test
+    void localFallbackSkipsPersistentMediaRegistration() {
+        String b64 = Base64.getEncoder().encodeToString(PNG);
+        String id = UUID.randomUUID().toString();
+        when(generation.generate(any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
+        when(store.store(b64)).thenReturn(
+                Mono.just(new GeneratedImageStore.StoredRef(id, id + ".png", false)));
+
+        GeneratedImageResponse response = service.generate(
+                new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
+                new MediaOwner("acct-1", null)).block();
+
+        assertThat(response).isNotNull();
+        assertThat(response.imageUrl()).endsWith(id);
+        verify(mediaRefs, never()).insert(any());
+    }
+}

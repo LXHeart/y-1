@@ -40,10 +40,11 @@ class S3GeneratedImageStoreTest {
     void store_putsObjectUnderKeyPrefixAndReturnsUuid() {
         S3GeneratedImageStore store = newStore("article-generated");
 
-        String id = store.store(Base64.getEncoder().encodeToString(PNG)).block();
+        GeneratedImageStore.StoredRef ref = store.store(Base64.getEncoder().encodeToString(PNG)).block();
 
-        assertThat(id).matches("[0-9a-f-]{36}");
-        verify(storage).putObject("article-generated/" + id + ".png", PNG, "image/png");
+        assertThat(ref.id()).matches("[0-9a-f-]{36}");
+        assertThat(ref.objectKey()).isEqualTo("article-generated/" + ref.id() + ".png");
+        verify(storage).putObject("article-generated/" + ref.id() + ".png", PNG, "image/png");
     }
 
     @Test

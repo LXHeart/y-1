@@ -2,6 +2,7 @@ package com.grassland.intelligence.articleimage;
 
 import com.grassland.intelligence.articleimage.ArticleImageService.GenerateCommand;
 import com.grassland.intelligence.articleimage.ArticleImageService.RecommendCommand;
+import com.grassland.intelligence.media.MediaOwner;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
@@ -70,17 +71,19 @@ public class ArticleImageController {
     public Mono<Map<String, Object>> generateJson(
             @RequestBody GenerateJsonRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> images.generate(new GenerateCommand(
-                        body.prompt(), body.size(), List.of())))
+                .flatMap(caller -> images.generate(
+                        new GenerateCommand(body.prompt(), body.size(), List.of()),
+                        new MediaOwner(caller.accountId(), caller.organizationId())))
                 .map(ArticleImageController::success);
     }
 
     @PostMapping(value = "/generate-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<Map<String, Object>> generateMultipart(ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .then(exchange.getMultipartData())
-                .flatMap(this::parseMultipart)
-                .flatMap(images::generate)
+                .flatMap(caller -> exchange.getMultipartData()
+                        .flatMap(this::parseMultipart)
+                        .flatMap(cmd -> images.generate(
+                                cmd, new MediaOwner(caller.accountId(), caller.organizationId()))))
                 .map(ArticleImageController::success);
     }
 

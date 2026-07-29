@@ -6,11 +6,22 @@ import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.media.MediaChecksums;
+import com.grassland.intelligence.media.MediaOwner;
+import com.grassland.intelligence.media.MediaPurpose;
+import com.grassland.intelligence.media.MediaReference;
+import com.grassland.intelligence.media.MediaReferenceRepository;
+import com.grassland.intelligence.media.MediaStatus;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -19,6 +30,7 @@ import reactor.core.publisher.Mono;
 @Service
 public class ArticleImageService {
 
+    private static final Logger log = LoggerFactory.getLogger(ArticleImageService.class);
     private static final Duration CHAT_TIMEOUT = Duration.ofSeconds(30);
     private static final String GENERATED_PREFIX = "/api/article-generation/generated-images/";
 
@@ -26,17 +38,23 @@ public class ArticleImageService {
     private final BingImageSearchClient search;
     private final ImageGenerationClient generation;
     private final GeneratedImageStore store;
+    private final MediaReferenceRepository mediaRefs;
+    private final Duration generatedTtl;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public ArticleImageService(
             AiCapabilityAdapter ai,
             BingImageSearchClient search,
             ImageGenerationClient generation,
-            GeneratedImageStore store) {
+            GeneratedImageStore store,
+            MediaReferenceRepository mediaRefs,
+            @Value("${article-images.generated.ttl-seconds:1800}") long generatedTtlSeconds) {
         this.ai = ai;
         this.search = search;
         this.generation = generation;
         this.store = store;
+        this.mediaRefs = mediaRefs;
+        this.generatedTtl = Duration.ofSeconds(generatedTtlSeconds);
     }
 
     public Mono<ImageRecommendation> recommend(RecommendCommand command) {
@@ -52,7 +70,7 @@ public class ArticleImageService {
         return search.search(keywords, count);
     }
 
-    public Mono<GeneratedImageResponse> generate(GenerateCommand command) {
+    public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner) {
         Mono<String> prompt = command.images().isEmpty()
                 ? Mono.just(command.prompt())
                 : Flux.fromIterable(command.images())
@@ -60,7 +78,7 @@ public class ArticleImageService {
                         .collectList()
                         .map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
         return prompt.flatMap(value -> generation.generate(value, command.size()))
-                .flatMap(this::toResponse);
+                .flatMap(generated -> toResponse(generated, owner));
     }
 
     public Mono<GeneratedImageStore.StoredImage> findGenerated(String id) {
@@ -79,12 +97,52 @@ public class ArticleImageService {
         return ai.completeText(command);
     }
 
-    private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated) {
+    private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated, MediaOwner owner) {
         if (generated.imageUrl() != null) {
-            return Mono.just(new GeneratedImageResponse(generated.imageUrl(), generated.revisedPrompt()));
+            return Mono.error(new IntelligenceException(502, "图片生成服务未返回可托管的图片数据"));
         }
         return store.store(generated.base64())
-                .map(id -> new GeneratedImageResponse(GENERATED_PREFIX + id, generated.revisedPrompt()));
+                .flatMap(ref -> registerGeneratedMedia(ref, generated.base64(), owner)
+                        .thenReturn(new GeneratedImageResponse(GENERATED_PREFIX + ref.id(), generated.revisedPrompt())));
+    }
+
+    /**
+     * 把生成的图片登记为 media 资产（草场 Slice 8 第二步）：S3 受管对象必须登记成功后才向调用方返回；
+     * 本地临时兜底（managed=false）跳过持久登记，避免文件 TTL 与 DB 行生命周期脱节。
+     * 公开读路径 {@code /generated-images/{id}} 不查此行，字节级契约不变。
+     */
+    private Mono<Void> registerGeneratedMedia(GeneratedImageStore.StoredRef ref, String base64, MediaOwner owner) {
+        if (!ref.managed()) {
+            return Mono.empty();
+        }
+        byte[] bytes;
+        try {
+            bytes = Base64.getDecoder().decode(base64);
+        } catch (Exception ignored) {
+            return Mono.error(new IntelligenceException(502, "图片生成服务返回了无效图片数据"));
+        }
+        MediaReference media = new MediaReference(
+                UUID.fromString(ref.id()),
+                owner.accountId(),
+                owner.organizationId(),
+                MediaPurpose.ARTICLE_GENERATED.db(),
+                null,
+                null,
+                ref.objectKey(),
+                "image/png",
+                bytes.length,
+                MediaChecksums.sha256(bytes),
+                "generated",
+                MediaStatus.ACTIVE,
+                null,
+                Instant.now().plus(generatedTtl),
+                null);
+        return Mono.defer(() -> mediaRefs.insert(media))
+                .retry(2)
+                .doOnError(error -> log.error(
+                        "generated image media registration failed: imageId={}, objectKey={}",
+                        ref.id(), ref.objectKey(), error))
+                .then();
     }
 
     private ImageRecommendation parseRecommendation(String raw) {

@@ -68,10 +68,10 @@ class S3GeneratedImageStoreIT {
         S3GeneratedImageStore store = newStore();
         byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 1, 2, 3};
 
-        String id = store.store(Base64.getEncoder().encodeToString(png)).block();
+        GeneratedImageStore.StoredRef ref = store.store(Base64.getEncoder().encodeToString(png)).block();
 
-        assertThat(id).matches("[0-9a-f-]{36}");
-        GeneratedImageStore.StoredImage result = store.find(id).block();
+        assertThat(ref.id()).matches("[0-9a-f-]{36}");
+        GeneratedImageStore.StoredImage result = store.find(ref.id()).block();
         assertThat(result).isNotNull();
         assertThat(result.bytes()).isEqualTo(png);
     }

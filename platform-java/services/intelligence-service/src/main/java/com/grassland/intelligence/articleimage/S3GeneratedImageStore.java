@@ -53,11 +53,11 @@ public class S3GeneratedImageStore implements GeneratedImageStore {
     }
 
     @Override
-    public Mono<String> store(String base64) {
+    public Mono<GeneratedImageStore.StoredRef> store(String base64) {
         return Mono.fromCallable(() -> {
                     String id = UUID.randomUUID().toString();
                     storage.putObject(keyOf(id), Base64.getDecoder().decode(base64), CONTENT_TYPE);
-                    return id;
+                    return new GeneratedImageStore.StoredRef(id, keyOf(id));
                 })
                 .subscribeOn(Schedulers.boundedElastic());
     }

@@ -39,7 +39,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
         when(images.search(anyString(), anyInt())).thenReturn(Mono.just(List.of(
                 new ImageSearchResult("https://cdn.example/a.jpg", "https://cdn.example/t.jpg",
                         null, "图A", 100, 80))));
-        when(images.generate(any())).thenReturn(Mono.just(
+        when(images.generate(any(), any())).thenReturn(Mono.just(
                 new GeneratedImageResponse("https://cdn.example/generated.png", "优化后")));
     }
 
@@ -101,7 +101,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.imageUrl").isEqualTo("https://cdn.example/generated.png");
 
-        verify(images).generate(any());
+        verify(images).generate(any(), any());
         verify(credits, never()).consume(any(), any());
     }
 
@@ -114,7 +114,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of("prompt", "现代商务插画"))
                 .exchange().expectStatus().isOk();
 
-        verify(images).generate(any());
+        verify(images).generate(any(), any());
     }
 
     @Test

@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +17,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -62,12 +64,14 @@ class S3ObjectStorageAdapterUnitTest {
         when(presigned.url()).thenReturn(URI.create("http://localhost:9000/grassland/k").toURL());
         when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presigned);
 
-        UploadTicket ticket = adapter.presignUpload(new PresignRequest("k", "image/png", 60, Map.of()));
+        UploadTicket ticket = adapter.presignUpload(new PresignRequest("k", "image/png", 60, Map.of(), 42L));
 
         assertThat(ticket.objectKey()).isEqualTo("k");
         assertThat(ticket.method()).isEqualTo("PUT");
         assertThat(ticket.uploadUrl().toString()).contains("grassland", "k");
         assertThat(ticket.headers()).containsEntry("Content-Type", "image/png");
+        verify(s3Presigner).presignPutObject(argThat((PutObjectPresignRequest req) ->
+                Long.valueOf(42L).equals(req.putObjectRequest().contentLength())));
     }
 
     @Test
@@ -128,6 +132,37 @@ class S3ObjectStorageAdapterUnitTest {
         assertThat(result.get(0).contentType()).isNull();
         assertThat(result.get(0).lastModified()).isEqualTo(Instant.EPOCH);
         assertThat(result.get(1).key()).isEqualTo("prefix/b.png");
+    }
+
+    @Test
+    void listObjects_followsContinuationTokensUntilComplete() {
+        S3Object first = mock(S3Object.class);
+        when(first.key()).thenReturn("prefix/first.png");
+        when(first.size()).thenReturn(7L);
+        when(first.eTag()).thenReturn("e1");
+        when(first.lastModified()).thenReturn(Instant.EPOCH);
+        S3Object second = mock(S3Object.class);
+        when(second.key()).thenReturn("prefix/second.png");
+        when(second.size()).thenReturn(3L);
+
+        ListObjectsV2Response firstPage = mock(ListObjectsV2Response.class);
+        when(firstPage.contents()).thenReturn(List.of(first));
+        when(firstPage.isTruncated()).thenReturn(true);
+        when(firstPage.nextContinuationToken()).thenReturn("page-2");
+        ListObjectsV2Response secondPage = mock(ListObjectsV2Response.class);
+        when(secondPage.contents()).thenReturn(List.of(second));
+        when(secondPage.isTruncated()).thenReturn(false);
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(firstPage, secondPage);
+
+        List<StoredObject> result = adapter.listObjects("prefix/");
+
+        assertThat(result).extracting(StoredObject::key)
+                .containsExactly("prefix/first.png", "prefix/second.png");
+        ArgumentCaptor<ListObjectsV2Request> captor = ArgumentCaptor.forClass(ListObjectsV2Request.class);
+        verify(s3Client, times(2)).listObjectsV2(captor.capture());
+        assertThat(captor.getAllValues()).extracting(ListObjectsV2Request::continuationToken)
+                .containsExactly(null, "page-2");
+        assertThat(captor.getAllValues()).allMatch(req -> "prefix/".equals(req.prefix()));
     }
 
     @Test

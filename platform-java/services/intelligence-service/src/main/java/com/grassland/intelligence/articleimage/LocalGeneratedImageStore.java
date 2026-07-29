@@ -46,14 +46,14 @@ public class LocalGeneratedImageStore implements GeneratedImageStore {
     }
 
     @Override
-    public Mono<String> store(String base64) {
+    public Mono<GeneratedImageStore.StoredRef> store(String base64) {
         return Mono.fromCallable(() -> {
                     Files.createDirectories(directory);
                     String id = UUID.randomUUID().toString();
                     Path path = directory.resolve(id + ".png");
                     Files.write(path, Base64.getDecoder().decode(base64));
                     Files.setLastModifiedTime(path, FileTime.from(clock.instant()));
-                    return id;
+                    return new GeneratedImageStore.StoredRef(id, id + ".png", false);
                 })
                 .subscribeOn(Schedulers.boundedElastic());
     }

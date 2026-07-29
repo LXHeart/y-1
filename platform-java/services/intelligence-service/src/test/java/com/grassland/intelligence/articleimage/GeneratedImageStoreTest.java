@@ -26,7 +26,8 @@ class GeneratedImageStoreTest {
         MutableClock clock = new MutableClock(Instant.parse("2026-07-28T10:00:00Z"));
         GeneratedImageStore store = new LocalGeneratedImageStore(directory, clock, Duration.ofMinutes(30));
 
-        String id = store.store(Base64.getEncoder().encodeToString(PNG)).block();
+        GeneratedImageStore.StoredRef ref = store.store(Base64.getEncoder().encodeToString(PNG)).block();
+        String id = ref.id();
         GeneratedImageStore.StoredImage result = store.find(id).block();
 
         assertThat(id).matches("[0-9a-f-]{36}");
@@ -39,7 +40,8 @@ class GeneratedImageStoreTest {
     void expiresImageAfterThirtyMinutes() {
         MutableClock clock = new MutableClock(Instant.parse("2026-07-28T10:00:00Z"));
         GeneratedImageStore store = new LocalGeneratedImageStore(directory, clock, Duration.ofMinutes(30));
-        String id = store.store(Base64.getEncoder().encodeToString(PNG)).block();
+        GeneratedImageStore.StoredRef ref = store.store(Base64.getEncoder().encodeToString(PNG)).block();
+        String id = ref.id();
 
         clock.advance(Duration.ofMinutes(31));
 

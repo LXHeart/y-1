@@ -53,24 +53,38 @@ class ImageGenerationClientTest {
     }
 
     @Test
-    @DisplayName("images/generations wire contract includes model prompt n and size")
+    @DisplayName("images/generations requests b64_json so every result can enter managed storage")
     void generatesImageUsingOpenAiImagesContract() {
         wireMock.stubFor(post(urlEqualTo("/images/generations"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
                         .withBody("""
-                                {"data":[{"url":"https://images.example/generated.png","revised_prompt":"优化后"}]}
+                                {"data":[{"b64_json":"iVBORw0KGgo=","revised_prompt":"优化后"}]}
                                 """)));
 
         GeneratedImage result = client.generate("原始提示词", "1024x1024").block(Duration.ofSeconds(2));
 
-        assertThat(result).isEqualTo(new GeneratedImage(
-                "https://images.example/generated.png", null, "优化后"));
+        assertThat(result).isEqualTo(new GeneratedImage(null, "iVBORw0KGgo=", "优化后"));
         wireMock.verify(postRequestedFor(urlEqualTo("/images/generations"))
                 .withHeader("Authorization", equalTo("Bearer image-key"))
                 .withRequestBody(containing("\"model\":\"wanx-v1\""))
                 .withRequestBody(containing("\"prompt\":\"原始提示词\""))
                 .withRequestBody(containing("\"n\":1"))
-                .withRequestBody(containing("\"size\":\"1024x1024\"")));
+                .withRequestBody(containing("\"size\":\"1024x1024\""))
+                .withRequestBody(containing("\"response_format\":\"b64_json\"")));
+    }
+
+    @Test
+    @DisplayName("URL-only provider response is rejected instead of bypassing managed media storage")
+    void rejectsUrlOnlyImageResult() {
+        wireMock.stubFor(post(urlEqualTo("/images/generations"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"data":[{"url":"https://images.example/generated.png"}]}
+                                """)));
+
+        assertThatThrownBy(() -> client.generate("提示词", "1024x1024").block(Duration.ofSeconds(2)))
+                .isInstanceOfSatisfying(IntelligenceException.class,
+                        error -> assertThat(error.status()).isEqualTo(502));
     }
 
     @Test

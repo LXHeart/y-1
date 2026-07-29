@@ -6,6 +6,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,9 @@ public final class S3ObjectStorageAdapter implements ObjectStorageAdapter {
         if (request.contentType() != null && !request.contentType().isBlank()) {
             objBuilder.contentType(request.contentType());
         }
+        if (request.contentLength() != null) {
+            objBuilder.contentLength(request.contentLength());
+        }
         if (!request.metadata().isEmpty()) {
             objBuilder.metadata(request.metadata());
         }
@@ -161,13 +165,23 @@ public final class S3ObjectStorageAdapter implements ObjectStorageAdapter {
 
     @Override
     public List<StoredObject> listObjects(String prefix) {
-        ListObjectsV2Response resp = s3Client.listObjectsV2(ListObjectsV2Request.builder()
-                .bucket(properties.bucket())
-                .prefix(prefix)
-                .build());
-        return resp.contents().stream()
-                .map(S3ObjectStorageAdapter::toStoredObject)
-                .toList();
+        List<StoredObject> objects = new ArrayList<>();
+        String continuationToken = null;
+        do {
+            ListObjectsV2Request request = ListObjectsV2Request.builder()
+                    .bucket(properties.bucket())
+                    .prefix(prefix)
+                    .continuationToken(continuationToken)
+                    .build();
+            ListObjectsV2Response response = s3Client.listObjectsV2(request);
+            response.contents().stream()
+                    .map(S3ObjectStorageAdapter::toStoredObject)
+                    .forEach(objects::add);
+            continuationToken = Boolean.TRUE.equals(response.isTruncated())
+                    ? response.nextContinuationToken()
+                    : null;
+        } while (continuationToken != null && !continuationToken.isBlank());
+        return List.copyOf(objects);
     }
 
     /**

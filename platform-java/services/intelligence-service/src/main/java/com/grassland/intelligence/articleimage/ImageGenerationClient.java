@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.security.IntelligenceException;
 import io.netty.channel.ChannelOption;
-import java.net.URI;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -67,19 +66,19 @@ public class ImageGenerationClient {
         body.put("prompt", prompt);
         body.put("n", 1);
         body.put("size", size);
+        body.put("response_format", "b64_json");
         return body;
     }
 
     private GeneratedImage parseResult(String json) {
         try {
             JsonNode first = mapper.readTree(json).path("data").path(0);
-            String imageUrl = httpsUrl(first.path("url").asText(null));
             String base64 = validBase64(first.path("b64_json").asText(null));
-            if (imageUrl == null && base64 == null) {
+            if (base64 == null) {
                 throw invalidResult();
             }
             return new GeneratedImage(
-                    imageUrl,
+                    null,
                     base64,
                     nonBlank(first.path("revised_prompt").asText(null)));
         } catch (IntelligenceException error) {
@@ -104,19 +103,6 @@ public class ImageGenerationClient {
 
     private static IntelligenceException invalidResult() {
         return new IntelligenceException(502, "图片生成服务返回了无效图片数据");
-    }
-
-    private static String httpsUrl(String raw) {
-        String value = nonBlank(raw);
-        if (value == null) {
-            return null;
-        }
-        try {
-            URI uri = URI.create(value);
-            return "https".equalsIgnoreCase(uri.getScheme()) ? uri.toString() : null;
-        } catch (Exception error) {
-            return null;
-        }
     }
 
     private static boolean isTimeout(Throwable error) {
