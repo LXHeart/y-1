@@ -25,6 +25,7 @@ dependencies {
     implementation("org.postgresql:postgresql")
 
     testImplementation(libs.spring.boot.test)
+    testImplementation("org.wiremock:wiremock-standalone:3.9.2")
     testImplementation(libs.reactor.test)
     testImplementation(libs.temporal.testing)
     testImplementation(platform(libs.testcontainers.bom))

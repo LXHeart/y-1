@@ -1,20 +1,27 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
+import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.saga.ReserveResult;
+import java.net.URI;
+import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 
@@ -39,6 +46,14 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** 争议检查替身（Slice 6A）：默认 false（无争议→settled）；held 用例桩 true。真实现 HttpDisputeChecker 调 trust。 */
     @MockitoBean
     private com.grassland.marketplace.workflow.saga.DisputeChecker disputeChecker;
+
+    /** intelligence media 中转边界替身（Slice 11 Stage 2）：按用例桩 metadata/downloadUrl。真实现 IntelligenceMediaClient 调 intelligence。 */
+    @MockitoBean
+    private IntelligenceMediaClient mediaClient;
+
+    /** 附件挂接 spy（Slice 11 Stage 2）：默认透传真实实现；原子性用例注入 attach 失败验证零残留。 */
+    @MockitoSpyBean
+    private SubmissionAttachmentRepository attachmentRepo;
 
     // ---------- apply ----------
 
@@ -421,6 +436,185 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    // ---------- 履约交付物附件（Slice 11 Stage 2） ----------
+
+    /** 非资金型任务建一份已接受报名（附件测试用，避开资金 Saga）。返回 {merchant, org, task, app}。 */
+    private String[] acceptedNonMonetary(String recommender) {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        String app = apply(recommender, task);
+        accept(merchant, task, app);
+        return new String[]{merchant, org, task, app};
+    }
+
+    private IntelligenceMediaClient.MediaMetadata mediaMeta(UUID id, String owner) {
+        return new IntelligenceMediaClient.MediaMetadata(
+                id, owner, "engagement_attachment", "active", "image/png", 1234L,
+                Instant.parse("2026-12-31T00:00:00Z"));
+    }
+
+    @Test
+    void submitWithAttachmentsCreatesRowsAndEvent() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        UUID m2 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.metadata(org, m2)).thenReturn(Mono.just(mediaMeta(m2, rec)));
+
+        Map<String, Object> data = submitWithMedia(rec, task, app, List.of(m1.toString(), m2.toString()));
+        String submissionId = (String) data.get("id");
+
+        assertThat(((List<?>) data.get("attachments"))).hasSize(2);
+        assertThat(submissionCount(app)).isEqualTo(1);
+        assertThat(attachmentCount(submissionId)).isEqualTo(2);
+        // outbox 事件携带 mediaIds
+        assertThat(outboxMediaIds(submissionId)).contains(m1.toString(), m2.toString());
+    }
+
+    /** IDOR：挂接他人附件 → 403，且无 submission/附件残留（校验在事务外，本就不写）。 */
+    @Test
+    void submitRejectsForeignAttachmentNoResidue() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        // metadata 放行（purpose/active 合法）但 owner 是别人 → IDOR 守卫 403
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, UUID.randomUUID().toString())));
+
+        submitWithMediaRaw(rec, task, app, List.of(m1.toString())).expectStatus().isForbidden();
+
+        assertThat(submissionCount(app)).isZero();
+        assertThat(attachmentCountForApp(app)).isZero();
+    }
+
+    /** media 不可用（intelligence 已过滤 purpose 不符/非活跃/过期/已删 → 404→empty）→ 404，无残留。 */
+    @Test
+    void submitRejectsUnavailableAttachment() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.empty());  // intelligence 404
+
+        submitWithMediaRaw(rec, task, app, List.of(m1.toString())).expectStatus().isNotFound();
+        assertThat(submissionCount(app)).isZero();
+    }
+
+    /** 附件超量（7 > 6）→ 400（CreateSubmissionRequest 构造器抛 IllegalArgumentException→400）。 */
+    @Test
+    void submitRejectsTooManyAttachments() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+        List<String> seven = java.util.stream.Stream.generate(UUID::randomUUID)
+                .limit(7).map(UUID::toString).toList();
+        submitWithMediaRaw(rec, task, app, seven).expectStatus().isBadRequest();
+    }
+
+    /** 无附件回归：mediaIds 省略仍可提交，attachments 为空。 */
+    @Test
+    void submitWithoutAttachmentsStillWorks() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+        Map<String, Object> data = submitWithMedia(rec, task, app, List.of());
+        assertThat(((List<?>) data.get("attachments"))).isEmpty();
+    }
+
+    @Test
+    void listSubmissionsIncludesAttachments() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(rec, "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.submissions[0].id").isEqualTo(submissionId)
+                .jsonPath("$.data.submissions[0].attachments[0].mediaId").isEqualTo(m1.toString())
+                .jsonPath("$.data.submissions[0].attachments[0].mimeType").isEqualTo("image/png");
+    }
+
+    /** 下载 URL：owner 与提交人都可见，外人 403。 */
+    @Test
+    void downloadUrlAuthorizedForOwnerAndSubmitter() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.downloadUrl(org, m1)).thenReturn(Mono.just(new IntelligenceMediaClient.MediaDownload(
+                URI.create("https://minio.local/media/x?sig=abc"), Instant.parse("2026-12-31T00:00:00Z"))));
+        String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
+        String uri = "/api/tasks/" + task + "/applications/" + app + "/submissions/" + submissionId
+                + "/attachments/" + m1 + "/download-url";
+
+        // 提交人可取
+        client().get().uri(uri).header("X-Grassland-Identity", sign(rec, "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.downloadUrl").isEqualTo("https://minio.local/media/x?sig=abc");
+        // 商家（owner）可取
+        client().get().uri(uri).header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk();
+        // 无关第三方 403
+        client().get().uri(uri).header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    /** 未挂接到该 submission 的 mediaId → findOne 空 → 404。 */
+    @Test
+    void downloadUrlRejectsUnattachedMedia() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+        String submissionId = (String) submitWithMedia(rec, task, app, List.of()).get("id");
+        UUID stranger = UUID.randomUUID();
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + submissionId
+                        + "/attachments/" + stranger + "/download-url")
+                .header("X-Grassland-Identity", sign(rec, "recommender"))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    /** media 已不可用（中转 404→empty）→ 404。 */
+    @Test
+    void downloadUrlRejectsUnavailableMedia() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.downloadUrl(org, m1)).thenReturn(Mono.empty());  // media 被删
+        String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + submissionId
+                        + "/attachments/" + m1 + "/download-url")
+                .header("X-Grassland-Identity", sign(rec, "recommender"))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    /** 附件挂接失败（注入冲突→empty）→ 409，且整事务回滚，零残留（7C 原子性）。 */
+    @Test
+    void submitAttachmentFailureRollsBackNoResidue() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        doReturn(Mono.empty()).when(attachmentRepo).attach(anyString(), anyList());  // 模拟冲突
+
+        submitWithMediaRaw(rec, task, app, List.of(m1.toString())).expectStatus().isEqualTo(409);
+
+        assertThat(submissionCount(app)).isZero();
+        assertThat(attachmentCountForApp(app)).isZero();
+        assertThat(outboxCountForApp("DeliverableSubmitted", app)).isZero();
+    }
+
     // ---------- reject ----------
 
     @Test
@@ -542,6 +736,65 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("contentUrl", url, "note", "已按要求发布"))
                 .exchange();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> submitWithMedia(String recommender, String task, String app, List<String> mediaIds) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("contentUrl", "https://example.com/post/" + app);
+        body.put("note", "已按要求发布");
+        body.put("mediaIds", mediaIds);
+        Map<String, Object> resp = client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(recommender, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (Map<String, Object>) resp.get("data");
+    }
+
+    private WebTestClient.ResponseSpec submitWithMediaRaw(String recommender, String task, String app, List<String> mediaIds) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("contentUrl", "https://example.com/post/" + app);
+        body.put("note", "已按要求发布");
+        body.put("mediaIds", mediaIds);
+        return client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(recommender, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange();
+    }
+
+    private long submissionCount(String appId) {
+        Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM engagement_submission WHERE application_id = CAST(:a AS uuid)")
+                .bind("a", appId).map(r -> r.get("c", Long.class)).one().block();
+        return c == null ? 0L : c;
+    }
+
+    private long attachmentCount(String submissionId) {
+        Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM engagement_submission_attachment WHERE submission_id = CAST(:s AS uuid)")
+                .bind("s", submissionId).map(r -> r.get("c", Long.class)).one().block();
+        return c == null ? 0L : c;
+    }
+
+    private long attachmentCountForApp(String appId) {
+        Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM engagement_submission_attachment a "
+                        + "JOIN engagement_submission s ON a.submission_id = s.id WHERE s.application_id = CAST(:a AS uuid)")
+                .bind("a", appId).map(r -> r.get("c", Long.class)).one().block();
+        return c == null ? 0L : c;
+    }
+
+    private String outboxMediaIds(String submissionId) {
+        return db.sql("SELECT payload->'mediaIds' AS m FROM marketplace_outbox "
+                        + "WHERE event_type = 'DeliverableSubmitted' AND aggregate_id = :sid")
+                .bind("sid", submissionId).map(r -> r.get("m", String.class)).one().block();
+    }
+
+    /** 按 applicationId 限定的事件计数（共享 testcontainer DB 跨用例累积，原子性用例需按 app 限定）。 */
+    private long outboxCountForApp(String eventType, String appId) {
+        Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM marketplace_outbox "
+                        + "WHERE event_type = :et AND payload->>'applicationId' = :app")
+                .bind("et", eventType).bind("app", appId)
+                .map(r -> r.get("c", Long.class)).one().block();
+        return c == null ? 0L : c;
     }
 
     private long outboxCountByType(String eventType) {

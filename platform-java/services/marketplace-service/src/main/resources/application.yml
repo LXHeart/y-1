@@ -113,3 +113,8 @@ finance:
 trust:
   service:
     base-url: ${TRUST_SERVICE_BASE_URL:http://trust-service:8085}
+
+# 跨服务调 intelligence（Slice 11 Stage 2 履约附件 metadata/download-url 中转出站 base url）。
+intelligence:
+  service:
+    base-url: ${INTELLIGENCE_SERVICE_BASE_URL:http://intelligence-service:8086}

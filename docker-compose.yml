@@ -148,6 +148,7 @@ services:
       SETTLEMENT_WINDOW_SECONDS: ${SETTLEMENT_WINDOW_SECONDS:-5}
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
       TRUST_SERVICE_BASE_URL: http://trust-service:8085
+      INTELLIGENCE_SERVICE_BASE_URL: http://intelligence-service:8086
       MARKETPLACE_TRUST_CONSUMER_ENABLED: ${MARKETPLACE_TRUST_CONSUMER_ENABLED:-true}
     depends_on:
       backend:
@@ -159,6 +160,8 @@ services:
       finance-service:
         condition: service_started
       trust-service:
+        condition: service_started
+      intelligence-service:
         condition: service_started
       kafka:
         condition: service_healthy

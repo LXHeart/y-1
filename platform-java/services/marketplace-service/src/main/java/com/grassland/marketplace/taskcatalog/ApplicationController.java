@@ -5,6 +5,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.saga.AcceptanceInput;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
@@ -15,7 +16,9 @@ import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +31,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -58,6 +62,8 @@ public class ApplicationController {
     private final TaskApplicationRepository apps;
     private final OutboxRepository outbox;
     private final SubmissionRepository submissions;
+    private final SubmissionAttachmentRepository attachments;
+    private final IntelligenceMediaClient mediaClient;
     private final RatingRepository ratings;
     private final WorkflowClient workflowClient;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
@@ -66,7 +72,10 @@ public class ApplicationController {
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
-                                 SubmissionRepository submissions, RatingRepository ratings,
+                                 SubmissionRepository submissions,
+                                 SubmissionAttachmentRepository attachments,
+                                 IntelligenceMediaClient mediaClient,
+                                 RatingRepository ratings,
                                  WorkflowClient workflowClient,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
                                  @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds,
@@ -76,6 +85,8 @@ public class ApplicationController {
         this.apps = apps;
         this.outbox = outbox;
         this.submissions = submissions;
+        this.attachments = attachments;
+        this.mediaClient = mediaClient;
         this.ratings = ratings;
         this.workflowClient = workflowClient;
         this.reconciliations = reconciliations;
@@ -203,36 +214,54 @@ public class ApplicationController {
                 .flatMap(caller -> loadAcceptedApp(id, appId)
                         .filter(app -> caller.accountId().equals(app.recommenderAccountId()))
                         .switchIfEmpty(fail(403, "只能提交自己的履约"))
-                        .flatMap(app -> submissions.create(appId, caller.accountId(), body.contentUrl(), body.note())
-                                .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
-                                .flatMap(created -> outbox
-                                        .append(submissionEnvelope("DeliverableSubmitted", app, created))
-                                        .thenReturn(created))
-                                .map(created -> ResponseEntity.status(HttpStatus.CREATED)
-                                        .body(Map.of("success", true, "data", toBody(created))))));
+                        .flatMap(app -> tasks.findById(id)
+                                .switchIfEmpty(fail(404, "任务不存在"))
+                                // 校验在事务外：逐个 mediaId 经 intelligence 取 metadata，过滤 owner==提交人（IDOR 守卫）。
+                                .flatMap(task -> validateAttachments(task.organizationId(),
+                                                caller.accountId(), body.mediaIds())
+                                        .flatMap(atts -> workSubmitDeliverable(app, appId, caller,
+                                                        body.contentUrl(), body.note(), atts)
+                                                .map(created -> ResponseEntity.status(HttpStatus.CREATED)
+                                                        .body(Map.of("success", true,
+                                                                "data", submissionBodyWithInputs(created, atts))))))));
     }
 
-    /** 列交付物（含历史）。商家（任务 owner）与本人推荐官可见。 */
+    /** 列交付物（含历史）及其附件。商家（任务 owner）与本人推荐官可见。 */
     @GetMapping("/api/tasks/{id}/applications/{appId}/submissions")
     public Mono<ResponseEntity<Map<String, Object>>> listSubmissions(
             @PathVariable String id, @PathVariable String appId, ServerHttpRequest request) {
         return callers.resolve(request)
-                .flatMap(caller -> apps.findById(appId)
-                        .switchIfEmpty(fail(404, "报名不存在"))
-                        .filter(app -> app.taskId().equals(id))
-                        .switchIfEmpty(fail(404, "报名不存在"))
-                        .flatMap(app -> tasks.findById(id)
-                                .switchIfEmpty(fail(404, "任务不存在"))
-                                .flatMap(task -> {
-                                    boolean isOwner = caller.accountId().equals(task.ownerAccountId());
-                                    boolean isSubmitter = caller.accountId().equals(app.recommenderAccountId());
-                                    if (!isOwner && !isSubmitter) {
-                                        return fail(403, "无权查看该履约的交付物");
+                .flatMap(caller -> loadSubmissionScoped(id, appId, caller)
+                        .flatMap(task -> submissions.findByApplication(appId).collectList()
+                                .flatMap(list -> {
+                                    if (list.isEmpty()) {
+                                        return Mono.just(ok(Map.<String, Object>of("submissions", List.of())));
                                     }
-                                    return submissions.findByApplication(appId).collectList()
-                                            .map(list -> ok(Map.of("submissions",
-                                                    list.stream().map(this::toBody).toList())));
+                                    return attachments.findBySubmissionIds(list.stream()
+                                                    .map(EngagementSubmission::id).toList()).collectList()
+                                            .map(atts -> ok(Map.<String, Object>of("submissions",
+                                                    list.stream().map(s -> submissionBodyWithRows(s,
+                                                            atts.stream().filter(a -> a.submissionId().equals(s.id())).toList()))
+                                                            .toList())));
                                 })));
+    }
+
+    /**
+     * 取某附件的短时下载 URL（草场 Slice 11 Stage 2）。可见性与 listSubmissions 一致（owner 或提交人），
+     * 再由 {@link SubmissionAttachmentRepository#findOne} 证 media 确挂该 submission（JOIN 限定 application，防跨履约越权），
+     * 最后经 {@link IntelligenceMediaClient} 中转取 intelligence 签发的 presigned URL。media 已删/不可用 → 404。
+     */
+    @GetMapping("/api/tasks/{id}/applications/{appId}/submissions/{submissionId}/attachments/{mediaId}/download-url")
+    public Mono<ResponseEntity<Map<String, Object>>> attachmentDownloadUrl(
+            @PathVariable String id, @PathVariable String appId, @PathVariable String submissionId,
+            @PathVariable UUID mediaId, ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> loadSubmissionScoped(id, appId, caller)
+                        .flatMap(task -> attachments.findOne(appId, submissionId, mediaId.toString())
+                                .switchIfEmpty(fail(404, "附件未挂接到该交付物"))
+                                .flatMap(att -> mediaClient.downloadUrl(task.organizationId(), mediaId)
+                                        .switchIfEmpty(fail(404, "附件已不可用"))
+                                        .map(dl -> ok(downloadBody(dl))))));
     }
 
     /** 商家退回补交：submitted → rejected（带原因）。退回后推荐官可修改重交。 */
@@ -247,7 +276,7 @@ public class ApplicationController {
                                 .flatMap(app -> submissions.review(submissionId, SubmissionStatus.REJECTED, note)
                                         .switchIfEmpty(fail(409, "该交付物已处理"))
                                         .flatMap(rejected -> outbox
-                                                .append(submissionEnvelope("DeliverableRejected", app, rejected))
+                                                .append(submissionEnvelope("DeliverableRejected", app, rejected, List.of()))
                                                 .thenReturn(rejected))
                                         .map(rejected -> ok(toBody(rejected))))));
     }
@@ -526,8 +555,9 @@ public class ApplicationController {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
-    /** 交付物事件：带上 application 与交付物两侧的关键字段，供下游（核实引擎/通知）消费。 */
-    private EventEnvelope submissionEnvelope(String eventType, TaskApplication app, EngagementSubmission submission) {
+    /** 交付物事件：带上 application 与交付物两侧的关键字段（含附件 mediaIds），供下游（核实引擎/通知）消费。 */
+    private EventEnvelope submissionEnvelope(String eventType, TaskApplication app, EngagementSubmission submission,
+                                             List<AttachmentInput> attachments) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
@@ -535,6 +565,9 @@ public class ApplicationController {
         payload.put("submissionId", submission.id());
         payload.put("contentUrl", submission.contentUrl());
         payload.put("status", submission.status());
+        if (!attachments.isEmpty()) {
+            payload.put("mediaIds", attachments.stream().map(a -> a.mediaId().toString()).toList());
+        }
         return new EventEnvelope(UUID.randomUUID().toString(), eventType, "EngagementSubmission",
                 submission.id(), 1, Instant.now(), null, payload);
     }
@@ -550,6 +583,99 @@ public class ApplicationController {
         m.put("reviewNote", submission.reviewNote());
         m.put("reviewedAt", submission.reviewedAt() == null ? null : submission.reviewedAt().toString());
         m.put("createdAt", submission.createdAt() == null ? null : submission.createdAt().toString());
+        return m;
+    }
+
+    /** 加载报名→任务并校验可见性（owner 或提交人）：不存在/越界→404，无权→403。返回 Task（取 orgId）。 */
+    private Mono<Task> loadSubmissionScoped(String taskId, String appId, Caller caller) {
+        return apps.findById(appId)
+                .switchIfEmpty(fail(404, "报名不存在"))
+                .filter(app -> app.taskId().equals(taskId))
+                .switchIfEmpty(fail(404, "报名不存在"))
+                .flatMap(app -> tasks.findById(taskId)
+                        .switchIfEmpty(fail(404, "任务不存在"))
+                        .filter(task -> caller.accountId().equals(task.ownerAccountId())
+                                || caller.accountId().equals(app.recommenderAccountId()))
+                        .switchIfEmpty(fail(403, "无权查看该履约的交付物")));
+    }
+
+    /**
+     * 校验附件（事务外）：逐个 mediaId 经 intelligence 取 metadata。intelligence 已过滤
+     * purpose=engagement_attachment && active && 未过期（不符→404→empty）；这里再做 IDOR 守卫——
+     * owner 必须是提交人本人，否则 403。media 不可用→404。无附件→空列表。
+     */
+    private Mono<List<AttachmentInput>> validateAttachments(String orgId, String ownerAccountId, List<UUID> mediaIds) {
+        if (mediaIds.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        return Flux.fromIterable(mediaIds)
+                .concatMap(mediaId -> mediaClient.metadata(orgId, mediaId)
+                        .switchIfEmpty(fail(404, "附件不存在或已不可用"))
+                        .filter(m -> ownerAccountId.equals(m.ownerAccountId()))
+                        .switchIfEmpty(fail(403, "不能挂接他人的附件"))
+                        .map(m -> new AttachmentInput(mediaId, m.mimeType(), m.sizeBytes())))
+                .collectList();
+    }
+
+    /**
+     * 原子提交交付物（7C 事务）：create + attach + outbox 同一 R2DBC 事务，outbox 挂 attach 之后。
+     * 任一内层失败（含附件冲突 empty→409）→ 整事务回滚，零残留（无孤儿 submission/附件/事件）。
+     */
+    private Mono<EngagementSubmission> workSubmitDeliverable(TaskApplication app, String appId, Caller caller,
+                                                             String contentUrl, String note,
+                                                             List<AttachmentInput> attachmentInputs) {
+        return transactions.transactional(
+                submissions.create(appId, caller.accountId(), contentUrl, note)
+                        .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
+                        .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
+                        .flatMap(created -> outbox
+                                .append(submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs))
+                                .thenReturn(created)));
+    }
+
+    private Mono<List<EngagementSubmissionAttachment>> attachAll(String submissionId, List<AttachmentInput> inputs) {
+        if (inputs.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        return attachments.attach(submissionId, inputs)
+                .switchIfEmpty(fail(409, "附件重复，请勿重复挂接相同附件"));
+    }
+
+    /** 交付物响应（提交回执）：带附件列表，附件元数据取自校验阶段的快照。 */
+    private Map<String, Object> submissionBodyWithInputs(EngagementSubmission submission, List<AttachmentInput> inputs) {
+        Map<String, Object> m = toBody(submission);
+        m.put("attachments", inputs.stream().map(this::attachmentInputBody).toList());
+        return m;
+    }
+
+    /** 交付物响应（列表）：带附件列表，附件元数据取自挂接时快照的 DB 行。 */
+    private Map<String, Object> submissionBodyWithRows(EngagementSubmission submission,
+                                                       List<EngagementSubmissionAttachment> rows) {
+        Map<String, Object> m = toBody(submission);
+        m.put("attachments", rows.stream().map(this::attachmentRowBody).toList());
+        return m;
+    }
+
+    private Map<String, Object> attachmentInputBody(AttachmentInput a) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("mediaId", a.mediaId());
+        m.put("mimeType", a.mimeType());
+        m.put("sizeBytes", a.sizeBytes());
+        return m;
+    }
+
+    private Map<String, Object> attachmentRowBody(EngagementSubmissionAttachment a) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("mediaId", a.mediaReferenceId());
+        m.put("mimeType", a.mimeType());
+        m.put("sizeBytes", a.sizeBytes());
+        return m;
+    }
+
+    private Map<String, Object> downloadBody(IntelligenceMediaClient.MediaDownload dl) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("downloadUrl", dl.downloadUrl().toString());
+        m.put("expiresAt", dl.expiresAt().toString());
         return m;
     }
 
