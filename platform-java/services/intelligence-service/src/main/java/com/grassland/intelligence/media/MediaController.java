@@ -36,6 +36,11 @@ import reactor.core.scheduler.Schedulers;
  * <p>对象 key 不是授权凭据：bucket 非公开，读先校验 owner，再签发短时 GET URL。非 owner 与不存在均返回 404，
  * 避免把媒体 id 变成存在性探测口。仅在 {@code object-storage.enabled=true} 时装配；LocalGeneratedImageStore
  * 是文章生成图兼容兜底，不对浏览器开放通用直传。
+ *
+ * <p>服务间断点（草场 Slice 11 Stage 1）：{@link #serviceMetadata}/{@link #serviceDownloadUrl} 仅 marketplace
+ * 服务 principal 可调，供履约附件中转读。附件由推荐官上传、商家经 marketplace 查看，owner-only {@link #read}
+ * 无法覆盖此跨账号场景；这里以 purpose={@code engagement_attachment} 为唯一放行用途缩小暴露面，
+ * active/未过期/不存在一律 404。owner 级 IDOR 守卫由 marketplace 挂接时自查（比对 metadata 返回的 ownerAccountId）。
  */
 @RestController
 @RequestMapping("/api/media")
@@ -59,6 +64,8 @@ public class MediaController {
             "audio/webm", "webm",
             "application/pdf", "pdf",
             "text/csv", "csv");
+    /** 服务间断点唯一放行的用途（履约附件）；其余用途经此路径一律 404，缩小暴露面。 */
+    private static final String SERVICE_ATTACHMENT_PURPOSE = MediaPurpose.ENGAGEMENT_ATTACHMENT.db();
     private static final long MIN_ASSET_TTL_SECONDS = 60;
     private static final long MAX_ASSET_TTL_SECONDS = 30L * 24 * 60 * 60;
 
@@ -136,6 +143,38 @@ public class MediaController {
                         .switchIfEmpty(notFound()))
                 .flatMap(this::deleteClaimed)
                 .thenReturn(success(Map.of("deleted", true)));
+    }
+
+    /**
+     * 服务间断点（草场 Slice 11 Stage 1）：仅 marketplace 服务 principal 可调，返回履约附件元数据。
+     * 不做 owner 校验（principal 已受信）；以 purpose=engagement_attachment + active + 未过期为放行条件，
+     * 不符/不存在统一 404。ownerAccountId 供 marketplace 挂接时做 IDOR 守卫（owner==提交人）。
+     */
+    @GetMapping("/{id}/metadata")
+    public Mono<Map<String, Object>> serviceMetadata(@PathVariable String id, ServerWebExchange exchange) {
+        UUID mediaId = parseId(id);
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.MARKETPLACE_SERVICE)
+                .flatMap(caller -> serviceAttachment(mediaId))
+                .map(MediaController::toServiceMetadata)
+                .map(MediaController::success);
+    }
+
+    /**
+     * 服务间断点（草场 Slice 11 Stage 1）：仅 marketplace 服务 principal 可调，为履约附件签发短时下载 URL。
+     * 复用 {@link #downloadTtl}/{@link #downloadDisposition}，与 owner-only {@link #read} 同源签名语义；
+     * {@code expiresAt} 为媒体资产本身的 TTL（与 {@link #serviceMetadata} 一致），presigned URL 自带短时过期，
+     * 超时由调用方重新请求本端点。
+     */
+    @GetMapping("/{id}/download-url")
+    public Mono<Map<String, Object>> serviceDownloadUrl(@PathVariable String id, ServerWebExchange exchange) {
+        UUID mediaId = parseId(id);
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.MARKETPLACE_SERVICE)
+                .flatMap(caller -> serviceAttachment(mediaId))
+                .map(ref -> new MediaServiceDownloadResponse(
+                        storage.presignDownload(
+                                ref.objectKey(), downloadTtl(ref, Instant.now()), downloadDisposition(ref)),
+                        ref.expiresAt()))
+                .map(MediaController::success);
     }
 
     private Mono<UploadTicketResponse> createPending(
@@ -268,6 +307,18 @@ public class MediaController {
                 .switchIfEmpty(notFound());
     }
 
+    /**
+     * 服务间断点的附件过滤：仅 purpose=engagement_attachment + active + 未过期；不符/不存在统一 404。
+     * 不校验 owner（principal 受信）；owner 级 IDOR 守卫在 marketplace 挂接时完成。
+     */
+    private Mono<MediaReference> serviceAttachment(UUID id) {
+        return mediaRefs.findById(id)
+                .filter(ref -> SERVICE_ATTACHMENT_PURPOSE.equals(ref.purpose()))
+                .filter(ref -> ref.status() == MediaStatus.ACTIVE)
+                .filter(ref -> !isExpired(ref, Instant.now()))
+                .switchIfEmpty(notFound());
+    }
+
     private Mono<StoredObject> headObject(String key) {
         return Mono.fromCallable(() -> storage.headObject(key))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -390,6 +441,13 @@ public class MediaController {
                 ref.source(), ref.status().db(), ref.createdAt(), ref.expiresAt(), ref.deletedAt());
     }
 
+    /** 服务间断点（Slice 11 Stage 1）的附件元数据视图：仅暴露中转读所需字段，含 ownerAccountId 供 IDOR 守卫。 */
+    private static MediaServiceMetadataResponse toServiceMetadata(MediaReference ref) {
+        return new MediaServiceMetadataResponse(
+                ref.id(), ref.ownerAccountId(), ref.purpose(), ref.status().db(),
+                ref.mimeType(), ref.sizeBytes(), ref.expiresAt());
+    }
+
     public record CreateUploadTicketRequest(
             String contentType, String purpose, String domainType,
             String domainId, Long sizeBytes, Long ttlSeconds) {}
@@ -408,6 +466,14 @@ public class MediaController {
             UUID id, String purpose, String domainType, String domainId,
             String mimeType, long sizeBytes, String checksum, Instant createdAt,
             Instant expiresAt, URI downloadUrl) {}
+
+    /** 服务间断点（Slice 11 Stage 1）附件元数据响应。 */
+    public record MediaServiceMetadataResponse(
+            UUID id, String ownerAccountId, String purpose, String status,
+            String mimeType, long sizeBytes, Instant expiresAt) {}
+
+    /** 服务间断点（Slice 11 Stage 1）附件下载 URL 响应。{@code expiresAt} 为媒体资产 TTL，非 URL 过期时间。 */
+    public record MediaServiceDownloadResponse(URI downloadUrl, Instant expiresAt) {}
 
     private record UploadSpec(
             String contentType, MediaPurpose purpose, String domainType,

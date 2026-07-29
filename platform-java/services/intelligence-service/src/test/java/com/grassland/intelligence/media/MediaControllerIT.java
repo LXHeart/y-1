@@ -383,6 +383,138 @@ class MediaControllerIT {
         assertThat(resp.statusCode()).isNotEqualTo(200);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void serviceMetadataReturnsAttachmentMetadataForMarketplaceService() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = "org-" + UUID.randomUUID();
+        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+        WebTestClient client = client();
+
+        Map<String, Object> envelope = client.get().uri("/api/media/{id}/metadata", mediaId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        assertThat(envelope).isNotNull();
+        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+        assertThat(data.get("id")).isEqualTo(mediaId.toString());
+        assertThat(data.get("ownerAccountId")).isEqualTo(owner);
+        assertThat(data.get("purpose")).isEqualTo("engagement_attachment");
+        assertThat(data.get("status")).isEqualTo("active");
+        assertThat(data.get("mimeType")).isEqualTo("image/png");
+        assertThat(data.get("sizeBytes")).isEqualTo(PNG.length);
+        assertThat(data.get("expiresAt")).isNotNull();
+    }
+
+    @Test
+    void serviceMetadataRejectsUserAssertionAndNonMarketplacePrincipal() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = "org-" + UUID.randomUUID();
+        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+        WebTestClient client = client();
+
+        // 终端用户断言（callerKind=null）→ 403：服务间断点不对浏览器/终端用户开放
+        client.get().uri("/api/media/{id}/metadata", mediaId)
+                .header("X-Grassland-Identity", sign(owner, org))
+                .exchange().expectStatus().isEqualTo(403);
+
+        // 服务断言但 principal 不是 marketplace → 403
+        client.get().uri("/api/media/{id}/metadata", mediaId)
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .exchange().expectStatus().isEqualTo(403);
+
+        // 缺断言 → 401
+        client.get().uri("/api/media/{id}/metadata", mediaId)
+                .exchange().expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void serviceMetadataReturnsNotFoundForNonAttachmentInactiveExpiredOrMissing() {
+        String org = "org-" + UUID.randomUUID();
+        WebTestClient client = client();
+
+        // 非 engagement_attachment 用途（user_upload pending）→ 404
+        UUID userUploadId = UUID.fromString(
+                (String) createTicket("acct-a-" + UUID.randomUUID(), PNG.length).get("id"));
+        client.get().uri("/api/media/{id}/metadata", userUploadId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
+
+        // engagement_attachment 但 pending（未 confirm）→ 404
+        UUID pendingId = UUID.fromString((String) createAttachmentTicket(
+                "acct-b-" + UUID.randomUUID(), org, PNG.length).get("id"));
+        client.get().uri("/api/media/{id}/metadata", pendingId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
+
+        // engagement_attachment active 但已过期 → 404
+        UUID expiredId = insertMedia("acct-c-" + UUID.randomUUID(), org,
+                "engagement_attachment", MediaStatus.ACTIVE, Instant.now().minusSeconds(60));
+        client.get().uri("/api/media/{id}/metadata", expiredId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
+
+        // 不存在的 id → 404（存在性不可探测）
+        client.get().uri("/api/media/{id}/metadata", UUID.randomUUID())
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void serviceDownloadUrlReturnsPresignedUrlServingOriginalBytes() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = "org-" + UUID.randomUUID();
+        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+        WebTestClient client = client();
+
+        Map<String, Object> envelope = client.get().uri("/api/media/{id}/download-url", mediaId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        assertThat(envelope).isNotNull();
+        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+        URI downloadUrl = URI.create((String) data.get("downloadUrl"));
+        assertThat(data.get("expiresAt")).isNotNull();
+
+        // 真 GET presigned URL 对 MinIO：200 + 原始字节（与 owner-only read 同源签名语义）
+        HttpResponse<byte[]> download = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(downloadUrl).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(download.statusCode()).isEqualTo(200);
+        assertThat(download.body()).isEqualTo(PNG);
+    }
+
+    @Test
+    void serviceDownloadUrlReturnsNotFoundForExpiredOrDeletedAndRejectsUser() throws Exception {
+        String org = "org-" + UUID.randomUUID();
+        WebTestClient client = client();
+
+        // 已过期 active → 404（download-url 在 presign 前就被 serviceAttachment 过滤掉）
+        UUID expiredId = insertMedia("acct-a-" + UUID.randomUUID(), org,
+                "engagement_attachment", MediaStatus.ACTIVE, Instant.now().minusSeconds(60));
+        client.get().uri("/api/media/{id}/download-url", expiredId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
+
+        // media 被删后 → 404
+        String ownerB = "acct-b-" + UUID.randomUUID();
+        UUID liveId = createActiveAttachment(ownerB, org, PNG.length);
+        client.delete().uri("/api/media/{id}", liveId)
+                .header("X-Grassland-Identity", sign(ownerB, org))
+                .exchange().expectStatus().isOk();
+        client.get().uri("/api/media/{id}/download-url", liveId)
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
+
+        // 用户断言 → 403（download-url 同 metadata 的 service gate）
+        String ownerC = "acct-c-" + UUID.randomUUID();
+        UUID liveId2 = createActiveAttachment(ownerC, org, PNG.length);
+        client.get().uri("/api/media/{id}/download-url", liveId2)
+                .header("X-Grassland-Identity", sign(ownerC, org))
+                .exchange().expectStatus().isEqualTo(403);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> createTicket(String owner, int sizeBytes) {
         Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
@@ -391,6 +523,47 @@ class MediaControllerIT {
                 .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return (Map<String, Object>) envelope.get("data");
+    }
+
+    /** 申请 engagement_attachment 上传凭据（pending，未 confirm）。 */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> createAttachmentTicket(String owner, String org, int sizeBytes) {
+        Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign(owner, org))
+                .bodyValue(Map.of(
+                        "contentType", "image/png",
+                        "purpose", "engagement_attachment",
+                        "domainType", "application",
+                        "domainId", "app-1",
+                        "sizeBytes", sizeBytes,
+                        "ttlSeconds", 3600))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (Map<String, Object>) envelope.get("data");
+    }
+
+    /** 三步上传一个 active 的 engagement_attachment 附件，返回 media id。 */
+    private UUID createActiveAttachment(String owner, String org, int sizeBytes) throws Exception {
+        Map<String, Object> ticket = createAttachmentTicket(owner, org, sizeBytes);
+        UUID id = UUID.fromString((String) ticket.get("id"));
+        put(URI.create((String) ticket.get("uploadUrl")), PNG);
+        client().post().uri("/api/media/{id}/confirm", id)
+                .header("X-Grassland-Identity", sign(owner, org))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("active");
+        return id;
+    }
+
+    /** 直接落一条 media_reference 行（绕过上传/配额），用于构造 active+过期等边缘态做服务端点过滤验证。 */
+    private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt) {
+        UUID id = UUID.randomUUID();
+        MediaReference ref = new MediaReference(
+                id, owner, org, purpose, "application", "app-1",
+                "media/" + purpose + "/" + id, null, "image/png", PNG.length,
+                MediaChecksums.sha256(PNG), "upload", status,
+                Instant.now().minusSeconds(120), expiresAt, null);
+        mediaRefs.insert(ref).block();
+        return id;
     }
 
     private void put(URI uploadUrl, byte[] content) throws Exception {
@@ -437,5 +610,19 @@ class MediaControllerIT {
                 accountId, "recommender", "sid-" + accountId, organizationId, null,
                 "cookie-session", "level1", null, "request", "trace",
                 "grassland-internal", now, now.plusSeconds(60), null, null));
+    }
+
+    /** 造一个 marketplace 服务断言（callerKind=service + principal=marketplace + org 上下文），镜像 ServiceAssertionIssuer.issueForOrg。 */
+    private String signService(String organizationId) {
+        return signService(organizationId, "marketplace");
+    }
+
+    private String signService(String organizationId, String principal) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                "service:" + principal, null, null, organizationId, null,
+                "service", "internal", null, "request", "trace",
+                "grassland-internal", now, now.plusSeconds(30),
+                "service", principal));
     }
 }

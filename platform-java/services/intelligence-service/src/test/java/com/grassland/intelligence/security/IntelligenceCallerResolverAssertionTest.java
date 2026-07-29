@@ -34,6 +34,15 @@ class IntelligenceCallerResolverAssertionTest {
                 AUDIENCE, now, now.plusSeconds(60), null, null));
     }
 
+    /** 造一个服务断言（callerKind=service + principal），镜像 ServiceAssertionIssuer.issueForOrg 的 claims 形状。 */
+    private String signService(String principal) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                "service:" + principal, null, null, null, null,
+                "service", "internal", null, "r", "t",
+                AUDIENCE, now, now.plusSeconds(30), "service", principal));
+    }
+
     private ServerHttpRequest requestWith(String token) {
         MockServerHttpRequest.BaseBuilder<?> b = MockServerHttpRequest.post("/api/intelligence/smoke/chat");
         if (token != null) {
@@ -75,5 +84,36 @@ class IntelligenceCallerResolverAssertionTest {
     void requireRecommenderEnforcesRole() {
         assertThatThrownBy(() -> resolver.requireRecommender(requestWith(sign("merchant"))).block())
                 .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
+    }
+
+    @Test
+    @DisplayName("requireServicePrincipal：marketplace 服务断言通过；用户断言/错 principal → 403")
+    void requireServicePrincipalEnforcesService() {
+        IntelligenceCallerResolver.Caller c = resolver
+                .requireServicePrincipal(requestWith(signService("marketplace")), "marketplace").block();
+        assertThat(c).isNotNull();
+        assertThat(c.isService()).isTrue();
+        assertThat(c.isServicePrincipal("marketplace")).isTrue();
+
+        // 终端用户断言（callerKind=null）→ 403
+        assertThatThrownBy(() -> resolver
+                .requireServicePrincipal(requestWith(sign("recommender")), "marketplace").block())
+                .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
+
+        // 服务断言但 principal 不是 marketplace → 403
+        assertThatThrownBy(() -> resolver
+                .requireServicePrincipal(requestWith(signService("trust")), "marketplace").block())
+                .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
+    }
+
+    @Test
+    @DisplayName("服务断言不可凭 activeIdentityType 冒充商家/推荐官（防冒充）")
+    void serviceAssertionCannotImpersonateBusinessIdentities() {
+        IntelligenceCallerResolver.Caller c = resolver.resolve(requestWith(signService("marketplace"))).block();
+        assertThat(c).isNotNull();
+        assertThat(c.isService()).isTrue();
+        // 服务断言 callerKind=service → isMerchant/isRecommender 恒 false，即便 activeIdentityType 非空也不可冒充
+        assertThat(c.isMerchant()).isFalse();
+        assertThat(c.isRecommender()).isFalse();
     }
 }
