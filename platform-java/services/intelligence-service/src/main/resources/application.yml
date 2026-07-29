@@ -79,12 +79,27 @@ ai:
     connect-timeout-ms: ${IMAGE_GENERATION_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${IMAGE_GENERATION_READ_TIMEOUT_MS:300000}
 
+# 对象存储（platform-storage）：文章生成图片从本地卷迁到 MinIO/S3（草场 Slice 8）。
+# enabled 默认 true（与 marketplace 一致）→ S3GeneratedImageStore（多副本共享，@PostConstruct 建 bucket，缺失即显式失败）。
+# 测试/本地未启 MinIO 时设 object-storage.enabled=false → 回落 LocalGeneratedImageStore。
+object-storage:
+  enabled: ${OBJECT_STORAGE_ENABLED:true}
+  endpoint: ${MINIO_ENDPOINT:http://minio:9000}
+  public-base-url: ${MINIO_PUBLIC_BASE_URL:http://localhost:9000}
+  region: ${MINIO_REGION:us-east-1}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket: ${MINIO_BUCKET:grassland}
+  path-style-access: ${MINIO_PATH_STYLE:true}
+  auto-create-bucket: ${MINIO_AUTO_CREATE_BUCKET:true}
+
 article-images:
   search:
     endpoint: ${ARTICLE_IMAGE_SEARCH_ENDPOINT:https://www.bing.com/images/search}
     timeout-ms: ${ARTICLE_IMAGE_SEARCH_TIMEOUT_MS:15000}
   generated:
-    directory: ${ARTICLE_GENERATED_IMAGES_DIR:/tmp/grassland-intelligence/generated-images}
+    # S3 key 前缀（对象 key 形如 {key-prefix}/{uuid}.png）；本地兜底实现忽略此值。
+    key-prefix: ${ARTICLE_GENERATED_IMAGE_KEY_PREFIX:article-generated}
     ttl-seconds: ${ARTICLE_GENERATED_IMAGE_TTL_SECONDS:1800}
     cleanup-interval-ms: ${ARTICLE_GENERATED_IMAGE_CLEANUP_INTERVAL_MS:300000}
 

@@ -2,7 +2,6 @@ package com.grassland.intelligence.articleimage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -13,6 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/** 本地卷兜底实现（未启对象存储时）的 TTL 与读写契约；S3 实现见 {@code S3GeneratedImageStoreTest}。 */
 class GeneratedImageStoreTest {
 
     private static final byte[] PNG = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 1, 2, 3};
@@ -24,21 +24,21 @@ class GeneratedImageStoreTest {
     @DisplayName("stores b64 PNG under UUID and reads exact bytes before expiry")
     void storesAndReadsImage() throws Exception {
         MutableClock clock = new MutableClock(Instant.parse("2026-07-28T10:00:00Z"));
-        GeneratedImageStore store = new GeneratedImageStore(directory, clock, Duration.ofMinutes(30));
+        GeneratedImageStore store = new LocalGeneratedImageStore(directory, clock, Duration.ofMinutes(30));
 
         String id = store.store(Base64.getEncoder().encodeToString(PNG)).block();
         GeneratedImageStore.StoredImage result = store.find(id).block();
 
         assertThat(id).matches("[0-9a-f-]{36}");
         assertThat(result).isNotNull();
-        assertThat(Files.readAllBytes(result.path())).isEqualTo(PNG);
+        assertThat(result.bytes()).isEqualTo(PNG);
     }
 
     @Test
     @DisplayName("expired images are hidden and removed")
     void expiresImageAfterThirtyMinutes() {
         MutableClock clock = new MutableClock(Instant.parse("2026-07-28T10:00:00Z"));
-        GeneratedImageStore store = new GeneratedImageStore(directory, clock, Duration.ofMinutes(30));
+        GeneratedImageStore store = new LocalGeneratedImageStore(directory, clock, Duration.ofMinutes(30));
         String id = store.store(Base64.getEncoder().encodeToString(PNG)).block();
 
         clock.advance(Duration.ofMinutes(31));
@@ -48,9 +48,9 @@ class GeneratedImageStoreTest {
     }
 
     @Test
-    @DisplayName("invalid identifiers never resolve paths")
+    @DisplayName("invalid identifiers never resolve")
     void rejectsInvalidIdentifiers() {
-        GeneratedImageStore store = new GeneratedImageStore(directory, Clock.systemUTC(), Duration.ofMinutes(30));
+        GeneratedImageStore store = new LocalGeneratedImageStore(directory, Clock.systemUTC(), Duration.ofMinutes(30));
 
         assertThat(store.find("../secret").block()).isNull();
         assertThat(store.find("00000000-0000-0000-0000-000000000000.png").block()).isNull();

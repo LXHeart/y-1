@@ -93,4 +93,22 @@ class MinIoObjectStorageAdapterIT {
 
         assertThat(new String(adapter.getObject(key))).isEqualTo("presigned-body");
     }
+
+    @Test
+    void listObjects_returnsKeysUnderPrefix() {
+        var adapter = newAdapter();
+        adapter.createBucketIfNeeded();
+        String prefix = "list/" + UUID.randomUUID() + "/";
+        adapter.putObject(prefix + "a.png", "hello".getBytes(), "image/png");
+        adapter.putObject(prefix + "b.png", "world!".getBytes(), "image/png");
+
+        var listed = adapter.listObjects(prefix);
+
+        var keys = listed.stream().map(StoredObject::key).toList();
+        assertThat(keys).contains(prefix + "a.png", prefix + "b.png");
+        var first = listed.stream().filter(o -> o.key().endsWith("a.png")).findFirst().orElseThrow();
+        assertThat(first.contentLength()).isEqualTo(5L);
+        // list 响应不含 content-type（契约：恒 null）。
+        assertThat(first.contentType()).isNull();
+    }
 }

@@ -13,6 +13,7 @@ dependencies {
     implementation(platform(libs.spring.boot.dependencies))
     implementation(libs.spring.boot.actuator)
     implementation(project(":platform-identity-assertion"))
+    implementation(project(":platform-storage"))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
@@ -31,6 +32,9 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.postgresql:postgresql")
     testImplementation("org.wiremock:wiremock-standalone:3.9.2")
+    // S3GeneratedImageStoreIT 直连 testcontainers MinIO 构造 S3ObjectStorageAdapter（仅测试）。
+    testImplementation(platform(libs.aws.bom))
+    testImplementation(libs.aws.s3)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

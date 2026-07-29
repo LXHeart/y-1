@@ -2,6 +2,7 @@ package com.grassland.storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,10 +27,13 @@ import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 
 /** 用 Mockito 验证 S3ObjectStorageAdapter 与 SDK 的交互，不连真实存储。 */
@@ -96,6 +101,33 @@ class S3ObjectStorageAdapterUnitTest {
     void deleteObject_forwardsToClient() {
         adapter.deleteObject("k");
         verify(s3Client).deleteObject(any(DeleteObjectRequest.class));
+    }
+
+    @Test
+    void listObjects_returnsMetadataForPrefixWithoutContentType() {
+        S3Object a = mock(S3Object.class);
+        when(a.key()).thenReturn("prefix/a.png");
+        when(a.size()).thenReturn(7L);
+        when(a.eTag()).thenReturn("etag-a");
+        when(a.lastModified()).thenReturn(Instant.EPOCH);
+        S3Object b = mock(S3Object.class);
+        when(b.key()).thenReturn("prefix/b.png");
+        when(b.size()).thenReturn(3L);
+        when(b.eTag()).thenReturn("etag-b");
+        when(b.lastModified()).thenReturn(Instant.parse("2026-07-29T00:00:00Z"));
+        ListObjectsV2Response resp = mock(ListObjectsV2Response.class);
+        when(resp.contents()).thenReturn(List.of(a, b));
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(resp);
+
+        List<StoredObject> result = adapter.listObjects("prefix/");
+
+        verify(s3Client).listObjectsV2(argThat((ListObjectsV2Request req) -> "prefix/".equals(req.prefix())));
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).key()).isEqualTo("prefix/a.png");
+        assertThat(result.get(0).contentLength()).isEqualTo(7L);
+        assertThat(result.get(0).contentType()).isNull();
+        assertThat(result.get(0).lastModified()).isEqualTo(Instant.EPOCH);
+        assertThat(result.get(1).key()).isEqualTo("prefix/b.png");
     }
 
     @Test

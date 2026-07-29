@@ -11,8 +11,6 @@ import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.credits.CreditsClient;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -121,11 +119,10 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
 
     @Test
     @DisplayName("generated image GET is public and preserves PNG/cache contract")
-    void servesGeneratedImagePublicly() throws Exception {
-        Path image = Files.createTempFile("article-image-it", ".png");
-        Files.write(image, new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47});
+    void servesGeneratedImagePublicly() {
+        byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47};
         String id = UUID.randomUUID().toString();
-        when(images.findGenerated(id)).thenReturn(Mono.just(new GeneratedImageStore.StoredImage(image)));
+        when(images.findGenerated(id)).thenReturn(Mono.just(new GeneratedImageStore.StoredImage(png)));
 
         byte[] body = client().get().uri("/api/article-generation/generated-images/" + id)
                 .exchange().expectStatus().isOk()
@@ -133,7 +130,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
                 .expectHeader().valueEquals("Cache-Control", "max-age=1800, private")
                 .expectBody().returnResult().getResponseBody();
 
-        assertThat(body).isEqualTo(new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47});
+        assertThat(body).isEqualTo(png);
         verify(credits, never()).consume(any(), any());
     }
 

@@ -7,6 +7,7 @@ import java.net.URL;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -20,8 +21,11 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
@@ -153,6 +157,30 @@ public final class S3ObjectStorageAdapter implements ObjectStorageAdapter {
     public void deleteObject(String key) {
         s3Client.deleteObject(
                 DeleteObjectRequest.builder().bucket(properties.bucket()).key(key).build());
+    }
+
+    @Override
+    public List<StoredObject> listObjects(String prefix) {
+        ListObjectsV2Response resp = s3Client.listObjectsV2(ListObjectsV2Request.builder()
+                .bucket(properties.bucket())
+                .prefix(prefix)
+                .build());
+        return resp.contents().stream()
+                .map(S3ObjectStorageAdapter::toStoredObject)
+                .toList();
+    }
+
+    /**
+     * list 响应不含 content-type，故 {@link StoredObject#contentType()} 恒为 {@code null}；
+     * size 映射为 contentLength，eTag/lastModified 透传。
+     */
+    private static StoredObject toStoredObject(S3Object object) {
+        return new StoredObject(
+                object.key(),
+                object.size(),
+                null,
+                object.eTag(),
+                object.lastModified());
     }
 
     private static URI toUri(URL url) {

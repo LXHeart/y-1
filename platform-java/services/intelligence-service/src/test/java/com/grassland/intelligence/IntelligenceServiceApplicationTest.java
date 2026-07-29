@@ -13,6 +13,7 @@ import org.springframework.test.context.TestPropertySource;
 @TestPropertySource(properties = {
         "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:1/nonexistent",
         "intelligence.outbox.enabled=false",
+        "object-storage.enabled=false",
         "identity-assertion.enabled=true",
         "identity-assertion.secret=test-secret-32-chars-min!!!",
         "ai.qwen.base-url=https://dashscope.aliyuncs.com",

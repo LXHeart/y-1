@@ -52,6 +52,8 @@ public abstract class IntelligenceItSupport {
         r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
         r.add("identity-assertion.audience", () -> "grassland-internal");
         r.add("intelligence.outbox.enabled", () -> "false");
+        // 未启 MinIO：回落 LocalGeneratedImageStore（本地卷），S3 自动配置与 S3GeneratedImageStore 不装配。
+        r.add("object-storage.enabled", () -> "false");
         // 平台默认 Qwen 指向 WireMock：base-url 是主机名（localhost）→ SSRF 结构校验通过（IP 字面量才拒）。
         r.add("ai.qwen.base-url", QWEN::baseUrl);
         r.add("ai.qwen.api-key", () -> "sk-test");

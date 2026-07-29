@@ -240,17 +240,23 @@ services:
       IMAGE_GENERATION_BASE_URL: ${IMAGE_GENERATION_BASE_URL:-}
       IMAGE_GENERATION_API_KEY: ${IMAGE_GENERATION_API_KEY:-}
       IMAGE_GENERATION_MODEL: ${IMAGE_GENERATION_MODEL:-}
-      ARTICLE_GENERATED_IMAGES_DIR: /app/data/generated-images
+      # 对象存储（草场 Slice 8）：生成图片迁 MinIO/S3（多副本共享），不再用本地卷。
+      OBJECT_STORAGE_ENABLED: "true"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
       # 积分扣减走 legacy 内部端点（共享 INTERNAL_API_KEY；legacy 不认 BFF 断言）。
       LEGACY_CREDITS_BASE_URL: http://backend:3000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     depends_on:
       backend:
         condition: service_started
+      minio:
+        condition: service_started
       kafka:
         condition: service_healthy
-    volumes:
-      - intelligence_generated_images:/app/data/generated-images
     restart: unless-stopped
 
   # Epic 3：事件基础设施
@@ -351,7 +357,6 @@ services:
 
 volumes:
   backend_data:
-  intelligence_generated_images:
   minio_data:
   temporal_dev_data:
   postgres_local_data:

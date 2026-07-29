@@ -7,7 +7,7 @@ import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.CacheControl;
@@ -93,7 +93,7 @@ public class ArticleImageController {
                 .map(stored -> ResponseEntity.ok()
                         .contentType(MediaType.IMAGE_PNG)
                         .cacheControl(CacheControl.maxAge(java.time.Duration.ofMinutes(30)).cachePrivate())
-                        .body((Resource) new FileSystemResource(stored.path())))
+                        .body((Resource) new ByteArrayResource(stored.bytes())))
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "图片不存在或已过期")));
     }
 
