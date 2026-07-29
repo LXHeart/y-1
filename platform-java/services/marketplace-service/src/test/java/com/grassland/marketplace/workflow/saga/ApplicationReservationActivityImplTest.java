@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,11 +20,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
  * {@link ApplicationReservationActivityImpl} 单元测试（草场 Epic 4 Slice 4F / HLD 9.2）：Mockito 桩 reactive repo + finance，
  * 验证各活动幂等 + 执行前重验状态（pending/reserving/accepted 守卫、owner 自查、release 条件分支）。
+ *
+ * <p>Slice 7C-2：activity 把「领域写 + outbox append」包进 {@code transactions.transactional(...)}。
+ * 单测里把 {@link TransactionalOperator} 桩成<b>直通</b>（原样返回被包的 Mono），故断言不变；
+ * 真实回滚由 {@code ActivityOutboxAtomicityIT}（testcontainers + spy outbox）证明。
  */
 @ExtendWith(MockitoExtension.class)
 class ApplicationReservationActivityImplTest {
@@ -38,13 +44,16 @@ class ApplicationReservationActivityImplTest {
     @Mock private TaskRepository tasks;
     @Mock private OutboxRepository outbox;
     @Mock private FinanceEscrowClient finance;
+    @Mock private TransactionalOperator transactions;
 
     private ApplicationReservationActivityImpl activity;
     private AcceptanceInput input;
 
     @BeforeEach
     void setUp() {
-        activity = new ApplicationReservationActivityImpl(apps, tasks, outbox, finance);
+        // 直通：transactional(mono) 原样返回被包的 Mono（reserveFunds 测试不触发，用 lenient 避免 strict stubbing 报错）。
+        lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
+        activity = new ApplicationReservationActivityImpl(apps, tasks, outbox, finance, transactions);
         input = new AcceptanceInput(APP_ID, TASK_ID, MERCHANT, ORG, 500L);
     }
 

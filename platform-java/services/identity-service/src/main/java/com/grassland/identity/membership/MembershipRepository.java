@@ -37,6 +37,24 @@ public class MembershipRepository {
                 .map(MembershipRepository::map).one();
     }
 
+    /**
+     * 幂等建成员（Slice 7C-2）：{@code ON CONFLICT DO NOTHING}——已存在时返回<b>空 Mono</b>（无异常），
+     * 供调用方做「已是成员」幂等判定。与 {@link #create} 的区别：后者用于会因重复报 409 的路径（org 侧加成员），
+     * 本方法用于「已成员视为成功」的邀请接受——避免在 R2DBC 事务内捕获 {@code DataIntegrityViolation}
+     * （被捕获的 INSERT 失败会把事务置 rollback-only）。
+     */
+    public Mono<Membership> createIfAbsent(String organizationId, String accountId, String role) {
+        String id = UUID.randomUUID().toString();
+        return db.sql("""
+                INSERT INTO organization_membership(id, organization_id, account_id, role)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), CAST(:acct AS uuid), :role)
+                ON CONFLICT (organization_id, account_id) DO NOTHING
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("org", organizationId).bind("acct", accountId).bind("role", role)
+                .map(MembershipRepository::map).one();
+    }
+
     public Flux<Membership> findByOrganization(String organizationId) {
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM organization_membership WHERE organization_id = CAST(:org AS uuid) ORDER BY created_at")

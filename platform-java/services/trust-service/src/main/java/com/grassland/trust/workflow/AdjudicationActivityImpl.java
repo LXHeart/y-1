@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.reactive.TransactionalOperator;
 
 /**
  * 审判 workflow 活动实现（草场 Epic 6 Slice 6C Phase C / HLD §5.5、§9.3）。
@@ -24,6 +25,10 @@ import org.springframework.stereotype.Component;
  * <p>每个活动幂等 + 执行前重验状态（终态短路、面板已存在短路、判决已记短路）。DB 写入用 guarded-UPDATE；
  * outbox 用确定性 type-3 {@code eventId}（{@code eventType:disputeId:round}）保 activity 重试 exactly-once。
  * {@code assignPanel} 抽签失败（无可用审判官）抛 {@link TrustException}(503) → Temporal 重试。
+ *
+ * <p><b>Slice 7C-2</b>：写活动的「领域写 + outbox append」绑进同一 R2DBC 事务——否则崩溃落在两次提交之间时，
+ * 重试会被幂等守卫（「面板已存在」/「非 voting」）短路，事件**永久丢失**。状态迁移（startAdjudication/reopen）、
+ * 抽签与 503、跨服务 {@code finance.*} 调用留在事务外（与本地写+outbox 原子性正交，且不改既有 503 行为）。
  *
  * <p>worker = {@code trust-adjudication}（application.yml 显式定义）。
  */
@@ -36,15 +41,17 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
     private final FinanceDecisionClient finance;
+    private final TransactionalOperator transactions;
 
     public AdjudicationActivityImpl(DisputeCaseRepository disputes, JudgeRepository judges,
                                     OutboxRepository outbox, AdjudicationProperties props,
-                                    FinanceDecisionClient finance) {
+                                    FinanceDecisionClient finance, TransactionalOperator transactions) {
         this.disputes = disputes;
         this.judges = judges;
         this.outbox = outbox;
         this.props = props;
         this.finance = finance;
+        this.transactions = transactions;
     }
 
     @Override
@@ -63,14 +70,17 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
         } else if (d.round() < round) {
             disputes.reopen(disputeId, round).block();  // voting→voting 下一轮
         }
-        d = disputes.findById(disputeId).block();  // reload 取 fresh version/round
-        List<Judge> pool = judges.drawEligiblePool(props.judgeEligibilityTier(), d.organizationId(), props.panelSize())
+        DisputeCase fresh = disputes.findById(disputeId).block();  // reload 取 fresh version/round
+        List<Judge> pool = judges.drawEligiblePool(props.judgeEligibilityTier(), fresh.organizationId(), props.panelSize())
                 .collectList().block();
         if (pool == null || pool.isEmpty()) {
             throw new TrustException(503, "无可用的合格审判官");
         }
-        judges.assignPanel(disputeId, round, pool.stream().map(Judge::accountId).toList()).block();
-        outbox.append(envelope(round == 1 ? "DisputeAssigned" : "AdjudicationReopened", d, round, pool.size())).block();
+        // 面板分配（INSERT）+ outbox 同事务：outbox 失败则回滚面板分配，重试不会因「面板已存在」丢事件。
+        transactions.transactional(
+                judges.assignPanel(disputeId, round, pool.stream().map(Judge::accountId).toList())
+                        .then(outbox.append(envelope(round == 1 ? "DisputeAssigned" : "AdjudicationReopened", fresh, round, pool.size())))
+        ).block();
     }
 
     @Override
@@ -90,20 +100,26 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 
     @Override
     public void recordDecision(String disputeId, String winner) {
-        DisputeCase updated = disputes.recordDecision(disputeId, winner).block();  // voting→decided
+        // 领域写（voting→decided）+ outbox 同事务：outbox 失败则回滚状态迁移。
+        DisputeCase updated = transactions.transactional(
+                disputes.recordDecision(disputeId, winner)
+                        .flatMap(u -> outbox.append(envelope("DisputeDecided", u, u.round(), null)).thenReturn(u))
+        ).block();
         if (updated == null) {
-            return;  // 非 voting（已判决/终局）→ 幂等跳过
+            return;  // 非 voting（已判决/终局）→ 幂等跳过（empty Mono，无写无事件）
         }
-        outbox.append(envelope("DisputeDecided", updated, updated.round(), null)).block();
     }
 
     @Override
     public void escalate(String disputeId) {
-        DisputeCase updated = disputes.markEscalated(disputeId).block();  // appeal_state=escalated（保持 voting）
+        // 领域写（appeal_state=escalated，保持 voting）+ outbox 同事务：outbox 失败则回滚。
+        DisputeCase updated = transactions.transactional(
+                disputes.markEscalated(disputeId)
+                        .flatMap(u -> outbox.append(envelope("AdjudicationEscalated", u, u.round(), null)).thenReturn(u))
+        ).block();
         if (updated == null) {
-            return;  // 非 voting → 幂等跳过
+            return;  // 非 voting → 幂等跳过（empty Mono，无写无事件）
         }
-        outbox.append(envelope("AdjudicationEscalated", updated, updated.round(), null)).block();
     }
 
     @Override

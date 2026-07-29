@@ -10,16 +10,15 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -36,7 +35,12 @@ import reactor.core.publisher.Mono;
  * 且邮箱不匹配一律返回 <b>404 而非 403</b>——403 会变相确认「这个 id 是个真邀请」，成为探测口。
  *
  * <p><b>顺序</b>：先做 guarded UPDATE（pending→accepted，并发只有一个赢家），再建成员关系。
- * 对方已经是成员时唯一约束冲突，视为幂等成功（邀请照样消费掉），不回滚。
+ * 对方已经是成员时，{@code createIfAbsent}（{@code ON CONFLICT DO NOTHING}）返回空——视为幂等成功
+ * （邀请照样消费掉），用 {@code alreadyMember=true} 如实告知前端，不报错。
+ *
+ * <p><b>Slice 7C-2</b>：accept 的「邀请状态迁移 + 落成员关系 + 两个 outbox 事件」绑进同一 R2DBC 事务
+ * （镜像 {@link #decline}）。成员幂等改用 {@code ON CONFLICT} 预判而非捕获
+ * {@code DataIntegrityViolation}——后者会把事务置 rollback-only，无法事务化。
  */
 @RestController
 @RequestMapping("/api/me/invitations")
@@ -71,14 +75,12 @@ public class MyInvitationController {
                                                             ServerHttpRequest request) {
         return accounts.resolve(request)
                 .flatMap(account -> requireMine(invitationId, account)
-                        // 不套事务：joinOrganization 靠捕获 memberships.create 的 DataIntegrityViolation
-                        // 做「已是成员→幂等」语义；被捕获的 INSERT 失败会把 R2DBC 事务置为 rollback-only，
-                        // 致后续 outbox 写失败。需改 joinOrganization 为 ON CONFLICT 预判才能事务化（留 7C-2）。
-                        .flatMap(invitation -> invitations.accept(invitationId, account.id())
-                                .flatMap(rows -> rows == 0
-                                        ? Mono.<ResponseEntity<Map<String, Object>>>error(
-                                                new IdentityException(409, "邀请已处理"))
-                                        : joinOrganization(invitation, account))));
+                        .flatMap(invitation -> transactions.transactional(
+                                invitations.accept(invitationId, account.id())
+                                        .flatMap(rows -> rows == 0
+                                                ? Mono.<ResponseEntity<Map<String, Object>>>error(
+                                                        new IdentityException(409, "邀请已处理"))
+                                                : joinOrganization(invitation, account)))));
     }
 
     @PostMapping("/{invitationId}/decline")
@@ -118,18 +120,18 @@ public class MyInvitationController {
                 });
     }
 
-    /** 落成员关系 + 事件。已是成员（唯一约束冲突）视为幂等成功，用 alreadyMember 如实告知前端。 */
+    /** 落成员关系 + 事件。已是成员（{@code createIfAbsent} 空结果）视为幂等成功，用 alreadyMember 如实告知前端。 */
     private Mono<ResponseEntity<Map<String, Object>>> joinOrganization(Invitation invitation, AuthUser account) {
         Map<String, Object> payload = Map.of(
                 "organizationId", invitation.organizationId(),
                 "accountId", account.id(),
                 "role", invitation.role());
-        return memberships.create(invitation.organizationId(), account.id(), invitation.role())
+        return memberships.createIfAbsent(invitation.organizationId(), account.id(), invitation.role())
                 .flatMap(membership -> outbox.append(new EventEnvelope(
                         UUID.randomUUID().toString(), "MembershipGranted", "Membership",
                         membership.id(), 1, Instant.now(), null, payload))
-                        .thenReturn(false))
-                .onErrorResume(DataIntegrityViolationException.class, e -> Mono.just(true))
+                        .thenReturn(false))   // 新建成员 → alreadyMember=false（发 MembershipGranted）
+                .switchIfEmpty(Mono.just(true))   // 已是成员（ON CONFLICT 空结果）→ alreadyMember=true（不发 MembershipGranted）
                 .flatMap(alreadyMember -> outbox
                         .append(event("MembershipInvitationAccepted", invitation, payload))
                         .thenReturn(ResponseEntity.ok(Map.<String, Object>of("success", true, "data", Map.of(

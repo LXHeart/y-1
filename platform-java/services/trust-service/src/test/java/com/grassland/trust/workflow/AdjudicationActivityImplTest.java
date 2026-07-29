@@ -18,12 +18,18 @@ import com.grassland.trust.event.OutboxRepository;
 import com.grassland.trust.judge.JudgeRepository;
 import com.grassland.trust.judge.VoteTally;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
  * {@link AdjudicationActivityImpl} 单元测试（草场 Epic 6 Slice 6C Phase C，Mockito）。
  * 覆盖 tallyVotes 映射、recordDecision 幂等、assignPanel 幂等短路、escalate/isFinal。
+ *
+ * <p>Slice 7C-2：activity 把「领域写 + outbox append」包进 {@code transactions.transactional(...)}。
+ * 单测里把 {@link TransactionalOperator} 桩成<b>直通</b>（原样返回被包的 Mono），故断言不变；
+ * 真实回滚由 {@code ActivityOutboxAtomicityIT}（testcontainers + spy outbox）证明。
  */
 class AdjudicationActivityImplTest {
 
@@ -31,10 +37,17 @@ class AdjudicationActivityImplTest {
     private final JudgeRepository judges = mock(JudgeRepository.class);
     private final OutboxRepository outbox = mock(OutboxRepository.class);
     private final FinanceDecisionClient finance = mock(FinanceDecisionClient.class);
+    private final TransactionalOperator transactions = mock(TransactionalOperator.class);
     private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(
             disputes, judges, outbox,
             new AdjudicationProperties(7, 24, 2, 48, 1, 168, 60, 0, 0),  // 末两参=秒级覆盖，0=用小时值
-            finance);
+            finance, transactions);
+
+    @BeforeEach
+    void passThrough() {
+        // 直通：transactional(mono) 原样返回被包的 Mono（本类无 MockitoExtension，未用到的桩不会报错）。
+        when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
 
     @Test
     void tallyVotesMapsMajorityAndTie() {
