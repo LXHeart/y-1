@@ -164,6 +164,8 @@ class MediaControllerIT {
         assertThat(readEnvelope).isNotNull();
         Map<String, Object> read = (Map<String, Object>) readEnvelope.get("data");
         URI downloadUrl = URI.create((String) read.get("downloadUrl"));
+        // 图片类型：签名读 URL 不注入 response-content-disposition，浏览器内联渲染。
+        assertThat(downloadUrl.toString()).doesNotContain("response-content-disposition");
         HttpResponse<byte[]> download = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(downloadUrl).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
@@ -192,6 +194,68 @@ class MediaControllerIT {
         client.get().uri("/api/media/{id}", mediaId)
                 .header("X-Grassland-Identity", sign(owner, org))
                 .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void signedReadInjectsContentDispositionForNonImageTypes() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        // 8 字节 "%PDF-1.5"；media 路径仅校验 size + MIME 字符串（无 magic-byte），任意同长度字节即可。
+        byte[] pdf = new byte[] {0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x35};
+        WebTestClient client = client();
+
+        Map<String, Object> ticketEnvelope = client.post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign(owner, null))
+                .bodyValue(Map.of(
+                        "contentType", "application/pdf",
+                        "purpose", "user_upload",
+                        "sizeBytes", pdf.length,
+                        "ttlSeconds", 3600))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        assertThat(ticketEnvelope).isNotNull();
+        Map<String, Object> ticket = (Map<String, Object>) ticketEnvelope.get("data");
+        UUID mediaId = UUID.fromString((String) ticket.get("id"));
+        URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
+
+        HttpResponse<Void> put = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(uploadUrl)
+                        .header("Content-Type", "application/pdf")
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(pdf))
+                        .build(),
+                HttpResponse.BodyHandlers.discarding());
+        assertThat(put.statusCode()).isEqualTo(200);
+
+        client.post().uri("/api/media/{id}/confirm", mediaId)
+                .header("X-Grassland-Identity", sign(owner, null))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("active");
+
+        Map<String, Object> readEnvelope = client.get().uri("/api/media/{id}", mediaId)
+                .header("X-Grassland-Identity", sign(owner, null))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        assertThat(readEnvelope).isNotNull();
+        Map<String, Object> read = (Map<String, Object>) readEnvelope.get("data");
+        URI downloadUrl = URI.create((String) read.get("downloadUrl"));
+
+        // 非图片类型：签名读 URL 注入 attachment; filename=<id>.pdf，强制浏览器下载而非内联渲染。
+        assertThat(downloadUrl.getRawQuery()).contains("response-content-disposition");
+        assertThat(downloadUrl.getRawQuery()).contains("attachment");
+        assertThat(downloadUrl.getRawQuery()).contains(mediaId + ".pdf");
+
+        HttpResponse<byte[]> download = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(downloadUrl).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(download.statusCode()).isEqualTo(200);
+        assertThat(download.body()).isEqualTo(pdf);
+        assertThat(download.headers().firstValue("Content-Disposition").orElse(""))
+                .isEqualTo("attachment; filename=\"" + mediaId + ".pdf\"");
     }
 
     @Test

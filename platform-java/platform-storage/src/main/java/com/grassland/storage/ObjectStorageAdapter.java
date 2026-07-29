@@ -16,6 +16,16 @@ public interface ObjectStorageAdapter {
     /** 申请下载 URL（presigned GET）。无 I/O，仅签名。 */
     URI presignDownload(String key, long expiresSeconds);
 
+    /**
+     * 申请下载 URL，可选注入 S3 响应覆盖参数（如 {@code response-content-disposition}）；{@code null}/空白表示不覆盖。
+     *
+     * <p>默认实现忽略覆盖参数，等价于 {@link #presignDownload(String, long)}，保证只实现 2-arg 的旧实现/测试桩不受影响。
+     * 覆盖参数会被 SigV4 签名为 query param（如 {@code response-content-disposition=...}）。
+     */
+    default URI presignDownload(String key, long expiresSeconds, String responseContentDisposition) {
+        return presignDownload(key, expiresSeconds);
+    }
+
     /** 服务端直接上传对象内容。阻塞 I/O，调用方需自行离线程。 */
     void putObject(String key, byte[] content, String contentType);
 

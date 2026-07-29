@@ -32,6 +32,8 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -72,6 +74,33 @@ class S3ObjectStorageAdapterUnitTest {
         assertThat(ticket.headers()).containsEntry("Content-Type", "image/png");
         verify(s3Presigner).presignPutObject(argThat((PutObjectPresignRequest req) ->
                 Long.valueOf(42L).equals(req.putObjectRequest().contentLength())));
+    }
+
+    @Test
+    void presignDownload_withDisposition_signsResponseContentDisposition() throws Exception {
+        PresignedGetObjectRequest presigned = mock(PresignedGetObjectRequest.class);
+        when(presigned.url()).thenReturn(URI.create("http://localhost:9000/grassland/k").toURL());
+        when(s3Presigner.presignGetObject(any(GetObjectPresignRequest.class))).thenReturn(presigned);
+
+        URI url = adapter.presignDownload("k", 60, "attachment; filename=\"x.pdf\"");
+
+        assertThat(url.toString()).contains("grassland", "k");
+        verify(s3Presigner).presignGetObject(argThat((GetObjectPresignRequest req) ->
+                "attachment; filename=\"x.pdf\"".equals(req.getObjectRequest().responseContentDisposition())));
+    }
+
+    @Test
+    void presignDownload_withoutDisposition_omitsResponseContentDisposition() throws Exception {
+        PresignedGetObjectRequest presigned = mock(PresignedGetObjectRequest.class);
+        when(presigned.url()).thenReturn(URI.create("http://localhost:9000/grassland/k").toURL());
+        when(s3Presigner.presignGetObject(any(GetObjectPresignRequest.class))).thenReturn(presigned);
+
+        adapter.presignDownload("k", 60, null);
+
+        verify(s3Presigner).presignGetObject(argThat((GetObjectPresignRequest req) -> {
+            String d = req.getObjectRequest().responseContentDisposition();
+            return d == null || d.isEmpty();
+        }));
     }
 
     @Test

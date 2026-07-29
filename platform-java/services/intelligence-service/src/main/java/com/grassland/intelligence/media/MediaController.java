@@ -48,6 +48,17 @@ public class MediaController {
             "video/mp4", "video/quicktime", "video/webm",
             "audio/mpeg", "audio/mp4", "audio/wav", "audio/webm",
             "application/pdf", "text/csv");
+    /** 非图片 MIME → 文件扩展名，用于推导 attachment; filename=<id>.<ext>（白名单与 ALLOWED_MIME_TYPES 同源）。 */
+    private static final Map<String, String> EXTENSIONS = Map.of(
+            "video/mp4", "mp4",
+            "video/quicktime", "mov",
+            "video/webm", "webm",
+            "audio/mpeg", "mp3",
+            "audio/mp4", "m4a",
+            "audio/wav", "wav",
+            "audio/webm", "webm",
+            "application/pdf", "pdf",
+            "text/csv", "csv");
     private static final long MIN_ASSET_TTL_SECONDS = 60;
     private static final long MAX_ASSET_TTL_SECONDS = 30L * 24 * 60 * 60;
 
@@ -111,7 +122,8 @@ public class MediaController {
                 .map(ref -> new MediaReadResponse(
                         ref.id(), ref.purpose(), ref.domainType(), ref.domainId(), ref.mimeType(),
                         ref.sizeBytes(), ref.checksum(), ref.createdAt(), ref.expiresAt(),
-                        storage.presignDownload(ref.objectKey(), downloadTtl(ref, Instant.now()))))
+                        storage.presignDownload(
+                                ref.objectKey(), downloadTtl(ref, Instant.now()), downloadDisposition(ref))))
                 .map(MediaController::success);
     }
 
@@ -347,6 +359,16 @@ public class MediaController {
         }
         long remaining = Math.max(Duration.between(now, ref.expiresAt()).toSeconds(), 1L);
         return Math.min(downloadUrlTtlSeconds, remaining);
+    }
+
+    /** 非图片类型注入 attachment; filename=&lt;id&gt;.&lt;ext&gt;，强制浏览器下载；图片返回 null（内联渲染）。 */
+    private static String downloadDisposition(MediaReference ref) {
+        String mime = ref.mimeType();
+        if (mime == null || mime.startsWith("image/")) {
+            return null;
+        }
+        String ext = EXTENSIONS.get(mime);
+        return "attachment; filename=\"" + ref.id() + (ext != null ? "." + ext : "") + "\"";
     }
 
     private static boolean isExpired(MediaReference ref, Instant now) {

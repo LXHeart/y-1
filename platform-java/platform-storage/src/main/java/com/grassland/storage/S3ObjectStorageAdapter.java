@@ -115,11 +115,20 @@ public final class S3ObjectStorageAdapter implements ObjectStorageAdapter {
 
     @Override
     public URI presignDownload(String key, long expiresSeconds) {
+        return presignDownload(key, expiresSeconds, null);
+    }
+
+    @Override
+    public URI presignDownload(String key, long expiresSeconds, String responseContentDisposition) {
+        GetObjectRequest.Builder requestBuilder = GetObjectRequest.builder()
+                .bucket(properties.bucket())
+                .key(key);
+        if (responseContentDisposition != null && !responseContentDisposition.isBlank()) {
+            // SigV4 会把它签成 response-content-disposition=... query param，强制浏览器下载而非内联渲染。
+            requestBuilder.responseContentDisposition(responseContentDisposition);
+        }
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
-                .getObjectRequest(GetObjectRequest.builder()
-                        .bucket(properties.bucket())
-                        .key(key)
-                        .build())
+                .getObjectRequest(requestBuilder.build())
                 .signatureDuration(Duration.ofSeconds(expiresSeconds))
                 .build();
         PresignedGetObjectRequest presigned = s3Presigner.presignGetObject(presignRequest);
