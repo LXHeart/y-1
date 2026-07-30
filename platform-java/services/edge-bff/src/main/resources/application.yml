@@ -156,6 +156,29 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    # ---- 视频改编出图（草场 intelligence Slice 9）→ intelligence-service。⚠️ 前缀 /api/video-recreation
+    # 与 legacy adapt-content（Slice 10 仍 legacy）共享，故 4 个图片端点用 method+path 精确路由；
+    # adapt-content 不在本批，仍走 legacy default upstream。四个端点共享一个回滚开关，默认开。
+    - method: POST
+      path: /api/video-recreation/generate-asset-image
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/video-recreation/generate-all-asset-images
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/video-recreation/generate-scene-image
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/video-recreation/generate-all-scene-images
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:true}
     # ---- 图片评价文案（草场 intelligence Slice 6）→ intelligence-service。⚠️ 前缀 /api/image-analysis
     # 当前未整体路由（回落 legacy），故按 leaf method+path 精确切到 intelligence，分三域回滚开关：
     # 生成（analyze + step/*）、风格数据（style-preferences* + save-style-memory）、飞书导出（export-feishu）。

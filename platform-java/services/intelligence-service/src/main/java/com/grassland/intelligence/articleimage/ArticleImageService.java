@@ -71,6 +71,14 @@ public class ArticleImageService {
     }
 
     public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner) {
+        return generate(command, owner, MediaPurpose.ARTICLE_GENERATED);
+    }
+
+    /**
+     * 生图并登记为 media 资产。{@code purpose} 区分归属用途：文章配图用 {@link MediaPurpose#ARTICLE_GENERATED}，
+     * 视频改编出图（Slice 9）用 {@link MediaPurpose#VIDEO_ASSET}；存储/读路径与外部 URL 契约不变。
+     */
+    public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner, MediaPurpose purpose) {
         Mono<String> prompt = command.images().isEmpty()
                 ? Mono.just(command.prompt())
                 : Flux.fromIterable(command.images())
@@ -78,7 +86,7 @@ public class ArticleImageService {
                         .collectList()
                         .map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
         return prompt.flatMap(value -> generation.generate(value, command.size()))
-                .flatMap(generated -> toResponse(generated, owner));
+                .flatMap(generated -> toResponse(generated, owner, purpose));
     }
 
     public Mono<GeneratedImageStore.StoredImage> findGenerated(String id) {
@@ -97,12 +105,12 @@ public class ArticleImageService {
         return ai.completeText(command);
     }
 
-    private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated, MediaOwner owner) {
+    private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated, MediaOwner owner, MediaPurpose purpose) {
         if (generated.imageUrl() != null) {
             return Mono.error(new IntelligenceException(502, "图片生成服务未返回可托管的图片数据"));
         }
         return store.store(generated.base64())
-                .flatMap(ref -> registerGeneratedMedia(ref, generated.base64(), owner)
+                .flatMap(ref -> registerGeneratedMedia(ref, generated.base64(), owner, purpose)
                         .thenReturn(new GeneratedImageResponse(GENERATED_PREFIX + ref.id(), generated.revisedPrompt())));
     }
 
@@ -111,7 +119,8 @@ public class ArticleImageService {
      * 本地临时兜底（managed=false）跳过持久登记，避免文件 TTL 与 DB 行生命周期脱节。
      * 公开读路径 {@code /generated-images/{id}} 不查此行，字节级契约不变。
      */
-    private Mono<Void> registerGeneratedMedia(GeneratedImageStore.StoredRef ref, String base64, MediaOwner owner) {
+    private Mono<Void> registerGeneratedMedia(
+            GeneratedImageStore.StoredRef ref, String base64, MediaOwner owner, MediaPurpose purpose) {
         if (!ref.managed()) {
             return Mono.empty();
         }
@@ -125,7 +134,7 @@ public class ArticleImageService {
                 UUID.fromString(ref.id()),
                 owner.accountId(),
                 owner.organizationId(),
-                MediaPurpose.ARTICLE_GENERATED.db(),
+                purpose.db(),
                 null,
                 null,
                 ref.objectKey(),

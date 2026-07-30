@@ -49,6 +49,11 @@ class UpstreamResolverTest {
             new RouteProperties("GET", "/api/article-generation/generated-images", "intelligence", true),
             // intelligence Slice 4：视频制作脚本精确切换；generate-video stub 仍 legacy
             new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true, true),
+            // intelligence Slice 9：视频改编出图 4 端点精确切换（adapt-content 共享前缀、Slice 10 仍 legacy，不得被抢）
+            new RouteProperties("POST", "/api/video-recreation/generate-asset-image", "intelligence", true, true),
+            new RouteProperties("POST", "/api/video-recreation/generate-all-asset-images", "intelligence", true, true),
+            new RouteProperties("POST", "/api/video-recreation/generate-scene-image", "intelligence", true, true),
+            new RouteProperties("POST", "/api/video-recreation/generate-all-scene-images", "intelligence", true, true),
             // intelligence Slice 6：图片评价文案 9 端点精确切换（分三域回滚开关；前缀 /api/image-analysis 未整体路由）
             new RouteProperties("POST", "/api/image-analysis/analyze", "intelligence", true, true),
             new RouteProperties("POST", "/api/image-analysis/step/draft", "intelligence", true, true),
@@ -243,6 +248,21 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("POST", "/api/video-production/generate-script")).isTrue();
         // Seedance 集成仍是 legacy stub；精确路由不能抢走它。
         assertThat(resolver.resolve("POST", "/api/video-production/generate-video")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void routesVideoRecreationImagesToIntelligenceButAdaptContentStaysLegacy() {
+        // Slice 9：4 个出图端点精确切到 intelligence（内部上游 → 签发 X-Grassland-Identity）。
+        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-asset-image")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-all-asset-images")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-scene-image")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-all-scene-images")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/video-recreation/generate-scene-image")).isTrue();
+        // ⚠️ 回归防护：adapt-content 共享前缀、Slice 10 仍 legacy，绝不能被精确叶子抢走；GET/sibling 也回 legacy。
+        assertThat(resolver.resolve("POST", "/api/video-recreation/adapt-content")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/video-recreation/generate-scene-image")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-asset-image/extra")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/video-recreation/unknown")).isEqualTo(LEGACY);
     }
 
     @Test
