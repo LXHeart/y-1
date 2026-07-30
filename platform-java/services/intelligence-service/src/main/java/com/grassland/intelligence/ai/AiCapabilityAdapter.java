@@ -1,5 +1,7 @@
 package com.grassland.intelligence.ai;
 
+import java.time.Duration;
+import java.util.List;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -16,4 +18,9 @@ public interface AiCapabilityAdapter {
 
     /** 非流式文本完成；返回 OpenAI-compatible {@code choices[0].message.content}。 */
     Mono<String> completeText(TextCompletionCommand command);
+
+    /** 非流式多模态完成（草场 Slice 10 视频改编）：文本 + 图片片断，自定义超时。默认不支持。 */
+    default Mono<String> completeMultimodal(List<ContentPart> parts, Duration timeout) {
+        return Mono.error(new UnsupportedOperationException("multimodal completion not supported"));
+    }
 }

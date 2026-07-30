@@ -1,5 +1,6 @@
 package com.grassland.intelligence.videorecreation;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -13,6 +14,7 @@ import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.media.MediaPurpose;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -199,6 +201,71 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("scenes", List.of()))
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("adapt-content requires auth")
+    void adaptContentRequiresAuth() {
+        client().post().uri("/api/video-recreation/adapt-content")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(adaptBody("脚本内容"))
+                .exchange().expectStatus().isUnauthorized();
+    }
+
+    @Test
+    @DisplayName("adapt-content returns envelope and never forwards proxyVideoUrl to Qwen")
+    void adaptContentReturnsEnvelope() {
+        stubQwenAdapt();
+        client().post().uri("/api/video-recreation/adapt-content")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(adaptBody("脚本内容"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.adaptedSummary").isEqualTo("改编摘要");
+
+        // proxyVideoUrl 绝不能进入上游请求体。
+        List<com.github.tomakehurst.wiremock.stubbing.ServeEvent> events = QWEN.getAllServeEvents();
+        assertThat(events).hasSizeGreaterThan(0);
+        assertThat(events.get(events.size() - 1).getRequest().getBodyAsString())
+                .doesNotContain("secret-proxy-token");
+        verify(credits, never()).consume(any(), any());
+    }
+
+    @Test
+    @DisplayName("adapt-content rejects empty extracted content")
+    void adaptContentRejectsEmptyContent() {
+        client().post().uri("/api/video-recreation/adapt-content")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(adaptBody("   "))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    private void stubQwenAdapt() {
+        String adaptation = "{\"adapted_summary\":\"改编摘要\",\"adapted_script\":[],"
+                + "\"character_sheets\":[],\"scene_cards\":[],\"prop_cards\":[]}";
+        Map<String, Object> response = Map.of("choices",
+                List.of(Map.of("message", Map.of("content", adaptation))));
+        String body;
+        try {
+            body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(response);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+        QWEN.stubFor(com.github.tomakehurst.wiremock.client.WireMock.post(
+                com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo("/chat/completions"))
+                .willReturn(com.github.tomakehurst.wiremock.client.WireMock.ok()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(body)));
+    }
+
+    private Map<String, Object> adaptBody(String script) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("platform", "douyin");
+        body.put("proxyVideoUrl", "/api/douyin/proxy/secret-proxy-token");
+        body.put("extractedContent", Map.of("videoScript", script));
+        return body;
     }
 
     private Map<String, Object> characterBody() {

@@ -31,10 +31,15 @@ public class VideoRecreationController {
 
     private final IntelligenceCallerResolver callers;
     private final VideoRecreationImageService images;
+    private final VideoRecreationAdaptationParser adaptationParser;
+    private final VideoRecreationAdaptationService adaptation;
 
-    public VideoRecreationController(IntelligenceCallerResolver callers, VideoRecreationImageService images) {
+    public VideoRecreationController(IntelligenceCallerResolver callers, VideoRecreationImageService images,
+            VideoRecreationAdaptationParser adaptationParser, VideoRecreationAdaptationService adaptation) {
         this.callers = callers;
         this.images = images;
+        this.adaptationParser = adaptationParser;
+        this.adaptation = adaptation;
     }
 
     @PostMapping(value = "/generate-asset-image", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -77,6 +82,23 @@ public class VideoRecreationController {
                     return images.generateAllScenes(req.scenes(), req.overallStyle(), req.size(), owner(caller));
                 })
                 .map(list -> success(Map.of("images", list)));
+    }
+
+    @PostMapping(value = "/adapt-content", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<Map<String, Object>> adaptContentJson(
+            @RequestBody Map<String, Object> body, ServerWebExchange exchange) {
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> adaptation.adapt(adaptationParser.parseJson(body)))
+                .map(VideoRecreationController::success);
+    }
+
+    @PostMapping(value = "/adapt-content", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<Map<String, Object>> adaptContentMultipart(ServerWebExchange exchange) {
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> exchange.getMultipartData()
+                        .flatMap(adaptationParser::parseMultipart)
+                        .flatMap(adaptation::adapt))
+                .map(VideoRecreationController::success);
     }
 
     private static MediaOwner owner(IntelligenceCallerResolver.Caller caller) {

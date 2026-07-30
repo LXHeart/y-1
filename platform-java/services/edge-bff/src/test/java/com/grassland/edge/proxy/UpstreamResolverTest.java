@@ -49,11 +49,13 @@ class UpstreamResolverTest {
             new RouteProperties("GET", "/api/article-generation/generated-images", "intelligence", true),
             // intelligence Slice 4：视频制作脚本精确切换；generate-video stub 仍 legacy
             new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true, true),
-            // intelligence Slice 9：视频改编出图 4 端点精确切换（adapt-content 共享前缀、Slice 10 仍 legacy，不得被抢）
+            // intelligence Slice 9：视频改编出图 4 端点精确切换
             new RouteProperties("POST", "/api/video-recreation/generate-asset-image", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-all-asset-images", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-scene-image", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-all-scene-images", "intelligence", true, true),
+            // intelligence Slice 10：adapt-content 精确切换（独立回滚开关；默认 false，测试构造时置 true 模拟开启）
+            new RouteProperties("POST", "/api/video-recreation/adapt-content", "intelligence", true, true),
             // intelligence Slice 6：图片评价文案 9 端点精确切换（分三域回滚开关；前缀 /api/image-analysis 未整体路由）
             new RouteProperties("POST", "/api/image-analysis/analyze", "intelligence", true, true),
             new RouteProperties("POST", "/api/image-analysis/step/draft", "intelligence", true, true),
@@ -251,18 +253,32 @@ class UpstreamResolverTest {
     }
 
     @Test
-    void routesVideoRecreationImagesToIntelligenceButAdaptContentStaysLegacy() {
+    void routesVideoRecreationLeavesToIntelligenceWithoutStealingSiblings() {
         // Slice 9：4 个出图端点精确切到 intelligence（内部上游 → 签发 X-Grassland-Identity）。
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-asset-image")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-all-asset-images")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-scene-image")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-all-scene-images")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/video-recreation/generate-scene-image")).isTrue();
-        // ⚠️ 回归防护：adapt-content 共享前缀、Slice 10 仍 legacy，绝不能被精确叶子抢走；GET/sibling 也回 legacy。
-        assertThat(resolver.resolve("POST", "/api/video-recreation/adapt-content")).isEqualTo(LEGACY);
+        // Slice 10：adapt-content 精确切到 intelligence（开启回滚开关时）。
+        assertThat(resolver.resolve("POST", "/api/video-recreation/adapt-content")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/video-recreation/adapt-content")).isTrue();
+        // ⚠️ 回归防护：method 与子路径不抢——GET/sibling/extra 仍回 legacy。
+        assertThat(resolver.resolve("GET", "/api/video-recreation/adapt-content")).isEqualTo(LEGACY);
         assertThat(resolver.resolve("GET", "/api/video-recreation/generate-scene-image")).isEqualTo(LEGACY);
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-asset-image/extra")).isEqualTo(LEGACY);
         assertThat(resolver.resolve("POST", "/api/video-recreation/unknown")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void adaptContentFallsBackToLegacyWhenFlagDisabled() {
+        // Slice 10 回滚：EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE=false → 仍走 legacy。
+        EdgeRoutingProperties disabled = new EdgeRoutingProperties(
+            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            List.of(new RouteProperties("POST", "/api/video-recreation/adapt-content", "intelligence", false, true)),
+            "legacy");
+        UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
+        assertThat(disabledResolver.resolve("POST", "/api/video-recreation/adapt-content")).isEqualTo(LEGACY);
     }
 
     @Test

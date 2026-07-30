@@ -133,6 +133,37 @@ class VideoRecreationPreflightFilterTest {
     }
 
     @Test
+    void adaptContentSharesGlobalBucketWithImageEndpoints() {
+        authenticated();
+        // 用 9 次图片端点 + 1 次 adapt-content 填满 global 10/60s；第 11 次 adapt-content → 429。
+        for (int i = 0; i < 9; i++) {
+            filter.filter(post("/api/video-recreation/generate-scene-image"), chain).block();
+        }
+        filter.filter(post("/api/video-recreation/adapt-content"), chain).block();
+        verify(chain, times(10)).filter(any());
+
+        MockServerWebExchange rejected = post("/api/video-recreation/adapt-content");
+        filter.filter(rejected, chain).block();
+        assertThat(rejected.getResponse().getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        verify(chain, times(10)).filter(any());
+    }
+
+    @Test
+    void adaptContentRejectsMultipartTooLargeBeforeChain() {
+        authenticated();
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.post("/api/video-recreation/adapt-content")
+                        .header("Content-Type", "multipart/form-data; boundary=x")
+                        .header("Content-Length", String.valueOf(21L * 1024 * 1024))
+                        .build());
+
+        filter.filter(exchange, chain).block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        verify(chain, never()).filter(any());
+    }
+
+    @Test
     void unrelatedRequestBypassesFilter() {
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/video-recreation/anything").build());

@@ -13,7 +13,9 @@ import com.grassland.intelligence.security.IntelligenceException;
 import io.netty.channel.ChannelOption;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
@@ -73,25 +75,36 @@ public class QwenClient implements AiCapabilityAdapter {
 
     @Override
     public Mono<String> completeText(TextCompletionCommand command) {
+        return requestCompletion(command.messages(), command.timeout(), command.failureMessage());
+    }
+
+    /** 非流式多模态完成（草场 Slice 10 视频改编）：复用 OpenAI 兼容 /chat/completions，自定义超时。 */
+    public Mono<String> completeMultimodal(List<ContentPart> parts, Duration timeout) {
+        return requestCompletion(List.of(ChatMessage.user(parts)), timeout, "视频内容改编失败，请稍后重试");
+    }
+
+    private Mono<String> requestCompletion(List<ChatMessage> messages, Duration timeout, String failureMessage) {
         String endpoint = stripTrailingSlash(config.baseUrl()) + "/chat/completions";
         return webClient.post().uri(endpoint)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Authorization", "Bearer " + config.apiKey())
-                .bodyValue(buildCompletionBody(command))
+                .bodyValue(buildCompletionBody(messages))
                 .exchangeToMono(response -> {
                     int status = response.statusCode().value();
                     if (status >= 200 && status < 300) {
                         return response.bodyToMono(String.class).map(this::extractMessageContent);
                     }
                     return response.bodyToMono(String.class).defaultIfEmpty("")
-                            .flatMap(ignored -> Mono.error(completionError(status, command.failureMessage())));
+                            .flatMap(ignored -> Mono.error(completionError(status, failureMessage)));
                 })
-                .timeout(command.timeout())
+                .timeout(timeout)
+                .onErrorMap(TimeoutException.class,
+                        error -> new IntelligenceException(504, "视频内容改编超时，请稍后重试"))
                 .onErrorMap(error -> {
                     if (error instanceof IntelligenceException) {
                         return error;
                     }
-                    return new IntelligenceException(502, command.failureMessage());
+                    return new IntelligenceException(502, failureMessage);
                 });
     }
 
@@ -104,10 +117,10 @@ public class QwenClient implements AiCapabilityAdapter {
         return body;
     }
 
-    private Map<String, Object> buildCompletionBody(TextCompletionCommand command) {
+    private Map<String, Object> buildCompletionBody(List<ChatMessage> messages) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.model());
-        body.put("messages", command.messages().stream().map(QwenClient::toMessageMap).toList());
+        body.put("messages", messages.stream().map(QwenClient::toMessageMap).toList());
         body.put("stream", false);
         body.put("enable_thinking", false);
         return body;

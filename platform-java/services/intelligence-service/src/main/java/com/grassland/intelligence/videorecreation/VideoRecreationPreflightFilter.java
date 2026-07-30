@@ -33,13 +33,16 @@ public class VideoRecreationPreflightFilter implements WebFilter, Ordered {
             "/api/video-recreation/generate-asset-image",
             "/api/video-recreation/generate-all-asset-images",
             "/api/video-recreation/generate-scene-image",
-            "/api/video-recreation/generate-all-scene-images");
+            "/api/video-recreation/generate-all-scene-images",
+            "/api/video-recreation/adapt-content");
     private static final Set<String> BATCH_PATHS = Set.of(
             "/api/video-recreation/generate-all-asset-images",
             "/api/video-recreation/generate-all-scene-images");
+    private static final String ADAPT_PATH = "/api/video-recreation/adapt-content";
     private static final int GLOBAL_LIMIT = 10;
     private static final int BATCH_LIMIT = 2;
     private static final long WINDOW_MILLIS = 60_000L;
+    private static final long MAX_MULTIPART_REQUEST_BYTES = 4L * 5 * 1024 * 1024 + 12L * 32 * 1024;
 
     private final IntelligenceCallerResolver callers;
     private final Clock clock;
@@ -78,13 +81,27 @@ public class VideoRecreationPreflightFilter implements WebFilter, Ordered {
                             : null;
                     boolean allowed = globalDecision.allowed()
                             && (batchDecision == null || batchDecision.allowed());
-                    return allowed
-                            ? chain.filter(exchange)
-                            : writeError(exchange, HttpStatus.TOO_MANY_REQUESTS,
-                                    "视频改编请求过于频繁，请稍后再试。");
+                    if (!allowed) {
+                        return writeError(exchange, HttpStatus.TOO_MANY_REQUESTS,
+                                "视频改编请求过于频繁，请稍后再试。");
+                    }
+                    if (ADAPT_PATH.equals(path) && multipartTooLarge(exchange)) {
+                        return writeError(exchange, HttpStatus.BAD_REQUEST,
+                                "图片上传总大小不能超过 20 MB");
+                    }
+                    return chain.filter(exchange);
                 })
                 .onErrorResume(AuthenticationPreflightException.class,
                         error -> writeError(exchange, HttpStatus.UNAUTHORIZED, "未登录"));
+    }
+
+    private boolean multipartTooLarge(ServerWebExchange exchange) {
+        MediaType contentType = exchange.getRequest().getHeaders().getContentType();
+        if (contentType == null || !MediaType.MULTIPART_FORM_DATA.isCompatibleWith(contentType)) {
+            return false;
+        }
+        long contentLength = exchange.getRequest().getHeaders().getContentLength();
+        return contentLength > MAX_MULTIPART_REQUEST_BYTES;
     }
 
     private RateDecision rate(ConcurrentHashMap<String, Window> windows, String accountId, int limit) {
