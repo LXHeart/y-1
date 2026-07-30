@@ -1,6 +1,8 @@
 import { ref } from 'vue'
 import type {
   AdjudicationSnapshot,
+  AttachmentDownload,
+  CreateMediaUploadTicketInput,
   CreateTaskInput,
   DisputeCase,
   EngagementRating,
@@ -13,6 +15,8 @@ import type {
   IdentityType,
   Judge,
   JudgeVote,
+  MediaMetadata,
+  MediaUploadTicket,
   CreatePermissionRequestInput,
   InvitationAcceptResult,
   LoginSession,
@@ -82,6 +86,26 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 第二步：把文件直传到 presigned URL。
+ *
+ * ⚠️ **刻意不走 {@link request}**，三处都不能照抄本站请求的写法：
+ * 1. 目标是 MinIO/S3（nginx CORS 反代 `:9002`）而非本站——`credentials: 'include'` 会让浏览器
+ *    要求响应带 `Access-Control-Allow-Credentials: true`，nginx 没发 → preflight 通过但请求被拦。
+ * 2. 只回放 ticket 给的 header。多加任何一个（如 `Authorization`）都不在 SigV4 的 SignedHeaders 里 → 403。
+ * 3. 响应体是**空的 / XML 错误**，不是 `{success,data}` 信封——不能拿 `request` 的 json 解析路径去解。
+ */
+async function putToPresignedUrl(ticket: MediaUploadTicket, file: File): Promise<void> {
+  const response = await fetch(ticket.uploadUrl, {
+    method: ticket.method || 'PUT',
+    headers: ticket.headers || {},
+    body: file,
+  })
+  if (!response.ok) {
+    throw new Error(`附件上传失败（${response.status}）——凭据可能已过期，请重试`)
+  }
 }
 
 export function useGrassland() {
@@ -224,11 +248,18 @@ export function useGrassland() {
    *
    * ⚠️ `contentUrl` 必须是 http(s) 链接，后端会校验；已有待核验的一份时 409（被退回后才可重交）。
    */
-  const submitDeliverable = (taskId: string, applicationId: string, contentUrl: string, note?: string) =>
+  const submitDeliverable = (
+    taskId: string, applicationId: string, contentUrl: string, note?: string, mediaIds?: string[],
+  ) =>
     run(() => request<EngagementSubmission>(
       `/api/tasks/${taskId}/applications/${applicationId}/submissions`, {
         method: 'POST',
-        body: JSON.stringify(note ? { contentUrl, note } : { contentUrl }),
+        body: JSON.stringify({
+          contentUrl,
+          ...(note ? { note } : {}),
+          // 空数组也不发：后端 mediaIds 省略与 [] 等价，少发一个字段少一处 400 风险。
+          ...(mediaIds && mediaIds.length > 0 ? { mediaIds } : {}),
+        }),
       }))
 
   /**
@@ -250,6 +281,63 @@ export function useGrassland() {
         method: 'POST',
         body: JSON.stringify({ note: note || '' }),
       }))
+
+  // ---------- intelligence：media 直传（三步上传）----------
+
+  /** 第一步：申请上传凭据。会原子预留 owner 配额（默认 20 个 / 400MB）并落一行 pending。 */
+  const createMediaUploadTicket = (input: CreateMediaUploadTicketInput) =>
+    run(() => request<MediaUploadTicket>('/api/media/upload-tickets', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  /**
+   * 第三步：确认上传。后端按临时 key HEAD 校验字节数与 content-type，再服务端搬到最终 key 并置 active。
+   *
+   * ⚠️ 不 confirm 的 pending 行会被清理任务回收（默认 1 小时宽限），对象也会被删——
+   * 提交交付物前必须 confirm 过，否则挂接时 intelligence 返回 404（附件不可用）。
+   */
+  const confirmMediaUpload = (mediaId: string) =>
+    run(() => request<MediaMetadata>(`/api/media/${mediaId}/confirm`, { method: 'POST' }))
+
+  /**
+   * 三步合一：申请凭据 → 直传 → confirm，返回可用于提交交付物的 mediaId。
+   *
+   * 整个流程包在**一次** `run()` 里，故三步中任何一步失败都只留一条 `error`、loading 只闪一次；
+   * 组件不需要自己串联，也不会出现「第二步失败但 loading 已复位」的中间态。
+   *
+   * ⚠️ `sizeBytes` 取 `file.size` 而不是让调用方传——confirm 时逐字节校验，两处取值必须同源。
+   */
+  const uploadEngagementAttachment = (file: File) =>
+    run(async () => {
+      const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          contentType: file.type || 'application/octet-stream',
+          purpose: 'engagement_attachment',
+          sizeBytes: file.size,
+        }),
+      })
+      await putToPresignedUrl(ticket, file)
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      return confirmed.id
+    })
+
+  /**
+   * 附件下载 URL（商家与提交人均可取）。
+   *
+   * marketplace 先证该 media 确实挂在这条交付物上（防跨履约越权），再经服务断言向 intelligence 换签名 URL——
+   * 浏览器**不能**直接调 intelligence 的 media 端点：附件 owner 是推荐官，商家在那边是无权访问的第三方。
+   *
+   * 附件已被 owner 删除时后端 404，这里会把错误落到 `error`（「附件已不可用」），返回 null。
+   */
+  const getAttachmentDownloadUrl = (
+    taskId: string, applicationId: string, submissionId: string, mediaId: string,
+  ) =>
+    run(() => request<AttachmentDownload>(
+      `/api/tasks/${taskId}/applications/${applicationId}/submissions/${submissionId}`
+      + `/attachments/${mediaId}/download-url`))
 
   // ---------- 推荐官画像（identity）+ 声誉 / 评分（marketplace）----------
 
@@ -611,6 +699,11 @@ export function useGrassland() {
     submitDeliverable,
     listDeliverables,
     rejectDeliverable,
+    // intelligence：media 直传
+    createMediaUploadTicket,
+    confirmMediaUpload,
+    uploadEngagementAttachment,
+    getAttachmentDownloadUrl,
     listStores,
     createStore,
     listStoreMemberships,

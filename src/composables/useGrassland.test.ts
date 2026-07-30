@@ -337,3 +337,158 @@ describe('错误处理', () => {
     expect(error.value).toBe('当前等级不可发布任务')
   })
 })
+
+describe('履约附件三步上传请求契约（Slice 11）', () => {
+  function mockFetchData(data: unknown): ReturnType<typeof vi.fn> {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data }),
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('createMediaUploadTicket 打到 /api/media/upload-tickets（复数）', async () => {
+    const spy = mockFetchData({})
+    const { createMediaUploadTicket } = useGrassland()
+
+    await createMediaUploadTicket({
+      contentType: 'image/png', purpose: 'engagement_attachment', sizeBytes: 1234,
+    })
+
+    // 后端路径是 upload-tickets 而非 upload-ticket，写成单数 404
+    expect(spy.mock.calls[0][0]).toBe('/api/media/upload-tickets')
+    expect(bodyOf(spy)).toEqual({
+      contentType: 'image/png', purpose: 'engagement_attachment', sizeBytes: 1234,
+    })
+  })
+
+  test('confirmMediaUpload POST 到 /confirm 且不带请求体', async () => {
+    const spy = mockFetchData({ id: 'media-1', status: 'active' })
+    const { confirmMediaUpload } = useGrassland()
+
+    await confirmMediaUpload('media-1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/media/media-1/confirm')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect((spy.mock.calls[0][1] as RequestInit).body).toBeUndefined()
+  })
+
+  test('submitDeliverable 带 mediaIds', async () => {
+    const spy = mockFetchData({})
+    const { submitDeliverable } = useGrassland()
+
+    await submitDeliverable('t-1', 'a-1', 'https://x.test/p', '说明', ['m-1', 'm-2'])
+
+    expect(bodyOf(spy)).toEqual({
+      contentUrl: 'https://x.test/p', note: '说明', mediaIds: ['m-1', 'm-2'],
+    })
+  })
+
+  test('submitDeliverable 附件为空数组时不发 mediaIds（少一处 400 风险）', async () => {
+    const spy = mockFetchData({})
+    const { submitDeliverable } = useGrassland()
+
+    await submitDeliverable('t-1', 'a-1', 'https://x.test/p', undefined, [])
+
+    expect(bodyOf(spy)).toEqual({ contentUrl: 'https://x.test/p' })
+  })
+
+  test('getAttachmentDownloadUrl 走 marketplace 嵌套路径（不直连 intelligence）', async () => {
+    // 附件 owner 是推荐官，商家在 intelligence 侧是无权第三方——必须经 marketplace 服务断言中转
+    const spy = mockFetchData({ downloadUrl: 'https://minio.test/signed', expiresAt: null })
+    const { getAttachmentDownloadUrl } = useGrassland()
+
+    const result = await getAttachmentDownloadUrl('t-1', 'a-1', 's-1', 'm-1')
+
+    expect(spy.mock.calls[0][0])
+      .toBe('/api/tasks/t-1/applications/a-1/submissions/s-1/attachments/m-1/download-url')
+    expect(result?.downloadUrl).toBe('https://minio.test/signed')
+  })
+
+  test('uploadEngagementAttachment 三步串起来，PUT 用 ticket 的 url/method/headers', async () => {
+    const ticket = {
+      id: 'media-9',
+      objectKey: 'media/engagement_attachment/media-9',
+      uploadUrl: 'http://localhost:9002/grassland/tmp/media-9',
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      expiresAt: null,
+    }
+    let call = 0
+    const spy = vi.fn().mockImplementation(async (url: string) => {
+      call += 1
+      if (url === ticket.uploadUrl) return { ok: true, status: 200 }
+      const data = call === 1 ? ticket : { id: 'media-9', status: 'active' }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    })
+    vi.stubGlobal('fetch', spy)
+    const { uploadEngagementAttachment } = useGrassland()
+    const file = new File([new Uint8Array(3)], 'shot.png', { type: 'image/png' })
+
+    const mediaId = await uploadEngagementAttachment(file)
+
+    expect(mediaId).toBe('media-9')
+    expect(spy.mock.calls[0][0]).toBe('/api/media/upload-tickets')
+    expect(bodyOf(spy)).toEqual({
+      contentType: 'image/png', purpose: 'engagement_attachment', sizeBytes: 3,
+    })
+    // 第二步：直传 MinIO
+    const put = spy.mock.calls[1][1] as RequestInit
+    expect(spy.mock.calls[1][0]).toBe(ticket.uploadUrl)
+    expect(put.method).toBe('PUT')
+    expect(put.headers).toEqual({ 'Content-Type': 'image/png' })
+    expect(put.body).toBe(file)
+    // 第三步：confirm
+    expect(spy.mock.calls[2][0]).toBe('/api/media/media-9/confirm')
+  })
+
+  test('直传 MinIO 时不带 cookie（credentials 会要求 ACAC 头，nginx 未发 → 请求被拦）', async () => {
+    const ticket = {
+      id: 'media-9', objectKey: 'k', uploadUrl: 'http://localhost:9002/b/k',
+      method: 'PUT', headers: {}, expiresAt: null,
+    }
+    let call = 0
+    const spy = vi.fn().mockImplementation(async (url: string) => {
+      call += 1
+      if (url === ticket.uploadUrl) return { ok: true, status: 200 }
+      return {
+        ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data: call === 1 ? ticket : { id: 'media-9' } }),
+      }
+    })
+    vi.stubGlobal('fetch', spy)
+    const { uploadEngagementAttachment } = useGrassland()
+
+    await uploadEngagementAttachment(new File(['x'], 'a.bin'))
+
+    const put = spy.mock.calls[1][1] as RequestInit
+    expect(put.credentials).toBeUndefined()
+    // 本站请求仍必须带 cookie
+    expect((spy.mock.calls[0][1] as RequestInit).credentials).toBe('include')
+  })
+
+  test('直传失败时不 confirm，错误落到 error（不留半成品 active 资产）', async () => {
+    const ticket = {
+      id: 'media-9', objectKey: 'k', uploadUrl: 'http://localhost:9002/b/k',
+      method: 'PUT', headers: {}, expiresAt: null,
+    }
+    const spy = vi.fn().mockImplementation(async (url: string) => {
+      if (url === ticket.uploadUrl) return { ok: false, status: 403 }
+      return {
+        ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data: ticket }),
+      }
+    })
+    vi.stubGlobal('fetch', spy)
+    const { uploadEngagementAttachment, error } = useGrassland()
+
+    const mediaId = await uploadEngagementAttachment(new File(['x'], 'a.bin'))
+
+    expect(mediaId).toBeNull()
+    expect(error.value).toContain('403')
+    expect(spy).toHaveBeenCalledTimes(2)  // ticket + PUT，没有第三步
+    expect(spy.mock.calls.some((c) => String(c[0]).includes('/confirm'))).toBe(false)
+  })
+})

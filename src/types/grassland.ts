@@ -405,6 +405,93 @@ export interface EngagementSubmission {
   reviewNote: string | null
   reviewedAt: string | null
   createdAt: string | null
+  /**
+   * 附件（Slice 11 履约附件）。
+   *
+   * ⚠️ 后端**总是**带这个字段（创建响应取挂接时的入参快照、列表响应取 DB 行快照），
+   * 但两条路径都可能是空数组；旧数据（Slice 11 之前的交付物）也走同一序列化，故为空数组而非缺字段。
+   * 标可选是为了让 legacy 测试夹具不必逐个补 `attachments: []`。
+   */
+  attachments?: EngagementSubmissionAttachment[]
+}
+
+/**
+ * 交付物附件。`mimeType`/`sizeBytes` 是**挂接那一刻的快照**（存在 marketplace 侧），
+ * 不会随 intelligence 侧 media_reference 变化——附件被删后这里仍有行，下载才 404。
+ *
+ * ⚠️ 字段名是 `mediaId` 而非 `id`：它是 intelligence 域的 media_reference id，
+ * marketplace 侧无 FK（镜像 V5 recommender_account_id 的跨服务弱引用）。
+ */
+export interface EngagementSubmissionAttachment {
+  mediaId: string
+  mimeType: string | null
+  sizeBytes: number | null
+}
+
+// ---------- intelligence：media 直传（三步上传）----------
+
+/** 附件用途。履约附件是唯一允许 marketplace 跨账号读的 purpose（服务间断点的放行条件）。 */
+export type MediaPurpose = 'engagement_attachment' | 'article_image' | 'avatar'
+
+/**
+ * 上传凭据（第一步 `POST /api/media/upload-tickets` 的响应）。
+ *
+ * ⚠️ `uploadUrl` 指向 **MinIO/S3 而非本站**（默认 `http://localhost:9002` 的 nginx CORS 反代，
+ * 见 Slice 11 Stage 3）。往它 PUT 时**绝不能带 cookie**——`credentials: 'include'` 会让浏览器
+ * 要求 `Access-Control-Allow-Credentials`，且多余 header 会破坏 SigV4 签名 → 403。
+ *
+ * `headers` 是签名时锁定的必须请求头（通常仅 `Content-Type`）；照原样回放，别增删。
+ */
+export interface MediaUploadTicket {
+  /** media_reference id；第三步 confirm 与提交交付物时都用它。 */
+  id: string
+  /** 临时对象 key（诊断用；最终 key 由服务端 confirm 时写入，从不暴露 PUT 权限）。 */
+  objectKey: string
+  uploadUrl: string
+  /** 恒为 `PUT`；照后端返回值用，不要写死。 */
+  method: string
+  headers: Record<string, string>
+  /** presigned URL 过期时间（默认 15 分钟）。 */
+  expiresAt: string | null
+}
+
+/** 申请上传凭据的入参。`sizeBytes` 必填且必须等于真实字节数——confirm 时按 HEAD 逐字节校验，不符即失败。 */
+export interface CreateMediaUploadTicketInput {
+  contentType: string
+  purpose: MediaPurpose
+  sizeBytes: number
+  domainType?: string
+  domainId?: string
+  /** 资产 TTL（秒）；省略则按后端默认（履约附件不设过期）。 */
+  ttlSeconds?: number
+}
+
+/**
+ * confirm（第三步）的响应 = media 完整元数据。
+ *
+ * `status` 走到 `active` 才算正式资产；此前是 `pending`（临时对象，会被清理任务回收）。
+ */
+export interface MediaMetadata {
+  id: string
+  ownerAccountId: string
+  organizationId: string | null
+  purpose: string
+  domainType: string | null
+  domainId: string | null
+  mimeType: string | null
+  sizeBytes: number
+  checksum: string | null
+  source: string
+  status: 'pending' | 'finalizing' | 'active' | 'deleting' | 'deleted'
+  createdAt: string | null
+  expiresAt: string | null
+  deletedAt: string | null
+}
+
+/** 附件下载 URL（marketplace 经服务断言中转 intelligence 签发）。⚠️ `expiresAt` 是**资产 TTL 而非 URL 过期时间**。 */
+export interface AttachmentDownload {
+  downloadUrl: string
+  expiresAt: string | null
 }
 
 // ---------- finance：推荐官钱包 ----------
