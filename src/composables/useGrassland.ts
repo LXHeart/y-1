@@ -92,8 +92,9 @@ function sleep(ms: number): Promise<void> {
  * 第二步：把文件直传到 presigned URL。
  *
  * ⚠️ **刻意不走 {@link request}**，三处都不能照抄本站请求的写法：
- * 1. 目标是 MinIO/S3（nginx CORS 反代 `:9002`）而非本站——`credentials: 'include'` 会让浏览器
- *    要求响应带 `Access-Control-Allow-Credentials: true`，nginx 没发 → preflight 通过但请求被拦。
+ * 1. 目标是 MinIO/S3（nginx CORS 反代 `:9002`）而非本站——presigned PUT 的鉴权是签名里的 SigV4，
+ *    本就不需要 cookie，故刻意不带 `credentials`；nginx 的 CORS 策略（`ce53cfb` 后唯一来源，故意不回
+ *    `Access-Control-Allow-Credentials`）也配合这一点——带了反而被浏览器拦。
  * 2. 只回放 ticket 给的 header。多加任何一个（如 `Authorization`）都不在 SigV4 的 SignedHeaders 里 → 403。
  * 3. 响应体是**空的 / XML 错误**，不是 `{success,data}` 信封——不能拿 `request` 的 json 解析路径去解。
  */
