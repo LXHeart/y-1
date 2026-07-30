@@ -209,4 +209,5 @@ class S3ObjectStorageAdapterUnitTest {
         adapter.createBucketIfNeeded();
         verify(s3Client, never()).createBucket(any(CreateBucketRequest.class));
     }
+
 }

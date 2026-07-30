@@ -56,7 +56,7 @@ management:
 object-storage:
   enabled: ${OBJECT_STORAGE_ENABLED:true}
   endpoint: ${MINIO_ENDPOINT:http://minio:9000}
-  public-base-url: ${MINIO_PUBLIC_BASE_URL:http://localhost:9000}
+  public-base-url: ${MINIO_PUBLIC_BASE_URL:http://localhost:9002}
   region: ${MINIO_REGION:us-east-1}
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}

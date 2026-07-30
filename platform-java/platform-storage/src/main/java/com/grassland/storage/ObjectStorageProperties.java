@@ -8,6 +8,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 与供应商环境变量解耦（切换真 S3/阿里云 OSS 只改 env，不改库）。
  *
  * <p>仅当 {@code enabled=true} 时强校验必要字段（仿 EdgeRoutingProperties 的 compact-constructor fail-fast）。
+ *
+ * <p>浏览器 presigned PUT 跨域（草场 Slice 11 Stage 3）：由 nginx MinIO CORS 反代（port 9002）处理，
+ * 不再依赖 {@code putBucketCors} API（MinIO 各版本实现损坏或未实现）。
+ * {@code MINIO_PUBLIC_BASE_URL} 设为 nginx 反代地址（如 {@code http://localhost:9002}），
+ * presigned URL 自动签到该地址；浏览器请求经 nginx 注 CORS 头后转 MinIO。
  */
 @ConfigurationProperties(prefix = "object-storage")
 public record ObjectStorageProperties(

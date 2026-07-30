@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile.frontend
     ports:
       - "${FRONTEND_PORT:-8080}:80"
+      - "9002:9002"  # 草场 Slice 11 Stage 3: MinIO CORS 反代端口
     depends_on:
       - backend
     restart: unless-stopped
@@ -139,7 +140,7 @@ services:
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
       OBJECT_STORAGE_ENABLED: "true"
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9002}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
@@ -246,7 +247,7 @@ services:
       # 对象存储（草场 Slice 8）：生成图片迁 MinIO/S3（多副本共享），不再用本地卷。
       OBJECT_STORAGE_ENABLED: "true"
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9002}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
@@ -296,6 +297,9 @@ services:
 
   # Epic 3：对象存储（S3 兼容）。无 profile 常驻（与 kafka/redis 一致），service name minio。
   # bucket 由 platform-storage 适配器在服务启动时幂等创建，无需 mc init 容器。
+  # bucket CORS：Slice 11 Stage 3 改用 nginx 反代注入 CORS 头（port 9002，见 nginx.conf + frontend ports）。
+  # MinIO putBucketCors API 各版本损坏（latest/2025-01=501，2024-06-13=400），不再使用。
+  # MINIO_PUBLIC_BASE_URL 设为 http://localhost:9002 → presigned URL 经 nginx 注 CORS 后转 MinIO。
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"

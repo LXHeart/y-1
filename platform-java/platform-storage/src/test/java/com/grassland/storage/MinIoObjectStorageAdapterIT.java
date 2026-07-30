@@ -20,7 +20,13 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
-/** 用 testcontainers 起 MinIO，端到端验证 put/head/get/delete 与 presigned 上传。 */
+/**
+ * 用 testcontainers 起 MinIO，端到端验证 put/head/get/delete 与 presigned 上传。
+ *
+ * <p>bucket CORS 的真跨域 preflight/PUT IT 暂缺：MinIO {@code latest} 对 PutBucketCors 统一返回 501
+ * NotImplemented（AWS SDK 与 mc 均如此），需固定 MinIO 版本后再补（草场 Slice 11 Stage 3 已知限制）。
+ * 适配器的 putBucketCors 逻辑（rule/跳过/降级）由 {@link S3ObjectStorageAdapterUnitTest} 覆盖。
+ */
 @Testcontainers
 class MinIoObjectStorageAdapterIT {
 

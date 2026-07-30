@@ -26,8 +26,8 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
@@ -55,7 +55,15 @@ public final class S3ObjectStorageAdapter implements ObjectStorageAdapter {
         this.s3Presigner = s3Presigner;
     }
 
+    /**
+     * 启动时幂等建 bucket（可选）。
+     * 浏览器 presigned PUT 跨域（CORS）由 nginx 反代（port 9002）处理，此处无需 putBucketCors。
+     */
     @PostConstruct
+    void initialize() {
+        createBucketIfNeeded();
+    }
+
     void createBucketIfNeeded() {
         if (!properties.autoCreateBucket()) {
             return;
@@ -71,6 +79,16 @@ public final class S3ObjectStorageAdapter implements ObjectStorageAdapter {
         } catch (BucketAlreadyOwnedByYouException e) {
             log.debug("Bucket already owned (concurrent create): {}", bucket);
         }
+    }
+
+    /**
+     * 草场 Slice 11 Stage 3（nginx 反代路径）：CORS 由 nginx port 9002 反代注入，此方法为 no-op。
+     * 原 SDK putBucketCors 方案被废弃——MinIO latest/2025-01 返回 501 NotImplemented，
+     * 2024-06-13 返回 400 MalformedXML，所有测试版本均不可用。
+     * 见 nginx.conf 的 MinIO CORS server block 与 docker-compose frontend ports。
+     */
+    void applyBucketCorsIfNeeded() {
+        // no-op：CORS 由 nginx MinIO 反代（port 9002）处理。
     }
 
     private boolean bucketExists(String bucket) {
