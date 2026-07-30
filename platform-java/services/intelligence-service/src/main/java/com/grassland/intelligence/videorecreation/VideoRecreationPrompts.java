@@ -21,7 +21,7 @@ final class VideoRecreationPrompts {
         parts.add(scene.shotDescription());
         parts.add(scene.characterDescription());
         parts.add(scene.sceneEnvironment());
-        if (scene.actionMovement() != null) {
+        if (scene.actionMovement() != null && !scene.actionMovement().isBlank()) {
             parts.add("Action: " + scene.actionMovement());
         }
         if (overallStyle != null) {

@@ -128,6 +128,44 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("generate-scene-image rejects omitted or non-string required legacy fields but permits present empty strings")
+    void generateSceneImagePreservesRequiredStringContract() {
+        client().post().uri("/api/video-recreation/generate-scene-image")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("scene", Map.of(
+                        "shotDescription", "镜头", "characterDescription", "角色", "sceneEnvironment", "夜景")))
+                .exchange().expectStatus().isBadRequest();
+
+        client().post().uri("/api/video-recreation/generate-scene-image")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("scene", Map.of(
+                        "shotDescription", "镜头", "characterDescription", "角色",
+                        "actionMovement", 1, "dialogueVoiceover", "", "sceneEnvironment", "夜景")))
+                .exchange().expectStatus().isBadRequest();
+
+        client().post().uri("/api/video-recreation/generate-scene-image")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("scene", Map.of(
+                        "shotDescription", "镜头", "characterDescription", "角色",
+                        "actionMovement", "", "dialogueVoiceover", "", "sceneEnvironment", "夜景")))
+                .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    @DisplayName("generate-asset-image rejects non-string asset fields")
+    void generateAssetImageRejectsNonStringFields() {
+        client().post().uri("/api/video-recreation/generate-asset-image")
+                .header("X-Grassland-Identity", signed())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("assetType", "character-three-view", "asset", Map.of(
+                        "id", 123, "name", "角色名", "description", "角色描述", "threeViewPrompt", "三视图")))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
     @DisplayName("generate-scene-image rejects over-long dialogue voiceover")
     void generateSceneImageRejectsTooLongDialogue() {
         client().post().uri("/api/video-recreation/generate-scene-image")
@@ -136,7 +174,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of(
                         "scene", Map.of(
                                 "shotDescription", "镜头", "characterDescription", "角色",
-                                "dialogueVoiceover", "x".repeat(1001), "sceneEnvironment", "夜景")))
+                                "actionMovement", "", "dialogueVoiceover", "x".repeat(1001), "sceneEnvironment", "夜景")))
                 .exchange().expectStatus().isBadRequest();
     }
 
@@ -149,9 +187,9 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of(
                         "scenes", List.of(
                                 Map.of("shotDescription", "镜头1", "characterDescription", "角色",
-                                        "sceneEnvironment", "环境1"),
+                                        "actionMovement", "", "dialogueVoiceover", "", "sceneEnvironment", "环境1"),
                                 Map.of("shotDescription", "镜头2", "characterDescription", "角色",
-                                        "sceneEnvironment", "环境2"))))
+                                        "actionMovement", "", "dialogueVoiceover", "", "sceneEnvironment", "环境2"))))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.images.length()").isEqualTo(2);
 

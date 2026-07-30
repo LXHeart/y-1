@@ -124,8 +124,8 @@ class VideoRecreationImageServiceTest {
     @Test
     void batchScenesCollectResultsInOrder() {
         List<VideoScene> scenes = List.of(
-                new VideoScene("镜头1", "角色1", null, null, "环境1"),
-                new VideoScene("镜头2", "角色2", null, null, "环境2"));
+                new VideoScene("镜头1", "角色1", "", "", "环境1"),
+                new VideoScene("镜头2", "角色2", "", "", "环境2"));
         GeneratedImageResponse r1 = new GeneratedImageResponse("url1", null);
         GeneratedImageResponse r2 = new GeneratedImageResponse("url2", null);
         when(articleImages.generate(any(), any(), any())).thenAnswer(inv -> {

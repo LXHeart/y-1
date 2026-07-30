@@ -7,7 +7,7 @@ import java.util.Map;
  * {@code server/src/schemas/video-recreation.ts} 的 {@code adaptedCharacterSheet/sceneCard/propCard}。
  *
  * <p>判别字段 {@code assetType} 位于父请求体（非 asset 内），故由 {@link VideoRecreationController}
- * 读出 assetType 后经 {@link #parse(String, JsonNode)} 分发到具体变体——Jackson 多态注解无法按兄弟字段分发，
+ * 读出 assetType 后经 {@link #parse(String, Map)} 分发到具体变体——Jackson 多态注解无法按兄弟字段分发，
  * 这里手动解析并交由各 record 的紧凑构造器逐字段校验上限。
  *
  * <p>上限逐字对齐 legacy Zod：id 1..100；name 1..200；title ≤200（可空）；description/threeViewPrompt/imagePrompt 1..2000。
@@ -55,25 +55,39 @@ public sealed interface Asset permits Asset.CharacterAsset, Asset.SceneAsset, As
         }
         return switch (assetType == null ? "" : assetType) {
             case "character-three-view" -> new CharacterAsset(
-                    str(node, "id"), str(node, "name"),
-                    str(node, "description"), str(node, "threeViewPrompt"));
+                    requiredString(node, "id"), requiredString(node, "name"),
+                    requiredString(node, "description"), requiredString(node, "threeViewPrompt"));
             case "scene" -> new SceneAsset(
-                    str(node, "id"), str(node, "title"),
-                    str(node, "description"), str(node, "imagePrompt"));
+                    requiredString(node, "id"), optionalString(node, "title"),
+                    requiredString(node, "description"), requiredString(node, "imagePrompt"));
             case "prop" -> new PropAsset(
-                    str(node, "id"), str(node, "name"),
-                    str(node, "description"), str(node, "imagePrompt"));
+                    requiredString(node, "id"), requiredString(node, "name"),
+                    requiredString(node, "description"), requiredString(node, "imagePrompt"));
             default -> throw new IllegalArgumentException("资源类型无效");
         };
     }
 
-    private static String str(Map<?, ?> node, String name) {
+    private static String requiredString(Map<?, ?> node, String name) {
         Object value = node.get(name);
-        return value == null ? null : value.toString();
+        if (!(value instanceof String string)) {
+            throw new IllegalArgumentException("资源信息无效");
+        }
+        return string;
+    }
+
+    private static String optionalString(Map<?, ?> node, String name) {
+        if (!node.containsKey(name)) {
+            return null;
+        }
+        Object value = node.get(name);
+        if (!(value instanceof String string)) {
+            throw new IllegalArgumentException("资源信息无效");
+        }
+        return string;
     }
 
     private static String require(String value, int min, int max) {
-        String trimmed = value == null ? "" : value.trim();
+        String trimmed = value == null ? "" : LegacyStringValidation.trim(value);
         if (trimmed.length() < min || trimmed.length() > max) {
             throw new IllegalArgumentException("资源信息无效");
         }
@@ -81,7 +95,7 @@ public sealed interface Asset permits Asset.CharacterAsset, Asset.SceneAsset, As
     }
 
     private static String optional(String value, int max) {
-        String trimmed = value == null ? null : value.trim();
+        String trimmed = value == null ? null : LegacyStringValidation.trim(value);
         if (trimmed != null && trimmed.isEmpty()) {
             trimmed = null;
         }

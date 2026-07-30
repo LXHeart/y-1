@@ -49,9 +49,24 @@ public final class RoutingProxyHandler {
 
     private Mono<Void> writeResponse(ServerWebExchange exchange, ClientResponse response) {
         exchange.getResponse().setStatusCode(response.statusCode());
+        String rateLimit = exchange.getResponse().getHeaders().getFirst("RateLimit-Limit");
+        String rateRemaining = exchange.getResponse().getHeaders().getFirst("RateLimit-Remaining");
+        String rateReset = exchange.getResponse().getHeaders().getFirst("RateLimit-Reset");
         HttpHeaders responseHeaders = LegacyProxyHeaderPolicy.responseHeaders(response.headers().asHttpHeaders());
         exchange.getResponse().getHeaders().putAll(responseHeaders);
+        // 若 BFF 已为跨上游路由族（如视频改编）施加共享配额，则不能被下游独立桶的同名头覆盖。
+        restoreRateLimitHeaders(exchange, rateLimit, rateRemaining, rateReset);
         return exchange.getResponse().writeWith(response.bodyToFlux(DataBuffer.class));
+    }
+
+    static void restoreRateLimitHeaders(
+            ServerWebExchange exchange, String limit, String remaining, String reset) {
+        if (limit == null) {
+            return;
+        }
+        exchange.getResponse().getHeaders().set("RateLimit-Limit", limit);
+        exchange.getResponse().getHeaders().set("RateLimit-Remaining", remaining);
+        exchange.getResponse().getHeaders().set("RateLimit-Reset", reset);
     }
 
     private URI targetUri(URI upstream, URI incoming) {

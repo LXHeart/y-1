@@ -59,19 +59,23 @@ public class VideoRecreationController {
 
     @PostMapping(value = "/generate-scene-image", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> generateSceneImage(
-            @RequestBody GenerateSceneImageRequest body, ServerWebExchange exchange) {
+            @RequestBody Map<String, Object> body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> images.generateScene(
-                        body.scene(), body.overallStyle(), body.size(), owner(caller)))
+                .flatMap(caller -> {
+                    SceneRequest req = parseSingleScene(body);
+                    return images.generateScene(req.scene(), req.overallStyle(), req.size(), owner(caller));
+                })
                 .map(VideoRecreationController::success);
     }
 
     @PostMapping(value = "/generate-all-scene-images", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> generateAllSceneImages(
-            @RequestBody GenerateAllSceneImagesRequest body, ServerWebExchange exchange) {
+            @RequestBody Map<String, Object> body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> images.generateAllScenes(
-                        body.scenes(), body.overallStyle(), body.size(), owner(caller)))
+                .flatMap(caller -> {
+                    SceneBatchRequest req = parseBatchScenes(body);
+                    return images.generateAllScenes(req.scenes(), req.overallStyle(), req.size(), owner(caller));
+                })
                 .map(list -> success(Map.of("images", list)));
     }
 
@@ -88,8 +92,8 @@ public class VideoRecreationController {
         if (!(assetObj instanceof Map<?, ?> assetMap)) {
             throw new IllegalArgumentException("资源信息无效");
         }
-        Asset asset = Asset.parse(str(body, "assetType"), assetMap);
-        return new AssetRequest(asset, optional(str(body, "visualStyle"), 500), validateSize(str(body, "size")));
+        Asset asset = Asset.parse(requiredString(body, "assetType"), assetMap);
+        return new AssetRequest(asset, optionalString(body, "visualStyle", "风格描述过长"), validateSize(body));
     }
 
     private static AssetBatchRequest parseBatchAssets(Map<String, Object> body) {
@@ -97,7 +101,7 @@ public class VideoRecreationController {
         if (!(arrObj instanceof List<?> arr)) {
             throw new IllegalArgumentException("资源列表无效");
         }
-        String assetType = str(body, "assetType");
+        String assetType = requiredString(body, "assetType");
         List<Asset> assets = new ArrayList<>();
         for (Object element : arr) {
             if (!(element instanceof Map<?, ?> assetMap)) {
@@ -108,19 +112,68 @@ public class VideoRecreationController {
         if (assets.isEmpty() || assets.size() > MAX_BATCH) {
             throw new IllegalArgumentException("资源数量需为 1-20");
         }
-        return new AssetBatchRequest(assets, optional(str(body, "visualStyle"), 500), validateSize(str(body, "size")));
+        return new AssetBatchRequest(
+                assets, optionalString(body, "visualStyle", "风格描述过长"), validateSize(body));
     }
 
-    private static String validateSize(String raw) {
-        String value = raw == null || raw.isBlank() ? "1024x1792" : raw.trim();
+    private static SceneRequest parseSingleScene(Map<String, Object> body) {
+        Object sceneObj = body == null ? null : body.get("scene");
+        if (!(sceneObj instanceof Map<?, ?> sceneMap)) {
+            throw new IllegalArgumentException("场景信息无效");
+        }
+        return new SceneRequest(
+                VideoScene.parse(sceneMap), optionalString(body, "overallStyle", "风格描述过长"), validateSize(body));
+    }
+
+    private static SceneBatchRequest parseBatchScenes(Map<String, Object> body) {
+        Object scenesObj = body == null ? null : body.get("scenes");
+        if (!(scenesObj instanceof List<?> sceneItems) || sceneItems.isEmpty() || sceneItems.size() > MAX_BATCH) {
+            throw new IllegalArgumentException("场景数量需为 1-20");
+        }
+        List<VideoScene> scenes = new ArrayList<>();
+        for (Object item : sceneItems) {
+            if (!(item instanceof Map<?, ?> sceneMap)) {
+                throw new IllegalArgumentException("场景信息无效");
+            }
+            scenes.add(VideoScene.parse(sceneMap));
+        }
+        return new SceneBatchRequest(
+                List.copyOf(scenes), optionalString(body, "overallStyle", "风格描述过长"), validateSize(body));
+    }
+
+    private static String validateSize(Map<String, Object> body) {
+        if (!body.containsKey("size")) {
+            return "1024x1792";
+        }
+        String value = requiredString(body, "size");
+        value = LegacyStringValidation.trim(value);
         if (!SIZES.contains(value)) {
             throw new IllegalArgumentException("图片尺寸无效");
         }
         return value;
     }
 
+    private static String requiredString(Map<String, Object> body, String field) {
+        Object value = body.get(field);
+        if (!(value instanceof String string)) {
+            throw new IllegalArgumentException("请求参数无效");
+        }
+        return string;
+    }
+
+    private static String optionalString(Map<String, Object> body, String field, String message) {
+        if (!body.containsKey(field)) {
+            return null;
+        }
+        Object value = body.get(field);
+        if (!(value instanceof String string)) {
+            throw new IllegalArgumentException(message);
+        }
+        return optional(string, 500);
+    }
+
     private static String optional(String value, int max) {
-        String trimmed = value == null ? null : value.trim();
+        String trimmed = value == null ? null : LegacyStringValidation.trim(value);
         if (trimmed != null && trimmed.isEmpty()) {
             trimmed = null;
         }
@@ -130,33 +183,11 @@ public class VideoRecreationController {
         return trimmed;
     }
 
-    private static String str(Map<String, Object> node, String field) {
-        Object value = node.get(field);
-        return value == null ? null : value.toString();
-    }
-
     private record AssetRequest(Asset asset, String visualStyle, String size) {}
 
     private record AssetBatchRequest(List<Asset> assets, String visualStyle, String size) {}
 
-    public record GenerateSceneImageRequest(VideoScene scene, String overallStyle, String size) {
-        public GenerateSceneImageRequest {
-            if (scene == null) {
-                throw new IllegalArgumentException("场景信息无效");
-            }
-            overallStyle = optional(overallStyle, 500);
-            size = validateSize(size);
-        }
-    }
+    private record SceneRequest(VideoScene scene, String overallStyle, String size) {}
 
-    public record GenerateAllSceneImagesRequest(List<VideoScene> scenes, String overallStyle, String size) {
-        public GenerateAllSceneImagesRequest {
-            if (scenes == null || scenes.isEmpty() || scenes.size() > MAX_BATCH) {
-                throw new IllegalArgumentException("场景数量需为 1-20");
-            }
-            scenes = List.copyOf(scenes);
-            overallStyle = optional(overallStyle, 500);
-            size = validateSize(size);
-        }
-    }
+    private record SceneBatchRequest(List<VideoScene> scenes, String overallStyle, String size) {}
 }

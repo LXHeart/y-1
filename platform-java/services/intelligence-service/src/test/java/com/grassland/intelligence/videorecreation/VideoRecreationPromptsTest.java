@@ -18,7 +18,7 @@ class VideoRecreationPromptsTest {
 
     @Test
     void buildsScenePromptWithoutOptionalActionAndStyle() {
-        VideoScene scene = new VideoScene("镜头A", "角色X", null, null, "夜景");
+        VideoScene scene = new VideoScene("镜头A", "角色X", "", "", "夜景");
 
         assertThat(VideoRecreationPrompts.buildSceneImagePrompt(scene, null))
                 .isEqualTo("镜头A. 角色X. 夜景");
