@@ -7,14 +7,19 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.taskcatalog.Task;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import java.time.Instant;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
@@ -27,9 +32,13 @@ import reactor.core.publisher.Mono;
 class SettlementActivityImplTest {
 
     private static final String APP_ID = "22222222-2222-2222-2222-222222222222";
+    private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";
+    private static final String RECOMMENDER = "55555555-5555-5555-5555-555555555555";
+    private static final String OWNER = "66666666-6666-6666-6666-666666666666";
     private static final String ORG = "44444444-4444-4444-4444-444444444444";
 
     @Mock private TaskApplicationRepository apps;
+    @Mock private TaskRepository tasks;
     @Mock private OutboxRepository outbox;
     @Mock private FinanceEscrowClient finance;
     @Mock private DisputeChecker disputes;
@@ -40,25 +49,33 @@ class SettlementActivityImplTest {
 
     @BeforeEach
     void setUp() {
-        activity = new SettlementActivityImpl(apps, outbox, finance, disputes, verification);
-        input = new SettlementInput(APP_ID, "11111111-1111-1111-1111-111111111111",
-                "33333333-3333-3333-3333-333333333333", ORG, 500L, 0L);
+        activity = new SettlementActivityImpl(apps, tasks, outbox, finance, disputes, verification);
+        input = new SettlementInput(APP_ID, TASK_ID, "33333333-3333-3333-3333-333333333333", ORG, 500L, 0L);
     }
 
     @Test
     void settledWhenAcceptedConfirmedNoDispute() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task()));
         when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
         when(finance.capture(ORG, APP_ID)).thenReturn(Mono.empty());
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         assertThat(activity.captureSettlement(input).status()).isEqualTo("settled");
         verify(finance).capture(ORG, APP_ID);
+
+        // Slice 12 Stage 3：EngagementSettled 携带双方账号，供 identity 通知中心解析收件人。
+        ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outbox).append(captor.capture());
+        Map<String, Object> payload = captor.getValue().payload();
+        assertThat(payload.get("taskOwnerId")).isEqualTo(OWNER);
+        assertThat(payload.get("recommenderAccountId")).isEqualTo(RECOMMENDER);
     }
 
     @Test
     void heldWhenDisputeOpen() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task()));
         when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(true);
         when(outbox.append(any())).thenReturn(Mono.empty());
 
@@ -71,6 +88,7 @@ class SettlementActivityImplTest {
     @Test
     void heldWhenVerificationFailed() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task()));
         when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
         when(verification.blocksSettlement(ORG, APP_ID)).thenReturn(true);  // failed 核验 → hold
         when(outbox.append(any())).thenReturn(Mono.empty());
@@ -105,5 +123,10 @@ class SettlementActivityImplTest {
         return new TaskApplication(APP_ID, "11111111-1111-1111-1111-111111111111",
                 "55555555-5555-5555-5555-555555555555", status, null,
                 "33333333-3333-3333-3333-333333333333", null, null, null, confirmedAt);
+    }
+
+    private Task task() {
+        return new Task(TASK_ID, OWNER, ORG, "title", "desc", "published", "video", "douyin", 1, 500L,
+                Instant.now(), Instant.now());
     }
 }

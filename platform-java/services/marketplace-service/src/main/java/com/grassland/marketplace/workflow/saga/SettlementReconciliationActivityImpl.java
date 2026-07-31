@@ -95,7 +95,7 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
 
         // 2. 非资金型任务（bounty null/0）：无 reservation 期望，直接结算。
         if (task.bountyCents() == null || task.bountyCents() <= 0) {
-            return complete(input, app, input.finalDecision());
+            return complete(input, app, input.finalDecision(), task.ownerAccountId());
         }
 
         // 3. finance 权威对账：verified/repaired→成功；blocked/conflict/missing→持久阻断；transport 错误→重试。
@@ -105,15 +105,16 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
             String reason = result == null ? "finance_missing" : "finance_" + result.outcome();
             return block(input, reason);
         }
-        return complete(input, app, input.finalDecision());
+        return complete(input, app, input.finalDecision(), task.ownerAccountId());
     }
 
     /** 成功：同事务 markReconciled + 确定性 EngagementSettled（重试不重复）。 */
     private SettlementReconciliationWorkflow.ReconciliationOutcome complete(
-            SettlementReconciliationWorkflow.ReconciliationInput input, TaskApplication app, String decision) {
+            SettlementReconciliationWorkflow.ReconciliationInput input, TaskApplication app, String decision,
+            String taskOwnerId) {
         transactions.transactional(reconciliations
                 .markReconciled(input.sourceEventId())
-                .then(outbox.append(settledEnvelope(input, app, decision)))).block();
+                .then(outbox.append(settledEnvelope(input, app, decision, taskOwnerId)))).block();
         log.info("settlement reconciled src={} app={} decision={}", input.sourceEventId(), app.id(), decision);
         return SettlementReconciliationWorkflow.ReconciliationOutcome.reconciled();
     }
@@ -129,10 +130,15 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
     }
 
     private EventEnvelope settledEnvelope(
-            SettlementReconciliationWorkflow.ReconciliationInput input, TaskApplication app, String decision) {
+            SettlementReconciliationWorkflow.ReconciliationInput input, TaskApplication app, String decision,
+            String taskOwnerId) {
         String reason = decision == null || decision.isBlank() ? "adjudication" : "adjudication:" + decision;
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("applicationId", app.id());
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        if (taskOwnerId != null) {
+            payload.put("taskOwnerId", taskOwnerId);
+        }
         payload.put("reason", reason);
         return derivedEnvelope(input, "EngagementSettled", payload);
     }

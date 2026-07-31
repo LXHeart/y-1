@@ -87,6 +87,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.note").isEqualTo("我能拍");
 
         assertThat(outboxCount("ApplicationSubmitted", task)).isEqualTo(1);
+        // Slice 12 Stage 3：发射端补齐商家侧收件人，identity 通知中心不反查 marketplace。
+        assertThat(outboxPayloadField("ApplicationSubmitted", task, "taskOwnerId")).isEqualTo(merchant);
     }
 
     @Test
@@ -700,6 +702,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("withdrawn");
         assertThat(outboxCount("ApplicationWithdrawn", task)).isEqualTo(1);
+        assertThat(outboxPayloadField("ApplicationWithdrawn", task, "taskOwnerId")).isEqualTo(merchant);
     }
 
     @Test
@@ -1054,6 +1057,14 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                         + " WHERE event_type = 'ApplicationReservationFailed' AND aggregate_id = :id")
                 .bind("id", app)
                 .map(r -> r.get("r", String.class)).one().block();
+    }
+
+    /** 读取按 taskId 限定的事件 payload 顶层字段（Slice 12 Stage 3 收件人字段断言）。 */
+    private String outboxPayloadField(String eventType, String taskId, String field) {
+        return db.sql("SELECT payload->>'" + field + "' AS v FROM marketplace_outbox"
+                        + " WHERE event_type = :et AND payload->>'taskId' = :tid")
+                .bind("et", eventType).bind("tid", taskId)
+                .map(r -> r.get("v", String.class)).one().block();
     }
 
     private long outboxCount(String eventType, String taskId) {

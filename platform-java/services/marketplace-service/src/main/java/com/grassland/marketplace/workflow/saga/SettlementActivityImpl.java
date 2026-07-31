@@ -2,8 +2,10 @@ package com.grassland.marketplace.workflow.saga;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.taskcatalog.Task;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import io.temporal.spring.boot.ActivityImpl;
 import java.nio.charset.StandardCharsets;
@@ -29,15 +31,17 @@ public class SettlementActivityImpl implements SettlementActivity {
     private static final Logger log = LoggerFactory.getLogger(SettlementActivityImpl.class);
 
     private final TaskApplicationRepository apps;
+    private final TaskRepository tasks;
     private final OutboxRepository outbox;
     private final FinanceEscrowClient finance;
     private final DisputeChecker disputes;
     private final VerificationChecker verification;
 
-    public SettlementActivityImpl(TaskApplicationRepository apps, OutboxRepository outbox,
+    public SettlementActivityImpl(TaskApplicationRepository apps, TaskRepository tasks, OutboxRepository outbox,
                                   FinanceEscrowClient finance, DisputeChecker disputes,
                                   VerificationChecker verification) {
         this.apps = apps;
+        this.tasks = tasks;
         this.outbox = outbox;
         this.finance = finance;
         this.disputes = disputes;
@@ -53,23 +57,26 @@ public class SettlementActivityImpl implements SettlementActivity {
         if (!"accepted".equals(app.status()) || app.confirmedAt() == null) {
             return SettlementOutcome.aborted();  // 非 accepted+confirmed（被回退/未确认/已结算）
         }
+        // 任务归属用于通知收件人解析（Slice 12 Stage 3）；任务缺失则置空，不阻断结算主路径。
+        Task task = tasks.findById(app.taskId()).block();
+        String taskOwnerId = task == null ? null : task.ownerAccountId();
         if (disputes.hasOpenDispute(input.organizationId(), input.applicationId())) {
-            outbox.append(envelope("SettlementHeld", app, "open_dispute")).block();
+            outbox.append(envelope("SettlementHeld", app, "open_dispute", taskOwnerId)).block();
             return SettlementOutcome.held("open_dispute");  // HLD 16：结算执行前重新检查 Hold
         }
         // 履约核验安全网闸门（Verification v1）：与争议闸门正交，failed 核验 → hold（inconclusive/passed/无记录不阻断）。
         if (verification.blocksSettlement(input.organizationId(), input.applicationId())) {
-            outbox.append(envelope("SettlementHeld", app, "verification_failed")).block();
+            outbox.append(envelope("SettlementHeld", app, "verification_failed", taskOwnerId)).block();
             return SettlementOutcome.held("verification_failed");
         }
         log.info("settlement capture START org={} ref={}", input.organizationId(), input.applicationId());
         // finance reserved→captured；409(已终态 captured/released) 由 client 映射为成功（幂等）；真异常抛出→Temporal 重试
         finance.capture(input.organizationId(), input.applicationId()).block();
-        outbox.append(envelope("EngagementSettled", app, null)).block();
+        outbox.append(envelope("EngagementSettled", app, null, taskOwnerId)).block();
         return SettlementOutcome.settled();
     }
 
-    private EventEnvelope envelope(String eventType, TaskApplication app, String reason) {
+    private EventEnvelope envelope(String eventType, TaskApplication app, String reason, String taskOwnerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
@@ -77,6 +84,9 @@ public class SettlementActivityImpl implements SettlementActivity {
         payload.put("status", app.status());
         if (reason != null) {
             payload.put("reason", reason);
+        }
+        if (taskOwnerId != null) {
+            payload.put("taskOwnerId", taskOwnerId);
         }
         String eventId = UUID.nameUUIDFromBytes(
                 (eventType + ":" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();

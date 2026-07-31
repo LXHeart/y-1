@@ -130,7 +130,7 @@ public class ApplicationController {
                                             .switchIfEmpty(transactions.transactional(
                                                     apps.create(id, rec.accountId(), note)
                                                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
-                                                            .flatMap(created -> outbox.append(envelope("ApplicationSubmitted", created, null)).thenReturn(created)))));
+                                                            .flatMap(created -> outbox.append(envelope("ApplicationSubmitted", created, task.ownerAccountId())).thenReturn(created)))));
                         })
                         .map(app -> ResponseEntity.status(HttpStatus.CREATED)
                                 .body(Map.of("success", true, "data", toBody(app)))));
@@ -236,7 +236,7 @@ public class ApplicationController {
                                 .flatMap(task -> validateAttachments(task.organizationId(),
                                                 caller.accountId(), body.mediaIds())
                                         .flatMap(atts -> workSubmitDeliverable(app, appId, caller,
-                                                        body.contentUrl(), body.note(), atts)
+                                                        body.contentUrl(), body.note(), atts, task.ownerAccountId())
                                                 .map(created -> ResponseEntity.status(HttpStatus.CREATED)
                                                         .body(Map.of("success", true,
                                                                 "data", submissionBodyWithInputs(created, atts))))))));
@@ -298,7 +298,7 @@ public class ApplicationController {
                                 .flatMap(app -> submissions.review(submissionId, SubmissionStatus.REJECTED, note)
                                         .switchIfEmpty(fail(409, "该交付物已处理"))
                                         .flatMap(rejected -> outbox
-                                                .append(submissionEnvelope("DeliverableRejected", app, rejected, List.of()))
+                                                .append(submissionEnvelope("DeliverableRejected", app, rejected, List.of(), task.ownerAccountId()))
                                                 .thenReturn(rejected))
                                         .map(rejected -> ok(toBody(rejected))))));
     }
@@ -512,10 +512,12 @@ public class ApplicationController {
                             if (!ApplicationStatus.PENDING.dbValue().equals(app.status())) {
                                 return fail(409, "该报名已处理");
                             }
-                            return transactions.transactional(
-                                    apps.withdraw(appId, id, rec.accountId())
-                                            .switchIfEmpty(fail(409, "该报名已处理"))
-                                            .flatMap(withdrawn -> outbox.append(envelope("ApplicationWithdrawn", withdrawn, null)).thenReturn(withdrawn)));
+                            return tasks.findById(id)
+                                    .switchIfEmpty(fail(404, "任务不存在"))
+                                    .flatMap(task -> transactions.transactional(
+                                            apps.withdraw(appId, id, rec.accountId())
+                                                    .switchIfEmpty(fail(409, "该报名已处理"))
+                                                    .flatMap(withdrawn -> outbox.append(envelope("ApplicationWithdrawn", withdrawn, task.ownerAccountId())).thenReturn(withdrawn))));
                         })
                         .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
     }
@@ -570,7 +572,8 @@ public class ApplicationController {
         return apps.countAcceptedByTask(task.id()).map(c -> c >= max);
     }
 
-    /** outbox 事件信封。{@code taskOwnerId} 仅 accept/reject 携带（apply/withdraw 为 null）。 */
+    /** outbox 事件信封。{@code taskOwnerId} 携带任务归属（apply/withdraw/accept/reject 全携带），
+     *  供 identity 通知中心解析商家侧收件人（Slice 12 Stage 3）；与 {@code recommenderAccountId} 合计覆盖争议双方。 */
     private EventEnvelope envelope(String eventType, TaskApplication app, String taskOwnerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
@@ -588,9 +591,9 @@ public class ApplicationController {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
-    /** 交付物事件：带上 application 与交付物两侧的关键字段（含附件 mediaIds），供下游（核实引擎/通知）消费。 */
+    /** 交付物事件：带上 application 与交付物两侧的关键字段（含附件 mediaIds + taskOwnerId），供下游（核实引擎/通知）消费。 */
     private EventEnvelope submissionEnvelope(String eventType, TaskApplication app, EngagementSubmission submission,
-                                             List<AttachmentInput> attachments) {
+                                             List<AttachmentInput> attachments, String taskOwnerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
@@ -598,6 +601,9 @@ public class ApplicationController {
         payload.put("submissionId", submission.id());
         payload.put("contentUrl", submission.contentUrl());
         payload.put("status", submission.status());
+        if (taskOwnerId != null) {
+            payload.put("taskOwnerId", taskOwnerId);
+        }
         if (!attachments.isEmpty()) {
             payload.put("mediaIds", attachments.stream().map(a -> a.mediaId().toString()).toList());
         }
@@ -656,13 +662,14 @@ public class ApplicationController {
      */
     private Mono<EngagementSubmission> workSubmitDeliverable(TaskApplication app, String appId, Caller caller,
                                                              String contentUrl, String note,
-                                                             List<AttachmentInput> attachmentInputs) {
+                                                             List<AttachmentInput> attachmentInputs,
+                                                             String taskOwnerId) {
         return transactions.transactional(
                 submissions.create(appId, caller.accountId(), contentUrl, note)
                         .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
                         .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
                         .flatMap(created -> outbox
-                                .append(submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs))
+                                .append(submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs, taskOwnerId))
                                 .thenReturn(created)));
     }
 
@@ -794,7 +801,7 @@ public class ApplicationController {
         return runVerificationChecks(task, submission)
                 .flatMap(outcomes -> transactions.transactional(
                         verifications.upsert(submission.id(), aggregateVerificationStatus(outcomes), checksToJson(outcomes))
-                                .flatMap(v -> outbox.append(verificationEnvelope(app, submission, v, outcomes))
+                                .flatMap(v -> outbox.append(verificationEnvelope(app, submission, v, outcomes, task.ownerAccountId()))
                                         .thenReturn(v))));
     }
 
@@ -878,12 +885,15 @@ public class ApplicationController {
 
     /** 核验事件：确定性 event_id（type-3 UUID），保 outbox 重试 exactly-once（镜像 SettlementActivityImpl）。 */
     private EventEnvelope verificationEnvelope(TaskApplication app, EngagementSubmission submission,
-                                               EngagementVerification v, List<CheckOutcome> outcomes) {
+                                               EngagementVerification v, List<CheckOutcome> outcomes, String taskOwnerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
         payload.put("submissionId", submission.id());
         payload.put("recommenderAccountId", app.recommenderAccountId());
+        if (taskOwnerId != null) {
+            payload.put("taskOwnerId", taskOwnerId);
+        }
         payload.put("status", v.status());
         payload.put("checks", checksToMaps(outcomes));
         String eventId = UUID.nameUUIDFromBytes(
