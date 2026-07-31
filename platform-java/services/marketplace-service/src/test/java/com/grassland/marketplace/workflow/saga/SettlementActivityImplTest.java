@@ -33,13 +33,14 @@ class SettlementActivityImplTest {
     @Mock private OutboxRepository outbox;
     @Mock private FinanceEscrowClient finance;
     @Mock private DisputeChecker disputes;
+    @Mock private VerificationChecker verification;
 
     private SettlementActivityImpl activity;
     private SettlementInput input;
 
     @BeforeEach
     void setUp() {
-        activity = new SettlementActivityImpl(apps, outbox, finance, disputes);
+        activity = new SettlementActivityImpl(apps, outbox, finance, disputes, verification);
         input = new SettlementInput(APP_ID, "11111111-1111-1111-1111-111111111111",
                 "33333333-3333-3333-3333-333333333333", ORG, 500L, 0L);
     }
@@ -64,6 +65,19 @@ class SettlementActivityImplTest {
         SettlementOutcome r = activity.captureSettlement(input);
         assertThat(r.status()).isEqualTo("held");
         assertThat(r.reason()).isEqualTo("open_dispute");
+        verify(finance, never()).capture(anyString(), anyString());
+    }
+
+    @Test
+    void heldWhenVerificationFailed() {
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
+        when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
+        when(verification.blocksSettlement(ORG, APP_ID)).thenReturn(true);  // failed 核验 → hold
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        SettlementOutcome r = activity.captureSettlement(input);
+        assertThat(r.status()).isEqualTo("held");
+        assertThat(r.reason()).isEqualTo("verification_failed");
         verify(finance, never()).capture(anyString(), anyString());
     }
 

@@ -32,13 +32,16 @@ public class SettlementActivityImpl implements SettlementActivity {
     private final OutboxRepository outbox;
     private final FinanceEscrowClient finance;
     private final DisputeChecker disputes;
+    private final VerificationChecker verification;
 
     public SettlementActivityImpl(TaskApplicationRepository apps, OutboxRepository outbox,
-                                  FinanceEscrowClient finance, DisputeChecker disputes) {
+                                  FinanceEscrowClient finance, DisputeChecker disputes,
+                                  VerificationChecker verification) {
         this.apps = apps;
         this.outbox = outbox;
         this.finance = finance;
         this.disputes = disputes;
+        this.verification = verification;
     }
 
     @Override
@@ -53,6 +56,11 @@ public class SettlementActivityImpl implements SettlementActivity {
         if (disputes.hasOpenDispute(input.organizationId(), input.applicationId())) {
             outbox.append(envelope("SettlementHeld", app, "open_dispute")).block();
             return SettlementOutcome.held("open_dispute");  // HLD 16：结算执行前重新检查 Hold
+        }
+        // 履约核验安全网闸门（Verification v1）：与争议闸门正交，failed 核验 → hold（inconclusive/passed/无记录不阻断）。
+        if (verification.blocksSettlement(input.organizationId(), input.applicationId())) {
+            outbox.append(envelope("SettlementHeld", app, "verification_failed")).block();
+            return SettlementOutcome.held("verification_failed");
         }
         log.info("settlement capture START org={} ref={}", input.organizationId(), input.applicationId());
         // finance reserved→captured；409(已终态 captured/released) 由 client 映射为成功（幂等）；真异常抛出→Temporal 重试

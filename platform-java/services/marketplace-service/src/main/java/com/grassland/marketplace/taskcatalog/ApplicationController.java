@@ -15,6 +15,9 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -64,6 +67,9 @@ public class ApplicationController {
     private final SubmissionRepository submissions;
     private final SubmissionAttachmentRepository attachments;
     private final IntelligenceMediaClient mediaClient;
+    private final LinkReachabilityChecker linkChecker;
+    private final EngagementVerificationRepository verifications;
+    private final ObjectMapper mapper = new ObjectMapper();
     private final RatingRepository ratings;
     private final WorkflowClient workflowClient;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
@@ -75,6 +81,8 @@ public class ApplicationController {
                                  SubmissionRepository submissions,
                                  SubmissionAttachmentRepository attachments,
                                  IntelligenceMediaClient mediaClient,
+                                 LinkReachabilityChecker linkChecker,
+                                 EngagementVerificationRepository verifications,
                                  RatingRepository ratings,
                                  WorkflowClient workflowClient,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
@@ -87,6 +95,8 @@ public class ApplicationController {
         this.submissions = submissions;
         this.attachments = attachments;
         this.mediaClient = mediaClient;
+        this.linkChecker = linkChecker;
+        this.verifications = verifications;
         this.ratings = ratings;
         this.workflowClient = workflowClient;
         this.reconciliations = reconciliations;
@@ -295,6 +305,17 @@ public class ApplicationController {
                         .flatMap(task -> loadAcceptedApp(id, appId)
                                 .flatMap(app -> submissions.findPending(appId)
                                         .switchIfEmpty(fail(409, "推荐官尚未提交履约凭证，无法确认"))
+                                        .flatMap(pending -> verifications.findBySubmission(pending.id())
+                                                .filter(v -> "failed".equalsIgnoreCase(v.status()))
+                                                .hasElement()
+                                                .flatMap(blocked -> {
+                                                    // 可选闸门：仅 failed 阻断 confirm（absent/passed/inconclusive 照常）。
+                                                    if (Boolean.TRUE.equals(blocked)) {
+                                                        return Mono.<EngagementSubmission>error(new MarketplaceException(
+                                                                409, "履约核验未通过，请退回重交或重新核验"));
+                                                    }
+                                                    return Mono.just(pending);
+                                                }))
                                         .flatMap(pending -> submissions
                                                 .review(pending.id(), SubmissionStatus.ACCEPTED, null))
                                         .switchIfEmpty(fail(409, "该交付物已处理"))
@@ -731,6 +752,112 @@ public class ApplicationController {
         m.put("createdAt", app.createdAt() == null ? null : app.createdAt().toString());
         return m;
     }
+
+    /**
+     * 商家触发履约核验（Verification v1）：对交付物跑自动核验（链接可达性；Stage 4 加 AI 视觉）
+     * → tri-state 聚合 → upsert 核验记录（7C 事务）→ 返回。商家手动决策仍走 confirm（通过）/reject（退回）。
+     */
+    @PostMapping("/api/tasks/{id}/applications/{appId}/submissions/{submissionId}/verification/checks")
+    public Mono<ResponseEntity<Map<String, Object>>> runVerificationChecks(
+            @PathVariable String id, @PathVariable String appId, @PathVariable String submissionId,
+            ServerHttpRequest request) {
+        return callers.requireMerchant(request)
+                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+                        .flatMap(task -> loadAcceptedApp(id, appId)
+                                .flatMap(app -> submissions.findByApplication(appId)
+                                        .filter(s -> s.id().equals(submissionId))
+                                        .next()
+                                        .switchIfEmpty(fail(404, "交付物不存在"))
+                                        .flatMap(submission -> runAndRecordVerification(task, app, submission)
+                                                .map(v -> ok(verificationBody(v)))))));
+    }
+
+    /** 跑自动核验并原子落记录（7C 事务：upsert + outbox，outbox 挂 upsert 之后；任一失败零残留）。 */
+    private Mono<EngagementVerification> runAndRecordVerification(Task task, TaskApplication app,
+                                                                  EngagementSubmission submission) {
+        return runVerificationChecks(submission)
+                .flatMap(outcomes -> transactions.transactional(
+                        verifications.upsert(submission.id(), aggregateVerificationStatus(outcomes), checksToJson(outcomes))
+                                .flatMap(v -> outbox.append(verificationEnvelope(app, submission, v, outcomes))
+                                        .thenReturn(v))));
+    }
+
+    /** Stage 2：仅链接可达性。Stage 4 在此 concat AI 视觉核验（附件 mediaIds → intelligence）。 */
+    private Mono<List<CheckOutcome>> runVerificationChecks(EngagementSubmission submission) {
+        return linkChecker.check(submission.contentUrl())
+                .map(r -> new CheckOutcome("link_reachability", r.status(), r.detail(), Instant.now()))
+                .map(List::of);
+    }
+
+    /** 聚合 tri-state：failed > inconclusive > passed；无 check → inconclusive。 */
+    private static String aggregateVerificationStatus(List<CheckOutcome> outcomes) {
+        if (outcomes.isEmpty()) {
+            return "inconclusive";
+        }
+        if (outcomes.stream().anyMatch(o -> "failed".equalsIgnoreCase(o.status()))) {
+            return "failed";
+        }
+        if (outcomes.stream().anyMatch(o -> "inconclusive".equalsIgnoreCase(o.status()))) {
+            return "inconclusive";
+        }
+        return "passed";
+    }
+
+    private List<Map<String, Object>> checksToMaps(List<CheckOutcome> outcomes) {
+        return outcomes.stream().map(o -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("type", o.type());
+            m.put("status", o.status());
+            m.put("detail", o.detail());
+            m.put("checkedAt", o.checkedAt() == null ? null : o.checkedAt().toString());
+            return m;
+        }).toList();
+    }
+
+    private String checksToJson(List<CheckOutcome> outcomes) {
+        try {
+            return mapper.writeValueAsString(checksToMaps(outcomes));
+        } catch (JsonProcessingException e) {
+            return "[]";  // 不应发生；兜底空数组
+        }
+    }
+
+    /** 核验事件：确定性 event_id（type-3 UUID），保 outbox 重试 exactly-once（镜像 SettlementActivityImpl）。 */
+    private EventEnvelope verificationEnvelope(TaskApplication app, EngagementSubmission submission,
+                                               EngagementVerification v, List<CheckOutcome> outcomes) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", app.taskId());
+        payload.put("applicationId", app.id());
+        payload.put("submissionId", submission.id());
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        payload.put("status", v.status());
+        payload.put("checks", checksToMaps(outcomes));
+        String eventId = UUID.nameUUIDFromBytes(
+                ("VerificationChecked:" + submission.id()).getBytes(StandardCharsets.UTF_8)).toString();
+        return new EventEnvelope(eventId, "VerificationChecked", "EngagementSubmission",
+                submission.id(), 1, Instant.now(), null, payload);
+    }
+
+    private Map<String, Object> verificationBody(EngagementVerification v) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("submissionId", v.submissionId());
+        m.put("status", v.status());
+        m.put("checks", parseChecks(v.checksJson()));
+        m.put("lastCheckedAt", v.lastCheckedAt() == null ? null : v.lastCheckedAt().toString());
+        return m;
+    }
+
+    /** checksJson 是 jsonb 读出的 JSON 文本；解析回结构化对象，避免响应里二次转义。坏 JSON → 原样字符串。 */
+    private Object parseChecks(String json) {
+        try {
+            return mapper.readValue(json, Object.class);
+        } catch (JsonProcessingException e) {
+            return json;
+        }
+    }
+
+    /** 单项核验明细（聚合前的原子结果）。 */
+    private record CheckOutcome(String type, String status, String detail, Instant checkedAt) {}
 
     private static <T> Mono<T> fail(int status, String message) {
         return Mono.error(new MarketplaceException(status, message));
