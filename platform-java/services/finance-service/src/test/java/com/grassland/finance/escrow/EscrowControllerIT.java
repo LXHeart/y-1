@@ -28,6 +28,8 @@ class EscrowControllerIT extends FinanceItSupport {
                 .jsonPath("$.data.balanceCents").isEqualTo(1000);
         assertThat(balanceOf(org)).isEqualTo(1000L);
         assertThat(outboxCount("AccountCredited", org)).isEqualTo(1);
+        // Slice 12 Stage 3：payload 里的用户账号（非 ledger accountId）才是通知收件人。
+        assertThat(outboxPayloadField("AccountCredited", org, "payeeAccountId")).isEqualTo(merchant);
     }
 
     @Test
@@ -429,5 +431,13 @@ class EscrowControllerIT extends FinanceItSupport {
                         + " WHERE event_type = :et AND payload->>'organizationId' = :org")
                 .bind("et", eventType).bind("org", org)
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
+    /** 读取按 organizationId 限定的事件 payload 顶层字段（Slice 12 Stage 3 收件人字段断言）。 */
+    private String outboxPayloadField(String eventType, String org, String field) {
+        return db.sql("SELECT payload->>'" + field + "' AS v FROM finance_outbox"
+                        + " WHERE event_type = :et AND payload->>'organizationId' = :org")
+                .bind("et", eventType).bind("org", org)
+                .map(r -> r.get("v", String.class)).one().block();
     }
 }

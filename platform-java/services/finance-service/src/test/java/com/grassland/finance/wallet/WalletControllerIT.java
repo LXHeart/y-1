@@ -33,6 +33,8 @@ class WalletControllerIT extends FinanceItSupport {
         // 平台抽成默认 0（PRD 前期全免费）→ 毛额全额到账
         assertThat(walletBalance(recommender)).isEqualTo(600L);
         assertThat(outboxCountByPayee("SplitCompleted", recommender)).isEqualTo(1);
+        // Slice 12 Stage 3：FundsCaptured 也携带 payeeAccountId，供 identity 解析钱包通知收件人。
+        assertThat(outboxCountByPayee("FundsCaptured", recommender)).isEqualTo(1);
 
         client().get().uri("/api/finance/wallets/me")
                 .header("X-Grassland-Identity", sign(recommender, "recommender", null, null))

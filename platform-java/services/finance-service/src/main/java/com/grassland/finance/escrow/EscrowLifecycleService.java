@@ -183,6 +183,8 @@ public class EscrowLifecycleService {
                 .then();
     }
 
+    /** {@code payeeAccountId} 是收款推荐官的用户账号（非 finance ledger account），
+     *  供 identity 通知中心解析钱包类通知收件人（Slice 12 Stage 3）；无分账对象时不携带。 */
     private EventEnvelope reservationEnvelope(String eventType, FundsReservation reservation) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("reservationId", reservation.id());
@@ -191,6 +193,12 @@ public class EscrowLifecycleService {
         payload.put("engagementRef", reservation.engagementRef());
         payload.put("amountCents", reservation.amountCents());
         payload.put("status", reservation.status());
+        if (reservation.payeeAccountId() != null) {
+            payload.put("payeeAccountId", reservation.payeeAccountId());
+        }
+        if (reservation.payoutCents() != null) {
+            payload.put("payoutCents", reservation.payoutCents());
+        }
         return new EventEnvelope(
                 UUID.randomUUID().toString(),
                 eventType,

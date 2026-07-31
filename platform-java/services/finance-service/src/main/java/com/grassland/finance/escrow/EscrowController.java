@@ -73,7 +73,9 @@ public class EscrowController {
                 .flatMap(caller -> transactions.transactional(
                         accounts.credit(orgId, amount)
                                 .switchIfEmpty(fail(404, "账户不存在，请先开户"))
-                                .flatMap(acct -> outbox.append(accountEnvelope("AccountCredited", acct, amount)).thenReturn(acct)))
+                                .flatMap(acct -> outbox
+                                        .append(accountEnvelope("AccountCredited", acct, amount, caller.accountId()))
+                                        .thenReturn(acct)))
                         .map(acct -> ResponseEntity.ok(Map.of("success", true, "data", toBody(acct)))));
     }
 
@@ -181,6 +183,8 @@ public class EscrowController {
                 });
     }
 
+    /** {@code payeeAccountId} 为收款推荐官的用户账号（非 finance ledger account），
+     *  供 identity 通知中心解析收件人（Slice 12 Stage 3）。 */
     private EventEnvelope reservationEnvelope(String eventType, FundsReservation r) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("reservationId", r.id());
@@ -189,16 +193,24 @@ public class EscrowController {
         payload.put("engagementRef", r.engagementRef());
         payload.put("amountCents", r.amountCents());
         payload.put("status", r.status());
+        if (r.payeeAccountId() != null) {
+            payload.put("payeeAccountId", r.payeeAccountId());
+        }
         return new EventEnvelope(UUID.randomUUID().toString(), eventType, "FundsReservation",
                 r.id(), 1, Instant.now(), null, payload);
     }
 
-    private EventEnvelope accountEnvelope(String eventType, Account acct, long amountCents) {
+    /** {@code accountId} 是 finance 组织 ledger account；{@code payeeAccountId} 才是用户账号
+     *  （充值场景即发起充值的商家本人），供 identity 通知中心解析收件人（Slice 12 Stage 3）。 */
+    private EventEnvelope accountEnvelope(String eventType, Account acct, long amountCents, String payeeAccountId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("accountId", acct.id());
         payload.put("organizationId", acct.organizationId());
         payload.put("amountCents", amountCents);
         payload.put("balanceCents", acct.balanceCents());
+        if (payeeAccountId != null) {
+            payload.put("payeeAccountId", payeeAccountId);
+        }
         return new EventEnvelope(UUID.randomUUID().toString(), eventType, "Account",
                 acct.id(), 1, Instant.now(), null, payload);
     }
