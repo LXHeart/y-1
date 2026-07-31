@@ -1,5 +1,6 @@
 package com.grassland.intelligence;
 
+import com.grassland.intelligence.bilibili.BilibiliFetchProperties;
 import com.grassland.intelligence.bilibili.BilibiliProxyTokenProperties;
 import com.grassland.intelligence.douyin.DouyinHotItemsProperties;
 import com.grassland.intelligence.event.OutboxProperties;
@@ -10,7 +11,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
-@EnableConfigurationProperties({OutboxProperties.class, DouyinHotItemsProperties.class, LegacyMediaProxyProperties.class, BilibiliProxyTokenProperties.class})
+@EnableConfigurationProperties({OutboxProperties.class, DouyinHotItemsProperties.class, LegacyMediaProxyProperties.class, BilibiliProxyTokenProperties.class, BilibiliFetchProperties.class})
 @SpringBootApplication
 public class IntelligenceServiceApplication {
     public static void main(String[] args) {

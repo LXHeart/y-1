@@ -244,9 +244,15 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:false}
+    # ---- Bilibili extract（草场 Slice 13 Stage 3）→ intelligence-service。exact 切，不抢其余子路径。
+    # analyze/analysis-media 暂仍 legacy（下一会话）。默认 false：关闭回落 legacy。
+    - method: POST
+      path: /api/bilibili/extract-video
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
     # ---- Bilibili 视频 proxy/download（草场 Slice 13 Stage 4）→ intelligence-service。GET 前缀路由
     # 覆盖 /api/bilibili/{proxy|download}/{token}；progressive 走 Java Range，DASH 回落 legacy（共享 secret）。
-    # extract/analyze/analysis-media 暂仍 legacy（下一会话）。默认 false：关闭回落 legacy。
     - method: GET
       path: /api/bilibili/proxy
       upstream: intelligence
