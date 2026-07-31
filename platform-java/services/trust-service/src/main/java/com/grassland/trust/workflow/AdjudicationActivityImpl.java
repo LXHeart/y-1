@@ -183,6 +183,7 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
         outbox.append(envelope("DisputeFinalized", d, d.round(), null)).block();
     }
 
+    /** {@code openedByAccountId}/{@code openedByRole} 供 identity 通知中心解析收件人（Slice 12 Stage 3）。 */
     private EventEnvelope envelope(String eventType, DisputeCase d, int round, Integer panelSize) {
         String eventId = UUID.nameUUIDFromBytes(
                 (eventType + ":" + d.id() + ":" + round).getBytes(StandardCharsets.UTF_8)).toString();
@@ -190,6 +191,8 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
         payload.put("disputeId", d.id());
         payload.put("engagementRef", d.engagementRef());
         payload.put("organizationId", d.organizationId());
+        payload.put("openedByAccountId", d.openedByAccountId());
+        payload.put("openedByRole", d.openedByRole());
         payload.put("round", round);
         if (d.decision() != null) {
             payload.put("decision", d.decision());

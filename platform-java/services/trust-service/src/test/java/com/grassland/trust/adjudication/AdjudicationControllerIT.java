@@ -48,6 +48,9 @@ class AdjudicationControllerIT extends TrustItSupport {
 
         assertThat(panelJudges(id, 1)).hasSize(PANEL_SIZE);
         assertThat(outboxCount("DisputeAssigned", id)).isEqualTo(1);
+        // Slice 12 Stage 3：发射端补齐开启人，identity 通知中心不反查 trust。
+        assertThat(outboxPayloadField("DisputeAssigned", id, "openedByAccountId")).isEqualTo(merchant);
+        assertThat(outboxPayloadField("DisputeAssigned", id, "openedByRole")).isEqualTo("merchant");
     }
 
     @Test
@@ -359,6 +362,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .jsonPath("$.data.status").isEqualTo("final")
                 .jsonPath("$.data.finalDecision").isEqualTo("for_recommender");
         assertThat(outboxCount("DisputeFinalized", id)).isEqualTo(1);
+        assertThat(outboxPayloadField("DisputeFinalized", id, "openedByAccountId")).isEqualTo(merchant);
     }
 
     @Test
@@ -513,6 +517,14 @@ class AdjudicationControllerIT extends TrustItSupport {
         return db.sql("SELECT status FROM dispute_case WHERE id = CAST(:id AS uuid)")
                 .bind("id", disputeId)
                 .map(r -> r.get("status", String.class)).one().block();
+    }
+
+    /** 读取按 disputeId 限定的事件 payload 顶层字段（Slice 12 Stage 3 收件人字段断言）。 */
+    private String outboxPayloadField(String eventType, String disputeId, String field) {
+        return db.sql("SELECT payload->>'" + field + "' AS v FROM trust_outbox"
+                        + " WHERE event_type = :et AND payload->>'disputeId' = :id")
+                .bind("et", eventType).bind("id", disputeId)
+                .map(r -> r.get("v", String.class)).one().block();
     }
 
     private long outboxCount(String eventType, String disputeId) {

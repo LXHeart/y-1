@@ -269,7 +269,9 @@ public class AdjudicationController {
                                 .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)))));
     }
 
-    /** 通用争议事件信封（确定性 type-3 eventId：eventType:disputeId:round）。 */
+    /** 通用争议事件信封（确定性 type-3 eventId：eventType:disputeId:round）。
+     *  {@code openedByAccountId}/{@code openedByRole} 供 identity 通知中心解析收件人（Slice 12 Stage 3）；
+     *  争议对方账号不在 DisputeCase 内（仅 engagementRef 引用），故本期只携带开启人 + 组织。 */
     private EventEnvelope disputeEnvelope(String eventType, DisputeCase d) {
         String eventId = UUID.nameUUIDFromBytes(
                 (eventType + ":" + d.id() + ":" + d.round()).getBytes(StandardCharsets.UTF_8)).toString();
@@ -277,6 +279,8 @@ public class AdjudicationController {
         payload.put("disputeId", d.id());
         payload.put("engagementRef", d.engagementRef());
         payload.put("organizationId", d.organizationId());
+        payload.put("openedByAccountId", d.openedByAccountId());
+        payload.put("openedByRole", d.openedByRole());
         payload.put("round", d.round());
         payload.put("status", d.status());
         if (d.finalDecision() != null) {
@@ -298,6 +302,8 @@ public class AdjudicationController {
         payload.put("disputeId", d.id());
         payload.put("engagementRef", d.engagementRef());
         payload.put("organizationId", d.organizationId());
+        payload.put("openedByAccountId", d.openedByAccountId());
+        payload.put("openedByRole", d.openedByRole());
         payload.put("round", round);
         payload.put("panelSize", panelSize);
         return new EventEnvelope(eventId, "DisputeAssigned", "DisputeCase",
