@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch, type Ref } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import EngagementRatingPanel from './EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from './EngagementSubmissionPanel.vue'
@@ -376,6 +376,24 @@ async function switchSide(next: Side): Promise<void> {
   }
 }
 
+/**
+ * 通知落点（草场 Slice 12 Stage 4）。`App.vue` provide 一个锚点 id，本组件滚到对应卡片后置空
+ * （置空才能让同一锚点被再次点击时重新触发 watch）。
+ *
+ * **不切换商家/推荐官视角**：`switchSide()` 会重置组织/任务/争议选择。故 `/me/engagements`、
+ * `/me/wallet` 这类两侧都有的锚点，落在当前视角自己那张卡上（两侧是 v-if/v-else，
+ * 同一时刻 DOM 里只有一个同名 id）。
+ */
+const grasslandAnchor = inject<Ref<string>>('grasslandAnchor', ref(''))
+
+watch(grasslandAnchor, async (anchor) => {
+  if (!anchor) return
+  await nextTick()
+  const element = document.getElementById(anchor)
+  element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  grasslandAnchor.value = ''
+})
+
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
     pending: '待处理',
@@ -413,7 +431,7 @@ function statusLabel(status: string): string {
     <p v-if="notice" class="gl-alert gl-alert-ok">{{ notice }}</p>
 
     <!-- 我的邀请 / 登录设备：都是账号级能力，与商家/推荐官视角无关，故在切换之外 -->
-    <article class="gl-card gl-card-wide">
+    <article id="gl-invitations" class="gl-card gl-card-wide">
       <MyInvitationsCard @joined="loadOrganizations" />
     </article>
 
@@ -423,7 +441,7 @@ function statusLabel(status: string): string {
 
     <!-- ============ 商家视角 ============ -->
     <div v-if="side === 'merchant'" class="gl-grid">
-      <article class="gl-card">
+      <article id="gl-organizations" class="gl-card">
         <h3>1. 我的组织</h3>
         <div class="gl-row">
           <select v-model="activeOrgId" @change="refreshAccount(); refreshTasks()">
@@ -456,7 +474,8 @@ function statusLabel(status: string): string {
         <OrgTeamCard :org-id="activeOrg.id" />
       </article>
 
-      <article class="gl-card">
+      <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
+      <article id="gl-wallet" class="gl-card">
         <h3>2. 资金账户</h3>
         <p class="gl-balance">余额 <strong>¥{{ balanceYuan }}</strong></p>
         <div class="gl-row">
@@ -485,7 +504,7 @@ function statusLabel(status: string): string {
         <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。</p>
       </article>
 
-      <article class="gl-card gl-card-wide">
+      <article id="gl-engagements" class="gl-card gl-card-wide">
         <h3>4. 任务与报名</h3>
         <p v-if="tasks.length === 0" class="gl-empty">暂无任务</p>
         <ul class="gl-list">
@@ -568,7 +587,7 @@ function statusLabel(status: string): string {
       </article>
 
       <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
-      <article class="gl-card gl-card-wide">
+      <article id="gl-wallet" class="gl-card gl-card-wide">
         <MyWalletCard />
       </article>
 
@@ -601,7 +620,7 @@ function statusLabel(status: string): string {
         </table>
       </article>
 
-      <article class="gl-card gl-card-wide">
+      <article id="gl-engagements" class="gl-card gl-card-wide">
         <h3>我的履约与争议</h3>
         <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。</p>
         <p v-if="applications.length === 0" class="gl-empty">选择任务后可见相关报名</p>
@@ -638,7 +657,7 @@ function statusLabel(status: string): string {
     </div>
 
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
-    <article class="gl-card gl-card-wide">
+    <article id="gl-disputes" class="gl-card gl-card-wide">
       <h3>争议审判</h3>
       <div class="gl-row">
         <input v-model="activeDisputeId" placeholder="争议 ID（开启争议后自动填入）" />

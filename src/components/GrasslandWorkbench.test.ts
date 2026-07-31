@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { ref } from 'vue'
 import GrasslandWorkbench from './GrasslandWorkbench.vue'
 import { useAuth } from '../composables/useAuth'
 import type { AuthUser } from '../types/auth'
@@ -113,5 +114,52 @@ describe('GrasslandWorkbench 登录态', () => {
 
     expect(urls.slice(firstRound)).toContain('/api/me/active-identity')
     expect(urls.slice(firstRound)).toContain('/api/organizations')
+  })
+})
+
+/**
+ * 通知落点（Slice 12 Stage 4）。本应用无 vue-router，故通知的 `linkPath` 落成
+ * 「切到草场视图 + 滚到卡片锚点」。这里锁：锚点 id 真实存在（改卡片时别把 id 删掉）、
+ * 消费后置空（同一锚点能被再次点击触发）、以及**不替用户切换商家/推荐官视角**。
+ */
+describe('GrasslandWorkbench 通知锚点', () => {
+  const ANCHORS = ['gl-invitations', 'gl-organizations', 'gl-engagements', 'gl-disputes', 'gl-wallet']
+
+  test('商家视角下五个锚点都在 DOM 里', async () => {
+    stubFetch()
+    const wrapper = mount(GrasslandWorkbench, { attachTo: document.body })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    for (const anchor of ANCHORS) {
+      expect(wrapper.find(`#${anchor}`).exists()).toBe(true)
+    }
+    // 同名 id 不能同时出现（两侧是 v-if/v-else）
+    expect(document.querySelectorAll('#gl-wallet')).toHaveLength(1)
+    expect(document.querySelectorAll('#gl-engagements')).toHaveLength(1)
+  })
+
+  test('provide 的锚点触发滚动，消费后置空且不切换视角', async () => {
+    stubFetch()
+    const anchor = ref('')
+    const scrolled: string[] = []
+    // happy-dom 没实现 scrollIntoView
+    Element.prototype.scrollIntoView = function scrollIntoViewStub(this: Element) {
+      scrolled.push(this.id)
+    } as unknown as typeof Element.prototype.scrollIntoView
+
+    const wrapper = mount(GrasslandWorkbench, {
+      attachTo: document.body,
+      global: { provide: { grasslandAnchor: anchor } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    anchor.value = 'gl-disputes'
+    await flushPromises()
+
+    expect(scrolled).toEqual(['gl-disputes'])
+    expect(anchor.value).toBe('')  // 置空后同一锚点可再次触发
+    expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')  // 未替用户切视角
   })
 })

@@ -54,6 +54,8 @@
             <strong class="auth-pill-name">{{ currentUser.displayName || currentUser.email }}</strong>
           </div>
 
+          <NotificationBell v-if="isAuthenticated" @navigate="handleNotificationNavigate" />
+
           <span
             v-if="isAuthenticated"
             class="credits-badge"
@@ -260,6 +262,7 @@ import HomeView from './components/HomeView.vue'
 import ImageAnalysisView from './components/ImageAnalysisView.vue'
 import ImageGenerationView from './components/ImageGenerationView.vue'
 import LoginModal from './components/LoginModal.vue'
+import NotificationBell from './components/NotificationBell.vue'
 import VideoAnalysisView from './components/VideoAnalysisView.vue'
 import VideoProductionView from './components/VideoProductionView.vue'
 import { useAnalysisSettings } from './composables/useAnalysisSettings'
@@ -268,12 +271,15 @@ import { useHomepageSettings } from './composables/useHomepageSettings'
 import { useTheme, type ThemeMode } from './composables/useTheme'
 import { useCredits } from './composables/useCredits'
 import type { LoginFormValues, RegisterFormValues } from './types/auth'
+import type { NotificationLinkTarget } from './types/notification'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
 type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
 const currentView = ref<AppView>('home')
+/** 通知点击后要滚到的草场卡片锚点；工作台消费后置空（见 handleNotificationNavigate）。 */
+const grasslandAnchor = ref('')
 const articleInitialTopic = ref('')
 const comedyInitialTopic = ref('')
 const showSettingsModal = ref(false)
@@ -425,6 +431,21 @@ function handleCreateComedyFromTopic(topic: string): void {
 
 provide('articleInitialTopic', articleInitialTopic)
 provide('comedyInitialTopic', comedyInitialTopic)
+provide('grasslandAnchor', grasslandAnchor)
+
+/**
+ * 通知点击落点（草场 Slice 12 Stage 4）。
+ *
+ * 本应用无 vue-router，故后端的 `linkPath` 由前端映射成「视图 + 卡片锚点」（见
+ * `types/notification.ts`）。这里只切视图并把锚点交给工作台——**刻意不替用户切换
+ * 商家/推荐官视角**，`switchSide()` 会重置组织/任务/争议选择，等于清掉他手上的活。
+ * 锚点用 `provide` 而非 prop：`<component :is>` 在 KeepAlive 下对所有视图共用一组属性，
+ * 挂 prop 会给其它 8 个视图落成无效 DOM 属性。
+ */
+function handleNotificationNavigate(target: NotificationLinkTarget): void {
+  currentView.value = target.view
+  grasslandAnchor.value = target.anchor
+}
 
 function handleVerifyModel(
   feature: AnalysisFeature,
