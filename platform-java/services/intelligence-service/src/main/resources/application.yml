@@ -114,6 +114,26 @@ article-images:
     ttl-seconds: ${ARTICLE_GENERATED_IMAGE_TTL_SECONDS:1800}
     cleanup-interval-ms: ${ARTICLE_GENERATED_IMAGE_CLEANUP_INTERVAL_MS:300000}
 
+# 抖音热点（草场 Slice 13 Stage 1）：公开端点 GET /api/douyin/hot-items，无 auth/credits。
+# 上游默认 60s API；edge-bff 路由开关默认 false，关闭时回落 legacy。
+douyin:
+  hot:
+    api-base-url: ${DOUYIN_HOT_API_BASE_URL:https://60s.viki.moe/v2/douyin}
+    api-timeout-ms: ${DOUYIN_HOT_API_TIMEOUT_MS:8000}
+    limit: 10
+
+# legacy Express 后端（草场 Slice 13 Stage 2）：Bilibili DASH 等 FFmpeg 路径回落 legacy 逃生。
+legacy:
+  backend:
+    base-url: ${LEGACY_BACKEND_BASE_URL:http://backend:3000}
+
+# Bilibili 代理 token（草场 Slice 13 Stage 3/4）：token-secret 与 legacy 共享（同 BILIBILI_PROXY_TOKEN_SECRET），
+# 缺失/过短时 create/parse 抛错。proxy/download 路由开关默认 false（EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE）。
+bilibili:
+  proxy:
+    token-secret: ${BILIBILI_PROXY_TOKEN_SECRET:}
+    token-ttl-ms: 900000
+
 # 积分扣减：经 legacy 内部端点（过渡期；legacy 不认 X-Grassland-Identity，用共享密钥）。
 credits:
   legacy:

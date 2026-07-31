@@ -236,6 +236,25 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE:true}
+    # ---- 抖音热点（草场 Slice 13 Stage 1）→ intelligence-service。公开端点，无 auth/credits；
+    # exact 精确切，不抢 /api/douyin 其余子路径（extract/analyze/proxy/download/audio/session 仍走 legacy）。
+    # 默认 false：关闭时回落 legacy Express（回滚安全）。
+    - method: GET
+      path: /api/douyin/hot-items
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:false}
+    # ---- Bilibili 视频 proxy/download（草场 Slice 13 Stage 4）→ intelligence-service。GET 前缀路由
+    # 覆盖 /api/bilibili/{proxy|download}/{token}；progressive 走 Java Range，DASH 回落 legacy（共享 secret）。
+    # extract/analyze/analysis-media 暂仍 legacy（下一会话）。默认 false：关闭回落 legacy。
+    - method: GET
+      path: /api/bilibili/proxy
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
+    - method: GET
+      path: /api/bilibili/download
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
 
 # 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
 identity-assertion:
