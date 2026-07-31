@@ -69,18 +69,26 @@ public final class RoutingProxyHandler {
         exchange.getResponse().getHeaders().set("RateLimit-Reset", reset);
     }
 
-    private URI targetUri(URI upstream, URI incoming) {
+    /**
+     * 拼上游 URI。**逐字节透传已编码的 path 与 query**。
+     *
+     * <p>此处刻意用 {@code URI.create(拼好的字符串)} 而不是多参 {@code URI(scheme, authority, path, query, fragment)}
+     * 构造器：后者把传入的组件当作**未编码文本**再转义一遍，于是入站的 {@code %3A} 会变成 {@code %253A}，
+     * 上游解出字面量 {@code %3A}。这曾让通知中心的 keyset 游标（{@code before=...T08%3A59%3A20Z}）
+     * 被 identity 判为非法时间戳返回 400，第二页永远加载不出来（Slice 12 Stage 5 真浏览器 e2e 抓到）。
+     * 同理保护 path 里的 {@code %2F}/{@code %20} 等。
+     */
+    static URI targetUri(URI upstream, URI incoming) {
         try {
-            String basePath = upstream.getRawPath();
-            String requestPath = incoming.getRawPath();
-            String path = joinPaths(basePath, requestPath);
-            return new URI(
-                upstream.getScheme(),
-                upstream.getRawAuthority(),
-                path,
-                incoming.getRawQuery(),
-                null
-            );
+            String path = joinPaths(upstream.getRawPath(), incoming.getRawPath());
+            String query = incoming.getRawQuery();
+            StringBuilder target = new StringBuilder()
+                .append(upstream.getScheme()).append("://").append(upstream.getRawAuthority())
+                .append(path == null ? "" : path);
+            if (query != null && !query.isEmpty()) {
+                target.append('?').append(query);
+            }
+            return new URI(target.toString());
         } catch (URISyntaxException error) {
             throw new IllegalArgumentException("Unable to construct upstream URI", error);
         }

@@ -162,4 +162,32 @@ describe('GrasslandWorkbench 通知锚点', () => {
     expect(anchor.value).toBe('')  // 置空后同一锚点可再次触发
     expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')  // 未替用户切视角
   })
+
+  /**
+   * 回归：真浏览器 e2e 抓到的首次挂载竞态。
+   *
+   * 点通知时 `App.vue` **同一 tick 内**既切 `currentView='grassland'` 又置锚点 → 工作台此刻才挂载，
+   * 锚点 ref 在 `watch` 注册之前就已是目标值。非 `immediate` 的 watch 只响应注册**之后**的变化，
+   * 于是首次从别的视图点通知进来不滚动（`scrollY` 不动）；已在草场视图时再点才滚。
+   * 修法：watch 带 `immediate`，挂载时若锚点非空就补滚一次。
+   */
+  test('挂载前就已设好的锚点（首次从其它视图点通知进来）也要滚动', async () => {
+    stubFetch()
+    // 关键：挂载前锚点已是目标值（模拟 currentView 切换与置锚点同一 tick）
+    const anchor = ref('gl-wallet')
+    const scrolled: string[] = []
+    Element.prototype.scrollIntoView = function scrollIntoViewStub(this: Element) {
+      scrolled.push(this.id)
+    } as unknown as typeof Element.prototype.scrollIntoView
+
+    mount(GrasslandWorkbench, {
+      attachTo: document.body,
+      global: { provide: { grasslandAnchor: anchor } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    expect(scrolled).toEqual(['gl-wallet'])
+    expect(anchor.value).toBe('')
+  })
 })

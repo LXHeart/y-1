@@ -386,13 +386,17 @@ async function switchSide(next: Side): Promise<void> {
  */
 const grasslandAnchor = inject<Ref<string>>('grasslandAnchor', ref(''))
 
+// `immediate`：点通知时 App.vue 在同一 tick 内既切 currentView='grassland' 又置锚点，
+// 工作台此刻才挂载——锚点 ref 在 watch 注册前就已是目标值。非 immediate 的 watch 只响应
+// 注册之后的变化，于是「首次从别的视图点通知进来」不滚动（真浏览器 e2e 抓到）。immediate 让
+// 挂载时若锚点非空就补滚一次；空值由 `if (!anchor) return` 兜住，正常进草场视图不会误滚。
 watch(grasslandAnchor, async (anchor) => {
   if (!anchor) return
   await nextTick()
   const element = document.getElementById(anchor)
   element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   grasslandAnchor.value = ''
-})
+}, { immediate: true })
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {

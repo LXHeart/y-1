@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -38,6 +39,12 @@ public class VideoRecreationRateLimitFilter implements WebFilter, Ordered {
     private final Clock clock;
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
 
+    /**
+     * 生产构造器。**必须显式标注 {@code @Autowired}**：本类还有一个测试用的可注入 Clock 构造器，
+     * 两个候选构造器且都没标注时 Spring 只会去找无参构造器，启动即 `NoSuchMethodException: <init>()`。
+     * （Slice 9 引入本类时未标注，因 edge-bff 镜像一直是旧构建才未暴露；Slice 12 Stage 5 重建镜像时崩在启动。）
+     */
+    @Autowired
     public VideoRecreationRateLimitFilter(SessionIdentityResolver identities) {
         this(identities, Clock.systemUTC());
     }
