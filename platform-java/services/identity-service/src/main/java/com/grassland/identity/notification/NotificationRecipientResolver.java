@@ -79,6 +79,8 @@ public class NotificationRecipientResolver {
             // 双方都关心：核验结果、结算、结算挂起。
             case "VerificationChecked", "EngagementSettled", "SettlementHeld" ->
                     accountIds(payload, "taskOwnerId", "recommenderAccountId");
+            // 争议对方通知：marketplace 派生的 EngagementDisputed 携带已解析的对方账号（草场 Slice 12 缺口补全）。
+            case "EngagementDisputed" -> accountIds(payload, "counterpartyAccountId");
             // 争议：只有开启人在 trust 本地表内（对方账号缺口见 docs 路线图第 8 项）。
             case "DisputeAssigned", "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized" ->
                     accountIds(payload, "openedByAccountId");

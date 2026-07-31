@@ -69,6 +69,12 @@ finance:
   service:
     base-url: ${FINANCE_SERVICE_BASE_URL:http://finance-service:8084}
 
+# 跨服务调 marketplace（Slice 12 安全收口：开争议前查参与方授权 + canonical task organization）。
+marketplace:
+  service:
+    base-url: ${MARKETPLACE_SERVICE_BASE_URL:http://marketplace-service:8083}
+
+
 # BFF 内部身份断言消费（与 edge-bff/identity/marketplace/finance 同 secret/audience）。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}

@@ -32,23 +32,28 @@ const ORG = {
 }
 
 function dataFor(url: string): unknown {
+  if (url === '/api/me/identities') {
+    return [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+  }
   if (url === '/api/organizations') return [ORG]
   if (url.startsWith('/api/tasks')) return []
   if (url.startsWith('/api/finance/accounts')) return { organizationId: 'org-1', balanceCents: 100000 }
   return {}
 }
 
-function stubFetch(): { urls: string[] } {
+function stubFetch(identities = dataFor('/api/me/identities')): { urls: string[]; calls: Array<[string, RequestInit | undefined]> } {
   const urls: string[] = []
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+  const calls: Array<[string, RequestInit | undefined]> = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     urls.push(url)
+    calls.push([url, init])
     return {
       ok: true,
       headers: { get: () => 'application/json' },
-      json: async () => ({ success: true, data: dataFor(url) }),
+      json: async () => ({ success: true, data: url === '/api/me/identities' ? identities : dataFor(url) }),
     }
   }))
-  return { urls }
+  return { urls, calls }
 }
 
 // 必须自动卸载：组件监听 useAuth 的模块级 currentUser，残留实例会响应后续用例的登录事件。
@@ -81,10 +86,50 @@ describe('GrasslandWorkbench 登录态', () => {
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
-    // 顺序关键：先激活活动身份，再拉数据，否则商家接口 403
-    expect(urls[0]).toBe('/api/me/active-identity')
+    // 顺序关键：先查已开通身份，再激活它；避免 recommender-only 账号被默认 merchant 激活成 409。
+    expect(urls[0]).toBe('/api/me/identities')
+    expect(urls).toContain('/api/me/active-identity')
     expect(urls).toContain('/api/organizations')
     expect(wrapper.text()).toContain('示例商家')
+  })
+
+  test('recommender-only 账号直接激活推荐官，不尝试 merchant', async () => {
+    const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+    const { calls } = stubFetch(identities)
+    const wrapper = mount(GrasslandWorkbench, {
+      global: {
+        stubs: {
+          MyRecommenderProfileCard: true,
+          MyWalletCard: true,
+          EngagementSubmissionPanel: true,
+          EngagementRatingPanel: true,
+          AdjudicationPanel: true,
+        },
+      },
+    })
+
+    currentUser.value = asUser('acct-rec', 'recommender@test.local')
+    await flushPromises()
+
+    expect(wrapper.find('[aria-selected="true"]').text()).toBe('推荐官视角')
+    const activation = calls.find(([url]) => url === '/api/me/active-identity')
+    expect(activation).toBeDefined()
+    expect(JSON.parse(activation?.[1]?.body as string)).toEqual({ type: 'recommender' })
+    expect(calls.filter(([url]) => url === '/api/me/active-identity')).toHaveLength(1)
+    expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
+  })
+
+  test('未开通身份时保留商家 onboarding，且不激活或自动开通', async () => {
+    const { calls } = stubFetch([])
+    const wrapper = mount(GrasslandWorkbench)
+
+    currentUser.value = asUser('acct-consumer', 'consumer@test.local')
+    await flushPromises()
+
+    expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')
+    expect(calls.filter(([url]) => url === '/api/me/active-identity')).toHaveLength(0)
+    expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
+    expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')
   })
 
   test('登出清空组织/余额/任务，不留上一个账号的数据', async () => {

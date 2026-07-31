@@ -70,19 +70,25 @@ public class SessionIdentityResolver {
                         row.get("role", String.class),
                         row.get("status", String.class)))
                 .one()
-                .flatMap(account -> Mono.zip(
-                        sessionState(sid).defaultIfEmpty(SessionState.EMPTY),
-                        orgTier(accountId).defaultIfEmpty(OrgTier.EMPTY))
-                        .map(t -> new ResolvedIdentity(
-                                account.id(),
-                                account.role(),
-                                account.status(),
-                                t.getT1().activeIdentityType(),
-                                sid,
-                                t.getT2().orgId(),
-                                t.getT2().tier(),
-                                t.getT1().reauthenticatedAt(),
-                                t.getT1().authStrength())));
+                .flatMap(account -> sessionState(sid).defaultIfEmpty(SessionState.EMPTY)
+                        .flatMap(session -> {
+                            // 仅商家活动身份才带 org/tier：推荐官/消费者断言即使该账号也拥有 merchant 档案，
+                            // 也必须 organizationId/tier 为 null——否则推荐官 session 会拿到无关 merchant 组织，
+                            // 破坏下游「活动身份 ↔ 组织上下文」不变量（HLD 7.4）。
+                            Mono<OrgTier> tier = "merchant".equalsIgnoreCase(session.activeIdentityType())
+                                    ? orgTier(accountId).defaultIfEmpty(OrgTier.EMPTY)
+                                    : Mono.just(OrgTier.EMPTY);
+                            return tier.map(o -> new ResolvedIdentity(
+                                    account.id(),
+                                    account.role(),
+                                    account.status(),
+                                    session.activeIdentityType(),
+                                    sid,
+                                    o.orgId(),
+                                    o.tier(),
+                                    session.reauthenticatedAt(),
+                                    session.authStrength()));
+                        }));
     }
 
     /** 在 Row 仍有效期间提前抽取字段（r2dbc Row 生命周期仅限 map 阶段，不可透传到下游 flatMap）。 */

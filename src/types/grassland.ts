@@ -356,6 +356,14 @@ export function parsePermissionMaterials(raw: string | null): Record<string, str
 /** 活动身份：merchant/recommender；null = 消费者。按 session 隔离（多设备互不影响）。 */
 export type IdentityType = 'merchant' | 'recommender'
 
+/** 已开通的身份档案；GET /api/me/identities 的响应项（请求字段仍是 {@link IdentityType} 的 `type`）。 */
+export interface IdentityProfile {
+  id: string
+  identityType: IdentityType
+  organizationId: string | null
+  status: string
+}
+
 // ---------- identity：组织成员 / 门店 / 门店成员（Slice 2F/2G/2J）----------
 
 /**

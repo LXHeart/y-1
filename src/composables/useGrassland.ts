@@ -13,6 +13,7 @@ import type {
   UpdateRecommenderProfileInput,
   FinanceAccount,
   GrasslandResponse,
+  IdentityProfile,
   IdentityType,
   Judge,
   JudgeVote,
@@ -133,6 +134,9 @@ export function useGrassland() {
   }
 
   // ---------- identity：组织 + 活动身份 ----------
+
+  /** 已开通身份列表。响应字段为 identityType（区别于 POST 请求字段 type）。 */
+  const listIdentities = () => run(() => request<IdentityProfile[]>('/api/me/identities'))
 
   const listOrganizations = () => run(() => request<Organization[]>('/api/organizations'))
 
@@ -674,6 +678,7 @@ export function useGrassland() {
     error,
     clearError,
     // identity
+    listIdentities,
     listOrganizations,
     createOrganization,
     openIdentity,

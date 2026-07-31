@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -31,6 +33,12 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
 
     @Autowired
     TrustEventProcessor processor;
+
+    @Autowired
+    TaskApplicationRepository applications;
+
+    @Autowired
+    TaskRepository tasks;
 
     @Autowired
     TransactionalOperator transactions;
@@ -195,7 +203,8 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
                     }
                 };
         TrustEventProcessor failingProcessor = new TrustEventProcessor(
-                inbox, failingReconciliations, transactions, new ObjectMapper(), CONSUMER_NAME);
+                inbox, failingReconciliations, transactions, new ObjectMapper(), CONSUMER_NAME,
+                applications, tasks, outbox);
         ConsumerRecord<String, String> record = record("slice7a-test-rollback", "slice7a-app-99");
 
         StepVerifier.create(failingProcessor.process(record))

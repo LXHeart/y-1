@@ -81,6 +81,45 @@ class ExternalNotificationRoutingTest {
     }
 
     @Test
+    void engagementDisputedNotifiesCounterpartyResolvedByOpenerRole() {
+        // merchant 开争议 → 对方是推荐官
+        assertThat(resolve("EngagementDisputed", Map.of(
+                "disputeId", "d-1", "engagementRef", "app-1",
+                "openedByAccountId", OWNER, "openedByRole", "merchant",
+                "counterpartyAccountId", RECOMMENDER)))
+                .containsExactly(RECOMMENDER);
+        // recommender 开争议 → 对方是任务归属商家
+        assertThat(resolve("EngagementDisputed", Map.of(
+                "disputeId", "d-2", "engagementRef", "app-2",
+                "openedByAccountId", RECOMMENDER, "openedByRole", "recommender",
+                "counterpartyAccountId", OWNER)))
+                .containsExactly(OWNER);
+    }
+
+    @Test
+    void engagementDisputedTemplateIsRoleAwareAndDoesNotLeakAccounts() {
+        NotificationTemplates.Template merchantOpened = NotificationTemplates.template(
+                "EngagementDisputed", payload(Map.of(
+                        "disputeId", "d-1", "engagementRef", "app-1",
+                        "openedByAccountId", OWNER, "counterpartyAccountId", RECOMMENDER,
+                        "openedByRole", "merchant")));
+
+        assertThat(merchantOpened).isNotNull();
+        assertThat(merchantOpened.category()).isEqualTo(NotificationCategory.DISPUTE);
+        assertThat(merchantOpened.linkPath()).isEqualTo("/me/disputes");
+        assertThat(merchantOpened.body()).contains("商家对你提交的履约");
+        // 渲染 payload 不泄露任何账号；disputeId/engagementRef 供前端定位。
+        assertThat(merchantOpened.payload()).containsEntry("disputeId", "d-1")
+                .doesNotContainKey("openedByAccountId")
+                .doesNotContainKey("counterpartyAccountId");
+
+        NotificationTemplates.Template recommenderOpened = NotificationTemplates.template(
+                "EngagementDisputed", payload(Map.of(
+                        "disputeId", "d-2", "openedByRole", "recommender")));
+        assertThat(recommenderOpened.body()).contains("推荐官对你发布的任务");
+    }
+
+    @Test
     void fundEventsGoToPayeeUserAccountNotLedgerAccount() {
         for (String eventType : List.of("FundsCaptured", "FundsReleased", "AccountCredited")) {
             // accountId 是 finance ledger account，绝不能当收件人。

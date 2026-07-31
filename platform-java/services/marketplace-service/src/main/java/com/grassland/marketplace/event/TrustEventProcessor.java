@@ -3,10 +3,19 @@ package com.grassland.marketplace.event;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.marketplace.settlement.SettlementReconciliationRepository;
+import com.grassland.marketplace.taskcatalog.Task;
+import com.grassland.marketplace.taskcatalog.TaskApplication;
+import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskRepository;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.UUID;
+import java.util.function.Supplier;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -17,9 +26,13 @@ import reactor.core.publisher.Mono;
 public class TrustEventProcessor {
 
     private static final String DISPUTE_FINALIZED = "DisputeFinalized";
+    private static final String DISPUTE_OPENED = "DisputeOpened";
 
     private final InboxRepository inbox;
     private final SettlementReconciliationRepository reconciliations;
+    private final TaskApplicationRepository applications;
+    private final TaskRepository tasks;
+    private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final ObjectMapper mapper;
     private final String consumerName;
@@ -29,29 +42,52 @@ public class TrustEventProcessor {
             SettlementReconciliationRepository reconciliations,
             TransactionalOperator transactions,
             ObjectMapper mapper,
-            @Value("${marketplace.trust-consumer.group-id:marketplace-trust-consumer}") String consumerName) {
+            @Value("${marketplace.trust-consumer.group-id:marketplace-trust-consumer}") String consumerName,
+            TaskApplicationRepository applications,
+            TaskRepository tasks,
+            OutboxRepository outbox) {
         this.inbox = inbox;
         this.reconciliations = reconciliations;
         this.transactions = transactions;
         this.mapper = mapper;
         this.consumerName = consumerName;
+        this.applications = applications;
+        this.tasks = tasks;
+        this.outbox = outbox;
     }
 
     public Mono<TrustEventProcessingResult> process(ConsumerRecord<String, String> record) {
         return Mono.defer(() -> {
             TrustEventEnvelope envelope = parseEnvelope(record);
-            if (!DISPUTE_FINALIZED.equals(envelope.eventType())) {
-                return Mono.just(TrustEventProcessingResult.IGNORED);
+            String eventType = envelope.eventType();
+            // 载荷在 inbox 前解析——契约错误（缺字段）立即抛，进 DLT 不重投。
+            if (DISPUTE_FINALIZED.equals(eventType)) {
+                DisputeFinalizedPayload payload = parseDisputeFinalized(envelope);
+                return dispatchNew(record, envelope, () -> enqueueReconciliation(envelope, payload));
             }
-            DisputeFinalizedPayload payload = parseDisputeFinalized(envelope);
-            String payloadSha256 = payloadSha256(envelope.payload());
-            Mono<TrustEventProcessingResult> work = inbox
-                    .recordIfAbsent(consumerName, record, envelope, payloadSha256)
-                    .flatMap(inserted -> inserted
-                            ? enqueueReconciliation(envelope, payload)
-                            : Mono.just(TrustEventProcessingResult.DUPLICATE));
-            return transactions.transactional(work);
+            if (DISPUTE_OPENED.equals(eventType)) {
+                DisputeOpenedPayload payload = parseDisputeOpened(envelope);
+                return dispatchNew(record, envelope, () -> emitEngagementDisputed(envelope, payload));
+            }
+            return Mono.just(TrustEventProcessingResult.IGNORED);
         });
+    }
+
+    /**
+     * inbox 去重 + 副作用，包在同一 R2DBC 事务（7A 约束）。副作用通过 {@link Supplier} 惰性求值——
+     * 仅在 inbox 命中新记录（inserted=true）时才组装（从而才触发仓储调用），重复投递不查库、不发事件。
+     */
+    private Mono<TrustEventProcessingResult> dispatchNew(
+            ConsumerRecord<String, String> record,
+            TrustEventEnvelope envelope,
+            Supplier<Mono<TrustEventProcessingResult>> sideEffect) {
+        String payloadSha256 = payloadSha256(envelope.payload());
+        Mono<TrustEventProcessingResult> work = inbox
+                .recordIfAbsent(consumerName, record, envelope, payloadSha256)
+                .flatMap(inserted -> inserted
+                        ? sideEffect.get()
+                        : Mono.just(TrustEventProcessingResult.DUPLICATE));
+        return transactions.transactional(work);
     }
 
     /**
@@ -66,6 +102,55 @@ public class TrustEventProcessor {
                 .enqueue(source.eventId(), payload.disputeId(), payload.engagementRef(),
                         payload.organizationId(), payload.finalDecision(), workflowId)
                 .thenReturn(TrustEventProcessingResult.PROCESSED);
+    }
+
+    /**
+     * 争议对方通知缺口（草场 Slice 12 遗留）：trust 的 {@code DisputeOpened} 只携带开争议者，
+     * 对方账号仅经 {@code engagementRef}（= applicationId）间接引用、不在 trust 表内。marketplace 自有
+     * task+application 两表，在本服务内解析对方账号，派生一条 {@code EngagementDisputed} 事件（确定性 eventId）
+     * 写本服务 outbox → 由 identity 通知中心消费，通知对方。不动 trust、不需 trust 反查 marketplace。
+     *
+     * <p>对方判定按 {@code openedByRole}：merchant 开 → 对方=推荐官；recommender 开 → 对方=任务归属商家。
+     * application/task 解析不到（engagementRef 过期/任务已删）→ {@link TrustEventProcessingResult#NO_RECIPIENT}，
+     * inbox 仍记录、不阻塞分区（镜像 identity「邀请邮箱未注册→静默跳过」语义）。
+     */
+    private Mono<TrustEventProcessingResult> emitEngagementDisputed(
+            TrustEventEnvelope source, DisputeOpenedPayload payload) {
+        return applications.findById(payload.engagementRef())
+                .flatMap((TaskApplication app) -> tasks.findById(app.taskId())
+                        .flatMap((Task task) -> {
+                            String counterparty = "recommender".equals(payload.openedByRole())
+                                    ? task.ownerAccountId()
+                                    : app.recommenderAccountId();
+                            if (counterparty == null || counterparty.isBlank()) {
+                                return Mono.just(TrustEventProcessingResult.NO_RECIPIENT);
+                            }
+                            return outbox.append(engagementDisputedEnvelope(source.eventId(), payload, counterparty))
+                                    .thenReturn(TrustEventProcessingResult.PROCESSED);
+                        })
+                        .switchIfEmpty(Mono.just(TrustEventProcessingResult.NO_RECIPIENT)))
+                .switchIfEmpty(Mono.just(TrustEventProcessingResult.NO_RECIPIENT));
+    }
+
+    /** 派生事件：确定性 eventId（type-3 UUID，命名空间「EngagementDisputed:」+ 信源 eventId），重投/重放幂等。 */
+    private EventEnvelope engagementDisputedEnvelope(
+            String sourceEventId, DisputeOpenedPayload payload, String counterpartyAccountId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("disputeId", payload.disputeId());
+        body.put("engagementRef", payload.engagementRef());
+        if (payload.organizationId() != null) {
+            body.put("organizationId", payload.organizationId());
+        }
+        if (payload.openedByAccountId() != null) {
+            body.put("openedByAccountId", payload.openedByAccountId());
+        }
+        body.put("openedByRole", payload.openedByRole());
+        body.put("counterpartyAccountId", counterpartyAccountId);
+        body.put("status", "open");
+        String eventId = UUID.nameUUIDFromBytes(
+                ("EngagementDisputed:" + sourceEventId).getBytes(StandardCharsets.UTF_8)).toString();
+        return new EventEnvelope(eventId, "EngagementDisputed", "DisputeCase",
+                payload.disputeId(), 1, Instant.now(), null, body);
     }
 
     private TrustEventEnvelope parseEnvelope(ConsumerRecord<String, String> record) {
@@ -100,6 +185,25 @@ public class TrustEventProcessor {
                 requiredText(payload, "engagementRef"),
                 optionalText(payload, "organizationId"),
                 requiredText(payload, "finalDecision"));
+    }
+
+    private DisputeOpenedPayload parseDisputeOpened(TrustEventEnvelope envelope) {
+        JsonNode payload = envelope.payload();
+        return new DisputeOpenedPayload(
+                requiredText(payload, "disputeId"),
+                requiredText(payload, "engagementRef"),
+                optionalText(payload, "organizationId"),
+                requiredText(payload, "openedByAccountId"),
+                requiredDisputeOpenerRole(payload));
+    }
+
+    /** 对方收件人完全由角色决定，不能把缺失/未知值静默降级成某一方，避免错误通知。 */
+    private static String requiredDisputeOpenerRole(JsonNode payload) {
+        String role = requiredText(payload, "openedByRole");
+        if (!"merchant".equals(role) && !"recommender".equals(role)) {
+            throw new EventContractException("trust event field openedByRole must be merchant or recommender");
+        }
+        return role;
     }
 
     private String payloadSha256(JsonNode payload) {

@@ -17,8 +17,8 @@ class DisputeControllerIT extends TrustItSupport {
     @Test
     void merchantOpensDisputeAndEvent() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng, "reason", "未履约"))
@@ -33,8 +33,8 @@ class DisputeControllerIT extends TrustItSupport {
     @Test
     void openIsIdempotentPerEngagement() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         client().post().uri("/api/trust/disputes").header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng)).exchange().expectStatus().isCreated();
         client().post().uri("/api/trust/disputes").header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -46,15 +46,37 @@ class DisputeControllerIT extends TrustItSupport {
     void openRequiresPartyRole() {
         client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "consumer", null, null))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "app-x"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", UUID.randomUUID().toString()))
                 .exchange().expectStatus().isForbidden();
+    }
+
+    /** 非当事方：marketplace 授权拒绝 → 403，且不创建争议/不写事件（Slice 12 安全收口）。 */
+    @Test
+    void openRejectedWhenMarketplaceDeniesParty() {
+        denyAuthorization();
+        String merchant = UUID.randomUUID().toString();
+        String eng = UUID.randomUUID().toString();
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng))
+                .exchange().expectStatus().isForbidden();
+        assertThat(outboxCount("DisputeOpened", eng)).isZero();
+    }
+
+    /** engagementRef 非 UUID → HTTP 边界 400，不进 DB cast / outbox。 */
+    @Test
+    void openRejectsNonUuidEngagementRef() {
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "not-a-uuid"))
+                .exchange().expectStatus().isBadRequest();
     }
 
     @Test
     void marketplaceServiceQueriesOpenDispute() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         open(merchant, org, eng);
         client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
@@ -73,8 +95,8 @@ class DisputeControllerIT extends TrustItSupport {
     @Test
     void decideFlipsToFinalAndClearsActive() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         String id = open(merchant, org, eng);
         client().post().uri("/api/trust/disputes/" + id + "/decide")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -93,8 +115,8 @@ class DisputeControllerIT extends TrustItSupport {
     @Test
     void decideAlreadyDecidedConflict() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         String id = open(merchant, org, eng);
         decide(merchant, org, id);
         client().post().uri("/api/trust/disputes/" + id + "/decide")
@@ -106,8 +128,8 @@ class DisputeControllerIT extends TrustItSupport {
     @Test
     void decideOtherOrgForbidden() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         String id = open(merchant, org, eng);
         client().post().uri("/api/trust/disputes/" + id + "/decide")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))

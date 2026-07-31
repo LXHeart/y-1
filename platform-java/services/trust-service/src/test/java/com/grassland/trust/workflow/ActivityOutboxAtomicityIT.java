@@ -41,7 +41,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
     @Test
     void assignPanelRollsBackWhenOutboxFails() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
         seedJudges(7);
         String id = open(merchant, org);   // open
 
@@ -54,7 +54,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
     @Test
     void recordDecisionRollsBackWhenOutboxFails() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
         String id = open(merchant, org);
         disputes.startAdjudication(id, 1).block();   // open→voting
 
@@ -67,7 +67,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
     @Test
     void escalateRollsBackWhenOutboxFails() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
         String id = open(merchant, org);
         disputes.startAdjudication(id, 1).block();   // voting
 
@@ -96,7 +96,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
         Map<String, Object> resp = client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("engagementRef", "app-" + UUID.randomUUID()))
+                .bodyValue(Map.of("engagementRef", UUID.randomUUID().toString()))
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return (String) ((Map<String, Object>) resp.get("data")).get("id");

@@ -1,6 +1,8 @@
 package com.grassland.identity.recommenderprofile;
 
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.identityprofile.IdentityProfileRepository;
+import com.grassland.identity.identityprofile.IdentityType;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -32,10 +34,15 @@ public class RecommenderProfileController {
 
     private final CurrentAccountResolver accounts;
     private final RecommenderProfileRepository profiles;
+    private final IdentityProfileRepository identities;
 
-    public RecommenderProfileController(CurrentAccountResolver accounts, RecommenderProfileRepository profiles) {
+    public RecommenderProfileController(
+            CurrentAccountResolver accounts,
+            RecommenderProfileRepository profiles,
+            IdentityProfileRepository identities) {
         this.accounts = accounts;
         this.profiles = profiles;
+        this.identities = identities;
     }
 
     @GetMapping("/api/me/recommender-profile")
@@ -50,7 +57,11 @@ public class RecommenderProfileController {
     public Mono<ResponseEntity<Map<String, Object>>> updateMyProfile(
             @RequestBody UpdateRecommenderProfileRequest body, ServerHttpRequest request) {
         return accounts.resolve(request)
-                .flatMap(account -> profiles.upsert(account.id(), body).map(profile -> ok(toBody(profile))));
+                // 推荐官画像是已开通推荐官身份的附属资料，不得把 profile 写入变成身份授予路径。
+                .flatMap(account -> identities.findByAccountAndType(account.id(), IdentityType.RECOMMENDER.dbValue())
+                        .switchIfEmpty(Mono.error(new IdentityException(409, "未开通推荐官身份，请先开通")))
+                        .then(profiles.upsert(account.id(), body))
+                        .map(profile -> ok(toBody(profile))));
     }
 
     @GetMapping("/api/recommenders/{accountId}/profile")

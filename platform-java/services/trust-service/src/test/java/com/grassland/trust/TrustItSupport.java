@@ -1,24 +1,39 @@
 package com.grassland.trust;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
+
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.trust.dispute.MarketplaceEngagementAuthorizationClient;
 import java.time.Instant;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.containers.PostgreSQLContainer;
+import reactor.core.publisher.Mono;
 
 /**
  * trust 集成测试公共基座（草场 Epic 6 Slice 6A）。镜像 {@code FinanceItSupport}：单例 testcontainers postgres；
  * {@code trust.datasource.from-database-url=true} 触发 {@code TrustDataSourceConfig} → Flyway V1 建 dispute_case/trust_outbox；
  * {@code identity-assertion} 注入 signer。提供 {@link #sign}（用户断言）+ {@link #signService}（服务断言）。
+ *
+ * <p>切片 12 起 {@code POST /api/trust/disputes} 先调 marketplace 授权；这里以 {@link MockitoBean} 替换该出站客户端，
+ * 默认对任意 applicationId 放行并回 canonical {@link #MARKETPLACE_ORG}（单测无 marketplace）。需拒绝时在用例内重置桩。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class TrustItSupport {
+
+    /** marketplace 授权桩默认返回的 canonical task organization（真实值由 marketplace 从 task 读取）。 */
+    public static final String MARKETPLACE_ORG = UUID.randomUUID().toString();
 
     public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -34,6 +49,22 @@ public abstract class TrustItSupport {
 
     @Autowired
     protected DatabaseClient db;
+
+    /** 出站 marketplace 授权客户端：默认放行（回显 applicationId + MARKETPLACE_ORG），用例可重置为拒绝。 */
+    @MockitoBean
+    protected MarketplaceEngagementAuthorizationClient authorizer;
+
+    @BeforeEach
+    void authorizeByDefault() {
+        lenient().when(authorizer.authorize(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(
+                        inv.getArgument(0), MARKETPLACE_ORG)));
+    }
+
+    /** 用例内显式拒绝授权（非当事方 → trust 403，不创建争议）。 */
+    protected void denyAuthorization() {
+        when(authorizer.authorize(anyString(), anyString(), anyString())).thenReturn(Mono.empty());
+    }
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {

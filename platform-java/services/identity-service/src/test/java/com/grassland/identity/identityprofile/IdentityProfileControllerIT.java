@@ -114,6 +114,20 @@ class IdentityProfileControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isEqualTo(409);
     }
 
+    /** V13 只回填迁移执行前的历史 profile；运行时新画像绝不能成为绕过显式开通的身份授权。 */
+    @Test
+    void runtimeProfileWithoutOpenedIdentityStillCannotActivate() {
+        var acc = seedAccount("ip-runtime-profile@example.com");
+        db.sql("INSERT INTO recommender_profile(account_id) VALUES (CAST(:acct AS uuid))")
+                .bind("acct", acc.accountId()).then().block();
+
+        client().post().uri("/api/me/active-identity")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + acc.cookie())
+                .bodyValue("{\"type\":\"recommender\"}")
+                .exchange().expectStatus().isEqualTo(409).expectBody()
+                .jsonPath("$.error").isEqualTo("未开通该身份，请先开通");
+    }
+
     @Test
     void activeIdentityChangedEvent() {
         var acc = seedAccount("ip-evt@example.com");

@@ -33,6 +33,20 @@ public class TrustServiceAssertionIssuer {
 
     /** 现签一个带 org 上下文的 trust 服务断言。 */
     public String issueForOrg(String organizationId) {
+        return sign(organizationId);
+    }
+
+    /**
+     * 现签一个不带 org 上下文的 trust 服务断言（Slice 12 安全收口）。
+     *
+     * <p>用于 trust→marketplace 的争议参与方授权：canonical organization 由 marketplace 从 task 读取并返回，
+     * trust 不应在请求时断言任何 org（否则又把组织上下文交回不可信的调用方）。
+     */
+    public String issueService() {
+        return sign(null);
+    }
+
+    private String sign(String organizationId) {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
                 "service:" + PRINCIPAL, null, null, organizationId, null,

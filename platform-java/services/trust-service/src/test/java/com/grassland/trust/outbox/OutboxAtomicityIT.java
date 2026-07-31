@@ -30,8 +30,8 @@ class OutboxAtomicityIT extends TrustItSupport {
     @Test
     void openRollsBackDisputeWhenOutboxFails() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "eng-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
 
         failOutboxOn("DisputeOpened");
         client().post().uri("/api/trust/disputes")
@@ -46,8 +46,8 @@ class OutboxAtomicityIT extends TrustItSupport {
     @SuppressWarnings("unchecked")
     void decideRollsBackWhenOutboxFails() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "eng-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
 
         Map<String, Object> opened = client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))

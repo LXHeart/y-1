@@ -7,12 +7,20 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.marketplace.settlement.SettlementReconciliationRepository;
+import com.grassland.marketplace.taskcatalog.Task;
+import com.grassland.marketplace.taskcatalog.TaskApplication;
+import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskRepository;
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -21,13 +29,17 @@ class TrustEventProcessorTest {
 
     private final InboxRepository inbox = mock(InboxRepository.class);
     private final SettlementReconciliationRepository reconciliations = mock(SettlementReconciliationRepository.class);
+    private final TaskApplicationRepository applications = mock(TaskApplicationRepository.class);
+    private final TaskRepository tasks = mock(TaskRepository.class);
+    private final OutboxRepository outbox = mock(OutboxRepository.class);
     private final TransactionalOperator transactions = mock(TransactionalOperator.class);
     private final TrustEventProcessor processor;
 
     TrustEventProcessorTest() {
         when(transactions.transactional(any(Mono.class))).thenAnswer(invocation -> invocation.getArgument(0));
         processor = new TrustEventProcessor(
-                inbox, reconciliations, transactions, new ObjectMapper(), "marketplace-trust-consumer");
+                inbox, reconciliations, transactions, new ObjectMapper(), "marketplace-trust-consumer",
+                applications, tasks, outbox);
     }
 
     @Test
@@ -73,7 +85,8 @@ class TrustEventProcessorTest {
 
     @Test
     void unrelatedValidTrustEventIsIgnoredWithoutInboxWrite() {
-        ConsumerRecord<String, String> record = record(envelope("event-2", "DisputeOpened", "app-42", null));
+        // DisputeOpened 现已被处理（见下）；此处用 DisputeDecided 验证「未处理类型」仍 IGNORED。
+        ConsumerRecord<String, String> record = record(envelope("event-2", "DisputeDecided", "app-42", null));
 
         StepVerifier.create(processor.process(record))
                 .expectNext(TrustEventProcessingResult.IGNORED)
@@ -81,6 +94,113 @@ class TrustEventProcessorTest {
 
         verify(inbox, never()).recordIfAbsent(any(), any(), any(), any());
         verify(reconciliations, never()).enqueue(any(), any(), any(), any(), any(), any());
+        verifyNoInteractions(applications, tasks, outbox);
+    }
+
+    // ---------- 争议对方通知：DisputeOpened → 解析对方 → 发 EngagementDisputed ----------
+
+    @Test
+    void disputeOpenedByMerchantNotifiesRecommenderAsCounterparty() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-1", "app-42", "owner-1", "merchant");
+        stubInboxInserted(record, true);
+        when(applications.findById("app-42")).thenReturn(Mono.just(application("app-42", "task-7", "rec-9")));
+        when(tasks.findById("task-7")).thenReturn(Mono.just(task("task-7", "owner-1")));
+        when(outbox.append(any(EventEnvelope.class))).thenReturn(Mono.empty());
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.PROCESSED)
+                .verifyComplete();
+
+        EventEnvelope emitted = captureEmitted();
+        assertThat(emitted.eventType()).isEqualTo("EngagementDisputed");
+        assertThat(emitted.aggregateType()).isEqualTo("DisputeCase");
+        assertThat(emitted.aggregateId()).isEqualTo("d-1");
+        assertThat(emitted.payload())
+                .containsEntry("counterpartyAccountId", "rec-9")
+                .containsEntry("openedByRole", "merchant")
+                .containsEntry("openedByAccountId", "owner-1")
+                .containsEntry("disputeId", "d-1")
+                .containsEntry("engagementRef", "app-42")
+                .containsEntry("status", "open");
+        // 确定性 eventId（派生自信源 eventId）→ outbox ON CONFLICT 与下游 inbox 幂等
+        assertThat(emitted.eventId()).isEqualTo(UUID.nameUUIDFromBytes(
+                "EngagementDisputed:event-open-1".getBytes(StandardCharsets.UTF_8)).toString());
+    }
+
+    @Test
+    void disputeOpenedByRecommenderNotifiesTaskOwnerAsCounterparty() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-2", "app-42", "rec-9", "recommender");
+        stubInboxInserted(record, true);
+        when(applications.findById("app-42")).thenReturn(Mono.just(application("app-42", "task-7", "rec-9")));
+        when(tasks.findById("task-7")).thenReturn(Mono.just(task("task-7", "owner-1")));
+        when(outbox.append(any(EventEnvelope.class))).thenReturn(Mono.empty());
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.PROCESSED)
+                .verifyComplete();
+
+        assertThat(captureEmitted().payload()).containsEntry("counterpartyAccountId", "owner-1");
+    }
+
+    @Test
+    void disputeOpenedDuplicateDoesNotResolveOrAppendOutbox() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-3", "app-42", "owner-1", "merchant");
+        stubInboxInserted(record, false);
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.DUPLICATE)
+                .verifyComplete();
+
+        verify(outbox, never()).append(any());
+        verifyNoInteractions(applications, tasks);
+    }
+
+    @Test
+    void disputeOpenedWithMissingApplicationYieldsNoRecipient() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-4", "stale-app", "owner-1", "merchant");
+        stubInboxInserted(record, true);
+        when(applications.findById("stale-app")).thenReturn(Mono.empty());
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.NO_RECIPIENT)
+                .verifyComplete();
+
+        verify(outbox, never()).append(any());
+    }
+
+    @Test
+    void disputeOpenedWithoutValidOpenerRoleIsAContractErrorBeforeInboxWrite() {
+        for (String role : new String[] {"", "judge", "MERCHANT"}) {
+            ConsumerRecord<String, String> record = openedRecord("event-invalid-role-" + role, "app-42", "owner-1", role);
+
+            StepVerifier.create(processor.process(record))
+                    .expectErrorSatisfies(error -> assertThat(error)
+                            .isInstanceOf(EventContractException.class)
+                            .hasMessageContaining("openedByRole"))
+                    .verify();
+        }
+
+        verify(inbox, never()).recordIfAbsent(any(), any(), any(), any());
+        verifyNoInteractions(applications, tasks, outbox);
+    }
+
+    @Test
+    void disputeOpenedWithMissingTaskYieldsNoRecipient() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-5", "app-42", "owner-1", "merchant");
+        stubInboxInserted(record, true);
+        when(applications.findById("app-42")).thenReturn(Mono.just(application("app-42", "task-7", "rec-9")));
+        when(tasks.findById("task-7")).thenReturn(Mono.empty());
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.NO_RECIPIENT)
+                .verifyComplete();
+
+        verify(outbox, never()).append(any());
     }
 
     @Test
@@ -162,6 +282,29 @@ class TrustEventProcessorTest {
                 .verify();
     }
 
+    // ---- helpers ----
+
+    private void stubInboxInserted(ConsumerRecord<String, String> record, boolean inserted) {
+        when(inbox.recordIfAbsent(
+                        eq("marketplace-trust-consumer"), eq(record),
+                        any(TrustEventEnvelope.class), anyString()))
+                .thenReturn(Mono.just(inserted));
+    }
+
+    private EventEnvelope captureEmitted() {
+        ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outbox).append(captor.capture());
+        return captor.getValue();
+    }
+
+    private static TaskApplication application(String id, String taskId, String recommenderAccountId) {
+        return new TaskApplication(id, taskId, recommenderAccountId, "accepted", null, null, null, null, null, null);
+    }
+
+    private static Task task(String id, String ownerAccountId) {
+        return new Task(id, ownerAccountId, null, "营销任务", null, "published", null, null, null, null, null, null);
+    }
+
     private ConsumerRecord<String, String> record(String value) {
         return new ConsumerRecord<>("grassland.trust.events", 2, 17L, "d-1", value);
     }
@@ -171,5 +314,18 @@ class TrustEventProcessorTest {
                 + (decision == null ? "" : ",\"finalDecision\":\"" + decision + "\"") + "}";
         return "{\"eventId\":\"" + eventId + "\",\"eventType\":\"" + eventType
                 + "\",\"aggregateType\":\"DisputeCase\",\"aggregateId\":\"d-1\",\"payload\":" + payload + "}";
+    }
+
+    /** DisputeOpened 记录：disputeId/engagementRef 必填，openedByAccountId/openedByRole 携带对方解析所需。 */
+    private ConsumerRecord<String, String> openedRecord(
+            String eventId, String engagementRef, String openedByAccountId, String openedByRole) {
+        String payload = "{\"disputeId\":\"d-1\",\"engagementRef\":\"" + engagementRef + "\""
+                + ",\"organizationId\":\"org-1\""
+                + ",\"openedByAccountId\":\"" + openedByAccountId + "\""
+                + ",\"openedByRole\":\"" + openedByRole + "\""
+                + ",\"status\":\"open\"}";
+        String json = "{\"eventId\":\"" + eventId + "\",\"eventType\":\"DisputeOpened\""
+                + ",\"aggregateType\":\"DisputeCase\",\"aggregateId\":\"d-1\",\"payload\":" + payload + "}";
+        return new ConsumerRecord<>("grassland.trust.events", 3, 31L, "d-1", json);
     }
 }

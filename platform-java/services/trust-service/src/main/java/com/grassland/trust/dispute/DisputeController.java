@@ -40,28 +40,34 @@ public class DisputeController {
     private final DisputeCaseRepository disputes;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final MarketplaceEngagementAuthorizationClient authorizer;
 
     public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
-                             TransactionalOperator transactions) {
+                             TransactionalOperator transactions,
+                             MarketplaceEngagementAuthorizationClient authorizer) {
         this.callers = callers;
         this.disputes = disputes;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.authorizer = authorizer;
     }
 
     @PostMapping("/api/trust/disputes")
     public Mono<ResponseEntity<Map<String, Object>>> open(@RequestBody OpenDisputeRequest body, ServerHttpRequest request) {
+        // 安全收口（Slice 12）：先验签身份 + marketplace 授权（确认调用方是该 application 的当事方、并取 canonical
+        // task organization），**再**查既有活跃争议——否则非参与方可读/复用他人履约的既有争议。
+        // organization 不再取自断言（推荐官本就无 org；merchant 的 org 须与 task 一致，由 marketplace 裁定）。
         return callers.requireMerchantOrRecommender(request)
-                .filter(caller -> caller.organizationId() != null)
-                .switchIfEmpty(fail(403, "无组织归属，无法开争议"))
-                .flatMap(caller -> disputes.findActiveByEngagementRef(body.engagementRef())
-                        .<Opened>map(d -> new Opened(d, false))  // 幂等：既有活跃争议 → 200
-                        .switchIfEmpty(transactions.transactional(
-                                disputes.create(body.engagementRef(), caller.organizationId(),
-                                                caller.accountId(), caller.activeIdentityType(), body.reason())
-                                        .<Opened>map(d -> new Opened(d, true))
-                                        .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
-                                                .thenReturn(opened)))))
+                .flatMap(caller -> authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
+                        .switchIfEmpty(fail(403, "无权对该履约开争议"))
+                        .flatMap(auth -> disputes.findActiveByEngagementRef(auth.engagementRef())
+                                .<Opened>map(d -> new Opened(d, false))  // 幂等：既有活跃争议 → 200
+                                .switchIfEmpty(transactions.transactional(
+                                        disputes.create(auth.engagementRef(), auth.organizationId(),
+                                                        caller.accountId(), caller.activeIdentityType(), body.reason())
+                                                .<Opened>map(d -> new Opened(d, true))
+                                                .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
+                                                        .thenReturn(opened))))))
                 .map(o -> ResponseEntity.status(o.created() ? HttpStatus.CREATED : HttpStatus.OK)
                         .body(Map.of("success", true, "data", toBody(o.dispute()))));
     }

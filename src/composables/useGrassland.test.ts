@@ -32,6 +32,26 @@ afterEach(() => {
 })
 
 describe('身份端点请求契约', () => {
+  test('listIdentities 读取 identityType 响应字段并携带 cookie', async () => {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({
+        success: true,
+        data: [{ id: 'identity-1', identityType: 'recommender', organizationId: null, status: 'active' }],
+      }),
+    })
+    vi.stubGlobal('fetch', spy)
+    const { listIdentities } = useGrassland()
+
+    await expect(listIdentities()).resolves.toEqual([
+      { id: 'identity-1', identityType: 'recommender', organizationId: null, status: 'active' },
+    ])
+
+    expect(spy.mock.calls[0][0]).toBe('/api/me/identities')
+    expect((spy.mock.calls[0][1] as RequestInit).credentials).toBe('include')
+  })
+
   test('openIdentity 发送 type 而非 identityType', async () => {
     const spy = mockFetchOk()
     const { openIdentity } = useGrassland()

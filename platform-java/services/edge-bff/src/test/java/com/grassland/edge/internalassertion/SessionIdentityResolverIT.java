@@ -92,6 +92,31 @@ class SessionIdentityResolverIT {
                 .verifyComplete();
     }
 
+    /**
+     * Slice 12 安全收口：双身份账号切到推荐官视角时，断言不得携带其 merchant 档案的组织/tier——
+     * 否则推荐官 session 会拿到无关 merchant 组织，破坏「活动身份 ↔ 组织上下文」不变量，
+     * 并让下游资源授权取决于无关的第二身份。org/tier 仅在 merchant 活动身份时签入。
+     */
+    @Test
+    void recommenderSessionDoesNotLeakMerchantOrgEvenWithMerchantProfile() {
+        Seeded seeded = seed("dual@grassland.local", "recommender");
+        String orgId = UUID.randomUUID().toString();
+        db.sql("INSERT INTO organization(id, owner_account_id, name, status, permission_tier) "
+                + "VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), 'Org', 'active', 'finance_transaction')")
+                .bind("id", orgId).bind("owner", seeded.accountId).then().block();
+        db.sql("INSERT INTO identity_profile(id, account_id, identity_type, organization_id, status) "
+                + "VALUES (CAST(:pid AS uuid), CAST(:acct AS uuid), 'merchant', CAST(:org AS uuid), 'active')")
+                .bind("pid", UUID.randomUUID().toString()).bind("acct", seeded.accountId).bind("org", orgId).then().block();
+
+        StepVerifier.create(resolver.resolve(requestWithCookie(seeded.cookie)))
+                .assertNext(identity -> {
+                    assertThat(identity.activeIdentityType()).isEqualTo("recommender");
+                    assertThat(identity.organizationId()).isNull();
+                    assertThat(identity.permissionTier()).isNull();
+                })
+                .verifyComplete();
+    }
+
     @Test
     void consumerWhenNoIdentitySessionRow() {
         Seeded seeded = seed("consumer@grassland.local", null);

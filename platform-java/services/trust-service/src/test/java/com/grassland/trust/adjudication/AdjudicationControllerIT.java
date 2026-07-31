@@ -32,8 +32,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void adjudicateAssignsPanelAndFlipsToVoting() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         seedJudges(PANEL_SIZE);
         String id = open(merchant, org, eng);
 
@@ -56,8 +56,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void adjudicateIsIdempotent() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String eng = "app-" + UUID.randomUUID();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
         seedJudges(PANEL_SIZE);
         String id = open(merchant, org, eng);
         adjudicate(merchant, org, id);  // 202 首启
@@ -73,9 +73,9 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void adjudicateRejectsOtherOrg() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
         seedJudges(PANEL_SIZE);
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String id = open(merchant, org, UUID.randomUUID().toString());
         client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))
                 .exchange().expectStatus().isForbidden();
@@ -84,8 +84,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void adjudicateRejectsFinalDispute() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         // 手动 decide → final
         client().post().uri("/api/trust/disputes/" + id + "/decide")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -99,8 +99,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void adjudicateRejectsNonParty() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "consumer", null, null))
                 .exchange().expectStatus().isForbidden();
@@ -112,8 +112,8 @@ class AdjudicationControllerIT extends TrustItSupport {
         db.sql("TRUNCATE judge_conflict").then().block();
         db.sql("TRUNCATE judge CASCADE").then().block();
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());  // 不 seed 任何审判官
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());  // 不 seed 任何审判官
         client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(503);
@@ -165,8 +165,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void voteRejectsOpenDispute() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());  // 未 adjudicate → open
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());  // 未 adjudicate → open
         String judge = UUID.randomUUID().toString();
         seedJudge(judge);  // 须已入池，否则先被入池门禁拦成 403，测不到「非投票阶段」这条
         client().post().uri("/api/trust/disputes/" + id + "/votes")
@@ -310,8 +310,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void partyAppealsDecidedDispute() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toDecided(id);  // open→voting→decided（repo 直置，绕过 24h Timer）
 
         client().post().uri("/api/trust/disputes/" + id + "/appeal")
@@ -325,8 +325,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void appealRejectsNonDecided() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());  // open，未判决
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());  // open，未判决
         client().post().uri("/api/trust/disputes/" + id + "/appeal")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
@@ -336,8 +336,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void appealIsOncePerDispute() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toDecided(id);
         client().post().uri("/api/trust/disputes/" + id + "/appeal")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -350,8 +350,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void customerServiceFinalDecisionOverridesAppealed() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);  // decided→appealed
         String cs = UUID.randomUUID().toString();
 
@@ -368,8 +368,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void customerServiceFinalDecisionOnEscalated() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toEscalated(id);  // voting + appeal_state=escalated（超轮无判决）
         String cs = UUID.randomUUID().toString();
 
@@ -383,8 +383,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void finalDecisionRejectsNonCustomerService() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);
         client().post().uri("/api/trust/disputes/" + id + "/final-decision")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -396,8 +396,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     void adminRoleCanAlsoFinalize() {
         // admin 是客服超集（平台管理员可执行客服动作）
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);
         Instant now = Instant.now();
         String adminAssertion = signer.sign(new IdentityAssertion(
@@ -415,8 +415,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     void serviceAssertionCannotImpersonateCustomerService() {
         // 防冒充：服务断言即便带 role 也不得执行客服动作（服务不是人）
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);
         Instant now = Instant.now();
         String serviceWithRole = signer.sign(new IdentityAssertion(
@@ -433,8 +433,8 @@ class AdjudicationControllerIT extends TrustItSupport {
     @Test
     void finalDecisionRequiresRecentMfa() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String org = MARKETPLACE_ORG;
+        String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);
         // reauthenticatedAt 为 1 小时前（超出 5 分钟窗口）→ 403
         Instant stale = Instant.now().minusSeconds(3600);
@@ -451,14 +451,14 @@ class AdjudicationControllerIT extends TrustItSupport {
     /** seed PANEL_SIZE+1 审判官，开争议，adjudicate，返回 panel（7 名）+ 被排除的 1 名。 */
     private Panel startPanel() {
         String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
         List<String> all = new ArrayList<>();
         for (int i = 0; i < PANEL_SIZE + 1; i++) {
             String acct = UUID.randomUUID().toString();
             seedJudge(acct);
             all.add(acct);
         }
-        String id = open(merchant, org, "app-" + UUID.randomUUID());
+        String id = open(merchant, org, UUID.randomUUID().toString());
         adjudicate(merchant, org, id);
         List<String> drawn = panelJudges(id, 1);
         assertThat(drawn).hasSize(PANEL_SIZE);

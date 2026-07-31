@@ -75,4 +75,13 @@ public abstract class MarketplaceItSupport {
                 "cookie-session", "level1", null, "r", "t",
                 "grassland-internal", now, now.plusSeconds(60), null, null));
     }
+
+    /** 签一个服务间断言（Slice 12：trust 调内部争议参与方授权端点）。 */
+    protected String signService(String principal) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                "service:" + principal, null, null, null, null,
+                "service", "internal", null, "r", "t",
+                "grassland-internal", now, now.plusSeconds(30), "service", principal));
+    }
 }

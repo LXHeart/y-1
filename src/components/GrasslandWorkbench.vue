@@ -124,15 +124,27 @@ async function loadOrganizations(): Promise<void> {
 }
 
 /**
- * 初始化必须**先激活活动身份**再拉数据。
+ * 初始化先读取已开通身份，再激活与之对应的当前 session 身份。
  *
- * 活动身份按 session 存（identity_session），新登录的 session 是「消费者」——
- * 此时直接调 /api/finance/accounts 等会 403「需要商家身份」，余额显示成 `—`。
- * 此前只有点视角切换按钮才激活，导致首次进入工作台数据全空（浏览器实测发现）。
+ * 推荐官-only 账号若沿用默认 merchant，会产生一个可预期却会出现在浏览器 console 的 409；
+ * 无身份账号保留 merchant onboarding 界面，但不因打开工作台暗中开通/激活 merchant。
  */
 async function initForAccount(): Promise<void> {
-  await grassland.activateIdentity(side.value)
-  grassland.clearError()  // 激活失败不该以红条吓用户，后续请求会给出更具体的错误
+  // 只激活已开通的身份：推荐官-only 账号不应因默认 merchant 视图收到可预期的 409。
+  // merchant 优先保留双身份账号的既有工作台入口；无身份则留在 merchant onboarding，但不暗中开户/激活。
+  const identities = await grassland.listIdentities()
+  if (identities === null) return
+
+  const initialIdentity = identities.some((identity) => identity.identityType === 'merchant')
+    ? 'merchant'
+    : identities.some((identity) => identity.identityType === 'recommender')
+      ? 'recommender'
+      : null
+  if (initialIdentity) {
+    side.value = initialIdentity
+    await grassland.activateIdentity(initialIdentity)
+    grassland.clearError()  // 已知身份的激活失败由后续具体操作给出更明确的错误
+  }
   await loadOrganizations()
 }
 

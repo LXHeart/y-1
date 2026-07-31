@@ -82,6 +82,14 @@ public final class NotificationTemplates {
                     NotificationCategory.ENGAGEMENT, "结算被挂起",
                     "该履约的结算被暂时挂起，待条件满足后继续", LINK_ENGAGEMENTS, taskPayload(payload));
             // ---------- trust：争议 ----------
+            // marketplace 派生：有人对一笔履约开了争议，通知对方（草场 Slice 12 缺口补全）。
+            case "EngagementDisputed" -> {
+                String body = "recommender".equals(stringField(payload, "openedByRole"))
+                        ? "推荐官对你发布的任务发起了一起争议，请查看"
+                        : "商家对你提交的履约发起了一起争议，请查看";
+                yield new Template(
+                        NotificationCategory.DISPUTE, "你被发起了一起争议", body, LINK_DISPUTES, disputePayload(payload));
+            }
             case "DisputeAssigned" -> new Template(
                     NotificationCategory.DISPUTE, "争议已进入审判",
                     "你参与的争议已组建审判庭并开始投票", LINK_DISPUTES, disputePayload(payload));
@@ -164,6 +172,12 @@ public final class NotificationTemplates {
         if (node != null && node.isTextual() && !node.asText().isBlank()) {
             map.put(key, node.asText());
         }
+    }
+
+    /** 读一个文本字段为纯 String（缺失/非文本 → null），供文案分支判定用，不写入通知 payload。 */
+    private static String stringField(JsonNode payload, String key) {
+        JsonNode node = payload.get(key);
+        return (node == null || !node.isTextual()) ? null : node.asText();
     }
 
     /** 静态文案模板（不含收件人——收件人由 resolver 异步解析后与模板合成 {@link NotificationSpec}）。 */

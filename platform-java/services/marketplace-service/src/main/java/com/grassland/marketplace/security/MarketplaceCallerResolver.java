@@ -33,8 +33,18 @@ public class MarketplaceCallerResolver {
         }
         return Mono.justOrEmpty(signer.verify(header, Instant.now()))
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.sessionToken(),
-                        a.organizationId(), a.permissionTier()))
+                        a.organizationId(), a.permissionTier(), a.callerKind(), a.principal()))
                 .switchIfEmpty(Mono.error(new MarketplaceException(401, "未登录")));
+    }
+
+    /**
+     * 仅接受指定服务 principal（HLD 11.1 服务身份）。终端用户断言恒拒绝——
+     * 内部端点（如争议参与方授权）只允许受信任服务（trust）以现签服务断言调用。
+     */
+    public Mono<Caller> requireServicePrincipal(ServerHttpRequest request, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new MarketplaceException(403, "无权调用内部端点")));
     }
 
     public Mono<Caller> requireMerchant(ServerHttpRequest request) {
@@ -53,13 +63,23 @@ public class MarketplaceCallerResolver {
     /** 断言解析出的调用者。{@code activeIdentityType} 为 null=消费者；merchant 发布任务 / recommender 报名。
      *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级授权/限额（4B+）。 */
     public record Caller(String accountId, String activeIdentityType, String sessionToken,
-                         String organizationId, String permissionTier) {
+                         String organizationId, String permissionTier, String callerKind, String principal) {
         public boolean isMerchant() {
-            return "merchant".equalsIgnoreCase(activeIdentityType);
+            return !"service".equalsIgnoreCase(callerKind)
+                    && "merchant".equalsIgnoreCase(activeIdentityType);
         }
 
         public boolean isRecommender() {
-            return "recommender".equalsIgnoreCase(activeIdentityType);
+            return !"service".equalsIgnoreCase(callerKind)
+                    && "recommender".equalsIgnoreCase(activeIdentityType);
+        }
+
+        public boolean isService() {
+            return "service".equalsIgnoreCase(callerKind);
+        }
+
+        public boolean isServicePrincipal(String expectedPrincipal) {
+            return isService() && expectedPrincipal != null && expectedPrincipal.equalsIgnoreCase(principal);
         }
     }
 }

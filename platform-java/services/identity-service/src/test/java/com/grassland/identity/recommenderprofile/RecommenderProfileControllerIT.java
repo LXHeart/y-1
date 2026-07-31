@@ -1,5 +1,7 @@
 package com.grassland.identity.recommenderprofile;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.grassland.identity.IdentityItSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -20,6 +22,7 @@ class RecommenderProfileControllerIT extends IdentityItSupport {
     @Test
     void updateThenReadOwnProfile() {
         var me = seedAccount("rp-owner@example.com");
+        openRecommender(me.cookie());
 
         client().put().uri("/api/me/recommender-profile")
                 .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + me.cookie())
@@ -44,6 +47,7 @@ class RecommenderProfileControllerIT extends IdentityItSupport {
     @Test
     void putReplacesWholeProfile() {
         var me = seedAccount("rp-replace@example.com");
+        openRecommender(me.cookie());
         putProfile(me.cookie(), FULL_BODY);
 
         client().put().uri("/api/me/recommender-profile")
@@ -61,6 +65,7 @@ class RecommenderProfileControllerIT extends IdentityItSupport {
     void merchantCanReadAnotherAccountProfile() {
         var recommender = seedAccount("rp-target@example.com");
         var merchant = seedAccount("rp-viewer@example.com");
+        openRecommender(recommender.cookie());
         putProfile(recommender.cookie(), FULL_BODY);
 
         client().get().uri("/api/recommenders/" + recommender.accountId() + "/profile")
@@ -86,8 +91,26 @@ class RecommenderProfileControllerIT extends IdentityItSupport {
     }
 
     @Test
+    void rejectsProfileUpdateWhenRecommenderIdentityIsNotOpened() {
+        var me = seedAccount("rp-unopened@example.com");
+
+        client().put().uri("/api/me/recommender-profile")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + me.cookie())
+                .bodyValue(FULL_BODY)
+                .exchange().expectStatus().isEqualTo(409).expectBody()
+                .jsonPath("$.error").isEqualTo("未开通推荐官身份，请先开通");
+
+        Long profileCount = db.sql("SELECT COUNT(*)::int AS c FROM recommender_profile"
+                        + " WHERE account_id = CAST(:acct AS uuid)")
+                .bind("acct", me.accountId())
+                .map(row -> row.get("c", Integer.class)).one().block().longValue();
+        assertThat(profileCount).isZero();
+    }
+
+    @Test
     void rejectsTooManyTags() {
         var me = seedAccount("rp-toomany@example.com");
+        openRecommender(me.cookie());
         String tags = java.util.stream.IntStream.rangeClosed(1, 11)
                 .mapToObj(i -> "\"标签" + i + "\"").reduce((a, b) -> a + "," + b).orElseThrow();
 
@@ -100,6 +123,13 @@ class RecommenderProfileControllerIT extends IdentityItSupport {
     @Test
     void rejectsAnonymous() {
         client().get().uri("/api/me/recommender-profile").exchange().expectStatus().isUnauthorized();
+    }
+
+    private void openRecommender(String cookie) {
+        client().post().uri("/api/me/identities")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{\"type\":\"recommender\"}")
+                .exchange().expectStatus().isCreated();
     }
 
     private void putProfile(String cookie, String body) {

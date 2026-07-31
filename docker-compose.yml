@@ -216,6 +216,8 @@ services:
       IDENTITY_ASSERTION_ENABLED: "true"
       IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
+      # Slice 12 安全收口：开争议前查参与方授权 + canonical task organization（不经 BFF）。
+      MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
     depends_on:
       backend:
         condition: service_started
