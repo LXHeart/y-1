@@ -21,6 +21,15 @@ spring:
         request.timeout.ms: 10000
         max.block.ms: 5000
         retries: 5
+    # 通知中心消费方（Slice 12）：消费本服务 outbox topic 派生站内通知。
+    # 默认不启用（测试/本地无 Kafka 时跳过，避免连接噪声）；compose 置 IDENTITY_NOTIFICATION_CONSUMER_ENABLED=true。
+    consumer:
+      group-id: ${IDENTITY_NOTIFICATION_CONSUMER_GROUP:identity-notification-consumer}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 1
   codec:
     max-in-memory-size: 256KB
   mail:
@@ -68,6 +77,12 @@ identity:
     # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
     sla-hours: ${PERMISSION_SLA_HOURS:72}
     at-risk-hours: ${PERMISSION_AT_RISK_HOURS:12}
+  notification-consumer:
+    # 通知中心（Slice 12）：消费 identity 自有 topic 派生站内通知。默认 false，compose 置 true。
+    enabled: ${IDENTITY_NOTIFICATION_CONSUMER_ENABLED:false}
+    topic: ${IDENTITY_NOTIFICATION_CONSUMER_TOPIC:grassland.identity.events}
+    group-id: ${IDENTITY_NOTIFICATION_CONSUMER_GROUP:identity-notification-consumer}
+    auto-startup: ${IDENTITY_NOTIFICATION_CONSUMER_AUTOSTARTUP:true}
 
 # 内部身份断言（HLD 7.4 消费）：secret/audience 须与 edge-bff 完全一致。
 # enabled=true 时 CurrentAccountResolver 优先信任 BFF 断言头（回退 cookie）。

@@ -70,6 +70,8 @@ services:
       IDENTITY_ASSERTION_SECRET: ${IDENTITY_ASSERTION_SECRET:-${SESSION_SECRET:-}}
       IDENTITY_ASSERTION_AUDIENCE: ${IDENTITY_ASSERTION_AUDIENCE:-grassland-internal}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Slice 12 通知中心：消费 identity 自有 topic 派生站内通知。默认开（与 marketplace trust-consumer 同款）。
+      IDENTITY_NOTIFICATION_CONSUMER_ENABLED: "true"
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}
       SMTP_USER: ${SMTP_USER:-}

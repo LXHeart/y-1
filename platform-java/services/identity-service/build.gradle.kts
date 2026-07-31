@@ -32,6 +32,7 @@ dependencies {
     testImplementation(libs.reactor.test)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.r2dbc)
+    testImplementation(libs.testcontainers.kafka)
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-test-autoconfigure")
