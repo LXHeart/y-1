@@ -1,16 +1,21 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
+import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
+import com.grassland.marketplace.workflow.IntelligenceVerificationException;
 import com.grassland.marketplace.workflow.saga.ReserveResult;
 import java.net.URI;
 import java.time.Instant;
@@ -54,6 +59,14 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** 附件挂接 spy（Slice 11 Stage 2）：默认透传真实实现；原子性用例注入 attach 失败验证零残留。 */
     @MockitoSpyBean
     private SubmissionAttachmentRepository attachmentRepo;
+
+    /** 链接可达性核验替身（Verification Stage 2/4）：免真打 example.com；按用例桩 passed/failed。 */
+    @MockitoBean
+    private LinkReachabilityChecker linkChecker;
+
+    /** intelligence AI 视觉核验出站边界替身（Verification Stage 4）：按用例桩 analyze；真实现调 intelligence。 */
+    @MockitoBean
+    private IntelligenceVerificationClient verificationClient;
 
     // ---------- apply ----------
 
@@ -713,12 +726,136 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    // ---------- 履约核验（Verification v1 Stage 2/4） ----------
+
+    /** 商家触发核验：附件 + 链接 → link_reachability + ai_visual 两项，聚合 passed。 */
+    @Test
+    void verificationChecksRunLinkAndAi() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
+
+        when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+        when(verificationClient.analyze(eq(org), eq(List.of(m1)), any(), any(), any()))
+                .thenReturn(Mono.just(new IntelligenceVerificationClient.VerificationAnalysis("passed",
+                        List.of(new IntelligenceVerificationClient.MediaResult(m1, "passed", "真实")))));
+
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("passed")
+                .jsonPath("$.data.checks.length()").isEqualTo(2);
+        verify(verificationClient).analyze(eq(org), eq(List.of(m1)), any(), any(), any());
+    }
+
+    /** 无附件 → 仅 link_reachability，AI check 跳过（verificationClient 从不被调）。 */
+    @Test
+    void verificationChecksLinkOnlyWithoutAttachments() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        String submissionId = submit(rec, task, app);  // 无附件
+
+        when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("passed")
+                .jsonPath("$.data.checks.length()").isEqualTo(1)
+                .jsonPath("$.data.checks[0].type").isEqualTo("link_reachability");
+        verify(verificationClient, never()).analyze(any(), any(), any(), any(), any());
+    }
+
+    /** intelligence 不可用 → ai_visual 降级 inconclusive，拖累整体 inconclusive，但不 fail 也不 5xx。 */
+    @Test
+    void verificationChecksAiUnavailableIsInconclusive() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        UUID m1 = UUID.randomUUID();
+        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
+
+        when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+        when(verificationClient.analyze(any(), any(), any(), any(), any()))
+                .thenReturn(Mono.error(new IntelligenceVerificationException("intelligence down")));
+
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("inconclusive")
+                .jsonPath("$.data.checks.length()").isEqualTo(2)
+                .jsonPath("$.data.checks[1].type").isEqualTo("ai_visual")
+                .jsonPath("$.data.checks[1].status").isEqualTo("inconclusive");
+    }
+
+    /** 非任务 owner 的商家触发核验 → 403。 */
+    @Test
+    void verificationChecksRejectsNonOwner() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+        String submissionId = submit(rec, task, app);
+        runChecksRaw(UUID.randomUUID().toString(), null, task, app, submissionId).expectStatus().isForbidden();
+    }
+
+    /** 未知 submissionId → 404。 */
+    @Test
+    void verificationChecksRejectsUnknownSubmission() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        submit(rec, task, app);
+        runChecksRaw(merchant, org, task, app, ZERO_UUID).expectStatus().isNotFound();
+    }
+
+    /** 核验 failed → 可选 confirm 闸门阻断（仅 failed→409；absent/passed/inconclusive 照常）。 */
+    @Test
+    void confirmBlockedWhenVerificationFailed() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        String submissionId = submit(rec, task, app);
+
+        when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("failed", "HTTP 404")));
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("failed");
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    /** 核验记录落库后 → listSubmissions 内联带出 verification。 */
+    @Test
+    void listSubmissionsIncludesVerificationFold() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        String submissionId = submit(rec, task, app);
+
+        when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk();
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.submissions[0].verification.status").isEqualTo("passed")
+                .jsonPath("$.data.submissions[0].verification.checks[0].type").isEqualTo("link_reachability");
+    }
+
     // ---------- helpers ----------
 
     private void accept(String merchant, String task, String app) {
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isOk();
+    }
+
+    /** 商家触发履约核验（须任务 owner）。 */
+    private WebTestClient.ResponseSpec runChecksRaw(String merchant, String org, String task, String app, String submissionId) {
+        return client().post().uri("/api/tasks/" + task + "/applications/" + app
+                        + "/submissions/" + submissionId + "/verification/checks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange();
     }
 
     /** 提交一份交付物，返回 submissionId。 */

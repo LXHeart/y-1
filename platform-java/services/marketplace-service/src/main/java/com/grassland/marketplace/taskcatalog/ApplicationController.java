@@ -6,6 +6,7 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
+import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
 import com.grassland.marketplace.workflow.saga.AcceptanceInput;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
@@ -24,6 +25,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -67,6 +70,7 @@ public class ApplicationController {
     private final SubmissionRepository submissions;
     private final SubmissionAttachmentRepository attachments;
     private final IntelligenceMediaClient mediaClient;
+    private final IntelligenceVerificationClient verificationClient;
     private final LinkReachabilityChecker linkChecker;
     private final EngagementVerificationRepository verifications;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -81,6 +85,7 @@ public class ApplicationController {
                                  SubmissionRepository submissions,
                                  SubmissionAttachmentRepository attachments,
                                  IntelligenceMediaClient mediaClient,
+                                 IntelligenceVerificationClient verificationClient,
                                  LinkReachabilityChecker linkChecker,
                                  EngagementVerificationRepository verifications,
                                  RatingRepository ratings,
@@ -95,6 +100,7 @@ public class ApplicationController {
         this.submissions = submissions;
         this.attachments = attachments;
         this.mediaClient = mediaClient;
+        this.verificationClient = verificationClient;
         this.linkChecker = linkChecker;
         this.verifications = verifications;
         this.ratings = ratings;
@@ -247,11 +253,17 @@ public class ApplicationController {
                                     if (list.isEmpty()) {
                                         return Mono.just(ok(Map.<String, Object>of("submissions", List.of())));
                                     }
-                                    return attachments.findBySubmissionIds(list.stream()
-                                                    .map(EngagementSubmission::id).toList()).collectList()
-                                            .map(atts -> ok(Map.<String, Object>of("submissions",
+                                    List<String> submissionIds = list.stream().map(EngagementSubmission::id).toList();
+                                    Mono<List<EngagementSubmissionAttachment>> attsM =
+                                            attachments.findBySubmissionIds(submissionIds).collectList();
+                                    Mono<List<EngagementVerification>> verifsM =
+                                            verifications.findBySubmissions(submissionIds).collectList();
+                                    return Mono.zip(attsM, verifsM)
+                                            .map(t -> ok(Map.<String, Object>of("submissions",
                                                     list.stream().map(s -> submissionBodyWithRows(s,
-                                                            atts.stream().filter(a -> a.submissionId().equals(s.id())).toList()))
+                                                            t.getT1().stream().filter(a -> a.submissionId().equals(s.id())).toList(),
+                                                            t.getT2().stream().filter(v -> v.submissionId().equals(s.id()))
+                                                                    .findFirst().orElse(null)))
                                                             .toList())));
                                 })));
     }
@@ -669,11 +681,15 @@ public class ApplicationController {
         return m;
     }
 
-    /** 交付物响应（列表）：带附件列表，附件元数据取自挂接时快照的 DB 行。 */
+    /** 交付物响应（列表）：带附件列表 + 核验记录（有则附）。附件元数据取自挂接时快照的 DB 行。 */
     private Map<String, Object> submissionBodyWithRows(EngagementSubmission submission,
-                                                       List<EngagementSubmissionAttachment> rows) {
+                                                       List<EngagementSubmissionAttachment> rows,
+                                                       EngagementVerification verification) {
         Map<String, Object> m = toBody(submission);
         m.put("attachments", rows.stream().map(this::attachmentRowBody).toList());
+        if (verification != null) {
+            m.put("verification", verificationBody(verification));
+        }
         return m;
     }
 
@@ -775,18 +791,56 @@ public class ApplicationController {
     /** 跑自动核验并原子落记录（7C 事务：upsert + outbox，outbox 挂 upsert 之后；任一失败零残留）。 */
     private Mono<EngagementVerification> runAndRecordVerification(Task task, TaskApplication app,
                                                                   EngagementSubmission submission) {
-        return runVerificationChecks(submission)
+        return runVerificationChecks(task, submission)
                 .flatMap(outcomes -> transactions.transactional(
                         verifications.upsert(submission.id(), aggregateVerificationStatus(outcomes), checksToJson(outcomes))
                                 .flatMap(v -> outbox.append(verificationEnvelope(app, submission, v, outcomes))
                                         .thenReturn(v))));
     }
 
-    /** Stage 2：仅链接可达性。Stage 4 在此 concat AI 视觉核验（附件 mediaIds → intelligence）。 */
-    private Mono<List<CheckOutcome>> runVerificationChecks(EngagementSubmission submission) {
-        return linkChecker.check(submission.contentUrl())
-                .map(r -> new CheckOutcome("link_reachability", r.status(), r.detail(), Instant.now()))
-                .map(List::of);
+    /**
+     * 跑自动核验：链接可达性 + AI 视觉核验（附件截图）。链接结论独立给出；AI 检查失败
+     * （intelligence 不可用 / 4xx / 5xx）降级为单项 {@code inconclusive}，不拖垮整次核验。无附件 → 跳过 AI，仅 link。
+     */
+    private Mono<List<CheckOutcome>> runVerificationChecks(Task task, EngagementSubmission submission) {
+        Mono<CheckOutcome> link = linkChecker.check(submission.contentUrl())
+                .map(r -> new CheckOutcome("link_reachability", r.status(), r.detail(), Instant.now()));
+        return link.flatMap(linkOutcome -> aiVisualCheck(task, submission)
+                .map(aiOutcomes -> Stream.concat(Stream.of(linkOutcome), aiOutcomes.stream()).toList()));
+    }
+
+    /**
+     * AI 视觉核验：取该 submission 已证挂接的附件 mediaIds（已限定本 submission，IDOR 安全）→ intelligence 视觉判断。
+     * 无附件 → 空（跳过 AI，仅 link）；intelligence 不可用 / 非 200 → 单项 {@code inconclusive}，不 fail 整次核验。
+     */
+    private Mono<List<CheckOutcome>> aiVisualCheck(Task task, EngagementSubmission submission) {
+        return attachments.findBySubmissionIds(List.of(submission.id())).collectList()
+                .flatMap(rows -> {
+                    if (rows.isEmpty()) {
+                        return Mono.just(List.<CheckOutcome>of());
+                    }
+                    List<UUID> mediaIds = rows.stream()
+                            .map(r -> UUID.fromString(r.mediaReferenceId()))
+                            .distinct()
+                            .toList();
+                    return verificationClient.analyze(task.organizationId(), mediaIds,
+                                    task.title(), task.description(), task.platform())
+                            .map(a -> List.of(new CheckOutcome("ai_visual", a.status(),
+                                    aiVisualDetail(a), Instant.now())))
+                            .onErrorResume(e -> Mono.just(List.of(new CheckOutcome("ai_visual",
+                                    "inconclusive", "AI 视觉核验暂不可用", Instant.now()))));
+                });
+    }
+
+    /** 汇总 per-media 明细为单项 ai_visual 的 detail（供商家面板展示）；无明细 → null。 */
+    private static String aiVisualDetail(IntelligenceVerificationClient.VerificationAnalysis a) {
+        List<IntelligenceVerificationClient.MediaResult> results = a.results();
+        if (results.isEmpty()) {
+            return null;
+        }
+        return results.stream()
+                .map(r -> r.status() + (r.detail() == null || r.detail().isBlank() ? "" : "：" + r.detail()))
+                .collect(Collectors.joining("；"));
     }
 
     /** 聚合 tri-state：failed > inconclusive > passed；无 check → inconclusive。 */
