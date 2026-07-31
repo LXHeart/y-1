@@ -7,6 +7,7 @@ import type {
   DisputeCase,
   EngagementRating,
   EngagementSubmission,
+  EngagementVerification,
   RecommenderProfile,
   RecommenderReputation,
   UpdateRecommenderProfileInput,
@@ -282,6 +283,16 @@ export function useGrassland() {
         method: 'POST',
         body: JSON.stringify({ note: note || '' }),
       }))
+
+  /**
+   * 商家触发履约核验（链接可达性 + AI 视觉核验附件）。返回 tri-state 核验记录：
+   * `{submissionId,status,checks:[{type,status,detail,checkedAt}],lastCheckedAt}`。
+   * 后端按 submission 内联回 listSubmissions，故此处只下发触发、不传 body。
+   */
+  const runVerificationChecks = (taskId: string, applicationId: string, submissionId: string) =>
+    run(() => request<EngagementVerification>(
+      `/api/tasks/${taskId}/applications/${applicationId}/submissions/${submissionId}/verification/checks`,
+      { method: 'POST' }))
 
   // ---------- intelligence：media 直传（三步上传）----------
 
@@ -700,6 +711,7 @@ export function useGrassland() {
     submitDeliverable,
     listDeliverables,
     rejectDeliverable,
+    runVerificationChecks,
     // intelligence：media 直传
     createMediaUploadTicket,
     confirmMediaUpload,

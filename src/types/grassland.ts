@@ -413,6 +413,11 @@ export interface EngagementSubmission {
    * 标可选是为了让 legacy 测试夹具不必逐个补 `attachments: []`。
    */
   attachments?: EngagementSubmissionAttachment[]
+  /**
+   * 履约核验记录（Slice 11 Verification v1）。商家触发核验后由后端在 listSubmissions 内联带出；
+   * 未核验时缺省。tri-state：passed=核验通过 / failed=核验未过 / inconclusive=核验存疑。
+   */
+  verification?: EngagementVerification | null
 }
 
 /**
@@ -426,6 +431,31 @@ export interface EngagementSubmissionAttachment {
   mediaId: string
   mimeType: string | null
   sizeBytes: number | null
+}
+
+// ---------- 履约核验（Slice 11 Verification v1）----------
+
+/** 履约核验聚合态（failed > inconclusive > passed；无 check → inconclusive）。 */
+export type VerificationStatus = 'passed' | 'failed' | 'inconclusive'
+
+/** 单项核验明细。 */
+export interface VerificationCheck {
+  /** link_reachability=链接可达；ai_visual=AI 视觉核验附件截图。 */
+  type: string
+  status: VerificationStatus
+  detail: string | null
+  checkedAt: string | null
+}
+
+/**
+ * 履约核验记录。商家触发核验（链接可达性 + AI 视觉）后落库，并内联回 listSubmissions。
+ * confirm 闸门仅阻断 failed；absent/passed/inconclusive 照常确认。
+ */
+export interface EngagementVerification {
+  submissionId: string
+  status: VerificationStatus
+  checks: VerificationCheck[]
+  lastCheckedAt: string | null
 }
 
 // ---------- intelligence：media 直传（三步上传）----------

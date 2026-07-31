@@ -375,6 +375,22 @@ describe('履约附件三步上传请求契约（Slice 11）', () => {
     expect((spy.mock.calls[0][1] as RequestInit).body).toBeUndefined()
   })
 
+  test('runVerificationChecks POST 到 /verification/checks 且不带请求体（Slice 11 Verification）', async () => {
+    const spy = mockFetchData({
+      submissionId: 's-1', status: 'passed',
+      checks: [{ type: 'link_reachability', status: 'passed', detail: 'HTTP 200', checkedAt: null }],
+      lastCheckedAt: null,
+    })
+    const { runVerificationChecks } = useGrassland()
+
+    const result = await runVerificationChecks('t-1', 'a-1', 's-1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/tasks/t-1/applications/a-1/submissions/s-1/verification/checks')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect((spy.mock.calls[0][1] as RequestInit).body).toBeUndefined()
+    expect(result).toEqual(expect.objectContaining({ submissionId: 's-1', status: 'passed' }))
+  })
+
   test('submitDeliverable 带 mediaIds', async () => {
     const spy = mockFetchData({})
     const { submitDeliverable } = useGrassland()

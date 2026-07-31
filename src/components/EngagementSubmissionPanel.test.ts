@@ -140,8 +140,9 @@ describe('EngagementSubmissionPanel 退回', () => {
     await wrapper.findAll('button').find((b) => b.text() === '退回补交')!.trigger('click')
     await flushPromises()
 
-    const post = calls.find((c) => c.method === 'POST')!
-    expect(post.url).toBe('/api/tasks/task-1/applications/app-1/submissions/s1/reject')
+    // 商家打开面板会懒触发核验 POST，故按 URL 取退回那条，而非「第一个 POST」。
+    const post = calls.find((c) => c.method === 'POST'
+      && c.url === '/api/tasks/task-1/applications/app-1/submissions/s1/reject')!
     expect(JSON.parse(post.body!)).toEqual({ note: '缺少门店实拍' })
     expect(wrapper.text()).toContain('已退回，推荐官可修改后重新提交')
   })
@@ -277,5 +278,102 @@ describe('EngagementSubmissionPanel 附件（Slice 11 S4）', () => {
     await flushPromises()
 
     expect(wrapper.find('input[type="file"]').exists()).toBe(false)
+  })
+})
+
+describe('EngagementSubmissionPanel 履约核验（Verification v1）', () => {
+  const VERIFY_PASSED = {
+    submissionId: 's1', status: 'passed',
+    checks: [{ type: 'link_reachability', status: 'passed', detail: 'HTTP 200', checkedAt: '2026-07-31T00:00:00Z' }],
+    lastCheckedAt: '2026-07-31T00:00:00Z',
+  }
+
+  /** 路由：GET→交付物列表；POST /verification/checks→核验结果。 */
+  function stubFetchVerify(opts: { list?: unknown[]; verify?: unknown }) {
+    const calls: { url: string; method: string }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      calls.push({ url, method })
+      const data = url.includes('/verification/checks')
+        ? (opts.verify ?? VERIFY_PASSED)
+        : { submissions: opts.list ?? [{ ...SUBMITTED }] }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    return { calls }
+  }
+
+  /** 商家打开面板 → 未核验的待核验交付物懒触发自动核验（GET 保持纯读，核验是付费 POST）。 */
+  test('商家打开面板懒触发未核验交付物的自动核验', async () => {
+    const { calls } = stubFetchVerify({ list: [{ ...SUBMITTED }] })  // 无 verification → 触发
+    const wrapper = mountPanel('merchant')
+    await flushPromises()
+    await flushPromises()
+
+    expect(calls.some((c) => c.method === 'POST'
+      && c.url === '/api/tasks/task-1/applications/app-1/submissions/s1/verification/checks')).toBe(true)
+    expect(wrapper.text()).toContain('核验通过')
+  })
+
+  /** 已有核验记录的不重跑——避免商家每次打开面板都触发付费 AI 核验。 */
+  test('已核验的交付物不重复懒触发', async () => {
+    const { calls } = stubFetchVerify({ list: [{ ...SUBMITTED, verification: VERIFY_PASSED }] })
+    mountPanel('merchant')
+    await flushPromises()
+
+    expect(calls.some((c) => c.url.includes('/verification/checks'))).toBe(false)
+  })
+
+  test('tri-state 徽章：failed → 核验未过', async () => {
+    const failed = {
+      ...VERIFY_PASSED, status: 'failed',
+      checks: [{ type: 'link_reachability', status: 'failed', detail: 'HTTP 404', checkedAt: '2026-07-31T00:00:00Z' }],
+    }
+    stubFetchVerify({ list: [{ ...SUBMITTED, verification: failed }] })
+    const wrapper = mountPanel('merchant')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('核验未过')
+  })
+
+  test('tri-state 徽章：inconclusive → 核验存疑', async () => {
+    const inconclusive = {
+      ...VERIFY_PASSED, status: 'inconclusive',
+      checks: [{ type: 'ai_visual', status: 'inconclusive', detail: 'AI 视觉核验暂不可用', checkedAt: '2026-07-31T00:00:00Z' }],
+    }
+    stubFetchVerify({ list: [{ ...SUBMITTED, verification: inconclusive }] })
+    const wrapper = mountPanel('merchant')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('核验存疑')
+  })
+
+  /** 手动「重新核验」强制重跑（即便已有结论），就地刷新徽章。 */
+  test('商家点「重新核验」重跑并刷新徽章', async () => {
+    const { calls } = stubFetchVerify({
+      list: [{ ...SUBMITTED, verification: VERIFY_PASSED }],  // 已核验 → 不懒触发
+      verify: {
+        ...VERIFY_PASSED, status: 'failed',
+        checks: [{ type: 'link_reachability', status: 'failed', detail: 'HTTP 404', checkedAt: '2026-07-31T00:00:00Z' }],
+      },
+    })
+    const wrapper = mountPanel('merchant')
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text() === '重新核验')!.trigger('click')
+    await flushPromises()
+
+    const recheckPosts = calls.filter((c) => c.url.includes('/verification/checks') && c.method === 'POST')
+    expect(recheckPosts.length).toBeGreaterThanOrEqual(1)
+    expect(wrapper.text()).toContain('核验未过')
+  })
+
+  /** 推荐官侧既不懒触发核验（付费），也没有「重新核验」按钮（商家动作）。 */
+  test('推荐官侧不懒触发核验、也无重新核验按钮', async () => {
+    const { calls } = stubFetchVerify({ list: [{ ...SUBMITTED }] })
+    const wrapper = mountPanel('recommender')
+    await flushPromises()
+
+    expect(calls.some((c) => c.url.includes('/verification/checks'))).toBe(false)
+    expect(wrapper.findAll('button').some((b) => b.text() === '重新核验')).toBe(false)
   })
 })

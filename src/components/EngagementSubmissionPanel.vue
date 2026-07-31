@@ -5,6 +5,7 @@ import type {
   EngagementSubmission,
   EngagementSubmissionAttachment,
   SubmissionStatus,
+  VerificationStatus,
 } from '../types/grassland'
 
 /**
@@ -58,6 +59,19 @@ const STATUS_LABEL: Record<SubmissionStatus, string> = {
   rejected: '已退回',
 }
 
+/** 履约核验 tri-state 徽章文案（Slice 11 Verification v1）。 */
+const VERIFICATION_LABEL: Record<VerificationStatus, string> = {
+  passed: '核验通过',
+  failed: '核验未过',
+  inconclusive: '核验存疑',
+}
+
+/** 单项核验明细的可读名（兜底原 type，避免后端新增 check 类型时前端裸露 key）。 */
+const CHECK_TYPE_LABEL: Record<string, string> = {
+  link_reachability: '链接可达',
+  ai_visual: 'AI 视觉',
+}
+
 const pending = computed(() => submissions.value.find((s) => s.status === 'submitted') || null)
 const canSubmit = computed(
   () => !pending.value && !uploading.value && contentUrl.value.trim().length > 0)
@@ -83,6 +97,33 @@ function attachmentLabel(attachment: EngagementSubmissionAttachment): string {
 async function refresh(): Promise<void> {
   const list = await grassland.listDeliverables(props.taskId, props.applicationId)
   if (list) submissions.value = list
+  // 商家打开面板时，对未核验的待核验交付物懒触发自动核验（GET 保持纯读；核验是付费 POST，故客户端触发）。
+  if (props.role === 'merchant') {
+    await lazyVerifyUnverified()
+  }
+}
+
+/**
+ * 对未核验（无 verification）的待核验交付物逐个触发自动核验。已核验的不重跑（避免每次打开都付费）。
+ * 单条失败不阻断（error 已进 grassland.error）——链接/AI 核验都可能 inconclusive，留给商家手动决策。
+ */
+async function lazyVerifyUnverified(): Promise<void> {
+  const targets = submissions.value.filter((s) => s.status === 'submitted' && !s.verification)
+  for (const s of targets) {
+    const result = await grassland.runVerificationChecks(props.taskId, props.applicationId, s.id)
+    // 防御：返回体不是合规核验记录（缺 checks）时不 patch，避免把脏数据渲染成徽章。
+    if (!result || !result.checks) continue
+    submissions.value = submissions.value.map((row) =>
+      row.id === s.id ? { ...row, verification: result } : row)
+  }
+}
+
+/** 商家手动「重新核验」：强制重跑（即便已有结论），就地刷新徽章。 */
+async function recheck(submission: EngagementSubmission): Promise<void> {
+  const result = await grassland.runVerificationChecks(props.taskId, props.applicationId, submission.id)
+  if (!result) return
+  submissions.value = submissions.value.map((row) =>
+    row.id === submission.id ? { ...row, verification: result } : row)
 }
 
 watch(() => [props.taskId, props.applicationId], refresh, { immediate: true })
@@ -187,9 +228,21 @@ async function reject(submission: EngagementSubmission): Promise<void> {
         <div class="sub-main">
           <a :href="s.contentUrl" target="_blank" rel="noopener noreferrer">{{ s.contentUrl }}</a>
           <span class="sub-tag" :class="`sub-${s.status}`">{{ STATUS_LABEL[s.status] || s.status }}</span>
+          <span v-if="s.verification" class="sub-tag" :class="`sub-verify-${s.verification.status}`">
+            {{ VERIFICATION_LABEL[s.verification.status] || s.verification.status }}
+          </span>
         </div>
         <p v-if="s.note" class="sub-meta">说明：{{ s.note }}</p>
         <p v-if="s.reviewNote" class="sub-meta sub-reject">退回原因：{{ s.reviewNote }}</p>
+
+        <ul v-if="s.verification?.checks?.length" class="sub-checks">
+          <li v-for="c in s.verification.checks" :key="c.type">
+            <span class="sub-tag" :class="`sub-verify-${c.status}`">
+              {{ CHECK_TYPE_LABEL[c.type] || c.type }}：{{ VERIFICATION_LABEL[c.status] || c.status }}
+            </span>
+            <span v-if="c.detail" class="sub-check-detail">{{ c.detail }}</span>
+          </li>
+        </ul>
 
         <ul v-if="s.attachments && s.attachments.length > 0" class="sub-atts">
           <li v-for="a in s.attachments" :key="a.mediaId">
@@ -204,6 +257,7 @@ async function reject(submission: EngagementSubmission): Promise<void> {
         <div v-if="role === 'merchant' && s.status === 'submitted'" class="sub-row">
           <input v-model="rejectNote" placeholder="退回原因（建议填写）" />
           <button type="button" :disabled="grassland.loading.value" @click="reject(s)">退回补交</button>
+          <button type="button" :disabled="grassland.loading.value" @click="recheck(s)">重新核验</button>
         </div>
       </li>
     </ul>
@@ -266,6 +320,12 @@ async function reject(submission: EngagementSubmission): Promise<void> {
 .sub-submitted { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
 .sub-accepted { background: color-mix(in srgb, var(--color-success) 22%, transparent); }
 .sub-rejected { background: color-mix(in srgb, var(--color-danger) 22%, transparent); }
+.sub-verify-passed { background: color-mix(in srgb, var(--color-success) 22%, transparent); }
+.sub-verify-failed { background: color-mix(in srgb, var(--color-danger) 22%, transparent); }
+.sub-verify-inconclusive { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.sub-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sub-checks li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.sub-check-detail { opacity: 0.65; word-break: break-all; }
 .sub-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sub-form { display: flex; flex-direction: column; gap: 6px; }
 .sub-atts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
