@@ -52,7 +52,17 @@ public class NotificationEventProcessor {
         this.consumerName = consumerName;
     }
 
+    /** identity 自有 topic：用注入的默认 consumerName（Stage 2 行为不变）。 */
     public Mono<NotificationProcessingResult> process(ConsumerRecord<String, String> record) {
+        return process(record, consumerName);
+    }
+
+    /**
+     * 处理一条事件。Stage 3 起同一处理器服务四个 topic（identity / marketplace / trust / finance），
+     * 每个消费者传入<b>自己的</b> {@code consumerName}——inbox 幂等键是
+     * {@code (consumer_name, event_id)}，各 topic 互不干扰（不同服务的 eventId 也可能撞号）。
+     */
+    public Mono<NotificationProcessingResult> process(ConsumerRecord<String, String> record, String consumerName) {
         return Mono.defer(() -> {
             IdentityEventEnvelope envelope = parseEnvelope(record);
             NotificationTemplates.Template template =

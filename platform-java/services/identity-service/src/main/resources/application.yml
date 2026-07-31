@@ -83,6 +83,17 @@ identity:
     topic: ${IDENTITY_NOTIFICATION_CONSUMER_TOPIC:grassland.identity.events}
     group-id: ${IDENTITY_NOTIFICATION_CONSUMER_GROUP:identity-notification-consumer}
     auto-startup: ${IDENTITY_NOTIFICATION_CONSUMER_AUTOSTARTUP:true}
+    external:
+      # Stage 3：另开消费者读 marketplace / trust / finance topic（报名/凭证/结算/争议/钱包通知）。
+      # 每个 topic 独立 group-id → inbox 幂等键 (consumer_name, event_id) 互不干扰。默认 false，compose 置 true。
+      enabled: ${IDENTITY_NOTIFICATION_EXTERNAL_ENABLED:false}
+      auto-startup: ${IDENTITY_NOTIFICATION_EXTERNAL_AUTOSTARTUP:true}
+      marketplace-topic: ${IDENTITY_NOTIFICATION_MARKETPLACE_TOPIC:grassland.marketplace.events}
+      marketplace-group-id: ${IDENTITY_NOTIFICATION_MARKETPLACE_GROUP:identity-notification-marketplace-consumer}
+      trust-topic: ${IDENTITY_NOTIFICATION_TRUST_TOPIC:grassland.trust.events}
+      trust-group-id: ${IDENTITY_NOTIFICATION_TRUST_GROUP:identity-notification-trust-consumer}
+      finance-topic: ${IDENTITY_NOTIFICATION_FINANCE_TOPIC:grassland.finance.events}
+      finance-group-id: ${IDENTITY_NOTIFICATION_FINANCE_GROUP:identity-notification-finance-consumer}
 
 # 内部身份断言（HLD 7.4 消费）：secret/audience 须与 edge-bff 完全一致。
 # enabled=true 时 CurrentAccountResolver 优先信任 BFF 断言头（回退 cookie）。

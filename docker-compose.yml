@@ -72,6 +72,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Slice 12 通知中心：消费 identity 自有 topic 派生站内通知。默认开（与 marketplace trust-consumer 同款）。
       IDENTITY_NOTIFICATION_CONSUMER_ENABLED: "true"
+      # Slice 12 Stage 3：同时消费 marketplace / trust / finance topic（报名/凭证退回/结算/争议/钱包通知）。
+      IDENTITY_NOTIFICATION_EXTERNAL_ENABLED: "true"
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}
       SMTP_USER: ${SMTP_USER:-}

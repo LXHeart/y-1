@@ -58,8 +58,46 @@ public class NotificationRecipientResolver {
                     findPermissionRequester(envelope.aggregateId())
                             .map(java.util.List::of)
                             .defaultIfEmpty(java.util.List.of());
-            default -> Mono.just(java.util.List.of());
+            default -> Mono.just(externalRecipients(envelope.eventType(), payload));
         };
+    }
+
+    /**
+     * 外部服务事件（marketplace / trust / finance）的收件人。草场 Slice 12 Stage 3。
+     *
+     * <p><b>只读 payload 里已有的 accountId</b>——identity 没有 task / dispute / reservation 表，
+     * 也不反向调用下游做领域查询（identity 是最上游服务）。缺字段 → 空列表 → 该事件不产生通知，
+     * 但 inbox 仍记录，不会无限重投。所需字段由发射端在 Stage 3 补齐。
+     */
+    private static java.util.List<String> externalRecipients(String eventType, JsonNode payload) {
+        return switch (eventType) {
+            // 商家侧：报名/撤回/交付进来了，通知任务归属人。
+            case "ApplicationSubmitted", "ApplicationWithdrawn", "DeliverableSubmitted" ->
+                    accountIds(payload, "taskOwnerId");
+            // 推荐官侧：凭证被退回。
+            case "DeliverableRejected" -> accountIds(payload, "recommenderAccountId");
+            // 双方都关心：核验结果、结算、结算挂起。
+            case "VerificationChecked", "EngagementSettled", "SettlementHeld" ->
+                    accountIds(payload, "taskOwnerId", "recommenderAccountId");
+            // 争议：只有开启人在 trust 本地表内（对方账号缺口见 docs 路线图第 8 项）。
+            case "DisputeAssigned", "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized" ->
+                    accountIds(payload, "openedByAccountId");
+            // 资金：payeeAccountId 是用户账号（不是 finance ledger account）。
+            case "FundsCaptured", "FundsReleased", "AccountCredited" -> accountIds(payload, "payeeAccountId");
+            default -> java.util.List.of();
+        };
+    }
+
+    /** 按字段顺序取出非空 accountId 并去重（同一账号既是任务归属人又是推荐官时只通知一次）。 */
+    private static java.util.List<String> accountIds(JsonNode payload, String... fields) {
+        Set<String> deduped = new LinkedHashSet<>();
+        for (String field : fields) {
+            JsonNode node = payload.get(field);
+            if (node != null && node.isTextual() && !node.asText().isBlank()) {
+                deduped.add(node.asText());
+            }
+        }
+        return java.util.List.copyOf(deduped);
     }
 
     /** org 的 owner+admin，排除操作者本人（操作者不需要被通知自己刚做的动作）。 */

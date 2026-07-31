@@ -17,6 +17,9 @@ public final class NotificationTemplates {
 
     static final String LINK_INVITATIONS = "/me/invitations";
     static final String LINK_PERMISSION = "/me/organizations";
+    static final String LINK_ENGAGEMENTS = "/me/engagements";
+    static final String LINK_DISPUTES = "/me/disputes";
+    static final String LINK_WALLET = "/me/wallet";
 
     private NotificationTemplates() {}
 
@@ -44,8 +47,91 @@ public final class NotificationTemplates {
             case "PermissionReviewed" -> new Template(
                     NotificationCategory.PERMISSION, "你的权限申请已审核",
                     "你的商家权限升级申请已有审核结果", LINK_PERMISSION, orgPayload(payload));
+            default -> externalTemplate(eventType, payload);
+        };
+    }
+
+    /**
+     * 外部服务（marketplace / trust / finance）事件文案。草场 Slice 12 Stage 3。
+     *
+     * <p>正文只描述「发生了什么」，具体标的（taskId / disputeId / 金额）放 payload 给前端渲染；
+     * 不把对方账号写进正文。
+     */
+    private static Template externalTemplate(String eventType, JsonNode payload) {
+        return switch (eventType) {
+            // ---------- marketplace：履约 ----------
+            case "ApplicationSubmitted" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "有新的报名",
+                    "你的任务收到一份新报名，待你处理", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "ApplicationWithdrawn" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "有报名被撤回",
+                    "你的任务有一份报名已被撤回", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "DeliverableSubmitted" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "收到交付凭证",
+                    "有推荐官提交了履约凭证，待你核验", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "DeliverableRejected" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "你的凭证被退回",
+                    "你提交的履约凭证被退回，请查看原因后重新提交", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "VerificationChecked" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "履约核验有结果",
+                    "该履约的凭证核验已出结果", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "EngagementSettled" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "履约已结算",
+                    "该履约已完成结算", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "SettlementHeld" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "结算被挂起",
+                    "该履约的结算被暂时挂起，待条件满足后继续", LINK_ENGAGEMENTS, taskPayload(payload));
+            // ---------- trust：争议 ----------
+            case "DisputeAssigned" -> new Template(
+                    NotificationCategory.DISPUTE, "争议已进入审判",
+                    "你参与的争议已组建审判庭并开始投票", LINK_DISPUTES, disputePayload(payload));
+            case "DisputeAppealed" -> new Template(
+                    NotificationCategory.DISPUTE, "争议已申诉",
+                    "你参与的争议已提出申诉", LINK_DISPUTES, disputePayload(payload));
+            case "AdjudicationEscalated" -> new Template(
+                    NotificationCategory.DISPUTE, "争议已升级客服",
+                    "你参与的争议已升级至客服终审", LINK_DISPUTES, disputePayload(payload));
+            case "DisputeFinalized" -> new Template(
+                    NotificationCategory.DISPUTE, "争议已终裁",
+                    "你参与的争议已出终裁结果", LINK_DISPUTES, disputePayload(payload));
+            // ---------- finance：钱包与资金 ----------
+            case "FundsCaptured" -> new Template(
+                    NotificationCategory.WALLET, "佣金已到账",
+                    "任务佣金已入账到你的钱包", LINK_WALLET, walletPayload(payload));
+            case "FundsReleased" -> new Template(
+                    NotificationCategory.WALLET, "托管资金已释放",
+                    "该笔托管资金已释放，不再计入本次履约", LINK_WALLET, walletPayload(payload));
+            case "AccountCredited" -> new Template(
+                    NotificationCategory.WALLET, "账户已充值",
+                    "你的组织账户已完成充值", LINK_WALLET, walletPayload(payload));
             default -> null;
         };
+    }
+
+    private static Map<String, Object> taskPayload(JsonNode payload) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        putIfText(map, payload, "taskId");
+        putIfText(map, payload, "applicationId");
+        putIfText(map, payload, "status");
+        putIfText(map, payload, "reason");
+        return map;
+    }
+
+    private static Map<String, Object> disputePayload(JsonNode payload) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        putIfText(map, payload, "disputeId");
+        putIfText(map, payload, "engagementRef");
+        putIfText(map, payload, "status");
+        putIfText(map, payload, "finalDecision");
+        return map;
+    }
+
+    private static Map<String, Object> walletPayload(JsonNode payload) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        putIfText(map, payload, "engagementRef");
+        putIfNumber(map, payload, "payoutCents");
+        putIfNumber(map, payload, "amountCents");
+        return map;
     }
 
     private static Map<String, Object> orgPayload(JsonNode payload) {
@@ -64,6 +150,13 @@ public final class NotificationTemplates {
         Map<String, Object> map = new LinkedHashMap<>();
         putIfText(map, payload, key);
         return map;
+    }
+
+    private static void putIfNumber(Map<String, Object> map, JsonNode payload, String key) {
+        JsonNode node = payload.get(key);
+        if (node != null && node.isNumber()) {
+            map.put(key, node.asLong());
+        }
     }
 
     private static void putIfText(Map<String, Object> map, JsonNode payload, String key) {

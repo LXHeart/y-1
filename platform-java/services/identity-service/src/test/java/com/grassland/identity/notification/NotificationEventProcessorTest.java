@@ -146,6 +146,23 @@ class NotificationEventProcessorTest {
                 any(), any(), eq("evt-1"), any());
     }
 
+    @Test
+    void externalConsumerNameIsUsedAsInboxKey() {
+        // Slice 12 Stage 3：外部 topic 传入自己的 consumerName，inbox 幂等键按消费者隔离。
+        ConsumerRecord<String, String> record = record("ApplicationSubmitted", "app-1",
+                Map.of("taskId", "task-1", "taskOwnerId", "owner-1"));
+        when(inbox.recordIfAbsent(eq("identity-notification-marketplace-consumer"), any(), any(), anyString()))
+                .thenReturn(Mono.just(true));
+        when(resolver.resolve(any(IdentityEventEnvelope.class))).thenReturn(Mono.just(List.of("owner-1")));
+        when(notifications.insertIfAbsent(eq("owner-1"), any(), anyString(), anyString(), any(), any(),
+                eq("evt-1"), any())).thenReturn(Mono.just(notification()));
+
+        StepVerifier.create(processor.process(record, "identity-notification-marketplace-consumer"))
+                .expectNext(NotificationProcessingResult.PROCESSED)
+                .verifyComplete();
+        verify(inbox).recordIfAbsent(eq("identity-notification-marketplace-consumer"), any(), any(), anyString());
+    }
+
     // ---- helpers ----
 
     private ConsumerRecord<String, String> record(String eventType, String aggregateId, Map<String, Object> payload) {
