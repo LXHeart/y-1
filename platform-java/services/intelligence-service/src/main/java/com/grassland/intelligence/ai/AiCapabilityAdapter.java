@@ -23,4 +23,13 @@ public interface AiCapabilityAdapter {
     default Mono<String> completeMultimodal(List<ContentPart> parts, Duration timeout) {
         return Mono.error(new UnsupportedOperationException("multimodal completion not supported"));
     }
+
+    /**
+     * 非流式多模态完成（草场 Slice 13 Stage 5 Bilibili 视频分析）：返回内容 + 上游 run id（前端「运行 ID」展示）。
+     * 默认不支持；{@code QwenClient} 实现复用 {@code /chat/completions}，解析 {@code choices[0].message.content}
+     * 与顶层 {@code id}。
+     */
+    default Mono<MultimodalResult> completeMultimodalMeta(List<ContentPart> parts, Duration timeout) {
+        return Mono.error(new UnsupportedOperationException("multimodal meta completion not supported"));
+    }
 }

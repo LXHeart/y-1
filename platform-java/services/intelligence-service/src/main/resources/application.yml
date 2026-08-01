@@ -78,6 +78,13 @@ ai:
     model: ${IMAGE_GENERATION_MODEL:}
     connect-timeout-ms: ${IMAGE_GENERATION_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${IMAGE_GENERATION_READ_TIMEOUT_MS:300000}
+  # Bilibili 视频分析（草场 Slice 13 Stage 5）：仅平台级 Qwen，不读用户 BYOK（与 video-recreation 同前提）。
+  # provider 非 qwen → intelligence 不处理，analyze 整体回落 legacy。max-single-segment-seconds：超过则回落 legacy 切片
+  # （legacy 用 30s 切片边界；此处默认 60s，即 progressive+≤60s+qwen 单段直发 video_url，>60s 回落 legacy 切片合并）。
+  bilibili-analysis:
+    provider: ${BILIBILI_ANALYSIS_PROVIDER:qwen}
+    timeout-ms: ${BILIBILI_ANALYSIS_TIMEOUT_MS:180000}
+    max-single-segment-seconds: ${BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
 
 # 对象存储（platform-storage）：文章生成图片从本地卷迁到 MinIO/S3（草场 Slice 8）。
 # enabled 默认 true（与 marketplace 一致）→ S3GeneratedImageStore（多副本共享，@PostConstruct 建 bucket，缺失即显式失败）。

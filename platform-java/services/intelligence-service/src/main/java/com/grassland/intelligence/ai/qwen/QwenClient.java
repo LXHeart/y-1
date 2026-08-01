@@ -6,6 +6,7 @@ import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
+import com.grassland.intelligence.ai.MultimodalResult;
 import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.ai.TextRunCommand;
@@ -75,15 +76,28 @@ public class QwenClient implements AiCapabilityAdapter {
 
     @Override
     public Mono<String> completeText(TextCompletionCommand command) {
-        return requestCompletion(command.messages(), command.timeout(), command.failureMessage());
+        return requestCompletion(command.messages(), command.timeout(), command.failureMessage(), "请求超时，请稍后重试")
+                .map(MultimodalResult::content);
     }
 
     /** 非流式多模态完成（草场 Slice 10 视频改编）：复用 OpenAI 兼容 /chat/completions，自定义超时。 */
     public Mono<String> completeMultimodal(List<ContentPart> parts, Duration timeout) {
-        return requestCompletion(List.of(ChatMessage.user(parts)), timeout, "视频内容改编失败，请稍后重试");
+        return requestCompletion(List.of(ChatMessage.user(parts)), timeout,
+                "视频内容改编失败，请稍后重试", "视频内容改编超时，请稍后重试")
+                .map(MultimodalResult::content);
     }
 
-    private Mono<String> requestCompletion(List<ChatMessage> messages, Duration timeout, String failureMessage) {
+    /**
+     * 非流式多模态完成（草场 Slice 13 Stage 5 Bilibili 视频分析）：返回内容 + 上游 run id。
+     * 复用 {@link #requestCompletion}，后者解析 {@code choices[0].message.content} 与顶层 {@code id}。
+     */
+    public Mono<MultimodalResult> completeMultimodalMeta(List<ContentPart> parts, Duration timeout) {
+        return requestCompletion(List.of(ChatMessage.user(parts)), timeout,
+                "视频内容提取失败，请稍后重试", "视频内容提取超时，请稍后重试");
+    }
+
+    private Mono<MultimodalResult> requestCompletion(List<ChatMessage> messages, Duration timeout,
+                                                      String failureMessage, String timeoutMessage) {
         String endpoint = stripTrailingSlash(config.baseUrl()) + "/chat/completions";
         return webClient.post().uri(endpoint)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -92,14 +106,14 @@ public class QwenClient implements AiCapabilityAdapter {
                 .exchangeToMono(response -> {
                     int status = response.statusCode().value();
                     if (status >= 200 && status < 300) {
-                        return response.bodyToMono(String.class).map(this::extractMessageContent);
+                        return response.bodyToMono(String.class).map(this::extractCompletionResult);
                     }
                     return response.bodyToMono(String.class).defaultIfEmpty("")
                             .flatMap(ignored -> Mono.error(completionError(status, failureMessage)));
                 })
                 .timeout(timeout)
                 .onErrorMap(TimeoutException.class,
-                        error -> new IntelligenceException(504, "视频内容改编超时，请稍后重试"))
+                        error -> new IntelligenceException(504, timeoutMessage))
                 .onErrorMap(error -> {
                     if (error instanceof IntelligenceException) {
                         return error;
@@ -144,6 +158,9 @@ public class QwenClient implements AiCapabilityAdapter {
             case ContentPart.Image image -> Map.of(
                     "type", "image_url",
                     "image_url", Map.of("url", image.url()));
+            case ContentPart.Video video -> Map.of(
+                    "type", "video_url",
+                    "video_url", Map.of("url", video.url()));
         };
     }
 
@@ -160,14 +177,15 @@ public class QwenClient implements AiCapabilityAdapter {
         }
     }
 
-    private String extractMessageContent(String json) {
+    private MultimodalResult extractCompletionResult(String json) {
         try {
-            String content = mapper.readTree(json)
-                    .path("choices").path(0).path("message").path("content").asText("");
+            JsonNode root = mapper.readTree(json);
+            String content = root.path("choices").path(0).path("message").path("content").asText("");
             if (content.isBlank()) {
                 throw new IntelligenceException(502, "AI 上游返回了空内容");
             }
-            return content;
+            String runId = root.path("id").asText(null);
+            return new MultimodalResult(content, (runId == null || runId.isBlank()) ? null : runId);
         } catch (IntelligenceException error) {
             throw error;
         } catch (Exception error) {

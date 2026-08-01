@@ -245,9 +245,16 @@ edge:
       exact: true
       enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:false}
     # ---- Bilibili extract（草场 Slice 13 Stage 3）→ intelligence-service。exact 切，不抢其余子路径。
-    # analyze/analysis-media 暂仍 legacy（下一会话）。默认 false：关闭回落 legacy。
+    # analyze-video（Stage 5）→ intelligence：progressive+≤60s+qwen 走 Java，否则回落 legacy（透传 cookie）。
+    # analysis-media 不路由（始终 legacy）：Java 路径用公开 proxy URL，回落路径的 analysis-media 经公开 origin 指向 legacy。
+    # 默认 false：关闭则全部回落 legacy。
     - method: POST
       path: /api/bilibili/extract-video
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
+    - method: POST
+      path: /api/bilibili/analyze-video
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
