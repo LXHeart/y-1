@@ -33,7 +33,7 @@ class LegacyCreditsClientTest {
         wireMock = new WireMockServer(options().dynamicPort());
         wireMock.start();
         client = new LegacyCreditsClient(wireMock.baseUrl(),
-                "/api/internal/credits/consume", "shared-secret");
+                "/internal/credits/consume", "/internal/credits/refund", "shared-secret");
     }
 
     @AfterEach
@@ -44,23 +44,65 @@ class LegacyCreditsClientTest {
     @Test
     @DisplayName("200 → 扣减完成；请求带共享密钥与 {accountId, feature}")
     void consumeSuccess() {
-        wireMock.stubFor(post(urlEqualTo("/api/internal/credits/consume"))
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"success\":true,\"data\":{\"consumed\":true}}")));
 
         client.consume(ACCOUNT, CreditFeature.COMEDY_GENERATION).block();
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/api/internal/credits/consume"))
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/consume"))
                 .withHeader("X-Internal-Key", equalTo("shared-secret"))
                 .withRequestBody(containing("\"accountId\":\"" + ACCOUNT + "\""))
                 .withRequestBody(containing("\"feature\":\"comedy_generation\"")));
     }
 
     @Test
+    @DisplayName("consume 带 operationId 幂等键；refund 复用同一 key（GL-P0-CRED-001）")
+    void consumeCarriesOperationIdAndRefundReusesIt() {
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"consumed\":true}}")));
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/refund"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"refunded\":true}}")));
+
+        CreditCharge charge = client.consume(ACCOUNT, CreditFeature.COMEDY_GENERATION).block();
+
+        assertThat(charge).isNotNull();
+        assertThat(charge.operationId()).isNotBlank();
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/consume"))
+                .withRequestBody(containing("\"operationId\":\"" + charge.operationId() + "\"")));
+
+        client.refund(charge, "上游失败自动退回").block();
+
+        // 退款必须复用扣减的 operationId——legacy 侧据此保证「一次扣减最多一次退款」
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/refund"))
+                .withHeader("X-Internal-Key", equalTo("shared-secret"))
+                .withRequestBody(containing("\"operationId\":\"" + charge.operationId() + "\""))
+                .withRequestBody(containing("\"feature\":\"comedy_generation\"")));
+    }
+
+    @Test
+    @DisplayName("refund 上游失败不抛——不覆盖用户看到的原始上游错误")
+    void refundSwallowsUpstreamFailure() {
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/refund"))
+                .willReturn(aResponse().withStatus(500).withBody("down")));
+
+        CreditCharge charge = new CreditCharge(ACCOUNT, CreditFeature.VIDEO_ANALYSIS, "op-1");
+
+        // 不抛异常即为期望行为（失败已记日志）
+        client.refund(charge, "失败退回").block();
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/refund")));
+    }
+
+    @Test
     @DisplayName("402 → InsufficientCreditsException（→402 信封）")
     void insufficientCredits() {
-        wireMock.stubFor(post(urlEqualTo("/api/internal/credits/consume"))
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(402)
                         .withBody("{\"success\":false,\"error\":\"积分不足\"}")));
         assertThatThrownBy(() -> client.consume(ACCOUNT, CreditFeature.ARTICLE_GENERATION).block())
@@ -70,7 +112,7 @@ class LegacyCreditsClientTest {
     @Test
     @DisplayName("其它 4xx → IntelligenceException(400)")
     void other4xxMapsTo400() {
-        wireMock.stubFor(post(urlEqualTo("/api/internal/credits/consume"))
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(400).withBody("bad")));
         assertThatThrownBy(() -> client.consume(ACCOUNT, CreditFeature.IMAGE_ANALYSIS).block())
                 .isInstanceOfSatisfying(IntelligenceException.class,
@@ -80,7 +122,7 @@ class LegacyCreditsClientTest {
     @Test
     @DisplayName("5xx → IntelligenceException(502)")
     void serverErrorMapsTo502() {
-        wireMock.stubFor(post(urlEqualTo("/api/internal/credits/consume"))
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(500).withBody("down")));
         assertThatThrownBy(() -> client.consume(ACCOUNT, CreditFeature.VIDEO_ANALYSIS).block())
                 .isInstanceOfSatisfying(IntelligenceException.class,

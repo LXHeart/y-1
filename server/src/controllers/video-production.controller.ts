@@ -14,7 +14,7 @@ export async function generateScriptHandler(
   try {
     const { images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt } = generateScriptRequestSchema.parse(req.body)
 
-    await requireCredit(getSessionUser(req)!.id, 'video_production_script')
+    const charge = await requireCredit(getSessionUser(req)!.id, 'video_production_script')
 
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
@@ -47,6 +47,8 @@ export async function generateScriptHandler(
       }
     } catch (error: unknown) {
       if (controller.signal.aborted) return
+      // 上游失败：退回已扣积分（GL-P0-BILL-002）
+      await charge.refund('视频脚本生成失败自动退回')
       const message = error instanceof AppError ? error.message : '视频脚本生成失败'
       logger.error({ err: error }, 'Video production script streaming error')
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`)
@@ -89,7 +91,7 @@ export async function generateVideoHandler(
     throw new AppError(videoProduction.VIDEO_GENERATION_UNAVAILABLE_REASON, 501)
   }
 
-  await requireCredit(getSessionUser(req)!.id, 'video_production_video')
+  const charge = await requireCredit(getSessionUser(req)!.id, 'video_production_video')
 
   try {
     const result = await videoProduction.generateVideo(script, images, videoStyle, shopName, shopAddress)
@@ -100,6 +102,8 @@ export async function generateVideoHandler(
 
     res.json({ success: true, data: result })
   } catch (error: unknown) {
+    // 上游失败：退回已扣积分（GL-P0-BILL-002）
+    await charge.refund('视频生成失败自动退回')
     if (error instanceof AppError) throw error
     logger.error({ err: error }, 'Video generation error')
     throw new AppError('视频生成失败，请稍后重试', 502)

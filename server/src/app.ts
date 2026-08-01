@@ -405,7 +405,8 @@ export function createApp() {
   app.use('/api/comedy-generation', comedyGenerationRouter)
   app.use('/api/video-production', videoProductionRouter)
   app.use('/api/credits', creditsRouter)
-  app.use('/api/internal/credits', internalCreditsRouter)
+  // 内部 bridge 刻意挂在 `/api` 之外（GL-P0-CRED-001）：nginx 只反代 `/api/`，`/internal/` 另有 deny
+  app.use('/internal/credits', internalCreditsRouter)
   app.use('/api/admin', adminRouter)
   app.use('/api/settings', settingsRouter)
   app.use('/api/homepage', homepageRouter)

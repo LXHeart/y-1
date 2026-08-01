@@ -4,13 +4,17 @@ import type { NextFunction, Request, Response } from 'express'
 const {
   getSessionUserMock,
   requireCreditMock,
+  refundMock,
   generateVideoMock,
   isVideoGenerationAvailableMock,
+  streamVideoScriptMock,
 } = vi.hoisted(() => ({
   getSessionUserMock: vi.fn(),
   requireCreditMock: vi.fn(),
+  refundMock: vi.fn(),
   generateVideoMock: vi.fn(),
   isVideoGenerationAvailableMock: vi.fn(),
+  streamVideoScriptMock: vi.fn(),
 }))
 
 vi.mock('../lib/auth.js', () => ({
@@ -25,10 +29,10 @@ vi.mock('../services/video-production.service.js', () => ({
   generateVideo: generateVideoMock,
   isVideoGenerationAvailable: isVideoGenerationAvailableMock,
   VIDEO_GENERATION_UNAVAILABLE_REASON: '视频生成服务暂未上线',
-  streamVideoScript: vi.fn(),
+  streamVideoScript: streamVideoScriptMock,
 }))
 
-const { generateVideoHandler, getCapabilitiesHandler } = await import('./video-production.controller.js')
+const { generateVideoHandler, getCapabilitiesHandler, generateScriptHandler } = await import('./video-production.controller.js')
 
 type TestResponse = Response & { jsonPayload: unknown }
 
@@ -44,6 +48,27 @@ function createResponse(): TestResponse {
   return res as unknown as TestResponse
 }
 
+type SseResponse = Response & { written: string[] }
+
+function createSseResponse(): SseResponse {
+  const res = {
+    written: [] as string[],
+    headersSent: false,
+    setHeader: vi.fn(),
+    write(chunk: string) {
+      this.written.push(chunk)
+      return true
+    },
+    end: vi.fn(),
+    on: vi.fn(),
+  }
+  return res as unknown as SseResponse
+}
+
+function createSseRequest(body: unknown): Request {
+  return { body, on: vi.fn(), removeListener: vi.fn() } as unknown as Request
+}
+
 const VALID_BODY = {
   script: '【镜头1】(3秒) 画面：门店外景，旁白：欢迎光临本店，这里有最地道的风味。',
   images: ['aGVsbG8='],
@@ -51,11 +76,24 @@ const VALID_BODY = {
   shopName: '测试小馆',
 }
 
+const SCRIPT_BODY = {
+  images: ['aGVsbG8='],
+  shopName: '测试小馆',
+  industryType: '餐饮' as const,
+  videoStyle: '烟火纪实' as const,
+}
+
 describe('generateVideoHandler credit gating', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     getSessionUserMock.mockReturnValue({ id: 'user-1' })
-    requireCreditMock.mockResolvedValue(undefined)
+    requireCreditMock.mockResolvedValue({
+      userId: 'user-1',
+      feature: 'video_production_video',
+      operationId: 'op-1',
+      refund: refundMock,
+    })
+    refundMock.mockResolvedValue(undefined)
   })
 
   it('能力不可用时抛 501 且绝不扣积分', async () => {
@@ -96,6 +134,77 @@ describe('generateVideoHandler credit gating', () => {
       success: true,
       data: { videoUrl: 'https://cdn.example.com/v.mp4' },
     })
+  })
+})
+
+// GL-P0-BILL-002：上游失败必须退回已扣积分，用户不为失败调用付费
+describe('失败注入：积分退回', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getSessionUserMock.mockReturnValue({ id: 'user-1' })
+    requireCreditMock.mockResolvedValue({
+      userId: 'user-1',
+      feature: 'video_production_video',
+      operationId: 'op-1',
+      refund: refundMock,
+    })
+    refundMock.mockResolvedValue(undefined)
+  })
+
+  it('generate-video 上游失败时退回积分', async () => {
+    isVideoGenerationAvailableMock.mockReturnValue(true)
+    generateVideoMock.mockRejectedValue(new Error('provider down'))
+
+    await expect(
+      generateVideoHandler({ body: VALID_BODY } as Request, createResponse(), (() => {}) as NextFunction),
+    ).rejects.toBeDefined()
+
+    expect(refundMock).toHaveBeenCalledOnce()
+  })
+
+  it('generate-video 成功时不退积分', async () => {
+    isVideoGenerationAvailableMock.mockReturnValue(true)
+    generateVideoMock.mockResolvedValue({ videoUrl: 'https://cdn.example.com/v.mp4', taskId: 't-1' })
+
+    await generateVideoHandler({ body: VALID_BODY } as Request, createResponse(), (() => {}) as NextFunction)
+
+    expect(refundMock).not.toHaveBeenCalled()
+  })
+
+  it('generate-video 返回空 videoUrl（501）时也退积分', async () => {
+    isVideoGenerationAvailableMock.mockReturnValue(true)
+    generateVideoMock.mockResolvedValue({ videoUrl: null })
+
+    await expect(
+      generateVideoHandler({ body: VALID_BODY } as Request, createResponse(), (() => {}) as NextFunction),
+    ).rejects.toMatchObject({ statusCode: 501 })
+
+    expect(refundMock).toHaveBeenCalledOnce()
+  })
+
+  it('generate-script SSE 上游失败时退回积分并发 error 帧', async () => {
+    streamVideoScriptMock.mockImplementation(async function* () {
+      yield '【镜头1】'
+      throw new Error('provider down')
+    })
+
+    const res = createSseResponse()
+    await generateScriptHandler(createSseRequest(SCRIPT_BODY), res, (() => {}) as NextFunction)
+
+    expect(refundMock).toHaveBeenCalledOnce()
+    expect(res.written.some((chunk) => chunk.includes('"error"'))).toBe(true)
+  })
+
+  it('generate-script SSE 正常完成时不退积分', async () => {
+    streamVideoScriptMock.mockImplementation(async function* () {
+      yield '【镜头1】'
+    })
+
+    const res = createSseResponse()
+    await generateScriptHandler(createSseRequest(SCRIPT_BODY), res, (() => {}) as NextFunction)
+
+    expect(refundMock).not.toHaveBeenCalled()
+    expect(res.written.some((chunk) => chunk.includes('[DONE]'))).toBe(true)
   })
 })
 

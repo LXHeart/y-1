@@ -14,6 +14,7 @@ import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.CreditsStubs;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -42,7 +43,7 @@ class ArticleControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void stubDefaults() {
         reset(ai, credits);
-        when(credits.consume(any(), any())).thenReturn(Mono.empty());
+        CreditsStubs.stubDefaults(credits);
     }
 
     private String signed() {
@@ -81,7 +82,8 @@ class ArticleControllerIT extends IntelligenceItSupport {
     @DisplayName("titles 成功 → 扣 article_generation + 聚合流式（跨块 code fence）→ 解析 {title,hook}")
     void titlesAggregatesAndParses() {
         ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
-        when(credits.consume(any(), featureCaptor.capture())).thenReturn(Mono.empty());
+        when(credits.consume(any(), featureCaptor.capture())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
 
         // 模型分块流式输出，拼起来是带 ```json fence 的 JSON（覆盖剥 fence + 跨块拼接）。
         when(ai.startTextRun(any())).thenReturn(Flux.just(

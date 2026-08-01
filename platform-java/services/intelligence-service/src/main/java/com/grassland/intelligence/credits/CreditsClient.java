@@ -9,8 +9,18 @@ import reactor.core.publisher.Mono;
 public interface CreditsClient {
 
     /**
-     * 原子扣减 1 积分；成功完成 Mono，积分不足信号 {@link InsufficientCreditsException}（→402），
+     * 原子扣减 1 积分；成功返回可用于退款的 {@link CreditCharge}，
+     * 积分不足信号 {@link InsufficientCreditsException}（→402），
      * 上游不可用信号 {@code IntelligenceException(502)}。
+     *
+     * <p>调用方在上游（AI/媒体）失败时必须 {@link #refund(CreditCharge, String)}，
+     * 否则用户为失败调用付费（GL-P0-BILL-002）。
      */
-    Mono<Void> consume(String accountId, CreditFeature feature);
+    Mono<CreditCharge> consume(String accountId, CreditFeature feature);
+
+    /**
+     * 退回一次扣减。幂等——重复调用只退一次（legacy 侧按 operationId 去重）。
+     * 退款自身失败不应覆盖原始上游错误，故实现返回空 Mono 而不向外抛。
+     */
+    Mono<Void> refund(CreditCharge charge, String note);
 }

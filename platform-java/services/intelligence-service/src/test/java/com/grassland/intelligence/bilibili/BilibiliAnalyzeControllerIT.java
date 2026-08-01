@@ -84,7 +84,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 .jsonPath("$.data.propsDescription").isEqualTo("一个白瓷大碗")
                 .jsonPath("$.data.runId").isEqualTo("chatcmpl-1");
 
-        LEGACY.verify(postRequestedFor(urlEqualTo("/api/internal/credits/consume"))
+        LEGACY.verify(postRequestedFor(urlEqualTo("/internal/credits/consume"))
                 .withRequestBody(containing("\"feature\":\"video_analysis\"")));
     }
 
@@ -158,7 +158,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
 
         // 回落：intelligence 不调 Qwen，不扣积分（legacy 自行扣）。
         QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
-        LEGACY.verify(0, postRequestedFor(urlEqualTo("/api/internal/credits/consume")));
+        LEGACY.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
         // legacy analyze 收到转发 cookie。
         LEGACY.verify(postRequestedFor(urlEqualTo("/api/bilibili/analyze-video"))
                 .withHeader("Cookie", equalTo("y1.sid=s%3Atok.sig")));
@@ -229,7 +229,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     }
 
     private void stubCreditsOk() {
-        LEGACY.stubFor(post(urlEqualTo("/api/internal/credits/consume"))
+        LEGACY.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(200).withBody("{}")));
     }
 

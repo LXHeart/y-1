@@ -56,14 +56,16 @@ public class ArticleController {
     public Mono<Map<String, Object>> titles(@RequestBody TitlesRequest body, ServerWebExchange exchange) {
         Platform platform = Platform.fromKey(body.platform());
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.ARTICLE_GENERATION)
-                        .thenReturn(caller))
-                .flatMap(caller -> ai.startTextRun(new TextRunCommand(List.of(
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.ARTICLE_GENERATION))
+                .flatMap(charge -> ai.startTextRun(new TextRunCommand(List.of(
                         ArticlePrompts.titlesSystem(platform), ArticlePrompts.titlesUser(body.topic()))))
                         .map(ChatChunk::content)
                         .collectList()
                         .map(chunks -> String.join("", chunks))
-                        .map(ArticleController::parseTitles))
+                        .map(ArticleController::parseTitles)
+                        // 上游失败：退回已扣积分后仍抛原始错误（GL-P0-BILL-002）
+                        .onErrorResume(error -> credits.refund(charge, "标题生成失败自动退回")
+                                .then(Mono.error(error))))
                 .map(titles -> Map.<String, Object>of("success", true, "data", Map.of("titles", titles)));
     }
 

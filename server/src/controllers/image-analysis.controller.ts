@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import { getSessionUser, getAuthenticatedUser, requireAuthenticatedUser } from '../lib/auth.js'
 import { AppError } from '../lib/errors.js'
-import { requireCredit } from '../lib/credits.js'
+import { requireCredit, type CreditCharge } from '../lib/credits.js'
 import { logger } from '../lib/logger.js'
 import { imageReviewGenerationRequestSchema, imageReviewStepRequestSchema, imageReviewStylePreferencesUpdateSchema, imageReviewStylePreferencesOptimizeSchema, imageReviewStyleSaveRequestSchema, uploadedImageListSchema } from '../schemas/image-analysis.js'
 import { imageAnalysisExportRequestSchema } from '../schemas/image-analysis-export.js'
@@ -38,8 +38,11 @@ export async function analyzeImageContentHandler(req: Request, res: Response, ne
       res.write(`data: ${JSON.stringify(event)}\n\n`)
     }
 
+    // charge 提到 try 外：catch 需要区分「扣减本身失败（402，无需退款）」与「上游失败（需退款）」
+    let charge: CreditCharge | null = null
+
     try {
-      await requireCredit(getSessionUser(req)!.id, 'image_analysis')
+      charge = await requireCredit(getSessionUser(req)!.id, 'image_analysis')
       const data = await analyzeUploadedImages(files.map((file) => ({
         originalName: file.originalname,
         mimeType: file.mimetype,
@@ -65,6 +68,9 @@ export async function analyzeImageContentHandler(req: Request, res: Response, ne
       if (abortController.signal.aborted) {
         return
       }
+
+      // 上游失败：退回已扣积分（GL-P0-BILL-002）。charge 为 null 说明扣减自身失败（如 402），无需退款
+      await charge?.refund('评价生成失败自动退回')
 
       const message = error instanceof AppError ? error.message : '评价生成失败，请稍后重试'
       logger.error({ err: error }, 'Image analysis streaming error')

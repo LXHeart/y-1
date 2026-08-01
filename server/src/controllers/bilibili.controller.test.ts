@@ -23,7 +23,15 @@ const {
   }
 })
 
-vi.mock('../lib/credits.js', () => ({ requireCredit: vi.fn().mockResolvedValue(undefined) }))
+const refundMock = vi.hoisted(() => vi.fn<(note: string) => Promise<void>>().mockResolvedValue(undefined))
+vi.mock('../lib/credits.js', () => ({
+  requireCredit: vi.fn().mockResolvedValue({
+    userId: 'test-user-id',
+    feature: 'bilibili_analysis',
+    operationId: 'op-bilibili',
+    refund: refundMock,
+  }),
+}))
 beforeEach(() => {
   process.env.BILIBILI_PROXY_TOKEN_SECRET = 'bilibili-proxy-test-secret-1234567890'
   createBilibiliMediaReadStreamMock.mockClear()

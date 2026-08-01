@@ -15,6 +15,7 @@ import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.CreditsStubs;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,7 +42,7 @@ class VideoProductionControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void setUp() {
         reset(ai, credits);
-        when(credits.consume(any(), any())).thenReturn(Mono.empty());
+        CreditsStubs.stubDefaults(credits);
     }
 
     private String signed() {
@@ -99,7 +100,8 @@ class VideoProductionControllerIT extends IntelligenceItSupport {
     @DisplayName("成功 → 扣 video_production_script + 多模态 text/image parts + SSE")
     void streamsMultimodalVideoScript() {
         ArgumentCaptor<CreditFeature> feature = ArgumentCaptor.forClass(CreditFeature.class);
-        when(credits.consume(any(), feature.capture())).thenReturn(Mono.empty());
+        when(credits.consume(any(), feature.capture())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
         ArgumentCaptor<TextRunCommand> command = ArgumentCaptor.forClass(TextRunCommand.class);
         when(ai.startTextRun(command.capture())).thenReturn(Flux.just(
                 new ChatChunk("【镜头1】"), new ChatChunk("旁白：欢迎光临")));

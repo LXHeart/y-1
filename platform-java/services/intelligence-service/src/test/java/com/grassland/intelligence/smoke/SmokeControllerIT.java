@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.CreditsStubs;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import java.util.Map;
 import java.util.UUID;
@@ -42,7 +43,7 @@ class SmokeControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void stubQwen() {
         reset(credits);
-        when(credits.consume(any(), any())).thenReturn(Mono.empty());
+        CreditsStubs.stubDefaults(credits);
         QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(aResponse().withStatus(200).withBody(
                 "data: {\"choices\":[{\"delta\":{\"content\":\"草场是\"}}]}\n\n"
                 + "data: {\"choices\":[{\"delta\":{\"content\":\"内容平台\"}}]}\n\n"

@@ -150,4 +150,7 @@ credits:
   legacy:
     base-url: ${LEGACY_CREDITS_BASE_URL:http://backend:3000}
     internal-key: ${INTERNAL_API_KEY:}
-    consume-path: /api/internal/credits/consume
+    # 内部 bridge 在公共 `/api` 树之外（GL-P0-CRED-001）：nginx 对 `/api/internal/` 与 `/internal/` 均 404，
+    # 仅容器网络直连 backend:3000 可达。
+    consume-path: /internal/credits/consume
+    refund-path: /internal/credits/refund

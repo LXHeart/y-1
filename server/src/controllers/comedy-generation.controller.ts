@@ -14,7 +14,7 @@ export async function streamComedyScriptHandler(
   try {
     const { topic, duration } = comedyScriptRequestSchema.parse(req.body)
 
-    await requireCredit(getSessionUser(req)!.id, 'comedy_generation')
+    const charge = await requireCredit(getSessionUser(req)!.id, 'comedy_generation')
 
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
@@ -43,6 +43,8 @@ export async function streamComedyScriptHandler(
       }
     } catch (error: unknown) {
       if (controller.signal.aborted) return
+      // 上游失败：退回已扣积分（GL-P0-BILL-002）
+      await charge.refund('脱口秀文稿生成失败自动退回')
       const message = error instanceof AppError ? error.message : '脱口秀文稿生成失败'
       logger.error({ err: error }, 'Comedy script streaming error')
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`)

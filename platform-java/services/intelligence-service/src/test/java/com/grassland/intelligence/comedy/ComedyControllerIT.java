@@ -14,6 +14,7 @@ import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.CreditsStubs;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import java.util.Map;
 import java.util.UUID;
@@ -42,7 +43,7 @@ class ComedyControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void stubDefaults() {
         reset(ai, credits);
-        when(credits.consume(any(), any())).thenReturn(Mono.empty());
+        CreditsStubs.stubDefaults(credits);
     }
 
     private String signed() {
@@ -92,7 +93,8 @@ class ComedyControllerIT extends IntelligenceItSupport {
     @DisplayName("成功 → 200 流式 SSE：扣 comedy_generation + 李继刚 prompt(duration/wordCount/主题) + 逐块 + [DONE]")
     void streamsComedyScript() {
         ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
-        when(credits.consume(any(), featureCaptor.capture())).thenReturn(Mono.empty());
+        when(credits.consume(any(), featureCaptor.capture())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
 
         ArgumentCaptor<TextRunCommand> cmdCaptor = ArgumentCaptor.forClass(TextRunCommand.class);
         when(ai.startTextRun(cmdCaptor.capture()))

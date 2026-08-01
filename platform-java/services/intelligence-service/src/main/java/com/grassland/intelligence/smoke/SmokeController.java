@@ -53,15 +53,18 @@ public class SmokeController {
     @PostMapping("/api/intelligence/smoke/chat")
     public Mono<ResponseEntity<Flux<DataBuffer>>> chat(@RequestBody SmokeRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(c -> credits.consume(c.accountId(), CreditFeature.INTELLIGENCE_SMOKE).thenReturn(c))
-                .map(c -> {
+                .flatMap(c -> credits.consume(c.accountId(), CreditFeature.INTELLIGENCE_SMOKE))
+                .map(charge -> {
                     String prompt = (body != null && body.prompt() != null && !body.prompt().isBlank())
                             ? body.prompt()
                             : DEFAULT_PROMPT;
                     Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
                             ChatMessage.system("你是草场平台的助手，回答简短友好。"),
                             ChatMessage.user(prompt))))
-                            .map(this::contentPayload);
+                            .map(this::contentPayload)
+                            // 上游失败：退回已扣积分（GL-P0-BILL-002）
+                            .onErrorResume(error -> credits.refund(charge, "smoke 调用失败自动退回")
+                                    .then(Mono.error(error)));
                     Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
                     HttpHeaders h = new HttpHeaders();
                     h.setContentType(MediaType.TEXT_EVENT_STREAM);

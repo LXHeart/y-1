@@ -99,9 +99,13 @@ public class ImageAnalysisController {
         return callers.resolve(exchange.getRequest())
                 .onErrorResume(e -> Mono.error(AnonymousMarker.INSTANCE))
                 .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.IMAGE_ANALYSIS)
-                        .then(styles.styleAppendixFor(caller.accountId()))
-                        .map(app -> withStyle(baseInput, app)))
-                .flatMapMany(in -> analysis.analyze(images, in))
+                        .flatMap(charge -> styles.styleAppendixFor(caller.accountId())
+                                .map(app -> Map.entry(charge, withStyle(baseInput, app)))))
+                // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
+                .flatMapMany(pair -> analysis.analyze(images, pair.getValue())
+                        .onErrorResume(e -> credits.refund(pair.getKey(), "评价生成失败自动退回")
+                                .thenMany(Flux.just(errorFrame(e, ANALYZE_FALLBACK)))))
+                // 扣减/解析自身失败（402、匿名）不退款——没有成功扣减可退
                 .onErrorResume(e -> Flux.just(errorFrame(e, ANALYZE_FALLBACK)));
     }
 

@@ -52,14 +52,15 @@ public class ComedyController {
     @PostMapping("/api/comedy-generation/generate-script")
     public Mono<ResponseEntity<Flux<DataBuffer>>> generate(@RequestBody ComedyRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.COMEDY_GENERATION)
-                        .thenReturn(caller))
-                .map(caller -> {
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.COMEDY_GENERATION))
+                .map(charge -> {
                     Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
                             ComedyPrompts.system(body.duration()),
                             ComedyPrompts.user(body.topic()))))
                             .map(chunk -> frame(Map.of("content", chunk.content())))
-                            .onErrorResume(e -> Flux.just(frame(Map.of("error", ERROR_MESSAGE))));
+                            // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
+                            .onErrorResume(e -> credits.refund(charge, "脱口秀文稿生成失败自动退回")
+                                    .thenMany(Flux.just(frame(Map.of("error", ERROR_MESSAGE)))));
                     Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
                     HttpHeaders h = new HttpHeaders();
                     h.setContentType(MediaType.TEXT_EVENT_STREAM);

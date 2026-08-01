@@ -70,7 +70,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - 分析提供者和凭据由服务端持久化设置决定，浏览器不能直接调用第三方服务
 - SSE 流式输出用于文章大纲/正文生成和脱口秀生成（`fetch` + `response.body.getReader()`，非 EventSource）
 - 文章配图按段落拆分，用户可跳过单个段落
-- 积分扣减使用原子操作 `UPDATE ... WHERE balance >= 1 RETURNING`
+- 积分扣减使用原子操作 `UPDATE ... WHERE balance >= 1 RETURNING`，且余额 UPDATE 与流水 INSERT 必须在同一 `withDbTransaction` 内（GL-P0-CRED-001）
 - `queryDb<T>()` 返回 `QueryResult<T>` — 始终用 `.rows` 访问数据
 
 ## API routes
@@ -106,6 +106,8 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - 管理员路由需要 `requireAuthenticatedUser` + `requireAdmin` 双重中间件
 - 视频制作图片用 base64 在 JSON body 中传输（≤9 张），`express.json` limit 已调至 10MB
 - `video-production.service.ts` 的 `isVideoGenerationAvailable()` 是「视频生成是否可用」的唯一真相源（`VIDEO_GENERATION_IMPLEMENTED` 常量硬关，无 env 开关）。**不可用能力不得先扣 `video_production_video` 积分**：controller 的 gate 必须留在 `requireCredit` 之前，`generate-video` 返回 501。前端经 `GET /api/video-production/capabilities` fail-closed 禁用入口。接入 Seedance 时改常量一处即全链生效
+- 草场 credits bridge 挂在 `/internal/credits/{consume,refund}`，**不在 `/api` 树下**（nginx 只反代 `/api/`，并对 `/internal/` 与旧 `/api/internal/` 显式 404）；`INTERNAL_API_KEY` 未配置时 fail-closed 503，带任一 `X-Forwarded-*`/`Forwarded` 头一律 404。Java 侧路径在 intelligence `application.yml` 里，改路径要两边一起改
+- `requireCredit()` 返回 `CreditCharge` 句柄，上游失败时调 `charge.refund(note)` 写 `refund` 流水（GL-P0-BILL-002）。退款键是 `refund:<operationId>`，靠 `operation_id` 唯一索引保证一次扣减至多一次退款；`refund()` 失败只记日志不抛，避免掩盖原始错误。用户主动 abort 不退款（内容已流出）
 - 环境变量定义在 `server/src/lib/env.ts`，是运行时配置的唯一来源
 - API 表描述逻辑契约；实际 upstream 由 edge-bff RouteManifest 与对应 flag 决定，未启用的 Java 路由回落 legacy
 

@@ -53,14 +53,15 @@ public class VideoProductionController {
             @RequestBody ScriptRequest body,
             ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.VIDEO_PRODUCTION_SCRIPT)
-                        .thenReturn(caller))
-                .map(caller -> {
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.VIDEO_PRODUCTION_SCRIPT))
+                .map(charge -> {
                     Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
                                     VideoScriptPrompts.system(body.videoStyle(), body.industryType()),
                                     VideoScriptPrompts.user(body))))
                             .map(chunk -> frame(Map.of("content", chunk.content())))
-                            .onErrorResume(error -> Flux.just(frame(Map.of("error", ERROR_MESSAGE))));
+                            // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
+                            .onErrorResume(error -> credits.refund(charge, "视频脚本生成失败自动退回")
+                                    .thenMany(Flux.just(frame(Map.of("error", ERROR_MESSAGE)))));
                     Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.TEXT_EVENT_STREAM);

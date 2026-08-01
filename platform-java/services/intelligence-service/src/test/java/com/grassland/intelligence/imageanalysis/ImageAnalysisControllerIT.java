@@ -14,6 +14,7 @@ import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.CreditsStubs;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import com.grassland.intelligence.imageanalysis.StylePreferencesService.StyleSnapshot;
 import java.util.List;
@@ -45,7 +46,7 @@ class ImageAnalysisControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void resetMocks() {
         Mockito.reset(ai, credits);
-        when(credits.consume(any(), any())).thenReturn(Mono.empty());
+        CreditsStubs.stubDefaults(credits);
         when(ai.completeText(any())).thenReturn(Mono.just(JSON_RESULT));
     }
 
@@ -53,7 +54,8 @@ class ImageAnalysisControllerIT extends IntelligenceItSupport {
 
     @Test
     void analyzeStreamsProgressResultDoneAndChargesImageAnalysis() {
-        when(credits.consume(any(), eq(CreditFeature.IMAGE_ANALYSIS))).thenReturn(Mono.empty());
+        when(credits.consume(any(), eq(CreditFeature.IMAGE_ANALYSIS))).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
 
         String body = client().post().uri("/api/image-analysis/analyze")
                 .header(header(), sign("user-analyze", null))

@@ -354,16 +354,25 @@ export async function analyzeDouyinVideoHandler(req: Request, res: Response, nex
 
   try {
     const { proxyVideoUrl } = analyzeDouyinVideoRequest.parse(req.body)
-    await requireCredit(getSessionUser(req)!.id, 'video_analysis')
-    const data = await analyzeDouyinVideoByProxyUrl(proxyVideoUrl, {
-      signal: abortController.signal,
-      userId: getSessionUser(req)?.id,
-    })
+    const charge = await requireCredit(getSessionUser(req)!.id, 'video_analysis')
 
-    res.json({
-      success: true,
-      data,
-    })
+    try {
+      const data = await analyzeDouyinVideoByProxyUrl(proxyVideoUrl, {
+        signal: abortController.signal,
+        userId: getSessionUser(req)?.id,
+      })
+
+      res.json({
+        success: true,
+        data,
+      })
+    } catch (error: unknown) {
+      // 上游失败：退回已扣积分（GL-P0-BILL-002）。用户主动断开不退（内容已产出）
+      if (!abortController.signal.aborted) {
+        await charge.refund('抖音视频分析失败自动退回')
+      }
+      throw error
+    }
   } catch (error: unknown) {
     next(error)
   } finally {

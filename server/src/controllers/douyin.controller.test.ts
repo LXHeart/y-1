@@ -25,7 +25,15 @@ const {
   }
 })
 
-vi.mock('../lib/credits.js', () => ({ requireCredit: vi.fn().mockResolvedValue(undefined) }))
+const refundMock = vi.hoisted(() => vi.fn<(note: string) => Promise<void>>().mockResolvedValue(undefined))
+vi.mock('../lib/credits.js', () => ({
+  requireCredit: vi.fn().mockResolvedValue({
+    userId: 'test-user-id',
+    feature: 'douyin_analysis',
+    operationId: 'op-douyin',
+    refund: refundMock,
+  }),
+}))
 beforeEach(() => {
   process.env.DOUYIN_PROXY_TOKEN_SECRET = 'douyin-proxy-test-secret-1234567890'
   createDouyinMediaReadStreamMock.mockClear()

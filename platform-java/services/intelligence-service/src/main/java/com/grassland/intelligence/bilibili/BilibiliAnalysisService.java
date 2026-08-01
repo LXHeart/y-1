@@ -73,9 +73,12 @@ public class BilibiliAnalysisService {
         String publicProxyUrl = buildPublicProxyUrl(token);
         List<ContentPart> parts = List.of(ContentPart.video(publicProxyUrl), ContentPart.text(BilibiliAnalysisPrompts.analysis()));
         return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
-                .then(ai.completeMultimodalMeta(parts, timeout)
-                        .map(meta -> new BilibiliAnalysisOutcome.Java(
-                                BilibiliAnalysisResultNormalizer.normalize(meta.content(), meta.runId()))));
+                .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
+                        .map(meta -> (BilibiliAnalysisOutcome) new BilibiliAnalysisOutcome.Java(
+                                BilibiliAnalysisResultNormalizer.normalize(meta.content(), meta.runId())))
+                        // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
+                        .onErrorResume(error -> credits.refund(charge, "Bilibili 视频分析失败自动退回")
+                                .then(Mono.error(error))));
     }
 
     /**
@@ -93,9 +96,12 @@ public class BilibiliAnalysisService {
         String publicProxyUrl = buildPublicProxyUrl(token);
         List<ContentPart> parts = List.of(ContentPart.video(publicProxyUrl), ContentPart.text(BilibiliAnalysisPrompts.recreation()));
         return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
-                .then(ai.completeMultimodalMeta(parts, timeout)
-                        .map(meta -> new BilibiliAnalysisOutcome.Java(
-                                BilibiliRecreationResultNormalizer.normalize(meta.content(), meta.runId()))));
+                .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
+                        .map(meta -> (BilibiliAnalysisOutcome) new BilibiliAnalysisOutcome.Java(
+                                BilibiliRecreationResultNormalizer.normalize(meta.content(), meta.runId())))
+                        // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
+                        .onErrorResume(error -> credits.refund(charge, "Bilibili 复刻分析失败自动退回")
+                                .then(Mono.error(error))));
     }
 
     private boolean isJavaEligible(BilibiliMediaTarget target, long duration) {

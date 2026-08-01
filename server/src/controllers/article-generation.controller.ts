@@ -28,14 +28,21 @@ export async function generateTitlesHandler(
     const abortOnClose = (): void => controller.abort()
     res.on('close', abortOnClose)
 
-    await requireCredit(getSessionUser(req)!.id, 'article_generation')
-    const titles = await dispatch.generateTitles(topic, {
-      signal: controller.signal,
-      userId: getSessionUser(req)?.id,
-      platform,
-    })
+    const charge = await requireCredit(getSessionUser(req)!.id, 'article_generation')
 
-    res.json({ success: true, data: { titles } })
+    try {
+      const titles = await dispatch.generateTitles(topic, {
+        signal: controller.signal,
+        userId: getSessionUser(req)?.id,
+        platform,
+      })
+
+      res.json({ success: true, data: { titles } })
+    } catch (error: unknown) {
+      // 上游失败：退回已扣积分（GL-P0-BILL-002）
+      await charge.refund('标题生成失败自动退回')
+      throw error
+    }
   } catch (error: unknown) {
     next(error)
   }
