@@ -77,4 +77,22 @@ class MailTemplatesTest {
         assertThat(mail.subject()).isEqualTo(notif.title());
         assertThat(mail.body()).isEqualTo(notif.body());
     }
+
+    @Test
+    void residualEventsCompleteMailCoverage() {
+        // GL-P1-NOTIFY-001 残留补全：4 个事件经委托拿到文案，且均非 PERMISSION → 落入高价值子集，入队邮件。
+        Map<String, String> expectedCategory = Map.of(
+                "DisputeDecided", "dispute",
+                "AdjudicationReopened", "dispute",
+                "FundsReserved", "wallet",
+                "FundsReversed", "wallet");
+        JsonNode p = payload(Map.of("disputeId", "d-1", "engagementRef", "eng-1", "amountCents", 600));
+        expectedCategory.forEach((eventType, category) -> {
+            MailTemplate mail = MailTemplates.mailTemplate(eventType, p);
+            assertThat(mail).as(eventType).isNotNull();
+            assertThat(mail.category()).as(eventType).isEqualTo(category);
+            assertThat(mail.subject()).as(eventType).isNotBlank();
+            assertThat(mail.body()).as(eventType).isNotBlank();
+        });
+    }
 }

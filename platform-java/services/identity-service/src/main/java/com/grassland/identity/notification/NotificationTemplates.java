@@ -93,22 +93,34 @@ public final class NotificationTemplates {
             case "DisputeAssigned" -> new Template(
                     NotificationCategory.DISPUTE, "争议已进入审判",
                     "你参与的争议已组建审判庭并开始投票", LINK_DISPUTES, disputePayload(payload));
+            case "AdjudicationReopened" -> new Template(
+                    NotificationCategory.DISPUTE, "争议已重新审判",
+                    "你参与的争议已重新进入新一轮审判", LINK_DISPUTES, disputePayload(payload));
             case "DisputeAppealed" -> new Template(
                     NotificationCategory.DISPUTE, "争议已申诉",
                     "你参与的争议已提出申诉", LINK_DISPUTES, disputePayload(payload));
             case "AdjudicationEscalated" -> new Template(
                     NotificationCategory.DISPUTE, "争议已升级客服",
                     "你参与的争议已升级至客服终审", LINK_DISPUTES, disputePayload(payload));
+            case "DisputeDecided" -> new Template(
+                    NotificationCategory.DISPUTE, "争议已判决",
+                    "你参与的争议已作出判决，点击查看结果", LINK_DISPUTES, disputePayload(payload));
             case "DisputeFinalized" -> new Template(
                     NotificationCategory.DISPUTE, "争议已终裁",
                     "你参与的争议已出终裁结果", LINK_DISPUTES, disputePayload(payload));
             // ---------- finance：钱包与资金 ----------
+            case "FundsReserved" -> new Template(
+                    NotificationCategory.WALLET, "任务报酬已托管",
+                    "该笔履约的报酬已进入托管预留", LINK_WALLET, walletPayload(payload));
             case "FundsCaptured" -> new Template(
                     NotificationCategory.WALLET, "佣金已到账",
                     "任务佣金已入账到你的钱包", LINK_WALLET, walletPayload(payload));
             case "FundsReleased" -> new Template(
                     NotificationCategory.WALLET, "托管资金已释放",
                     "该笔托管资金已释放，不再计入本次履约", LINK_WALLET, walletPayload(payload));
+            case "FundsReversed" -> new Template(
+                    NotificationCategory.WALLET, "结算资金已冲正",
+                    "该笔履约的资金已被冲正退回", LINK_WALLET, walletPayload(payload));
             case "AccountCredited" -> new Template(
                     NotificationCategory.WALLET, "账户已充值",
                     "你的组织账户已完成充值", LINK_WALLET, walletPayload(payload));
@@ -130,6 +142,7 @@ public final class NotificationTemplates {
         putIfText(map, payload, "disputeId");
         putIfText(map, payload, "engagementRef");
         putIfText(map, payload, "status");
+        putIfText(map, payload, "decision");
         putIfText(map, payload, "finalDecision");
         return map;
     }

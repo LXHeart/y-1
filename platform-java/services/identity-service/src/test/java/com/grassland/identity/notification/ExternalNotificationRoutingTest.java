@@ -71,8 +71,9 @@ class ExternalNotificationRoutingTest {
 
     @Test
     void disputeEventsGoToOpener() {
-        for (String eventType :
-                List.of("DisputeAssigned", "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized")) {
+        for (String eventType : List.of(
+                "DisputeAssigned", "AdjudicationReopened", "DisputeDecided",
+                "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized")) {
             assertThat(resolve(eventType, Map.of(
                     "disputeId", "d-1", "openedByAccountId", OWNER, "openedByRole", "merchant")))
                     .as(eventType)
@@ -121,7 +122,8 @@ class ExternalNotificationRoutingTest {
 
     @Test
     void fundEventsGoToPayeeUserAccountNotLedgerAccount() {
-        for (String eventType : List.of("FundsCaptured", "FundsReleased", "AccountCredited")) {
+        for (String eventType : List.of(
+                "FundsReserved", "FundsCaptured", "FundsReleased", "FundsReversed", "AccountCredited")) {
             // accountId 是 finance ledger account，绝不能当收件人。
             assertThat(resolve(eventType, Map.of(
                     "accountId", "ledger-1", "payeeAccountId", RECOMMENDER, "amountCents", 600)))
@@ -165,6 +167,41 @@ class ExternalNotificationRoutingTest {
         assertThat(template.category()).isEqualTo(NotificationCategory.DISPUTE);
         assertThat(template.payload()).doesNotContainKey("openedByAccountId");
         assertThat(template.body()).doesNotContain(OWNER);
+    }
+
+    @Test
+    void disputeDecidedAndReopenedTemplatesAreDisputeCategoryWithoutLeak() {
+        // GL-P1-NOTIFY-001 残留补全：DisputeDecided 携带判决方向供前端渲染，但不泄露账号。
+        NotificationTemplates.Template decided = NotificationTemplates.template(
+                "DisputeDecided",
+                payload(Map.of("disputeId", "d-1", "openedByAccountId", OWNER, "decision", "for_recommender")));
+
+        assertThat(decided).isNotNull();
+        assertThat(decided.category()).isEqualTo(NotificationCategory.DISPUTE);
+        assertThat(decided.payload()).containsEntry("decision", "for_recommender")
+                .doesNotContainKey("openedByAccountId");
+        assertThat(decided.body()).doesNotContain(OWNER);
+
+        NotificationTemplates.Template reopened = NotificationTemplates.template(
+                "AdjudicationReopened",
+                payload(Map.of("disputeId", "d-2", "openedByAccountId", OWNER, "round", 2)));
+        assertThat(reopened).isNotNull();
+        assertThat(reopened.category()).isEqualTo(NotificationCategory.DISPUTE);
+        assertThat(reopened.payload()).doesNotContainKey("openedByAccountId");
+    }
+
+    @Test
+    void fundsReservedAndReversedTemplatesAreWalletCategoryWithAmounts() {
+        // GL-P1-NOTIFY-001 残留补全：FundsReserved/FundsReversed 走钱包类，携带金额供前端渲染。
+        for (String eventType : List.of("FundsReserved", "FundsReversed")) {
+            NotificationTemplates.Template template = NotificationTemplates.template(
+                    eventType, payload(Map.of("engagementRef", "eng-1", "amountCents", 600, "payeeAccountId", RECOMMENDER)));
+
+            assertThat(template).as(eventType).isNotNull();
+            assertThat(template.category()).as(eventType).isEqualTo(NotificationCategory.WALLET);
+            assertThat(template.payload()).as(eventType).containsEntry("amountCents", 600L)
+                    .doesNotContainKey("payeeAccountId");
+        }
     }
 
     // ---- helpers ----

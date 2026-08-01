@@ -82,10 +82,12 @@ public class NotificationRecipientResolver {
             // 争议对方通知：marketplace 派生的 EngagementDisputed 携带已解析的对方账号（草场 Slice 12 缺口补全）。
             case "EngagementDisputed" -> accountIds(payload, "counterpartyAccountId");
             // 争议：只有开启人在 trust 本地表内（对方账号缺口见 docs 路线图第 8 项）。
-            case "DisputeAssigned", "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized" ->
+            case "DisputeAssigned", "AdjudicationReopened", "DisputeDecided",
+                    "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized" ->
                     accountIds(payload, "openedByAccountId");
             // 资金：payeeAccountId 是用户账号（不是 finance ledger account）。
-            case "FundsCaptured", "FundsReleased", "AccountCredited" -> accountIds(payload, "payeeAccountId");
+            case "FundsReserved", "FundsCaptured", "FundsReleased", "FundsReversed", "AccountCredited" ->
+                    accountIds(payload, "payeeAccountId");
             default -> java.util.List.of();
         };
     }
