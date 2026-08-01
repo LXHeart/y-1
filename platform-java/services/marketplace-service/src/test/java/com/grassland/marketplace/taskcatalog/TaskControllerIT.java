@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.marketplace.MarketplaceItSupport;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -425,6 +426,140 @@ class TaskControllerIT extends MarketplaceItSupport {
         String snapTitle = db.sql("SELECT title FROM task_version WHERE task_id = CAST(:id AS uuid) ORDER BY version DESC LIMIT 1")
                 .bind("id", id).map(r -> r.get("title", String.class)).one().block();
         assertThat(snapTitle).isEqualTo("终标题");
+    }
+
+    // ---------- GL-P1-TASK-001 Stage 2：全局任务大厅 feed ----------
+
+    /** feed 跨组织、仅 published：我发的两条在、草稿不在、返回项全 published（单例容器数据累积，不锁总数）。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void feedReturnsOnlyPublishedAcrossOrgs() {
+        String orgA = UUID.randomUUID().toString();
+        String orgB = UUID.randomUUID().toString();
+        publish(UUID.randomUUID().toString(), orgA, "basic_publish", "feed-A-唯一", null);
+        publish(UUID.randomUUID().toString(), orgB, "basic_publish", "feed-B-唯一", null);
+        createDraft(UUID.randomUUID().toString(), orgA, "basic_publish", "feed-草稿-唯一");
+
+        List<Map<String, Object>> items = itemsOf(client().get().uri("/api/tasks/feed?limit=50")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody());
+        List<String> titles = items.stream().map(m -> (String) m.get("title")).toList();
+        assertThat(titles).contains("feed-A-唯一", "feed-B-唯一").doesNotContain("feed-草稿-唯一");
+        assertThat(items).allSatisfy(item -> assertThat(item.get("status")).isEqualTo("published"));
+    }
+
+    /** keyset 游标分页：用唯一 platform 隔离恰好 3 条，limit=2 → 第 1 页 2 条 hasMore，第 2 页 1 条无重叠。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void feedPaginatesByCursorWithoutOverlap() {
+        String platform = "pg" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);  // ≤ varchar(32)
+        String org = UUID.randomUUID().toString();
+        for (int i = 0; i < 3; i++) {
+            publishPlatform(UUID.randomUUID().toString(), org, "t" + i, platform);
+        }
+
+        Map<String, Object> firstBody = feedPage(null, 2, platform);
+        List<Map<String, Object>> firstItems = itemsOf(firstBody);
+        Map<String, Object> firstData = dataOf(firstBody);
+        assertThat(firstItems).hasSize(2);
+        assertThat(firstData.get("hasMore")).isEqualTo(true);
+        String nextCursor = (String) firstData.get("nextCursor");
+        assertThat(nextCursor).isNotBlank();
+
+        Map<String, Object> secondBody = feedPage(nextCursor, 2, platform);
+        List<Map<String, Object>> secondItems = itemsOf(secondBody);
+        Map<String, Object> secondData = dataOf(secondBody);
+        assertThat(secondItems).hasSize(1);
+        assertThat(secondData.get("hasMore")).isEqualTo(false);
+        List<String> firstIds = firstItems.stream().map(m -> (String) m.get("id")).toList();
+        assertThat(secondItems.stream().map(m -> (String) m.get("id")).toList()).noneMatch(firstIds::contains);
+    }
+
+    /** 平台筛选：douyin 任务在结果、xiaohongshu 不在。 */
+    @Test
+    void feedFiltersByPlatform() {
+        String org = UUID.randomUUID().toString();
+        String douyinId = publishPlatform(UUID.randomUUID().toString(), org, "抖音", "douyin");
+        String xhsId = publishPlatform(UUID.randomUUID().toString(), org, "小红书", "xiaohongshu");
+
+        List<String> ids = itemsOf(feedPage(null, 20, "douyin")).stream().map(m -> (String) m.get("id")).toList();
+        assertThat(ids).contains(douyinId).doesNotContain(xhsId);
+    }
+
+    /** 过期 deadline 被排除；未来 deadline 仍可见（用唯一 platform 隔离累积数据）。 */
+    @Test
+    void feedExcludesExpiredDeadlineTasks() {
+        String platform = "dl" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);  // ≤ varchar(32)
+        String org = UUID.randomUUID().toString();
+        String expired = publishDeadlinePlatform(UUID.randomUUID().toString(), org,
+                java.time.Instant.now().minusSeconds(3600), platform);
+        String open = publishDeadlinePlatform(UUID.randomUUID().toString(), org,
+                java.time.Instant.now().plusSeconds(3600), platform);
+
+        List<String> ids = itemsOf(feedPage(null, 20, platform)).stream().map(m -> (String) m.get("id")).toList();
+        assertThat(ids).containsExactly(open).doesNotContain(expired);
+    }
+
+    /** 坏游标不报错，按首页返回（避免前端持过期游标硬失败）。 */
+    @Test
+    void feedIgnoresInvalidCursor() {
+        String org = UUID.randomUUID().toString();
+        publish(UUID.randomUUID().toString(), org, "basic_publish", "x", null);
+        client().get().uri("/api/tasks/feed?cursor=not-a-valid-cursor")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> feedPage(String cursor, int limit, String platform) {
+        String uri = "/api/tasks/feed?limit=" + limit;
+        if (platform != null) {
+            uri += "&platform=" + platform;
+        }
+        if (cursor != null) {
+            uri += "&cursor=" + cursor;
+        }
+        return client().get().uri(uri)
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+    }
+
+    private Map<String, Object> feedPage(String cursor, int limit) {
+        return feedPage(cursor, limit, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> itemsOf(Map<String, Object> body) {
+        return (List<Map<String, Object>>) ((Map<String, Object>) body.get("data")).get("items");
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> dataOf(Map<String, Object> body) {
+        return (Map<String, Object>) body.get("data");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String publishPlatform(String merchant, String org, String title, String platform) {
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body(org, title, platform, null))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String publishDeadlinePlatform(String merchant, String org, java.time.Instant deadline, String platform) {
+        Map<String, Object> b = body(org, "截止任务", platform, null);
+        b.put("applicationDeadline", deadline.toString());
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
     }
 
     @SuppressWarnings("unchecked")

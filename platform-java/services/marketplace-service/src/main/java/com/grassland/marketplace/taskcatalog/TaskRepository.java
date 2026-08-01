@@ -38,6 +38,9 @@ public class TaskRepository {
         this.db = db;
     }
 
+    /** 任务大厅筛选条件（GL-P1-TASK-001 Stage 2）。字段均可空（null=不过滤该维度）。 */
+    public record FeedFilter(String platform, String contentForm, Long minBountyCents) {}
+
     /**
      * 创建即发布（兼容 {@code POST /api/tasks}）：status=published，published_at=now，落 v1 快照。
      * 由 controller 包进「INSERT task + INSERT task_version + outbox」同一 R2DBC 事务。
@@ -141,6 +144,42 @@ public class TaskRepository {
         return db.sql("SELECT " + SELECT_COLS + " FROM task WHERE id = CAST(:id AS uuid)")
                 .bind("id", id)
                 .map(TaskRepository::map).one();
+    }
+
+    /**
+     * 全局任务大厅（GL-P1-TASK-001 Stage 2）：跨组织 feed，仅 published 且未截止，可选筛选 + keyset 游标分页。
+     *
+     * <p>排序 {@code (created_at DESC, id DESC)} 稳定；游标 = 上一页最后一行的 {@code (created_at, id)}，
+     * 取「更老」的下一页（{@code (created_at, id) < (cursorTs, cursorId)}，DESC 下即游标之后的行）。
+     * {@code cursor} 为 null 时首页（不带 keyset 谓词，避免 null/值混合绑定的类型歧义）。
+     * {@code limit} 已 +1（调用方据此判 hasMore）；返回行数 ≤ limit。
+     */
+    public Flux<Task> findFeed(FeedFilter filter, Instant cursorTs, String cursorId, int limit) {
+        boolean firstPage = cursorTs == null;
+        String predicate = "status = 'published'"
+                + " AND (application_deadline IS NULL OR application_deadline > now())"
+                + (filter.platform() != null ? " AND platform = :platform" : "")
+                + (filter.contentForm() != null ? " AND content_form = :contentForm" : "")
+                + (filter.minBountyCents() != null ? " AND bounty_cents IS NOT NULL AND bounty_cents >= :minBountyCents" : "")
+                + (firstPage ? "" : " AND (created_at, id) < (CAST(:cursorTs AS timestamptz), CAST(:cursorId AS uuid))");
+        String sql = "SELECT " + SELECT_COLS + " FROM task WHERE " + predicate
+                + " ORDER BY created_at DESC, id DESC LIMIT :limit";
+        var spec = db.sql(sql).bind("limit", limit);
+        // 只绑定 SQL 中实际出现的命名参数：r2dbc-postgresql 对 SQL 里不存在的标识符 bind/bindNull 会抛
+        // NoSuchElementException，故筛选子句省略时连 bindNull 都不能调（controller 已把空白归一为 null）。
+        if (filter.platform() != null) {
+            spec = spec.bind("platform", filter.platform());
+        }
+        if (filter.contentForm() != null) {
+            spec = spec.bind("contentForm", filter.contentForm());
+        }
+        if (filter.minBountyCents() != null) {
+            spec = spec.bind("minBountyCents", filter.minBountyCents());
+        }
+        if (!firstPage) {
+            spec = spec.bind("cursorTs", cursorTs.atOffset(ZoneOffset.UTC)).bind("cursorId", cursorId);
+        }
+        return spec.map(TaskRepository::map).all();
     }
 
     /** 列某 org 的任务；status 为空则不限（大厅默认查 published 由调用方传入）。 */

@@ -6,7 +6,10 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.MediaType;
@@ -193,6 +196,50 @@ public class TaskController {
     }
 
     /**
+     * 全局任务大厅（GL-P1-TASK-001 Stage 2）：跨组织 feed，仅 published 且未截止。
+     *
+     * <p>任意已登录 caller 可查（推荐官浏览大厅）。keyset 游标分页（{@code created_at DESC, id DESC}），
+     * 筛选 platform/contentForm/minBountyCents。距离筛选未做（task 无地理位置字段，避免发明）。
+     * 响应 {@code {items, nextCursor, hasMore}}，与按 org 的 {@code GET /api/tasks} 裸数组形状区分。
+     * 路由字面量 {@code feed} 在 PathPattern 优先于 {@code {id}}，命中既有 {@code /api/tasks**} BFF flag。
+     */
+    @GetMapping("/api/tasks/feed")
+    public Mono<ResponseEntity<Map<String, Object>>> feed(
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String contentForm,
+            @RequestParam(required = false) Long minBountyCents,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false, defaultValue = "20") int limit,
+            ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> {
+                    int safeLimit = Math.max(1, Math.min(limit, 50));
+                    FeedCursor decoded = FeedCursor.decode(cursor);
+                    TaskRepository.FeedFilter filter = new TaskRepository.FeedFilter(
+                            blankToNull(platform), blankToNull(contentForm),
+                            (minBountyCents == null || minBountyCents < 0) ? null : minBountyCents);
+                    return tasks.findFeed(filter,
+                                    decoded == null ? null : decoded.ts(),
+                                    decoded == null ? null : decoded.id(),
+                                    safeLimit + 1)
+                            .collectList()
+                            .map(rows -> feedBody(rows, safeLimit));
+                });
+    }
+
+    /** 组装 feed 分页体：取 limit+1 判 hasMore，nextCursor 为本页最后一行的 (created_at, id)。 */
+    private ResponseEntity<Map<String, Object>> feedBody(List<Task> rows, int limit) {
+        boolean hasMore = rows.size() > limit;
+        List<Task> page = hasMore ? rows.subList(0, limit) : rows;
+        String nextCursor = hasMore && !page.isEmpty() ? FeedCursor.encode(page.get(page.size() - 1)) : null;
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("items", page.stream().map(this::toBody).toList());
+        data.put("nextCursor", nextCursor);
+        data.put("hasMore", hasMore);
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /**
      * 本组织的发布用量（D-05 额度的「已用」侧）。
      *
      * <p>补 identity {@code GET /api/organizations/{orgId}/quota} 的缺口——那里只给**上限**
@@ -334,5 +381,37 @@ public class TaskController {
 
     private static <T> Mono<T> fail(int status, String message) {
         return Mono.error(new MarketplaceException(status, message));
+    }
+
+    private static String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value;
+    }
+
+    /**
+     * feed keyset 游标（GL-P1-TASK-001 Stage 2）：opaque base64url 编码 {@code createdAt|id}。
+     * 坏游标 → decode 返回 null（当首页，不报错），避免前端持有过期游标时硬失败。
+     */
+    record FeedCursor(Instant ts, String id) {
+        static String encode(Task task) {
+            String raw = task.createdAt().toString() + "|" + task.id();
+            return Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+        }
+
+        static FeedCursor decode(String cursor) {
+            if (cursor == null || cursor.isBlank()) {
+                return null;
+            }
+            try {
+                String raw = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+                int sep = raw.lastIndexOf('|');
+                if (sep <= 0 || sep == raw.length() - 1) {
+                    return null;
+                }
+                return new FeedCursor(Instant.parse(raw.substring(0, sep)), raw.substring(sep + 1));
+            } catch (Exception error) {
+                return null;
+            }
+        }
     }
 }
