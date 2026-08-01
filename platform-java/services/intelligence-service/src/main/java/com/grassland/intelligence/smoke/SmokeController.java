@@ -6,6 +6,8 @@ import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.Sse;
 import com.grassland.intelligence.ai.TextRunCommand;
+import com.grassland.intelligence.credits.CreditFeature;
+import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import java.util.List;
 import java.util.Map;
@@ -25,8 +27,12 @@ import reactor.core.publisher.Mono;
  * 内部冒烟端点（草场 intelligence Slice 1）——非业务，验证整条链路：
  * edge-bff 断言 → intelligence callerResolver → 平台默认 Qwen 流式 → SSE 字节级透传。
  *
- * <p>不扣积分（冒烟免扣；积分链路由 {@code CreditsClient} 单测 + 后续业务 slice 真实验证）。
- * 后续业务 controller（脱口秀等）结构与本端点同构：{@code resolve → startTextRun → Sse.stream}。
+ * <p><b>扣积分 + 限流</b>（GL-P0-SEC-002）。本端点真实消耗平台 Qwen 上游，此前只要求登录、
+ * 既不扣分也不限流，任何登录账号可无成本驱动上游。现按 {@link CreditFeature#INTELLIGENCE_SMOKE}
+ * 扣 1 积分，并由 {@link SmokePreflightFilter} 做每账号限流。扣分在 {@code startTextRun} 之前，
+ * 积分不足直接 402、不触发上游调用。
+ *
+ * <p>后续业务 controller（脱口秀等）结构与本端点同构：{@code resolve → consume → startTextRun → Sse.stream}。
  */
 @RestController
 public class SmokeController {
@@ -35,16 +41,19 @@ public class SmokeController {
 
     private final IntelligenceCallerResolver callers;
     private final AiCapabilityAdapter ai;
+    private final CreditsClient credits;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public SmokeController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai) {
+    public SmokeController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits) {
         this.callers = callers;
         this.ai = ai;
+        this.credits = credits;
     }
 
     @PostMapping("/api/intelligence/smoke/chat")
     public Mono<ResponseEntity<Flux<DataBuffer>>> chat(@RequestBody SmokeRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
+                .flatMap(c -> credits.consume(c.accountId(), CreditFeature.INTELLIGENCE_SMOKE).thenReturn(c))
                 .map(c -> {
                     String prompt = (body != null && body.prompt() != null && !body.prompt().isBlank())
                             ? body.prompt()

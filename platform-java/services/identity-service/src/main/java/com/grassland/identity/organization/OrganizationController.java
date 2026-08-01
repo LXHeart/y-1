@@ -6,7 +6,6 @@ import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.Membership;
 import com.grassland.identity.membership.MembershipRepository;
 import com.grassland.identity.membership.MembershipRole;
-import com.grassland.identity.membership.OrgAuthorization;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -25,16 +24,20 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
- * 商家主体（Organization）HTTP 入口。草场身份域 Slice 2E；Slice 2F 加创建时种 OWNER 成员 + 权限升级端点。
+ * 商家主体（Organization）HTTP 入口。草场身份域 Slice 2E；Slice 2F 加创建时种 OWNER 成员行。
  *
  * <ul>
  *   <li>POST /api/organizations — 创建组织（当前 account 为 owner），种 OWNER 成员行，写 outbox {@code OrganizationCreated} 事件。</li>
  *   <li>GET /api/organizations/{id} — 取单个组织。</li>
  *   <li>GET /api/organizations — 列出当前 account 名下组织。</li>
- *   <li>POST /api/organizations/{id}/permissions/grant — 升级商家准入权限（单调升级），需 OWNER，写 outbox {@code MerchantPermissionGranted}。</li>
  * </ul>
  *
- * <p>所有端点经 {@link CurrentAccountResolver} 鉴权（需登录 session）；权限升级额外经 {@link OrgAuthorization} 限定 OWNER。
+ * <p>所有端点经 {@link CurrentAccountResolver} 鉴权（需登录 session）。
+ *
+ * <p><b>权限升级不在本 controller。</b>商家准入等级只能经
+ * {@code PermissionRequestController} 的审核工作流变更（org OWNER 提交申请 + 材料校验 → 平台 admin
+ * 审核 approve → 升 tier）。曾经存在的 {@code POST /{id}/permissions/grant} 是 Slice 2F 的 dev 地基，
+ * 允许 org owner 无审核把自己单调升到最高 tier（GL-P0-SEC-002），已随审核流上线删除；不要重新引入。
  */
 @RestController
 @RequestMapping("/api/organizations")
@@ -43,17 +46,15 @@ public class OrganizationController {
     private final CurrentAccountResolver accounts;
     private final OrganizationRepository organizations;
     private final MembershipRepository memberships;
-    private final OrgAuthorization authz;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
     public OrganizationController(CurrentAccountResolver accounts, OrganizationRepository organizations,
-                                  MembershipRepository memberships, OrgAuthorization authz, OutboxRepository outbox,
+                                  MembershipRepository memberships, OutboxRepository outbox,
                                   TransactionalOperator transactions) {
         this.accounts = accounts;
         this.organizations = organizations;
         this.memberships = memberships;
-        this.authz = authz;
         this.outbox = outbox;
         this.transactions = transactions;
     }
@@ -85,36 +86,6 @@ public class OrganizationController {
         return accounts.resolve(request)
                 .flatMap(acc -> organizations.findByOwner(acc.id()).collectList()
                         .map(list -> ResponseEntity.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
-    }
-
-    /**
-     * 升级商家准入权限（Slice 2F，HLD 1.3 事实 7）。单调升级：降级或同级 → 409。
-     * 本轮 owner 自授予（dev 地基），真实审核工作流（材料/审核/额度/申诉）走 HLD D-05。
-     */
-    @PostMapping("/{id}/permissions/grant")
-    public Mono<ResponseEntity<Map<String, Object>>> grantPermission(@PathVariable String id,
-                                                                     @RequestBody GrantPermissionRequest body,
-                                                                     ServerHttpRequest request) {
-        return authz.requireRole(request, id, MembershipRole.OWNER)
-                .flatMap(owner -> organizations.findById(id)
-                        .switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
-                        .flatMap(org -> {
-                            PermissionTier current = PermissionTier.fromDb(org.permissionTier());
-                            PermissionTier target = PermissionTier.fromDb(body.tier());
-                            if (target.ordinal() <= current.ordinal()) {
-                                return Mono.<Organization>error(new IdentityException(409,
-                                        target == current ? "已是该权限等级" : "权限只能升级"));
-                            }
-                            return transactions.transactional(
-                                    organizations.updatePermissionTier(id, target.dbValue())
-                                            .then(organizations.findById(id))
-                                            .flatMap(updated -> outbox.append(new EventEnvelope(
-                                                    UUID.randomUUID().toString(), "MerchantPermissionGranted", "Organization",
-                                                    updated.id(), 1, Instant.now(), null,
-                                                    Map.of("organizationId", updated.id(), "tier", updated.permissionTier())))
-                                                    .thenReturn(updated)));
-                        })
-                        .map(updated -> ResponseEntity.ok(Map.of("success", true, "data", toBody(updated)))));
     }
 
     /** best-effort 种 OWNER 成员行：失败不阻断 org 创建（鉴权兜底靠 owner_account_id）。 */

@@ -51,18 +51,10 @@ management:
       exposure:
         include: health,info
 
-# 对象存储（platform-storage 共享库，autoconfigure 在 enabled=true 时装配）。
-# endpoint 是服务端访问 MinIO 的地址；public-base-url 是浏览器直传地址（SigV4 签 Host 必须匹配）。
-object-storage:
-  enabled: ${OBJECT_STORAGE_ENABLED:true}
-  endpoint: ${MINIO_ENDPOINT:http://minio:9000}
-  public-base-url: ${MINIO_PUBLIC_BASE_URL:http://localhost:9002}
-  region: ${MINIO_REGION:us-east-1}
-  access-key: ${MINIO_ACCESS_KEY:minioadmin}
-  secret-key: ${MINIO_SECRET_KEY:minioadmin}
-  bucket: ${MINIO_BUCKET:grassland}
-  path-style-access: ${MINIO_PATH_STYLE:true}
-  auto-create-bucket: ${MINIO_AUTO_CREATE_BUCKET:true}
+# 对象存储：本服务不再直连 MinIO。媒体上传统一走 intelligence-service 的鉴权链路
+# （POST /api/media/upload-tickets → confirm → read/delete，带 caller 解析、MIME 白名单、
+# owner 配额与限流）。原 marketplace `/storage/uploads` 匿名端点绕过全部约束，已删（GL-P0-SEC-002）；
+# 随之移除 platform-storage 依赖与本段 object-storage 配置，marketplace 不再持有 MinIO 凭据。
 
 # DB 地基（Epic 4 Slice 4A）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 marketplace_flyway_schema。
 marketplace:
