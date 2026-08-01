@@ -259,4 +259,195 @@ class TaskControllerIT extends MarketplaceItSupport {
         }
         return m;
     }
+
+    // ---------- GL-P1-TASK-001 Stage 1：生命周期 + 可见性 + 乐观锁 ----------
+
+    /** immediate-publish 回归：仍 201 published，且带 version=1、publishedAt、task_version 快照行。 */
+    @Test
+    void immediatePublishProducesVersionAndSnapshot() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "即时发布", null);
+
+        client().get().uri("/api/tasks/" + id)
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("published")
+                .jsonPath("$.data.version").isEqualTo(1)
+                .jsonPath("$.data.publishedAt").isNotEmpty();
+
+        Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
+                .bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
+        assertThat(versions).isEqualTo(1);
+    }
+
+    /** 草稿 tier 商家可建草稿（不占发布额度、不需资金权限）。 */
+    @Test
+    void draftTierMerchantCanCreateDraft() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "draft"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body(org, "草稿任务", null, null))
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.status").isEqualTo("draft")
+                .jsonPath("$.data.version").isEqualTo(0);
+
+        // 草稿不计活跃额度（仅 published 计）。
+        Integer active = db.sql("SELECT COUNT(*)::int AS c FROM task WHERE organization_id = CAST(:org AS uuid) AND status = 'published'")
+                .bind("org", org).map(r -> r.get("c", Integer.class)).one().block();
+        assertThat(active).isZero();
+    }
+
+    /** 编辑草稿：version +1；非 draft 态不可编辑（409）。 */
+    @Test
+    void editDraftBumpsVersionAndRejectedAfterPublish() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = createDraft(merchant, org, "basic_publish", "标题");
+
+        client().put().uri("/api/tasks/" + id)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 0, "title", "改后标题"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.title").isEqualTo("改后标题")
+                .jsonPath("$.data.version").isEqualTo(1);
+
+        // 发布后 PUT 应被拒（非 draft → 409）。
+        client().post().uri("/api/tasks/" + id + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+        client().put().uri("/api/tasks/" + id)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "title", "再改"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    /** 乐观锁：expectedVersion 不匹配 → 409，状态不变。 */
+    @Test
+    void publishWithStaleVersionConflict() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = createDraft(merchant, org, "basic_publish", "锁");
+        client().post().uri("/api/tasks/" + id + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 99))
+                .exchange().expectStatus().isEqualTo(409);
+        // 仍 draft（未迁移）
+        assertThat(taskStatus(id)).isEqualTo("draft");
+    }
+
+    /** 草稿 tier 不可发布（与 immediate-publish 同闸门）。 */
+    @Test
+    void draftTierCannotPublishDraft() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = createDraft(merchant, org, "draft", "草稿");
+        client().post().uri("/api/tasks/" + id + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "draft"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 0))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    /** 关闭/取消 终态迁移 + TaskClosed/TaskCancelled 事件。 */
+    @Test
+    void closeAndCancelEmitEventsAndTransition() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String toClose = publish(merchant, org, "basic_publish", "关", null);
+        client().post().uri("/api/tasks/" + toClose + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("closed");
+        assertThat(outboxType(toClose, "TaskClosed")).isEqualTo(1);
+
+        String toCancel = publish(merchant, org, "basic_publish", "消", null);
+        client().post().uri("/api/tasks/" + toCancel + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("cancelled");
+        assertThat(outboxType(toCancel, "TaskCancelled")).isEqualTo(1);
+    }
+
+    /** 可见性：非 owner GET 草稿/取消任务 → 404（不泄露存在）。 */
+    @Test
+    void nonOwnerCannotSeeDraftOrCancelledDetail() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String draftId = createDraft(merchant, org, "basic_publish", "私密草稿");
+
+        client().get().uri("/api/tasks/" + draftId)
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isNotFound();
+
+        // owner 仍可见。
+        client().get().uri("/api/tasks/" + draftId)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk();
+    }
+
+    /** 可见性：非本 org 商家查 draft status → 回落 published（防跨组织草稿泄露）。 */
+    @Test
+    void otherOrgMerchantCannotListDrafts() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        createDraft(merchant, org, "basic_publish", "他家草稿");
+
+        String outsider = UUID.randomUUID().toString();
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
+                .header("X-Grassland-Identity", sign(outsider, "merchant", UUID.randomUUID().toString(), "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").value(l -> assertThat((Integer) l).isZero());
+    }
+
+    /** 草稿发布后落 task_version 快照（含编辑后的字段）。 */
+    @Test
+    void publishingDraftRecordsImmutableSnapshot() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = createDraft(merchant, org, "basic_publish", "原标题");
+        client().put().uri("/api/tasks/" + id)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 0, "title", "终标题", "bountyCents", 0))
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/tasks/" + id + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+
+        String snapTitle = db.sql("SELECT title FROM task_version WHERE task_id = CAST(:id AS uuid) ORDER BY version DESC LIMIT 1")
+                .bind("id", id).map(r -> r.get("title", String.class)).one().block();
+        assertThat(snapTitle).isEqualTo("终标题");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createDraft(String merchant, String org, String tier, String title) {
+        Map<String, Object> resp = client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, tier))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body(org, title, null, null))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    private String taskStatus(String id) {
+        return db.sql("SELECT status FROM task WHERE id = CAST(:id AS uuid)")
+                .bind("id", id).map(r -> r.get("status", String.class)).one().block();
+    }
+
+    private long outboxType(String taskId, String eventType) {
+        Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM marketplace_outbox"
+                        + " WHERE event_type = :et AND payload->>'taskId' = :tid")
+                .bind("et", eventType).bind("tid", taskId)
+                .map(row -> row.get("c", Long.class)).one().block();
+        return c == null ? 0L : c;
+    }
 }

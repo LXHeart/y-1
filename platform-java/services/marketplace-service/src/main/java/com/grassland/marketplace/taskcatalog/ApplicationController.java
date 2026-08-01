@@ -122,6 +122,12 @@ public class ApplicationController {
                             if (!"published".equals(task.status())) {
                                 return fail(409, "任务当前不可报名");
                             }
+                            // GL-P1-TASK-001 Stage 1：报名截止（PRD「指定时间」）。已截止 → 不接受新报名；
+                            // 既有 pending/accepted/履约不受影响（D-03 未决，不动 accept/confirm/结算）。
+                            if (task.applicationDeadline() != null
+                                    && task.applicationDeadline().isBefore(Instant.now())) {
+                                return fail(409, "报名已截止");
+                            }
                             return slotsFull(task).flatMap(full -> full
                                     ? Mono.<TaskApplication>error(new MarketplaceException(409, "名额已满"))
                                     : apps.findByTaskAndRecommender(id, rec.accountId())

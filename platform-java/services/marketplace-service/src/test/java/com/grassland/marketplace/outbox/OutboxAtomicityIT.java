@@ -87,6 +87,79 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         assertThat(applicationStatus(appId)).isEqualTo("pending");   // 未撤销
     }
 
+    // ---------- GL-P1-TASK-001 Stage 1：生命周期写 + outbox 同事务 ----------
+
+    @Test
+    void publishDraftRollsBackWhenOutboxFails() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String taskId = createDraft(merchant, org);
+
+        failOutboxOn("TaskPublished");
+        client().post().uri("/api/tasks/" + taskId + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 0))
+                .exchange().expectStatus().is5xxServerError();
+
+        // 回滚：仍 draft / version 0，且未落快照。
+        assertThat(taskStatus(taskId)).isEqualTo("draft");
+        assertThat(taskVersionCount(taskId)).isZero();
+    }
+
+    @Test
+    void closeRollsBackWhenOutboxFails() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String taskId = publishTask(merchant, org);
+
+        failOutboxOn("TaskClosed");
+        client().post().uri("/api/tasks/" + taskId + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().is5xxServerError();
+
+        assertThat(taskStatus(taskId)).isEqualTo("published");   // 未迁移到 closed
+    }
+
+    @Test
+    void cancelRollsBackWhenOutboxFails() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String taskId = publishTask(merchant, org);
+
+        failOutboxOn("TaskCancelled");
+        client().post().uri("/api/tasks/" + taskId + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().is5xxServerError();
+
+        assertThat(taskStatus(taskId)).isEqualTo("published");   // 未迁移到 cancelled
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createDraft(String merchant, String org) {
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("organizationId", org);
+        b.put("title", "草稿");
+        Map<String, Object> resp = client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    private String taskStatus(String taskId) {
+        return db.sql("SELECT status FROM task WHERE id = CAST(:t AS uuid)")
+                .bind("t", taskId).map(row -> row.get("status", String.class)).one().block();
+    }
+
+    private long taskVersionCount(String taskId) {
+        Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM task_version WHERE task_id = CAST(:t AS uuid)")
+                .bind("t", taskId).map(row -> row.get("c", Long.class)).one().block();
+        return c == null ? 0L : c;
+    }
+
     private void failOutboxOn(String eventType) {
         doReturn(Mono.<Void>error(new RuntimeException("outbox injected failure")))
                 .when(outbox).append(argThat((EventEnvelope e) -> e != null && eventType.equals(e.eventType())));

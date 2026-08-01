@@ -89,7 +89,7 @@ class ApplicationReservationActivityImplTest {
     @Test
     void beginAcceptance_abortsWhenNotOwner() {
         Task otherOwned = new Task(TASK_ID, "99999999-9999-9999-9999-999999999999", ORG, "t", "d",
-                "published", "form", "platform", null, 500L, null, null);
+                "published", "form", "platform", null, 500L, null, null, 1, null, null, null);
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(otherOwned));
 
         assertThat(activity.beginAcceptance(input)).isFalse();
@@ -164,7 +164,7 @@ class ApplicationReservationActivityImplTest {
 
     private Task task(Integer maxSlots) {
         return new Task(TASK_ID, MERCHANT, ORG, "title", "desc", "published",
-                "form", "platform", maxSlots, 500L, null, null);
+                "form", "platform", maxSlots, 500L, null, null, 1, null, null, null);
     }
 
     private TaskApplication app(String status) {

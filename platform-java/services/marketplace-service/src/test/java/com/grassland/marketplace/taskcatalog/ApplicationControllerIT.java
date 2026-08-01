@@ -942,6 +942,55 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .bind("et", eventType).map(r -> r.get("c", Integer.class)).one().block().longValue();
     }
 
+    // ---------- GL-P1-TASK-001 Stage 1：close/cancel/deadline 只门控「新报名」 ----------
+
+    /** 报名截止（指定时间，已过）→ 新报名 409。 */
+    @Test
+    void applyRejectedAfterApplicationDeadline() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskWithDeadline(merchant, org, Instant.now().minusSeconds(3600));
+
+        client().post().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "迟到的报名"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    /** 关闭报名后 → 新报名 409（任务 published→closed）。 */
+    @Test
+    void applyRejectedAfterClose() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        client().post().uri("/api/tasks/" + task + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+
+        client().post().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    /** 取消任务后 → 新报名 409（任务 published→cancelled）。 */
+    @Test
+    void applyRejectedAfterCancel() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        client().post().uri("/api/tasks/" + task + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+
+        client().post().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
     @SuppressWarnings("unchecked")
     private String apply(String recommender, String task) {
         Map<String, Object> resp = client().post().uri("/api/tasks/" + task + "/applications")
@@ -960,6 +1009,20 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         if (maxSlots != null) {
             b.put("maxSlots", maxSlots);
         }
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String publishTaskWithDeadline(String merchant, String org, Instant applicationDeadline) {
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("organizationId", org);
+        b.put("title", "截止任务");
+        b.put("applicationDeadline", applicationDeadline.toString());
         Map<String, Object> resp = client().post().uri("/api/tasks")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)

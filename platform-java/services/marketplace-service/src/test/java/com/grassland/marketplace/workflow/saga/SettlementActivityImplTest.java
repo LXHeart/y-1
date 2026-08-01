@@ -127,6 +127,6 @@ class SettlementActivityImplTest {
 
     private Task task() {
         return new Task(TASK_ID, OWNER, ORG, "title", "desc", "published", "video", "douyin", 1, 500L,
-                Instant.now(), Instant.now());
+                Instant.now(), Instant.now(), 1, null, null, null);
     }
 }

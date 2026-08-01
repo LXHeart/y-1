@@ -1,11 +1,15 @@
 package com.grassland.marketplace.taskcatalog;
 
+import java.time.Instant;
+
 /**
- * 发布任务请求体。草场 Epic 4 Slice 4A（4B 加 maxSlots；4F 加 bountyCents）。
+ * 发布任务请求体（immediate-publish，{@code POST /api/tasks}）。草场 Epic 4 Slice 4A（4B 加 maxSlots；4F 加 bountyCents；
+ * GL-P1-TASK-001 Stage 1 加 applicationDeadline）。
  *
  * <p>{@code organizationId}/{@code title} 必填（compact 构造校验）；{@code description}/{@code contentForm}/{@code platform}
  * 可选；{@code maxSlots} 可空（null=不限名额），若给须 {@code >= 1}（0 无意义）。{@code bountyCents} 可空
  * （null/0=非资金型任务，accept 走 4B 直连；{@code >0}=资金型赏金分，accept 经资金预留 Saga，Slice 4F），若给须 {@code >= 0}。
+ * {@code applicationDeadline} 可空（null=无时间截止；PRD「指定时间」截止，apply 时判）。
  * owner 由断言 caller 决定（非请求体）。organizationId 须等于 caller 的 org（TaskController 资源级自查，Slice 4B）。
  */
 public record CreateTaskRequest(
@@ -15,7 +19,8 @@ public record CreateTaskRequest(
         String contentForm,
         String platform,
         Integer maxSlots,
-        Long bountyCents
+        Long bountyCents,
+        Instant applicationDeadline
 ) {
     public CreateTaskRequest {
         if (organizationId == null || organizationId.isBlank()) {

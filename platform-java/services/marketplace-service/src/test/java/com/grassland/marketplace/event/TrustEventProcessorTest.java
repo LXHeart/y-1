@@ -302,7 +302,7 @@ class TrustEventProcessorTest {
     }
 
     private static Task task(String id, String ownerAccountId) {
-        return new Task(id, ownerAccountId, null, "营销任务", null, "published", null, null, null, null, null, null);
+        return new Task(id, ownerAccountId, null, "营销任务", null, "published", null, null, null, null, null, null, 1, null, null, null);
     }
 
     private ConsumerRecord<String, String> record(String value) {

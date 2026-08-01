@@ -1,13 +1,17 @@
 package com.grassland.marketplace.taskcatalog;
 
 /**
- * 任务状态。草场 Epic 4 Slice 4A（HLD 5.3 task-catalog）。MVP 创建即 {@link #PUBLISHED}；
- * {@code draft}/{@code closed} 为后续草稿/关闭流转预留。DB 存小写 dbValue。
+ * 任务状态。草场 Epic 4 Slice 4A（HLD 5.3 task-catalog）+ GL-P1-TASK-001 Stage 1 生命周期。
+ *
+ * <p>状态机：{@code draft} →（publish）{@code published} →（close）{@code closed}；
+ * {@code draft}/{@code published} →（cancel）{@code cancelled}。{@code closed}/{@code cancelled} 为终态
+ * （close=停止新报名但既有履约继续；cancel=任务取消）。DB 存小写 dbValue。
  */
 public enum TaskStatus {
     DRAFT("draft"),
     PUBLISHED("published"),
-    CLOSED("closed");
+    CLOSED("closed"),
+    CANCELLED("cancelled");
 
     private final String dbValue;
 

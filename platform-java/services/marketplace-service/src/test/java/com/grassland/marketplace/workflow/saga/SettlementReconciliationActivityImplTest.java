@@ -164,7 +164,7 @@ class SettlementReconciliationActivityImplTest {
                         Instant.now(), Instant.now())));
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(
                 new Task(TASK_ID, "own", ORG, "title", "desc", "published", "any", "any", null, bounty,
-                        Instant.now(), Instant.now())));
+                        Instant.now(), Instant.now(), 1, null, null, null)));
     }
 
     private void trustFinal(String decision) {
