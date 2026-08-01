@@ -24,6 +24,8 @@ import { internalCreditsRouter } from './routes/internal-credits.js'
 import { createSessionMiddleware } from './lib/session.js'
 import { attachAuthenticatedUser } from './lib/auth.js'
 import { createRateLimit } from './lib/rate-limit.js'
+import { createSecurityHeaders } from './lib/security-headers.js'
+import { createCsrfOriginCheck } from './lib/csrf.js'
 
 interface RateLimitEntry {
   count: number
@@ -257,7 +259,9 @@ export function createApp() {
     app.set('trust proxy', 1)
   }
 
+  app.disable('x-powered-by')
   app.use(pinoHttp({ logger }))
+  app.use(createSecurityHeaders())
   app.use(cors({
     origin(origin, callback) {
       if (!origin || allowedOrigins.includes(origin)) {
@@ -269,6 +273,10 @@ export function createApp() {
     },
     credentials: true,
   }))
+  // CSRF 来源校验放在 body 解析与 session 之前：跨站请求应在建立/续期会话前被拒，
+  // 也避免为将被 403 的请求解析 10MB body。只挂 `/api`——`/internal/credits`
+  // 是服务间通道（无 Origin），由 INTERNAL_API_KEY + rejectForwardedRequest 把关。
+  app.use('/api', createCsrfOriginCheck({ allowedOrigins }))
   app.use(express.json({ limit: '10mb' }))
   app.use(createSessionMiddleware())
   app.use(attachAuthenticatedUser)

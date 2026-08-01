@@ -50,9 +50,27 @@ public record IdentityAssertion(
         Instant expiresAt,
         String callerKind,
         String principal,
-        String role) {
+        String role,
+        // GL-P0-ASSERT-001 新增 envelope claims
+        String issuer,
+        String keyId,
+        String jti) {
 
     private static final String SERVICE = "service";
+
+    /**
+     * 构造一个带 envelope（issuer/keyId/jti/audience）的断言副本（签发时填充）。
+     *
+     * <p>用于 {@link IdentityAssertionSigner#sign(IdentityAssertion, String)}：signer 填充 envelope claims
+     * 并用目标 audience 重写 payload audience。
+     */
+    public IdentityAssertion withEnvelope(String issuer, String keyId, String jti, String audience) {
+        return new IdentityAssertion(
+                accountId, activeIdentityType, sessionToken, organizationId, permissionTier,
+                authMethod, authStrength, reauthenticatedAt, requestId, traceId,
+                audience, issuedAt, expiresAt, callerKind, principal, role,
+                issuer, keyId, jti);
+    }
 
     /**
      * 15 参便捷构造器（{@code role=null}）——服务间断言与既有测试夹具用。
@@ -68,7 +86,24 @@ public record IdentityAssertion(
                              String callerKind, String principal) {
         this(accountId, activeIdentityType, sessionToken, organizationId, permissionTier, authMethod,
                 authStrength, reauthenticatedAt, requestId, traceId, audience, issuedAt, expiresAt,
-                callerKind, principal, null);
+                callerKind, principal, null, null, null, null);
+    }
+
+    /**
+     * 16 参便捷构造器（{@code role} 显式，envelope 为 null）——保留旧 canonical 调用点零改动。
+     *
+     * <p>{@code issuer}/{@code keyId}/{@code jti} 缺省 null：由 {@link IdentityAssertionSigner}
+     * 在 keyring 模式签发时填充（{@link #withEnvelope}）。直接用本构造器签发的 token 无法通过
+     * keyring 验签（缺 issuer/kid），仅 legacy 模式或测试夹具用。
+     */
+    public IdentityAssertion(String accountId, String activeIdentityType, String sessionToken,
+                             String organizationId, String permissionTier, String authMethod,
+                             String authStrength, Instant reauthenticatedAt, String requestId,
+                             String traceId, String audience, Instant issuedAt, Instant expiresAt,
+                             String callerKind, String principal, String role) {
+        this(accountId, activeIdentityType, sessionToken, organizationId, permissionTier, authMethod,
+                authStrength, reauthenticatedAt, requestId, traceId, audience, issuedAt, expiresAt,
+                callerKind, principal, role, null, null, null);
     }
 
     /** 是否为领域服务现签的服务间断言（HLD 11.1）。 */

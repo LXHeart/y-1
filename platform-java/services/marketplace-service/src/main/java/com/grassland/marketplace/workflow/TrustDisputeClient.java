@@ -35,7 +35,7 @@ public class TrustDisputeClient {
     public Mono<Boolean> hasOpenDispute(String orgId, String engagementRef) {
         return webClient.get()
                 .uri("/api/trust/engagements/{ref}/open-dispute", engagementRef)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-trust"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("trust open-dispute HTTP {} org={} ref={}", code, orgId, engagementRef);

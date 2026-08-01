@@ -51,7 +51,7 @@ public class LoginController {
                 return Mono.just(build429(rateCheck));
             }
             return userLookup.findByEmail(email == null ? null : email.trim().toLowerCase())
-                .flatMap(user -> attemptLogin(user, password, ip, email))
+                .flatMap(user -> attemptLogin(user, password, ip, email, request))
                 .switchIfEmpty(Mono.defer(() -> {
                     rateLimiter.recordOutcome(ip, email, true);
                     return Mono.just(build401());
@@ -59,7 +59,8 @@ public class LoginController {
         });
     }
 
-    private Mono<ResponseEntity<Map<String, Object>>> attemptLogin(LoginUser user, String password, String ip, String email) {
+    private Mono<ResponseEntity<Map<String, Object>>> attemptLogin(LoginUser user, String password, String ip, String email,
+                                                                   ServerHttpRequest request) {
         boolean passwordOk = user.isActive() && passwordVerifier.verify(password, user.passwordHash());
         if (!passwordOk) {
             rateLimiter.recordOutcome(ip, email, true);
@@ -67,7 +68,7 @@ public class LoginController {
         }
         AuthUser authUser = new AuthUser(user.id(), user.email(), user.displayName(), user.role(), user.status());
         return userRepository.recordLogin(user.id())
-            .then(sessionWriter.createSession(authUser))
+            .then(sessionWriter.createSession(authUser, request))
             .map(created -> {
                 rateLimiter.recordOutcome(ip, email, false);
                 return build200(authUser, created.setCookieHeader());

@@ -25,6 +25,18 @@ const envSchema = z.object({
   SESSION_SECRET: z.string().trim().optional().transform((value) => value || undefined).refine((value) => !value || value.length >= 32, 'SESSION_SECRET must be at least 32 characters'),
   SESSION_COOKIE_NAME: z.string().trim().default('y1.sid'),
   SESSION_COOKIE_MAX_AGE_MS: z.coerce.number().int().positive().optional(),
+  // GL-P0-AUTH-001：与 identity-service 的 SESSION_COOKIE_SECURE 同名同义（同一张 session 表）。
+  // auto=按 X-Forwarded-Proto/连接判定；always=恒定 Secure（生产全站 TLS 推荐）；never=恒不加。
+  // 未设时按 NODE_ENV 取默认：production → auto，其余 → never（见 resolveSessionCookieSecure）。
+  SESSION_COOKIE_SECURE: z.enum(['auto', 'always', 'never']).optional(),
+  SESSION_COOKIE_SAME_SITE: z.enum(['lax', 'strict', 'none', 'Lax', 'Strict', 'None']).optional(),
+  // HSTS 只应在「入口确定是 HTTPS」时开：一旦发出，浏览器会在 max-age 内强制 https，
+  // 误开会把仅 HTTP 可达的部署锁死。默认 0，且即使为 1，非 HTTPS 请求也不发。
+  SECURITY_HSTS_ENABLED: z.enum(['0', '1']).optional(),
+  SECURITY_HSTS_MAX_AGE_SECONDS: z.coerce.number().int().nonnegative().default(15552000),
+  // 状态变更请求的 Origin/Referer 校验（CSRF 纵深防御，SameSite=Lax 之外再加一层）。
+  // 默认开；置 0 仅用于排障。
+  SECURITY_CSRF_ORIGIN_CHECK: z.enum(['0', '1']).optional(),
   DOUYIN_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   DOUYIN_HOT_API_BASE_URL: z.string().url().default('https://60s.viki.moe/v2/douyin'),
   DOUYIN_HOT_API_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),

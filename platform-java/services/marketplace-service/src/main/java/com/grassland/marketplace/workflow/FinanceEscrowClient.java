@@ -49,7 +49,7 @@ public class FinanceEscrowClient {
     public Mono<ReserveResult> reserve(String orgId, String engagementRef, long amountCents, String payeeAccountId) {
         return webClient.post()
                 .uri("/api/finance/accounts/{orgId}/reservations", orgId)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("engagementRef", engagementRef, "amountCents", amountCents,
                         "payeeAccountId", payeeAccountId))
@@ -69,7 +69,7 @@ public class FinanceEscrowClient {
     public Mono<Void> release(String orgId, String engagementRef) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/release", engagementRef)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     if (code == 200 || code == 404 || code == 409) {
@@ -85,7 +85,7 @@ public class FinanceEscrowClient {
     public Mono<Void> capture(String orgId, String engagementRef) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/capture", engagementRef)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("capture HTTP {} org={} ref={}", code, orgId, engagementRef);

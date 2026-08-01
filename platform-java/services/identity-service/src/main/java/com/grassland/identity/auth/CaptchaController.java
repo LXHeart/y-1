@@ -1,6 +1,7 @@
 package com.grassland.identity.auth;
 
 import com.grassland.identity.security.CaptchaGenerator;
+import com.grassland.identity.session.SessionCookiePolicy;
 import com.grassland.identity.session.SessionService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -14,11 +15,11 @@ import reactor.core.publisher.Mono;
 public class CaptchaController {
     private final CaptchaGenerator generator;
     private final SessionService sessionService;
-    private final String cookieName;
+    private final SessionCookiePolicy cookiePolicy;
 
     public CaptchaController(CaptchaGenerator generator, SessionService sessionService,
-                             @org.springframework.beans.factory.annotation.Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName) {
-        this.generator = generator; this.sessionService = sessionService; this.cookieName = cookieName;
+                             SessionCookiePolicy cookiePolicy) {
+        this.generator = generator; this.sessionService = sessionService; this.cookiePolicy = cookiePolicy;
     }
 
     @GetMapping("/api/auth/captcha")
@@ -26,7 +27,7 @@ public class CaptchaController {
         String text = generator.generateText();
         String svg = generator.generateSvg(text);
         String cookie = extractCookie(request);
-        return sessionService.generateAndStoreCaptcha(cookie, text, svg)
+        return sessionService.generateAndStoreCaptcha(cookie, text, svg, request)
             .map(result -> {
                 ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, "image/svg+xml")
@@ -39,7 +40,7 @@ public class CaptchaController {
     }
 
     private String extractCookie(ServerHttpRequest request) {
-        var cookie = request.getCookies().getFirst(cookieName);
+        var cookie = request.getCookies().getFirst(cookiePolicy.cookieName());
         return cookie != null ? cookie.getValue() : null;
     }
 }

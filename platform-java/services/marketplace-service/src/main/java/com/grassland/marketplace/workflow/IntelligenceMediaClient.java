@@ -53,7 +53,7 @@ public class IntelligenceMediaClient {
     public Mono<MediaMetadata> metadata(String orgId, UUID mediaId) {
         return webClient.get()
                 .uri("/api/media/{id}/metadata", mediaId)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("media metadata HTTP {} org={} mediaId={}", code, orgId, mediaId);
@@ -71,7 +71,7 @@ public class IntelligenceMediaClient {
     public Mono<MediaDownload> downloadUrl(String orgId, UUID mediaId) {
         return webClient.get()
                 .uri("/api/media/{id}/download-url", mediaId)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("media download-url HTTP {} org={} mediaId={}", code, orgId, mediaId);

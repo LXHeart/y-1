@@ -1,9 +1,9 @@
 package com.grassland.identity.auth;
 
 import com.grassland.identity.security.CookieSigner;
+import com.grassland.identity.session.SessionCookiePolicy;
 import java.util.Map;
 import java.util.Optional;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -17,20 +17,20 @@ import reactor.core.publisher.Mono;
 public class LogoutController {
     private final DatabaseClient db;
     private final CookieSigner cookieSigner;
-    private final String cookieName;
+    private final SessionCookiePolicy cookiePolicy;
 
-    public LogoutController(DatabaseClient db, CookieSigner cookieSigner,
-                            @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName) {
+    public LogoutController(DatabaseClient db, CookieSigner cookieSigner, SessionCookiePolicy cookiePolicy) {
         this.db = db;
         this.cookieSigner = cookieSigner;
-        this.cookieName = cookieName;
+        this.cookiePolicy = cookiePolicy;
     }
 
     @PostMapping("/api/auth/logout")
     public Mono<ResponseEntity<Map<String, Object>>> logout(ServerHttpRequest request) {
-        HttpCookie cookie = request.getCookies().getFirst(cookieName);
+        boolean secure = cookiePolicy.isSecure(request);
+        HttpCookie cookie = request.getCookies().getFirst(cookiePolicy.cookieName());
         if (cookie == null) {
-            return Mono.just(ok());
+            return Mono.just(ok(secure));
         }
         String value = cookie.getValue().replace("+", "%2B");
         try {
@@ -41,12 +41,12 @@ public class LogoutController {
         Mono<Void> delete = sid
             .map(s -> db.sql("DELETE FROM session WHERE sid = :sid").bind("sid", s).then())
             .orElse(Mono.empty());
-        return delete.thenReturn(ok());
+        return delete.thenReturn(ok(secure));
     }
 
-    private ResponseEntity<Map<String, Object>> ok() {
+    private ResponseEntity<Map<String, Object>> ok(boolean secure) {
         return ResponseEntity.ok()
-            .header("Set-Cookie", cookieName + "=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax")
+            .header("Set-Cookie", cookiePolicy.buildClearCookie(secure))
             .body(Map.of("success", true, "data", Map.of("loggedOut", true)));
     }
 }

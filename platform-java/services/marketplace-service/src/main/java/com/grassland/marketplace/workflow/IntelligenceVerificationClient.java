@@ -63,7 +63,7 @@ public class IntelligenceVerificationClient {
                                               String taskTitle, String taskDescription, String platform) {
         return webClient.post()
                 .uri("/api/verification/analyze")
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(analyzeBody(mediaIds, taskTitle, taskDescription, platform))
                 .exchangeToMono(resp -> {

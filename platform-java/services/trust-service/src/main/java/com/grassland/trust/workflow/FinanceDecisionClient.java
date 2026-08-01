@@ -51,7 +51,7 @@ public class FinanceDecisionClient {
     private Mono<Boolean> post(String uri, String orgId, String engagementRef, String op) {
         return webClient.post()
                 .uri(uri, engagementRef)
-                .header(headerName, issuer.issueForOrg(orgId))
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("{} HTTP {} org={} ref={}", op, code, orgId, engagementRef);

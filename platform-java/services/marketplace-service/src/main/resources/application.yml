@@ -89,12 +89,36 @@ marketplace:
     redispatch-seconds: ${MARKETPLACE_RECONCILIATION_REDISPATCH_SECONDS:30}
     start-failure-backoff-seconds: ${MARKETPLACE_RECONCILIATION_START_FAILURE_BACKOFF_SECONDS:10}
 
-# BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
+# 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
+# marketplace 签发服务断言到 finance/trust/intelligence（purpose=service），
+# 验证 edge-bff 签发的用户断言（purpose=user）。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
-  secret: ${IDENTITY_ASSERTION_SECRET:}
-  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
+  issuer: ${IDENTITY_ASSERTION_ISSUER:marketplace}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+  # marketplace 签发服务断言到各下游（purpose=service）
+  signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_FINANCE_KID:marketplace-service-finance-v1}
+      purpose: service
+      audience: grassland-finance
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_FINANCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST_KID:marketplace-service-trust-v1}
+      purpose: service
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE_KID:marketplace-service-intelligence-v1}
+      purpose: service
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE:}
+  # marketplace 验证 edge-bff 签发的用户断言（purpose=user）
+  verify-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE_KID:edge-user-marketplace-v1}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE:}
+  replay-protection:
+    enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 
 # 跨服务调 finance（Slice 4F Saga ReserveFunds/ReleaseFunds 出站 base url）。
 finance:

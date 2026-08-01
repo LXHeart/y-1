@@ -38,7 +38,7 @@ public class TrustResolutionClient {
     public Mono<TrustResolution> resolve(String organizationId, String disputeId) {
         return webClient.get()
                 .uri("/api/trust/disputes/{id}/resolution", disputeId)
-                .header(headerName, issuer.issueForOrg(organizationId))
+                .header(headerName, issuer.issueForOrg(organizationId, "grassland-trust"))
                 .accept(MediaType.APPLICATION_JSON)
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();

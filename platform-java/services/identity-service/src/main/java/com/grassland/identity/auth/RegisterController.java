@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,7 +37,8 @@ public class RegisterController {
     }
 
     @PostMapping(value = "/api/auth/register", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<ResponseEntity<Map<String, Object>>> register(@RequestBody Map<String, String> body) {
+    public Mono<ResponseEntity<Map<String, Object>>> register(@RequestBody Map<String, String> body,
+                                                              ServerHttpRequest request) {
         String email = body.get("email");
         String password = body.get("password");
         String displayName = body.get("displayName");
@@ -59,7 +61,7 @@ public class RegisterController {
                     .switchIfEmpty(Mono.just(error(409, "\u8be5\u90ae\u7bb1\u5df2\u5b58\u5728")).flatMap(e -> Mono.empty()))
                     .flatMap(uid -> awardCredits(uid).then(outbox.append(new EventEnvelope(
                         UUID.randomUUID().toString(), "UserRegistered", "User", uid, 1, java.time.Instant.now(), null, Map.of("email", normalizedEmail, "userId", uid)))).then(sessionWriter.createSession(
-                        new AuthUser(uid, normalizedEmail, displayName.trim(), "user", "active")))
+                        new AuthUser(uid, normalizedEmail, displayName.trim(), "user", "active"), request))
                         .map(session -> ResponseEntity.status(201)
                             .header("Set-Cookie", session.setCookieHeader())
                             .body(Map.of("success", true, "data", Map.of("user", buildUser(uid, normalizedEmail, displayName.trim())))))))

@@ -39,7 +39,7 @@ public class FinanceReconciliationClient {
     public Mono<Result> reconcile(String organizationId, String engagementRef, String finalDecision) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/reconcile", engagementRef)
-                .header(headerName, issuer.issueForOrg(organizationId))
+                .header(headerName, issuer.issueForOrg(organizationId, "grassland-finance"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("organizationId", organizationId, "finalDecision", finalDecision))
                 .exchangeToMono(resp -> {

@@ -75,9 +75,34 @@ marketplace:
     base-url: ${MARKETPLACE_SERVICE_BASE_URL:http://marketplace-service:8083}
 
 
-# BFF 内部身份断言消费（与 edge-bff/identity/marketplace/finance 同 secret/audience）。
+# 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
+# trust 签发服务断言到 finance/marketplace（purpose=service），
+# 验证 edge-bff 用户断言 + marketplace 服务断言。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
-  secret: ${IDENTITY_ASSERTION_SECRET:}
-  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
+  issuer: ${IDENTITY_ASSERTION_ISSUER:trust}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+  # trust 签发服务断言到下游（purpose=service）
+  signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_FINANCE_KID:trust-service-finance-v1}
+      purpose: service
+      audience: grassland-finance
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_FINANCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE_KID:trust-service-marketplace-v1}
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE:}
+  # trust 验证 edge-bff 用户断言 + marketplace 服务断言
+  verify-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST_KID:edge-user-trust-v1}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST_KID:marketplace-service-trust-v1}
+      issuer: marketplace
+      purpose: service
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST:}
+  replay-protection:
+    enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}

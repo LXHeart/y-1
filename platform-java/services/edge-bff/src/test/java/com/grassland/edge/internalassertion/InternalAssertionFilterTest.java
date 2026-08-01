@@ -10,6 +10,7 @@ import com.grassland.edge.proxy.UpstreamResolver;
 import com.grassland.identity.assertion.IdentityAssertionProperties;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -26,7 +27,19 @@ class InternalAssertionFilterTest {
     private final IdentityAssertionSigner signer =
             new IdentityAssertionSigner(SECRET.getBytes(), "grassland-internal", Duration.ofSeconds(5));
     private final IdentityAssertionProperties props =
-            new IdentityAssertionProperties(true, SECRET, 60, "grassland-internal", "X-Grassland-Identity", 5, null);
+            new IdentityAssertionProperties(
+                    true, // enabled
+                    SECRET, // legacy secret
+                    60, // ttlSeconds
+                    "grassland-internal", // audience
+                    "X-Grassland-Identity", // headerName
+                    5, // leewaySeconds
+                    List.of("X-Grassland-Identity", "X-Grassland-Account-Id",
+                            "X-Grassland-Active-Identity", "X-Grassland-Session-Token"), // internalHeaderDenylist
+                    null, // issuer (null for legacy mode)
+                    List.of(), // signingKeys (empty for legacy mode)
+                    List.of(), // verifyKeys (empty for legacy mode)
+                    new IdentityAssertionProperties.ReplayProtectionConfig(false)); // replayProtection
 
     /** 回显 filter 附加后的 X-Grassland-Identity 头（无则 "none"）。 */
     @RestController
@@ -159,6 +172,8 @@ class InternalAssertionFilterTest {
     private static UpstreamResolver upstreamInternal(String pathPrefix) {
         UpstreamResolver upstream = mock(UpstreamResolver.class);
         when(upstream.isInternalUpstream(anyString(), org.mockito.ArgumentMatchers.startsWith(pathPrefix))).thenReturn(true);
+        // GL-P0-ASSERT-001：filter 现按 upstream 名解析目标 audience（identity→grassland-identity）选钥。
+        when(upstream.resolveUpstreamName(anyString(), org.mockito.ArgumentMatchers.startsWith(pathPrefix))).thenReturn("identity");
         return upstream;
     }
 

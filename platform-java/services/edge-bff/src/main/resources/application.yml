@@ -269,14 +269,41 @@ edge:
       upstream: intelligence
       enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
 
-# 内部身份断言（HLD 7.4）：secret/audience 须与下游 identity-service 完全一致，否则签发/验签不通（回退 cookie）。
+# 内部身份断言（HLD 7.4 + GL-P0-ASSERT-001 keyring 模式）：
+# edge-bff 按 target upstream 选对应签名钥签发用户断言（purpose=user）。
+# 每个受众服务一把独立钥，泄露某服务验签钥只影响该服务。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
-  secret: ${IDENTITY_ASSERTION_SECRET:}
+  # keyring 模式必须设置 issuer（edge-bff）
+  issuer: ${IDENTITY_ASSERTION_ISSUER:edge-bff}
   ttl-seconds: ${IDENTITY_ASSERTION_TTL_SECONDS:60}
-  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
   leeway-seconds: ${IDENTITY_ASSERTION_LEEWAY_SECONDS:5}
+  # edge-bff 签发用户断言到各领域服务（purpose=user）
+  signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY_KID:edge-user-identity-v1}
+      purpose: user
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE_KID:edge-user-marketplace-v1}
+      purpose: user
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_FINANCE_KID:edge-user-finance-v1}
+      purpose: user
+      audience: grassland-finance
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_FINANCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST_KID:edge-user-trust-v1}
+      purpose: user
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_KID:edge-user-intelligence-v1}
+      purpose: user
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE:}
+  # replay 防护（默认关闭，单实例部署时关闭；扩副本前须切换共享存储）
+  replay-protection:
+    enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 
 identity:
   legacy:

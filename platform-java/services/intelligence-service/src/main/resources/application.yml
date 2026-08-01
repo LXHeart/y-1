@@ -55,12 +55,26 @@ intelligence:
     initial-backoff-ms: ${INTELLIGENCE_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${INTELLIGENCE_OUTBOX_MAX_BACKOFF_MS:60000}
 
-# BFF 内部身份断言消费（与 edge-bff/identity 同 secret/audience）。
+# 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
+# intelligence 验证 edge-bff 用户断言 + marketplace 服务断言。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
-  secret: ${IDENTITY_ASSERTION_SECRET:}
-  audience: ${IDENTITY_ASSERTION_AUDIENCE:grassland-internal}
+  issuer: ${IDENTITY_ASSERTION_ISSUER:intelligence}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+  # intelligence 验证 edge-bff 用户断言 + marketplace 服务断言
+  verify-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_KID:edge-user-intelligence-v1}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE_KID:marketplace-service-intelligence-v1}
+      issuer: marketplace
+      purpose: service
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE:}
+  replay-protection:
+    enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 
 # 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
 # intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。

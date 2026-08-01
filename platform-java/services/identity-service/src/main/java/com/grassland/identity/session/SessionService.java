@@ -11,7 +11,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -19,31 +19,32 @@ import reactor.core.publisher.Mono;
 @Component
 public class SessionService {
     private static final long CAPTCHA_TTL_MS = 5 * 60 * 1000;
-    private static final long SESSION_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000;
     private static final SecureRandom RANDOM = new SecureRandom();
     private final DatabaseClient db;
     private final CookieSigner cookieSigner;
     private final ObjectMapper mapper = new ObjectMapper();
-    private final String cookieName;
+    private final SessionCookiePolicy cookiePolicy;
 
-    public SessionService(DatabaseClient db, CookieSigner cookieSigner,
-                          @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName) {
+    public SessionService(DatabaseClient db, CookieSigner cookieSigner, SessionCookiePolicy cookiePolicy) {
         this.db = db;
         this.cookieSigner = cookieSigner;
-        this.cookieName = cookieName;
+        this.cookiePolicy = cookiePolicy;
     }
 
     public record CaptchaResult(String svg, String setCookieHeader) {}
     public record CaptchaData(String text) {}
 
-    public Mono<CaptchaResult> generateAndStoreCaptcha(String rawCookieValue, String captchaText, String svg) {
+    /** {@code request} 仅用于判定新建 captcha 会话 cookie 是否加 Secure（GL-P0-AUTH-001）。 */
+    public Mono<CaptchaResult> generateAndStoreCaptcha(String rawCookieValue, String captchaText, String svg,
+                                                      ServerHttpRequest request) {
+        boolean secure = cookiePolicy.isSecure(request);
         String existingSid = resolveSid(rawCookieValue);
         if (existingSid != null) {
             return storeCaptchaInExisting(existingSid, captchaText)
                 .flatMap(ok -> ok ? Mono.just(new CaptchaResult(svg, null))
-                                  : createNewCaptchaSession(captchaText, svg));
+                                  : createNewCaptchaSession(captchaText, svg, secure));
         }
-        return createNewCaptchaSession(captchaText, svg);
+        return createNewCaptchaSession(captchaText, svg, secure);
     }
 
     public Mono<Optional<CaptchaData>> consumeCaptcha(String rawCookieValue) {
@@ -94,12 +95,15 @@ public class SessionService {
             .defaultIfEmpty(false);
     }
 
-    private Mono<CaptchaResult> createNewCaptchaSession(String captchaText, String svg) {
+    private Mono<CaptchaResult> createNewCaptchaSession(String captchaText, String svg, boolean secure) {
         String sid = generateSid();
         Map<String, Object> sess = new LinkedHashMap<>();
         Map<String, Object> cookie = new LinkedHashMap<>();
-        cookie.put("path", "/"); cookie.put("httpOnly", true); cookie.put("sameSite", "lax");
-        cookie.put("originalMaxAge", SESSION_MAX_AGE_MS);
+        cookie.put("path", "/"); cookie.put("httpOnly", true);
+        cookie.put("sameSite", cookiePolicy.sameSite().toLowerCase(java.util.Locale.ROOT));
+        // secure 必须落库：express-session rolling 续期按库里属性重发 Set-Cookie。
+        cookie.put("secure", secure);
+        cookie.put("originalMaxAge", cookiePolicy.maxAgeMs());
         sess.put("cookie", cookie);
         Map<String, Object> cap = new LinkedHashMap<>();
         cap.put("text", captchaText.toLowerCase());
@@ -109,7 +113,7 @@ public class SessionService {
             String sessJson = mapper.writeValueAsString(sess);
             return db.sql("INSERT INTO session(sid, sess, expire) VALUES (:sid, CAST(:sess AS json), now() + interval '7 days')")
                 .bind("sid", sid).bind("sess", sessJson).then()
-                .thenReturn(new CaptchaResult(svg, buildSetCookie(sid)));
+                .thenReturn(new CaptchaResult(svg, buildSetCookie(sid, secure)));
         } catch (Exception e) { return Mono.error(e); }
     }
 
@@ -126,9 +130,9 @@ public class SessionService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private String buildSetCookie(String sid) {
+    private String buildSetCookie(String sid, boolean secure) {
         String signed = cookieSigner.sign(sid);
         String encoded = URLEncoder.encode("s:" + signed, StandardCharsets.UTF_8);
-        return cookieName + "=" + encoded + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + (SESSION_MAX_AGE_MS / 1000);
+        return cookiePolicy.buildSetCookie(encoded, secure);
     }
 }

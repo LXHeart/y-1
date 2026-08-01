@@ -16,3 +16,6 @@ coverage
 server/.data
 playwright-report
 test-artifacts
+
+# Claude Code session worktrees (local only)
+.claude/worktrees/

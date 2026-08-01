@@ -10,12 +10,12 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link ServiceAssertionIssuer} 签发的服务断言可被 finance 端 {@link IdentityAssertionSigner#verify} 验签通过，
- * 且携带 callerKind=service / principal=marketplace / org 上下文（HLD 11.1，Slice 4F）。
+ * 且携带 callerKind=service / principal=marketplace / org 上下文（HLD 11.1，Slice 4F + GL-P0-ASSERT-001）。
  */
 class ServiceAssertionIssuerTest {
 
     private static final String SECRET = "test-secret-32-chars-min!!!";
-    private static final String AUDIENCE = "grassland-internal";
+    private static final String AUDIENCE = "grassland-finance"; // 目标受众
     private static final String ORG = "11111111-1111-1111-1111-111111111111";
 
     private final IdentityAssertionSigner signer =
@@ -25,7 +25,7 @@ class ServiceAssertionIssuerTest {
     void issuedTokenVerifiesAsMarketplaceService() {
         ServiceAssertionIssuer issuer = new ServiceAssertionIssuer(signer, AUDIENCE);
 
-        IdentityAssertion verified = signer.verify(issuer.issueForOrg(ORG), Instant.now()).orElseThrow();
+        IdentityAssertion verified = signer.verify(issuer.issueForOrg(ORG, AUDIENCE), Instant.now()).orElseThrow();
 
         assertThat(verified.isService()).isTrue();
         assertThat(verified.principal()).isEqualTo("marketplace");
@@ -38,7 +38,7 @@ class ServiceAssertionIssuerTest {
     void issuedTokenCannotImpersonateMerchant() {
         ServiceAssertionIssuer issuer = new ServiceAssertionIssuer(signer, AUDIENCE);
 
-        IdentityAssertion verified = signer.verify(issuer.issueForOrg(ORG), Instant.now()).orElseThrow();
+        IdentityAssertion verified = signer.verify(issuer.issueForOrg(ORG, AUDIENCE), Instant.now()).orElseThrow();
 
         // 服务断言 activeIdentityType 为 null——finance 端 isMerchant() 对 service callerKind 恒为 false
         assertThat(verified.activeIdentityType()).isNull();
@@ -49,8 +49,8 @@ class ServiceAssertionIssuerTest {
     void eachCallMintsFreshToken() {
         ServiceAssertionIssuer issuer = new ServiceAssertionIssuer(signer, AUDIENCE);
 
-        String a = issuer.issueForOrg(ORG);
-        String b = issuer.issueForOrg(ORG);
+        String a = issuer.issueForOrg(ORG, AUDIENCE);
+        String b = issuer.issueForOrg(ORG, AUDIENCE);
 
         // requestId/traceId 每次 UUID，故 payload 不同 → token 不同（规避重放/固定 TTL 过期）
         assertThat(a).isNotEqualTo(b);

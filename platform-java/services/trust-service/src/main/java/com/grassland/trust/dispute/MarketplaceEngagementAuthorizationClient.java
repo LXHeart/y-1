@@ -47,7 +47,7 @@ public class MarketplaceEngagementAuthorizationClient {
     public Mono<Authorization> authorize(String applicationId, String actorAccountId, String actorIdentity) {
         return webClient.post()
                 .uri("/internal/marketplace/engagements/{id}/dispute-authorization", applicationId)
-                .header(headerName, issuer.issueService())
+                .header(headerName, issuer.issueService("grassland-marketplace"))
                 .bodyValue(java.util.Map.of("actorAccountId", actorAccountId, "actorIdentity", actorIdentity))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
