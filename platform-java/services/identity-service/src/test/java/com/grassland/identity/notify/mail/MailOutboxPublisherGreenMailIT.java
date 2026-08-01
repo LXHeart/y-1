@@ -30,6 +30,7 @@ class MailOutboxPublisherGreenMailIT extends IdentityItSupport {
     private GreenMail greenMail;
     private MailOutboxRepository repo;
     private MailOutboxPublisher publisher;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
@@ -38,10 +39,11 @@ class MailOutboxPublisherGreenMailIT extends IdentityItSupport {
         greenMail.start();
 
         repo = new MailOutboxRepository(db);
+        meterRegistry = new SimpleMeterRegistry();
         SmtpMailSender smtp = new SmtpMailSender(javaMailSenderForGreenMail(), "from@test", "from@test");
         MailOutboxProperties props = new MailOutboxProperties(
                 true, 100, 10, 2, 60_000, 5, 1_000, 30_000, 5_000);
-        publisher = new MailOutboxPublisher(repo, smtp, new SimpleMeterRegistry(), props);
+        publisher = new MailOutboxPublisher(repo, smtp, meterRegistry, props);
     }
 
     @AfterEach
@@ -70,15 +72,20 @@ class MailOutboxPublisherGreenMailIT extends IdentityItSupport {
         SmtpMailSender failing = new SmtpMailSender(javaMailSenderForClosedPort(), "from@test", "from@test");
         MailOutboxProperties props = new MailOutboxProperties(
                 true, 100, 10, 2, 60_000, 1, 1_000, 30_000, 2_000);
-        MailOutboxPublisher failingPublisher = new MailOutboxPublisher(repo, failing, new SimpleMeterRegistry(), props);
+        SimpleMeterRegistry failingRegistry = new SimpleMeterRegistry();
+        MailOutboxPublisher failingPublisher = new MailOutboxPublisher(repo, failing, failingRegistry, props);
 
         repo.append(new MailMessage("evt-dead", "to@test", "s", "b", "engagement")).block();
 
         failingPublisher.publishPending();
 
-        await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
-                assertThat(mailStatus("evt-dead")).isEqualTo("dead"));
-        assertThat(repo.deadCount().block()).isEqualTo(1);
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            assertThat(mailStatus("evt-dead")).isEqualTo("dead");
+            assertThat(repo.deadCount().block()).isEqualTo(1);
+            assertThat(failingRegistry.get("grassland.mail.outbox.dead").counter().count()).isEqualTo(1.0);
+            assertThat(failingRegistry.get("grassland.mail.outbox.dead.current").gauge().value()).isEqualTo(1.0);
+            assertThat(failingRegistry.get("grassland.mail.outbox.pending").gauge().value()).isZero();
+        });
     }
 
     // ---- helpers ----

@@ -1,0 +1,14 @@
+groups:
+  - name: identity-mail-outbox
+    rules:
+      - alert: IdentityMailOutboxDeadLetters
+        expr: grassland_mail_outbox_dead_current{job="identity-service"} > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: identity-service
+        annotations:
+          summary: Identity transaction email dead letters require attention
+          description: >-
+            identity-service has mail_outbox rows in dead state. Automatic delivery retries have stopped;
+            inspect the dead rows and SMTP delivery logs before replaying or remediating them.

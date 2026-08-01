@@ -100,6 +100,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # GL-P3-PLATFORM-001：私网 Prometheus，当前聚焦抓 identity 邮件死信指标与加载告警规则。
+  # 不发布宿主端口、不经 Nginx；运维通知接收器（Alertmanager）另行接入。
+  prometheus:
+    profiles: ["java-edge"]
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./platform-java/deploy/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./platform-java/deploy/observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      identity-service:
+        condition: service_started
+    restart: unless-stopped
+
   # 可选 Java Edge BFF 评估入口。
   # 仅在使用 --profile java-edge 时启动；默认不参与，且 Nginx 仍直连 backend:3000。
   # /api/auth/me 经 RouteManifest 路由到 identity-service，其余透传 Express。
@@ -425,3 +442,4 @@ volumes:
   minio_data:
   temporal_dev_data:
   postgres_local_data:
+  prometheus_data:

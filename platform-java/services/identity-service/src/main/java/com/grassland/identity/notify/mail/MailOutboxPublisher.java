@@ -28,7 +28,8 @@ import reactor.core.scheduler.Schedulers;
  * </ul>
  *
  * <p>轮询节奏、overlap guard、claim→send→mark、backlog metrics 与领域 outbox 同构。
- * 未启用（{@code enabled=false}）或 SMTP 未配（{@code isConfigured()=false}）时 publishPending 直接返回。
+ * 未启用（{@code enabled=false}）或 SMTP 未配（{@code isConfigured()=false}）时跳过发送，
+ * 但仍刷新 pending/dead backlog gauges，避免停发或重启期间历史死信被误报为 0。
  */
 @Component
 public class MailOutboxPublisher {
@@ -41,6 +42,7 @@ public class MailOutboxPublisher {
     private final MailOutboxProperties properties;
     private final AtomicBoolean isPublishing = new AtomicBoolean();
     private final AtomicLong pendingGauge = new AtomicLong();
+    private final AtomicLong deadGauge = new AtomicLong();
     private final Counter attemptsCounter;
     private final Counter successCounter;
     private final Counter failuresCounter;
@@ -65,22 +67,24 @@ public class MailOutboxPublisher {
         overlapCounter = Counter.builder("grassland.mail.outbox.poll.overlap").register(meterRegistry);
         publishDuration = Timer.builder("grassland.mail.outbox.publish.duration").register(meterRegistry);
         Gauge.builder("grassland.mail.outbox.pending", pendingGauge, AtomicLong::get).register(meterRegistry);
+        Gauge.builder("grassland.mail.outbox.dead.current", deadGauge, AtomicLong::get).register(meterRegistry);
     }
 
     @Scheduled(fixedDelayString = "${identity.mail-outbox.poll-interval-ms:2000}")
     public void publishPending() {
-        if (!properties.enabled() || !mailSender.isConfigured()) {
-            return;
-        }
         if (!isPublishing.compareAndSet(false, true)) {
             overlapCounter.increment();
             return;
         }
 
-        UUID claimToken = UUID.randomUUID();
-        repository.claimBatch(properties.batchSize(), claimToken, properties.claimLease())
-                .flatMap(this::publishClaimed, properties.maxConcurrency())
-                .then()
+        Mono<Void> delivery = Mono.empty();
+        if (properties.enabled() && mailSender.isConfigured()) {
+            UUID claimToken = UUID.randomUUID();
+            delivery = repository.claimBatch(properties.batchSize(), claimToken, properties.claimLease())
+                    .flatMap(this::publishClaimed, properties.maxConcurrency())
+                    .then();
+        }
+        delivery
                 .doOnError(error -> log.error("Failed to process mail outbox batch", error))
                 .onErrorResume(error -> Mono.empty())
                 .then(refreshBacklogMetrics())
@@ -130,12 +134,13 @@ public class MailOutboxPublisher {
         failuresCounter.increment();
         String errorCode = errorCode(error);
         if (row.attemptCount() >= properties.maxAttempts()) {
-            deadCounter.increment();
-            log.warn("Mail dead-lettered after {} attempts: recipient={}, errorCode={}",
-                    row.attemptCount(), row.recipient(), errorCode);
             return Mono.defer(() -> repository.markDead(row.id(), row.claimToken(), errorCode))
                     .flatMap(updated -> {
-                        if (!updated) {
+                        if (updated) {
+                            deadCounter.increment();
+                            log.warn("Mail dead-lettered after {} attempts: recipient={}, errorCode={}",
+                                    row.attemptCount(), row.recipient(), errorCode);
+                        } else {
                             markFailuresCounter.increment();
                         }
                         return Mono.<Void>empty();
@@ -162,11 +167,17 @@ public class MailOutboxPublisher {
     }
 
     private Mono<Void> refreshBacklogMetrics() {
-        return repository.pendingCount().defaultIfEmpty(0L)
+        Mono<Void> pending = repository.pendingCount().defaultIfEmpty(0L)
                 .doOnNext(pendingGauge::set)
-                .doOnError(error -> log.warn("Failed to refresh mail outbox metrics"))
+                .doOnError(error -> log.warn("Failed to refresh mail outbox pending metric"))
                 .onErrorResume(error -> Mono.empty())
                 .then();
+        Mono<Void> dead = repository.deadCount().defaultIfEmpty(0L)
+                .doOnNext(deadGauge::set)
+                .doOnError(error -> log.warn("Failed to refresh mail outbox dead metric"))
+                .onErrorResume(error -> Mono.empty())
+                .then();
+        return Mono.when(pending, dead);
     }
 
     private long backoffMillis(int attemptCount) {
