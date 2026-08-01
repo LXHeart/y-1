@@ -63,12 +63,31 @@ export async function generateScriptHandler(
   }
 }
 
+export function getCapabilitiesHandler(_req: Request, res: Response): void {
+  const available = videoProduction.isVideoGenerationAvailable()
+
+  res.json({
+    success: true,
+    data: {
+      videoGeneration: {
+        available,
+        reason: available ? null : videoProduction.VIDEO_GENERATION_UNAVAILABLE_REASON,
+      },
+    },
+  })
+}
+
 export async function generateVideoHandler(
   req: Request,
   res: Response,
   _next: NextFunction,
 ): Promise<void> {
   const { script, images, videoStyle, shopName, shopAddress } = generateVideoRequestSchema.parse(req.body)
+
+  // 能力未就绪时必须在扣积分之前拦截（GL-P0-BILL-001）
+  if (!videoProduction.isVideoGenerationAvailable()) {
+    throw new AppError(videoProduction.VIDEO_GENERATION_UNAVAILABLE_REASON, 501)
+  }
 
   await requireCredit(getSessionUser(req)!.id, 'video_production_video')
 

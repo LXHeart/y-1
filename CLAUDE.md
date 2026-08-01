@@ -84,7 +84,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 图片评价 | `/api/image-analysis/*` | analyze (SSE), export-feishu, save-style-memory, style-preferences (GET/PUT), style-preferences/optimize, step/draft, step/optimize, step/style-refine |
 | 文章生成 | `/api/article-generation/*` | titles, outline (SSE), content (SSE), image-recommendations, search-images, generate-image |
 | 脱口秀 | `/api/comedy-generation/*` | generate-script (SSE) |
-| 视频制作 | `/api/video-production/*` | `generate-script`（SSE）可用；`generate-video` 当前是 Seedance stub，未接真实供应商，能力未就绪时必须在扣积分前 gate |
+| 视频制作 | `/api/video-production/*` | `capabilities`（GET）、`generate-script`（SSE）可用；`generate-video` 当前是 Seedance stub，已 gate 为 501 且不扣积分 |
 | 视频改编 | `/api/video-recreation/*` | adapt-content, generate-asset-image, generate-all-asset-images, generate-scene-image, generate-all-scene-images |
 | 积分 | `/api/credits/*` | balance, history |
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）|
@@ -105,7 +105,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - `provider-url.ts` 维护 `TRUSTED_PUBLIC_API_SUFFIXES` 白名单，匹配时跳过 SSRF 私有 IP 检查
 - 管理员路由需要 `requireAuthenticatedUser` + `requireAdmin` 双重中间件
 - 视频制作图片用 base64 在 JSON body 中传输（≤9 张），`express.json` limit 已调至 10MB
-- `video-production.service.ts` 的 `generate-video` 当前返回不可用 stub/501，Seedance 未接入；**不可用能力不得先扣 `video_production_video` 积分**，上线前必须 feature-gate
+- `video-production.service.ts` 的 `isVideoGenerationAvailable()` 是「视频生成是否可用」的唯一真相源（`VIDEO_GENERATION_IMPLEMENTED` 常量硬关，无 env 开关）。**不可用能力不得先扣 `video_production_video` 积分**：controller 的 gate 必须留在 `requireCredit` 之前，`generate-video` 返回 501。前端经 `GET /api/video-production/capabilities` fail-closed 禁用入口。接入 Seedance 时改常量一处即全链生效
 - 环境变量定义在 `server/src/lib/env.ts`，是运行时配置的唯一来源
 - API 表描述逻辑契约；实际 upstream 由 edge-bff RouteManifest 与对应 flag 决定，未启用的 Java 路由回落 legacy
 

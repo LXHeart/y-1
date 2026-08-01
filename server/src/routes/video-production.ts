@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { generateScriptHandler, generateVideoHandler } from '../controllers/video-production.controller.js'
+import { generateScriptHandler, generateVideoHandler, getCapabilitiesHandler } from '../controllers/video-production.controller.js'
 import { requireAuthenticatedUser } from '../lib/auth.js'
 import { createRateLimit } from '../lib/rate-limit.js'
 
@@ -13,6 +13,7 @@ videoProductionRouter.use(createRateLimit({
   methods: ['POST'],
   message: '视频制作请求过于频繁，请稍后再试。',
 }))
+videoProductionRouter.get('/capabilities', getCapabilitiesHandler)
 videoProductionRouter.post('/generate-script', generateScriptHandler)
 videoProductionRouter.post('/generate-video', generateVideoHandler)
 

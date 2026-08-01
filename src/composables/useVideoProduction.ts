@@ -1,9 +1,21 @@
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { VideoProductionStage, VideoProductionImage, VideoProductionForm } from '../types/video-production'
 import { compressImageToFile } from './compress-image'
 
 function generateId(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+const VIDEO_GENERATION_FALLBACK_REASON = '视频生成服务暂未上线'
+
+interface CapabilitiesResponse {
+  success?: boolean
+  data?: {
+    videoGeneration?: {
+      available?: boolean
+      reason?: string | null
+    }
+  }
 }
 
 export function useVideoProduction() {
@@ -23,6 +35,10 @@ export function useVideoProduction() {
   const videoLoading = ref(false)
   const videoProgress = ref(0)
   const error = ref('')
+
+  // fail-closed：拉取失败时保持不可用，宁可误禁也不误扣积分
+  const videoGenerationAvailable = ref(false)
+  const videoGenerationReason = ref(VIDEO_GENERATION_FALLBACK_REASON)
 
   let scriptController: AbortController | null = null
   let videoController: AbortController | null = null
@@ -120,7 +136,30 @@ export function useVideoProduction() {
     }
   }
 
+  async function loadCapabilities(): Promise<void> {
+    try {
+      const response = await fetch('/api/video-production/capabilities')
+      if (!response.ok) return
+
+      const body = await response.json() as CapabilitiesResponse
+      const capability = body.data?.videoGeneration
+      if (!capability) return
+
+      videoGenerationAvailable.value = capability.available === true
+      videoGenerationReason.value = capability.reason || VIDEO_GENERATION_FALLBACK_REASON
+    } catch {
+      // fail-closed：保持 videoGenerationAvailable = false
+    }
+  }
+
+  onMounted(loadCapabilities)
+
   async function startVideoGeneration(): Promise<void> {
+    if (!videoGenerationAvailable.value) {
+      error.value = videoGenerationReason.value || VIDEO_GENERATION_FALLBACK_REASON
+      return
+    }
+
     if (!script.value.trim()) {
       error.value = '脚本内容不能为空'
       return
@@ -269,6 +308,7 @@ export function useVideoProduction() {
     stage, images, form, script, videoUrl,
     scriptLoading, videoLoading, videoProgress, error,
     canProceedToScript,
+    videoGenerationAvailable, videoGenerationReason,
     addImages, removeImage, reorderImage,
     generateScript, startVideoGeneration,
     goBackToUpload, goBackToScript,

@@ -241,6 +241,17 @@ export interface VideoGenerationResult {
   taskId: string
 }
 
+// Seedance API 尚未接入。能力不可用期间禁止计费（GL-P0-BILL-001）。
+// 这是「视频生成是否可用」的唯一真相源：接入真实 provider 时改这里，
+// controller、capabilities 端点和前端都跟着生效。
+const VIDEO_GENERATION_IMPLEMENTED = false
+
+export const VIDEO_GENERATION_UNAVAILABLE_REASON = '视频生成服务暂未上线'
+
+export function isVideoGenerationAvailable(): boolean {
+  return VIDEO_GENERATION_IMPLEMENTED
+}
+
 export async function generateVideo(
   _script: string,
   _images: string[],
@@ -248,6 +259,11 @@ export async function generateVideo(
   _shopName: string,
   _shopAddress?: string,
 ): Promise<VideoGenerationResult> {
+  // 防御性拦截：任何绕过 controller gate 的调用路径也不会静默返回空结果
+  if (!isVideoGenerationAvailable()) {
+    throw new AppError(VIDEO_GENERATION_UNAVAILABLE_REASON, 501)
+  }
+
   // Stub: Seedance API integration will be added later
   logger.info('Video generation called (stub)')
 

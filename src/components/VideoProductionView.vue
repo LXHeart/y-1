@@ -161,12 +161,14 @@
         </button>
         <button
           class="btn-primary"
-          :disabled="scriptLoading || !script.trim()"
+          :disabled="scriptLoading || !script.trim() || !videoGenerationAvailable"
           @click="startVideoGeneration"
         >
           生成视频
         </button>
       </div>
+
+      <p v-if="!videoGenerationAvailable" class="field-note">{{ videoGenerationReason }}</p>
     </section>
 
     <!-- Step 3: Video Generation -->
@@ -235,6 +237,7 @@ const {
   stage, images, form, script, videoUrl,
   scriptLoading, videoLoading, videoProgress, error,
   canProceedToScript,
+  videoGenerationAvailable, videoGenerationReason,
   addImages, removeImage, reorderImage,
   generateScript, startVideoGeneration,
   goBackToUpload, goBackToScript,
