@@ -36,6 +36,9 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-test-autoconfigure")
+    // GL-P1-NOTIFY-001：事务邮件 outbox 测试用 GreenMail（内存 SMTP），填 identity 邮件零测试的盲区。
+    testImplementation("com.icegreen:greenmail-junit5:2.0.1")
+    testImplementation("org.assertj:assertj-core")
 }
 
 tasks.test {

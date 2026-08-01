@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.identity.event.EventContractException;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.event.InboxRepository;
+import com.grassland.identity.notify.mail.MailOutboxEnqueuer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,7 @@ class NotificationEventProcessorTest {
     @Mock private InboxRepository inbox;
     @Mock private NotificationRecipientResolver resolver;
     @Mock private NotificationRepository notifications;
+    @Mock private MailOutboxEnqueuer mailOutbox;
     @Mock private TransactionalOperator transactions;
 
     private NotificationEventProcessor processor;
@@ -49,7 +51,9 @@ class NotificationEventProcessorTest {
         // pass-through 且 lenient：IGNORED/坏 envelope 等用例不经事务路径，strict stub 会误报。
         org.mockito.Mockito.lenient().when(transactions.transactional(any(Mono.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
-        processor = new NotificationEventProcessor(inbox, resolver, notifications, transactions,
+        // GL-P1-NOTIFY-001：emit 末尾入队邮件（mock 空 Mono；真实入队/原子性由 NotificationInboxIT 验证）。
+        org.mockito.Mockito.lenient().when(mailOutbox.enqueue(any(), any())).thenReturn(Mono.empty());
+        processor = new NotificationEventProcessor(inbox, resolver, notifications, mailOutbox, transactions,
                 "identity-notification-consumer");
     }
 

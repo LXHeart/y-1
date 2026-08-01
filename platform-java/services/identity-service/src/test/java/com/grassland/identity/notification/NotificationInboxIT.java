@@ -145,7 +145,10 @@ class NotificationInboxIT extends IdentityItSupport {
         NotificationEventProcessor failingProcessor = new NotificationEventProcessor(
                 new com.grassland.identity.event.InboxRepository(db),
                 new com.grassland.identity.notification.NotificationRecipientResolver(db),
-                spy, transactions, "identity-notification-consumer");
+                spy,
+                new com.grassland.identity.notify.mail.MailOutboxEnqueuer(
+                        new com.grassland.identity.notify.mail.MailOutboxRepository(db), db),
+                transactions, "identity-notification-consumer");
 
         assertThatThrownBy(() -> failingProcessor.process(record).block())
                 .isInstanceOf(RuntimeException.class)

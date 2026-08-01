@@ -80,6 +80,19 @@ identity:
     claim-lease-ms: ${IDENTITY_OUTBOX_CLAIM_LEASE_MS:300000}
     initial-backoff-ms: ${IDENTITY_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${IDENTITY_OUTBOX_MAX_BACKOFF_MS:60000}
+  # 事务邮件 delivery outbox（GL-P1-NOTIFY-001）。默认 false——仅当 SMTP 已配（SmtpMailSender.isConfigured）
+  # 时由 compose 置 true；publisher 内部再判 isConfigured()，未配不轮询。
+  mail-outbox:
+    enabled: ${IDENTITY_MAIL_OUTBOX_ENABLED:false}
+    poll-interval-ms: ${IDENTITY_MAIL_OUTBOX_POLL_INTERVAL_MS:2000}
+    batch-size: ${IDENTITY_MAIL_OUTBOX_BATCH_SIZE:50}
+    max-concurrency: ${IDENTITY_MAIL_OUTBOX_MAX_CONCURRENCY:4}
+    claim-lease-ms: ${IDENTITY_MAIL_OUTBOX_CLAIM_LEASE_MS:60000}
+    # 失败封顶：5 次（指数退避 1/2/4/8/16s）后置 status=dead 停止重试 + 告警。
+    max-attempts: ${IDENTITY_MAIL_OUTBOX_MAX_ATTEMPTS:5}
+    initial-backoff-ms: ${IDENTITY_MAIL_OUTBOX_INITIAL_BACKOFF_MS:1000}
+    max-backoff-ms: ${IDENTITY_MAIL_OUTBOX_MAX_BACKOFF_MS:30000}
+    send-timeout-ms: ${IDENTITY_MAIL_OUTBOX_SEND_TIMEOUT_MS:30000}
   permission:
     # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
     sla-hours: ${PERMISSION_SLA_HOURS:72}

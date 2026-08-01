@@ -41,6 +41,22 @@ public class SmtpMailSender {
 
     public boolean isConfigured() { return mailSender != null; }
 
+    /**
+     * 通用发送（GL-P1-NOTIFY-001）：供 {@code MailOutboxPublisher} 发送已渲染好的邮件。
+     *
+     * <p>阻塞调用（{@link JavaMailSender#send} 是阻塞 API），须在弹性线程（publisher 的
+     * {@code Schedulers.boundedElastic}）上执行。失败抛异常，调用方据此退避重试或死信。
+     */
+    public void send(String to, String subject, String body) {
+        if (mailSender == null) throw new IllegalStateException("邮件服务未配置");
+        SimpleMailMessage msg = new SimpleMailMessage();
+        msg.setFrom(from);
+        msg.setTo(to);
+        msg.setSubject(subject);
+        msg.setText(body);
+        mailSender.send(msg);
+    }
+
     public void sendVerificationCode(String to, String code) {
         if (mailSender == null) throw new IllegalStateException("邮件服务未配置");
         SimpleMailMessage msg = new SimpleMailMessage();

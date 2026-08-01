@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.event.EventContractException;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.event.InboxRepository;
+import com.grassland.identity.notify.mail.MailOutboxEnqueuer;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Map;
@@ -35,6 +36,7 @@ public class NotificationEventProcessor {
     private final InboxRepository inbox;
     private final NotificationRecipientResolver resolver;
     private final NotificationRepository notifications;
+    private final MailOutboxEnqueuer mailOutbox;
     private final TransactionalOperator transactions;
     private final ObjectMapper mapper = new ObjectMapper();
     private final String consumerName;
@@ -43,11 +45,13 @@ public class NotificationEventProcessor {
             InboxRepository inbox,
             NotificationRecipientResolver resolver,
             NotificationRepository notifications,
+            MailOutboxEnqueuer mailOutbox,
             TransactionalOperator transactions,
             @Value("${identity.notification-consumer.group-id:identity-notification-consumer}") String consumerName) {
         this.inbox = inbox;
         this.resolver = resolver;
         this.notifications = notifications;
+        this.mailOutbox = mailOutbox;
         this.transactions = transactions;
         this.consumerName = consumerName;
     }
@@ -80,7 +84,12 @@ public class NotificationEventProcessor {
         });
     }
 
-    /** 解析收件人并逐条插通知（同事务）。无收件人（如邀请邮箱未注册）时仍视为 PROCESSED——inbox 已记录。 */
+    /**
+     * 解析收件人并逐条插通知（同事务），随后入队事务邮件（同事务）。无收件人（如邀请邮箱未注册）时仍视为
+     * PROCESSED——inbox 已记录；邮件 enqueuer 对邀请事件会直接用 payload.email 入队（未注册邮箱也能收到）。
+     *
+     * <p>「站内通知插入」与「邮件入队」在同一事务：任一失败则整体回滚，保证不漂移（GL-P1-NOTIFY-001）。
+     */
     private Mono<Long> emit(IdentityEventEnvelope envelope, NotificationTemplates.Template template) {
         return resolver.resolve(envelope).flatMap(recipients -> {
             Mono<Long> chain = Mono.just(0L);
@@ -91,7 +100,8 @@ public class NotificationEventProcessor {
                                 envelope.eventId(), template.payload())
                         .thenReturn(1L));
             }
-            return chain;
+            return chain.then(mailOutbox.enqueue(envelope, recipients))
+                    .thenReturn((long) recipients.size());
         });
     }
 

@@ -1,6 +1,7 @@
 package com.grassland.identity;
 
 import com.grassland.identity.event.OutboxProperties;
+import com.grassland.identity.notify.mail.MailOutboxProperties;
 import io.r2dbc.spi.ConnectionFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -13,7 +14,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 
 @SpringBootApplication
 @EnableScheduling
-@EnableConfigurationProperties(OutboxProperties.class)
+@EnableConfigurationProperties({ OutboxProperties.class, MailOutboxProperties.class })
 public class IdentityServiceApplication {
     public static void main(String[] args) {
         SpringApplication.run(IdentityServiceApplication.class, args);

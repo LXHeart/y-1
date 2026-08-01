@@ -5,15 +5,11 @@ import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
-import com.grassland.identity.notify.SmtpMailSender;
-import com.grassland.identity.organization.OrganizationRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
@@ -29,7 +25,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 /**
  * 组织侧的成员邀请入口。挂 {@code /api/organizations/{orgId}/invitations}。
@@ -48,26 +43,19 @@ import reactor.core.scheduler.Schedulers;
 @RequestMapping("/api/organizations/{orgId}/invitations")
 public class OrganizationInvitationController {
 
-    private static final Logger log = LoggerFactory.getLogger(OrganizationInvitationController.class);
-
     private final OrgAuthorization authz;
     private final InvitationRepository invitations;
-    private final OrganizationRepository organizations;
     private final OutboxRepository outbox;
-    private final SmtpMailSender mailSender;
     private final Duration ttl;
     private final TransactionalOperator transactions;
 
     public OrganizationInvitationController(OrgAuthorization authz, InvitationRepository invitations,
-                                            OrganizationRepository organizations, OutboxRepository outbox,
-                                            SmtpMailSender mailSender,
+                                            OutboxRepository outbox,
                                             @Value("${identity.invitation.ttl-hours:168}") long ttlHours,
                                             TransactionalOperator transactions) {
         this.authz = authz;
         this.invitations = invitations;
-        this.organizations = organizations;
         this.outbox = outbox;
-        this.mailSender = mailSender;
         this.ttl = Duration.ofHours(ttlHours > 0 ? ttlHours : 168);
         this.transactions = transactions;
     }
@@ -89,9 +77,10 @@ public class OrganizationInvitationController {
                                                         Map.of("organizationId", orgId, "email", invitation.email(),
                                                                 "role", invitation.role(), "invitedBy", owner.id())))
                                                         .thenReturn(invitation)))))
-                        .flatMap(invitation -> notifyInvitee(orgId, invitation)
-                                .map(sent -> ResponseEntity.status(201).body(Map.of(
-                                        "success", true, "data", toBody(invitation, sent))))))
+                        // GL-P1-NOTIFY-001：邀请邮件改由 MembershipInvited 事件 → NotificationEventProcessor
+                        // → mail_outbox 异步可靠发送（见 notify/mail）。此处入队即 201，不再同步直发。
+                        .map(invitation -> ResponseEntity.status(201).body(Map.of(
+                                "success", true, "data", toBody(invitation)))))
                 .onErrorResume(DataIntegrityViolationException.class, e ->
                         Mono.just(ResponseEntity.status(409)
                                 .body(Map.of("success", false, "error", "该邮箱已有待接受的邀请"))));
@@ -102,7 +91,7 @@ public class OrganizationInvitationController {
         return authz.requireRole(request, orgId, MembershipRole.MEMBER)
                 .flatMap(account -> invitations.findByOrganization(orgId).collectList()
                         .map(list -> ResponseEntity.ok(Map.of("success", true,
-                                "data", list.stream().map(i -> toBody(i, null)).toList()))));
+                                "data", list.stream().map(this::toBody).toList()))));
     }
 
     @DeleteMapping("/{invitationId}")
@@ -131,28 +120,6 @@ public class OrganizationInvitationController {
                         }));
     }
 
-    /**
-     * 尽力而为地把邀请通知发到被邀请邮箱；返回是否真的发出（前端据此提示邀请人是否需另行告知对方）。
-     * 未配置 SMTP（本地/dev 常态）或发送失败都不影响邀请本身已落库。
-     */
-    private Mono<Boolean> notifyInvitee(String orgId, Invitation invitation) {
-        if (!mailSender.isConfigured()) {
-            return Mono.just(false);
-        }
-        return organizations.findById(orgId)
-                .map(org -> org.name())
-                .defaultIfEmpty("草场组织")
-                .flatMap(orgName -> Mono.fromCallable(() -> {
-                            mailSender.sendOrganizationInvitation(invitation.email(), orgName, invitation.role());
-                            return true;
-                        })
-                        .subscribeOn(Schedulers.boundedElastic()))
-                .onErrorResume(e -> {
-                    log.warn("invitation mail send failed for org {}: {}", orgId, e.toString());
-                    return Mono.just(false);
-                });
-    }
-
     @ExceptionHandler(IdentityException.class)
     public ResponseEntity<Map<String, Object>> handleError(IdentityException error) {
         return ResponseEntity.status(error.status()).body(Map.of("success", false, "error", error.getMessage()));
@@ -164,8 +131,7 @@ public class OrganizationInvitationController {
         return ResponseEntity.status(400).body(Map.of("success", false, "error", "邮箱或角色不合法"));
     }
 
-    /** emailSent 仅在创建时有意义（列表读不出「当时是否发信」），故列表传 null 时省略该字段。 */
-    private Map<String, Object> toBody(Invitation invitation, Boolean emailSent) {
+    private Map<String, Object> toBody(Invitation invitation) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", invitation.id());
         map.put("organizationId", invitation.organizationId());
@@ -175,9 +141,6 @@ public class OrganizationInvitationController {
         map.put("expiresAt", invitation.expiresAt() == null ? null : invitation.expiresAt().toString());
         map.put("createdAt", invitation.createdAt() == null ? null : invitation.createdAt().toString());
         map.put("expired", invitation.isPending() && invitation.isExpired(Instant.now()));
-        if (emailSent != null) {
-            map.put("emailSent", emailSent);
-        }
         return map;
     }
 }

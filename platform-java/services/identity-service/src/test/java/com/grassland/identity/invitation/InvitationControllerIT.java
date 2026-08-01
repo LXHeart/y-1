@@ -72,12 +72,12 @@ class InvitationControllerIT extends IdentityItSupport {
         invite(orgId, owner.cookie(), "inv-registered@example.com", "member")
                 .expectStatus().isCreated().expectBody()
                 .jsonPath("$.data.status").isEqualTo("pending")
-                .jsonPath("$.data.emailSent").isEqualTo(false);
+                .jsonPath("$.data.email").isEqualTo("inv-registered@example.com");
 
         invite(orgId, owner.cookie(), "nobody-here@example.com", "member")
                 .expectStatus().isCreated().expectBody()
                 .jsonPath("$.data.status").isEqualTo("pending")
-                .jsonPath("$.data.emailSent").isEqualTo(false);
+                .jsonPath("$.data.email").isEqualTo("nobody-here@example.com");
     }
 
     @Test
