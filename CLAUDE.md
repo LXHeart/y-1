@@ -6,7 +6,7 @@
 
 技术栈：Vue 3 + Vite 前端，Express + TypeScript 后端，PostgreSQL 数据库。
 
-> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前正在执行 Epic 0/1：新增独立 Java 平台 `platform-java/`（Gradle 多模块、Spring Boot、Spring Cloud Gateway WebFlux）与透明 `edge-bff`，默认不切换 Nginx 流量。
+> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前是 Java 草场领域与 Express legacy/worker 并存的混合架构：identity、marketplace、finance、trust、intelligence 已有 Java 服务；Express 仍承载部分 legacy API、FFmpeg/Playwright worker 与迁移 fallback。生产默认 Nginx 仍直连 `backend:3000`，`edge-bff` 的 RouteManifest/feature flag 是启动期的逐路由切流控制。当前未完成开发与生产门禁见 `docs/草场开发进度与续接指南.md` 当前 backlog 及 memory `grassland-prioritized-backlog.md`。
 
 ## Java 平台（草场 Epic 0/1）
 
@@ -14,8 +14,8 @@
 - 模块：`services/edge-bff`、`services/identity-service`、`services/marketplace-service`、`services/finance-service`、`services/trust-service`、`services/intelligence-service`
 - 工具链：JDK 25（`brew install openjdk@25`）；通过 `./gradlew` 构建，不依赖系统 Gradle
 - `edge-bff` 是固定上游透明代理，零聚合透传 SSE / Multipart / Range，剥离 hop-by-hop header；契约矩阵见 `docs/草场旧API兼容契约矩阵.md`
-- 可选 Compose Profile：`docker compose --profile java-edge up edge-bff`，默认流量仍由 Nginx 直连 `backend:3000`
-- 不要改动根 `package.json`、`nginx.conf` 或现有 Express 行为；新草场领域直接进入 Java 服务，不写回旧库
+- 可选 Compose Profile：`docker compose --profile java-edge up edge-bff`；默认生产入口仍由 Nginx 直连 `backend:3000`，RouteManifest flag 是启动期配置，回滚通常需要重启或替换 edge 实例
+- 保持既有 public API/Express 行为与兼容契约；新草场领域直接进入 Java 服务，必要时允许聚焦的 bridge、routing、worker 兼容修改，不把 FFmpeg/Playwright 塞入 WebFlux 请求线程
 
 核心功能模块：
 - **视频提取分析**：抖音/Bilibili 视频解析、预览、下载、音频提取、AI 视频分析
@@ -42,7 +42,7 @@ npm run typecheck        # TypeScript 类型检查
 npx tsx server/src/scripts/run-migrations.ts  # 执行数据库 migration
 ```
 
-DATABASE_URL: `postgresql://lxh:Aa@111111@64.83.36.35:5432/lxh`
+DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和提交中不得记录数据库连接值、密码或其他凭据。
 
 ## Architecture
 
@@ -84,7 +84,7 @@ DATABASE_URL: `postgresql://lxh:Aa@111111@64.83.36.35:5432/lxh`
 | 图片评价 | `/api/image-analysis/*` | analyze (SSE), export-feishu, save-style-memory, style-preferences (GET/PUT), style-preferences/optimize, step/draft, step/optimize, step/style-refine |
 | 文章生成 | `/api/article-generation/*` | titles, outline (SSE), content (SSE), image-recommendations, search-images, generate-image |
 | 脱口秀 | `/api/comedy-generation/*` | generate-script (SSE) |
-| 视频制作 | `/api/video-production/*` | generate-script (SSE), generate-video（需登录+扣积分）|
+| 视频制作 | `/api/video-production/*` | `generate-script`（SSE）可用；`generate-video` 当前是 Seedance stub，未接真实供应商，能力未就绪时必须在扣积分前 gate |
 | 视频改编 | `/api/video-recreation/*` | adapt-content, generate-asset-image, generate-all-asset-images, generate-scene-image, generate-all-scene-images |
 | 积分 | `/api/credits/*` | balance, history |
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）|
@@ -105,9 +105,9 @@ DATABASE_URL: `postgresql://lxh:Aa@111111@64.83.36.35:5432/lxh`
 - `provider-url.ts` 维护 `TRUSTED_PUBLIC_API_SUFFIXES` 白名单，匹配时跳过 SSRF 私有 IP 检查
 - 管理员路由需要 `requireAuthenticatedUser` + `requireAdmin` 双重中间件
 - 视频制作图片用 base64 在 JSON body 中传输（≤9 张），`express.json` limit 已调至 10MB
-- 视频制作积分 key：`video_production_script` 和 `video_production_video`
-- 视频生成 API 目前是 stub，Seedance 集成待后续对接
+- `video-production.service.ts` 的 `generate-video` 当前返回不可用 stub/501，Seedance 未接入；**不可用能力不得先扣 `video_production_video` 积分**，上线前必须 feature-gate
 - 环境变量定义在 `server/src/lib/env.ts`，是运行时配置的唯一来源
+- API 表描述逻辑契约；实际 upstream 由 edge-bff RouteManifest 与对应 flag 决定，未启用的 Java 路由回落 legacy
 
 ## Testing
 
