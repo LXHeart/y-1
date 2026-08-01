@@ -17,8 +17,8 @@ export interface GrasslandResponse<T> {
 
 // ---------- marketplace ----------
 
-/** 任务状态：published=大厅可见；closed=已关闭（不占活跃额度）。 */
-export type TaskStatus = 'published' | 'closed'
+/** 任务状态（GL-P1-TASK-001）：draft=草稿；published=大厅可见；closed=已关闭报名；cancelled=已取消。 */
+export type TaskStatus = 'draft' | 'published' | 'closed' | 'cancelled'
 
 export interface Task {
   id: string
@@ -34,6 +34,14 @@ export interface Task {
   /** 赏金（分）；null/0 = 非资金型任务（accept 走直连，不经资金 Saga）。 */
   bountyCents: number | null
   createdAt: string | null
+  /** 乐观锁版本号（GL-P1-TASK-001 Stage 1）：draft 编辑 / publish / close / cancel 每次 +1。 */
+  version: number
+  /** 报名截止时间（ISO）；null = 无时间截止。apply 时判，过期则不接受新报名。 */
+  applicationDeadline: string | null
+  /** 进入 published 的时刻（ISO）；发布额度/月度统计按它计。draft/cancelled 为 null。 */
+  publishedAt: string | null
+  /** 取消时刻（ISO）；仅 cancelled 态非空。 */
+  cancelledAt: string | null
 }
 
 export interface CreateTaskInput {
@@ -44,6 +52,39 @@ export interface CreateTaskInput {
   platform?: string
   maxSlots?: number
   bountyCents?: number
+  /** 报名截止时间（ISO）；可空 = 无时间截止。 */
+  applicationDeadline?: string
+}
+
+/** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
+export type CreateDraftInput = CreateTaskInput
+
+/** 编辑草稿请求（仅 draft 态；expectedVersion 乐观锁）。可空字段 null=清空。 */
+export interface UpdateTaskInput {
+  expectedVersion: number
+  title: string
+  description?: string
+  contentForm?: string
+  platform?: string
+  maxSlots?: number
+  bountyCents?: number
+  applicationDeadline?: string
+}
+
+/** 任务大厅 feed 查询（GL-P1-TASK-001 Stage 2）。 */
+export interface TaskFeedQuery {
+  platform?: string
+  contentForm?: string
+  minBountyCents?: number
+  cursor?: string
+  limit?: number
+}
+
+/** 任务大厅 feed 分页响应。 */
+export interface TaskFeedPage {
+  items: Task[]
+  nextCursor: string | null
+  hasMore: boolean
 }
 
 /**

@@ -56,8 +56,20 @@ const outcomes = ref<Record<string, string>>({})
 
 const newOrgName = ref('')
 const creditAmountYuan = ref(1000)
-const taskForm = ref({ title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0 })
+/** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
+const taskForm = ref({
+  title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '',
+})
+/** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
+const editingDraft = ref<{ id: string; version: number } | null>(null)
 const applyNote = ref('')
+
+// ---------- 推荐官：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）----------
+const feedItems = ref<Task[]>([])
+const feedCursor = ref('')
+const feedHasMore = ref(false)
+const feedLoading = ref(false)
+const feedFilters = ref({ platform: '', contentForm: '', minBountyYuan: 0 })
 
 // ---------- 商家筛选报名者（PRD 五等级 + 完成率）----------
 //
@@ -164,6 +176,10 @@ function resetAccountState(): void {
   levelFilter.value = ''
   rateFilterPct.value = 0
   confirmedAppIds.value = new Set()
+  feedItems.value = []
+  feedCursor.value = ''
+  feedHasMore.value = false
+  editingDraft.value = null
 }
 
 /**
@@ -236,11 +252,109 @@ async function publishTask(): Promise<void> {
     platform: taskForm.value.platform.trim() || undefined,
     maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
+    applicationDeadline: deadlineIso(),
   })
   if (!created) return
-  taskForm.value = { title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0 }
+  resetTaskForm()
   setNotice(`任务「${created.title}」已发布`)
   await refreshTasks()
+}
+
+/** datetime-local 字符串 → ISO（给后端）；空或不可解析 → undefined（无截止）。 */
+function deadlineIso(): string | undefined {
+  const raw = taskForm.value.applicationDeadline
+  if (!raw) return undefined
+  const ms = Date.parse(raw)
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
+}
+
+/** ISO → datetime-local（回填编辑草稿用）。 */
+function isoToLocalInput(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function resetTaskForm(): void {
+  taskForm.value = { title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '' }
+  editingDraft.value = null
+}
+
+/** 存草稿：editingDraft 非空 → PUT 更新，否则 POST 新建。 */
+async function saveDraft(): Promise<void> {
+  if (!activeOrgId.value || !taskForm.value.title.trim()) return
+  const bountyCents = yuanToCents(taskForm.value.bountyYuan)
+  const editing = editingDraft.value
+  if (editing) {
+    const updated = await grassland.updateTask(editing.id, {
+      expectedVersion: editing.version,
+      title: taskForm.value.title.trim(),
+      description: taskForm.value.description.trim() || undefined,
+      platform: taskForm.value.platform.trim() || undefined,
+      maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
+      bountyCents: bountyCents > 0 ? bountyCents : undefined,
+      applicationDeadline: deadlineIso(),
+    })
+    if (!updated) return
+    setNotice(`草稿「${updated.title}」已更新（v${updated.version}）`)
+  } else {
+    const created = await grassland.createDraft({
+      organizationId: activeOrgId.value,
+      title: taskForm.value.title.trim(),
+      description: taskForm.value.description.trim() || undefined,
+      platform: taskForm.value.platform.trim() || undefined,
+      maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
+      bountyCents: bountyCents > 0 ? bountyCents : undefined,
+      applicationDeadline: deadlineIso(),
+    })
+    if (!created) return
+    setNotice(`草稿「${created.title}」已保存`)
+  }
+  resetTaskForm()
+  await refreshTasks()
+}
+
+/** 把草稿载入表单供编辑。 */
+function editDraft(task: Task): void {
+  editingDraft.value = { id: task.id, version: task.version }
+  taskForm.value = {
+    title: task.title,
+    description: task.description || '',
+    platform: task.platform || '',
+    maxSlots: task.maxSlots ?? 1,
+    bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
+    applicationDeadline: isoToLocalInput(task.applicationDeadline),
+  }
+}
+
+async function publishDraft(task: Task): Promise<void> {
+  const published = await grassland.publishDraft(task.id, task.version)
+  if (!published) return
+  setNotice(`任务「${published.title}」已发布`)
+  await refreshTasks()
+}
+
+async function closeTaskAction(task: Task): Promise<void> {
+  const closed = await grassland.closeTask(task.id, task.version)
+  if (!closed) return
+  setNotice(`任务「${closed.title}」已关闭报名`)
+  await refreshTasks()
+}
+
+async function cancelTaskAction(task: Task): Promise<void> {
+  const cancelled = await grassland.cancelTask(task.id, task.version)
+  if (!cancelled) return
+  setNotice(`任务「${cancelled.title}」已取消`)
+  await refreshTasks()
+}
+
+function taskStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    draft: '草稿', published: '已发布', closed: '已关闭报名', cancelled: '已取消',
+  }
+  return map[status] || status
 }
 
 async function selectTask(taskId: string): Promise<void> {
@@ -348,6 +462,36 @@ async function apply(taskId: string): Promise<void> {
   setNotice('报名已提交，等待商家处理')
 }
 
+/** 加载全局大厅 feed（reset=true 重新查首页；否则按游标加载更多）。 */
+async function loadFeed(reset = false): Promise<void> {
+  if (feedLoading.value) return
+  feedLoading.value = true
+  const page = await grassland.listTaskFeed({
+    platform: feedFilters.value.platform.trim() || undefined,
+    contentForm: feedFilters.value.contentForm.trim() || undefined,
+    minBountyCents: feedFilters.value.minBountyYuan > 0 ? yuanToCents(feedFilters.value.minBountyYuan) : undefined,
+    cursor: reset ? undefined : (feedCursor.value || undefined),
+    limit: 20,
+  })
+  feedLoading.value = false
+  if (!page) return
+  feedItems.value = reset || !feedCursor.value ? page.items : [...feedItems.value, ...page.items]
+  feedCursor.value = page.nextCursor || ''
+  feedHasMore.value = page.hasMore
+  grassland.clearError()
+}
+
+/** 推荐官撤销本人 pending 报名（GL-P1-TASK-001：前端原缺入口）。 */
+async function withdrawApp(app: TaskApplication): Promise<void> {
+  const withdrawn = await grassland.withdrawApplication(selectedTaskId.value, app.id)
+  if (!withdrawn) return
+  setNotice('已撤销报名')
+  if (selectedTaskId.value) {
+    const list = await grassland.listApplications(selectedTaskId.value)
+    if (list) applications.value = list
+  }
+}
+
 async function dispute(app: TaskApplication): Promise<void> {
   const opened = await grassland.openDispute(app.id, '履约存在争议')
   if (!opened) return
@@ -387,6 +531,16 @@ async function switchSide(next: Side): Promise<void> {
     await refreshTasks()
   }
 }
+
+/**
+ * 切到推荐官视角时加载全局任务大厅 feed 首页（GL-P1-TASK-001 Stage 2）。
+ * 仅在尚未加载时触发，避免每次来回切换都重拉；用户可点「查询」强制刷新。
+ */
+watch(side, async (s) => {
+  if (s === 'recommender' && feedItems.value.length === 0) {
+    await loadFeed(true)
+  }
+})
 
 /**
  * 通知落点（草场 Slice 12 Stage 4）。`App.vue` provide 一个锚点 id，本组件滚到对应卡片后置空
@@ -504,7 +658,7 @@ function statusLabel(status: string): string {
       </article>
 
       <article class="gl-card gl-card-wide">
-        <h3>3. 发布任务</h3>
+        <h3>3. 发布任务<span v-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「发布」）</span></h3>
         <div class="gl-row">
           <input v-model="taskForm.title" placeholder="任务标题" />
           <input v-model="taskForm.platform" placeholder="平台（可选）" />
@@ -515,9 +669,14 @@ function statusLabel(status: string): string {
         <div class="gl-row">
           <label>名额 <input v-model.number="taskForm.maxSlots" type="number" min="1" /></label>
           <label>赏金 ¥<input v-model.number="taskForm.bountyYuan" type="number" min="0" :disabled="!canPublishBounty" /></label>
-          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">发布</button>
+          <label>报名截止 <input v-model="taskForm.applicationDeadline" type="datetime-local" /></label>
         </div>
-        <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。</p>
+        <div class="gl-row">
+          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">立即发布</button>
+          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="saveDraft">{{ editingDraft ? '保存草稿' : '存为草稿' }}</button>
+          <button v-if="editingDraft" type="button" :disabled="grassland.loading.value" @click="resetTaskForm">取消编辑</button>
+        </div>
+        <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。草稿不占发布额度、不需资金权限。</p>
       </article>
 
       <article id="gl-engagements" class="gl-card gl-card-wide">
@@ -528,8 +687,19 @@ function statusLabel(status: string): string {
             <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }" @click="selectTask(t.id)">
               {{ t.title }}
             </button>
-            <span class="gl-tag">{{ t.status }}</span>
+            <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
             <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
+            <!-- 草稿：编辑 / 发布 / 取消 -->
+            <template v-if="t.status === 'draft'">
+              <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
+              <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">发布</button>
+              <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消</button>
+            </template>
+            <!-- 已发布：关闭报名 / 取消 -->
+            <template v-else-if="t.status === 'published'">
+              <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
+              <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消任务</button>
+            </template>
           </li>
         </ul>
 
@@ -610,17 +780,20 @@ function statusLabel(status: string): string {
       <article class="gl-card gl-card-wide">
         <h3>任务大厅</h3>
         <div class="gl-row">
-          <input v-model="activeOrgId" placeholder="按组织 ID 浏览任务" />
-          <button type="button" :disabled="grassland.loading.value" @click="refreshTasks">查询</button>
+          <input v-model="feedFilters.platform" placeholder="平台筛选（可选）" />
+          <input v-model="feedFilters.contentForm" placeholder="内容形式筛选（可选）" />
+          <label>最低赏金 ¥<input v-model.number="feedFilters.minBountyYuan" type="number" min="0" /></label>
+          <button type="button" :disabled="feedLoading || grassland.loading.value" @click="loadFeed(true)">查询</button>
         </div>
         <div class="gl-row">
           <input v-model="applyNote" placeholder="报名留言（可选）" />
         </div>
-        <p v-if="tasks.length === 0" class="gl-empty">暂无可报名任务</p>
+        <p class="gl-hint">大厅只显示已发布且未截止的任务；报名截止后不再接受新报名。</p>
+        <p v-if="feedItems.length === 0" class="gl-empty">暂无可报名任务</p>
         <table v-else class="gl-table">
-          <thead><tr><th>任务</th><th>平台</th><th>赏金</th><th>操作</th></tr></thead>
+          <thead><tr><th>任务</th><th>平台</th><th>赏金</th><th>截止</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="t in tasks" :key="t.id">
+            <tr v-for="t in feedItems" :key="t.id">
               <!-- 点标题选中任务 → 下方「我的履约与争议」才能加载自己的报名（进而提交履约） -->
               <td>
                 <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }"
@@ -628,12 +801,14 @@ function statusLabel(status: string): string {
               </td>
               <td>{{ t.platform || '—' }}</td>
               <td>{{ t.bountyCents ? `¥${(t.bountyCents / 100).toFixed(2)}` : '无' }}</td>
+              <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
               <td>
                 <button type="button" :disabled="grassland.loading.value" @click="apply(t.id)">报名</button>
               </td>
             </tr>
           </tbody>
         </table>
+        <button v-if="feedHasMore" type="button" :disabled="feedLoading" @click="loadFeed(false)">加载更多</button>
       </article>
 
       <article id="gl-engagements" class="gl-card gl-card-wide">
@@ -649,6 +824,9 @@ function statusLabel(status: string): string {
               <td>
                 <button v-if="a.status === 'accepted'" type="button" :disabled="grassland.loading.value" @click="dispute(a)">
                   开启争议
+                </button>
+                <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="withdrawApp(a)">
+                  撤销
                 </button>
                 <span v-else>—</span>
               </td>

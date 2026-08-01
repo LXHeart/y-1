@@ -36,6 +36,7 @@ function dataFor(url: string): unknown {
     return [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
   }
   if (url === '/api/organizations') return [ORG]
+  if (url.startsWith('/api/tasks/feed')) return { items: [], nextCursor: null, hasMore: false }
   if (url.startsWith('/api/tasks')) return []
   if (url.startsWith('/api/finance/accounts')) return { organizationId: 'org-1', balanceCents: 100000 }
   return {}

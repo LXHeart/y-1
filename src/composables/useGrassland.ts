@@ -4,6 +4,7 @@ import type {
   AttachmentDownload,
   CreateMediaUploadTicketInput,
   CreateTaskInput,
+  CreateDraftInput,
   DisputeCase,
   EngagementRating,
   EngagementSubmission,
@@ -38,6 +39,9 @@ import type {
   SettlementOutcome,
   Task,
   TaskApplication,
+  TaskFeedPage,
+  TaskFeedQuery,
+  UpdateTaskInput,
   Wallet,
   VoteChoice,
 } from '../types/grassland'
@@ -508,6 +512,44 @@ export function useGrassland() {
   const createTask = (input: CreateTaskInput) =>
     run(() => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }))
 
+  /** 全局任务大厅 feed（GL-P1-TASK-001 Stage 2）：跨组织、仅 published 且未截止，keyset 游标分页。 */
+  const listTaskFeed = (query: TaskFeedQuery = {}) => {
+    const params = new URLSearchParams()
+    if (query.platform) params.set('platform', query.platform)
+    if (query.contentForm) params.set('contentForm', query.contentForm)
+    if (query.minBountyCents != null) params.set('minBountyCents', String(query.minBountyCents))
+    if (query.cursor) params.set('cursor', query.cursor)
+    if (query.limit != null) params.set('limit', String(query.limit))
+    const qs = params.toString()
+    return run(() => request<TaskFeedPage>(`/api/tasks/feed${qs ? '?' + qs : ''}`))
+  }
+
+  /** 创建草稿（草稿 tier 也可建；不占发布额度）。 */
+  const createDraft = (input: CreateDraftInput) =>
+    run(() => request<Task>('/api/tasks/draft', { method: 'POST', body: JSON.stringify(input) }))
+
+  /** 编辑草稿（仅 draft 态；expectedVersion 乐观锁）。 */
+  const updateTask = (id: string, input: UpdateTaskInput) =>
+    run(() => request<Task>(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify(input) }))
+
+  /** 发布草稿（draft→published；expectedVersion 乐观锁）。 */
+  const publishDraft = (id: string, expectedVersion: number) =>
+    run(() => request<Task>(`/api/tasks/${id}/publish`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion }),
+    }))
+
+  /** 关闭报名（published→closed）。 */
+  const closeTask = (id: string, expectedVersion: number) =>
+    run(() => request<Task>(`/api/tasks/${id}/close`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion }),
+    }))
+
+  /** 取消任务（draft|published→cancelled）。 */
+  const cancelTask = (id: string, expectedVersion: number) =>
+    run(() => request<Task>(`/api/tasks/${id}/cancel`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion }),
+    }))
+
   const listApplications = (taskId: string) =>
     run(() => request<TaskApplication[]>(`/api/tasks/${taskId}/applications`))
 
@@ -537,6 +579,10 @@ export function useGrassland() {
 
   const rejectApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reject`, { method: 'POST' }))
+
+  /** 推荐官撤销本人 pending 报名（GL-P1-TASK-001：前端原缺入口，后端早有）。 */
+  const withdrawApplication = (taskId: string, appId: string) =>
+    run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/withdraw`, { method: 'POST' }))
 
   /**
    * 轮询资金预留结局，直到到达**终态**（accepted / compensated）或超时。
@@ -730,10 +776,17 @@ export function useGrassland() {
     // marketplace
     listTasks,
     createTask,
+    listTaskFeed,
+    createDraft,
+    updateTask,
+    publishDraft,
+    closeTask,
+    cancelTask,
     listApplications,
     applyToTask,
     acceptApplication,
     rejectApplication,
+    withdrawApplication,
     pollReservation,
     confirmEngagement,
     pollSettlement,
