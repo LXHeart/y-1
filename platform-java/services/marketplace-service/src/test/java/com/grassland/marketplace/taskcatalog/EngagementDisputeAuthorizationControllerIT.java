@@ -89,8 +89,8 @@ class EngagementDisputeAuthorizationControllerIT extends MarketplaceItSupport {
         String owner = UUID.randomUUID().toString();
         String app = UUID.randomUUID().toString();
         String task = seedTask(org, owner);
-        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status)"
-                + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'pending')")
+        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents)"
+                + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'pending', 0)")
                 .bind("id", app).bind("task", task).bind("rec", UUID.randomUUID().toString()).then().block();
 
         client().post().uri(ENDPOINT, app)
@@ -113,8 +113,8 @@ class EngagementDisputeAuthorizationControllerIT extends MarketplaceItSupport {
     private Seeded seedAcceptedApplication(String org, String owner, String recommender) {
         String task = seedTask(org, owner);
         String app = UUID.randomUUID().toString();
-        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status)"
-                + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'accepted')")
+        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents)"
+                + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'accepted', 0)")
                 .bind("id", app).bind("task", task).bind("rec", recommender).then().block();
         return new Seeded(app, task);
     }

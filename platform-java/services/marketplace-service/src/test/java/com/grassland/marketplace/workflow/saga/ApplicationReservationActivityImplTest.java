@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -120,12 +121,12 @@ class ApplicationReservationActivityImplTest {
     @Test
     void activateEngagement_reservingToAccepted() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
-        when(apps.acceptFromReserving(APP_ID, TASK_ID)).thenReturn(Mono.just(app("accepted")));
+        when(apps.acceptFromReserving(APP_ID, TASK_ID, 500L)).thenReturn(Mono.just(app("accepted")));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         activity.activateEngagement(input);
 
-        verify(apps).acceptFromReserving(APP_ID, TASK_ID);
+        verify(apps).acceptFromReserving(APP_ID, TASK_ID, 500L);
     }
 
     @Test
@@ -134,7 +135,7 @@ class ApplicationReservationActivityImplTest {
 
         activity.activateEngagement(input);
 
-        verify(apps, never()).acceptFromReserving(anyString(), anyString());
+        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong());
     }
 
     @Test
@@ -168,6 +169,6 @@ class ApplicationReservationActivityImplTest {
     }
 
     private TaskApplication app(String status) {
-        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null, null);
+        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null, null, 0L);
     }
 }

@@ -134,7 +134,7 @@ public class ApplicationController {
                                             .<TaskApplication>flatMap(existing ->
                                                     Mono.error(new MarketplaceException(409, "已报名该任务")))
                                             .switchIfEmpty(transactions.transactional(
-                                                    apps.create(id, rec.accountId(), note)
+                                                    apps.create(id, rec.accountId(), note, bountyOrZero(task))
                                                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
                                                             .flatMap(created -> outbox.append(envelope("ApplicationSubmitted", created, task.ownerAccountId())).thenReturn(created)))));
                         })
@@ -164,17 +164,22 @@ public class ApplicationController {
     /** 非资金型任务（bounty null/0）→ 4B 原直连：pending→accepted 同步返回 200。 */
     private Mono<ResponseEntity<Map<String, Object>>> acceptDirectly(Task task, TaskApplication app, Caller merchant) {
         return transactions.transactional(
-                apps.accept(app.id(), app.taskId(), merchant.accountId())
+                apps.accept(app.id(), app.taskId(), merchant.accountId(), bountyOrZero(task))
                         .switchIfEmpty(fail(409, "该报名已处理"))
                         .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a)))
                 .map(a -> ResponseEntity.ok(Map.of("success", true, "data", toBody(a))));
+    }
+
+    /** task.bountyCents 归一为 long（null → 0）。accept/create 冻结赏金快照用。 */
+    private static long bountyOrZero(Task task) {
+        return task.bountyCents() == null ? 0L : task.bountyCents();
     }
 
     /** 资金型任务 → 启资金预留 Saga：202 Accepted + workflowId。双击去重（WorkflowExecutionAlreadyStarted → 复用 id）。 */
     private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
                                                                                Caller merchant) {
         AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), merchant.accountId(),
-                task.organizationId(), task.bountyCents());
+                task.organizationId(), bountyOrZero(task));
         String workflowId = "accept-" + app.id();
         return Mono.fromCallable(() -> {
             ApplicationReservationWorkflow stub = workflowClient.newWorkflowStub(
@@ -422,7 +427,8 @@ public class ApplicationController {
 
     /** 资金型任务已确认 → 启结算窗口 Saga：202 settling（Timer 后 capture）。双击去重。 */
     private Mono<ResponseEntity<Map<String, Object>>> startSettlementWorkflow(Task task, TaskApplication app) {
-        long amount = task.bountyCents() == null ? 0L : task.bountyCents();
+        // capture 金额取 **app 冻结的赏金**（snapshot-pinning），不读可变 task 行——accept 后改 task 赏金不影响本履约结算额。
+        long amount = app.bountyCents();
         SettlementInput input = new SettlementInput(app.id(), task.id(), app.reviewedByAccountId(),
                 task.organizationId(), amount, settlementWindowSeconds);
         String workflowId = "settle-" + app.id();

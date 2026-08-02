@@ -178,23 +178,43 @@ public class TaskController {
     }
 
     /**
-     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本）。
+     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本，全字段）。
      *
-     * <p>owner + published；乐观锁。只改非资金字段（title/description/maxSlots/deadline），bounty/platform 冻结
-     * （请求体 {@link ReviseTaskRequest} 不含这些字段）。每次修订 version+1 + 新 task_version 快照 + outbox TaskRevised。
-     * 已 accept 的履约不受影响（修订的字段只门控新报名）。
+     * <p>owner + published；乐观锁；赏金变更走 tier 闸门（{@link #enforceBountyTierGate}，与发布同口径但不占额度）。
+     * 全字段可改——accept/结算读 task_application.bounty_cents 快照（V14），已 accept 履约不受影响。每次修订 version+1
+     * + 新 task_version 快照 + outbox TaskRevised。
      */
     @PostMapping(value = "/api/tasks/{id}/revise", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> revise(@PathVariable String id, @RequestBody ReviseTaskRequest body,
                                                             ServerHttpRequest request) {
         return callers.requireMerchant(request)
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), "published")
-                        .flatMap(ignored -> transactions.transactional(
-                                tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
-                                        body.maxSlots(), body.applicationDeadline(), merchant.accountId())
-                                        .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                        .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task)))))
+                        .flatMap(ignored -> enforceBountyTierGate(merchant, body.bountyCents())
+                                .thenReturn(ignored)
+                                .flatMap(v -> transactions.transactional(
+                                        tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
+                                                body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
+                                                body.applicationDeadline(), merchant.accountId())
+                                                .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+                                                .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+    }
+
+    /**
+     * 修订赏金的 tier 闸门：资金型（bounty&gt;0）须有交易权限；赏金 ≤ 本组织单笔上限。与发布同口径，
+     * 但<b>不算 active/monthly 额度</b>——修订不是新发布，任务已在额度内。防止商家借修订把赏金抬到 tier 之上。
+     */
+    private Mono<Void> enforceBountyTierGate(Caller merchant, Long bountyCents) {
+        MerchantTier tier = MerchantTier.fromDb(merchant.permissionTier());
+        long bounty = bountyCents == null ? 0L : bountyCents;
+        long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
+        if (bounty > 0 && maxTx == 0) {
+            return Mono.error(new MarketplaceException(403, "当前等级不可发布资金型任务"));
+        }
+        if (bounty > maxTx) {
+            return Mono.error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
+        }
+        return Mono.empty();
     }
 
     @GetMapping("/api/tasks")

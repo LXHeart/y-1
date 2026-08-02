@@ -70,8 +70,8 @@ class EngagementVerificationRepositoryIT extends MarketplaceItSupport {
                 .bind("t", task).bind("owner", UUID.randomUUID().toString())
                 .bind("org", UUID.randomUUID().toString()).then().block();
         db.sql("""
-                INSERT INTO task_application(id, task_id, recommender_account_id)
-                VALUES (CAST(:a AS uuid), CAST(:t AS uuid), CAST(:rec AS uuid))
+                INSERT INTO task_application(id, task_id, recommender_account_id, bounty_cents)
+                VALUES (CAST(:a AS uuid), CAST(:t AS uuid), CAST(:rec AS uuid), 0)
                 """)
                 .bind("a", app).bind("t", task).bind("rec", UUID.randomUUID().toString()).then().block();
         db.sql("""

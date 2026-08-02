@@ -115,9 +115,10 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         if (!ApplicationStatus.RESERVING.dbValue().equals(app.status())) {
             return;  // 已补偿回 pending 或其他——无可激活
         }
-        // 领域写（reserving→accepted）+ outbox 同事务。
+        // 领域写（reserving→accepted）+ outbox 同事务。冻结 accept 时赏金（input.amountCents = accept 时 task 赏金）：
+        // 此后结算读 app.bountyCents() 而非可变 task 行——accept 后改 task 赏金不再影响本履约。
         TaskApplication activated = transactions.transactional(
-                apps.acceptFromReserving(input.applicationId(), input.taskId())
+                apps.acceptFromReserving(input.applicationId(), input.taskId(), input.amountCents())
                         .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, null)).thenReturn(a))
         ).block();
         if (activated == null) {

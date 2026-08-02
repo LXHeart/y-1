@@ -24,7 +24,7 @@ public class TaskApplicationRepository {
 
     private static final String SELECT_COLS =
             "id::text, task_id::text, recommender_account_id::text, status, note,"
-                    + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at";
+                    + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at, bounty_cents";
 
     private final DatabaseClient db;
 
@@ -32,15 +32,18 @@ public class TaskApplicationRepository {
         this.db = db;
     }
 
-    /** 报名（status=pending）。note 可空。UNIQUE(task,recommender) 违例 → empty（调用方判 409「已报名」）。 */
-    public Mono<TaskApplication> create(String taskId, String recommenderAccountId, String note) {
+    /**
+     * 报名（status=pending）。note 可空。{@code bountyCents} = 报名时 task 赏金（provisional；accept 时才冻结）。
+     * UNIQUE(task,recommender) 违例 → empty（调用方判 409「已报名」）。
+     */
+    public Mono<TaskApplication> create(String taskId, String recommenderAccountId, String note, long bountyCents) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO task_application(id, task_id, recommender_account_id, status, note)
-                VALUES (CAST(:id AS uuid), CAST(:taskId AS uuid), CAST(:rec AS uuid), 'pending', :note)
+                INSERT INTO task_application(id, task_id, recommender_account_id, status, note, bounty_cents)
+                VALUES (CAST(:id AS uuid), CAST(:taskId AS uuid), CAST(:rec AS uuid), 'pending', :note, :bounty)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId);
+                .bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId).bind("bounty", bountyCents);
         spec = bindNullable(spec, "note", note);
         return spec.map(TaskApplicationRepository::map).one()
                 .onErrorResume(R2dbcDataIntegrityViolationException.class, e -> Mono.empty());
@@ -68,10 +71,25 @@ public class TaskApplicationRepository {
                 .map(TaskApplicationRepository::map).all();
     }
 
-    /** 接受（4B 直连路径）：pending → accepted，记录操作商家 + decided_at。0 行（非 pending / 不属该 task）→ empty。 */
-    public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId) {
-        return transition(id, taskId, ApplicationStatus.PENDING.dbValue(), ApplicationStatus.ACCEPTED.dbValue(),
-                reviewerAccountId);
+    /**
+     * 接受（4B 直连路径）：pending → accepted，记录操作商家 + decided_at，<b>并冻结 accept 时赏金到 bounty_cents</b>
+     * （snapshot-pinning：此后结算读这列而非可变 task 行）。0 行（非 pending / 不属该 task）→ empty。
+     */
+    public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId, long bountyCents) {
+        return db.sql("""
+                UPDATE task_application
+                SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid),
+                    decided_at = now(), bounty_cents = :bounty, updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = :from
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .bind("from", ApplicationStatus.PENDING.dbValue())
+                .bind("status", ApplicationStatus.ACCEPTED.dbValue())
+                .bind("reviewer", reviewerAccountId).bind("bounty", bountyCents)
+                .map(TaskApplicationRepository::map).one();
     }
 
     /** 结算确认（Slice 5A）：accepted + 未确认 → 设 confirmed_at（商家 ConfirmEngagement）。0 行（非 accepted / 已确认）→ empty。
@@ -101,17 +119,17 @@ public class TaskApplicationRepository {
                 reviewerAccountId);
     }
 
-    /** 激活（Slice 4F Saga activate）：reserving → accepted。不重写 reviewer/decided_at（beginAcceptance 已记录）。
-     *  0 行（非 reserving）→ empty（幂等：重试或已变迁）。 */
-    public Mono<TaskApplication> acceptFromReserving(String id, String taskId) {
+    /** 激活（Slice 4F Saga activate）：reserving → accepted，<b>冻结 accept 时赏金</b>（snapshot-pinning）。
+     *  不重写 reviewer/decided_at（beginAcceptance 已记录）。0 行（非 reserving）→ empty（幂等：重试或已变迁）。 */
+    public Mono<TaskApplication> acceptFromReserving(String id, String taskId, long bountyCents) {
         return db.sql("""
-                UPDATE task_application SET status = :status, updated_at = now()
+                UPDATE task_application SET status = :status, bounty_cents = :bounty, updated_at = now()
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = :from
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("taskId", taskId)
+                .bind("id", id).bind("taskId", taskId).bind("bounty", bountyCents)
                 .bind("from", ApplicationStatus.RESERVING.dbValue())
                 .bind("status", ApplicationStatus.ACCEPTED.dbValue())
                 .map(TaskApplicationRepository::map).one();
@@ -183,12 +201,17 @@ public class TaskApplicationRepository {
                 toInstant(row.get("decided_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
-                toInstant(row.get("confirmed_at", OffsetDateTime.class))
+                toInstant(row.get("confirmed_at", OffsetDateTime.class)),
+                longValue(row.get("bounty_cents", Long.class))
         );
     }
 
     private static Instant toInstant(OffsetDateTime value) {
         return value == null ? null : value.toInstant();
+    }
+
+    private static long longValue(Long raw) {
+        return raw == null ? 0L : raw;
     }
 
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {

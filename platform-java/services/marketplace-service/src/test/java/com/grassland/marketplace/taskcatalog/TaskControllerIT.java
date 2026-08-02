@@ -433,7 +433,7 @@ class TaskControllerIT extends MarketplaceItSupport {
     /** 修订已发布任务：version+1、新快照、outbox TaskRevised；赏金冻结（请求体不含 bountyCents → 不被触及）。 */
     @Test
     @SuppressWarnings("unchecked")
-    void reviseBumpsVersionWritesSnapshotAndFreezesBounty() {
+    void reviseBumpsVersionWritesSnapshotAndCanChangeBounty() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         Map<String, Object> bountyBody = body(org, "原标题", null, 3);
@@ -444,20 +444,42 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id");
 
+        // 全字段修订：改 title + 赏金 500→800（accept/结算读 app 快照，已 accept 履约不受影响）。
         client().post().uri("/api/tasks/" + id + "/revise")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 1, "title", "修订标题", "maxSlots", 5))
+                .bodyValue(Map.of("expectedVersion", 1, "title", "修订标题", "maxSlots", 5, "bountyCents", 800))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.title").isEqualTo("修订标题")
                 .jsonPath("$.data.version").isEqualTo(2)
                 .jsonPath("$.data.maxSlots").isEqualTo(5)
-                .jsonPath("$.data.bountyCents").isEqualTo(500); // 赏金冻结
+                .jsonPath("$.data.bountyCents").isEqualTo(800); // 赏金可改
 
         Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
                 .bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
         assertThat(versions).isEqualTo(2); // v1 发布快照 + v2 修订快照
         assertThat(outboxType(id, "TaskRevised")).isEqualTo(1);
+    }
+
+    /** 修订赏金超 tier 单笔上限 → 409（finance_transaction 上限 ¥100000 = 10_000_000 分）。 */
+    @Test
+    void reviseBountyAboveTierMaxRejected() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> bountyBody = body(org, "上限测", null, null);
+        bountyBody.put("bountyCents", 500);
+        @SuppressWarnings("unchecked")
+        String id = (String) ((Map<String, Object>) client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(bountyBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id");
+
+        client().post().uri("/api/tasks/" + id + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "title", "超限", "bountyCents", 20_000_000L))
+                .exchange().expectStatus().isEqualTo(409);
     }
 
     /** 非 owner 修订 → 403。 */

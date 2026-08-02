@@ -9,20 +9,23 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 
 /**
- * Flyway V11 回填回归（GL-P1-TASK-001 Stage 1）：既有 published 任务必须拿到 {@code published_at=created_at}、
- * {@code version=1} 和一行 {@code task_version} 快照；且迁移绝不伪造 outbox 事件。
+ * Flyway 回填回归（GL-P1-TASK-001）：V11 既有 published 任务须拿到 {@code published_at=created_at}、{@code version=1}
+ * 和一行 {@code task_version} 快照；V14 既有 task_application 须从 task 回填 {@code bounty_cents} 并 NOT NULL。
+ * 迁移绝不伪造 outbox 事件。
  *
  * <p>镜像 identity {@code RecommenderIdentityBackfillMigrationTest} 的隔离 schema 模式：手动建 post-V10 的 task +
- * marketplace_outbox，baseline=10，只跑 V11。
+ * task_application + marketplace_outbox，baseline=10，跑 V11+（含 V14）。V14 ALTER task_application，故须预先建该表。
  */
 class TaskLifecycleMigrationTest extends MarketplaceItSupport {
 
     @Test
-    void v11BackfillsPublishedTaskSnapshotAndTimestampsWithoutOutboxSideEffects() throws Exception {
+    void v11AndV14BackfillTaskSnapshotAndApplicationBountyWithoutOutboxSideEffects() throws Exception {
         String schema = "task_v11_" + UUID.randomUUID().toString().replace("-", "");
         String publishedTask = UUID.randomUUID().toString();
         String owner = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String historicalApp = UUID.randomUUID().toString();
 
         try (var connection = DriverManager.getConnection(
                         POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -35,9 +38,18 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                     + " content_form varchar(32), platform varchar(32),"
                     + " created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),"
                     + " max_slots int, bounty_cents bigint)");
+            // post-V10 task_application 形状（V2，**无 bounty_cents**——V14 加）。V14 ALTER 它，故须存在。
+            statement.execute("CREATE TABLE " + schema + ".task_application ("
+                    + "id uuid PRIMARY KEY, task_id uuid NOT NULL, recommender_account_id uuid NOT NULL,"
+                    + " status varchar(32) NOT NULL DEFAULT 'pending', note text, reviewed_by_account_id uuid,"
+                    + " decided_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),"
+                    + " updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(task_id, recommender_account_id))");
             statement.execute("CREATE TABLE " + schema + ".marketplace_outbox (id uuid PRIMARY KEY)");
             statement.execute("INSERT INTO " + schema + ".task(id, owner_account_id, organization_id, title, status, bounty_cents) "
                     + "VALUES ('" + publishedTask + "', '" + owner + "', '" + org + "', '历史任务', 'published', 500)");
+            statement.execute("INSERT INTO " + schema
+                    + ".task_application(id, task_id, recommender_account_id, status) VALUES ('"
+                    + historicalApp + "', '" + publishedTask + "', '" + recommender + "', 'accepted')");
         }
 
         Flyway.configure()
@@ -74,6 +86,13 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                 assertThat(rs.getLong("bounty_cents")).isEqualTo(500L);
                 assertThat(rs.getString("published_by")).isEqualTo(owner);
                 assertThat(rs.isLast()).isTrue();  // 仅一行快照
+            }
+            // V14：历史 app 从 task 回填 bounty_cents=500，且 NOT NULL（getObject 非空）。
+            try (var rs = statement.executeQuery(
+                    "SELECT bounty_cents FROM " + schema + ".task_application WHERE id = '" + historicalApp + "'")) {
+                rs.next();
+                assertThat(rs.getObject("bounty_cents")).isNotNull();  // NOT NULL 生效
+                assertThat(rs.getLong("bounty_cents")).isEqualTo(500L);
             }
             assertThat(count(statement, schema + ".marketplace_outbox", "true")).isZero();  // 无事件副作用
         }

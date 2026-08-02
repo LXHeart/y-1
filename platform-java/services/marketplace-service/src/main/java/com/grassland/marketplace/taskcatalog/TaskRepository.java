@@ -130,28 +130,30 @@ public class TaskRepository {
     }
 
     /**
-     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本）。
+     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本，全字段）。
      *
-     * <p><b>刻意只接受非资金字段</b>（title/description/maxSlots/applicationDeadline）——bounty_cents/platform/content_form
-     * 不在修订范围内。原因：{@code task_version} 快照表虽已建，但 accept/结算目前<b>仍重读可变 task 行</b>、未消费快照，
-     * 此时若放任改赏金/平台，会把已报名/进行中履约的条款一并改掉（HLD §2.3「配置不篡改历史」目前对 task 编辑不成立）。
-     * 故首期冻结资金条款、只允许改描述/截止/名额（这些只影响新报名，不触及已 accept 履约的财务口径）。
-     * 全字段编辑（含赏金）留待 snapshot-pinning 接入 accept/结算读取后。
+     * <p>全字段可改——accept/结算已读 {@code task_application.bounty_cents} 快照（V14 snapshot-pinning），故修订 task
+     * 赏金/平台只影响<b>新报名</b>（新 app 冻新值），已 accept 的履约仍按其 accept 时快照结算（HLD §2.3「配置不篡改历史」）。
      *
      * <p>guarded {@code WHERE status='published' AND version=:expected}，version+1，同事务落新 {@code task_version} 快照。
      * 0 行（非 published / 版本冲突）→ empty，调用方映射 409。
      */
     public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
-                                      Integer maxSlots, Instant applicationDeadline, String revisedBy) {
+                                      String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                                      Instant applicationDeadline, String revisedBy) {
         var spec = db.sql("""
-                UPDATE task SET title = :title, description = :desc, max_slots = :maxSlots,
+                UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
+                                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
                                 application_deadline = :deadline, version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("expected", expectedVersion).bind("title", title);
         spec = bindNullable(spec, "desc", description);
+        spec = bindNullable(spec, "contentForm", contentForm);
+        spec = bindNullable(spec, "platform", platform);
         spec = bindNullableInt(spec, "maxSlots", maxSlots);
+        spec = bindNullableLong(spec, "bountyCents", bountyCents);
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         return spec.map(TaskRepository::map).one()
                 .flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));

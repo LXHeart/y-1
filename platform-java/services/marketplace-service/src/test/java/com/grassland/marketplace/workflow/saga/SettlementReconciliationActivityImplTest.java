@@ -102,6 +102,28 @@ class SettlementReconciliationActivityImplTest {
     }
 
     @Test
+    void monetaryAppStaysFundBranchEvenAfterTaskBountyEditedToZero() {
+        // snapshot-pinning：app 冻结 bounty=500，但 task 行后来被改到 0（全字段 revise）。
+        // 结算必须仍走 finance 对账（fund 分支）——读 app.bountyCents()，不读可变 task.bountyCents()。
+        // 否则 fund 任务被改成 0 后会跳过 finance 对账，预留的钱不再走 release/reverse（真实资金错误）。
+        when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
+        when(apps.findById(APP)).thenReturn(Mono.just(
+                new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
+                        Instant.now(), Instant.now(), 500L)));  // 冻结 500
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(
+                new Task(TASK_ID, "own", ORG, "title", "desc", "published", "any", "any", null, 0L,
+                        Instant.now(), Instant.now(), 1, null, null, null)));  // task 行已被改到 0
+        trustFinal(DECISION);
+        when(finance.reconcile(ORG, APP, DECISION)).thenReturn(Mono.just(
+                new FinanceReconciliationClient.Result("repaired", "captured")));
+
+        SettlementReconciliationWorkflow.ReconciliationOutcome outcome = activity.reconcile(input());
+
+        assertThat(outcome.status()).isEqualTo("reconciled");
+        verify(finance).reconcile(ORG, APP, DECISION);  // 仍走 finance（fund 分支），未被误判非 fund 跳过
+    }
+
+    @Test
     void financeRepairedCompletes() {
         acceptedMonetaryApp();
         trustFinal(DECISION);
@@ -148,7 +170,7 @@ class SettlementReconciliationActivityImplTest {
         when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
         when(apps.findById(APP)).thenReturn(Mono.just(
                 new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
-                        Instant.now(), null)));  // confirmedAt=null
+                        Instant.now(), null, 0L)));  // confirmedAt=null
 
         SettlementReconciliationWorkflow.ReconciliationOutcome outcome = activity.reconcile(input());
 
@@ -165,7 +187,7 @@ class SettlementReconciliationActivityImplTest {
         when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
         when(apps.findById(APP)).thenReturn(Mono.just(
                 new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
-                        Instant.now(), Instant.now())));
+                        Instant.now(), Instant.now(), bounty)));  // bounty 冻结在 app（snapshot-pinning），结算读它
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(
                 new Task(TASK_ID, "own", ORG, "title", "desc", "published", "any", "any", null, bounty,
                         Instant.now(), Instant.now(), 1, null, null, null)));

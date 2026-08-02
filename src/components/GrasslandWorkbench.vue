@@ -306,14 +306,17 @@ function resetTaskForm(): void {
 /** 存草稿 / 保存修订：revisingTask → POST /revise，editingDraft → PUT 草稿，否则 POST 新建草稿。 */
 async function saveDraft(): Promise<void> {
   if (!activeOrgId.value || !taskForm.value.title.trim()) return
+  const bountyCents = yuanToCents(taskForm.value.bountyYuan)
   const revising = revisingTask.value
   if (revising) {
-    // 修订只送非资金字段：bounty/platform/content_form 发布后冻结（改了会动已报名履约的条款）。
+    // 全字段修订：accept/结算读 app 的 bounty 快照（snapshot-pinning），改 task 赏金只影响新报名。
     const revised = await grassland.reviseTask(revising.id, {
       expectedVersion: revising.version,
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
+      platform: taskForm.value.platform.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
+      bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
     })
     if (!revised) return
@@ -322,7 +325,6 @@ async function saveDraft(): Promise<void> {
     await refreshTasks()
     return
   }
-  const bountyCents = yuanToCents(taskForm.value.bountyYuan)
   const editing = editingDraft.value
   if (editing) {
     const updated = await grassland.updateTask(editing.id, {
@@ -368,8 +370,8 @@ function editDraft(task: Task): void {
 }
 
 /**
- * 把已发布任务载入表单供修订（出新版本）。赏金/平台字段载入仅作展示、保存时不会被送出
- * （ReviseTaskInput 不含它们）——这里也把输入禁用，免得商家改了半天发现没生效。
+ * 把已发布任务载入表单供修订（出新版本，全字段可改）。改赏金/平台只影响新报名——
+ * 已接受的履约按其接受时的金额结算（accept 时冻了 bounty_cents 快照）。
  */
 function editPublished(task: Task): void {
   revisingTask.value = { id: task.id, version: task.version }
@@ -713,17 +715,17 @@ function statusLabel(status: string): string {
       </article>
 
       <article class="gl-card gl-card-wide">
-        <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（赏金/平台不可改，保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「发布」）</span></h3>
+        <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「发布」）</span></h3>
         <div class="gl-row">
           <input v-model="taskForm.title" placeholder="任务标题" />
-          <input v-model="taskForm.platform" placeholder="平台（可选）" :disabled="!!revisingTask" />
+          <input v-model="taskForm.platform" placeholder="平台（可选）" />
         </div>
         <div class="gl-row">
           <input v-model="taskForm.description" placeholder="任务描述（可选）" />
         </div>
         <div class="gl-row">
           <label>名额 <input v-model.number="taskForm.maxSlots" type="number" min="1" /></label>
-          <label>赏金 ¥<input v-model.number="taskForm.bountyYuan" type="number" min="0" :disabled="!canPublishBounty || !!revisingTask" /></label>
+          <label>赏金 ¥<input v-model.number="taskForm.bountyYuan" type="number" min="0" :disabled="!canPublishBounty" /></label>
           <label>报名截止 <input v-model="taskForm.applicationDeadline" type="datetime-local" /></label>
         </div>
         <div class="gl-row">
@@ -731,7 +733,7 @@ function statusLabel(status: string): string {
           <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="saveDraft">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
           <button v-if="editingDraft || revisingTask" type="button" :disabled="grassland.loading.value" @click="resetTaskForm">取消编辑</button>
         </div>
-        <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本，但<b>赏金/平台发布后不可改</b>（避免改动已报名履约的条款）。</p>
+        <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
       </article>
 
       <article id="gl-engagements" class="gl-card gl-card-wide">

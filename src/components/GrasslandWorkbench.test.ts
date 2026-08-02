@@ -259,10 +259,10 @@ describe('GrasslandWorkbench 通知锚点', () => {
 
 describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
   /**
-   * 锁的是「修订只送非资金字段」：bountyCents/platform 发布后冻结，改了会动已报名履约的条款
-   * （task_version 快照尚未被 accept/结算消费）。请求体里不该出现这些键——这是后端冻结之外的前端第二道闸。
+   * 锁的是「修订送全字段，含赏金/平台」：accept/结算已读 app 的 bounty 快照（snapshot-pinning），
+   * 故修订 task 赏金只影响新报名。请求体应带 platform/bountyCents（载入的原值，未改也回传）。
    */
-  test('修订已发布任务只送 title/description/maxSlots/deadline，不送赏金/平台', async () => {
+  test('修订已发布任务送全字段（含赏金/平台，载入原值）', async () => {
     const published = {
       id: 'task-pub', ownerAccountId: 'acct-1', organizationId: 'org-1',
       title: '原标题', description: '原描述', status: 'published',
@@ -296,14 +296,13 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
-    // 点已发布任务的「编辑」进入修订模式
+    // 点已发布任务的「编辑」进入修订模式（全字段可改，输入不再禁用）
     const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')!
     await editBtn.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('正在修订已发布任务')
-    // 修订模式冻结资金/物料字段：平台输入禁用
-    expect(wrapper.find('input[placeholder="平台（可选）"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('input[placeholder="平台（可选）"]').attributes('disabled')).toBeUndefined()
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('修订标题')
     const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存修订')!
@@ -314,9 +313,8 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     const body = JSON.parse(revise[1]!.body as string)
     expect(body.title).toBe('修订标题')
     expect(body.expectedVersion).toBe(1)
-    // 资金/物料字段不在修订请求里（冻结）
-    expect(body).not.toHaveProperty('bountyCents')
-    expect(body).not.toHaveProperty('platform')
-    expect(body).not.toHaveProperty('contentForm')
+    // 全字段：载入的平台/赏金原值随修订回传（未改也送）
+    expect(body.platform).toBe('douyin')
+    expect(body.bountyCents).toBe(500)
   })
 })

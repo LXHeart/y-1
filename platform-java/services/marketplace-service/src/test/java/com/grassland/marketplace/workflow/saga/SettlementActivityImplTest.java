@@ -132,7 +132,7 @@ class SettlementActivityImplTest {
     private TaskApplication app(String status, Instant confirmedAt) {
         return new TaskApplication(APP_ID, "11111111-1111-1111-1111-111111111111",
                 "55555555-5555-5555-5555-555555555555", status, null,
-                "33333333-3333-3333-3333-333333333333", null, null, null, confirmedAt);
+                "33333333-3333-3333-3333-333333333333", null, null, null, confirmedAt, 500L);
     }
 
     private Task task() {

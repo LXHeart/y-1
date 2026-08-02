@@ -74,15 +74,17 @@ export interface UpdateTaskInput {
 /**
  * 修订已发布任务请求（仅 published 态；GL-P1-TASK-001：编辑出新版本）。
  *
- * 刻意不含 bountyCents/platform/contentForm——这些资金/物料条款发布后冻结
- * （task_version 快照尚未被 accept/结算消费，改了会动已报名履约的条款）。
- * 只能改 title/description/maxSlots/applicationDeadline（仅影响新报名）。
+ * 全字段可改——accept/结算已读 task_application.bounty_cents 快照（V14 snapshot-pinning），
+ * 故修订 task 赏金/平台只影响新报名（新 app 冻新值），已 accept 的履约仍按其 accept 时快照结算。
  */
 export interface ReviseTaskInput {
   expectedVersion: number
   title: string
   description?: string
+  contentForm?: string
+  platform?: string
   maxSlots?: number
+  bountyCents?: number
   applicationDeadline?: string
 }
 
