@@ -2,7 +2,26 @@
 
 | 状态 | 日期 | 决策编号 | 阻塞范围 | 依赖 |
 |------|------|----------|----------|------|
-| 草案 | 2026-08-02 | D-11（HLD §19、§12.3） | Intelligence、Finance | D-01（仅 AI 真实收费时） |
+| 已采纳 | 2026-08-02 草案 / 2026-08-02 已采纳 | D-11（HLD §19、§12.3） | Intelligence、Finance | D-01（仅 AI 真实收费时） |
+
+## 决策记录（已采纳，2026-08-02）
+
+采纳推荐方案 B（按能力按实量计量）+ 全部默认值（数值项延后到落地填）：
+
+1. **BYOK 平台控制面费：首期不收**——用户自带 Key 直付 provider；平台仅计量入 usage account 供 quota/budget，不收 AI token 费。
+2. **credits 预付 + usage 真实计量并存**（因 D-01 真实 PSP 延后而锁定）：credits 仍是预付单位，每条用量映射真实成本；真实付款充 credits 随 D-01 真实 PSP 落地。
+3. **model budget 默认值：数值延后**——本 ADR 定口径（每 Run/每 org 的 token/张/秒预算上限，超预算硬停，`GL-P3-AI-001`），具体默认值由运营/成本落地时定。
+4. **usage account 归属：intelligence 写用量事实、finance 记 credits 扣减/退回账本**（事实单写 HLD §6.2，跨服务经事件）。
+5. **价目表定价：数值延后**——各能力各模型价格（含平台 margin）由成本核算+产品定；价目表版本化（HLD §2.3），Run 记 `priceTableVersion`，配置不篡改历史。
+6. **视频生成纳入本口径**——接入时（`GL-P3-VIDEO-001`）按秒计费，与文本(token)/图片(张)统一计量。
+
+**计量单位口径**（按能力按实量，不做跨能力归一）：文本=token（输入+输出分开）、图片生成=张（按分辨率/质量档）、视频生成=秒、视觉理解=次（含输入 token）、语音=秒/字符、内容安全/检索=次。
+
+**预留/退回**沿用 GL-P0-BILL-002 退款范式：Run 开始按预算上限预留 credits → 成功按实际用量结算（预留−实际=退回）→ provider 失败全额退 → 用户主动 abort 不退（内容已流出）→ 超预算硬停。BYOK → 平台模型回退须组织策略显式授权，否则该能力失败，不静默扣平台额度（HLD §12.3 硬规则）。
+
+**解锁**：`GL-P3-AI-001` 控制面（Run/usage/model budget/BYOK）与 `GL-P2-FIN-001` 真实 AI 收费可按本口径进 LLD。BYOK Key 经 Envelope Encryption（DEK 加密 Key、KEK 在 KMS/Secret Manager，`GL-P3-AI-001` 前置），普通成员可用不可见。
+
+**仍属实现层（后续 backlog）**：usage account 表设计、价目表具体数值、model budget 默认值、Run 调度/并发/DNS pinning、legacy credits 迁移退场节奏。
 
 ## 背景
 
