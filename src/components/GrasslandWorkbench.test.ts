@@ -94,6 +94,25 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(wrapper.text()).toContain('示例商家')
   })
 
+  /**
+   * 商家任务列表必须四态全取（GL-P1-TASK-001 Stage 3 浏览器实测发现）。
+   *
+   * 原实现只取 `status=published`：刚存下的草稿在列表里不出现，「编辑 / 发布」无从触达；
+   * 关闭报名后整条任务从列表消失，商家再也无法处理已提交的报名。
+   */
+  test('商家任务列表按 draft/published/closed/cancelled 四态拉取', async () => {
+    const { urls } = stubFetch()
+    mount(GrasslandWorkbench)
+
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    const statuses = urls
+      .filter((url) => url.startsWith('/api/tasks?organizationId='))
+      .map((url) => new URL(url, 'http://localhost').searchParams.get('status'))
+    expect(statuses).toEqual(['draft', 'published', 'closed', 'cancelled'])
+  })
+
   test('recommender-only 账号直接激活推荐官，不尝试 merchant', async () => {
     const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
     const { calls } = stubFetch(identities)

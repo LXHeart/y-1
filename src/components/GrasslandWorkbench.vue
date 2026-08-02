@@ -236,10 +236,23 @@ async function credit(): Promise<void> {
 
 // ---------- 商家：任务 / 报名 ----------
 
+/** 商家列表展示的任务状态；顺序即列表顺序（待处理的排前面）。 */
+const MERCHANT_TASK_STATUSES = ['draft', 'published', 'closed', 'cancelled'] as const
+
+/**
+ * 商家任务列表：四态全取。
+ *
+ * 后端 `GET /api/tasks?status=` 一次只收一个 status，所以并发取多次再合并。浏览器实测发现两处漏洞：
+ * 只取 published 时刚存下的草稿不出现，「编辑 / 发布」入口无从触达；漏掉 closed 时**关闭报名后
+ * 整条任务从列表消失**，商家再也无法处理已提交的报名（accept / reject）。cancelled 也一并显示，
+ * 否则「取消任务」点完没有任何可见结果。
+ */
 async function refreshTasks(): Promise<void> {
   if (!activeOrgId.value) return
-  const list = await grassland.listTasks(activeOrgId.value)
-  if (list) tasks.value = list
+  const orgId = activeOrgId.value
+  const groups = await Promise.all(
+    MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status)))
+  if (groups.some((g) => g)) tasks.value = groups.flatMap((g) => g ?? [])
 }
 
 async function publishTask(): Promise<void> {
