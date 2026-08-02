@@ -129,6 +129,34 @@ public class TaskRepository {
         return transition(id, expectedVersion, "published", "closed");
     }
 
+    /**
+     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本）。
+     *
+     * <p><b>刻意只接受非资金字段</b>（title/description/maxSlots/applicationDeadline）——bounty_cents/platform/content_form
+     * 不在修订范围内。原因：{@code task_version} 快照表虽已建，但 accept/结算目前<b>仍重读可变 task 行</b>、未消费快照，
+     * 此时若放任改赏金/平台，会把已报名/进行中履约的条款一并改掉（HLD §2.3「配置不篡改历史」目前对 task 编辑不成立）。
+     * 故首期冻结资金条款、只允许改描述/截止/名额（这些只影响新报名，不触及已 accept 履约的财务口径）。
+     * 全字段编辑（含赏金）留待 snapshot-pinning 接入 accept/结算读取后。
+     *
+     * <p>guarded {@code WHERE status='published' AND version=:expected}，version+1，同事务落新 {@code task_version} 快照。
+     * 0 行（非 published / 版本冲突）→ empty，调用方映射 409。
+     */
+    public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
+                                      Integer maxSlots, Instant applicationDeadline, String revisedBy) {
+        var spec = db.sql("""
+                UPDATE task SET title = :title, description = :desc, max_slots = :maxSlots,
+                                application_deadline = :deadline, version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("expected", expectedVersion).bind("title", title);
+        spec = bindNullable(spec, "desc", description);
+        spec = bindNullableInt(spec, "maxSlots", maxSlots);
+        spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
+        return spec.map(TaskRepository::map).one()
+                .flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
+    }
+
     /** 取消任务（draft|published→cancelled，cancelled_at=now，version+1）。0 行（终态 / 版本冲突）→ empty。 */
     public Mono<Task> cancel(String id, int expectedVersion) {
         return db.sql("""

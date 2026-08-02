@@ -256,3 +256,67 @@ describe('GrasslandWorkbench 通知锚点', () => {
     expect(anchor.value).toBe('')
   })
 })
+
+describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
+  /**
+   * 锁的是「修订只送非资金字段」：bountyCents/platform 发布后冻结，改了会动已报名履约的条款
+   * （task_version 快照尚未被 accept/结算消费）。请求体里不该出现这些键——这是后端冻结之外的前端第二道闸。
+   */
+  test('修订已发布任务只送 title/description/maxSlots/deadline，不送赏金/平台', async () => {
+    const published = {
+      id: 'task-pub', ownerAccountId: 'acct-1', organizationId: 'org-1',
+      title: '原标题', description: '原描述', status: 'published',
+      contentForm: null, platform: 'douyin', maxSlots: 3, bountyCents: 500,
+      version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+      cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    }
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = {}
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.startsWith('/api/tasks/feed')) {
+        data = { items: [], nextCursor: null, hasMore: false }
+      } else if (url.startsWith('/api/tasks?') && url.includes('status=published')) {
+        data = [published]
+      } else if (url.startsWith('/api/tasks/task-pub/revise')) {
+        data = { ...published, title: '修订标题', version: 2 }
+      } else if (url.startsWith('/api/tasks')) {
+        data = []
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench)
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    // 点已发布任务的「编辑」进入修订模式
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')!
+    await editBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('正在修订已发布任务')
+    // 修订模式冻结资金/物料字段：平台输入禁用
+    expect(wrapper.find('input[placeholder="平台（可选）"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('input[placeholder="任务标题"]').setValue('修订标题')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存修订')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    const revise = calls.find(([u]) => u.endsWith('/api/tasks/task-pub/revise'))!
+    const body = JSON.parse(revise[1]!.body as string)
+    expect(body.title).toBe('修订标题')
+    expect(body.expectedVersion).toBe(1)
+    // 资金/物料字段不在修订请求里（冻结）
+    expect(body).not.toHaveProperty('bountyCents')
+    expect(body).not.toHaveProperty('platform')
+    expect(body).not.toHaveProperty('contentForm')
+  })
+})

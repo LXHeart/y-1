@@ -428,6 +428,90 @@ class TaskControllerIT extends MarketplaceItSupport {
         assertThat(snapTitle).isEqualTo("终标题");
     }
 
+    // ---------- GL-P1-TASK-001：编辑出新版本（restricted revise） ----------
+
+    /** 修订已发布任务：version+1、新快照、outbox TaskRevised；赏金冻结（请求体不含 bountyCents → 不被触及）。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void reviseBumpsVersionWritesSnapshotAndFreezesBounty() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> bountyBody = body(org, "原标题", null, 3);
+        bountyBody.put("bountyCents", 500); // 资金型任务
+        String id = (String) ((Map<String, Object>) client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(bountyBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id");
+
+        client().post().uri("/api/tasks/" + id + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "title", "修订标题", "maxSlots", 5))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.title").isEqualTo("修订标题")
+                .jsonPath("$.data.version").isEqualTo(2)
+                .jsonPath("$.data.maxSlots").isEqualTo(5)
+                .jsonPath("$.data.bountyCents").isEqualTo(500); // 赏金冻结
+
+        Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
+                .bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
+        assertThat(versions).isEqualTo(2); // v1 发布快照 + v2 修订快照
+        assertThat(outboxType(id, "TaskRevised")).isEqualTo(1);
+    }
+
+    /** 非 owner 修订 → 403。 */
+    @Test
+    void reviseRejectsNonOwner() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "非owner", null);
+        client().post().uri("/api/tasks/" + id + "/revise")
+                .header("X-Grassland-Identity",
+                        sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "title", "篡改"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    /** 仅 published 可修订；draft / closed → 409。 */
+    @Test
+    void reviseOnlyAllowedOnPublished() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String draftId = createDraft(merchant, org, "basic_publish", "草稿");
+        client().post().uri("/api/tasks/" + draftId + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 0, "title", "x"))
+                .exchange().expectStatus().isEqualTo(409);
+
+        String closedId = publish(merchant, org, "basic_publish", "已关", null);
+        client().post().uri("/api/tasks/" + closedId + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/tasks/" + closedId + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 2, "title", "x"))
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    /** 乐观锁：expectedVersion 不匹配 → 409，状态与 version 不变。 */
+    @Test
+    void reviseStaleVersionConflict() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "锁", null);
+        client().post().uri("/api/tasks/" + id + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 99, "title", "x"))
+                .exchange().expectStatus().isEqualTo(409);
+        assertThat(taskStatus(id)).isEqualTo("published");
+    }
+
     // ---------- GL-P1-TASK-001 Stage 2：全局任务大厅 feed ----------
 
     /** feed 跨组织、仅 published：我发的两条在、草稿不在、返回项全 published（单例容器数据累积，不锁总数）。 */

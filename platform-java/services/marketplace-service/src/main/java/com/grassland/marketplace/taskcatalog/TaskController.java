@@ -177,6 +177,26 @@ public class TaskController {
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
+    /**
+     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本）。
+     *
+     * <p>owner + published；乐观锁。只改非资金字段（title/description/maxSlots/deadline），bounty/platform 冻结
+     * （请求体 {@link ReviseTaskRequest} 不含这些字段）。每次修订 version+1 + 新 task_version 快照 + outbox TaskRevised。
+     * 已 accept 的履约不受影响（修订的字段只门控新报名）。
+     */
+    @PostMapping(value = "/api/tasks/{id}/revise", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> revise(@PathVariable String id, @RequestBody ReviseTaskRequest body,
+                                                            ServerHttpRequest request) {
+        return callers.requireMerchant(request)
+                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), "published")
+                        .flatMap(ignored -> transactions.transactional(
+                                tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
+                                        body.maxSlots(), body.applicationDeadline(), merchant.accountId())
+                                        .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+                                        .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task)))))
+                .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+    }
+
     @GetMapping("/api/tasks")
     public Mono<ResponseEntity<Map<String, Object>>> list(@RequestParam String organizationId,
                                                           @RequestParam(required = false, defaultValue = "published") String status,
@@ -354,6 +374,13 @@ public class TaskController {
 
     private EventEnvelope taskCancelledEnvelope(Task task) {
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskCancelled", "Task",
+                task.id(), task.version(), Instant.now(), null,
+                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
+                        "ownerAccountId", task.ownerAccountId(), "version", task.version()));
+    }
+
+    private EventEnvelope taskRevisedEnvelope(Task task) {
+        return new EventEnvelope(UUID.randomUUID().toString(), "TaskRevised", "Task",
                 task.id(), task.version(), Instant.now(), null,
                 Map.of("taskId", task.id(), "organizationId", task.organizationId(),
                         "ownerAccountId", task.ownerAccountId(), "version", task.version()));

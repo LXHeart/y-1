@@ -62,6 +62,12 @@ const taskForm = ref({
 })
 /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
 const editingDraft = ref<{ id: string; version: number } | null>(null)
+/**
+ * 待修订的已发布任务 id/version（GL-P1-TASK-001：编辑出新版本）。与 editingDraft 互斥——
+ * 非空时「保存」走 POST /revise（只带非资金字段）。刻意独立于 editingDraft 而非复用：
+ * 修订走不同端点、冻结资金字段、保存语义不同（已发布→出新版本，不是存草稿），混在一个标志里要靠 status 二次判分支，易错。
+ */
+const revisingTask = ref<{ id: string; version: number } | null>(null)
 const applyNote = ref('')
 
 // ---------- 推荐官：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）----------
@@ -180,6 +186,7 @@ function resetAccountState(): void {
   feedCursor.value = ''
   feedHasMore.value = false
   editingDraft.value = null
+  revisingTask.value = null
 }
 
 /**
@@ -293,11 +300,28 @@ function isoToLocalInput(iso: string | null): string {
 function resetTaskForm(): void {
   taskForm.value = { title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '' }
   editingDraft.value = null
+  revisingTask.value = null
 }
 
-/** 存草稿：editingDraft 非空 → PUT 更新，否则 POST 新建。 */
+/** 存草稿 / 保存修订：revisingTask → POST /revise，editingDraft → PUT 草稿，否则 POST 新建草稿。 */
 async function saveDraft(): Promise<void> {
   if (!activeOrgId.value || !taskForm.value.title.trim()) return
+  const revising = revisingTask.value
+  if (revising) {
+    // 修订只送非资金字段：bounty/platform/content_form 发布后冻结（改了会动已报名履约的条款）。
+    const revised = await grassland.reviseTask(revising.id, {
+      expectedVersion: revising.version,
+      title: taskForm.value.title.trim(),
+      description: taskForm.value.description.trim() || undefined,
+      maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
+      applicationDeadline: deadlineIso(),
+    })
+    if (!revised) return
+    setNotice(`任务「${revised.title}」已修订出新版本（v${revised.version}）`)
+    resetTaskForm()
+    await refreshTasks()
+    return
+  }
   const bountyCents = yuanToCents(taskForm.value.bountyYuan)
   const editing = editingDraft.value
   if (editing) {
@@ -332,6 +356,24 @@ async function saveDraft(): Promise<void> {
 /** 把草稿载入表单供编辑。 */
 function editDraft(task: Task): void {
   editingDraft.value = { id: task.id, version: task.version }
+  revisingTask.value = null
+  taskForm.value = {
+    title: task.title,
+    description: task.description || '',
+    platform: task.platform || '',
+    maxSlots: task.maxSlots ?? 1,
+    bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
+    applicationDeadline: isoToLocalInput(task.applicationDeadline),
+  }
+}
+
+/**
+ * 把已发布任务载入表单供修订（出新版本）。赏金/平台字段载入仅作展示、保存时不会被送出
+ * （ReviseTaskInput 不含它们）——这里也把输入禁用，免得商家改了半天发现没生效。
+ */
+function editPublished(task: Task): void {
+  revisingTask.value = { id: task.id, version: task.version }
+  editingDraft.value = null
   taskForm.value = {
     title: task.title,
     description: task.description || '',
@@ -671,25 +713,25 @@ function statusLabel(status: string): string {
       </article>
 
       <article class="gl-card gl-card-wide">
-        <h3>3. 发布任务<span v-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「发布」）</span></h3>
+        <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（赏金/平台不可改，保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「发布」）</span></h3>
         <div class="gl-row">
           <input v-model="taskForm.title" placeholder="任务标题" />
-          <input v-model="taskForm.platform" placeholder="平台（可选）" />
+          <input v-model="taskForm.platform" placeholder="平台（可选）" :disabled="!!revisingTask" />
         </div>
         <div class="gl-row">
           <input v-model="taskForm.description" placeholder="任务描述（可选）" />
         </div>
         <div class="gl-row">
           <label>名额 <input v-model.number="taskForm.maxSlots" type="number" min="1" /></label>
-          <label>赏金 ¥<input v-model.number="taskForm.bountyYuan" type="number" min="0" :disabled="!canPublishBounty" /></label>
+          <label>赏金 ¥<input v-model.number="taskForm.bountyYuan" type="number" min="0" :disabled="!canPublishBounty || !!revisingTask" /></label>
           <label>报名截止 <input v-model="taskForm.applicationDeadline" type="datetime-local" /></label>
         </div>
         <div class="gl-row">
-          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">立即发布</button>
-          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="saveDraft">{{ editingDraft ? '保存草稿' : '存为草稿' }}</button>
-          <button v-if="editingDraft" type="button" :disabled="grassland.loading.value" @click="resetTaskForm">取消编辑</button>
+          <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">立即发布</button>
+          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="saveDraft">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
+          <button v-if="editingDraft || revisingTask" type="button" :disabled="grassland.loading.value" @click="resetTaskForm">取消编辑</button>
         </div>
-        <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。草稿不占发布额度、不需资金权限。</p>
+        <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本，但<b>赏金/平台发布后不可改</b>（避免改动已报名履约的条款）。</p>
       </article>
 
       <article id="gl-engagements" class="gl-card gl-card-wide">
@@ -708,8 +750,9 @@ function statusLabel(status: string): string {
               <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">发布</button>
               <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消</button>
             </template>
-            <!-- 已发布：关闭报名 / 取消 -->
+            <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
             <template v-else-if="t.status === 'published'">
+              <button type="button" :disabled="grassland.loading.value" @click="editPublished(t)">编辑</button>
               <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
               <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消任务</button>
             </template>

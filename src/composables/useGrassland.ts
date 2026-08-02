@@ -49,6 +49,7 @@ import type {
   TaskFeedPage,
   TaskFeedQuery,
   UpdateTaskInput,
+  ReviseTaskInput,
   Wallet,
   VoteChoice,
 } from '../types/grassland'
@@ -545,6 +546,13 @@ export function useGrassland() {
       method: 'POST', body: JSON.stringify({ expectedVersion }),
     }))
 
+  /**
+   * 修订已发布任务（published→published 出新版本；expectedVersion 乐观锁）。
+   * 只传非资金字段——赏金/平台发布后冻结，改了会动已报名履约的条款（见 ReviseTaskInput）。
+   */
+  const reviseTask = (id: string, input: ReviseTaskInput) =>
+    run(() => request<Task>(`/api/tasks/${id}/revise`, { method: 'POST', body: JSON.stringify(input) }))
+
   /** 关闭报名（published→closed）。 */
   const closeTask = (id: string, expectedVersion: number) =>
     run(() => request<Task>(`/api/tasks/${id}/close`, {
@@ -857,6 +865,7 @@ export function useGrassland() {
     listTaskFeed,
     createDraft,
     updateTask,
+    reviseTask,
     publishDraft,
     closeTask,
     cancelTask,

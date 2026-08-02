@@ -71,6 +71,21 @@ export interface UpdateTaskInput {
   applicationDeadline?: string
 }
 
+/**
+ * 修订已发布任务请求（仅 published 态；GL-P1-TASK-001：编辑出新版本）。
+ *
+ * 刻意不含 bountyCents/platform/contentForm——这些资金/物料条款发布后冻结
+ * （task_version 快照尚未被 accept/结算消费，改了会动已报名履约的条款）。
+ * 只能改 title/description/maxSlots/applicationDeadline（仅影响新报名）。
+ */
+export interface ReviseTaskInput {
+  expectedVersion: number
+  title: string
+  description?: string
+  maxSlots?: number
+  applicationDeadline?: string
+}
+
 /** 任务大厅 feed 查询（GL-P1-TASK-001 Stage 2）。 */
 export interface TaskFeedQuery {
   platform?: string
