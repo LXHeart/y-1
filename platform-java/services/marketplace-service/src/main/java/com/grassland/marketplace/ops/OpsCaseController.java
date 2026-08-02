@@ -41,13 +41,16 @@ public class OpsCaseController {
     private final OpsCaseActionService actionService;
     private final OpsDltMessageRepository dltMessages;
     private final OpsDltActionService dltActions;
+    private final OpsPendingVerificationRepository pendingVerifications;
     private final MarketplaceCallerResolver callers;
     private final TransactionalOperator transactions;
 
     public OpsCaseController(OpsCaseRepository cases, OpsCaseAuditRepository audits,
                              OpsCaseActionRepository actionLog, OpsCaseActionService actionService,
                              OpsDltMessageRepository dltMessages, OpsDltActionService dltActions,
+                             OpsPendingVerificationRepository pendingVerifications,
                              MarketplaceCallerResolver callers, TransactionalOperator transactions) {
+        this.pendingVerifications = pendingVerifications;
         this.cases = cases;
         this.audits = audits;
         this.actionLog = actionLog;
@@ -177,6 +180,39 @@ public class OpsCaseController {
                 .flatMap(caller -> dltActions.execute(messageId, replay, operationId,
                         caller.accountId(), caller.role()))
                 .map(executed -> ResponseEntity.ok(Map.of("success", true, "data", toActionBody(executed))));
+    }
+
+    /**
+     * 「待判定」核验（Stage 3）：{@code inconclusive} 且交付物仍 {@code submitted} 的履约。
+     *
+     * <p><b>只读、无处置动作</b> —— 见 {@link OpsPendingVerification}：inconclusive 永不阻断结算，
+     * 平台侧的决策权在商家的 confirm / reject，运营台只提供可见性。
+     */
+    @GetMapping("/api/ops/pending-verifications")
+    public Mono<ResponseEntity<Map<String, Object>>> listPendingVerifications(
+            @RequestParam(required = false, defaultValue = "50") int limit,
+            ServerHttpRequest request) {
+        int capped = Math.max(1, Math.min(limit, MAX_LIMIT));
+        return callers.requireOpsOperator(request)
+                .then(pendingVerifications.list(capped)
+                        .map(OpsCaseController::toPendingVerificationBody).collectList())
+                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+    }
+
+    private static Map<String, Object> toPendingVerificationBody(OpsPendingVerification v) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("verificationId", v.verificationId());
+        body.put("submissionId", v.submissionId());
+        body.put("applicationId", v.applicationId());
+        body.put("taskId", v.taskId());
+        body.put("taskTitle", v.taskTitle());
+        body.put("organizationId", v.organizationId());
+        body.put("recommenderAccountId", v.recommenderAccountId());
+        body.put("contentUrl", v.contentUrl());
+        body.put("checks", v.checksJson());
+        body.put("lastCheckedAt", v.lastCheckedAt());
+        body.put("submittedAt", v.submittedAt());
+        return body;
     }
 
     private static Map<String, Object> toActionBody(OpsCaseAction a) {

@@ -201,6 +201,20 @@
           草场
         </button>
         <button
+          v-if="isAuthenticated && (currentUser?.role === 'admin' || currentUser?.role === 'customer_service')"
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'ops' }"
+          :aria-selected="currentView === 'ops'"
+          type="button"
+          @click="currentView = 'ops'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="12.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+          运营处置
+        </button>
+        <button
           v-if="isAuthenticated && currentUser?.role === 'admin'"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'admin' }"
@@ -257,6 +271,7 @@ import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
 import ArticleCreationView from './components/ArticleCreationView.vue'
 import ComedyWritingView from './components/ComedyWritingView.vue'
 import AdminView from './components/AdminView.vue'
+import OpsConsole from './components/OpsConsole.vue'
 import GrasslandWorkbench from './components/GrasslandWorkbench.vue'
 import HomeView from './components/HomeView.vue'
 import ImageAnalysisView from './components/ImageAnalysisView.vue'
@@ -274,7 +289,7 @@ import type { LoginFormValues, RegisterFormValues } from './types/auth'
 import type { NotificationLinkTarget } from './types/notification'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'admin'
+type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'ops' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
 const currentView = ref<AppView>('home')
@@ -404,6 +419,7 @@ const viewComponentMap: Record<AppView, Component> = {
   comedy: ComedyWritingView,
   'video-production': VideoProductionView,
   grassland: GrasslandWorkbench,
+  ops: OpsConsole,
   admin: AdminView,
 }
 

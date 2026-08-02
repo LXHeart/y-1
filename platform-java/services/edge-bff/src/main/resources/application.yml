@@ -79,6 +79,12 @@ edge:
     - path: /api/recommenders
       upstream: identity
       enabled: ${EDGE_ROUTE_RECOMMENDERS_IDENTITY:true}
+    # 运营处置台（GL-P1-OPS-001）→ marketplace。前缀覆盖 /api/ops/cases、/api/ops/dlt、
+    # /api/ops/pending-verifications。legacy Express 无 /api/ops 前缀，纯增量不抢旧流量。
+    # 闸门在 marketplace 侧按平台角色（customer_service/admin）判，edge 只透传断言。
+    - path: /api/ops
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_OPS_MARKETPLACE:true}
     # 推荐官声誉（PRD 五/六）→ marketplace。声誉指标全部从撮合事实派生，故落在 marketplace 而非 identity。
     - path: /api/reputation
       upstream: marketplace

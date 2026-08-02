@@ -32,6 +32,8 @@ class UpstreamResolverTest {
             // 推荐官画像 → identity，声誉 → marketplace（两个不同上游，前缀不得互相抢占）
             new RouteProperties(null, "/api/recommenders", "identity", true),
             new RouteProperties(null, "/api/reputation", "marketplace", true),
+            // 运营处置台（GL-P1-OPS-001）→ marketplace
+            new RouteProperties(null, "/api/ops", "marketplace", true),
             // intelligence Slice 1：/api/intelligence 前缀 → intelligence（冒烟端点 + 后续业务）
             new RouteProperties(null, "/api/intelligence", "intelligence", true),
             // intelligence Slice 8：media-reference 鉴权上传/签名读 → intelligence
@@ -179,6 +181,18 @@ class UpstreamResolverTest {
         // 自维护画像走既有 /api/me 前缀 → identity（不需要单独一条路由）
         assertThat(resolver.resolve("GET", "/api/me/recommender-profile")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("PUT", "/api/me/recommender-profile")).isEqualTo(IDENTITY);
+    }
+
+    // ---------- 运营处置台（GL-P1-OPS-001）：/api/ops 三个子树同落 marketplace ----------
+
+    @Test
+    void routesOpsConsoleToMarketplace() {
+        assertThat(resolver.resolve("GET", "/api/ops/cases")).isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("POST", "/api/ops/cases/" + ACCOUNT_ID + "/decide")).isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("GET", "/api/ops/dlt")).isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("GET", "/api/ops/pending-verifications")).isEqualTo(MARKETPLACE);
+        // 内部上游 → edge 签发 X-Grassland-Identity，marketplace 侧才能按平台角色判闸门
+        assertThat(resolver.isInternalUpstream("GET", "/api/ops/cases")).isTrue();
     }
 
     @Test

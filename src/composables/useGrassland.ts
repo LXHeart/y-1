@@ -20,6 +20,13 @@ import type {
   JudgeVote,
   MediaMetadata,
   MediaUploadTicket,
+  OpsActionKind,
+  OpsCase,
+  OpsCaseAction,
+  OpsCaseDetail,
+  OpsCaseStatus,
+  OpsDltMessage,
+  OpsPendingVerification,
   CreatePermissionRequestInput,
   InvitationAcceptResult,
   LoginSession,
@@ -719,6 +726,77 @@ export function useGrassland() {
       body: JSON.stringify({ decision }),
     }))
 
+  // ---------- 运营处置台（GL-P1-OPS-001）----------
+
+  /** 处置队列。省略 status → 未终态（open/in_review/approved）；给定值精确筛选（含终态，供回看）。 */
+  const listOpsCases = (status?: OpsCaseStatus) =>
+    run(() => request<OpsCase[]>(`/api/ops/cases${status ? `?status=${status}` : ''}`))
+
+  /** 详情：单据 + 审计时间线 + 动作台账。 */
+  const getOpsCase = (id: string) =>
+    run(() => request<OpsCaseDetail>(`/api/ops/cases/${id}`))
+
+  /**
+   * 三个流转端点都必须带 `expectedVersion`（乐观锁）——传当前 `case.version`。
+   * 版本不符 / 状态已变 → 409，UI 应提示刷新而非重试。
+   */
+  const submitOpsCase = (id: string, expectedVersion: number, note?: string) =>
+    run(() => request<OpsCase>(`/api/ops/cases/${id}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion, note }),
+    }))
+
+  /** 审批。**审批人不能是提审人**（后端 409）——同一浏览器登录同一账号无法自审自批。 */
+  const decideOpsCase = (id: string, expectedVersion: number, approve: boolean, note?: string) =>
+    run(() => request<OpsCase>(`/api/ops/cases/${id}/decide`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion, approve, note }),
+    }))
+
+  const resolveOpsCase = (id: string, expectedVersion: number, resolution: string, note?: string) =>
+    run(() => request<OpsCase>(`/api/ops/cases/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion, resolution, note }),
+    }))
+
+  /**
+   * 执行处置动作（须 case 已 approved）。
+   *
+   * `operationId` 是幂等键，**由调用方生成并在重试时复用**——网络超时后重按不会重复打下游。
+   * 返回 status='failed' 时 HTTP 仍 200：动作执行过且失败了，看 `error`。
+   */
+  const executeOpsAction = (caseId: string, action: OpsActionKind, operationId: string) =>
+    run(() => request<OpsCaseAction>(`/api/ops/cases/${caseId}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ action, operationId }),
+    }))
+
+  /** 死信队列。省略 status → 仅 pending。 */
+  const listOpsDlt = (status?: OpsDltMessage['status']) =>
+    run(() => request<OpsDltMessage[]>(`/api/ops/dlt${status ? `?status=${status}` : ''}`))
+
+  /** 死信重投（replay=true，回原 topic 保留原 key）或弃置（false，只标记不删）。 */
+  const executeOpsDltAction = (messageId: string, replay: boolean, operationId: string) =>
+    run(() => request<OpsCaseAction>(`/api/ops/dlt/${messageId}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ replay, operationId }),
+    }))
+
+  /** 「待判定」核验只读窗（无处置动作——inconclusive 永不阻断结算）。 */
+  const listOpsPendingVerifications = () =>
+    run(() => request<OpsPendingVerification[]>('/api/ops/pending-verifications'))
+
+  /**
+   * 幂等键生成：`crypto.randomUUID` 在 HTTPS 与 localhost 之外不可用（Safari/旧 Chrome），
+   * 故带一条时间戳+随机数兜底，避免运营台在 HTTP 内网入口上整个按钮不可用。
+   */
+  function newOperationId(prefix: string): string {
+    const rand = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    return `${prefix}-${rand}`
+  }
+
   return {
     loading,
     error,
@@ -805,5 +883,16 @@ export function useGrassland() {
     leaveJudgePool,
     castVote,
     finalDecision,
+    // 运营处置台
+    listOpsCases,
+    getOpsCase,
+    submitOpsCase,
+    decideOpsCase,
+    resolveOpsCase,
+    executeOpsAction,
+    listOpsDlt,
+    executeOpsDltAction,
+    listOpsPendingVerifications,
+    newOperationId,
   }
 }
