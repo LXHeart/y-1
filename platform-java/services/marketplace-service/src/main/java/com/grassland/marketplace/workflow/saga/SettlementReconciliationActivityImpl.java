@@ -2,6 +2,8 @@ package com.grassland.marketplace.workflow.saga;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.ops.OpsCaseRegistrar;
+import com.grassland.marketplace.ops.OpsCaseSource;
 import com.grassland.marketplace.settlement.SettlementReconciliation;
 import com.grassland.marketplace.settlement.SettlementReconciliationRepository;
 import com.grassland.marketplace.taskcatalog.Task;
@@ -42,6 +44,7 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
     private final OutboxRepository outbox;
     private final TrustResolutionClient trust;
     private final FinanceReconciliationClient finance;
+    private final OpsCaseRegistrar opsCases;
     private final TransactionalOperator transactions;
 
     public SettlementReconciliationActivityImpl(
@@ -51,6 +54,7 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
             OutboxRepository outbox,
             TrustResolutionClient trust,
             FinanceReconciliationClient finance,
+            OpsCaseRegistrar opsCases,
             TransactionalOperator transactions) {
         this.reconciliations = reconciliations;
         this.apps = apps;
@@ -58,6 +62,7 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
         this.outbox = outbox;
         this.trust = trust;
         this.finance = finance;
+        this.opsCases = opsCases;
         this.transactions = transactions;
     }
 
@@ -69,15 +74,16 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
             return SettlementReconciliationWorkflow.ReconciliationOutcome.reconciled();  // 幂等：已对账/未知
         }
         TaskApplication app = apps.findById(input.applicationId()).block();
+        // 这三处阻断发生在 task 可读之前，org 未知 → 处置单 organization_id 留空（队列按 application_id 定位）。
         if (app == null || !"accepted".equals(app.status())) {
-            return block(input, "application_not_accepted");
+            return block(input, null, "application_not_accepted");
         }
         if (app.confirmedAt() == null) {
-            return block(input, "application_not_confirmed");
+            return block(input, null, "application_not_confirmed");
         }
         Task task = tasks.findById(app.taskId()).block();
         if (task == null) {
-            return block(input, "task_missing");
+            return block(input, null, "task_missing");
         }
         String organizationId = task.organizationId();
 
@@ -90,7 +96,7 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
                 || !Objects.equals(resolution.engagementRef(), input.applicationId())
                 || !Objects.equals(resolution.organizationId(), organizationId)
                 || !Objects.equals(resolution.finalDecision(), input.finalDecision())) {
-            return block(input, "trust_mismatch");
+            return block(input, organizationId, "trust_mismatch");
         }
 
         // 2. 非资金型任务（bounty null/0）：无 reservation 期望，直接结算。
@@ -103,7 +109,7 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
                 finance.reconcile(organizationId, input.applicationId(), input.finalDecision()).block();
         if (result == null || !result.isSuccess()) {
             String reason = result == null ? "finance_missing" : "finance_" + result.outcome();
-            return block(input, reason);
+            return block(input, organizationId, reason);
         }
         return complete(input, app, input.finalDecision(), task.ownerAccountId());
     }
@@ -119,12 +125,21 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
         return SettlementReconciliationWorkflow.ReconciliationOutcome.reconciled();
     }
 
-    /** 阻断：同事务 markBlocked + 确定性 SettlementReconciliationBlocked（运维可见，永不写 EngagementSettled）。 */
+    /**
+     * 阻断：同事务 markBlocked + 确定性 SettlementReconciliationBlocked（运维可见，永不写 EngagementSettled）
+     * + 运营处置单登记（GL-P1-OPS-001 Stage 1）。
+     *
+     * <p>处置单 sourceRef 取 {@code sourceEventId}（= 本对账请求主键），与 {@code settlement_reconciliation}
+     * 一一对应；重试幂等由 {@code UNIQUE(source_kind, source_ref)} 保证。
+     * reason 形如 {@code finance_blocked}（finance 侧 manual_clawback_required）。
+     */
     private SettlementReconciliationWorkflow.ReconciliationOutcome block(
-            SettlementReconciliationWorkflow.ReconciliationInput input, String reason) {
+            SettlementReconciliationWorkflow.ReconciliationInput input, String organizationId, String reason) {
         transactions.transactional(reconciliations
                 .markBlocked(input.sourceEventId(), reason)
-                .then(outbox.append(blockedEnvelope(input, reason)))).block();
+                .then(outbox.append(blockedEnvelope(input, reason)))
+                .then(opsCases.register(OpsCaseSource.SETTLEMENT_BLOCKED, input.sourceEventId(),
+                        organizationId, input.applicationId(), reason))).block();
         log.warn("settlement blocked src={} reason={}", input.sourceEventId(), reason);
         return SettlementReconciliationWorkflow.ReconciliationOutcome.blocked(reason);
     }

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.ops.OpsCaseRegistrar;
 import com.grassland.marketplace.settlement.SettlementReconciliation;
 import com.grassland.marketplace.settlement.SettlementReconciliationRepository;
 import com.grassland.marketplace.taskcatalog.Task;
@@ -43,8 +44,10 @@ class SettlementReconciliationActivityImplTest {
     private final TrustResolutionClient trust = mock(TrustResolutionClient.class);
     private final FinanceReconciliationClient finance = mock(FinanceReconciliationClient.class);
     private final TransactionalOperator transactions = mock(TransactionalOperator.class);
+    private final OpsCaseRegistrar opsCases = mock(OpsCaseRegistrar.class);
     private final SettlementReconciliationActivityImpl activity =
-            new SettlementReconciliationActivityImpl(reconciliations, apps, tasks, outbox, trust, finance, transactions);
+            new SettlementReconciliationActivityImpl(reconciliations, apps, tasks, outbox, trust, finance,
+                    opsCases, transactions);
 
     @BeforeEach
     void passThroughTransactions() {
@@ -52,6 +55,7 @@ class SettlementReconciliationActivityImplTest {
         when(reconciliations.markReconciled(any())).thenReturn(Mono.just(true));
         when(reconciliations.markBlocked(any(), any())).thenReturn(Mono.just(true));
         when(outbox.append(any())).thenReturn(Mono.empty());
+        when(opsCases.register(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
     }
 
     @Test

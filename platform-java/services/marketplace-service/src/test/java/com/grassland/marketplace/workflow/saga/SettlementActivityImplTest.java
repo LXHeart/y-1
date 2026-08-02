@@ -3,12 +3,14 @@ package com.grassland.marketplace.workflow.saga;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.ops.OpsCaseRegistrar;
 import com.grassland.marketplace.taskcatalog.Task;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -43,13 +46,20 @@ class SettlementActivityImplTest {
     @Mock private FinanceEscrowClient finance;
     @Mock private DisputeChecker disputes;
     @Mock private VerificationChecker verification;
+    @Mock private OpsCaseRegistrar opsCases;
+    @Mock private TransactionalOperator transactions;
 
     private SettlementActivityImpl activity;
     private SettlementInput input;
 
     @BeforeEach
     void setUp() {
-        activity = new SettlementActivityImpl(apps, tasks, outbox, finance, disputes, verification);
+        // hold 分支才会用到（GL-P1-OPS-001）：事务直通 + 登记处置单，非 hold 用例不会触达，故 lenient。
+        lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(opsCases.register(anyString(), anyString(), any(), any(), anyString()))
+                .thenReturn(Mono.empty());
+        activity = new SettlementActivityImpl(apps, tasks, outbox, finance, disputes, verification,
+                opsCases, transactions);
         input = new SettlementInput(APP_ID, TASK_ID, "33333333-3333-3333-3333-333333333333", ORG, 500L, 0L);
     }
 

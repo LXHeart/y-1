@@ -76,6 +76,20 @@ public abstract class MarketplaceItSupport {
                 "grassland-internal", now, now.plusSeconds(60), null, null));
     }
 
+    /**
+     * 签一个带平台角色的断言（GL-P1-OPS-001：运营处置台按 {@code app_users.role} 判定，非业务身份）。
+     *
+     * <p>{@code activeIdentityType} 留 null —— 运营操作与「选了哪个业务视角」正交，
+     * 这正是端点必须按 role 判定的原因（历史上按 activeIdentityType 建模职能会导致恒 403）。
+     */
+    protected String signWithRole(String accountId, String role) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                accountId, null, "sid-" + accountId, null, null,
+                "cookie-session", "level1", null, "r", "t",
+                "grassland-internal", now, now.plusSeconds(60), null, null, role));
+    }
+
     /** 签一个服务间断言（Slice 12：trust 调内部争议参与方授权端点）。 */
     protected String signService(String principal) {
         Instant now = Instant.now();
