@@ -45,11 +45,15 @@ spring:
       enabled: ${TEMPORAL_TEST_SERVER:false}
 server:
   port: ${SERVER_PORT:8083}
+# management 走独立端口 9082（镜像 identity）：业务流量与指标/健康检查分离，
+# prometheus 端点不暴露在主端口上。compose 私网 Prometheus 抓 marketplace-service:9082。
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9082}
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 # 对象存储：本服务不再直连 MinIO。媒体上传统一走 intelligence-service 的鉴权链路
 # （POST /api/media/upload-tickets → confirm → read/delete，带 caller 解析、MIME 白名单、
@@ -88,6 +92,16 @@ marketplace:
     topics: ${MARKETPLACE_DLT_CONSUMER_TOPICS:grassland.trust.events.DLT}
     group-id: ${MARKETPLACE_DLT_CONSUMER_GROUP:marketplace-dlt-registrar}
     auto-startup: ${MARKETPLACE_DLT_CONSUMER_AUTOSTARTUP:true}
+  # 运营死信指标 + retention 清理（GL-P3-PLATFORM-001，承接 OPS-001 Stage 2）。
+  # dlt-metrics 总是开（gauge 反映 DB 真相，与 consumer 是否启用无关）；dlt-cleanup 默认关，
+  # compose 在 java-edge profile 下置 MARKETPLACE_OPS_DLT_CLEANUP_ENABLED=true 开启定时清理。
+  ops:
+    dlt-metrics:
+      refresh-ms: ${MARKETPLACE_OPS_DLT_METRICS_REFRESH_MS:15000}
+    dlt-cleanup:
+      enabled: ${MARKETPLACE_OPS_DLT_CLEANUP_ENABLED:false}
+      retention-days: ${MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS:30}
+      interval-ms: ${MARKETPLACE_OPS_DLT_CLEANUP_INTERVAL_MS:3600000}
   # 结算对账派发器（Slice 7B）：争议终局后确定性地启对账 workflow，确认资金到位才发布结算。
   # dispatcher-enabled 默认开（生产）；测试基座关闭。redispatch-seconds 控制 started 行多久后可重派发。
   reconciliation:

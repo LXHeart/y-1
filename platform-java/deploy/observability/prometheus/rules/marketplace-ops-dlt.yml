@@ -1,0 +1,16 @@
+groups:
+  - name: marketplace-ops-dlt
+    rules:
+      - alert: MarketplaceOpsDltPending
+        expr: grassland_ops_dlt_pending{job="marketplace-service"} > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: marketplace-service
+        annotations:
+          summary: Marketplace dead-letter queue has messages awaiting operator action
+          description: >-
+            marketplace-service has ops_dlt_message rows in pending state. These are Kafka dead letters
+            that failed consumption and need an operator to replay or discard via the ops console
+            (GL-P1-OPS-001). Pending dead letters block the affected consumer group's progress on those
+            messages; sustained pending means nobody is working the queue.

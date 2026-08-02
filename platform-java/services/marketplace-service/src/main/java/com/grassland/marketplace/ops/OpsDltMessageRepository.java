@@ -3,6 +3,7 @@ package com.grassland.marketplace.ops;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
@@ -73,6 +74,43 @@ public class OpsDltMessageRepository {
             spec = spec.bind("status", status);
         }
         return spec.map(OpsDltMessageRepository::map).all();
+    }
+
+    /** pending（待处置）积压数 —— 喂 {@code grassland.ops.dlt.pending} gauge 与告警。 */
+    public Mono<Long> pendingCount() {
+        return count("status = 'pending'");
+    }
+
+    /** 已弃置数 —— 喂 {@code grassland.ops.dlt.discarded} gauge（弃置是审计对象，长期看趋势）。 */
+    public Mono<Long> discardedCount() {
+        return count("status = 'discarded'");
+    }
+
+    /** 总数 —— 喂 {@code grassland.ops.dlt.total} gauge（retention 清理是否在吃掉历史，看这条判）。 */
+    public Mono<Long> totalCount() {
+        return count(null);
+    }
+
+    private Mono<Long> count(String where) {
+        String sql = "SELECT COUNT(*) AS n FROM ops_dlt_message"
+                + (where == null ? "" : " WHERE " + where);
+        return db.sql(sql).map((row, meta) -> row.get("n", Long.class)).one()
+                .defaultIfEmpty(0L);
+    }
+
+    /**
+     * 删除已进入终态（replayed/discarded）且早于 {@code cutoff} 的死信行。
+     *
+     * <p><b>绝不删 {@code pending}</b>：pending 是待运营处置的死信，删了就丢证据。只清已被重投或弃置的历史行，
+     * 让 ops_dlt_message 表不会无限膨胀（弃置只改状态不删行是 Stage 2 的审计约定，retention 清理归本条）。
+     *
+     * @return 删除行数
+     */
+    public Mono<Long> deleteTerminalOlderThan(Instant cutoff) {
+        return db.sql("DELETE FROM ops_dlt_message"
+                + " WHERE status IN ('replayed','discarded') AND created_at < :cutoff")
+                .bind("cutoff", OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC))
+                .fetch().rowsUpdated();
     }
 
     /**

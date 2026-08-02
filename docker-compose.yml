@@ -100,8 +100,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # GL-P3-PLATFORM-001：私网 Prometheus，当前聚焦抓 identity 邮件死信指标与加载告警规则。
-  # 不发布宿主端口、不经 Nginx；运维通知接收器（Alertmanager）另行接入。
+  # GL-P3-PLATFORM-001：私网 Prometheus，抓 identity 邮件死信 + marketplace 运营死信指标，加载告警规则。
+  # 不发布宿主端口、不经 Nginx；告警推送至下方 Alertmanager（接收端凭据属部署侧）。
   prometheus:
     profiles: ["java-edge"]
     image: prom/prometheus:v3.5.0
@@ -115,6 +115,21 @@ services:
     depends_on:
       identity-service:
         condition: service_started
+      marketplace-service:
+        condition: service_started
+    restart: unless-stopped
+
+  # GL-P3-PLATFORM-001：私网 Alertmanager，承接 Prometheus 告警。UI 在内网 alertmanager:9093。
+  # 真接收端（Slack/SMTP/PagerDuty）属部署侧凭据，alertmanager.yml 用占位 webhook，接入时改 receivers。
+  alertmanager:
+    profiles: ["java-edge"]
+    image: prom/alertmanager:v0.27.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./platform-java/deploy/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
     restart: unless-stopped
 
   # 可选 Java Edge BFF 评估入口。
@@ -205,6 +220,10 @@ services:
       # 死信登记（GL-P1-OPS-001）：跟随 trust 消费者一起开，否则重试耗尽的事件会静静躺在 *.DLT 里没人看。
       MARKETPLACE_DLT_CONSUMER_ENABLED: ${MARKETPLACE_DLT_CONSUMER_ENABLED:-${MARKETPLACE_TRUST_CONSUMER_ENABLED:-true}}
       MARKETPLACE_DLT_CONSUMER_TOPICS: ${MARKETPLACE_DLT_CONSUMER_TOPICS:-grassland.trust.events.DLT}
+      # 运营死信 retention 清理（GL-P3-PLATFORM-001）：跟随 dlt 消费者一起开，否则 ops_dlt_message 只增不减。
+      # dlt-metrics gauge 总是开（与消费者无关），这里只配清理任务。
+      MARKETPLACE_OPS_DLT_CLEANUP_ENABLED: ${MARKETPLACE_OPS_DLT_CLEANUP_ENABLED:-${MARKETPLACE_DLT_CONSUMER_ENABLED:-${MARKETPLACE_TRUST_CONSUMER_ENABLED:-true}}}
+      MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS: ${MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS:-30}
     depends_on:
       backend:
         condition: service_started
@@ -446,3 +465,4 @@ volumes:
   temporal_dev_data:
   postgres_local_data:
   prometheus_data:
+  alertmanager_data:

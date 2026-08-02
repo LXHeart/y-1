@@ -12,6 +12,7 @@ java {
 dependencies {
     implementation(platform(libs.spring.boot.dependencies))
     implementation(libs.spring.boot.actuator)
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     implementation(project(":platform-identity-assertion"))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
