@@ -80,6 +80,14 @@ marketplace:
     topic: ${MARKETPLACE_TRUST_CONSUMER_TOPIC:grassland.trust.events}
     group-id: ${MARKETPLACE_TRUST_CONSUMER_GROUP:marketplace-trust-consumer}
     auto-startup: ${MARKETPLACE_TRUST_CONSUMER_AUTOSTARTUP:true}
+  # 死信登记消费方（GL-P1-OPS-001 Stage 2）：把 *.DLT 落到 ops_dlt_message 并开处置单，
+  # 否则死信只躺在 topic 里，运营既看不到也重投不了。topics 逗号分隔（SpEL split）。
+  # 用默认 container factory：trust 那个带 DLT recoverer，本消费者失败会投到 *.DLT.DLT 无限套娃。
+  dlt-consumer:
+    enabled: ${MARKETPLACE_DLT_CONSUMER_ENABLED:false}
+    topics: ${MARKETPLACE_DLT_CONSUMER_TOPICS:grassland.trust.events.DLT}
+    group-id: ${MARKETPLACE_DLT_CONSUMER_GROUP:marketplace-dlt-registrar}
+    auto-startup: ${MARKETPLACE_DLT_CONSUMER_AUTOSTARTUP:true}
   # 结算对账派发器（Slice 7B）：争议终局后确定性地启对账 workflow，确认资金到位才发布结算。
   # dispatcher-enabled 默认开（生产）；测试基座关闭。redispatch-seconds 控制 started 行多久后可重派发。
   reconciliation:

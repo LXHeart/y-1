@@ -26,6 +26,12 @@ public final class OpsCaseSource {
      */
     public static final String SETTLEMENT_HELD = "settlement_held";
 
+    /**
+     * 死信消息（Stage 2）：{@code sourceRef} = {@code topic:partition:offset}（Kafka 位点天然幂等，
+     * 消费者重启重读同一条不会开出第二张单）。reason = 原 topic。
+     */
+    public static final String DLT_MESSAGE = "dlt_message";
+
     private OpsCaseSource() {
     }
 

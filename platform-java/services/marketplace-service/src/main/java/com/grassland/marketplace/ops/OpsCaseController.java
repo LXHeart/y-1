@@ -37,13 +37,23 @@ public class OpsCaseController {
 
     private final OpsCaseRepository cases;
     private final OpsCaseAuditRepository audits;
+    private final OpsCaseActionRepository actionLog;
+    private final OpsCaseActionService actionService;
+    private final OpsDltMessageRepository dltMessages;
+    private final OpsDltActionService dltActions;
     private final MarketplaceCallerResolver callers;
     private final TransactionalOperator transactions;
 
     public OpsCaseController(OpsCaseRepository cases, OpsCaseAuditRepository audits,
+                             OpsCaseActionRepository actionLog, OpsCaseActionService actionService,
+                             OpsDltMessageRepository dltMessages, OpsDltActionService dltActions,
                              MarketplaceCallerResolver callers, TransactionalOperator transactions) {
         this.cases = cases;
         this.audits = audits;
+        this.actionLog = actionLog;
+        this.actionService = actionService;
+        this.dltMessages = dltMessages;
+        this.dltActions = dltActions;
         this.callers = callers;
         this.transactions = transactions;
     }
@@ -66,9 +76,12 @@ public class OpsCaseController {
         return callers.requireOpsOperator(request)
                 .then(cases.findById(id))
                 .switchIfEmpty(Mono.error(new MarketplaceException(404, "处置单不存在")))
-                .flatMap(opsCase -> audits.listByCase(id).map(OpsCaseController::toAuditBody).collectList()
-                        .map(timeline -> ResponseEntity.ok(Map.of("success", true,
-                                "data", Map.of("case", toBody(opsCase), "audits", timeline)))));
+                .flatMap(opsCase -> Mono.zip(
+                                audits.listByCase(id).map(OpsCaseController::toAuditBody).collectList(),
+                                actionLog.listByCase(id).map(OpsCaseController::toActionBody).collectList())
+                        .map(both -> ResponseEntity.ok(Map.of("success", true,
+                                "data", Map.of("case", toBody(opsCase),
+                                        "audits", both.getT1(), "actions", both.getT2())))));
     }
 
     /** 提审（open→in_review）。非 open 或版本不符 → 409。 */
@@ -120,6 +133,82 @@ public class OpsCaseController {
                                                 caller.role(), "approved", updated.status(), body.note())
                                         .thenReturn(updated))))
                 .map(updated -> ResponseEntity.ok(Map.of("success", true, "data", toBody(updated))));
+    }
+
+    /**
+     * 执行受限处置动作（Stage 2）。须 case 已 {@code approved}，须带 {@code operationId} 幂等键。
+     *
+     * <p>动作集封闭：{@code retry_reconciliation} / {@code release_funds}。见
+     * {@link OpsCaseActionService} —— 只复用 finance 既有原语，不新增资金原语，刻意不提供 capture。
+     */
+    @PostMapping(value = "/api/ops/cases/{id}/actions", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> executeAction(
+            @PathVariable String id, @RequestBody OpsCaseActionExecuteRequest body, ServerHttpRequest request) {
+        String action = body.requireAction();
+        String operationId = body.requireOperationId();
+        return callers.requireOpsOperator(request)
+                .flatMap(caller -> actionService.execute(id, action, operationId,
+                        caller.accountId(), caller.role()))
+                .map(executed -> ResponseEntity.ok(Map.of("success", true, "data", toActionBody(executed))));
+    }
+
+    /** 死信队列（Stage 2）。{@code status} 省略 → 仅 pending。 */
+    @GetMapping("/api/ops/dlt")
+    public Mono<ResponseEntity<Map<String, Object>>> listDlt(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false, defaultValue = "50") int limit,
+            ServerHttpRequest request) {
+        int capped = Math.max(1, Math.min(limit, MAX_LIMIT));
+        return callers.requireOpsOperator(request)
+                .then(dltMessages.list(status, capped).map(OpsCaseController::toDltBody).collectList())
+                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+    }
+
+    /**
+     * 死信重投（{@code replay=true}，回原 topic）或弃置（{@code replay=false}，只标记不删）。
+     * 同样须对应 case 已 {@code approved} + {@code operationId} 幂等键。
+     */
+    @PostMapping(value = "/api/ops/dlt/{messageId}/actions", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> executeDltAction(
+            @PathVariable String messageId, @RequestBody OpsDltActionRequest body, ServerHttpRequest request) {
+        boolean replay = body.requireReplay();
+        String operationId = body.requireOperationId();
+        return callers.requireOpsOperator(request)
+                .flatMap(caller -> dltActions.execute(messageId, replay, operationId,
+                        caller.accountId(), caller.role()))
+                .map(executed -> ResponseEntity.ok(Map.of("success", true, "data", toActionBody(executed))));
+    }
+
+    private static Map<String, Object> toActionBody(OpsCaseAction a) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", a.id());
+        body.put("caseId", a.caseId());
+        body.put("operationId", a.operationId());
+        body.put("action", a.action());
+        body.put("status", a.status());
+        body.put("requestedBy", a.requestedBy());
+        body.put("outcome", a.outcome());
+        body.put("error", a.error());
+        body.put("createdAt", a.createdAt());
+        body.put("completedAt", a.completedAt());
+        return body;
+    }
+
+    private static Map<String, Object> toDltBody(OpsDltMessage m) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", m.id());
+        body.put("topic", m.topic());
+        body.put("partition", m.partition());
+        body.put("offset", m.offset());
+        body.put("originalTopic", m.originalTopic());
+        body.put("messageKey", m.messageKey());
+        body.put("payload", m.payload());
+        body.put("errorSummary", m.errorSummary());
+        body.put("status", m.status());
+        body.put("replayedAt", m.replayedAt());
+        body.put("discardedAt", m.discardedAt());
+        body.put("createdAt", m.createdAt());
+        return body;
     }
 
     private static Map<String, Object> toBody(OpsCase c) {
