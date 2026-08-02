@@ -2,6 +2,7 @@ package com.grassland.finance.wallet;
 
 import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
+import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
 import java.time.Instant;
@@ -39,13 +40,15 @@ public class WalletController {
     private final WalletRepository wallets;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final LedgerService ledger;
 
     public WalletController(FinanceCallerResolver callers, WalletRepository wallets, OutboxRepository outbox,
-                            TransactionalOperator transactions) {
+                            TransactionalOperator transactions, LedgerService ledger) {
         this.callers = callers;
         this.wallets = wallets;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.ledger = ledger;
     }
 
     @GetMapping("/api/finance/wallets/me")
@@ -69,6 +72,7 @@ public class WalletController {
                                 .switchIfEmpty(Mono.error(new FinanceException(409, "余额不足")))
                                 .flatMap(wallet -> wallets
                                         .appendEntry(accountId, WalletEntryType.WITHDRAWAL, -amount, 0, null, "sandbox 提现")
+                                        .then(ledger.postWithdraw(accountId, amount))
                                         .then(outbox.append(new EventEnvelope(
                                                 UUID.randomUUID().toString(), "WithdrawalCompleted", "Wallet",
                                                 accountId, 1, Instant.now(), null,

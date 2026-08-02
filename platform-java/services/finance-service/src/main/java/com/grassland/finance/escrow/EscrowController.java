@@ -4,6 +4,7 @@ import com.grassland.finance.account.Account;
 import com.grassland.finance.account.AccountRepository;
 import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
+import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
 import com.grassland.finance.wallet.PlatformFeePolicy;
@@ -48,11 +49,13 @@ public class EscrowController {
     private final PlatformFeePolicy fees;
     private final EscrowLifecycleService lifecycle;
     private final TransactionalOperator transactions;
+    private final LedgerService ledger;
 
     public EscrowController(FinanceCallerResolver callers, AccountRepository accounts,
                             ReservationRepository reservations, OutboxRepository outbox,
                             WalletRepository wallets, PlatformFeePolicy fees,
-                            EscrowLifecycleService lifecycle, TransactionalOperator transactions) {
+                            EscrowLifecycleService lifecycle, TransactionalOperator transactions,
+                            LedgerService ledger) {
         this.callers = callers;
         this.accounts = accounts;
         this.reservations = reservations;
@@ -61,6 +64,7 @@ public class EscrowController {
         this.fees = fees;
         this.lifecycle = lifecycle;
         this.transactions = transactions;
+        this.ledger = ledger;
     }
 
     @PostMapping("/api/finance/accounts/{orgId}/credit")
@@ -73,9 +77,10 @@ public class EscrowController {
                 .flatMap(caller -> transactions.transactional(
                         accounts.credit(orgId, amount)
                                 .switchIfEmpty(fail(404, "账户不存在，请先开户"))
-                                .flatMap(acct -> outbox
-                                        .append(accountEnvelope("AccountCredited", acct, amount, caller.accountId()))
-                                        .thenReturn(acct)))
+                                .flatMap(acct -> ledger.postDeposit(orgId, amount)
+                                        .then(outbox
+                                                .append(accountEnvelope("AccountCredited", acct, amount, caller.accountId()))
+                                                .thenReturn(acct))))
                         .map(acct -> ResponseEntity.ok(Map.of("success", true, "data", toBody(acct)))));
     }
 
@@ -106,7 +111,8 @@ public class EscrowController {
                                 .switchIfEmpty(reservations.findByEngagementRef(ref)
                                         .<Reserved>map(r -> new Reserved(r, false)))))  // 并发冲突 → 既有
                 .flatMap(res -> (res.created()
-                        ? outbox.append(reservationEnvelope("FundsReserved", res.reservation())).thenReturn(res)
+                        ? ledger.postReserve(orgId, ref, amount)
+                                .then(outbox.append(reservationEnvelope("FundsReserved", res.reservation())).thenReturn(res))
                         : Mono.just(res)));
     }
 

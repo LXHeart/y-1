@@ -3,6 +3,7 @@ package com.grassland.finance.escrow;
 import com.grassland.finance.account.AccountRepository;
 import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
+import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.security.FinanceException;
 import com.grassland.finance.wallet.PlatformFeePolicy;
 import com.grassland.finance.wallet.WalletEntryType;
@@ -25,6 +26,7 @@ public class EscrowLifecycleService {
     private final OutboxRepository outbox;
     private final PlatformFeePolicy fees;
     private final TransactionalOperator transactions;
+    private final LedgerService ledger;
 
     public EscrowLifecycleService(
             ReservationRepository reservations,
@@ -32,13 +34,15 @@ public class EscrowLifecycleService {
             WalletRepository wallets,
             OutboxRepository outbox,
             PlatformFeePolicy fees,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions,
+            LedgerService ledger) {
         this.reservations = reservations;
         this.accounts = accounts;
         this.wallets = wallets;
         this.outbox = outbox;
         this.fees = fees;
         this.transactions = transactions;
+        this.ledger = ledger;
     }
 
     public Mono<FundsReservation> release(FundsReservation reservation) {
@@ -105,6 +109,8 @@ public class EscrowLifecycleService {
                 .switchIfEmpty(Mono.error(new FinanceException(409, "该预留已处理")))
                 .flatMap(released -> accounts.credit(
                                 reservation.organizationId(), reservation.amountCents())
+                        .then(ledger.postRelease(
+                                reservation.organizationId(), reservation.engagementRef(), reservation.amountCents()))
                         .then(outbox.append(reservationEnvelope("FundsReleased", released)))
                         .thenReturn(released));
     }
@@ -116,7 +122,10 @@ public class EscrowLifecycleService {
         return reservations.capture(reservation.id(), payout)
                 .switchIfEmpty(Mono.error(new FinanceException(409, "该预留已处理")))
                 .flatMap(this::splitToPayee)
-                .flatMap(captured -> outbox.append(reservationEnvelope("FundsCaptured", captured))
+                .flatMap(captured -> ledger.postCapture(
+                                captured.organizationId(), captured.engagementRef(),
+                                captured.amountCents(), captured.payeeAccountId(), captured.payoutCents())
+                        .then(outbox.append(reservationEnvelope("FundsCaptured", captured)))
                         .thenReturn(captured));
     }
 
@@ -126,6 +135,9 @@ public class EscrowLifecycleService {
                 .switchIfEmpty(Mono.error(new FinanceException(409, "该预留不可冲正（须 captured）")))
                 .flatMap(refunded -> accounts.credit(
                                 reservation.organizationId(), reservation.amountCents())
+                        .then(ledger.postReverse(
+                                reservation.organizationId(), reservation.engagementRef(),
+                                reservation.amountCents(), reservation.payeeAccountId(), reservation.payoutCents()))
                         .then(outbox.append(reservationEnvelope("FundsReversed", refunded)))
                         .thenReturn(refunded));
     }

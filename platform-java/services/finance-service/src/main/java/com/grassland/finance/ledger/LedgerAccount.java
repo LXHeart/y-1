@@ -1,0 +1,57 @@
+package com.grassland.finance.ledger;
+
+import java.util.Objects;
+
+/**
+ * 账本账户（复合键：{@code type + owner + 可选 ref}）。不建独立 accounts 表——余额由 posting {@code SUM} 派生。
+ *
+ * <p>账户语义（草场资金拓扑，HLD §6.4 / ADR-D01）：
+ * <ul>
+ *   <li>{@code ESCROW:{orgId}} — 平台对商家的托管负债（投影 = {@code finance_account.balance_cents}）。</li>
+ *   <li>{@code RESERVE:{orgId}:{engagementRef}} — 已 earmark 待结算的预留池（派生，无投影行）。</li>
+ *   <li>{@code WALLET:{accountId}} — 推荐官可提现余额（投影 = {@code recommender_wallet.balance_cents}）。</li>
+ *   <li>{@code FEE} — 平台抽成收入（owner/ref 为 null）。</li>
+ *   <li>{@code EXTERNAL:{channel}} — PSP/存管对手方（{@code channel=sandbox} 为 stub；真实 PSP 时此腿接 {@code PaymentProviderAdapter}）。</li>
+ * </ul>
+ *
+ * <p>负债/收入类账户：{@code CREDIT} 增、{@code DEBIT} 减；余额 = {@code SUM(credit) - SUM(debit)}。
+ */
+public record LedgerAccount(Type type, String owner, String ref) {
+
+    /** 账户类型（存 {@code posting.account_type}）。 */
+    public enum Type {
+        ESCROW,
+        RESERVE,
+        WALLET,
+        FEE,
+        EXTERNAL;
+
+        public String dbValue() {
+            return name();
+        }
+    }
+
+    public LedgerAccount {
+        Objects.requireNonNull(type, "type");
+    }
+
+    public static LedgerAccount escrow(String orgId) {
+        return new LedgerAccount(Type.ESCROW, orgId, null);
+    }
+
+    public static LedgerAccount reserve(String orgId, String engagementRef) {
+        return new LedgerAccount(Type.RESERVE, orgId, engagementRef);
+    }
+
+    public static LedgerAccount wallet(String accountId) {
+        return new LedgerAccount(Type.WALLET, accountId, null);
+    }
+
+    public static LedgerAccount fee() {
+        return new LedgerAccount(Type.FEE, null, null);
+    }
+
+    public static LedgerAccount external(String channel) {
+        return new LedgerAccount(Type.EXTERNAL, channel, null);
+    }
+}

@@ -2,7 +2,24 @@
 
 | 状态 | 日期 | 决策编号 | 阻塞范围 | 依赖 |
 |------|------|----------|----------|------|
-| 草案 | 2026-08-02 | D-01（HLD §19、§12.1） | 真实支付、退款、结算、核销分账（根决策） | 无 |
+| 部分采纳 | 2026-08-02 草案 / 2026-08-02 部分采纳 | D-01（HLD §19、§12.1） | 真实支付、退款、结算、核销分账（根决策） | 无 |
+
+## 决策记录（部分采纳，2026-08-02）
+
+**决策者拍板**：资金对接哪个平台尚未确定，但当前系统必须先记录资金流转，**预留与其他平台对接的口子**先开发；选定平台后再开发对接接口。
+
+**采纳范围（已落地，commit 级未 push）**：
+- 采纳本 ADR「保留 `reserve/release/capture/reverse/reconcile` 状态机、底层升级为双录账本」的核心架构——**Approach B（双写投影）**：余额行保留为缓存投影 + 并发守卫，同事务追加不可变 `journal`/`posting`（HLD §6.4 双录：每 journal ≥ 2 posting、借贷合计为零、Finalized 不可改、错误经 Reversal Journal、余额可由 Posting 重建）。OPENING 回填存量余额使投影自迁移起可重建。
+- 落地 **`PaymentProviderAdapter` seam**（HLD §12.2 命名）：首期 `SandboxPaymentProviderAdapter`（`@ConditionalOnProperty finance.psp.mode=sandbox`，只写内部账本、不真发外部调用）；真实 PSP impl 替换该 bean 即生效，无需改调用点。供应商 DTO 停留 adapter 层，不进领域模型。
+- 接线 6 处资金操作同事务双写账本（credit/reserve/release/capture/reverse/withdraw），**HTTP/outbox 事件/身份契约零变**。
+- 验证：finance-service **82 tests**（新增 17：LedgerService 单测 10 + LedgerRepositoryIT 3 + LedgerProjectionIT 2 + LedgerAtomicityIT 2）+ bootJar 全绿；既有 EscrowControllerIT/WalletControllerIT/ReservationReconciliationIT 0 改动通过（契约不变实证）。
+
+**仍延后（待真实 PSP 接入，不阻塞账本）**——下方「待你拍板」6 项全部降级为「PSP 接入时再答」：
+1. 资金存管合作方 / 2. 合规主体 / 3. 二清合规结论 / 4. PSP 首期范围 / 6. 对账口径——这五项在「不动真钱」阶段不实质化（二清风险只在真实归集第三方资金时触发）。
+- 第 5 项「退款资金来源」随真实退款通道落地。
+- 真实 PSP 实现（createPaymentIntent/refund/payout/对账文件）、Payment/PaymentIntent/Refund/Payout 实体（属 D-07 到店核销，依赖商品/订单）一并延后。
+
+> 即：**资金主干的内部记录已可上线，真实收钱/出钱仍卡在平台选定**。采纳本部分不等于解锁真实资金生产——真实 PSP 接入前，finance 仍是「内部账本真相源 + sandbox 余额」，不触碰真实第三方资金。
 
 ## 背景
 

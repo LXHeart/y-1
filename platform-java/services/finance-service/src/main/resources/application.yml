@@ -26,6 +26,10 @@ management:
 finance:
   datasource:
     from-database-url: ${FINANCE_DATASOURCE_FROM_DATABASE_URL:false}
+  # PSP/存管 adapter 模式（ADR-D01）：sandbox = stub（只写内部账本，不真动钱）。
+  # 选定真实合作方后置 FINANCE_PSP_MODE=<provider> 并提供对应 PaymentProviderAdapter bean。
+  psp:
+    mode: ${FINANCE_PSP_MODE:sandbox}
   outbox:
     topic: ${FINANCE_OUTBOX_TOPIC:grassland.finance.events}
     enabled: ${FINANCE_OUTBOX_ENABLED:true}
