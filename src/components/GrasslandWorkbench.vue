@@ -403,8 +403,17 @@ async function closeTaskAction(task: Task): Promise<void> {
 async function cancelTaskAction(task: Task): Promise<void> {
   const cancelled = await grassland.cancelTask(task.id, task.version)
   if (!cancelled) return
-  setNotice(`任务「${cancelled.title}」已取消`)
+  // 后端同时把「已接受未提交」的履约退款并置终态 refunded（D-03 §5），故必须连报名列表一起刷，
+  // 否则当前选中任务仍显示「已接受 + 确认履约」（点下去必 409）。同时清掉 accept 轮询留下的过期结果文案。
+  const refunded = cancelled.refundedCount ?? 0
+  setNotice(refunded > 0
+    ? `任务「${cancelled.title}」已取消，${refunded} 个已接受履约已全额退款`
+    : `任务「${cancelled.title}」已取消`)
   await refreshTasks()
+  if (selectedTaskId.value === task.id) {
+    outcomes.value = {}
+    await selectTask(task.id)
+  }
 }
 
 function taskStatusLabel(status: string): string {
@@ -628,6 +637,8 @@ function statusLabel(status: string): string {
     accepted: '已接受',
     rejected: '已拒绝',
     withdrawn: '已撤销',
+    // 商家取消任务且该履约未提交凭证 → 已全额退商家（D-03 §5），终态。
+    refunded: '任务已取消（已退款）',
   }
   return map[status] || status
 }

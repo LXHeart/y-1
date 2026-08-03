@@ -14,10 +14,16 @@
 -- 纯增量、可安全跑在已部署 V13 的库：先 ADD 可空列，backfill 自 task，再 NOT NULL（每个 app 都有 task_id 真 FK → 必有 task → 必有 bounty_cents）。
 ALTER TABLE task_application ADD COLUMN bounty_cents bigint;
 
+-- COALESCE 必需：task.bounty_cents 自 V3 起是**可空**列（非资金型任务不填），不是「必有值」。
+-- 直接 SET = t.bounty_cents 会给这些 app 留 NULL，随后 SET NOT NULL 报 23502 使整个 V14 失败
+-- （Flyway 就此卡住，后续 V15/V16 全部不再应用）。资金分支判据是 bounty > 0，故非资金型冻 0 语义等价。
 UPDATE task_application a
-   SET bounty_cents = t.bounty_cents
+   SET bounty_cents = COALESCE(t.bounty_cents, 0)
   FROM task t
  WHERE a.task_id = t.id;
+
+-- 兜底：理论上每个 app 都有真 FK task，若仍有残留 NULL 也补 0，避免 NOT NULL 失败。
+UPDATE task_application SET bounty_cents = 0 WHERE bounty_cents IS NULL;
 
 ALTER TABLE task_application ALTER COLUMN bounty_cents SET NOT NULL;
 

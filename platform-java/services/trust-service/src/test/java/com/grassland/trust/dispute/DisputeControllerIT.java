@@ -1,18 +1,28 @@
 package com.grassland.trust.dispute;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
 import com.grassland.trust.TrustItSupport;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import reactor.core.publisher.Mono;
 
 /**
  * 争议端到端（草场 Epic 6 Slice 6A）。继承 {@link TrustItSupport}。
  * 覆盖：open（成功+幂等/角色门禁）、活跃争议查询（marketplace 服务断言 200 / 404 / org 自查）、decide（open→final 手动终局/重复 409）。
  */
 class DisputeControllerIT extends TrustItSupport {
+
+    /** 争议仓储 spy（D-03 审阅 F2）：默认透传真实实现；并发用例把 create 变成「插入成功但返回空」。 */
+    @MockitoSpyBean
+    DisputeCaseRepository disputeRepo;
 
     @Test
     void merchantOpensDisputeAndEvent() {
@@ -70,6 +80,47 @@ class DisputeControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", MARKETPLACE_ORG, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "not-a-uuid"))
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    /**
+     * D-03 审阅 F2：并发 create 撞唯一键时必须回读既有争议返回带 id 的 200，
+     * 不能返回空 200 体（marketplace 侧解析不到 data.id → 商家看到 500）。
+     */
+    @Test
+    void concurrentCreateReturnsExistingDisputeInsteadOfEmptyBody() {
+        String merchant = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
+        Map<String, Object> body = Map.of(
+                "engagementRef", eng, "kind", "merchant_rejection",
+                "openedByAccountId", merchant, "organizationId", org, "reason", "系统核实与实际不符");
+        Map<?, ?> first = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String disputeId = (String) ((Map<?, ?>) first.get("data")).get("id");
+
+        // 预查命中路径（重复请求）：幂等 200 + 同一 id，不重复写事件。
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.id").isEqualTo(disputeId)
+                .jsonPath("$.data.kind").isEqualTo("merchant_rejection");
+        assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(1);
+
+        // 真正的唯一键冲突路径：预查为空（对手尚未提交）→ create 撞键返回空 → 必须回读。
+        String eng2 = UUID.randomUUID().toString();
+        doAnswer(inv -> ((Mono<?>) inv.callRealMethod()).then(Mono.empty()))
+                .when(disputeRepo).create(eq(eng2), anyString(), anyString(), anyString(), any(), anyString());
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of(
+                        "engagementRef", eng2, "kind", "merchant_rejection",
+                        "openedByAccountId", merchant, "organizationId", org, "reason", "并发"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.id").isNotEmpty()
+                .jsonPath("$.data.kind").isEqualTo("merchant_rejection");
     }
 
     /** D-03：marketplace 服务可代商家开 merchant_rejection 案，并由 SLA 内部端点默认 for_recommender 终局。 */

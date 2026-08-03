@@ -201,12 +201,19 @@ public class TaskController {
     /**
      * 退还本任务「已 accept 未提交凭证」的 engagement（D-03 §5）：逐条 finance release（全额返商家）+
      * outbox {@code EngagementRefundedOnCancel}（违约信号 + 双方通知）。失败向上抛；cancel 重试会再次执行（两侧幂等）。
+     *
+     * <p>release 幂等（404/409 视作成功）后必须把 application 置终态 {@code refunded}：留在 accepted 会让推荐官
+     * 侧一直显示「进行中且可提交」（提交已被 cancelled 校验拒），且每次 cancel 重试都重复 release + 重复通知。
+     * 状态流转与 outbox append 同事务，保证「已退款 ⇔ 已通知」。
      */
     private Mono<Integer> refundAcceptedWithoutSubmission(Task task) {
         return apps.findAcceptedByTaskWithoutSubmission(task.id())
                 .concatMap(app -> finance.release(task.organizationId(), app.id())
-                        .then(outbox.append(engagementRefundedEnvelope(task, app)))
-                        .thenReturn(1))
+                        .then(transactions.transactional(
+                                apps.markRefunded(app.id(), task.id())
+                                        .flatMap(refunded -> outbox.append(engagementRefundedEnvelope(task, refunded))
+                                                .thenReturn(1))))
+                        .defaultIfEmpty(0))
                 .reduce(0, Integer::sum);
     }
 

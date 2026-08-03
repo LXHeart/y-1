@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -72,6 +73,10 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** trust 出站边界替身（D-03 contest）：开 merchant_rejection / SLA auto-finalize。 */
     @MockitoBean
     private TrustDisputeClient trustDisputeClient;
+
+    /** 客服 SLA 启窗 spy（D-03 审阅 F3）：默认透传真实 starter；提交后失败用例注入异常验证不误判。 */
+    @MockitoSpyBean
+    private com.grassland.marketplace.workflow.saga.MerchantRejectionReviewWorkflowStarter rejectionStarter;
 
     // ---------- apply ----------
 
@@ -456,6 +461,22 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
         verify(financeClient).release(org, app);
         assertThat(outboxCountByType("EngagementRefundedOnCancel")).isGreaterThanOrEqualTo(1);
+
+        // 退款后 application 必须置终态 refunded：留在 accepted 会让推荐官侧一直显示「进行中」。
+        client().get().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].status").isEqualTo("refunded");
+
+        // 重复 cancel 幂等：不再重复 release、不再重复通知。
+        long refundEvents = outboxCountByType("EngagementRefundedOnCancel");
+        client().post().uri("/api/tasks/" + task + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.refundedCount").isEqualTo(0);
+        verify(financeClient, times(1)).release(org, app);
+        assertThat(outboxCountByType("EngagementRefundedOnCancel")).isEqualTo(refundEvents);
     }
 
     /** 已提交凭证的 engagement 不被退款（照常结算）；cancel 后任务不再接受新提交 → 409。 */
@@ -579,6 +600,14 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.submissions[0].status").isEqualTo("submitted")
                 .jsonPath("$.data.submissions[1].status").isEqualTo("rejected")
                 .jsonPath("$.data.submissions[2].status").isEqualTo("rejected");
+        // 达上限后，不存在的 submissionId 仍必须回 404（审阅 F4）：
+        // 上限判定排在存在性校验之后，否则「id 写错」会被报成「补证次数已达上限」，
+        // 把调用方引向确认履约/开争议这类不可逆动作。
+        client().post().uri("/api/tasks/" + task + "/applications/" + app
+                        + "/submissions/" + UUID.randomUUID() + "/reject")
+                .header("X-Grassland-Identity", merchantHeader)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "不存在"))
+                .exchange().expectStatus().isNotFound();
     }
 
     /** 退回端点 submissionId 必须属于 URL 中的 application，跨履约 IDOR → 404。 */
@@ -968,6 +997,48 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                         + " AND severity='high'")
                 .bind("dispute", disputeId).bind("app", app).map(r -> r.get("c", Integer.class)).one().block();
         assertThat(cases).isEqualTo(1);
+    }
+
+    /**
+     * D-03 审阅 F3：contest 本地事务已提交、仅 SLA 启窗失败时**不得** auto-finalize ——
+     * 那等于无客服裁定就把商家异议判给推荐官。要求：报错让客户端重试，异议标记留库，
+     * 重试走幂等分支补启 workflow 并返回 contested。
+     */
+    @Test
+    void contestDoesNotAutoFinalizeWhenOnlyWorkflowStartFails() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        String submissionId = submit(rec, task, app);
+        when(linkChecker.check(anyString()))
+                .thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk();
+        String disputeId = UUID.randomUUID().toString();
+        when(trustDisputeClient.openMerchantRejection(org, app, merchant, "核实截图与实际不符"))
+                .thenReturn(Mono.just(disputeId));
+        when(trustDisputeClient.autoFinalizeMerchantRejection(org, disputeId)).thenReturn(Mono.empty());
+        doReturn(Mono.error(new IllegalStateException("temporal down")))
+                .when(rejectionStarter).start(eq(app), eq(disputeId), eq(org), anyLong());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/contest")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("reason", "核实截图与实际不符"))
+                .exchange().expectStatus().is5xxServerError();
+
+        verify(trustDisputeClient, never()).autoFinalizeMerchantRejection(org, disputeId);
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/confirmation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("contested");
+
+        // 重启恢复：同一 disputeId 补启窗后返回 contested（不重复开 trust 案）。
+        doReturn(Mono.empty()).when(rejectionStarter).start(eq(app), eq(disputeId), eq(org), anyLong());
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/contest")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("reason", "核实截图与实际不符"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.disputeId").isEqualTo(disputeId);
+        verify(trustDisputeClient, times(1)).openMerchantRejection(org, app, merchant, "核实截图与实际不符");
     }
 
     /** 未核实 / 非 passed 的履约不得使用客服拒绝通道。 */

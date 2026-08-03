@@ -46,12 +46,9 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
     @BeforeEach
     void cleanReliabilityTables() {
         db.sql("DELETE FROM marketplace_inbox WHERE event_id LIKE 'slice7a-test-%'").then().block();
-        db.sql("""
-                        DELETE FROM marketplace_outbox
-                        WHERE event_id LIKE 'slice7a-test-%' OR aggregate_id LIKE 'slice7a-app-%'
-                        """)
-                .then()
-                .block();
+        // 全表清空：下面的租约用例断言 claimBatch(...).single()，即「整表恰好一条可领取行」。
+        // 只删本类前缀会让任何其他用例遗留的未发布 outbox 行把它们变成顺序相关的假失败。
+        db.sql("DELETE FROM marketplace_outbox").then().block();
         db.sql("DELETE FROM settlement_reconciliation WHERE source_event_id LIKE 'slice7a-test-%'").then().block();
     }
 

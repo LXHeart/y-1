@@ -243,6 +243,26 @@ public class TaskApplicationRepository {
                 .map(TaskApplicationRepository::map).all();
     }
 
+    /**
+     * 商家取消任务后把「已 accept 未提交凭证」的 engagement 置终态 refunded（D-03 §5）。
+     *
+     * <p>前置条件写进 WHERE：status='accepted' 且确无 submission —— 与 {@code SubmissionRepository.create}
+     * 的 {@code FOR SHARE OF t} 一起保证不会与并发提交交叉。已 refunded → 返回空（cancel 重试幂等）。
+     */
+    public Mono<TaskApplication> markRefunded(String id, String taskId) {
+        return db.sql("""
+                UPDATE task_application a
+                SET status = 'refunded', decided_at = COALESCE(decided_at, now()), updated_at = now()
+                WHERE a.id = CAST(:id AS uuid)
+                  AND a.task_id = CAST(:taskId AS uuid)
+                  AND a.status = 'accepted'
+                  AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .map(TaskApplicationRepository::map).one();
+    }
+
     private Mono<TaskApplication> transition(String id, String taskId, String fromStatus, String toStatus,
                                              String reviewerAccountId) {
         return db.sql("""

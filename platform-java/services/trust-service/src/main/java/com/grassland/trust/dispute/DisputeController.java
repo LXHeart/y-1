@@ -98,7 +98,14 @@ public class DisputeController {
                                         body.openedByAccountId(), "merchant", body.reason(), "merchant_rejection")
                                 .map(d -> new Opened(d, true))
                                 .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
-                                        .thenReturn(opened))));
+                                        .thenReturn(opened))))
+                // create 撞唯一键 → 空（并发对手已开案）。必须回读，否则返回空 200 体，
+                // marketplace 侧 TrustDisputeClient 解析不到 data.id 会抛错 → 商家收到 500。
+                .switchIfEmpty(Mono.defer(() -> disputes.findActiveByEngagementRef(body.engagementRef())
+                        .flatMap(existing -> "merchant_rejection".equals(existing.kind())
+                                ? Mono.just(new Opened(existing, false))
+                                : Mono.<Opened>error(new TrustException(409, "该履约已有普通活跃争议")))
+                        .switchIfEmpty(Mono.error(new TrustException(409, "开争议失败，请重试")))));
     }
 
     /** 幂等开争议：既有活跃 → 200；否则事务内 create + outbox DisputeOpened → 201。 */
@@ -110,7 +117,11 @@ public class DisputeController {
                         disputes.create(engagementRef, organizationId, openedBy, role, reason, kind)
                                 .<Opened>map(d -> new Opened(d, true))
                                 .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
-                                        .thenReturn(opened))));
+                                        .thenReturn(opened))))
+                // 同上：并发撞唯一键回读既有活跃争议，避免空 200 体。
+                .switchIfEmpty(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)
+                        .<Opened>map(d -> new Opened(d, false))
+                        .switchIfEmpty(Mono.error(new TrustException(409, "开争议失败，请重试")))));
     }
 
     @PostMapping("/api/trust/disputes/{id}/decide")

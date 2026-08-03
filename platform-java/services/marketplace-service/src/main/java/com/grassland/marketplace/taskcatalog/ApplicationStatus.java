@@ -4,7 +4,8 @@ package com.grassland.marketplace.taskcatalog;
  * 推荐官报名状态（application 聚合，HLD 5.3）。草场 Epic 4 Slice 4B。
  *
  * <p>流转：{@link #PENDING}（报名）→ {@link #ACCEPTED}（商家接受）/ {@link #REJECTED}（商家拒绝）/
- * {@link #WITHDRAWN}（推荐官撤销）。后三者皆终态。仅用于校验/映射逻辑；DB 与 record 仍存小写 String
+ * {@link #WITHDRAWN}（推荐官撤销）；{@link #ACCEPTED} 且未提交凭证时商家取消任务 → {@link #REFUNDED}。
+ * 除 PENDING/RESERVING 外皆终态。仅用于校验/映射逻辑；DB 与 record 仍存小写 String
  * （house style，同 {@link TaskStatus}）。
  */
 public enum ApplicationStatus {
@@ -12,7 +13,9 @@ public enum ApplicationStatus {
     RESERVING("reserving"),
     ACCEPTED("accepted"),
     REJECTED("rejected"),
-    WITHDRAWN("withdrawn");
+    WITHDRAWN("withdrawn"),
+    /** 商家取消任务，该 engagement 未提交凭证 → 已全额退商家（D-03 §5）。终态。 */
+    REFUNDED("refunded");
 
     private final String dbValue;
 

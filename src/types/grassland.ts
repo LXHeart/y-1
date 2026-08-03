@@ -42,6 +42,11 @@ export interface Task {
   publishedAt: string | null
   /** 取消时刻（ISO）；仅 cancelled 态非空。 */
   cancelledAt: string | null
+  /**
+   * 本次取消退款的「已接受未提交」履约数（D-03 §5）。**仅 cancel 响应带此字段**
+   * （`cancelBody` = task body + refundedCount），list/get 不返回，故可选。
+   */
+  refundedCount?: number
 }
 
 export interface CreateTaskInput {
@@ -108,7 +113,9 @@ export interface TaskFeedPage {
  * 报名状态。`reserving` 是资金型任务 accept 后的中间态——
  * 商家点接受返回 202，资金预留 Saga 异步执行，需轮询 reservation 端点确认最终结果。
  */
-export type ApplicationStatus = 'pending' | 'reserving' | 'accepted' | 'rejected' | 'withdrawn'
+/** `refunded` = 商家取消任务且该履约未提交凭证 → 已全额退商家（D-03 §5），终态。 */
+export type ApplicationStatus =
+  'pending' | 'reserving' | 'accepted' | 'rejected' | 'withdrawn' | 'refunded'
 
 export interface TaskApplication {
   id: string

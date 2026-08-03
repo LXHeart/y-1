@@ -352,14 +352,17 @@ public class ApplicationController {
         return callers.requireMerchant(request)
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
                         .flatMap(task -> loadAcceptedApp(id, appId)
-                                .flatMap(app -> submissions.countRejectedByApplication(appId)
+                                // 先校验 submissionId 存在且属于本 application，再判补证上限：
+                                // 顺序反了会对「不存在/不属于本履约」的 id 回 409「补证次数已达上限」，
+                                // 把调用方引向「去确认履约或开争议」，而真实原因只是 id 写错（应 404）。
+                                .flatMap(app -> submissions.findById(submissionId)
+                                        .filter(s -> appId.equals(s.applicationId()))
+                                        .switchIfEmpty(fail(404, "交付物不存在"))
+                                        .flatMap(target -> submissions.countRejectedByApplication(appId))
                                         .flatMap(rejectedCount -> rejectedCount >= supplementCap
                                                 ? Mono.<ResponseEntity<Map<String, Object>>>error(new MarketplaceException(
                                                         409, "补证次数已达上限，请确认履约或发起争议"))
-                                                : submissions.findById(submissionId)
-                                                        .filter(s -> appId.equals(s.applicationId()))
-                                                        .switchIfEmpty(fail(404, "交付物不存在"))
-                                                        .flatMap(s -> submissions.review(submissionId, SubmissionStatus.REJECTED, note))
+                                                : submissions.review(submissionId, SubmissionStatus.REJECTED, note)
                                                         .switchIfEmpty(fail(409, "该交付物已处理"))
                                                         .flatMap(rejected -> outbox
                                                                 .append(submissionEnvelope("DeliverableRejected", app, rejected, List.of(), task.ownerAccountId()))
@@ -418,21 +421,38 @@ public class ApplicationController {
                                                                                             contested, submission.id(), disputeId,
                                                                                             task.ownerAccountId())))
                                                                                     .thenReturn(contested)))
+                                                            // then + defer：事务 Mono 的 onNext 早于 commit 完成，
+                                                            // 只有 onComplete 之后回读才能看到已提交行（补偿判定依赖这一点）。
+                                                            .then(Mono.defer(() -> apps.findById(app.id())))
                                                             .flatMap(contested -> rejectionWorkflows.start(
                                                                             contested.id(), disputeId,
                                                                             task.organizationId(), customerServiceSlaSeconds)
                                                                     .thenReturn(contested))
-                                                            // trust 开案在 marketplace 事务之外：若本地写入/启窗失败，
-                                                            // 立即让该案按核实结果自动终局，避免留下「trust 有案、marketplace 无异议标记」
-                                                            // 的悬挂争议（它会经 DisputeChecker 无限期 hold 结算）。
-                                                            .onErrorResume(failure -> trustDisputes
-                                                                    .autoFinalizeMerchantRejection(task.organizationId(), disputeId)
-                                                                    .onErrorResume(cleanupFailure -> {
-                                                                        log.warn("merchant rejection cleanup failed app={} dispute={}",
-                                                                                app.id(), disputeId, cleanupFailure);
-                                                                        return Mono.empty();
+                                                            // trust 开案在 marketplace 事务之外，故失败需补偿——但**必须先回读本地状态**：
+                                                            // 只有本地事务未提交（无异议标记）时才 auto-finalize，避免留下「trust 有案、
+                                                            // marketplace 无异议标记」的悬挂争议（它会经 DisputeChecker 无限期 hold 结算）。
+                                                            // 若本地已提交、仅 Temporal 启窗失败（或并发请求已抢先 contest），auto-finalize
+                                                            // 会**在无客服裁定的情况下把商家异议直接判给推荐官**——即把一次基础设施抖动
+                                                            // 变成一个不可逆的资金裁决。此时照抛原错误：重试走 merchantRejectedAt != null
+                                                            // 分支补启 SLA workflow，且 ops_case 已登记（high severity，运营可见）。
+                                                            .onErrorResume(failure -> apps.findById(app.id())
+                                                                    .filter(current -> disputeId.equals(
+                                                                            current.merchantRejectionDisputeId()))
+                                                                    .flatMap(committed -> {
+                                                                        log.warn("merchant rejection committed but post-commit step failed;"
+                                                                                        + " NOT auto-finalizing app={} dispute={}",
+                                                                                app.id(), disputeId, failure);
+                                                                        return Mono.<TaskApplication>error(failure);
                                                                     })
-                                                                    .then(Mono.error(failure)))))
+                                                                    // defer：补偿只在真正走到该分支时才发起（装配期不得触发出站调用）。
+                                                                    .switchIfEmpty(Mono.defer(() -> trustDisputes
+                                                                            .autoFinalizeMerchantRejection(task.organizationId(), disputeId)
+                                                                            .onErrorResume(cleanupFailure -> {
+                                                                                log.warn("merchant rejection cleanup failed app={} dispute={}",
+                                                                                        app.id(), disputeId, cleanupFailure);
+                                                                                return Mono.empty();
+                                                                            })
+                                                                            .then(Mono.<TaskApplication>error(failure)))))))
                                             .map(this::contestedResponse);
                                 })));
     }
