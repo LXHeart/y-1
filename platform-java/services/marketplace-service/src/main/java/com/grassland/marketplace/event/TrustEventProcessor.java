@@ -113,9 +113,21 @@ public class TrustEventProcessor {
      * <p>对方判定按 {@code openedByRole}：merchant 开 → 对方=推荐官；recommender 开 → 对方=任务归属商家。
      * application/task 解析不到（engagementRef 过期/任务已删）→ {@link TrustEventProcessingResult#NO_RECIPIENT}，
      * inbox 仍记录、不阻塞分区（镜像 identity「邀请邮箱未注册→静默跳过」语义）。
+     *
+     * <p><b>D-03 例外（F7）</b>：{@code kind=merchant_rejection} 的争议是本服务 contest 主动经 trust 开的，
+     * 且在同一事务已发过 {@code MerchantContested}（收件人=商家+推荐官，文案「履约异议已转客服裁定」）。
+     * 该争议经 Kafka 回环到本消费者时若照旧派生 {@code EngagementDisputed}，推荐官会**再收一条**语义更弱的
+     * 通用争议通知。故在此按 kind 抑制。
+     *
+     * <p>抑制点刻意放在 marketplace 而非 identity 侧过滤：① 不写无用 outbox 行、不发无用 Kafka 消息；
+     * ② 「这条通知已由谁发过」是 marketplace 自己的知识，不必让 identity 理解 marketplace 内部流程；
+     * ③ trust 的 {@code DisputeOpened} 载荷与 identity 的收件人解析都无需改动。
      */
     private Mono<TrustEventProcessingResult> emitEngagementDisputed(
             TrustEventEnvelope source, DisputeOpenedPayload payload) {
+        if (payload.isMerchantRejection()) {
+            return Mono.just(TrustEventProcessingResult.SUPPRESSED);
+        }
         return applications.findById(payload.engagementRef())
                 .flatMap((TaskApplication app) -> tasks.findById(app.taskId())
                         .flatMap((Task task) -> {
@@ -194,7 +206,17 @@ public class TrustEventProcessor {
                 requiredText(payload, "engagementRef"),
                 optionalText(payload, "organizationId"),
                 requiredText(payload, "openedByAccountId"),
-                requiredDisputeOpenerRole(payload));
+                requiredDisputeOpenerRole(payload),
+                disputeKind(payload));
+    }
+
+    /**
+     * kind 按**可选**解析：trust V5 才加该列，V5 之前在途/重放的旧事件无此字段，按必填会全部判契约错误进 DLT
+     * 且不重投。缺失 → {@code standard}，保留 Slice 12 的对方通知语义（旧事件都是普通争议）。
+     */
+    private static String disputeKind(JsonNode payload) {
+        String kind = optionalText(payload, "kind");
+        return kind == null || kind.isBlank() ? DisputeOpenedPayload.KIND_STANDARD : kind;
     }
 
     /** 对方收件人完全由角色决定，不能把缺失/未知值静默降级成某一方，避免错误通知。 */

@@ -144,6 +144,58 @@ class TrustEventProcessorTest {
         assertThat(captureEmitted().payload()).containsEntry("counterpartyAccountId", "owner-1");
     }
 
+    /**
+     * F7：merchant_rejection 争议的通知已由 contest 在同事务发的 MerchantContested 承担（收件人含推荐官）。
+     * 此处若再派生 EngagementDisputed，推荐官会收到第二条通用争议通知 → 必须抑制，且不查库、不写 outbox。
+     */
+    @Test
+    void merchantRejectionDisputeIsSuppressedInsteadOfDerivingDuplicateNotification() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-mr", "app-42", "owner-1", "merchant", "merchant_rejection");
+        stubInboxInserted(record, true);
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.SUPPRESSED)
+                .verifyComplete();
+
+        verify(applications, never()).findById(anyString());
+        verify(tasks, never()).findById(anyString());
+        verify(outbox, never()).append(any(EventEnvelope.class));
+    }
+
+    @Test
+    void standardKindStillNotifiesCounterparty() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-std", "app-42", "owner-1", "merchant", "standard");
+        stubInboxInserted(record, true);
+        when(applications.findById("app-42")).thenReturn(Mono.just(application("app-42", "task-7", "rec-9")));
+        when(tasks.findById("task-7")).thenReturn(Mono.just(task("task-7", "owner-1")));
+        when(outbox.append(any(EventEnvelope.class))).thenReturn(Mono.empty());
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.PROCESSED)
+                .verifyComplete();
+
+        assertThat(captureEmitted().payload()).containsEntry("counterpartyAccountId", "rec-9");
+    }
+
+    /** trust V5 之前在途的旧事件无 kind —— 必须当普通争议照常通知，不能判契约错误进 DLT。 */
+    @Test
+    void disputeOpenedWithoutKindFieldIsTreatedAsStandardAndStillNotifies() {
+        ConsumerRecord<String, String> record =
+                openedRecord("event-open-legacy", "app-42", "owner-1", "merchant");
+        stubInboxInserted(record, true);
+        when(applications.findById("app-42")).thenReturn(Mono.just(application("app-42", "task-7", "rec-9")));
+        when(tasks.findById("task-7")).thenReturn(Mono.just(task("task-7", "owner-1")));
+        when(outbox.append(any(EventEnvelope.class))).thenReturn(Mono.empty());
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.PROCESSED)
+                .verifyComplete();
+
+        assertThat(captureEmitted().payload()).containsEntry("counterpartyAccountId", "rec-9");
+    }
+
     @Test
     void disputeOpenedDuplicateDoesNotResolveOrAppendOutbox() {
         ConsumerRecord<String, String> record =
@@ -319,10 +371,17 @@ class TrustEventProcessorTest {
     /** DisputeOpened 记录：disputeId/engagementRef 必填，openedByAccountId/openedByRole 携带对方解析所需。 */
     private ConsumerRecord<String, String> openedRecord(
             String eventId, String engagementRef, String openedByAccountId, String openedByRole) {
+        return openedRecord(eventId, engagementRef, openedByAccountId, openedByRole, null);
+    }
+
+    /** kind == null 模拟 trust V5 之前的旧事件（载荷无该字段）。 */
+    private ConsumerRecord<String, String> openedRecord(
+            String eventId, String engagementRef, String openedByAccountId, String openedByRole, String kind) {
         String payload = "{\"disputeId\":\"d-1\",\"engagementRef\":\"" + engagementRef + "\""
                 + ",\"organizationId\":\"org-1\""
                 + ",\"openedByAccountId\":\"" + openedByAccountId + "\""
                 + ",\"openedByRole\":\"" + openedByRole + "\""
+                + (kind == null ? "" : ",\"kind\":\"" + kind + "\"")
                 + ",\"status\":\"open\"}";
         String json = "{\"eventId\":\"" + eventId + "\",\"eventType\":\"DisputeOpened\""
                 + ",\"aggregateType\":\"DisputeCase\",\"aggregateId\":\"d-1\",\"payload\":" + payload + "}";
