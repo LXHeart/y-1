@@ -50,7 +50,7 @@ class MailTemplatesTest {
     @Test
     void confirmationWindowMailMatchesEngagementNotification() {
         JsonNode p = payload(Map.of("taskId", "t-1", "applicationId", "a-1", "submissionId", "s-1"));
-        for (String eventType : java.util.List.of("ConfirmationWindowEntered", "AutoSettledOnTimeout")) {
+        for (String eventType : java.util.List.of("ConfirmationWindowEntered", "ConfirmationWindowExpiring", "AutoSettledOnTimeout")) {
             MailTemplate mail = MailTemplates.mailTemplate(eventType, p);
             NotificationTemplates.Template notification = NotificationTemplates.template(eventType, p);
             assertThat(mail).as(eventType).isNotNull();
@@ -58,6 +58,17 @@ class MailTemplatesTest {
             assertThat(mail.subject()).as(eventType).isEqualTo(notification.title());
             assertThat(mail.body()).as(eventType).isEqualTo(notification.body());
         }
+    }
+
+    @Test
+    void merchantContestedProducesDisputeMail() {
+        JsonNode p = payload(Map.of("disputeId", "d-1", "applicationId", "a-1"));
+        MailTemplate mail = MailTemplates.mailTemplate("MerchantContested", p);
+        NotificationTemplates.Template notification = NotificationTemplates.template("MerchantContested", p);
+        assertThat(mail).isNotNull();
+        assertThat(mail.category()).isEqualTo("dispute");
+        assertThat(mail.subject()).isEqualTo(notification.title());
+        assertThat(mail.body()).isEqualTo(notification.body());
     }
 
     @Test

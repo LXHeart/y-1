@@ -48,7 +48,7 @@ class ExternalNotificationRoutingTest {
 
     @Test
     void bothPartiesNotifiedOnVerificationAndSettlement() {
-        for (String eventType : List.of("VerificationChecked", "EngagementSettled", "SettlementHeld")) {
+        for (String eventType : List.of("VerificationChecked", "EngagementSettled", "SettlementHeld", "EngagementRefundedOnCancel")) {
             assertThat(resolve(eventType, Map.of(
                     "taskId", "task-1", "recommenderAccountId", RECOMMENDER, "taskOwnerId", OWNER)))
                     .as(eventType)
@@ -58,7 +58,7 @@ class ExternalNotificationRoutingTest {
 
     @Test
     void confirmationWindowEventsNotifyBothPartiesWithEngagementTemplates() {
-        for (String eventType : List.of("ConfirmationWindowEntered", "AutoSettledOnTimeout")) {
+        for (String eventType : List.of("ConfirmationWindowEntered", "ConfirmationWindowExpiring", "AutoSettledOnTimeout")) {
             Map<String, Object> fields = Map.of(
                     "taskId", "task-1", "applicationId", "app-1", "submissionId", "sub-1",
                     "taskOwnerId", OWNER, "recommenderAccountId", RECOMMENDER);
@@ -74,6 +74,22 @@ class ExternalNotificationRoutingTest {
                     .doesNotContainKey("taskOwnerId")
                     .doesNotContainKey("recommenderAccountId");
         }
+    }
+
+    @Test
+    void merchantContestedNotifiesBothPartiesWithDisputeTemplate() {
+        Map<String, Object> fields = Map.of(
+                "applicationId", "app-1", "submissionId", "sub-1", "disputeId", "d-1",
+                "taskOwnerId", OWNER, "recommenderAccountId", RECOMMENDER);
+        assertThat(resolve("MerchantContested", fields)).containsExactly(OWNER, RECOMMENDER);
+        NotificationTemplates.Template template = NotificationTemplates.template("MerchantContested", payload(fields));
+        assertThat(template).isNotNull();
+        assertThat(template.category()).isEqualTo(NotificationCategory.DISPUTE);
+        assertThat(template.payload())
+                .containsEntry("disputeId", "d-1")
+                .containsEntry("applicationId", "app-1")
+                .doesNotContainKey("taskOwnerId")
+                .doesNotContainKey("recommenderAccountId");
     }
 
     @Test

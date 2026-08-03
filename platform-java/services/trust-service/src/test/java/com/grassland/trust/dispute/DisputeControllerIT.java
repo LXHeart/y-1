@@ -72,6 +72,65 @@ class DisputeControllerIT extends TrustItSupport {
                 .exchange().expectStatus().isBadRequest();
     }
 
+    /** D-03：marketplace 服务可代商家开 merchant_rejection 案，并由 SLA 内部端点默认 for_recommender 终局。 */
+    @Test
+    void marketplaceOpensAndAutoFinalizesMerchantRejection() {
+        String merchant = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
+        Map<String, Object> resp = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of(
+                        "engagementRef", eng,
+                        "kind", "merchant_rejection",
+                        "openedByAccountId", merchant,
+                        "organizationId", org,
+                        "reason", "系统核实与实际不符"))
+                .exchange().expectStatus().isCreated().expectBody(Map.class)
+                .returnResult().getResponseBody();
+        String disputeId = (String) ((Map<?, ?>) resp.get("data")).get("id");
+        assertThat(disputeId).isNotBlank();
+
+        client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.kind").isEqualTo("merchant_rejection")
+                .jsonPath("$.data.openedByAccountId").isEqualTo(merchant);
+
+        client().post().uri("/api/trust/internal/disputes/" + disputeId + "/auto-finalize")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("final")
+                .jsonPath("$.data.finalDecision").isEqualTo("for_recommender");
+        assertThat(outboxCount("DisputeFinalized", eng)).isEqualTo(1);
+
+        // 重试幂等：已 final 不重复发终局事件。
+        client().post().uri("/api/trust/internal/disputes/" + disputeId + "/auto-finalize")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk();
+        assertThat(outboxCount("DisputeFinalized", eng)).isEqualTo(1);
+    }
+
+    @Test
+    void merchantRejectionInternalEndpointsRejectWrongCallerAndKind() {
+        String merchant = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
+        String standard = open(merchant, org, eng);
+        // 普通争议不能走 SLA 自动终局。
+        client().post().uri("/api/trust/internal/disputes/" + standard + "/auto-finalize")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isEqualTo(409);
+        // 终端用户不能代开 merchant_rejection kind（请求 kind 被强制归 standard）。
+        String another = UUID.randomUUID().toString();
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of(
+                        "engagementRef", another, "kind", "merchant_rejection"))
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.kind").isEqualTo("standard");
+    }
+
     @Test
     void marketplaceServiceQueriesOpenDispute() {
         String merchant = UUID.randomUUID().toString();

@@ -25,7 +25,8 @@ public class TaskApplicationRepository {
     private static final String SELECT_COLS =
             "id::text, task_id::text, recommender_account_id::text, status, note,"
                     + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at, bounty_cents,"
-                    + " merchant_confirm_deadline_at, auto_confirmed_at";
+                    + " merchant_confirm_deadline_at, auto_confirmed_at, merchant_rejected_at, rejection_reason,"
+                    + " merchant_rejection_dispute_id::text";
 
     private final DatabaseClient db;
 
@@ -108,6 +109,28 @@ public class TaskApplicationRepository {
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("taskId", taskId)
                 .map(TaskApplicationRepository::map).one();
+    }
+
+    /**
+     * 商家拒绝系统核实通过的履约（D-03 §2）：accepted + 未手动确认/未拒绝 → 设 confirmed_at（系统核实事实成立，
+     * 供争议终局 reconciliation 落钱）+ merchant_rejected_at/reason。若 Timer 在 trust 开案后抢先自动确认，
+     * {@code auto_confirmed_at IS NOT NULL} 也允许 contest 接管；普通商家手动确认仍不可反悔。0 行 = 状态已变/重复操作。
+     */
+    public Mono<TaskApplication> contest(String id, String taskId, String disputeId, String reason) {
+        GenericExecuteSpec spec = db.sql("""
+                UPDATE task_application
+                SET confirmed_at = COALESCE(confirmed_at, now()), merchant_rejected_at = now(), rejection_reason = :reason,
+                    merchant_rejection_dispute_id = CAST(:dispute AS uuid), updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = 'accepted'
+                  AND (confirmed_at IS NULL OR auto_confirmed_at IS NOT NULL)
+                  AND merchant_rejected_at IS NULL
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId).bind("dispute", disputeId);
+        spec = bindNullable(spec, "reason", reason);
+        return spec.map(TaskApplicationRepository::map).one();
     }
 
     /** 窗口到期自动确认（D-03）：accepted + 未确认 → 同时设 confirmed_at / auto_confirmed_at。
@@ -208,6 +231,18 @@ public class TaskApplicationRepository {
                 .map(r -> r.get("c", Integer.class)).one();
     }
 
+    /**
+     * D-03 §5：某任务下「已 accept 但未提交凭证」的报名（商家 cancel 时全额返还商家；已提交/核实的照常结算）。
+     * NOT EXISTS 子查询排除有 engagement_submission 的报名。
+     */
+    public Flux<TaskApplication> findAcceptedByTaskWithoutSubmission(String taskId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM task_application a"
+                + " WHERE task_id = CAST(:taskId AS uuid) AND status = 'accepted'"
+                + " AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)")
+                .bind("taskId", taskId)
+                .map(TaskApplicationRepository::map).all();
+    }
+
     private Mono<TaskApplication> transition(String id, String taskId, String fromStatus, String toStatus,
                                              String reviewerAccountId) {
         return db.sql("""
@@ -238,7 +273,10 @@ public class TaskApplicationRepository {
                 toInstant(row.get("confirmed_at", OffsetDateTime.class)),
                 longValue(row.get("bounty_cents", Long.class)),
                 toInstant(row.get("merchant_confirm_deadline_at", OffsetDateTime.class)),
-                toInstant(row.get("auto_confirmed_at", OffsetDateTime.class))
+                toInstant(row.get("auto_confirmed_at", OffsetDateTime.class)),
+                toInstant(row.get("merchant_rejected_at", OffsetDateTime.class)),
+                row.get("rejection_reason", String.class),
+                row.get("merchant_rejection_dispute_id", String.class)
         );
     }
 

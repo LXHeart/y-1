@@ -44,7 +44,7 @@ class ConfirmationWindowDispatcherTest {
         apps = org.mockito.Mockito.mock(TaskApplicationRepository.class);
         tasks = org.mockito.Mockito.mock(TaskRepository.class);
         starter = org.mockito.Mockito.mock(ConfirmationWorkflowStarter.class);
-        dispatcher = new ConfirmationWindowDispatcher(submissions, apps, tasks, starter, 32);
+        dispatcher = new ConfirmationWindowDispatcher(submissions, apps, tasks, starter, 32, 86400L);
     }
 
     @Test
@@ -53,7 +53,7 @@ class ConfirmationWindowDispatcherTest {
 
         dispatcher.dispatchBatch();
 
-        verify(starter, never()).start(anyString(), anyString(), anyString(), anyLong());
+        verify(starter, never()).start(anyString(), anyString(), anyString(), anyLong(), anyLong());
         verify(submissions, never()).markConfirmationWorkflowStarted(anyString());
     }
 
@@ -64,7 +64,7 @@ class ConfirmationWindowDispatcherTest {
         when(submissions.findConfirmationDispatchable(32)).thenReturn(Flux.just(submission));
         when(apps.findById(appId)).thenReturn(Mono.just(app));
         when(tasks.findById(taskId)).thenReturn(Mono.just(task()));
-        when(starter.start(eq(appId), eq(submissionId), eq(orgId), org.mockito.ArgumentMatchers.longThat(s -> s > 0 && s <= 120)))
+        when(starter.start(eq(appId), eq(submissionId), eq(orgId), org.mockito.ArgumentMatchers.longThat(s -> s > 0 && s <= 120), anyLong()))
                 .thenReturn(Mono.just("confirm-" + submissionId));
         when(submissions.markConfirmationWorkflowStarted(submissionId)).thenReturn(Mono.just(true));
 
@@ -80,13 +80,13 @@ class ConfirmationWindowDispatcherTest {
         when(submissions.findConfirmationDispatchable(32)).thenReturn(Flux.just(submission));
         when(apps.findById(appId)).thenReturn(Mono.just(app));
         when(tasks.findById(taskId)).thenReturn(Mono.just(task()));
-        when(starter.start(eq(appId), eq(submissionId), eq(orgId), eq(0L)))
+        when(starter.start(eq(appId), eq(submissionId), eq(orgId), eq(0L), anyLong()))
                 .thenReturn(Mono.just("confirm-" + submissionId));
         when(submissions.markConfirmationWorkflowStarted(submissionId)).thenReturn(Mono.just(true));
 
         dispatcher.dispatchBatch();
 
-        verify(starter).start(appId, submissionId, orgId, 0L);
+        verify(starter).start(appId, submissionId, orgId, 0L, 0L);
         verify(submissions).markConfirmationWorkflowStarted(submissionId);
     }
 
@@ -97,7 +97,7 @@ class ConfirmationWindowDispatcherTest {
         when(submissions.findConfirmationDispatchable(32)).thenReturn(Flux.just(submission));
         when(apps.findById(appId)).thenReturn(Mono.just(app));
         when(tasks.findById(taskId)).thenReturn(Mono.just(task()));
-        when(starter.start(eq(appId), eq(submissionId), eq(orgId), anyLong()))
+        when(starter.start(eq(appId), eq(submissionId), eq(orgId), anyLong(), anyLong()))
                 .thenReturn(Mono.error(new IllegalStateException("temporal unavailable")));
 
         dispatcher.dispatchBatch();
@@ -114,7 +114,7 @@ class ConfirmationWindowDispatcherTest {
 
         dispatcher.dispatchBatch();
 
-        verify(starter, never()).start(anyString(), anyString(), anyString(), anyLong());
+        verify(starter, never()).start(anyString(), anyString(), anyString(), anyLong(), anyLong());
         verify(submissions, never()).markConfirmationWorkflowStarted(anyString());
     }
 
@@ -128,7 +128,7 @@ class ConfirmationWindowDispatcherTest {
         when(submissions.findConfirmationDispatchable(32)).thenReturn(Flux.fromIterable(List.of(s1, s2)));
         when(apps.findById(appId)).thenReturn(Mono.just(app));
         when(tasks.findById(taskId)).thenReturn(Mono.just(task()));
-        when(starter.start(eq(appId), anyString(), eq(orgId), anyLong())).thenReturn(Mono.just("confirm-x"));
+        when(starter.start(eq(appId), anyString(), eq(orgId), anyLong(), anyLong())).thenReturn(Mono.just("confirm-x"));
         when(submissions.markConfirmationWorkflowStarted(anyString())).thenReturn(Mono.just(true));
 
         dispatcher.dispatchBatch();

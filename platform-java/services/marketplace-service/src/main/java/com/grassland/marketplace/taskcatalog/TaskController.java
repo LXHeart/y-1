@@ -5,6 +5,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -49,13 +50,18 @@ public class TaskController {
     private final MarketplaceCallerResolver callers;
     private final TaskRepository tasks;
     private final OutboxRepository outbox;
+    private final TaskApplicationRepository apps;
+    private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, OutboxRepository outbox,
+                          TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions) {
         this.callers = callers;
         this.tasks = tasks;
         this.outbox = outbox;
+        this.apps = apps;
+        this.finance = finance;
         this.transactions = transactions;
     }
 
@@ -158,7 +164,14 @@ public class TaskController {
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
-    /** 取消任务（draft|published→cancelled；owner；expectedVersion）。 */
+    /**
+     * 取消任务（draft|published→cancelled；owner；expectedVersion）。
+     *
+     * <p>D-03 §5：cancel 视商家违约——已 accept 但<b>未提交凭证</b>的 engagement 全额返还商家（首期无补偿），
+     * 并记违约信号（trust 声誉未建，事件先落库）。已提交/核实通过的履约<b>不动</b>，照常结算（其确认窗口继续）。
+     * release 不在 task-cancel 事务内（finance HTTP）；release 幂等 + 事件确定性 ⇒ 崩溃安全。退款失败向上抛 5xx；
+     * task 已 cancelled 时重复调用会跳过状态迁移并重跑退款，收敛「cancel 已提交、release 尚未完成」间隙。
+     */
     @PostMapping("/api/tasks/{id}/cancel")
     public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                             ServerHttpRequest request) {
@@ -166,15 +179,35 @@ public class TaskController {
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), null)
                         .flatMap(owned -> {
                             String status = owned.status();
+                            if (TaskStatus.CANCELLED.dbValue().equals(status)) {
+                                return refundAcceptedWithoutSubmission(owned)
+                                        .map(count -> ResponseEntity.ok(Map.of("success", true,
+                                                "data", cancelBody(owned, count))));
+                            }
                             if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)) {
-                                return Mono.<Task>error(new MarketplaceException(409, "任务已结束，不可取消"));
+                                return Mono.<ResponseEntity<Map<String, Object>>>error(
+                                        new MarketplaceException(409, "任务已结束，不可取消"));
                             }
                             return transactions.transactional(
                                     tasks.cancel(id, body.expectedVersion())
                                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                            .flatMap(task -> outbox.append(taskCancelledEnvelope(task)).thenReturn(task)));
-                        }))
-                .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+                                            .flatMap(task -> outbox.append(taskCancelledEnvelope(task)).thenReturn(task)))
+                                    .flatMap(task -> refundAcceptedWithoutSubmission(task)
+                                            .map(refundedCount -> ResponseEntity.ok(Map.of("success", true,
+                                                    "data", cancelBody(task, refundedCount)))));
+                        }));
+    }
+
+    /**
+     * 退还本任务「已 accept 未提交凭证」的 engagement（D-03 §5）：逐条 finance release（全额返商家）+
+     * outbox {@code EngagementRefundedOnCancel}（违约信号 + 双方通知）。失败向上抛；cancel 重试会再次执行（两侧幂等）。
+     */
+    private Mono<Integer> refundAcceptedWithoutSubmission(Task task) {
+        return apps.findAcceptedByTaskWithoutSubmission(task.id())
+                .concatMap(app -> finance.release(task.organizationId(), app.id())
+                        .then(outbox.append(engagementRefundedEnvelope(task, app)))
+                        .thenReturn(1))
+                .reduce(0, Integer::sum);
     }
 
     /**
@@ -397,6 +430,32 @@ public class TaskController {
                 task.id(), task.version(), Instant.now(), null,
                 Map.of("taskId", task.id(), "organizationId", task.organizationId(),
                         "ownerAccountId", task.ownerAccountId(), "version", task.version()));
+    }
+
+    /**
+     * D-03 §5 cancel 退款事件：商家取消任务，已 accept 未提交凭证的 engagement 全额返还商家。
+     * 确定性 eventId（type-3 {@code EngagementRefundedOnCancel:<appId>}）保证重跑 exactly-once；
+     * reason={@code merchant_cancel} 供 trust 声誉消费（违约计数，D-05）。双方收件（identity 通知中心）。
+     */
+    private EventEnvelope engagementRefundedEnvelope(Task task, TaskApplication app) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", task.id());
+        payload.put("applicationId", app.id());
+        payload.put("organizationId", task.organizationId());
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        payload.put("taskOwnerId", task.ownerAccountId());
+        payload.put("reason", "merchant_cancel");
+        String eventId = UUID.nameUUIDFromBytes(
+                ("EngagementRefundedOnCancel:" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
+        return new EventEnvelope(eventId, "EngagementRefundedOnCancel", "TaskApplication",
+                app.id(), 1, Instant.now(), null, payload);
+    }
+
+    /** cancel 响应：附 refundedCount（已退还的未提交履约数）。 */
+    private Map<String, Object> cancelBody(Task task, int refundedCount) {
+        Map<String, Object> m = toBody(task);
+        m.put("refundedCount", refundedCount);
+        return m;
     }
 
     private EventEnvelope taskRevisedEnvelope(Task task) {

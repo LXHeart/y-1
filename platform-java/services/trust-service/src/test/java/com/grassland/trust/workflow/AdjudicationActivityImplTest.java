@@ -144,11 +144,11 @@ class AdjudicationActivityImplTest {
 
     private DisputeCase finalDispute(String id, String decision) {
         return new DisputeCase(id, "eng-" + id, "org-1", UUID.randomUUID().toString(), "merchant",
-                "final", "未履约", decision, null, null, null, 1, 2L, "none", decision, null, null);
+                "final", "未履约", decision, null, null, null, 1, 2L, "none", decision, null, null, "standard");
     }
 
     private DisputeCase dispute(String id, String status) {
         return new DisputeCase(id, "eng-" + id, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
-                "merchant", status, "未履约", null, null, null, null, 1, 1L, "none", null, null, null);
+                "merchant", status, "未履约", null, null, null, null, 1, 1L, "none", null, null, null, "standard");
     }
 }

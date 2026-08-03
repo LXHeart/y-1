@@ -35,6 +35,7 @@ public class ConfirmationWindowDispatcher {
     private final TaskRepository tasks;
     private final ConfirmationWorkflowStarter starter;
     private final int batchSize;
+    private final long reminderLeadSeconds;
 
     public ConfirmationWindowDispatcher(
             SubmissionRepository submissions,
@@ -42,12 +43,15 @@ public class ConfirmationWindowDispatcher {
             TaskRepository tasks,
             ConfirmationWorkflowStarter starter,
             @org.springframework.beans.factory.annotation.Value(
-                    "${marketplace.confirmation.dispatcher-batch-size:32}") int batchSize) {
+                    "${marketplace.confirmation.dispatcher-batch-size:32}") int batchSize,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${marketplace.confirmation.reminder-lead-seconds:86400}") long reminderLeadSeconds) {
         this.submissions = submissions;
         this.apps = apps;
         this.tasks = tasks;
         this.starter = starter;
         this.batchSize = Math.max(1, batchSize);
+        this.reminderLeadSeconds = Math.max(0, reminderLeadSeconds);
     }
 
     @Scheduled(fixedDelayString = "${marketplace.confirmation.dispatcher-poll-ms:2000}")
@@ -81,7 +85,9 @@ public class ConfirmationWindowDispatcher {
             }
             long remainingSeconds = Math.max(0,
                     Duration.between(Instant.now(), app.merchantConfirmDeadlineAt()).toSeconds());
-            starter.start(app.id(), submission.id(), task.organizationId(), remainingSeconds).block();
+            // 若补启发生在最后 lead 秒内，传 lead=remaining，使 workflow 立即发一次提醒；新窗口短于生产 lead 仍由 controller 路径跳过。
+            long effectiveLead = reminderLeadSeconds <= 0 ? 0 : Math.min(reminderLeadSeconds, remainingSeconds);
+            starter.start(app.id(), submission.id(), task.organizationId(), remainingSeconds, effectiveLead).block();
             submissions.markConfirmationWorkflowStarted(submission.id()).block();
         } catch (RuntimeException failure) {
             // 不标记，下轮重试；确定性 workflowId 保证「start 已成功但 mark 失败」也安全。

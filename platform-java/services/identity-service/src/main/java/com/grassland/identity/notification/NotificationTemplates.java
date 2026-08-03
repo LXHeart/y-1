@@ -78,6 +78,10 @@ public final class NotificationTemplates {
             case "EngagementSettled" -> new Template(
                     NotificationCategory.ENGAGEMENT, "履约已结算",
                     "该履约已完成结算", LINK_ENGAGEMENTS, taskPayload(payload));
+            // marketplace：商家取消任务，未提交凭证的履约预留退还商家（D-03 §5）。
+            case "EngagementRefundedOnCancel" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "任务已取消，履约预留已退还",
+                    "商家取消了任务，未提交凭证的履约预留已退还商家", LINK_ENGAGEMENTS, taskPayload(payload));
             case "SettlementHeld" -> new Template(
                     NotificationCategory.ENGAGEMENT, "结算被挂起",
                     "该履约的结算被暂时挂起，待条件满足后继续", LINK_ENGAGEMENTS, taskPayload(payload));
@@ -86,9 +90,19 @@ public final class NotificationTemplates {
                     NotificationCategory.ENGAGEMENT, "请确认履约",
                     "有推荐官提交了履约凭证，请在确认窗口内确认或退回，逾期未操作将自动确认结算",
                     LINK_ENGAGEMENTS, taskPayload(payload));
+            // marketplace：确认窗口临到期提醒（D-03 §1 剩余 24h 强提醒）。
+            case "ConfirmationWindowExpiring" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "履约确认窗口即将到期",
+                    "该履约的确认窗口即将到期，逾期未操作将自动确认结算，请尽快处理",
+                    LINK_ENGAGEMENTS, taskPayload(payload));
             case "AutoSettledOnTimeout" -> new Template(
                     NotificationCategory.ENGAGEMENT, "履约已自动结算",
                     "商家确认窗口到期未操作，系统已自动确认结算该履约", LINK_ENGAGEMENTS, taskPayload(payload));
+            // marketplace：商家拒绝系统核实通过的履约，已直送客服终审（D-03 §2）。
+            case "MerchantContested" -> new Template(
+                    NotificationCategory.DISPUTE, "履约异议已转客服裁定",
+                    "商家对系统核实通过的履约发起异议，平台客服将在时限内裁定",
+                    LINK_DISPUTES, disputePayload(payload));
             // ---------- trust：争议 ----------
             // marketplace 派生：有人对一笔履约开了争议，通知对方（草场 Slice 12 缺口补全）。
             case "EngagementDisputed" -> {
@@ -150,6 +164,8 @@ public final class NotificationTemplates {
         Map<String, Object> map = new LinkedHashMap<>();
         putIfText(map, payload, "disputeId");
         putIfText(map, payload, "engagementRef");
+        putIfText(map, payload, "applicationId");
+        putIfText(map, payload, "submissionId");
         putIfText(map, payload, "status");
         putIfText(map, payload, "decision");
         putIfText(map, payload, "finalDecision");

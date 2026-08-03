@@ -94,6 +94,27 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
         };
     }
 
+    /**
+     * 临到期提醒（D-03 §1 剩余 24h 强提醒）。发 outbox {@code ConfirmationWindowExpiring}（双方收件）。
+     *
+     * <p>跳过条件（窗口已失效，提醒无意义）：app 已确认 / 非 accepted / 本 submission 已退回。确定性 eventId
+     * （type-3 {@code ConfirmationWindowExpiring:<submissionId>}）保证 activity 重试 / Temporal 重放不重复通知。
+     */
+    @Override
+    public void notifyExpiring(ConfirmationInput input) {
+        TaskApplication app = apps.findById(input.applicationId()).block();
+        if (app == null || !"accepted".equals(app.status()) || app.confirmedAt() != null) {
+            return;  // 已确认 / 非 accepted / 不存在 → 窗口已失效
+        }
+        EngagementSubmission submission = submissions.findById(input.submissionId()).block();
+        if (submission == null || !SubmissionStatus.SUBMITTED.dbValue().equals(submission.status())) {
+            return;  // 本 submission 已退回（重交起新窗口）→ 旧窗口的提醒无意义
+        }
+        Task task = tasks.findById(app.taskId()).block();
+        String taskOwnerId = task == null ? null : task.ownerAccountId();
+        outbox.append(envelope("ConfirmationWindowExpiring", app, input.submissionId(), taskOwnerId)).block();
+    }
+
     private EventEnvelope envelope(String eventType, TaskApplication app, String submissionId, String taskOwnerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());

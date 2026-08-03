@@ -71,6 +71,12 @@ marketplace:
   # 概念 3 天（259200）；dev/test 短默认 5s 便于 e2e。prod 置 CONFIRMATION_WINDOW_SECONDS=259200。
   confirmation:
     window-seconds: ${CONFIRMATION_WINDOW_SECONDS:5}
+    # 临到期强提醒前置秒数：生产 86400（剩余 24h）；若 > window（dev 5s）则 workflow 自动跳过。
+    reminder-lead-seconds: ${CONFIRMATION_REMINDER_LEAD_SECONDS:86400}
+    # 商家要求补证（退回重交）次数上限（D-03 §3）。
+    supplement-cap: ${CONFIRMATION_SUPPLEMENT_CAP:2}
+    # merchant_rejection 客服裁定 SLA：3 工作日首期按 3 自然日秒数执行；超时默认 for_recommender。
+    cs-sla-seconds: ${CONFIRMATION_CS_SLA_SECONDS:259200}
     # 补启派发器：消除 DB 提交与 Temporal start 的间隙（进程崩溃/网络失败时下轮扫描补启）。
     dispatcher-enabled: ${MARKETPLACE_CONFIRMATION_DISPATCHER_ENABLED:true}
     dispatcher-poll-ms: ${MARKETPLACE_CONFIRMATION_DISPATCHER_POLL_MS:2000}

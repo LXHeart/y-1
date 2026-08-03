@@ -30,12 +30,29 @@ public class SubmissionRepository {
         this.db = db;
     }
 
-    /** 提交交付物。已有待核验的一份时触发 partial unique 冲突 → empty（调用方转 409）。 */
+    /**
+     * 提交交付物。已有待核验的一份时触发 partial unique 冲突 → empty（调用方转 409）。
+     *
+     * <p>D-03 cancel 并发守卫：INSERT 前 JOIN task 并 {@code FOR SHARE OF t}。它与 cancel 的 task UPDATE
+     * （NO KEY UPDATE 锁）冲突，保证二者串行：提交先拿锁→cancel 等提交落库后看见 submission 不退款；
+     * cancel 先拿锁→提交醒来见 cancelled 后 0 行，不会发生「已退款又补交」。
+     */
     public Mono<EngagementSubmission> create(String applicationId, String recommenderAccountId,
                                              String contentUrl, String note) {
         var spec = db.sql("""
+                WITH eligible AS (
+                    SELECT a.id
+                    FROM task_application a
+                    JOIN task t ON t.id = a.task_id
+                    WHERE a.id = CAST(:app AS uuid)
+                      AND a.recommender_account_id = CAST(:rec AS uuid)
+                      AND a.status = 'accepted'
+                      AND t.status <> 'cancelled'
+                    FOR SHARE OF t
+                )
                 INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note)
-                VALUES (CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note)
+                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note
+                FROM eligible
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", UUID.randomUUID().toString())
@@ -77,6 +94,14 @@ public class SubmissionRepository {
                 + " WHERE application_id = CAST(:app AS uuid) ORDER BY created_at DESC")
                 .bind("app", applicationId)
                 .map(SubmissionRepository::map).all();
+    }
+
+    /** D-03 规则 4：该履约累计被退回（要求补证）的次数 = status='rejected' 的交付物行数。供商家退回上限校验。 */
+    public Mono<Integer> countRejectedByApplication(String applicationId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM engagement_submission"
+                + " WHERE application_id = CAST(:app AS uuid) AND status = 'rejected'")
+                .bind("app", applicationId)
+                .map(r -> r.get("c", Integer.class)).one();
     }
 
     /** 当前待核验的交付物（confirm 守卫用）。 */

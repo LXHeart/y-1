@@ -145,7 +145,7 @@ class AdjudicationRepositoryIT extends TrustItSupport {
     // ---------- helpers ----------
 
     private String openDispute(String org) {
-        return disputes.create("eng-" + UUID.randomUUID(), org, UUID.randomUUID().toString(), "merchant", "未履约")
+        return disputes.create("eng-" + UUID.randomUUID(), org, UUID.randomUUID().toString(), "merchant", "未履约", "standard")
                 .block().id();
     }
 

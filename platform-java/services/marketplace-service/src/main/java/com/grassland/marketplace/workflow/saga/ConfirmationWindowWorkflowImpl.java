@@ -29,7 +29,17 @@ public class ConfirmationWindowWorkflowImpl implements ConfirmationWindowWorkflo
     @Override
     public ConfirmationOutcome run(ConfirmationInput input) {
         // 确认窗口 Timer：时长来自 input（controller 读配置传入），workflow 内不读 env（确定性）。
-        Workflow.sleep(Duration.ofSeconds(Math.max(0, input.windowSeconds())));
+        long window = Math.max(0, input.windowSeconds());
+        long lead = Math.max(0, input.reminderLeadSeconds());
+        // D-03 slice 2 临到期提醒（剩余 lead 秒）：lead<window 正常中段；lead==window（dispatcher 在最后 24h 补启）立即提醒。
+        // lead=0 或 lead>window ⇒ 跳过（dev 关闭/新窗口短于生产 24h 前置）。
+        if (lead > 0 && lead <= window) {
+            Workflow.sleep(Duration.ofSeconds(window - lead));
+            activity.notifyExpiring(input);   // 发 ConfirmationWindowExpiring（确定性 eventId，重试 exactly-once）
+            Workflow.sleep(Duration.ofSeconds(lead));
+        } else {
+            Workflow.sleep(Duration.ofSeconds(window));
+        }
         // 窗口到期 → 自动确认结算 Command（重验 + 自动确认 + capture/hold）
         return activity.autoConfirmSettle(input);
     }

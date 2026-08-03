@@ -57,19 +57,60 @@ public class DisputeController {
         // 安全收口（Slice 12）：先验签身份 + marketplace 授权（确认调用方是该 application 的当事方、并取 canonical
         // task organization），**再**查既有活跃争议——否则非参与方可读/复用他人履约的既有争议。
         // organization 不再取自断言（推荐官本就无 org；merchant 的 org 须与 task 一致，由 marketplace 裁定）。
-        return callers.requireMerchantOrRecommender(request)
-                .flatMap(caller -> authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
-                        .switchIfEmpty(fail(403, "无权对该履约开争议"))
-                        .flatMap(auth -> disputes.findActiveByEngagementRef(auth.engagementRef())
-                                .<Opened>map(d -> new Opened(d, false))  // 幂等：既有活跃争议 → 200
-                                .switchIfEmpty(transactions.transactional(
-                                        disputes.create(auth.engagementRef(), auth.organizationId(),
-                                                        caller.accountId(), caller.activeIdentityType(), body.reason())
-                                                .<Opened>map(d -> new Opened(d, true))
-                                                .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
-                                                        .thenReturn(opened))))))
+        //
+        // D-03 slice 2：marketplace 服务断言可代商家开 merchant_rejection 争议（商家在确认窗口拒绝核实通过履约）。
+        // marketplace 已 loadOwnedTask 校验商家 ownership，故跳过 authorizer，直接用 payload 的 openedByAccountId/org。
+        return callers.resolve(request)
+                .flatMap(caller -> {
+                    if (caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)) {
+                        return openForMarketplaceService(body, caller.organizationId());
+                    }
+                    if (!caller.isMerchant() && !caller.isRecommender()) {
+                        return fail(403, "需要商家或推荐官身份");
+                    }
+                    // 终端用户路径：authorizer 校验当事方 + 取 canonical org。
+                    return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
+                            .switchIfEmpty(fail(403, "无权对该履约开争议"))
+                            .flatMap(auth -> openOrCreate(auth.engagementRef(), auth.organizationId(),
+                                    caller.accountId(), caller.activeIdentityType(), body.reason(), "standard"));
+                })
                 .map(o -> ResponseEntity.status(o.created() ? HttpStatus.CREATED : HttpStatus.OK)
                         .body(Map.of("success", true, "data", toBody(o.dispute()))));
+    }
+
+    /** marketplace 服务断言代商家开 merchant_rejection 争议（D-03 §2）。仅允许该 kind；openedBy/org 取请求体。 */
+    private Mono<Opened> openForMarketplaceService(OpenDisputeRequest body, String assertionOrganizationId) {
+        if (!"merchant_rejection".equals(body.kind())) {
+            return fail(403, "服务断言仅可开 merchant_rejection 争议");
+        }
+        if (body.openedByAccountId() == null || body.organizationId() == null) {
+            return fail(400, "缺少 openedByAccountId / organizationId");
+        }
+        if (!body.organizationId().equals(assertionOrganizationId)) {
+            return fail(403, "服务断言组织与请求不一致");
+        }
+        return disputes.findActiveByEngagementRef(body.engagementRef())
+                .flatMap(existing -> "merchant_rejection".equals(existing.kind())
+                        ? Mono.just(new Opened(existing, false))
+                        : Mono.<Opened>error(new TrustException(409, "该履约已有普通活跃争议")))
+                .switchIfEmpty(transactions.transactional(
+                        disputes.create(body.engagementRef(), body.organizationId(),
+                                        body.openedByAccountId(), "merchant", body.reason(), "merchant_rejection")
+                                .map(d -> new Opened(d, true))
+                                .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
+                                        .thenReturn(opened))));
+    }
+
+    /** 幂等开争议：既有活跃 → 200；否则事务内 create + outbox DisputeOpened → 201。 */
+    private Mono<Opened> openOrCreate(String engagementRef, String organizationId, String openedBy,
+                                       String role, String reason, String kind) {
+        return disputes.findActiveByEngagementRef(engagementRef)
+                .<Opened>map(d -> new Opened(d, false))
+                .switchIfEmpty(transactions.transactional(
+                        disputes.create(engagementRef, organizationId, openedBy, role, reason, kind)
+                                .<Opened>map(d -> new Opened(d, true))
+                                .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
+                                        .thenReturn(opened))));
     }
 
     @PostMapping("/api/trust/disputes/{id}/decide")
@@ -81,6 +122,9 @@ public class DisputeController {
                         .flatMap(d -> {
                             if (!d.organizationId().equals(caller.organizationId())) {
                                 return fail(403, "无权操作该争议");
+                            }
+                            if ("merchant_rejection".equals(d.kind())) {
+                                return fail(409, "商家履约异议须由客服终审");
                             }
                             return transactions.transactional(
                                     disputes.decide(id, body.decision()).switchIfEmpty(fail(409, "该争议已裁决"))
@@ -101,6 +145,36 @@ public class DisputeController {
                         .map(d -> ResponseEntity.ok(Map.of("success", true, "data", toBody(d)))));
     }
 
+    /**
+     * D-03 §2 客服 SLA 超时自动终局（内部，仅 marketplace 服务）：merchant_rejection 争议客服未在 SLA 内裁定 →
+     * 默认按系统核实结果（for_recommender）结算，避免裁定侧悬置。无 MFA（系统动作，非客服覆盖）。
+     * 非 merchant_rejection / 已终局 → 幂等 200（不动）。
+     */
+    @PostMapping("/api/trust/internal/disputes/{id}/auto-finalize")
+    public Mono<ResponseEntity<Map<String, Object>>> autoFinalize(@PathVariable String id, ServerHttpRequest request) {
+        return callers.resolve(request)
+                .filter(c -> c.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE))
+                .switchIfEmpty(fail(403, "仅 marketplace 服务可调用自动终局"))
+                .flatMap(caller -> disputes.findById(id)
+                        .switchIfEmpty(fail(404, "争议不存在"))
+                        .filter(d -> d.organizationId().equals(caller.organizationId()))
+                        .switchIfEmpty(fail(403, "服务断言组织与案件不一致"))
+                        .flatMap(d -> {
+                            if (!"merchant_rejection".equals(d.kind())) {
+                                return fail(409, "仅 merchant_rejection 争议可自动终局");
+                            }
+                            if ("final".equals(d.status())) {
+                                return Mono.just(d);  // 已终局 → 幂等
+                            }
+                            return transactions.transactional(
+                                    disputes.forceFinalize(id, "for_recommender", null)
+                                            .flatMap(fin -> outbox.append(envelope("DisputeFinalized", fin)).thenReturn(fin))
+                                            // 并发调用已先终局：回读，不用旧 open 快照误发第二条终局事件。
+                                            .switchIfEmpty(disputes.findById(id)));
+                        }))
+                .map(d -> ResponseEntity.ok(Map.of("success", true, "data", toBody(d))));
+    }
+
     private EventEnvelope envelope(String eventType, DisputeCase d) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("disputeId", d.id());
@@ -109,6 +183,7 @@ public class DisputeController {
         payload.put("openedByAccountId", d.openedByAccountId());
         payload.put("openedByRole", d.openedByRole());
         payload.put("status", d.status());
+        payload.put("kind", d.kind());
         if (d.decision() != null) {
             payload.put("decision", d.decision());
         }
@@ -124,6 +199,7 @@ public class DisputeController {
         m.put("openedByAccountId", d.openedByAccountId());
         m.put("openedByRole", d.openedByRole());
         m.put("status", d.status());
+        m.put("kind", d.kind());
         m.put("reason", d.reason());
         m.put("decision", d.decision());
         m.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());

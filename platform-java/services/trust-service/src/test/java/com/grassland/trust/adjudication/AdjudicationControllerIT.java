@@ -347,6 +347,23 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of()).exchange().expectStatus().isEqualTo(409);
     }
 
+    /** D-03：merchant_rejection 不走 7 官面板，open 态可由近期 MFA 客服直接终审。 */
+    @Test
+    void customerServiceFinalDecisionOnOpenMerchantRejection() {
+        String merchant = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        String id = disputes.create(UUID.randomUUID().toString(), org, merchant,
+                "merchant", "系统核实与实际不符", "merchant_rejection").block().id();
+
+        client().post().uri("/api/trust/disputes/" + id + "/final-decision")
+                .header("X-Grassland-Identity", signCs(UUID.randomUUID().toString(), Instant.now()))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("final")
+                .jsonPath("$.data.finalDecision").isEqualTo("for_merchant");
+        assertThat(outboxCount("DisputeFinalized", id)).isEqualTo(1);
+    }
+
     @Test
     void customerServiceFinalDecisionOverridesAppealed() {
         String merchant = UUID.randomUUID().toString();

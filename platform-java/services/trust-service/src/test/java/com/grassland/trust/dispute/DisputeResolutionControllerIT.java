@@ -19,7 +19,8 @@ class DisputeResolutionControllerIT extends TrustItSupport {
                 org,
                 UUID.randomUUID().toString(),
                 "merchant",
-                "reason").block();
+                "reason",
+                "standard").block();
         disputes.decide(dispute.id(), "for_recommender").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
@@ -39,7 +40,7 @@ class DisputeResolutionControllerIT extends TrustItSupport {
         String org = UUID.randomUUID().toString();
         String merchant = UUID.randomUUID().toString();
         DisputeCase dispute = disputes.create(
-                "app-" + UUID.randomUUID(), org, merchant, "merchant", "reason").block();
+                "app-" + UUID.randomUUID(), org, merchant, "merchant", "reason", "standard").block();
         disputes.decide(dispute.id(), "for_merchant").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
@@ -58,7 +59,8 @@ class DisputeResolutionControllerIT extends TrustItSupport {
                 org,
                 UUID.randomUUID().toString(),
                 "merchant",
-                "reason").block();
+                "reason",
+                "standard").block();
         disputes.decide(dispute.id(), "for_merchant").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
@@ -75,7 +77,8 @@ class DisputeResolutionControllerIT extends TrustItSupport {
                 org,
                 UUID.randomUUID().toString(),
                 "merchant",
-                "reason").block();
+                "reason",
+                "standard").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))

@@ -76,12 +76,14 @@ public class NotificationRecipientResolver {
                     accountIds(payload, "taskOwnerId");
             // 推荐官侧：凭证被退回。
             case "DeliverableRejected" -> accountIds(payload, "recommenderAccountId");
-            // 双方都关心：核验结果、结算、结算挂起。
-            case "VerificationChecked", "EngagementSettled", "SettlementHeld" ->
+            // 双方都关心：核验结果、结算、结算挂起、取消退款（D-03 §5）。
+            case "VerificationChecked", "EngagementSettled", "SettlementHeld", "EngagementRefundedOnCancel" ->
                     accountIds(payload, "taskOwnerId", "recommenderAccountId");
-            // 商家确认窗口（D-03）：进入窗口通知双方（商家待确认、推荐官知悉）；到期自动结算通知双方。
-            case "ConfirmationWindowEntered", "AutoSettledOnTimeout" ->
+            // 商家确认窗口（D-03）：进入/临到期/到期自动结算通知双方（商家待确认、推荐官知悉）。
+            case "ConfirmationWindowEntered", "ConfirmationWindowExpiring", "AutoSettledOnTimeout" ->
                     accountIds(payload, "taskOwnerId", "recommenderAccountId");
+            // 商家拒绝系统核实通过履约（D-03）：转客服裁定，双方知悉。
+            case "MerchantContested" -> accountIds(payload, "taskOwnerId", "recommenderAccountId");
             // 争议对方通知：marketplace 派生的 EngagementDisputed 携带已解析的对方账号（草场 Slice 12 缺口补全）。
             case "EngagementDisputed" -> accountIds(payload, "counterpartyAccountId");
             // 争议：只有开启人在 trust 本地表内（对方账号缺口见 docs 路线图第 8 项）。

@@ -27,6 +27,13 @@ public final class OpsCaseSource {
     public static final String SETTLEMENT_HELD = "settlement_held";
 
     /**
+     * 商家拒绝系统核实通过的履约（D-03 §2）：直送客服裁定，sourceRef = trust disputeId，
+     * applicationId = task_application.id，reason = 商家拒绝理由。涉资金终局，severity=high。
+     * 运营队列可直接拿 sourceRef 调 trust final-decision，无需跨服务反查映射。
+     */
+    public static final String MERCHANT_REJECTION = "merchant_rejection";
+
+    /**
      * 死信消息（Stage 2）：{@code sourceRef} = {@code topic:partition:offset}（Kafka 位点天然幂等，
      * 消费者重启重读同一条不会开出第二张单）。reason = 原 topic。
      */
@@ -35,8 +42,9 @@ public final class OpsCaseSource {
     private OpsCaseSource() {
     }
 
-    /** 资金相关阻断置 high（对账阻断意味着钱可能停在中间态）。 */
+    /** 资金相关阻断/裁定置 high（对账阻断或客服裁定意味着钱停在中间态）。 */
     public static String severityOf(String sourceKind) {
-        return SETTLEMENT_BLOCKED.equals(sourceKind) ? "high" : "normal";
+        return SETTLEMENT_BLOCKED.equals(sourceKind) || MERCHANT_REJECTION.equals(sourceKind)
+                ? "high" : "normal";
     }
 }

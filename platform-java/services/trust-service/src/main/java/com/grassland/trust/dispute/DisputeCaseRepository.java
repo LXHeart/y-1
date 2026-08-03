@@ -25,7 +25,7 @@ public class DisputeCaseRepository {
     private static final String SELECT_COLS =
             "id::text, engagement_ref, organization_id::text, opened_by_account_id::text, opened_by_role,"
                     + " status, reason, decision, decided_at, created_at, updated_at,"
-                    + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref";
+                    + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref, kind";
 
     private final DatabaseClient db;
 
@@ -33,16 +33,19 @@ public class DisputeCaseRepository {
         this.db = db;
     }
 
-    /** 开争议（status=open）。新列取默认（round=0, version=1, appeal_state='none'）。partial unique 违例 → empty（幂等：已有活跃）。 */
-    public Mono<DisputeCase> create(String engagementRef, String organizationId, String openedBy, String role, String reason) {
+    /** 开争议（status=open）。新列取默认（round=0, version=1, appeal_state='none'）。partial unique 违例 → empty（幂等：已有活跃）。
+     *  D-03 slice 2：{@code kind} 区分 standard（普通，走面板）/ merchant_rejection（商家拒绝核实通过履约，直送客服）。 */
+    public Mono<DisputeCase> create(String engagementRef, String organizationId, String openedBy, String role, String reason,
+                                    String kind) {
         String id = UUID.randomUUID().toString();
+        String effectiveKind = (kind == null || kind.isBlank()) ? "standard" : kind;
         var spec = db.sql("""
-                INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role, status, reason)
-                VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, 'open', :reason)
+                INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role, status, reason, kind)
+                VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, 'open', :reason, :kind)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("ref", engagementRef).bind("org", organizationId)
-                .bind("by", openedBy).bind("role", role);
+                .bind("by", openedBy).bind("role", role).bind("kind", effectiveKind);
         spec = bindNullable(spec, "reason", reason);
         return spec.map(DisputeCaseRepository::map).one()
                 .onErrorResume(DisputeCaseRepository::isDuplicateKey, e -> Mono.empty());
@@ -207,7 +210,8 @@ public class DisputeCaseRepository {
                 row.get("appeal_state", String.class),
                 row.get("final_decision", String.class),
                 row.get("final_decided_by", String.class),
-                row.get("evidence_ref", String.class)
+                row.get("evidence_ref", String.class),
+                row.get("kind", String.class)
         );
     }
 

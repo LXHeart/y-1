@@ -41,7 +41,7 @@ class ConfirmationActivityImplTest {
     private final String taskId = UUID.randomUUID().toString();
     private final String submissionId = UUID.randomUUID().toString();
     private final String orgId = UUID.randomUUID().toString();
-    private final ConfirmationInput input = new ConfirmationInput(appId, submissionId, orgId, 0L);
+    private final ConfirmationInput input = new ConfirmationInput(appId, submissionId, orgId, 0L, 0L);
 
     @BeforeEach
     void setUp() {
@@ -152,6 +152,41 @@ class ConfirmationActivityImplTest {
 
         assertThat(result.status()).isEqualTo("held");
         assertThat(result.reason()).isEqualTo("open_dispute");
+    }
+
+    // ---------- notifyExpiring（slice 2 临到期提醒）----------
+
+    @Test
+    void notifyExpiringEmitsEventWhenAwaitingConfirmation() {
+        when(apps.findById(appId)).thenReturn(Mono.just(app("accepted", null, null)));
+        when(submissions.findById(submissionId)).thenReturn(Mono.just(submission(SubmissionStatus.SUBMITTED.dbValue())));
+
+        activity.notifyExpiring(input);
+
+        verify(outbox).append(argThat(event -> event != null
+                && "ConfirmationWindowExpiring".equals(event.eventType())
+                && submissionId.equals(event.payload().get("submissionId"))));
+    }
+
+    @Test
+    void notifyExpiringSkipsWhenAlreadyConfirmed() {
+        when(apps.findById(appId)).thenReturn(Mono.just(app("accepted", Instant.now(), null)));
+
+        activity.notifyExpiring(input);
+
+        verify(outbox, never()).append(any());
+        verify(submissions, never()).findById(anyString());
+    }
+
+    @Test
+    void notifyExpiringSkipsWhenSubmissionRejected() {
+        when(apps.findById(appId)).thenReturn(Mono.just(app("accepted", null, null)));
+        when(submissions.findById(submissionId))
+                .thenReturn(Mono.just(submission(SubmissionStatus.REJECTED.dbValue())));
+
+        activity.notifyExpiring(input);
+
+        verify(outbox, never()).append(any());
     }
 
     private TaskApplication app(String status, Instant confirmedAt, Instant autoConfirmedAt) {

@@ -97,6 +97,9 @@ public class AdjudicationController {
                             if ("final".equals(d.status())) {
                                 return fail(409, "争议已终局");
                             }
+                            if ("merchant_rejection".equals(d.kind())) {
+                                return fail(409, "商家履约异议直送客服终审，不进入审判面板");
+                            }
                             // 新启争议：先抽面板（fail-fast：无可用审判官 → 503，争议保持 open 可重试），
                             //   再 open→voting + 写面板 + 发事件；避免「先翻 voting 再抽签失败」的半提交。
                             // 已审判（voting/decided/appealed）：幂等——补齐缺失面板（自愈）后返回当前态。
@@ -257,9 +260,11 @@ public class AdjudicationController {
                 .switchIfEmpty(fail(403, "需要客服近期重新认证（MFA）"))
                 .flatMap(cs -> disputes.findById(id)
                         .switchIfEmpty(fail(404, "争议不存在"))
-                        // 客服终审范围：已上诉（panel 判决+上诉）或升级（超轮无判决，appeal_state=escalated）。
+                        // 客服终审范围：已上诉（panel 判决+上诉）或升级（超轮无判决，appeal_state=escalated）；
+                        // 或 merchant_rejection（D-03 §2 商家拒绝核实通过履约，open 态直送客服，不走面板）。
                         .filter(d -> "appealed".equals(d.status())
-                                || ("voting".equals(d.status()) && "escalated".equals(d.appealState())))
+                                || ("voting".equals(d.status()) && "escalated".equals(d.appealState()))
+                                || ("open".equals(d.status()) && "merchant_rejection".equals(d.kind())))
                         .switchIfEmpty(fail(409, "该争议不在客服终审范围"))
                         .flatMap(d -> transactions.transactional(
                                 disputes.forceFinalize(id, body.decision(), cs.accountId())  // CS 覆盖终局

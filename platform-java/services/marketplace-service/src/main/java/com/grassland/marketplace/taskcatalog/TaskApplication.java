@@ -30,5 +30,20 @@ public record TaskApplication(
          *  真正到期由 Temporal ConfirmationWindowWorkflow Timer 驱动，此列是估算展示值，不作判定依据。 */
         Instant merchantConfirmDeadlineAt,
         /** D-03 自动确认时刻。仅窗口到期 activity 写；用于区别商家手动确认并支撑 Temporal activity 崩溃重试。 */
-        Instant autoConfirmedAt
-) {}
+        Instant autoConfirmedAt,
+        /** D-03 slice 2：商家对系统核实通过履约发起异议的时刻。contest 同时设 confirmed_at，供 reconciliation 落钱。 */
+        Instant merchantRejectedAt,
+        /** 商家拒绝理由（客服裁定证据摘要）。 */
+        String rejectionReason,
+        /** trust merchant_rejection dispute id（轮询/客服案件定位）。 */
+        String merchantRejectionDisputeId
+) {
+    /** 兼容既有测试/调用方的 D-03 core slice 构造器；未发生商家异议时新增字段均为空。 */
+    public TaskApplication(
+            String id, String taskId, String recommenderAccountId, String status, String note,
+            String reviewedByAccountId, Instant decidedAt, Instant createdAt, Instant updatedAt,
+            Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt) {
+        this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
+                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, null, null, null);
+    }
+}

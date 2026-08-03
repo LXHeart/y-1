@@ -26,10 +26,11 @@ public class ConfirmationWorkflowStarter {
     }
 
     public Mono<String> start(String applicationId, String submissionId,
-                              String organizationId, long windowSeconds) {
+                              String organizationId, long windowSeconds, long reminderLeadSeconds) {
         String workflowId = workflowId(submissionId);
         ConfirmationInput input = new ConfirmationInput(
-                applicationId, submissionId, organizationId, Math.max(0, windowSeconds));
+                applicationId, submissionId, organizationId,
+                Math.max(0, windowSeconds), Math.max(0, reminderLeadSeconds));
         return Mono.fromCallable(() -> {
             ConfirmationWindowWorkflow stub = workflowClient.newWorkflowStub(
                     ConfirmationWindowWorkflow.class,

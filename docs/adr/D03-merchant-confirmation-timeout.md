@@ -28,7 +28,15 @@
 - 通知：`ConfirmationWindowEntered`（提交时）+ `AutoSettledOnTimeout`（自动结算时），双方收件，ENGAGEMENT 类（identity 3-touch）。
 - V15 迁移：`task_application` 加 `merchant_confirm_deadline_at` / `auto_confirmed_at`；`engagement_submission` 加 `confirmation_workflow_started_at`（补启标记）。
 - 验证：marketplace **304 tests**（+17 D-03：ConfirmationActivityImplTest 7 / ConfirmationWindowWorkflowReplayTest 4 / ConfirmationWindowDispatcherTest 6 + ApplicationControllerIT 2）+ identity **247 tests** 全绿；bootJar 绿。
-- **仍延后（slice 2）**：规则 3（reject→客服裁定：新 reject 端点 + ops_case + dispute kind 列 + 客服 SLA）、规则 4（补证次数上限 2）、cancel 主动退款未提交 engagement、Expire-24h 通知（需窗口中段 Temporal signal）。
+- **slice 2 已实现（2026-08-03，待本轮全量验证/commit）**：规则 3/4 + cancel + 第三触达全部接线：
+  - **拒绝→客服**：`POST .../contest` 仅允许当前 submission 的系统核验 `passed`；marketplace 以服务断言幂等开 `kind=merchant_rejection` trust 争议，同事务把 submission 置 accepted、application 写 `merchant_rejected_at/rejection_reason/dispute_id`（`confirmed_at` 仅作争议终局 reconciliation 资金门控）、登记 high severity `ops_case`、发 `MerchantContested`。普通 confirm/轮询优先 surfacing `contested`，不会误报普通确认。
+  - **客服 SLA**：`MerchantRejectionReviewWorkflow` 等待默认 259200 秒（可配；首期按 3 个自然日近似 ADR 的 3 个工作日，法定节假日日历待后续接入）后调用 trust 内部 `auto-finalize`；客服可在 open merchant_rejection 案上直接 MFA 终审，超时默认 `for_recommender`。该 kind 禁走旧 merchant `/decide` 与 7 官面板；终局复用既有 `DisputeFinalized → settlement_reconciliation → Finance reconcile`，reserved 态双向均已支持（for_merchant→release / for_recommender→capture），不新写钱侧逻辑。
+  - **补证上限**：按 `engagement_submission.status='rejected'` 计数，默认 2；第 3 次退回 409，当前 submission 留 submitted，确认窗口继续收敛。
+  - **cancel 主动退款**：仅 `accepted + NOT EXISTS submission` 的 engagement 走既有 finance release；失败返回 5xx，cancelled 重试会继续退款；submission INSERT 与 task cancel 用 task 行锁串行化，避免「已退款又补交」。已提交/核实履约不退款、照常结算。
+  - **Expire-24h**：confirmation workflow 在剩余 `reminderLeadSeconds`（默认 86400）发 `ConfirmationWindowExpiring`；dispatcher 最后 24h 补启会立即提醒；确定性 eventId 防重。三类窗口通知均邮件+站内、双方收件。
+  - 迁移：marketplace V16（`merchant_rejected_at/rejection_reason/merchant_rejection_dispute_id`）；trust V5（`dispute_case.kind`）。
+  - 验证：marketplace **317 tests**（304→317）+ trust **98 tests**（96→98）+ identity **249 tests**（247→249）全绿，三服务 bootJar 绿；`docker compose config` 通过。窗口/SLA 时间驱动主链路仍只在 Timer 单测与 replay 层覆盖，容器级 e2e 未跑。
+- **仍延后**：merchant cancel 的 trust 声誉计数消费者（本轮已发 `EngagementRefundedOnCancel(reason=merchant_cancel)` 事件，D-05 声誉模块未建）；merchant_rejection 的客服 UI 专用快捷入口（ops_case sourceRef 已直接存 disputeId，后端可操作）。
 
 ## 背景
 

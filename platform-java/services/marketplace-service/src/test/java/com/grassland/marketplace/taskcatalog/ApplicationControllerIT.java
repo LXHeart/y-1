@@ -16,6 +16,7 @@ import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationException;
+import com.grassland.marketplace.workflow.TrustDisputeClient;
 import com.grassland.marketplace.workflow.saga.ReserveResult;
 import java.net.URI;
 import java.time.Instant;
@@ -67,6 +68,10 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** intelligence AI 视觉核验出站边界替身（Verification Stage 4）：按用例桩 analyze；真实现调 intelligence。 */
     @MockitoBean
     private IntelligenceVerificationClient verificationClient;
+
+    /** trust 出站边界替身（D-03 contest）：开 merchant_rejection / SLA auto-finalize。 */
+    @MockitoBean
+    private TrustDisputeClient trustDisputeClient;
 
     // ---------- apply ----------
 
@@ -423,6 +428,62 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.status").isEqualTo("confirmed");
     }
 
+    // ---------- 商家取消任务主动退款（D-03 §5） ----------
+
+    /** cancel 任务 → 已 accept 未提交凭证的 engagement 全额返还商家（finance release）+ 事件 + refundedCount=1。 */
+    @Test
+    void cancelRefundsAcceptedNoSubmissionEngagement() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.release(org, app)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        // 未提交凭证即取消 → 退款该 engagement
+        client().post().uri("/api/tasks/" + task + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("cancelled")
+                .jsonPath("$.data.refundedCount").isEqualTo(1);
+
+        verify(financeClient).release(org, app);
+        assertThat(outboxCountByType("EngagementRefundedOnCancel")).isGreaterThanOrEqualTo(1);
+    }
+
+    /** 已提交凭证的 engagement 不被退款（照常结算）；cancel 后任务不再接受新提交 → 409。 */
+    @Test
+    void submitRejectedOnCancelledTask() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.release(org, app)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        // 取消任务（该 engagement 未提交 → 被退款）
+        client().post().uri("/api/tasks/" + task + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+
+        // 取消后提交履约 → 409
+        submitRaw(recommender, task, app, "https://example.com/late").expectStatus().isEqualTo(409);
+    }
+
     // ---------- 履约交付物（V5） ----------
 
     /**
@@ -470,6 +531,76 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.submissions.length()").isEqualTo(2)
                 .jsonPath("$.data.submissions[0].status").isEqualTo("accepted");
+    }
+
+    /**
+     * D-03 规则 4：补证（退回重交）上限 2 次。第 3 次退回 → 409，submission 留 submitted，
+     * 确认窗口照常跑到自动结算（不再允许补证）。
+     */
+    @Test
+    void rejectDeliverableCappedAtTwoSupplements() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        String merchantHeader = sign(merchant, "merchant", org, "basic_publish");
+        // 补证 1：提交 → 退回
+        String s1 = submit(recommender, task, app);
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + s1 + "/reject")
+                .header("X-Grassland-Identity", merchantHeader)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "补证1"))
+                .exchange().expectStatus().isOk();
+        // 补证 2：重交 → 退回（达上限）
+        String s2 = submit(recommender, task, app);
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + s2 + "/reject")
+                .header("X-Grassland-Identity", merchantHeader)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "补证2"))
+                .exchange().expectStatus().isOk();
+        // 第 3 次退回 → 409（已达上限），第 3 份 submission 留 submitted
+        String s3 = submit(recommender, task, app);
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + s3 + "/reject")
+                .header("X-Grassland-Identity", merchantHeader)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "补证3"))
+                .exchange().expectStatus().isEqualTo(409);
+        // 列表（created_at DESC）：第 3 份（最新）仍 submitted，前两份 rejected ⇒ 第 3 次退回被拒
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", merchantHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.submissions.length()").isEqualTo(3)
+                .jsonPath("$.data.submissions[0].status").isEqualTo("submitted")
+                .jsonPath("$.data.submissions[1].status").isEqualTo("rejected")
+                .jsonPath("$.data.submissions[2].status").isEqualTo("rejected");
+    }
+
+    /** 退回端点 submissionId 必须属于 URL 中的 application，跨履约 IDOR → 404。 */
+    @Test
+    void rejectDeliverableRejectsForeignSubmissionId() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        String recA = UUID.randomUUID().toString();
+        String recB = UUID.randomUUID().toString();
+        String appA = apply(recA, task);
+        String appB = apply(recB, task);
+        accept(merchant, task, appA);
+        accept(merchant, task, appB);
+        String submissionA = submit(recA, task, appA);
+        submit(recB, task, appB);
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + appB
+                        + "/submissions/" + submissionA + "/reject")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "越界"))
+                .exchange().expectStatus().isNotFound();
     }
 
     /** 没有交付物就确认 → 409。此前 confirm 是凭空点的，这条守卫是本 slice 的要点。 */
@@ -796,6 +927,63 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     }
 
     // ---------- 履约核验（Verification v1 Stage 2/4） ----------
+
+    /** D-03：仅系统核实 passed 的履约可 contest，落商家异议 + ops_case + outbox，轮询显示 contested。 */
+    @Test
+    void merchantContestsVerifiedSubmissionToCustomerService() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        String submissionId = submit(rec, task, app);
+        when(linkChecker.check(anyString()))
+                .thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("passed");
+        String disputeId = UUID.randomUUID().toString();
+        when(trustDisputeClient.openMerchantRejection(org, app, merchant, "核实截图与实际不符"))
+                .thenReturn(Mono.just(disputeId));
+        when(trustDisputeClient.autoFinalizeMerchantRejection(org, disputeId)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/contest")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("reason", "核实截图与实际不符"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("contested")
+                .jsonPath("$.data.disputeId").isEqualTo(disputeId)
+                .jsonPath("$.data.reason").isEqualTo("核实截图与实际不符");
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/confirmation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("contested")
+                .jsonPath("$.data.disputeId").isEqualTo(disputeId);
+        // confirmed_at 只为 reconciliation 资金门控，普通 confirm 必须拒绝而非误报幂等成功。
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(409);
+
+        assertThat(outboxCountByType("MerchantContested")).isGreaterThanOrEqualTo(1);
+        Integer cases = db.sql("SELECT COUNT(*)::int AS c FROM ops_case"
+                        + " WHERE source_kind='merchant_rejection' AND source_ref=:dispute AND application_id=:app"
+                        + " AND severity='high'")
+                .bind("dispute", disputeId).bind("app", app).map(r -> r.get("c", Integer.class)).one().block();
+        assertThat(cases).isEqualTo(1);
+    }
+
+    /** 未核实 / 非 passed 的履约不得使用客服拒绝通道。 */
+    @Test
+    void contestRequiresPassedVerification() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        submit(rec, task, app);
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/contest")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("reason", "不同意"))
+                .exchange().expectStatus().isEqualTo(409);
+        verify(trustDisputeClient, never()).openMerchantRejection(any(), any(), any(), any());
+    }
 
     /** 商家触发核验：附件 + 链接 → link_reachability + ai_visual 两项，聚合 passed。 */
     @Test
