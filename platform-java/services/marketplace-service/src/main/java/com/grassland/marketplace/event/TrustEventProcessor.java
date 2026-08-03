@@ -97,6 +97,11 @@ public class TrustEventProcessor {
      */
     private Mono<TrustEventProcessingResult> enqueueReconciliation(
             TrustEventEnvelope source, DisputeFinalizedPayload payload) {
+        // D-03 F5：旧 merchant_rejection 已在 trust 同一事务内接续 standard successor。
+        // inbox 仍须记账去重，但旧案不能越过 successor 直接驱动资金；successor 终局事件再走正常对账。
+        if (payload.settlementDeferred()) {
+            return Mono.just(TrustEventProcessingResult.SUPPRESSED);
+        }
         String workflowId = "settlement-reconcile-" + payload.disputeId();
         return reconciliations
                 .enqueue(source.eventId(), payload.disputeId(), payload.engagementRef(),
@@ -192,11 +197,19 @@ public class TrustEventProcessor {
 
     private DisputeFinalizedPayload parseDisputeFinalized(TrustEventEnvelope envelope) {
         JsonNode payload = envelope.payload();
+        boolean settlementDeferred = optionalBoolean(payload, "settlementDeferred", false);
+        String successorDisputeId = optionalText(payload, "successorDisputeId");
+        if (settlementDeferred && (successorDisputeId == null || successorDisputeId.isBlank())) {
+            throw new EventContractException(
+                    "trust event field successorDisputeId must be a non-blank string when settlementDeferred is true");
+        }
         return new DisputeFinalizedPayload(
                 requiredText(payload, "disputeId"),
                 requiredText(payload, "engagementRef"),
                 optionalText(payload, "organizationId"),
-                requiredText(payload, "finalDecision"));
+                requiredText(payload, "finalDecision"),
+                settlementDeferred,
+                successorDisputeId);
     }
 
     private DisputeOpenedPayload parseDisputeOpened(TrustEventEnvelope envelope) {
@@ -260,6 +273,17 @@ public class TrustEventProcessor {
             throw new EventContractException("trust event field " + field + " must be a non-blank string");
         }
         return value;
+    }
+
+    private static boolean optionalBoolean(JsonNode node, String field, boolean defaultValue) {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull()) {
+            return defaultValue;
+        }
+        if (!value.isBoolean()) {
+            throw new EventContractException("trust event field " + field + " must be a boolean");
+        }
+        return value.booleanValue();
     }
 
     private static String optionalText(JsonNode node, String field) {

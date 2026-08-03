@@ -2,19 +2,16 @@ package com.grassland.marketplace.taskcatalog;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
-import com.grassland.marketplace.ops.OpsCaseRegistrar;
-import com.grassland.marketplace.ops.OpsCaseSource;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
-import com.grassland.marketplace.workflow.TrustDisputeClient;
 import com.grassland.marketplace.workflow.saga.AcceptanceInput;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
 import com.grassland.marketplace.workflow.saga.ConfirmationWorkflowStarter;
-import com.grassland.marketplace.workflow.saga.MerchantRejectionReviewWorkflowStarter;
+import com.grassland.marketplace.workflow.saga.MerchantContestCoordinator;
 import com.grassland.marketplace.workflow.saga.SettlementInput;
 import com.grassland.marketplace.workflow.saga.SettlementWindowWorkflow;
 import io.temporal.client.WorkflowClient;
@@ -86,14 +83,11 @@ public class ApplicationController {
     private final RatingRepository ratings;
     private final WorkflowClient workflowClient;
     private final ConfirmationWorkflowStarter confirmationWorkflows;
-    private final MerchantRejectionReviewWorkflowStarter rejectionWorkflows;
-    private final TrustDisputeClient trustDisputes;
-    private final OpsCaseRegistrar opsCases;
+    private final MerchantContestCoordinator contests;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
     private final long settlementWindowSeconds;
     private final long confirmationWindowSeconds;
     private final long confirmationReminderLeadSeconds;
-    private final long customerServiceSlaSeconds;
     private final int supplementCap;
     private final TransactionalOperator transactions;
 
@@ -108,14 +102,11 @@ public class ApplicationController {
                                  RatingRepository ratings,
                                  WorkflowClient workflowClient,
                                  ConfirmationWorkflowStarter confirmationWorkflows,
-                                 MerchantRejectionReviewWorkflowStarter rejectionWorkflows,
-                                 TrustDisputeClient trustDisputes,
-                                 OpsCaseRegistrar opsCases,
+                                 MerchantContestCoordinator contests,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
                                  @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds,
                                  @Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
                                  @Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
-                                 @Value("${marketplace.confirmation.cs-sla-seconds:259200}") long customerServiceSlaSeconds,
                                  @Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap,
                                  TransactionalOperator transactions) {
         this.callers = callers;
@@ -131,14 +122,11 @@ public class ApplicationController {
         this.ratings = ratings;
         this.workflowClient = workflowClient;
         this.confirmationWorkflows = confirmationWorkflows;
-        this.rejectionWorkflows = rejectionWorkflows;
-        this.trustDisputes = trustDisputes;
-        this.opsCases = opsCases;
+        this.contests = contests;
         this.reconciliations = reconciliations;
         this.settlementWindowSeconds = settlementWindowSeconds;
         this.confirmationWindowSeconds = confirmationWindowSeconds;
         this.confirmationReminderLeadSeconds = Math.max(0, confirmationReminderLeadSeconds);
-        this.customerServiceSlaSeconds = Math.max(0, customerServiceSlaSeconds);
         this.supplementCap = Math.max(0, supplementCap);
         this.transactions = transactions;
     }
@@ -371,11 +359,8 @@ public class ApplicationController {
     }
 
     /**
-     * 商家拒绝「系统核实通过」的履约（D-03 §2）→ 不直接退款，转客服终审。
-     *
-     * <p>仅当前 submitted 凭证有 verification.status=passed 时可用；failed 走补证，inconclusive 可确认/等待。
-     * 先经 trust 幂等开 merchant_rejection dispute，再事务内 contest（同时设 confirmed_at + 异议标记）+
-     * ops_case + MerchantContested outbox，最后启动客服 SLA workflow。客服超时默认 for_recommender。
+     * 商家拒绝「系统核实通过」的履约（D-03 §2）→ 先取得本地 durable contest 门闩，再转客服终审。
+     * 门闩与 manual/auto confirm 更新同一 application 行；一旦提交，Timer 即使尚未读到 trust 案也不得 capture。
      */
     @PostMapping("/api/tasks/{id}/applications/{appId}/contest")
     public Mono<ResponseEntity<Map<String, Object>>> contest(
@@ -385,11 +370,9 @@ public class ApplicationController {
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
                         .flatMap(task -> loadAcceptedApp(id, appId)
                                 .flatMap(app -> {
-                                    if (app.merchantRejectedAt() != null) {
-                                        // 前次可能已落 contest 但 Temporal start 失败；重复请求用持久 disputeId 重启 SLA workflow。
-                                        return rejectionWorkflows.start(app.id(), app.merchantRejectionDisputeId(),
-                                                        task.organizationId(), customerServiceSlaSeconds)
-                                                .thenReturn(contestedResponse(app));
+                                    if (app.contestRequestedAt() != null) {
+                                        // durable claim 已落：重复请求继续未完成的 trust/本地/SLA 步骤。
+                                        return contests.dispatch(app, task).map(this::contestedResponse);
                                     }
                                     if (app.confirmedAt() != null) {
                                         return fail(409, "该履约已确认，不能再发起拒绝");
@@ -403,57 +386,13 @@ public class ApplicationController {
                                             .flatMap(submission -> verifications.findBySubmission(submission.id())
                                                     .filter(v -> "passed".equalsIgnoreCase(v.status()))
                                                     .switchIfEmpty(fail(409, "仅系统核实通过的履约可转客服拒绝"))
-                                                    .flatMap(v -> trustDisputes.openMerchantRejection(
-                                                            task.organizationId(), app.id(), merchant.accountId(), body.reason()))
-                                                    .flatMap(disputeId -> transactions.transactional(
-                                                                    submissions.review(submission.id(), SubmissionStatus.ACCEPTED, null)
-                                                                            // Timer 可能在 trust 开案后抢先接受本 submission；accepted 视作幂等成功。
-                                                                            .switchIfEmpty(submissions.findById(submission.id())
-                                                                                    .filter(s -> SubmissionStatus.ACCEPTED.dbValue().equals(s.status())))
-                                                                            .switchIfEmpty(fail(409, "该履约凭证状态已变"))
-                                                                            .then(apps.contest(app.id(), task.id(), disputeId, body.reason()))
-                                                                            .switchIfEmpty(fail(409, "该履约状态已变"))
-                                                                            .flatMap(contested -> opsCases.register(
-                                                                                            OpsCaseSource.MERCHANT_REJECTION,
-                                                                                            disputeId, task.organizationId(),
-                                                                                            contested.id(), body.reason())
-                                                                                    .then(outbox.append(merchantContestedEnvelope(
-                                                                                            contested, submission.id(), disputeId,
-                                                                                            task.ownerAccountId())))
-                                                                                    .thenReturn(contested)))
-                                                            // then + defer：事务 Mono 的 onNext 早于 commit 完成，
-                                                            // 只有 onComplete 之后回读才能看到已提交行（补偿判定依赖这一点）。
-                                                            .then(Mono.defer(() -> apps.findById(app.id())))
-                                                            .flatMap(contested -> rejectionWorkflows.start(
-                                                                            contested.id(), disputeId,
-                                                                            task.organizationId(), customerServiceSlaSeconds)
-                                                                    .thenReturn(contested))
-                                                            // trust 开案在 marketplace 事务之外，故失败需补偿——但**必须先回读本地状态**：
-                                                            // 只有本地事务未提交（无异议标记）时才 auto-finalize，避免留下「trust 有案、
-                                                            // marketplace 无异议标记」的悬挂争议（它会经 DisputeChecker 无限期 hold 结算）。
-                                                            // 若本地已提交、仅 Temporal 启窗失败（或并发请求已抢先 contest），auto-finalize
-                                                            // 会**在无客服裁定的情况下把商家异议直接判给推荐官**——即把一次基础设施抖动
-                                                            // 变成一个不可逆的资金裁决。此时照抛原错误：重试走 merchantRejectedAt != null
-                                                            // 分支补启 SLA workflow，且 ops_case 已登记（high severity，运营可见）。
-                                                            .onErrorResume(failure -> apps.findById(app.id())
-                                                                    .filter(current -> disputeId.equals(
-                                                                            current.merchantRejectionDisputeId()))
-                                                                    .flatMap(committed -> {
-                                                                        log.warn("merchant rejection committed but post-commit step failed;"
-                                                                                        + " NOT auto-finalizing app={} dispute={}",
-                                                                                app.id(), disputeId, failure);
-                                                                        return Mono.<TaskApplication>error(failure);
-                                                                    })
-                                                                    // defer：补偿只在真正走到该分支时才发起（装配期不得触发出站调用）。
-                                                                    .switchIfEmpty(Mono.defer(() -> trustDisputes
-                                                                            .autoFinalizeMerchantRejection(task.organizationId(), disputeId)
-                                                                            .onErrorResume(cleanupFailure -> {
-                                                                                log.warn("merchant rejection cleanup failed app={} dispute={}",
-                                                                                        app.id(), disputeId, cleanupFailure);
-                                                                                return Mono.empty();
-                                                                            })
-                                                                            .then(Mono.<TaskApplication>error(failure)))))))
-                                            .map(this::contestedResponse);
+                                                    // claim 自身单独提交后才允许任何远端动作；与 Timer 的 guarded update 决胜。
+                                                    .then(transactions.transactional(
+                                                            apps.claimContest(app.id(), task.id(), body.reason())
+                                                                    .switchIfEmpty(fail(409, "该履约状态已变"))))
+                                                    .then(Mono.defer(() -> apps.findById(app.id())))
+                                                    .flatMap(claimed -> contests.dispatch(claimed, task))
+                                                    .map(this::contestedResponse));
                                 })));
     }
 
@@ -477,8 +416,8 @@ public class ApplicationController {
         return callers.requireMerchant(request)
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
                         .flatMap(task -> loadAcceptedApp(id, appId)
-                                // 商家已发起拒绝争议 → 不允许再走普通确认；confirmed_at 仅为 reconciliation 资金门控。
-                                .flatMap(app -> app.merchantRejectedAt() != null
+                                // contest claim 一旦落地即不允许普通确认；不必等待 trust 案/merchant_rejected_at 完成。
+                                .flatMap(app -> app.contestRequestedAt() != null
                                         ? fail(409, "已发起争议，无法确认")
                                         // 已由商家/自动路径确认 → 幂等 200，不再启动第二个 SettlementWindow。
                                         : app.confirmedAt() != null
@@ -658,6 +597,10 @@ public class ApplicationController {
     }
 
     private ResponseEntity<Map<String, Object>> confirmationOutcome(TaskApplication app) {
+        if (app.contestRequestedAt() != null && app.merchantRejectedAt() == null) {
+            return ok(Map.of("applicationId", app.id(), "status", "contest_pending", "reason",
+                    app.rejectionReason() == null ? "" : app.rejectionReason()));
+        }
         if (app.merchantRejectedAt() != null) {
             return contestedResponse(app);
         }
@@ -843,26 +786,6 @@ public class ApplicationController {
         String eventId = UUID.nameUUIDFromBytes(
                 (eventType + ":" + submissionId).getBytes(StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(eventId, eventType, "TaskApplication",
-                app.id(), 1, Instant.now(), null, payload);
-    }
-
-    /** D-03 商家拒绝转客服通知：确定性 eventId，携 disputeId 与双方账号。 */
-    private EventEnvelope merchantContestedEnvelope(
-            TaskApplication app, String submissionId, String disputeId, String taskOwnerId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("taskId", app.taskId());
-        payload.put("applicationId", app.id());
-        payload.put("submissionId", submissionId);
-        payload.put("disputeId", disputeId);
-        payload.put("recommenderAccountId", app.recommenderAccountId());
-        payload.put("status", "contested");
-        payload.put("reason", app.rejectionReason());
-        if (taskOwnerId != null) {
-            payload.put("taskOwnerId", taskOwnerId);
-        }
-        String eventId = UUID.nameUUIDFromBytes(
-                ("MerchantContested:" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
-        return new EventEnvelope(eventId, "MerchantContested", "TaskApplication",
                 app.id(), 1, Instant.now(), null, payload);
     }
 

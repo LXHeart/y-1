@@ -41,15 +41,21 @@ public class DisputeController {
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final MarketplaceEngagementAuthorizationClient authorizer;
+    private final DeferredDisputeRequestRepository deferredRequests;
+    private final MerchantRejectionFinalizer merchantRejectionFinalizer;
 
     public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
                              TransactionalOperator transactions,
-                             MarketplaceEngagementAuthorizationClient authorizer) {
+                             MarketplaceEngagementAuthorizationClient authorizer,
+                             DeferredDisputeRequestRepository deferredRequests,
+                             MerchantRejectionFinalizer merchantRejectionFinalizer) {
         this.callers = callers;
         this.disputes = disputes;
         this.outbox = outbox;
         this.transactions = transactions;
         this.authorizer = authorizer;
+        this.deferredRequests = deferredRequests;
+        this.merchantRejectionFinalizer = merchantRejectionFinalizer;
     }
 
     @PostMapping("/api/trust/disputes")
@@ -63,7 +69,9 @@ public class DisputeController {
         return callers.resolve(request)
                 .flatMap(caller -> {
                     if (caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)) {
-                        return openForMarketplaceService(body, caller.organizationId());
+                        return openForMarketplaceService(body, caller.organizationId())
+                                .map(o -> response(o.created() ? HttpStatus.CREATED : HttpStatus.OK,
+                                        toBody(o.dispute())));
                     }
                     if (!caller.isMerchant() && !caller.isRecommender()) {
                         return fail(403, "需要商家或推荐官身份");
@@ -71,11 +79,9 @@ public class DisputeController {
                     // 终端用户路径：authorizer 校验当事方 + 取 canonical org。
                     return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
                             .switchIfEmpty(fail(403, "无权对该履约开争议"))
-                            .flatMap(auth -> openOrCreate(auth.engagementRef(), auth.organizationId(),
-                                    caller.accountId(), caller.activeIdentityType(), body.reason(), "standard"));
-                })
-                .map(o -> ResponseEntity.status(o.created() ? HttpStatus.CREATED : HttpStatus.OK)
-                        .body(Map.of("success", true, "data", toBody(o.dispute()))));
+                            .flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(),
+                                    caller.accountId(), caller.activeIdentityType(), body.reason()));
+                });
     }
 
     /** marketplace 服务断言代商家开 merchant_rejection 争议（D-03 §2）。仅允许该 kind；openedBy/org 取请求体。 */
@@ -108,36 +114,73 @@ public class DisputeController {
                         .switchIfEmpty(Mono.error(new TrustException(409, "开争议失败，请重试")))));
     }
 
-    /** 幂等开争议：既有活跃 → 200；否则事务内 create + outbox DisputeOpened → 201。 */
-    private Mono<Opened> openOrCreate(String engagementRef, String organizationId, String openedBy,
-                                       String role, String reason, String kind) {
+    /** 用户普通争议：无活跃案则即时创建；推荐官遇 merchant_rejection 时持久化 deferred request。 */
+    private Mono<ResponseEntity<Map<String, Object>>> openOrDefer(
+            String engagementRef, String organizationId, String openedBy, String role, String reason) {
         return disputes.findActiveByEngagementRef(engagementRef)
-                .flatMap(d -> {
-                    if ("merchant_rejection".equals(d.kind()) && "standard".equals(kind)) {
-                        return Mono.error(new TrustException(409, "该履约已有商家履约异议，当前仅支持客服终审（案号：" + d.id() + "）。"));
+                .flatMap(active -> {
+                    if ("merchant_rejection".equals(active.kind())) {
+                        if (!"recommender".equals(role)) {
+                            return fail(409, "该履约已有商家履约异议，须等待客服终审");
+                        }
+                        return deferredRequests.findBySourceAndRecommender(active.id(), openedBy)
+                                .map(existing -> response(HttpStatus.OK, deferredBody(existing)))
+                                .switchIfEmpty(transactions.transactional(
+                                                deferredRequests.createOrFind(active, openedBy, reason))
+                                        .then(Mono.defer(() -> deferredRequests
+                                                .findBySourceAndRecommender(active.id(), openedBy)))
+                                        .map(created -> response(HttpStatus.ACCEPTED, deferredBody(created))));
                     }
-                    if ("standard".equals(d.kind()) && "merchant_rejection".equals(kind)) {
-                        return Mono.error(new TrustException(409, "该履约已有普通活跃争议，无法转为商家履约异议。"));
-                    }
-                    return Mono.just(new Opened(d, false));
+                    return Mono.just(response(HttpStatus.OK, toBody(active)));
                 })
                 .switchIfEmpty(transactions.transactional(
-                        disputes.create(engagementRef, organizationId, openedBy, role, reason, kind)
-                                .<Opened>map(d -> new Opened(d, true))
-                                .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
-                                        .thenReturn(opened))))
-                // 同上：并发撞唯一键回读既有活跃争议，避免空 200 体。
-                .switchIfEmpty(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)
-                        .flatMap(d -> {
-                            if ("merchant_rejection".equals(d.kind()) && "standard".equals(kind)) {
-                                return Mono.error(new TrustException(409, "该履约已有商家履约异议，当前仅支持客服终审（案号：" + d.id() + "）。"));
+                                disputes.create(engagementRef, organizationId, openedBy, role, reason, "standard")
+                                        .flatMap(created -> outbox.append(envelope("DisputeOpened", created))
+                                                .thenReturn(created)))
+                        .then(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)))
+                        .flatMap(created -> {
+                            if ("merchant_rejection".equals(created.kind())) {
+                                // create 并发输给 merchant rejection：按同一 deferred 语义恢复。
+                                if (!"recommender".equals(role)) {
+                                    return fail(409, "该履约已有商家履约异议，须等待客服终审");
+                                }
+                                return transactions.transactional(
+                                                deferredRequests.createOrFind(created, openedBy, reason))
+                                        .then(Mono.defer(() -> deferredRequests
+                                                .findBySourceAndRecommender(created.id(), openedBy)))
+                                        .map(request -> response(HttpStatus.ACCEPTED, deferredBody(request)));
                             }
-                            if ("standard".equals(d.kind()) && "merchant_rejection".equals(kind)) {
-                                return Mono.error(new TrustException(409, "该履约已有普通活跃争议，无法转为商家履约异议。"));
-                            }
-                            return Mono.just(new Opened(d, false));
-                        })
-                        .switchIfEmpty(Mono.error(new TrustException(409, "开争议失败，请重试")))));
+                            boolean ownCreation = openedBy.equals(created.openedByAccountId());
+                            return Mono.just(response(ownCreation ? HttpStatus.CREATED : HttpStatus.OK, toBody(created)));
+                        }));
+    }
+
+    private Map<String, Object> deferredBody(DeferredDisputeRequest request) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("status", request.status());
+        m.put("requestId", request.id());
+        m.put("engagementRef", request.engagementRef());
+        m.put("reason", request.reason() == null ? "" : request.reason());
+        m.put("disputeId", request.promotedDisputeId() == null ? "" : request.promotedDisputeId());
+        m.put("workflowId", request.adjudicationWorkflowId() == null ? "" : request.adjudicationWorkflowId());
+        return m;
+    }
+
+    private ResponseEntity<Map<String, Object>> response(HttpStatus status, Map<String, Object> data) {
+        return ResponseEntity.status(status).body(Map.of("success", true, "data", data));
+    }
+
+    @GetMapping("/api/trust/dispute-requests/{requestId}")
+    public Mono<ResponseEntity<Map<String, Object>>> getRequest(
+            @PathVariable String requestId, ServerHttpRequest request) {
+        return callers.resolvePartyOrService(request, TrustCallerResolver.MARKETPLACE_SERVICE)
+                .flatMap(caller -> deferredRequests.findById(requestId)
+                        .switchIfEmpty(fail(404, "争议请求不存在"))
+                        .filter(r -> r.recommenderAccountId().equals(caller.accountId())
+                                || caller.isCustomerService()
+                                || caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE))
+                        .switchIfEmpty(fail(403, "无权查询该争议请求"))
+                        .map(r -> response(HttpStatus.OK, deferredBody(r))));
     }
 
     @PostMapping("/api/trust/disputes/{id}/decide")
@@ -191,15 +234,12 @@ public class DisputeController {
                                 return fail(409, "仅 merchant_rejection 争议可自动终局");
                             }
                             if ("final".equals(d.status())) {
-                                return Mono.just(d);  // 已终局 → 幂等
+                                return Mono.just(new MerchantRejectionFinalizer.Finalization(d, null, null));
                             }
-                            return transactions.transactional(
-                                    disputes.forceFinalize(id, "for_recommender", null)
-                                            .flatMap(fin -> outbox.append(envelope("DisputeFinalized", fin)).thenReturn(fin))
-                                            // 并发调用已先终局：回读，不用旧 open 快照误发第二条终局事件。
-                                            .switchIfEmpty(disputes.findById(id)));
+                            return merchantRejectionFinalizer.finalizeCase(d, "for_recommender", null);
                         }))
-                .map(d -> ResponseEntity.ok(Map.of("success", true, "data", toBody(d))));
+                .map(result -> ResponseEntity.ok(Map.of(
+                        "success", true, "data", toBody(result.finalized()))));
     }
 
     private EventEnvelope envelope(String eventType, DisputeCase d) {

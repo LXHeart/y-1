@@ -79,6 +79,7 @@ public abstract class TrustItSupport {
         r.add("identity-assertion.audience", () -> "grassland-internal");
         // 6C 起 trust-service 引入 Temporal：IT 用内存 test-server（免 temporal 容器），镜像 marketplace。
         r.add("spring.temporal.test-server.enabled", () -> "true");
+        r.add("trust.adjudication.dispatcher.enabled", () -> "false");
     }
 
     protected WebTestClient client() {

@@ -67,6 +67,57 @@ class TrustEventProcessorTest {
     }
 
     @Test
+    void deferredMerchantCaseFinalizationIsInboxProcessedWithoutReconciliation() {
+        ConsumerRecord<String, String> record = record(deferredFinalizedEnvelope("event-deferred"));
+        stubInboxInserted(record, true);
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.SUPPRESSED)
+                .verifyComplete();
+
+        verify(reconciliations, never()).enqueue(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void duplicateDeferredFinalizationRemainsDuplicateWithoutReconciliation() {
+        ConsumerRecord<String, String> record = record(deferredFinalizedEnvelope("event-deferred-duplicate"));
+        stubInboxInserted(record, false);
+
+        StepVerifier.create(processor.process(record))
+                .expectNext(TrustEventProcessingResult.DUPLICATE)
+                .verifyComplete();
+
+        verify(reconciliations, never()).enqueue(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void deferredFlagMustBeBooleanAndNameItsSuccessor() {
+        String nonBoolean = """
+                {"eventId":"event-bad-flag","eventType":"DisputeFinalized","aggregateType":"DisputeCase","aggregateId":"d-1",
+                 "payload":{"disputeId":"d-1","engagementRef":"app-42","finalDecision":"for_recommender",
+                            "settlementDeferred":"true","successorDisputeId":"d-2"}}
+                """;
+        String missingSuccessor = """
+                {"eventId":"event-no-successor","eventType":"DisputeFinalized","aggregateType":"DisputeCase","aggregateId":"d-1",
+                 "payload":{"disputeId":"d-1","engagementRef":"app-42","finalDecision":"for_recommender",
+                            "settlementDeferred":true}}
+                """;
+
+        StepVerifier.create(processor.process(record(nonBoolean)))
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(EventContractException.class)
+                        .hasMessageContaining("settlementDeferred"))
+                .verify();
+        StepVerifier.create(processor.process(record(missingSuccessor)))
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(EventContractException.class)
+                        .hasMessageContaining("successorDisputeId"))
+                .verify();
+
+        verify(inbox, never()).recordIfAbsent(any(), any(), any(), any());
+    }
+
+    @Test
     void duplicateInboxRecordDoesNotEnqueue() {
         ConsumerRecord<String, String> record = record(envelope("event-1", "DisputeFinalized", "app-42", "for_merchant"));
         when(inbox.recordIfAbsent(
@@ -366,6 +417,14 @@ class TrustEventProcessorTest {
                 + (decision == null ? "" : ",\"finalDecision\":\"" + decision + "\"") + "}";
         return "{\"eventId\":\"" + eventId + "\",\"eventType\":\"" + eventType
                 + "\",\"aggregateType\":\"DisputeCase\",\"aggregateId\":\"d-1\",\"payload\":" + payload + "}";
+    }
+
+    private String deferredFinalizedEnvelope(String eventId) {
+        return """
+                {"eventId":"%s","eventType":"DisputeFinalized","aggregateType":"DisputeCase","aggregateId":"d-1",
+                 "payload":{"disputeId":"d-1","engagementRef":"app-42","organizationId":"org-1",
+                            "finalDecision":"for_recommender","settlementDeferred":true,"successorDisputeId":"d-2"}}
+                """.formatted(eventId);
     }
 
     /** DisputeOpened 记录：disputeId/engagementRef 必填，openedByAccountId/openedByRole 携带对方解析所需。 */

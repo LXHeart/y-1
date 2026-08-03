@@ -1,6 +1,7 @@
 package com.grassland.marketplace.workflow;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -25,12 +26,15 @@ public class TrustDisputeClient {
 
     private final WebClient webClient;
     private final ServiceAssertionIssuer issuer;
+    private final ObjectMapper objectMapper;
     private final String headerName;
 
     public TrustDisputeClient(ServiceAssertionIssuer issuer,
+                              ObjectMapper objectMapper,
                               @Value("${trust.service.base-url:http://trust-service:8085}") String baseUrl,
                               @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
+        this.objectMapper = objectMapper;
         this.headerName = headerName;
         this.webClient = WebClient.builder().baseUrl(baseUrl).build();
     }
@@ -75,8 +79,8 @@ public class TrustDisputeClient {
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     if (code == 200 || code == 201) {
-                        return resp.bodyToMono(JsonNode.class)
-                                .map(json -> json.path("data").path("id").asText())
+                        return resp.bodyToMono(String.class)
+                                .map(this::disputeId)
                                 .filter(id -> !id.isBlank())
                                 .switchIfEmpty(Mono.error(new IllegalStateException(
                                         "trust merchant-rejection response missing dispute id")));
@@ -85,6 +89,14 @@ public class TrustDisputeClient {
                             .flatMap(b -> Mono.<String>error(new IllegalStateException(
                                     "trust merchant-rejection failed: HTTP " + code + ": " + b)));
                 });
+    }
+
+    private String disputeId(String body) {
+        try {
+            return objectMapper.readTree(body).path("data").path("id").asText();
+        } catch (JsonProcessingException failure) {
+            throw new IllegalStateException("trust merchant-rejection response is not valid JSON", failure);
+        }
     }
 
     /** D-03 客服 SLA 超时：仅 merchant_rejection；trust 幂等终局为 for_recommender。 */

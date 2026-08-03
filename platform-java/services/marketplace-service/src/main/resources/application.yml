@@ -81,6 +81,11 @@ marketplace:
     dispatcher-enabled: ${MARKETPLACE_CONFIRMATION_DISPATCHER_ENABLED:true}
     dispatcher-poll-ms: ${MARKETPLACE_CONFIRMATION_DISPATCHER_POLL_MS:2000}
     dispatcher-batch-size: ${MARKETPLACE_CONFIRMATION_DISPATCHER_BATCH_SIZE:32}
+  # F6 contest durable intent 补偿派发器；与 confirmation dispatcher 分开开关，测试可独立禁用。
+  contest:
+    dispatcher-enabled: ${MARKETPLACE_CONTEST_DISPATCHER_ENABLED:true}
+    dispatcher-poll-ms: ${MARKETPLACE_CONTEST_DISPATCHER_POLL_MS:2000}
+    dispatcher-batch-size: ${MARKETPLACE_CONTEST_DISPATCHER_BATCH_SIZE:32}
   outbox:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}
@@ -146,13 +151,18 @@ identity-assertion:
       purpose: service
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE:}
-  # marketplace 验证 edge-bff 签发的用户断言（purpose=user）
+  # marketplace 验证 edge-bff 用户断言 + trust 服务断言（内部争议参与方授权）
   verify-keys:
     - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE_KID:edge-user-marketplace-v1}
       issuer: edge-bff
       purpose: user
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE_KID:trust-service-marketplace-v1}
+      issuer: trust
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 

@@ -53,8 +53,9 @@ public abstract class MarketplaceItSupport {
         // 把整个 WebFlux 服务饿死 → 所有请求「Timeout on blocking read」。
         // 各 IT 断言的是 outbox **表里的行**（见 outboxCount），从不校验真实投递，故关掉不削弱任何覆盖。
         r.add("marketplace.outbox.enabled", () -> "false");
-        // 对账派发器默认关：避免普通 IT 意外启动真实 workflow（需 trust+finance 真实可达，仅专用 IT 开启）。
+        // 对账/contest 派发器默认关：避免普通 IT 后台扫描其他用例的 durable 行；专用测试显式调用 seam。
         r.add("marketplace.reconciliation.dispatcher-enabled", () -> "false");
+        r.add("marketplace.contest.dispatcher-enabled", () -> "false");
         r.add("spring.temporal.test-server.enabled", () -> "true");
     }
 

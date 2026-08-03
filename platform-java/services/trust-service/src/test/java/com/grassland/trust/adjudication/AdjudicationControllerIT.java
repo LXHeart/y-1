@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.trust.TrustItSupport;
+import com.grassland.trust.dispute.DeferredDisputeRequest;
+import com.grassland.trust.dispute.DeferredDisputeRequestRepository;
+import com.grassland.trust.dispute.DisputeCase;
 import com.grassland.trust.dispute.DisputeCaseRepository;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -26,6 +29,9 @@ class AdjudicationControllerIT extends TrustItSupport {
 
     @Autowired
     private DisputeCaseRepository disputes;
+
+    @Autowired
+    private DeferredDisputeRequestRepository deferredRequests;
 
     private static final int PANEL_SIZE = 7;
 
@@ -362,6 +368,48 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .jsonPath("$.data.status").isEqualTo("final")
                 .jsonPath("$.data.finalDecision").isEqualTo("for_merchant");
         assertThat(outboxCount("DisputeFinalized", id)).isEqualTo(1);
+    }
+
+    @Test
+    void customerServiceFinalDecisionPromotesDeferredObjection() {
+        String merchant = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        String recommender = UUID.randomUUID().toString();
+        String engagement = UUID.randomUUID().toString();
+        DisputeCase source = disputes.create(engagement, org, merchant,
+                "merchant", "商家异议", "merchant_rejection").block();
+        DeferredDisputeRequest request = deferredRequests
+                .createOrFind(source, recommender, "  人工终审后仍需七官裁定  ").block();
+
+        client().post().uri("/api/trust/disputes/" + source.id() + "/final-decision")
+                .header("X-Grassland-Identity", signCs(UUID.randomUUID().toString(), Instant.now()))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("final")
+                .jsonPath("$.data.finalDecision").isEqualTo("for_merchant");
+
+        DeferredDisputeRequest promoted = deferredRequests.findById(request.id()).block();
+        DisputeCase successor = disputes.findById(promoted.promotedDisputeId()).block();
+        assertThat(promoted.status()).isEqualTo("promoted");
+        assertThat(promoted.adjudicationWorkflowId()).isEqualTo("adjudicate-" + successor.id());
+        assertThat(successor.kind()).isEqualTo("standard");
+        assertThat(successor.openedByAccountId()).isEqualTo(recommender);
+        assertThat(successor.openedByRole()).isEqualTo("recommender");
+        assertThat(successor.reason()).isEqualTo("  人工终审后仍需七官裁定  ");
+        assertThat(disputes.findActiveByEngagementRef(engagement).block().id()).isEqualTo(successor.id());
+        assertThat(outboxPayloadField("DisputeFinalized", source.id(), "settlementDeferred")).isEqualTo("true");
+        assertThat(outboxPayloadField("DisputeFinalized", source.id(), "successorDisputeId"))
+                .isEqualTo(successor.id());
+
+        // HTTP 重试按既有 final-decision 契约返回 409，且不生成第二个 successor / 终局事件。
+        client().post().uri("/api/trust/disputes/" + source.id() + "/final-decision")
+                .header("X-Grassland-Identity", signCs(UUID.randomUUID().toString(), Instant.now()))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isEqualTo(409);
+        Integer disputeCount = db.sql("SELECT COUNT(*)::int AS c FROM dispute_case WHERE engagement_ref = :ref")
+                .bind("ref", engagement).map(row -> row.get("c", Integer.class)).one().block();
+        assertThat(disputeCount).isEqualTo(2);
+        assertThat(outboxCount("DisputeFinalized", source.id())).isEqualTo(1);
     }
 
     @Test

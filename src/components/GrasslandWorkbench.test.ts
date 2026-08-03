@@ -182,6 +182,162 @@ describe('GrasslandWorkbench 登录态', () => {
   })
 })
 
+describe('GrasslandWorkbench 商家 contest', () => {
+  test('已接受履约显示理由输入与转客服按钮，并逐字发送理由', async () => {
+    const application = {
+      id: 'app-accepted', taskId: 'task-1', recommenderAccountId: 'acct-rec',
+      status: 'accepted', note: null, reviewedByAccountId: null, decidedAt: null, createdAt: null,
+    }
+    const task = {
+      id: 'task-1', ownerAccountId: 'acct-1', organizationId: 'org-1', title: '待核验任务',
+      description: null, status: 'published', contentForm: null, platform: null, maxSlots: 1,
+      bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
+      publishedAt: null, cancelledAt: null,
+    }
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = {}
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.includes('status=published')) {
+        data = [task]
+      } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
+        data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
+      } else if (url === '/api/tasks/task-1/applications') {
+        data = [application]
+      } else if (url.endsWith('/contest')) {
+        data = { applicationId: 'app-accepted', status: 'contested', reason: '  画面与要求不符  ', disputeId: 'dispute-1' }
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      } else if (url.startsWith('/api/reputation/')) {
+        data = { accountId: 'acct-rec', level: 'Lv1', levelTitle: '新锐', acceptedCount: 1, completedCount: 0, completionRate: 0, ratingCount: 0, averageScore: null, averageResponseSeconds: null }
+      } else if (url.includes('/profile')) {
+        data = { accountId: 'acct-rec', displayName: null, bio: null, contentTags: [], domainTags: [], socialAccounts: [], updatedAt: null }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+    await wrapper.find('button.gl-link').trigger('click')
+    await flushPromises()
+
+    const reason = wrapper.get('[aria-label="拒绝理由 app-accepted"]')
+    await reason.setValue('  画面与要求不符  ')
+    const button = wrapper.findAll('button').find((item) => item.text() === '拒绝并转客服')!
+    await button.trigger('click')
+    await flushPromises()
+
+    const request = calls.find(([url]) => url.endsWith('/contest'))!
+    expect(JSON.parse(request[1]?.body as string)).toEqual({ reason: '画面与要求不符' })
+    expect(wrapper.text()).toContain('商家异议已提交，结算已暂停并转客服裁定')
+  })
+})
+
+describe('GrasslandWorkbench deferred 争议', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function recommenderFetch(statusRequests: Array<Record<string, unknown>>) {
+    const application = {
+      id: 'app-accepted', taskId: 'task-1', recommenderAccountId: 'acct-rec',
+      status: 'accepted', note: null, reviewedByAccountId: null, decidedAt: null, createdAt: null,
+    }
+    let statusIndex = 0
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(url)
+      let data: unknown = {}
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = []
+      } else if (url.startsWith('/api/tasks/feed')) {
+        data = { items: [{
+          id: 'task-1', ownerAccountId: 'merchant-1', organizationId: 'org-1', title: '测试任务',
+          description: null, status: 'published', contentForm: null, platform: null, maxSlots: 1,
+          bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
+          publishedAt: null, cancelledAt: null,
+        }], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/task-1/applications') {
+        data = [application]
+      } else if (url === '/api/trust/disputes' && init?.method === 'POST') {
+        data = { status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '履约存在争议', disputeId: '', workflowId: '' }
+      } else if (url === '/api/trust/dispute-requests/request-1') {
+        data = statusRequests[Math.min(statusIndex++, statusRequests.length - 1)]
+      } else if (url.startsWith('/api/reputation/')) {
+        data = { accountId: 'acct-rec', level: 'Lv1', levelTitle: '新锐', acceptedCount: 1, completedCount: 0, completionRate: 0, ratingCount: 0, averageScore: null, averageResponseSeconds: null }
+      } else if (url.includes('/profile')) {
+        data = { accountId: 'acct-rec', displayName: null, bio: null, contentTags: [], domainTags: [], socialAccounts: [], updatedAt: null }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    return calls
+  }
+
+  async function reachDeferred(wrapper: ReturnType<typeof mount>): Promise<void> {
+    currentUser.value = asUser('acct-rec', 'recommender@test.local')
+    await flushPromises()
+    await wrapper.find('button.gl-link').trigger('click')
+    await flushPromises()
+    const open = wrapper.findAll('button').find((button) => button.text() === '开启争议')!
+    await open.trigger('click')
+    await flushPromises()
+  }
+
+  test('pending 时显示明确提示且不把 requestId 挂给 AdjudicationPanel', async () => {
+    recommenderFetch([{ status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' }])
+    const wrapper = mount(GrasslandWorkbench, { global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
+
+    await reachDeferred(wrapper)
+
+    expect(wrapper.get('[data-testid="deferred-dispute-status"]').text()).toContain('客服案终局后自动开普通争议')
+    expect(wrapper.find('adjudication-panel-stub').exists()).toBe(false)
+    expect((wrapper.find('#gl-disputes input').element as HTMLInputElement).value).toBe('')
+  })
+
+  test('低频轮询 promotion 后只挂载 successor disputeId', async () => {
+    const calls = recommenderFetch([
+      { status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' },
+      { status: 'promoted', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: 'dispute-2', workflowId: 'adjudicate-dispute-2' },
+    ])
+    const wrapper = mount(GrasslandWorkbench, { global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
+    await reachDeferred(wrapper)
+
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(wrapper.find('adjudication-panel-stub').exists()).toBe(false)
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(wrapper.getComponent({ name: 'AdjudicationPanel' }).props('disputeId')).toBe('dispute-2')
+    expect(calls.filter((url) => url === '/api/trust/dispute-requests/request-1')).toHaveLength(2)
+    expect(wrapper.text()).toContain('普通争议已自动开启并进入七官审判流程')
+  })
+
+  test('组件卸载后清理 pending 轮询 timer', async () => {
+    const calls = recommenderFetch([{ status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' }])
+    const wrapper = mount(GrasslandWorkbench, { global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
+    await reachDeferred(wrapper)
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(6000)
+
+    expect(calls.filter((url) => url === '/api/trust/dispute-requests/request-1')).toHaveLength(0)
+  })
+})
+
 /**
  * 通知落点（Slice 12 Stage 4）。本应用无 vue-router，故通知的 `linkPath` 落成
  * 「切到草场视图 + 滚到卡片锚点」。这里锁：锚点 id 真实存在（改卡片时别把 id 删掉）、

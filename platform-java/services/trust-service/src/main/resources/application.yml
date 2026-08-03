@@ -63,6 +63,10 @@ trust:
     vote-window-seconds: ${TRUST_ADJUDICATION_VOTE_WINDOW_SECONDS:0}
     appeal-window-seconds: ${TRUST_ADJUDICATION_APPEAL_WINDOW_SECONDS:0}
     judge-eligibility-tier: ${TRUST_ADJUDICATION_JUDGE_ELIGIBILITY_TIER:1}
+    dispatcher:
+      enabled: ${TRUST_ADJUDICATION_DISPATCHER_ENABLED:true}
+      poll-ms: ${TRUST_ADJUDICATION_DISPATCHER_POLL_MS:2000}
+      batch-size: ${TRUST_ADJUDICATION_DISPATCHER_BATCH_SIZE:32}
 
 # 跨服务调 finance（Slice 6C ReleaseHoldAndApplyDecision 出站 base url）。
 finance:

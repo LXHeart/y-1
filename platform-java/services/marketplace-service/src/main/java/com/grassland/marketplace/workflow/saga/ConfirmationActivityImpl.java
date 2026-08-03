@@ -56,6 +56,10 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
         if (app == null || !"accepted".equals(app.status())) {
             return ConfirmationOutcome.aborted();
         }
+        // contest durable claim 先赢：不依赖 trust 可见性，Timer 必须在本地直接停住且绝不 capture。
+        if (app.contestRequestedAt() != null) {
+            return ConfirmationOutcome.held("merchant_contest_requested");
+        }
         // 商家手动确认先赢（confirmed_at 有值但 auto_confirmed_at 无值）→ 由其 SettlementWindow 接管，本 workflow abort。
         if (app.confirmedAt() != null && app.autoConfirmedAt() == null) {
             return ConfirmationOutcome.aborted();

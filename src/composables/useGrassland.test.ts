@@ -97,6 +97,29 @@ describe('身份端点请求契约', () => {
   })
 })
 
+describe('商家 contest 请求契约', () => {
+  test('发送拒绝理由到 marketplace contest 端点', async () => {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({
+        success: true,
+        data: {
+          applicationId: 'app-1', status: 'contested', reason: '证据不符', disputeId: 'dispute-1',
+        },
+      }),
+    })
+    vi.stubGlobal('fetch', spy)
+    const { contestEngagement } = useGrassland()
+
+    await contestEngagement('task-1', 'app-1', '证据不符')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/tasks/task-1/applications/app-1/contest')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect(bodyOf(spy)).toEqual({ reason: '证据不符' })
+  })
+})
+
 describe('materials 解析（响应是 JSON 字符串，不是对象）', () => {
   // 浏览器实测缺陷：审核卡片直接 Object.entries(req.materials)，而后端按 materials::text
   // 返回的是 JSON **字符串** → 被逐字符展开，界面显示成一列单字（0:'{', 1:'"', …）。
@@ -338,6 +361,63 @@ describe('202 异步轮询终态判据', () => {
 
     expect(outcome).toEqual({ status: 'held', reason: 'open_dispute' })
     expect(spy).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('争议 deferred 请求契约', () => {
+  function mockFetchData(data: unknown): ReturnType<typeof vi.fn> {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data }),
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('即时开案返回 dispute 判别支，不混入 deferred request', async () => {
+    mockFetchData({
+      id: 'dispute-1', engagementRef: 'app-1', organizationId: 'org-1',
+      openedByAccountId: 'rec-1', openedByRole: 'recommender', status: 'open', kind: 'standard',
+      reason: '理由', decision: null, decidedAt: null, round: 0, version: 1,
+      appealState: 'none', finalDecision: null, createdAt: null,
+    })
+    const { openDispute } = useGrassland()
+
+    const result = await openDispute('app-1', '理由')
+
+    expect(result).toEqual(expect.objectContaining({
+      kind: 'dispute', dispute: expect.objectContaining({ id: 'dispute-1', kind: 'standard' }),
+    }))
+  })
+
+  test('deferred 响应返回 request 判别支，requestId 不会成为 dispute id', async () => {
+    mockFetchData({
+      status: 'pending', requestId: 'request-1', engagementRef: 'app-1', reason: '逐字理由',
+      disputeId: '', workflowId: '',
+    })
+    const { openDispute } = useGrassland()
+
+    const result = await openDispute('app-1', '逐字理由')
+
+    expect(result).toEqual({ kind: 'deferred', request: {
+      status: 'pending', requestId: 'request-1', engagementRef: 'app-1', reason: '逐字理由',
+      disputeId: '', workflowId: '',
+    } })
+    expect(result && result.kind === 'deferred' ? result.request.disputeId : 'wrong').toBe('')
+  })
+
+  test('getDisputeRequest 查询状态端点并编码 requestId', async () => {
+    const spy = mockFetchData({
+      status: 'promoted', requestId: 'request / 1', engagementRef: 'app-1', reason: '理由',
+      disputeId: 'dispute-2', workflowId: 'adjudicate-dispute-2',
+    })
+    const { getDisputeRequest } = useGrassland()
+
+    const result = await getDisputeRequest('request / 1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/trust/dispute-requests/request%20%2F%201')
+    expect(result?.disputeId).toBe('dispute-2')
   })
 })
 

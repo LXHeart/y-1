@@ -128,6 +128,14 @@ export interface TaskApplication {
   createdAt: string | null
 }
 
+/** 商家拒绝系统核实通过履约后的客服争议状态。 */
+export interface MerchantContestOutcome {
+  applicationId: string
+  status: 'contested'
+  reason: string
+  disputeId: string
+}
+
 /**
  * 资金预留轮询结果。compensated = 预留失败已补偿（reason 说明原因，如 insufficient_funds）。
  *
@@ -223,6 +231,7 @@ export interface EngagementRating {
 
 /** 争议状态机（5 态）。非 final 均阻塞结算。 */
 export type DisputeStatus = 'open' | 'voting' | 'decided' | 'appealed' | 'final'
+export type DisputeKind = 'standard' | 'merchant_rejection'
 
 export interface DisputeCase {
   id: string
@@ -231,6 +240,7 @@ export interface DisputeCase {
   openedByAccountId: string
   openedByRole: string
   status: DisputeStatus
+  kind: DisputeKind
   reason: string | null
   decision: string | null
   decidedAt: string | null
@@ -240,6 +250,24 @@ export interface DisputeCase {
   finalDecision: string | null
   createdAt: string | null
 }
+
+/**
+ * merchant_rejection 活跃期间推荐官异议的显式状态。pending 不暴露客服案 id；promoted 后
+ * disputeId 指向自动创建的 standard successor，workflowId 固定为 `adjudicate-<disputeId>`。
+ */
+export interface DeferredDisputeRequest {
+  status: 'pending' | 'promoted'
+  requestId: string
+  engagementRef: string
+  reason: string
+  disputeId: string
+  workflowId: string
+}
+
+/** POST /api/trust/disputes 的判别联合；requestId 绝不能当作 dispute id。 */
+export type OpenDisputeResult =
+  | { kind: 'dispute'; dispute: DisputeCase }
+  | { kind: 'deferred'; request: DeferredDisputeRequest }
 
 /** 审判快照（脱敏：不含审判官 account_id / 个票 rationale）。 */
 export interface AdjudicationSnapshot {

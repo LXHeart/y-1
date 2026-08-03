@@ -5,6 +5,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.ops.OpsCaseRegistrar;
 import com.grassland.marketplace.ops.OpsCaseSource;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
+import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -33,16 +34,19 @@ public class SettlementExecution {
     private static final Logger log = LoggerFactory.getLogger(SettlementExecution.class);
 
     private final OutboxRepository outbox;
+    private final TaskApplicationRepository applications;
     private final FinanceEscrowClient finance;
     private final DisputeChecker disputes;
     private final VerificationChecker verification;
     private final OpsCaseRegistrar opsCases;
     private final TransactionalOperator transactions;
 
-    public SettlementExecution(OutboxRepository outbox, FinanceEscrowClient finance,
-                               DisputeChecker disputes, VerificationChecker verification,
-                               OpsCaseRegistrar opsCases, TransactionalOperator transactions) {
+    public SettlementExecution(OutboxRepository outbox, TaskApplicationRepository applications,
+                               FinanceEscrowClient finance, DisputeChecker disputes,
+                               VerificationChecker verification, OpsCaseRegistrar opsCases,
+                               TransactionalOperator transactions) {
         this.outbox = outbox;
+        this.applications = applications;
         this.finance = finance;
         this.disputes = disputes;
         this.verification = verification;
@@ -56,6 +60,15 @@ public class SettlementExecution {
      */
     public SettlementOutcome captureOrHold(String organizationId, String applicationId,
                                            TaskApplication app, String taskOwnerId) {
+        // F6 本地最后门闩：controller/Timer 上游重验之后仍可能发生 contest；capture 前必须重新读 marketplace 权威行。
+        // 一旦 claim 已提交，即使 trust 案尚未创建或远端读尚不可见，也只能 hold，绝不能调用 finance。
+        TaskApplication fresh = applications.findById(applicationId).block();
+        if (fresh == null) {
+            return SettlementOutcome.aborted();
+        }
+        if (fresh.contestRequestedAt() != null) {
+            return hold(organizationId, applicationId, fresh, "merchant_contest_requested", taskOwnerId);
+        }
         if (disputes.hasOpenDispute(organizationId, applicationId)) {
             return hold(organizationId, applicationId, app, "open_dispute", taskOwnerId);  // HLD 16：结算前重查 Hold
         }

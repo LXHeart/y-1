@@ -183,6 +183,66 @@ class DisputeControllerIT extends TrustItSupport {
                 .jsonPath("$.data.kind").isEqualTo("standard");
     }
 
+    /** F5 SLA 终局：旧客服案 final 后同事务创建唯一 standard successor，并标记旧案结算延后。 */
+    @Test
+    void autoFinalizePromotesDeferredObjectionToStandardSuccessor() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String eng = UUID.randomUUID().toString();
+        when(authorizer.authorize(eq(eng), eq(recommender), eq("recommender")))
+                .thenReturn(Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(eng, org)));
+
+        Map<?, ?> opened = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of(
+                        "engagementRef", eng, "kind", "merchant_rejection",
+                        "openedByAccountId", merchant, "organizationId", org, "reason", "商家异议"))
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String sourceId = (String) ((Map<?, ?>) opened.get("data")).get("id");
+        Map<?, ?> deferred = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng, "reason", "保留我的逐字理由"))
+                .exchange().expectStatus().isAccepted().expectBody(Map.class).returnResult().getResponseBody();
+        String requestId = (String) ((Map<?, ?>) deferred.get("data")).get("requestId");
+
+        client().post().uri("/api/trust/internal/disputes/" + sourceId + "/auto-finalize")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk();
+
+        Map<?, ?> promoted = client().get().uri("/api/trust/dispute-requests/" + requestId)
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+        Map<?, ?> promotedData = (Map<?, ?>) promoted.get("data");
+        String successorId = (String) promotedData.get("disputeId");
+        assertThat(promotedData.get("status")).isEqualTo("promoted");
+        assertThat(successorId).isNotBlank();
+        assertThat(promotedData.get("workflowId")).isEqualTo("adjudicate-" + successorId);
+        assertThat(promotedData.containsKey("sourceDisputeId")).isFalse();
+
+        // successor opener 即使无 org，也可按统一 DisputeAudience 读取自己的审判快照。
+        client().get().uri("/api/trust/disputes/" + successorId + "/adjudication")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.id").isEqualTo(successorId)
+                .jsonPath("$.data.status").isEqualTo("open");
+
+        Integer active = db.sql("SELECT COUNT(*)::int AS c FROM dispute_case"
+                        + " WHERE engagement_ref = :ref AND status <> 'final'")
+                .bind("ref", eng).map(r -> r.get("c", Integer.class)).one().block();
+        String successorKind = db.sql("SELECT kind FROM dispute_case"
+                        + " WHERE engagement_ref = :ref AND status <> 'final'")
+                .bind("ref", eng).map(r -> r.get("kind", String.class)).one().block();
+        String successorReason = db.sql("SELECT reason FROM dispute_case"
+                        + " WHERE engagement_ref = :ref AND status <> 'final'")
+                .bind("ref", eng).map(r -> r.get("reason", String.class)).one().block();
+        assertThat(active).isEqualTo(1);
+        assertThat(successorKind).isEqualTo("standard");
+        assertThat(successorReason).isEqualTo("保留我的逐字理由");
+        assertThat(outboxPayloadField("DisputeFinalized", sourceId, "settlementDeferred")).isEqualTo("true");
+        assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(2);
+    }
+
     @Test
     void marketplaceServiceQueriesOpenDispute() {
         String merchant = UUID.randomUUID().toString();
@@ -267,6 +327,13 @@ class DisputeControllerIT extends TrustItSupport {
                 .exchange().expectStatus().isOk();
     }
 
+    private String outboxPayloadField(String eventType, String disputeId, String field) {
+        return db.sql("SELECT payload->>'" + field + "' AS v FROM trust_outbox"
+                        + " WHERE event_type = :et AND payload->>'disputeId' = :id")
+                .bind("et", eventType).bind("id", disputeId)
+                .map(r -> r.get("v", String.class)).one().block();
+    }
+
     private long outboxCount(String eventType, String engagementRef) {
         return db.sql("SELECT COUNT(*)::int AS c FROM trust_outbox"
                         + " WHERE event_type = :et AND payload->>'engagementRef' = :ref")
@@ -274,50 +341,60 @@ class DisputeControllerIT extends TrustItSupport {
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
     }
 
-    /**
-     * F8：推荐官尝试在活跃 merchant_rejection 期开 standard 争议 → 409（对称守卫）。
-     * 原先会返回 200 把 CS 案信息泄露给推荐官（openedByAccountId=商户，kind=merchant_rejection），
-     * 且推荐官以为争议已开、但实际 reason 被丢弃。此为真正缺陷（更甚于「重复通知」）。
-     *
-     * <p>409 消息含案号，前端可据此在 CS 终局后引导推荐官上诉 → 实现 F5 选项 C（复用既有 appeal
-     * 机制，无需新状态）。
-     */
+    /** F5：推荐官异议在客服案期间 durable deferred，保留逐字 reason；重复提交不重复记录。 */
     @Test
-    void recommenderCannotOpenStandardDisputeWhileMerchantRejectionIsActive() {
+    void recommenderObjectionIsDeferredAndIdempotentWhileMerchantRejectionIsActive() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String recommender = UUID.randomUUID().toString();
         String eng = UUID.randomUUID().toString();
-
-        // Mock authorization to pass for recommender（本测聚焦 kind 守卫，非授权逻辑）
         when(authorizer.authorize(eq(eng), eq(recommender), eq("recommender")))
                 .thenReturn(Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(eng, org)));
 
-        // 商家先开 merchant_rejection
         client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of(
-                        "engagementRef", eng, "kind", "merchant_rejection",
+                .bodyValue(Map.of("engagementRef", eng, "kind", "merchant_rejection",
                         "openedByAccountId", merchant, "organizationId", org, "reason", "系统与实际不符"))
-                .exchange()
-                .expectStatus().isCreated()
-                .expectBody()
-                .jsonPath("$.data.id").isNotEmpty()
-                .jsonPath("$.data.kind").isEqualTo("merchant_rejection");
+                .exchange().expectStatus().isCreated();
 
-        // 推荐官尝试开 standard 争议 → 409 且消息含案号
+        Map<?, ?> first = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("engagementRef", eng, "reason", "  我也不同意，证据 A/B  "))
+                .exchange().expectStatus().isAccepted().expectBody(Map.class).returnResult().getResponseBody();
+        Map<?, ?> data = (Map<?, ?>) first.get("data");
+        String requestId = (String) data.get("requestId");
+        assertThat(data.get("status")).isEqualTo("pending");
+        assertThat(data.get("reason")).isEqualTo("  我也不同意，证据 A/B  ");
+        assertThat(data.get("disputeId")).isEqualTo("");
+
         client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("engagementRef", eng, "reason", "我也不同意"))
-                .exchange()
-                .expectStatus().isEqualTo(409);
+                .bodyValue(Map.of("engagementRef", eng, "reason", "重试时的新文本不得覆盖"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.requestId").isEqualTo(requestId)
+                .jsonPath("$.data.reason").isEqualTo("  我也不同意，证据 A/B  ");
 
-        // 仍只有一条 active 案
-        long count = db.sql("SELECT COUNT(*)::int FROM dispute_case WHERE engagement_ref = :ref AND status = 'open'")
-                .bind("ref", eng).map(r -> r.get("count", Long.class)).one().block();
-        assertThat(count).isEqualTo(1);
+        client().get().uri("/api/trust/dispute-requests/" + requestId)
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("pending")
+                .jsonPath("$.data.disputeId").isEqualTo("")
+                .jsonPath("$.data.workflowId").isEqualTo("")
+                .jsonPath("$.data.sourceDisputeId").doesNotExist();
+        client().get().uri("/api/trust/dispute-requests/" + requestId)
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender", null, "basic"))
+                .exchange().expectStatus().isForbidden();
+
+        Integer requests = db.sql("SELECT COUNT(*)::int AS c FROM deferred_dispute_request WHERE engagement_ref = :ref")
+                .bind("ref", eng).map(r -> r.get("c", Integer.class)).one().block();
+        Integer active = db.sql("SELECT COUNT(*)::int AS c FROM dispute_case"
+                        + " WHERE engagement_ref = :ref AND status <> 'final'")
+                .bind("ref", eng).map(r -> r.get("c", Integer.class)).one().block();
+        assertThat(requests).isEqualTo(1);
+        assertThat(active).isEqualTo(1);
     }
 
     /**

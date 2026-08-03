@@ -5,6 +5,7 @@ import type {
   CreateMediaUploadTicketInput,
   CreateTaskInput,
   CreateDraftInput,
+  DeferredDisputeRequest,
   DisputeCase,
   EngagementRating,
   EngagementSubmission,
@@ -27,9 +28,11 @@ import type {
   OpsCaseStatus,
   OpsDltMessage,
   OpsPendingVerification,
+  OpenDisputeResult,
   CreatePermissionRequestInput,
   InvitationAcceptResult,
   LoginSession,
+  MerchantContestOutcome,
   Membership,
   MyInvitation,
   Organization,
@@ -595,6 +598,14 @@ export function useGrassland() {
   const rejectApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reject`, { method: 'POST' }))
 
+  /** 商家拒绝系统核实通过的履约，先落 marketplace contest 门闩再转客服。 */
+  const contestEngagement = (taskId: string, appId: string, reason: string) =>
+    run(() => request<MerchantContestOutcome>(
+      `/api/tasks/${taskId}/applications/${appId}/contest`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      }))
+
   /** 推荐官撤销本人 pending 报名（GL-P1-TASK-001：前端原缺入口，后端早有）。 */
   const withdrawApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/withdraw`, { method: 'POST' }))
@@ -675,12 +686,26 @@ export function useGrassland() {
 
   // ---------- trust：争议 + 审判 ----------
 
-  /** 开争议（engagementRef = marketplace applicationId）。每 engagement 至多一个活跃争议（幂等）。 */
+  /**
+   * 开争议（engagementRef = marketplace applicationId）。即时案与 deferred request 显式判别，
+   * 避免把 requestId 当成 dispute id 挂载审判看板。
+   */
   const openDispute = (engagementRef: string, reason?: string) =>
-    run(() => request<DisputeCase>('/api/trust/disputes', {
-      method: 'POST',
-      body: JSON.stringify(reason ? { engagementRef, reason } : { engagementRef }),
-    }))
+    run(async (): Promise<OpenDisputeResult> => {
+      const data = await request<DisputeCase | DeferredDisputeRequest>('/api/trust/disputes', {
+        method: 'POST',
+        body: JSON.stringify(reason ? { engagementRef, reason } : { engagementRef }),
+      })
+      if ('requestId' in data) {
+        return { kind: 'deferred', request: data }
+      }
+      return { kind: 'dispute', dispute: data }
+    })
+
+  /** 查询 deferred objection；pending 时 disputeId/workflowId 为空，promoted 后指向 standard successor。 */
+  const getDisputeRequest = (requestId: string) =>
+    run(() => request<DeferredDisputeRequest>(
+      `/api/trust/dispute-requests/${encodeURIComponent(requestId)}`))
 
   /** 启动审判（抽 7 官面板 + 启 workflow）。无可用审判官时后端返回 503。 */
   const startAdjudication = (disputeId: string) =>
@@ -873,6 +898,7 @@ export function useGrassland() {
     applyToTask,
     acceptApplication,
     rejectApplication,
+    contestEngagement,
     withdrawApplication,
     pollReservation,
     confirmEngagement,
@@ -883,6 +909,7 @@ export function useGrassland() {
     creditAccount,
     // trust
     openDispute,
+    getDisputeRequest,
     startAdjudication,
     getAdjudication,
     appealDispute,

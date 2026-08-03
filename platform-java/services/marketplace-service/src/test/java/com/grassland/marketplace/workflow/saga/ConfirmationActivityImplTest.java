@@ -91,6 +91,22 @@ class ConfirmationActivityImplTest {
     }
 
     @Test
+    void contestClaimedFirstHoldsWithoutAutoConfirmOrCapture() {
+        TaskApplication claimed = new TaskApplication(
+                appId, taskId, "rec-1", "accepted", null, "merchant-1",
+                null, null, null, null, 500L, null, null,
+                null, "不同意", null, Instant.now(), null);
+        when(apps.findById(appId)).thenReturn(Mono.just(claimed));
+
+        ConfirmationOutcome result = activity.autoConfirmSettle(input);
+
+        assertThat(result.status()).isEqualTo("held");
+        assertThat(result.reason()).isEqualTo("merchant_contest_requested");
+        verify(apps, never()).autoConfirm(anyString(), anyString());
+        verify(settlementExecution, never()).captureOrHold(anyString(), anyString(), any(), any());
+    }
+
+    @Test
     void firstAutoConfirmAcceptsBoundSubmissionEmitsEventThenCaptures() {
         TaskApplication pending = app("accepted", null, null);
         TaskApplication autoConfirmed = app("accepted", Instant.now(), Instant.now());

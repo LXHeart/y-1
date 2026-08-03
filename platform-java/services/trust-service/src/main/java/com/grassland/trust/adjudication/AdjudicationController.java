@@ -2,6 +2,7 @@ package com.grassland.trust.adjudication;
 
 import com.grassland.trust.dispute.DisputeCase;
 import com.grassland.trust.dispute.DisputeCaseRepository;
+import com.grassland.trust.dispute.MerchantRejectionFinalizer;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
 import com.grassland.trust.judge.Judge;
@@ -12,13 +13,7 @@ import com.grassland.trust.judge.VoteTally;
 import com.grassland.trust.security.DisputeAudience;
 import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
-import com.grassland.trust.workflow.AdjudicationInput;
-import com.grassland.trust.workflow.DisputeAdjudicationWorkflow;
-import com.grassland.trust.workflow.DisputeAdjudicationWorkflowImpl;
-import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
-import io.temporal.client.WorkflowClient;
-import io.temporal.client.WorkflowExecutionAlreadyStarted;
-import io.temporal.client.WorkflowOptions;
+import com.grassland.trust.workflow.AdjudicationWorkflowStarter;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -36,7 +31,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 /**
  * 审判 HTTP 入口（草场 Epic 6 Slice 6C Phase B / HLD §5.5、§9.3、§10.5）。
@@ -64,23 +58,26 @@ public class AdjudicationController {
     private final JudgeRepository judges;
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
-    private final WorkflowClient workflowClient;
+    private final AdjudicationWorkflowStarter workflowStarter;
     /** 读争议的受众口径（当事方 / marketplace 服务 / 本轮面板审判官 / 客服），见 {@link DisputeAudience}。 */
     private final DisputeAudience audience;
     private final TransactionalOperator transactions;
+    private final MerchantRejectionFinalizer merchantRejectionFinalizer;
 
     public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
                                   JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props,
-                                  WorkflowClient workflowClient, DisputeAudience audience,
-                                  TransactionalOperator transactions) {
+                                  AdjudicationWorkflowStarter workflowStarter, DisputeAudience audience,
+                                  TransactionalOperator transactions,
+                                  MerchantRejectionFinalizer merchantRejectionFinalizer) {
         this.audience = audience;
         this.callers = callers;
         this.disputes = disputes;
         this.judges = judges;
         this.outbox = outbox;
         this.props = props;
-        this.workflowClient = workflowClient;
+        this.workflowStarter = workflowStarter;
         this.transactions = transactions;
+        this.merchantRejectionFinalizer = merchantRejectionFinalizer;
     }
 
     @PostMapping("/api/trust/disputes/{id}/adjudicate")
@@ -110,36 +107,11 @@ public class AdjudicationController {
                                     ? startFreshAdjudication(d)
                                     : ensurePanelAndEvent(d, d.round()).thenReturn(d);
                             return outcome
-                                    .flatMap(voting -> startWorkflow(voting, workflowId).thenReturn(voting))
+                                    .flatMap(voting -> workflowStarter.start(voting.id()).thenReturn(voting))
                                     .flatMap(this::snapshot)
                                     .map(snap -> ResponseEntity.status(fresh ? HttpStatus.ACCEPTED : HttpStatus.OK)
                                             .body(adjudicateBody(snap, workflowId)));
                         }));
-    }
-
-    /** 启 DisputeAdjudicationWorkflow（双击去重：WorkflowExecutionAlreadyStarted → 复用 id）。阻塞调用包 boundedElastic。 */
-    private Mono<String> startWorkflow(DisputeCase d, String workflowId) {
-        AdjudicationInput input = new AdjudicationInput(
-                d.id(),
-                props.voteWindowSecondsEffective(),
-                props.appealWindowSecondsEffective(),
-                props.maxRounds(),
-                Math.max(0, props.csAwaitHours()) * 3600L,
-                Math.max(1, props.csPollSeconds()));
-        return Mono.fromCallable(() -> {
-            DisputeAdjudicationWorkflow stub = workflowClient.newWorkflowStub(
-                    DisputeAdjudicationWorkflow.class,
-                    WorkflowOptions.newBuilder()
-                            .setWorkflowId(workflowId)
-                            .setTaskQueue(DisputeAdjudicationWorkflowImpl.TASK_QUEUE)
-                            .setWorkflowIdReusePolicy(
-                                    WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
-                            .build());
-            WorkflowClient.start(stub::run, input);
-            return workflowId;
-        })
-        .subscribeOn(Schedulers.boundedElastic())
-        .onErrorResume(WorkflowExecutionAlreadyStarted.class, already -> Mono.just(workflowId));
     }
 
     private Map<String, Object> adjudicateBody(Map<String, Object> snap, String workflowId) {
@@ -266,12 +238,16 @@ public class AdjudicationController {
                                 || ("voting".equals(d.status()) && "escalated".equals(d.appealState()))
                                 || ("open".equals(d.status()) && "merchant_rejection".equals(d.kind())))
                         .switchIfEmpty(fail(409, "该争议不在客服终审范围"))
-                        .flatMap(d -> transactions.transactional(
-                                disputes.forceFinalize(id, body.decision(), cs.accountId())  // CS 覆盖终局
-                                        .switchIfEmpty(fail(409, "争议已终局"))
-                                        .flatMap(fin -> outbox.append(disputeEnvelope("DisputeFinalized", fin)).thenReturn(fin)))
-                                .flatMap(this::snapshot)
-                                .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)))));
+                        .flatMap(d -> "merchant_rejection".equals(d.kind())
+                                ? merchantRejectionFinalizer.finalizeCase(d, body.decision(), cs.accountId())
+                                        .map(MerchantRejectionFinalizer.Finalization::finalized)
+                                : transactions.transactional(
+                                        disputes.forceFinalize(id, body.decision(), cs.accountId())
+                                                .switchIfEmpty(fail(409, "争议已终局"))
+                                                .flatMap(fin -> outbox.append(
+                                                        disputeEnvelope("DisputeFinalized", fin)).thenReturn(fin))))
+                        .flatMap(this::snapshot)
+                        .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
     }
 
     /** 通用争议事件信封（确定性 type-3 eventId：eventType:disputeId:round）。

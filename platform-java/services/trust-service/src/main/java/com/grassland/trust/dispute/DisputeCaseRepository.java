@@ -33,11 +33,9 @@ public class DisputeCaseRepository {
         this.db = db;
     }
 
-    /** 开争议（status=open）。新列取默认（round=0, version=1, appeal_state='none'）。partial unique 违例 → empty（幂等：已有活跃）。
-     *  D-03 slice 2：{@code kind} 区分 standard（普通，走面板）/ merchant_rejection（商家拒绝核实通过履约，直送客服）。 */
-    public Mono<DisputeCase> create(String engagementRef, String organizationId, String openedBy, String role, String reason,
-                                    String kind) {
-        String id = UUID.randomUUID().toString();
+    /** 开争议（status=open）。调用方可提供确定性 id，供 deferred promotion 在一个事务内串联 successor/outbox。 */
+    public Mono<DisputeCase> createWithId(String id, String engagementRef, String organizationId,
+                                          String openedBy, String role, String reason, String kind) {
         String effectiveKind = (kind == null || kind.isBlank()) ? "standard" : kind;
         var spec = db.sql("""
                 INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role, status, reason, kind)
@@ -49,6 +47,13 @@ public class DisputeCaseRepository {
         spec = bindNullable(spec, "reason", reason);
         return spec.map(DisputeCaseRepository::map).one()
                 .onErrorResume(DisputeCaseRepository::isDuplicateKey, e -> Mono.empty());
+    }
+
+    /** 开争议（status=open）。新列取默认（round=0, version=1, appeal_state='none'）。partial unique 违例 → empty（幂等：已有活跃）。
+     *  D-03 slice 2：{@code kind} 区分 standard（普通，走面板）/ merchant_rejection（商家拒绝核实通过履约，直送客服）。 */
+    public Mono<DisputeCase> create(String engagementRef, String organizationId, String openedBy, String role, String reason,
+                                    String kind) {
+        return createWithId(UUID.randomUUID().toString(), engagementRef, organizationId, openedBy, role, reason, kind);
     }
 
     /** 并发竞态下 partial-unique 违例兜底（常规幂等由 controller 预查 findActive 处理）。按消息判定 duplicate key（robust）。 */

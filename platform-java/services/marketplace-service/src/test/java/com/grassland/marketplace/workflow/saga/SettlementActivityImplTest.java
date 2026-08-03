@@ -60,7 +60,7 @@ class SettlementActivityImplTest {
                 .thenReturn(Mono.empty());
         // gate+capture 钱侧逻辑已抽到 SettlementExecution（D-03）；用真实实例 + 桩 gates 覆盖 captureOrHold 全分支。
         SettlementExecution settlementExecution =
-                new SettlementExecution(outbox, finance, disputes, verification, opsCases, transactions);
+                new SettlementExecution(outbox, apps, finance, disputes, verification, opsCases, transactions);
         activity = new SettlementActivityImpl(apps, tasks, settlementExecution);
         input = new SettlementInput(APP_ID, TASK_ID, "33333333-3333-3333-3333-333333333333", ORG, 500L, 0L);
     }
@@ -82,6 +82,24 @@ class SettlementActivityImplTest {
         Map<String, Object> payload = captor.getValue().payload();
         assertThat(payload.get("taskOwnerId")).isEqualTo(OWNER);
         assertThat(payload.get("recommenderAccountId")).isEqualTo(RECOMMENDER);
+    }
+
+    @Test
+    void localContestClaimHoldsBeforeRemoteDisputeRead() {
+        TaskApplication claimed = new TaskApplication(
+                APP_ID, TASK_ID, RECOMMENDER, "accepted", null,
+                "33333333-3333-3333-3333-333333333333", null, null, null, Instant.now(), 500L,
+                null, null, null, "不同意", null, Instant.now(), null);
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(claimed));
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task()));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        SettlementOutcome result = activity.captureSettlement(input);
+
+        assertThat(result.status()).isEqualTo("held");
+        assertThat(result.reason()).isEqualTo("merchant_contest_requested");
+        verify(disputes, never()).hasOpenDispute(anyString(), anyString());
+        verify(finance, never()).capture(anyString(), anyString());
     }
 
     @Test

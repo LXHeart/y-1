@@ -47,6 +47,7 @@ public class DisputeAudience {
     public Mono<Boolean> canRead(TrustCallerResolver.Caller caller, DisputeCase dispute) {
         if (caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)
                 || caller.isCustomerService()
+                || dispute.openedByAccountId().equals(caller.accountId())
                 || dispute.organizationId().equals(caller.organizationId())) {
             return Mono.just(true);
         }

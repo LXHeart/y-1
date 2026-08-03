@@ -25,6 +25,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -77,6 +80,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** 客服 SLA 启窗 spy（D-03 审阅 F3）：默认透传真实 starter；提交后失败用例注入异常验证不误判。 */
     @MockitoSpyBean
     private com.grassland.marketplace.workflow.saga.MerchantRejectionReviewWorkflowStarter rejectionStarter;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private TaskApplicationRepository applicationRepo;
 
     // ---------- apply ----------
 
@@ -1041,6 +1047,73 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         verify(trustDisputeClient, times(1)).openMerchantRejection(org, app, merchant, "核实截图与实际不符");
     }
 
+    /** F6：本地 contest claim 已落时，Timer 的 guarded autoConfirm 必须输掉，且不依赖 trust 远端可见性。 */
+    @Test
+    void contestClaimDeterministicallyBlocksAutoConfirm() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+
+        TaskApplication claimed = applicationRepo.claimContest(app, task, "并发门闩").block();
+        assertThat(claimed).isNotNull();
+        assertThat(claimed.contestRequestedAt()).isNotNull();
+        assertThat(applicationRepo.autoConfirm(app, task).block()).isNull();
+
+        TaskApplication current = applicationRepo.findById(app).block();
+        assertThat(current.confirmedAt()).isNull();
+        assertThat(current.autoConfirmedAt()).isNull();
+    }
+
+    /** F6 对称赢家：auto-confirm 已提交后，contest claim 必须返回空，不能在 capture 之后反向接管。 */
+    @Test
+    void autoConfirmDeterministicallyBlocksContestClaim() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+
+        assertThat(applicationRepo.autoConfirm(app, task).block()).isNotNull();
+        assertThat(applicationRepo.claimContest(app, task, "太晚了").block()).isNull();
+        assertThat(applicationRepo.findById(app).block().contestRequestedAt()).isNull();
+    }
+
+    /** F6 真并发回归：同一行上的 claimContest/autoConfirm 同时开始，数据库只能返回一个赢家。 */
+    @Test
+    void concurrentContestAndAutoConfirmHaveExactlyOneWinner() throws Exception {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String task = s[2], app = s[3];
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicReference<TaskApplication> contestResult = new AtomicReference<>();
+        AtomicReference<TaskApplication> confirmResult = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        Thread contest = Thread.ofPlatform().start(() -> runConcurrentUpdate(
+                ready, start, failure, () -> contestResult.set(applicationRepo.claimContest(app, task, "同时开始").block())));
+        Thread confirm = Thread.ofPlatform().start(() -> runConcurrentUpdate(
+                ready, start, failure, () -> confirmResult.set(applicationRepo.autoConfirm(app, task).block())));
+
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        contest.join(10_000L);
+        confirm.join(10_000L);
+        assertThat(contest.isAlive()).isFalse();
+        assertThat(confirm.isAlive()).isFalse();
+        assertThat(failure.get()).isNull();
+        assertThat((contestResult.get() != null) ^ (confirmResult.get() != null)).isTrue();
+
+        TaskApplication current = applicationRepo.findById(app).block();
+        assertThat(current).isNotNull();
+        assertThat(current.contestRequestedAt() != null && current.autoConfirmedAt() != null).isFalse();
+        if (contestResult.get() != null) {
+            assertThat(current.contestRequestedAt()).isNotNull();
+            assertThat(current.confirmedAt()).isNull();
+        } else {
+            assertThat(current.autoConfirmedAt()).isNotNull();
+            assertThat(current.contestRequestedAt()).isNull();
+        }
+    }
+
     /** 未核实 / 非 passed 的履约不得使用客服拒绝通道。 */
     @Test
     void contestRequiresPassedVerification() {
@@ -1314,6 +1387,19 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
                 .exchange().expectStatus().isEqualTo(409);
+    }
+
+    private void runConcurrentUpdate(CountDownLatch ready, CountDownLatch start,
+                                     AtomicReference<Throwable> failure, Runnable update) {
+        ready.countDown();
+        try {
+            if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent update start timed out");
+            }
+            update.run();
+        } catch (Throwable t) {
+            failure.compareAndSet(null, t);
+        }
     }
 
     @SuppressWarnings("unchecked")

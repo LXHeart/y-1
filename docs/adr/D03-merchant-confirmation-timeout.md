@@ -19,24 +19,16 @@
 
 **仍属实现层（后续 backlog，非本决策）**：Temporal 确认窗口定时器、拒绝端点转客服、补证计数、cancel 违约计数进信誉、通知通道接线。
 
-**实现进度（core slice，2026-08-03，commit 级未 push）**：规则 1（确认窗口）+ 规则 2（到期自动结算 default-approve）+ 规则 6（通知邮件+站内）已落：
-- `ConfirmationWindowWorkflow` + `ConfirmationActivity`（镜像 `SettlementWindowWorkflow`，复用 `marketplace-saga` worker）；抽出共享 `SettlementExecution`（gate+capture+hold，手动确认与自动确认共用，避免钱侧逻辑分叉）。
-- **submission 级窗口绑定**：`workflowId=confirm-<submissionId>`，退回重交起新窗口；旧 Timer 到期重验 submission 非 submitted → abort，不误结算新凭证。
-- `auto_confirmed_at` 区分手动/自动确认：activity 崩溃重试见它非空可继续幂等 capture；仅 `confirmed_at` 非空 = 商家先确认 → abort。
-- `ConfirmationWindowDispatcher`（@Scheduled 补启）：消除 DB commit→Temporal start 间隙（进程崩溃/网络失败时下轮扫描未标记 submission 补启，按 DB deadline 剩余秒数启动，不重置窗口）。
-- 手动确认幂等：首次 202 + 启 SettlementWindow；重复 200 confirmed 不重启（`ConfirmationConflict` 触发事务回滚 + 回读）；与自动路径经 `confirmed_at IS NULL` 条件 + finance 409→success + 确定性 eventId 安全收敛。
-- 通知：`ConfirmationWindowEntered`（提交时）+ `AutoSettledOnTimeout`（自动结算时），双方收件，ENGAGEMENT 类（identity 3-touch）。
-- V15 迁移：`task_application` 加 `merchant_confirm_deadline_at` / `auto_confirmed_at`；`engagement_submission` 加 `confirmation_workflow_started_at`（补启标记）。
-- 验证：marketplace **304 tests**（+17 D-03：ConfirmationActivityImplTest 7 / ConfirmationWindowWorkflowReplayTest 4 / ConfirmationWindowDispatcherTest 6 + ApplicationControllerIT 2）+ identity **247 tests** 全绿；bootJar 绿。
-- **slice 2 已实现（2026-08-03，待本轮全量验证/commit）**：规则 3/4 + cancel + 第三触达全部接线：
-  - **拒绝→客服**：`POST .../contest` 仅允许当前 submission 的系统核验 `passed`；marketplace 以服务断言幂等开 `kind=merchant_rejection` trust 争议，同事务把 submission 置 accepted、application 写 `merchant_rejected_at/rejection_reason/dispute_id`（`confirmed_at` 仅作争议终局 reconciliation 资金门控）、登记 high severity `ops_case`、发 `MerchantContested`。普通 confirm/轮询优先 surfacing `contested`，不会误报普通确认。
-  - **客服 SLA**：`MerchantRejectionReviewWorkflow` 等待默认 259200 秒（可配；首期按 3 个自然日近似 ADR 的 3 个工作日，法定节假日日历待后续接入）后调用 trust 内部 `auto-finalize`；客服可在 open merchant_rejection 案上直接 MFA 终审，超时默认 `for_recommender`。该 kind 禁走旧 merchant `/decide` 与 7 官面板；终局复用既有 `DisputeFinalized → settlement_reconciliation → Finance reconcile`，reserved 态双向均已支持（for_merchant→release / for_recommender→capture），不新写钱侧逻辑。
-  - **补证上限**：按 `engagement_submission.status='rejected'` 计数，默认 2；第 3 次退回 409，当前 submission 留 submitted，确认窗口继续收敛。
-  - **cancel 主动退款**：仅 `accepted + NOT EXISTS submission` 的 engagement 走既有 finance release；失败返回 5xx，cancelled 重试会继续退款；submission INSERT 与 task cancel 用 task 行锁串行化，避免「已退款又补交」。已提交/核实履约不退款、照常结算。
-  - **Expire-24h**：confirmation workflow 在剩余 `reminderLeadSeconds`（默认 86400）发 `ConfirmationWindowExpiring`；dispatcher 最后 24h 补启会立即提醒；确定性 eventId 防重。三类窗口通知均邮件+站内、双方收件。
-  - 迁移：marketplace V16（`merchant_rejected_at/rejection_reason/merchant_rejection_dispute_id`）；trust V5（`dispute_case.kind`）。
-  - 验证：marketplace **317 tests**（304→317）+ trust **98 tests**（96→98）+ identity **249 tests**（247→249）全绿，三服务 bootJar 绿；`docker compose config` 通过。窗口/SLA 时间驱动主链路仍只在 Timer 单测与 replay 层覆盖，容器级 e2e 未跑。
-- **仍延后**：merchant cancel 的 trust 声誉计数消费者（本轮已发 `EngagementRefundedOnCancel(reason=merchant_cancel)` 事件，D-05 声誉模块未建）；merchant_rejection 的客服 UI 专用快捷入口（ops_case sourceRef 已直接存 disputeId，后端可操作）。
+**实现进度（2026-08-03）**：规则 1–4、规则 5 的首期 cancel 口径与规则 6 已落地；本节记录最终实现语义，历史分段测试数量见续接指南与提交历史。
+- `ConfirmationWindowWorkflow` + `ConfirmationActivity` 复用共享 `SettlementExecution`（gate + capture + hold）；窗口绑定 submission，退回重交会启动新窗口，旧 Timer 到期重验后退出。`ConfirmationWindowDispatcher` 以固定 workflow ID 补齐 DB commit→Temporal start 间隙。
+- **F6 本地 contest 门闩**：marketplace V17 在 `task_application` 持久化 `contest_requested_at` 与客服 SLA workflow 启动标记。contest 先用 guarded `UPDATE ... RETURNING` 提交本地 intent，`confirm` / `autoConfirm` 同时要求 intent 为空；三路争抢同一 application 行，PostgreSQL 行锁与谓词复查只允许一个赢家。contest 输给已确认路径时明确 409；contest 先赢时 Timer 返回 held，且 `SettlementExecution` 在唯一钱侧入口再次回读本地门闩，绝不调用 finance capture。trust 的开放争议查询仍保留，但只作纵深防御，不承担跨服务竞态正确性。
+- **F6 durable recovery**：本地 intent 提交后才在事务外幂等创建 trust `merchant_rejection`，再完成 submission/application、ops case 与确定性 outbox，最后以固定 ID 启动客服 SLA；`MerchantContestDispatcher` 扫描未完成 intent 并恢复 trust/local/Temporal 各阶段。远端或 Temporal 暂时失败不会自动终局客服案，也不会重复事件、处置单或 workflow。
+- **F5 延后异议**：保留 `uniq_dispute_active_per_engagement`。活跃 `merchant_rejection` 期间，经过 marketplace 当事方授权的推荐官普通异议会持久化为 deferred request（逐字保留 reason），首次返回 202、重试返回 200；pending 响应不暴露客服案 ID。客服人工终审或 SLA auto-finalize 在同一 trust 事务中先终局旧案、再创建唯一 `standard` successor、标记 request promoted，并追加旧案 `DisputeFinalized` 与新案 `DisputeOpened`。
+- **F5 审判与结算接续**：promoted request 持久化固定 `adjudicate-<successorId>` 启动意图，dispatcher 自动启动既有七官 `DisputeAdjudicationWorkflow`；successor opener 可读取自己的案卷。旧客服案 final 事件携带 `settlementDeferred=true` / `successorDisputeId`，marketplace 仍记 inbox 但不创建 reconciliation；只有 successor 的最终 `DisputeFinalized` 进入既有 D-06 reconciliation，避免旧裁决越过新争议落钱。
+- **跨服务断言**：trust 调 marketplace 参与方授权使用 `purpose=service`、`audience=grassland-marketplace`；marketplace 的 verify keyring 必须同时包含 edge 用户键与 trust→marketplace 服务键。配置只引用环境变量，不在仓库记录密钥值。
+- 其余规则：补证上限默认 2；cancel 仅对 `accepted + 尚无 submission` 的 engagement 全额 release；`ConfirmationWindowEntered` / `ConfirmationWindowExpiring` / `AutoSettledOnTimeout` 走邮件+站内通知。
+- **验证边界（2026-08-03）**：marketplace/trust 全量测试与 `bootJar` 使用显式 JDK 25 通过；根工程 62 个测试文件、659 项测试、typecheck、build 通过。容器以 bootJar 后生成的新 JAR 重建；真实 Temporal + Kafka 闭环覆盖 F6 Timer-first 409 与 contest-first 保持 reserved、F5 人工终审及 300 秒 SLA 两条 deferred→successor→voting 路径、旧案 inboxed 但 reconciliation suppressed、successor final 正常 reconciled。真实浏览器走 Vite `:5173` → edge-bff `:8081`，中间等待只观察 DOM。上述均为本地测试/容器验证，未做生产真实流量验证。
+- **仍延后**：merchant cancel 的 trust 声誉计数消费者；merchant_rejection 的客服 UI 专用快捷入口（ops case 已保存 disputeId）；法定节假日工作日历（当前默认秒数近似 3 个自然日）。
 
 ## 背景
 

@@ -26,7 +26,7 @@ public class TaskApplicationRepository {
             "id::text, task_id::text, recommender_account_id::text, status, note,"
                     + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at, bounty_cents,"
                     + " merchant_confirm_deadline_at, auto_confirmed_at, merchant_rejected_at, rejection_reason,"
-                    + " merchant_rejection_dispute_id::text";
+                    + " merchant_rejection_dispute_id::text, contest_requested_at, rejection_workflow_started_at";
 
     private final DatabaseClient db;
 
@@ -105,6 +105,7 @@ public class TaskApplicationRepository {
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = 'accepted'
                   AND confirmed_at IS NULL
+                  AND contest_requested_at IS NULL
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("taskId", taskId)
@@ -112,25 +113,68 @@ public class TaskApplicationRepository {
     }
 
     /**
-     * 商家拒绝系统核实通过的履约（D-03 §2）：accepted + 未手动确认/未拒绝 → 设 confirmed_at（系统核实事实成立，
-     * 供争议终局 reconciliation 落钱）+ merchant_rejected_at/reason。若 Timer 在 trust 开案后抢先自动确认，
-     * {@code auto_confirmed_at IS NOT NULL} 也允许 contest 接管；普通商家手动确认仍不可反悔。0 行 = 状态已变/重复操作。
+     * F6 contest 门闩：在任何 trust/Temporal 出站调用前先原子落 durable intent。
+     * 与 {@link #confirm}/{@link #autoConfirm} 更新同一 application 行；提交后赢家唯一，输家谓词复查为 0 行。
      */
-    public Mono<TaskApplication> contest(String id, String taskId, String disputeId, String reason) {
+    public Mono<TaskApplication> claimContest(String id, String taskId, String reason) {
         GenericExecuteSpec spec = db.sql("""
                 UPDATE task_application
-                SET confirmed_at = COALESCE(confirmed_at, now()), merchant_rejected_at = now(), rejection_reason = :reason,
+                SET contest_requested_at = now(), rejection_reason = :reason, updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = 'accepted'
+                  AND confirmed_at IS NULL
+                  AND contest_requested_at IS NULL
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId);
+        spec = bindNullable(spec, "reason", reason);
+        return spec.map(TaskApplicationRepository::map).one();
+    }
+
+    /**
+     * 完成已 claim 的 contest：写 trust 案号与资金 reconciliation 所需 confirmed_at。
+     * 只允许 durable claim 推进；同一 dispute 重试返回当前行，不允许 Timer auto-confirm 后再接管。
+     */
+    public Mono<TaskApplication> completeContest(String id, String taskId, String disputeId) {
+        return db.sql("""
+                UPDATE task_application
+                SET confirmed_at = COALESCE(confirmed_at, now()), merchant_rejected_at = COALESCE(merchant_rejected_at, now()),
                     merchant_rejection_dispute_id = CAST(:dispute AS uuid), updated_at = now()
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = 'accepted'
-                  AND (confirmed_at IS NULL OR auto_confirmed_at IS NOT NULL)
-                  AND merchant_rejected_at IS NULL
+                  AND contest_requested_at IS NOT NULL
+                  AND auto_confirmed_at IS NULL
+                  AND (merchant_rejection_dispute_id IS NULL
+                       OR merchant_rejection_dispute_id = CAST(:dispute AS uuid))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("taskId", taskId).bind("dispute", disputeId);
-        spec = bindNullable(spec, "reason", reason);
-        return spec.map(TaskApplicationRepository::map).one();
+                .bind("id", id).bind("taskId", taskId).bind("dispute", disputeId)
+                .map(TaskApplicationRepository::map).one();
+    }
+
+    /** 待恢复 contest：已 claim，但 trust 案/本地完成/SLA 启动任一步未完成。 */
+    public Flux<TaskApplication> findContestDispatchable(int limit) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM task_application"
+                        + " WHERE contest_requested_at IS NOT NULL"
+                        + " AND (merchant_rejected_at IS NULL OR rejection_workflow_started_at IS NULL)"
+                        + " ORDER BY contest_requested_at LIMIT :limit")
+                .bind("limit", Math.max(1, limit))
+                .map(TaskApplicationRepository::map).all();
+    }
+
+    /** 固定 workflow 启动成功后的 guarded 标记；重复派发/AlreadyStarted 均幂等。 */
+    public Mono<Boolean> markRejectionWorkflowStarted(String id, String disputeId) {
+        return db.sql("""
+                UPDATE task_application
+                SET rejection_workflow_started_at = COALESCE(rejection_workflow_started_at, now()), updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND merchant_rejection_dispute_id = CAST(:dispute AS uuid)
+                  AND rejection_workflow_started_at IS NULL
+                """)
+                .bind("id", id).bind("dispute", disputeId)
+                .fetch().rowsUpdated().map(n -> n > 0).defaultIfEmpty(false);
     }
 
     /** 窗口到期自动确认（D-03）：accepted + 未确认 → 同时设 confirmed_at / auto_confirmed_at。
@@ -144,6 +188,7 @@ public class TaskApplicationRepository {
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = 'accepted'
                   AND confirmed_at IS NULL
+                  AND contest_requested_at IS NULL
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("taskId", taskId)
@@ -296,7 +341,9 @@ public class TaskApplicationRepository {
                 toInstant(row.get("auto_confirmed_at", OffsetDateTime.class)),
                 toInstant(row.get("merchant_rejected_at", OffsetDateTime.class)),
                 row.get("rejection_reason", String.class),
-                row.get("merchant_rejection_dispute_id", String.class)
+                row.get("merchant_rejection_dispute_id", String.class),
+                toInstant(row.get("contest_requested_at", OffsetDateTime.class)),
+                toInstant(row.get("rejection_workflow_started_at", OffsetDateTime.class))
         );
     }
 

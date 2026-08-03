@@ -36,7 +36,11 @@ public record TaskApplication(
         /** 商家拒绝理由（客服裁定证据摘要）。 */
         String rejectionReason,
         /** trust merchant_rejection dispute id（轮询/客服案件定位）。 */
-        String merchantRejectionDisputeId
+        String merchantRejectionDisputeId,
+        /** F6：商家 contest 的本地 durable claim。一旦存在，手动确认与 Timer auto-confirm 均不得再 capture。 */
+        Instant contestRequestedAt,
+        /** 客服 SLA workflow 已成功启动（确定性 workflow id；dispatcher 可补启）。 */
+        Instant rejectionWorkflowStartedAt
 ) {
     /** 兼容既有测试/调用方的 D-03 core slice 构造器；未发生商家异议时新增字段均为空。 */
     public TaskApplication(
@@ -44,6 +48,6 @@ public record TaskApplication(
             String reviewedByAccountId, Instant decidedAt, Instant createdAt, Instant updatedAt,
             Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt) {
         this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
-                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, null, null, null);
+                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, null, null, null, null, null);
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, ref, watch, type Ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import EngagementRatingPanel from './EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from './EngagementSubmissionPanel.vue'
@@ -48,8 +48,12 @@ const tasks = ref<Task[]>([])
 const applications = ref<TaskApplication[]>([])
 const selectedTaskId = ref('')
 const notice = ref('')
-/** 当前查看的争议 id——开争议后挂载审判看板。 */
+/** 当前查看的争议 id——即时开案或 deferred promotion 后挂载审判看板。 */
 const activeDisputeId = ref('')
+/** 待客服案终局的推荐官异议 request；requestId 与 disputeId 严格分离。 */
+const deferredDisputeRequestId = ref('')
+let deferredPollTimer: ReturnType<typeof setTimeout> | null = null
+const DEFERRED_POLL_MS = 3000
 
 /** 每个 application 的异步结局（accept 预留 / confirm 结算），key = applicationId。 */
 const outcomes = ref<Record<string, string>>({})
@@ -69,6 +73,8 @@ const editingDraft = ref<{ id: string; version: number } | null>(null)
  */
 const revisingTask = ref<{ id: string; version: number } | null>(null)
 const applyNote = ref('')
+/** 商家拒绝理由按 application 独立保存，避免多条报名共用输入串值。 */
+const contestReasons = ref<Record<string, string>>({})
 
 // ---------- 推荐官：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）----------
 const feedItems = ref<Task[]>([])
@@ -168,6 +174,8 @@ async function initForAccount(): Promise<void> {
 
 /** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
 function resetAccountState(): void {
+  clearDeferredPoll()
+  deferredDisputeRequestId.value = ''
   orgs.value = []
   activeOrgId.value = ''
   account.value = null
@@ -176,6 +184,7 @@ function resetAccountState(): void {
   selectedTaskId.value = ''
   activeDisputeId.value = ''
   outcomes.value = {}
+  contestReasons.value = {}
   notice.value = ''
   applicantReputation.value = {}
   applicantProfile.value = {}
@@ -491,6 +500,23 @@ async function reject(app: TaskApplication): Promise<void> {
   await selectTask(app.taskId)
 }
 
+/** 系统核实通过后，商家可在确认窗口内拒绝并转客服；后端门闩与确认 Timer 原子决胜。 */
+async function contest(app: TaskApplication): Promise<void> {
+  const reason = contestReasons.value[app.id]?.trim() || ''
+  if (!reason) {
+    setNotice('请先填写拒绝理由')
+    return
+  }
+  outcomes.value = { ...outcomes.value, [app.id]: '正在转客服…' }
+  const contested = await grassland.contestEngagement(app.taskId, app.id, reason)
+  if (!contested) {
+    outcomes.value = { ...outcomes.value, [app.id]: '' }
+    return
+  }
+  outcomes.value = { ...outcomes.value, [app.id]: '已拒绝并转客服裁定' }
+  setNotice('商家异议已提交，结算已暂停并转客服裁定')
+}
+
 /** 确认履约：202 后轮询结算结局（有未终局争议时为 held）。 */
 async function confirm(app: TaskApplication): Promise<void> {
   outcomes.value = { ...outcomes.value, [app.id]: '结算中…' }
@@ -558,11 +584,52 @@ async function withdrawApp(app: TaskApplication): Promise<void> {
   }
 }
 
+function clearDeferredPoll(): void {
+  if (deferredPollTimer !== null) {
+    clearTimeout(deferredPollTimer)
+    deferredPollTimer = null
+  }
+}
+
+function scheduleDeferredPoll(requestId: string): void {
+  clearDeferredPoll()
+  deferredPollTimer = setTimeout(async () => {
+    deferredPollTimer = null
+    // 账号/视角切换或新请求已替代旧请求时，不让过期回调继续更新 UI。
+    if (deferredDisputeRequestId.value !== requestId) return
+    const request = await grassland.getDisputeRequest(requestId)
+    if (deferredDisputeRequestId.value !== requestId) return
+    if (!request) {
+      // 暂时失败保留 durable request，低频重试；error 同时给用户可见。
+      scheduleDeferredPoll(requestId)
+      return
+    }
+    if (request.status === 'promoted' && request.disputeId) {
+      deferredDisputeRequestId.value = ''
+      activeDisputeId.value = request.disputeId
+      setNotice('普通争议已自动开启并进入七官审判流程')
+      return
+    }
+    scheduleDeferredPoll(requestId)
+  }, DEFERRED_POLL_MS)
+}
+
+onBeforeUnmount(clearDeferredPoll)
+
 async function dispute(app: TaskApplication): Promise<void> {
   const opened = await grassland.openDispute(app.id, '履约存在争议')
   if (!opened) return
-  activeDisputeId.value = opened.id  // 挂载审判看板
-  setNotice(`争议已开启（状态 ${opened.status}），结算将被暂停`)
+  if (opened.kind === 'deferred') {
+    activeDisputeId.value = ''
+    deferredDisputeRequestId.value = opened.request.requestId
+    setNotice('异议已记录，客服案终局后自动开普通争议')
+    scheduleDeferredPoll(opened.request.requestId)
+    return
+  }
+  clearDeferredPoll()
+  deferredDisputeRequestId.value = ''
+  activeDisputeId.value = opened.dispute.id
+  setNotice(`争议已开启（状态 ${opened.dispute.status}），结算将被暂停`)
 }
 
 /**
@@ -809,7 +876,20 @@ function statusLabel(status: string): string {
                   <td class="gl-actions">
                     <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
                     <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
-                    <button v-if="a.status === 'accepted'" type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
+                    <template v-if="a.status === 'accepted'">
+                      <button type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
+                      <input
+                        v-model="contestReasons[a.id]"
+                        class="gl-contest-reason"
+                        :aria-label="`拒绝理由 ${a.id}`"
+                        placeholder="拒绝理由（系统核实通过后转客服）"
+                      />
+                      <button
+                        type="button"
+                        :disabled="grassland.loading.value || !contestReasons[a.id]?.trim()"
+                        @click="contest(a)"
+                      >拒绝并转客服</button>
+                    </template>
                   </td>
                   <td class="gl-outcome">{{ outcomes[a.id] || '—' }}</td>
                 </tr>
@@ -926,6 +1006,9 @@ function statusLabel(status: string): string {
         <input v-model="activeDisputeId" placeholder="争议 ID（开启争议后自动填入）" />
       </div>
       <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
+      <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
+        异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
+      </p>
       <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
     </article>
 
@@ -979,7 +1062,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-tag-money { background: color-mix(in srgb, var(--color-success) 16%, transparent); color: var(--color-success); }
 .gl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .gl-table th, .gl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
-.gl-actions { display: flex; gap: 6px; }
+.gl-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.gl-contest-reason { min-width: 210px; padding: 6px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 12px; }
 .gl-outcome { font-size: 12px; opacity: 0.8; }
 .gl-filter { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .gl-filter label { display: flex; align-items: center; gap: 6px; opacity: 0.85; }
