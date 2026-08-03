@@ -75,6 +75,18 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
+    /**
+     * 某 engagement 的<b>最近终局</b>争议（GL-P2-TRUST-001：冷却期检查）。
+     * 按 decided_at 降序取第一条 final 态争议。无 → empty。
+     */
+    public Mono<DisputeCase> findLastFinalizedByEngagementRef(String engagementRef) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM dispute_case WHERE engagement_ref = :ref AND status = 'final'"
+                + " ORDER BY decided_at DESC NULLS LAST LIMIT 1")
+                .bind("ref", engagementRef)
+                .map(DisputeCaseRepository::map).one().defaultIfEmpty(null);
+    }
+
     /** 手动裁决（终局）：open→final，记 decision + decided_at + final_decision + version+1。0 行（非 open）→ empty。 */
     public Mono<DisputeCase> decide(String id, String decision) {
         return db.sql("""

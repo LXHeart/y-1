@@ -97,6 +97,14 @@ public class AdjudicationController {
                             if ("merchant_rejection".equals(d.kind())) {
                                 return fail(409, "商家履约异议直送客服终审，不进入审判面板");
                             }
+                            // GL-P2-TRUST-001：争议开启后需等待 48h（可配）才可启动审判
+                            if (props.adjudicationWindowEnabled() != 0 && d.createdAt() != null && !isAdjudicationWindowElapsed(d)) {
+                                long remainingSeconds = props.adjudicationWindowSecondsEffective()
+                                        - Duration.between(d.createdAt(), Instant.now()).toSeconds();
+                                return fail(409, String.format("争议开启后需等待 %d 小时才可启动审判，还剩约 %d 小时",
+                                        props.adjudicationWindowSecondsEffective() / 3600,
+                                        remainingSeconds / 3600 + 1));
+                            }
                             // 新启争议：先抽面板（fail-fast：无可用审判官 → 503，争议保持 open 可重试），
                             //   再 open→voting + 写面板 + 发事件；避免「先翻 voting 再抽签失败」的半提交。
                             // 已审判（voting/decided/appealed）：幂等——补齐缺失面板（自愈）后返回当前态。
@@ -269,6 +277,15 @@ public class AdjudicationController {
         }
         return new EventEnvelope(eventId, eventType, "DisputeCase",
                 d.id(), d.version(), Instant.now(), null, payload);
+    }
+
+    /** GL-P2-TRUST-001：检查争议开启后是否已过审判启动窗口。 */
+    private boolean isAdjudicationWindowElapsed(DisputeCase d) {
+        if (d.createdAt() == null) {
+            return true;  // 防御：无创建时间则跳过校验
+        }
+        Instant deadline = d.createdAt().plusSeconds(props.adjudicationWindowSecondsEffective());
+        return Instant.now().isAfter(deadline) || Instant.now().equals(deadline);
     }
 
     // ---------- helpers ----------

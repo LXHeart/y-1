@@ -344,6 +344,8 @@ services:
       # Slice 13 Bilibili：共享 HMAC token secret；public origin 必须是浏览器/模型可达的 edge-bff 外部地址。
       # 未启 Bilibili Java 路由时可留空；启用前须配置 secret（≥32 chars）及 PUBLIC_BACKEND_ORIGIN。
       BILIBILI_PROXY_TOKEN_SECRET: ${BILIBILI_PROXY_TOKEN_SECRET:-}
+      # GL-P3-MEDIA-001 Douyin：共享 HMAC token secret；与 legacy Express 共享，须 ≥32 字符。
+      DOUYIN_PROXY_TOKEN_SECRET: ${DOUYIN_PROXY_TOKEN_SECRET:-}
       APP_PUBLIC_BACKEND_ORIGIN: ${PUBLIC_BACKEND_ORIGIN:-}
       BILIBILI_ANALYSIS_PROVIDER: ${BILIBILI_ANALYSIS_PROVIDER:-qwen}
       BILIBILI_ANALYSIS_TIMEOUT_MS: ${BILIBILI_ANALYSIS_TIMEOUT_MS:-180000}

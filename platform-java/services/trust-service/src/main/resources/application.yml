@@ -57,11 +57,16 @@ trust:
     vote-window-hours: ${TRUST_ADJUDICATION_VOTE_WINDOW_HOURS:24}
     max-rounds: ${TRUST_ADJUDICATION_MAX_ROUNDS:2}
     appeal-window-hours: ${TRUST_ADJUDICATION_APPEAL_WINDOW_HOURS:48}
+    # GL-P2-TRUST-001：争议开启后需等待的小时数才可启动审判（默认 48h）
+    adjudication-window-hours: ${TRUST_ADJUDICATION_WINDOW_HOURS:48}
+    # GL-P2-TRUST-001：争议终局后冷却期，防止恶意重复开争议（默认 7 天=168h）
+    dispute-cooldown-hours: ${TRUST_ADJUDICATION_DISPUTE_COOLDOWN_HOURS:168}
     # 秒级覆盖（>0 时优先于上面的小时值）：窗口原本最小 1 小时，dev/e2e 无法验证
     # 「窗口到期→自动 tally→decided→上诉窗口→终局」这条时间驱动主链路。
     # 对齐 marketplace 的 SETTLEMENT_WINDOW_SECONDS 约定；生产留 0 即用小时值。
     vote-window-seconds: ${TRUST_ADJUDICATION_VOTE_WINDOW_SECONDS:0}
     appeal-window-seconds: ${TRUST_ADJUDICATION_APPEAL_WINDOW_SECONDS:0}
+    adjudication-window-seconds: ${TRUST_ADJUDICATION_WINDOW_SECONDS:0}
     judge-eligibility-tier: ${TRUST_ADJUDICATION_JUDGE_ELIGIBILITY_TIER:1}
     dispatcher:
       enabled: ${TRUST_ADJUDICATION_DISPATCHER_ENABLED:true}

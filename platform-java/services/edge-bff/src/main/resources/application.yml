@@ -274,6 +274,22 @@ edge:
       path: /api/bilibili/download
       upstream: intelligence
       enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
+    # ---- Douyin media（草场 GL-P3-MEDIA-001）→ intelligence-service。extract/proxy/download 迁移 Java，
+    # analyze 与 audio/analysis-media/session 保留 legacy（复杂 worker 首期不改）。
+    # 默认 false：关闭时回落 legacy Express（回滚安全）。
+    - method: POST
+      path: /api/douyin/extract-video
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+    - method: GET
+      path: /api/douyin/proxy
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+    - method: GET
+      path: /api/douyin/download
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
 
 # 内部身份断言（HLD 7.4 + GL-P0-ASSERT-001 keyring 模式）：
 # edge-bff 按 target upstream 选对应签名钥签发用户断言（purpose=user）。

@@ -2,6 +2,8 @@ package com.grassland.trust.judge;
 
 import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
@@ -24,17 +26,22 @@ import reactor.core.publisher.Mono;
  *
  * <p>仅推荐官可入池（{@code requireJudge} 是投票门禁，此处用 {@code requireMerchantOrRecommender} 后再筛
  * recommender——商家不得自任审判官，避免既当运动员又当裁判）。
- * {@code eligibilityTier} 固定 1：声誉模块未建，资格阈值由 {@code trust.adjudication.judge-eligibility-tier} 占位。
+ * GL-P2-TRUST-001：入池时从 marketplace 获取声誉等级，映射为 eligibility_tier（Lv1=1, Lv2=2, ..., Lv5=5）。
  */
 @RestController
 public class JudgeController {
 
+    private static final Logger log = LoggerFactory.getLogger(JudgeController.class);
+
     private final TrustCallerResolver callers;
     private final JudgeRepository judges;
+    private final MarketplaceReputationClient reputationClient;
 
-    public JudgeController(TrustCallerResolver callers, JudgeRepository judges) {
+    public JudgeController(TrustCallerResolver callers, JudgeRepository judges,
+                          MarketplaceReputationClient reputationClient) {
         this.callers = callers;
         this.judges = judges;
+        this.reputationClient = reputationClient;
     }
 
     @PostMapping("/api/trust/judges")
@@ -42,7 +49,15 @@ public class JudgeController {
         return callers.requireMerchantOrRecommender(request)
                 .filter(TrustCallerResolver.Caller::isRecommender)
                 .switchIfEmpty(fail(403, "仅推荐官可报名成为审判官"))
-                .flatMap(caller -> judges.enroll(caller.accountId(), caller.organizationId()))
+                .flatMap(caller -> reputationClient.getLevel(caller.accountId())
+                        // 声誉查询失败时回退到 tier=1（允许入池，但不获得高 tier 权限）
+                        .onErrorResume(e -> {
+                            log.warn("Failed to fetch reputation for {}, defaulting to tier=1: {}",
+                                    caller.accountId(), e.getMessage());
+                            return Mono.just(new MarketplaceReputationClient.LevelResult(caller.accountId(), 1));
+                        })
+                        .flatMap(level -> judges.enrollWithTier(
+                                caller.accountId(), caller.organizationId(), level.level())))
                 .map(judge -> ResponseEntity.ok(Map.of("success", true, "data", toBody(judge))));
     }
 

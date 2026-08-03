@@ -60,6 +60,10 @@ public class ReputationController {
         map.put("levelTitle", level.title());
         map.put("acceptedCount", stats.acceptedCount());
         map.put("completedCount", stats.completedCount());
+        map.put("merchantCancelledCount", stats.merchantCancelledCount());
+        map.put("rejectedCount", stats.rejectedCount());
+        map.put("withdrawnCount", stats.withdrawnCount());
+        map.put("terminalCount", stats.terminalCount());
         map.put("completionRate", round(stats.completionRate(), 4));
         map.put("ratingCount", stats.ratingCount());
         // 无评分 → null（不是 0）：「没人评过」与「口碑差」在 UI 上必须是两种说法

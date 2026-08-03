@@ -3,6 +3,7 @@ import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type Ref } fro
 import AdjudicationPanel from './AdjudicationPanel.vue'
 import EngagementRatingPanel from './EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from './EngagementSubmissionPanel.vue'
+import MerchantKybCard from './MerchantKybCard.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
 import MyRecommenderProfileCard from './MyRecommenderProfileCard.vue'
@@ -777,6 +778,11 @@ function statusLabel(status: string): string {
       <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
       <article v-if="activeOrg" class="gl-card gl-card-wide">
         <OrgTeamCard :org-id="activeOrg.id" />
+      </article>
+
+      <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
+      <article v-if="activeOrg" class="gl-card gl-card-wide">
+        <MerchantKybCard :org-id="activeOrg.id" @changed="loadOrganizations" />
       </article>
 
       <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->

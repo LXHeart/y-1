@@ -14,6 +14,7 @@ dependencies {
     implementation(libs.spring.boot.actuator)
     implementation(project(":platform-identity-assertion"))
     implementation(project(":platform-storage"))
+    implementation(project(":platform-crypto"))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")

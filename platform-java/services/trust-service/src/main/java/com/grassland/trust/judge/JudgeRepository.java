@@ -37,17 +37,30 @@ public class JudgeRepository {
 
     /**
      * 报名入池（幂等）：{@code UNIQUE(account_id)} 冲突 → 复活并返回既有行（退池后可再报名）。
-     * {@code eligibilityTier} 固定 1——声誉模块未建，资格阈值现由配置占位（HLD 3.1）。
+     * GL-P2-TRUST-001：优先使用 {@link #enrollWithTier} 从 marketplace 获取声誉等级；
+     * 本方法保留为兼容入口，tier 默认 1（无声誉记录视为 Lv1）。
      */
     public Mono<Judge> enroll(String accountId, String organizationId) {
+        return enrollWithTier(accountId, organizationId, 1);
+    }
+
+    /**
+     * 报名入池（指定声誉等级）：GL-P2-TRUST-001 reputation-based judge eligibility。
+     *
+     * <p>从 marketplace 获取推荐官声誉等级（Lv1-Lv5），映射为 eligibility_tier。
+     * Lv5 绑定审判官资格（tier=5），其他等级对应 tier=1-4。
+     *
+     * <p>幂等：{@code UNIQUE(account_id)} 冲突 → 复活并更新 tier（允许声誉为动态值）。
+     */
+    public Mono<Judge> enrollWithTier(String accountId, String organizationId, int eligibilityTier) {
         var spec = db.sql("""
                 INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active)
-                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), 1, true)
+                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), :tier, true)
                 ON CONFLICT (account_id) DO UPDATE
-                    SET active = true, organization_id = EXCLUDED.organization_id
+                    SET active = true, organization_id = EXCLUDED.organization_id, eligibility_tier = :tier
                 RETURNING id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at
                 """)
-                .bind("id", UUID.randomUUID().toString()).bind("acct", accountId);
+                .bind("id", UUID.randomUUID().toString()).bind("acct", accountId).bind("tier", eligibilityTier);
         spec = (organizationId == null || organizationId.isBlank())
                 ? spec.bindNull("org", String.class)
                 : spec.bind("org", organizationId);

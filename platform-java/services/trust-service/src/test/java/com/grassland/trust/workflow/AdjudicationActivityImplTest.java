@@ -40,7 +40,7 @@ class AdjudicationActivityImplTest {
     private final TransactionalOperator transactions = mock(TransactionalOperator.class);
     private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(
             disputes, judges, outbox,
-            new AdjudicationProperties(7, 24, 2, 48, 1, 168, 60, 0, 0),  // 末两参=秒级覆盖，0=用小时值
+            new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0),  // 末两参=秒级覆盖，0=用小时值
             finance, transactions);
 
     @BeforeEach

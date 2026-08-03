@@ -23,6 +23,15 @@ public class ReputationRepository {
               (SELECT COUNT(*) FROM task_application
                  WHERE recommender_account_id = CAST(:acc AS uuid) AND confirmed_at IS NOT NULL)::int
                 AS completed_count,
+              (SELECT COUNT(*) FROM task_application
+                 WHERE recommender_account_id = CAST(:acc AS uuid) AND status = 'refunded')::int
+                AS merchant_cancelled_count,
+              (SELECT COUNT(*) FROM task_application
+                 WHERE recommender_account_id = CAST(:acc AS uuid) AND status = 'rejected')::int
+                AS rejected_count,
+              (SELECT COUNT(*) FROM task_application
+                 WHERE recommender_account_id = CAST(:acc AS uuid) AND status = 'withdrawn')::int
+                AS withdrawn_count,
               (SELECT COUNT(*) FROM engagement_rating
                  WHERE recommender_account_id = CAST(:acc AS uuid))::int
                 AS rating_count,
@@ -57,6 +66,9 @@ public class ReputationRepository {
         return new ReputationStats(
                 intOf(row, "accepted_count"),
                 intOf(row, "completed_count"),
+                intOf(row, "merchant_cancelled_count"),
+                intOf(row, "rejected_count"),
+                intOf(row, "withdrawn_count"),
                 intOf(row, "rating_count"),
                 row.get("average_score", Double.class),
                 row.get("average_response_seconds", Double.class));

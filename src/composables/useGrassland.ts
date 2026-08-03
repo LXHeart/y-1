@@ -55,6 +55,16 @@ import type {
   ReviseTaskInput,
   Wallet,
   VoteChoice,
+  // KYB 类型
+  MerchantProfile,
+  CreateMerchantProfileInput,
+  MerchantAttachment,
+  CreateMerchantAttachmentInput,
+  WithdrawalAccount,
+  CreateWithdrawalAccountInput,
+  KybVerificationRequest,
+  StoreProfile,
+  CreateStoreProfileInput,
 } from '../types/grassland'
 
 /**
@@ -819,6 +829,176 @@ export function useGrassland() {
   const listOpsPendingVerifications = () =>
     run(() => request<OpsPendingVerification[]>('/api/ops/pending-verifications'))
 
+  // ---------- KYB：商家资料（GL-P3-MERCHANT-001）----------
+
+  /**
+   * 获取本组织的商家资料。
+   *
+   * ⚠️ 需要当前用户是该组织的 MEMBER+；不存在时后端返回 404 → 此处转为 null。
+   */
+  async function getMerchantProfile(orgId: string): Promise<MerchantProfile | null> {
+    try {
+      return await request<MerchantProfile>(`/api/organizations/${orgId}/merchant-profile`)
+    } catch {
+      return null // 404 = 尚未创建资料，属正常状态
+    }
+  }
+
+  /**
+   * 创建/更新商家资料。
+   *
+   * PUT 幂等：同一资料重复提交不会重复创建，但会更新字段。
+   */
+  const createMerchantProfile = (orgId: string, input: CreateMerchantProfileInput) =>
+    run(() => request<MerchantProfile>(`/api/organizations/${orgId}/merchant-profile`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  /**
+   * 提交商家资料审核。
+   *
+   * 仅 draft 态可提交；提交后状态变为 pending，进入审核队列。
+   */
+  const submitMerchantProfile = (orgId: string) =>
+    run(() => request<MerchantProfile>(
+      `/api/organizations/${orgId}/merchant-profile/submit`, { method: 'POST' }))
+
+  /** 列出本组织的商家附件。 */
+  const listMerchantAttachments = (orgId: string) =>
+    run(() => request<MerchantAttachment[]>(`/api/organizations/${orgId}/merchant-attachments`))
+
+  /**
+   * 上传商家附件（三步合一）。
+   *
+   * 封装：申请凭据 → 直传 → confirm → 创建附件记录。
+   * 返回的 mediaId 可用于创建附件记录。
+   */
+  const uploadMerchantAttachment = async (orgId: string, file: File, attachmentType: string) =>
+    run(async () => {
+      // 第一步：申请上传凭据
+      const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          contentType: file.type || 'application/octet-stream',
+          purpose: 'merchant_kyc_attachment',
+          sizeBytes: file.size,
+        }),
+      })
+      // 第二步：直传到 presigned URL
+      await putToPresignedUrl(ticket, file)
+      // 第三步：确认上传
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      // 第四步：创建附件记录
+      const attachment = await request<MerchantAttachment>(
+        `/api/organizations/${orgId}/merchant-attachments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            attachmentType,
+            mediaReferenceId: confirmed.id,
+            mimeType: file.type,
+            sizeBytes: file.size,
+          } as CreateMerchantAttachmentInput),
+        })
+      return attachment
+    })
+
+  /** 删除商家附件（软删除，不删媒体文件）。 */
+  const deleteMerchantAttachment = (orgId: string, attachmentId: string) =>
+    run(() => request<unknown>(
+      `/api/organizations/${orgId}/merchant-attachments/${attachmentId}`, { method: 'DELETE' }))
+
+  // ---------- KYB：收款账户 ----------
+
+  /** 列出本组织的收款账户。 */
+  const listWithdrawalAccounts = (orgId: string) =>
+    run(() => request<WithdrawalAccount[]>(`/api/organizations/${orgId}/withdrawal-accounts`))
+
+  /**
+   * 创建收款账户。
+   *
+   * 创建后状态为 pending，需经审核（KYC 审核通过后的组织可开通提现功能）。
+   */
+  const createWithdrawalAccount = (orgId: string, input: CreateWithdrawalAccountInput) =>
+    run(() => request<WithdrawalAccount>(`/api/organizations/${orgId}/withdrawal-accounts`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  /**
+   * 设置默认收款账户。
+   *
+   * 仅 approved 态的账户可设默认。
+   */
+  const setDefaultWithdrawalAccount = (orgId: string, accountId: string) =>
+    run(() => request<WithdrawalAccount>(
+      `/api/organizations/${orgId}/withdrawal-accounts/${accountId}/set-default`, { method: 'POST' }))
+
+  /** 删除收款账户（软删除）。 */
+  const deleteWithdrawalAccount = (orgId: string, accountId: string) =>
+    run(() => request<unknown>(
+      `/api/organizations/${orgId}/withdrawal-accounts/${accountId}`, { method: 'DELETE' }))
+
+  // ---------- KYB：门店资料 ----------
+
+  /**
+   * 获取门店资料。
+   *
+   * ⚠️ 需要当前用户是该门店所属组织的 MEMBER+；不存在时后端返回 404 → 此处转为 null。
+   */
+  async function getStoreProfile(orgId: string, storeId: string): Promise<StoreProfile | null> {
+    try {
+      return await request<StoreProfile>(`/api/organizations/${orgId}/stores/${storeId}/profile`)
+    } catch {
+      return null // 404 = 尚未创建资料，属正常状态
+    }
+  }
+
+  /**
+   * 创建/更新门店资料。
+   *
+   * PUT 幂等：同一资料重复提交不会重复创建，但会更新字段。
+   */
+  const createStoreProfile = (orgId: string, storeId: string, input: CreateStoreProfileInput) =>
+    run(() => request<StoreProfile>(
+      `/api/organizations/${orgId}/stores/${storeId}/profile`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }))
+
+  /**
+   * 提交门店资料审核。
+   *
+   * 仅 draft 态可提交；提交后状态变为 pending，进入审核队列。
+   */
+  const submitStoreProfile = (orgId: string, storeId: string) =>
+    run(() => request<StoreProfile>(
+      `/api/organizations/${orgId}/stores/${storeId}/profile/submit`, { method: 'POST' }))
+
+  // ---------- KYB：审核申请（平台管理员）----------
+
+  /** 列出所有 KYB 审核申请（管理员专用）。 */
+  const listKybVerifications = (status?: string) =>
+    run(() => request<KybVerificationRequest[]>(
+      `/api/admin/kyb-verifications${status ? `?status=${status}` : ''}`))
+
+  /** 获取 KYB 审核详情。 */
+  const getKybVerification = (verificationId: string) =>
+    run(() => request<KybVerificationRequest>(`/api/admin/kyb-verifications/${verificationId}`))
+
+  /**
+   * 审核 KYB 申请（管理员专用）。
+   *
+   * approve → 状态变为 approved；reject → 状态变为 rejected。
+   * 终态再审 → 409。
+   */
+  const reviewKybVerification = (verificationId: string, decision: 'approve' | 'reject', note?: string) =>
+    run(() => request<KybVerificationRequest>(`/api/admin/kyb-verifications/${verificationId}/review`, {
+      method: 'POST',
+      body: JSON.stringify(note ? { decision, note } : { decision }),
+    }))
+
   /**
    * 幂等键生成：`crypto.randomUUID` 在 HTTPS 与 localhost 之外不可用（Safari/旧 Chrome），
    * 故带一条时间戳+随机数兜底，避免运营台在 HTTP 内网入口上整个按钮不可用。
@@ -930,5 +1110,25 @@ export function useGrassland() {
     executeOpsDltAction,
     listOpsPendingVerifications,
     newOperationId,
+    // KYB：商家资料
+    getMerchantProfile,
+    createMerchantProfile,
+    submitMerchantProfile,
+    listMerchantAttachments,
+    uploadMerchantAttachment,
+    deleteMerchantAttachment,
+    // KYB：收款账户
+    listWithdrawalAccounts,
+    createWithdrawalAccount,
+    setDefaultWithdrawalAccount,
+    deleteWithdrawalAccount,
+    // KYB：门店资料
+    getStoreProfile,
+    createStoreProfile,
+    submitStoreProfile,
+    // KYB：审核（管理员）
+    listKybVerifications,
+    getKybVerification,
+    reviewKybVerification,
   }
 }

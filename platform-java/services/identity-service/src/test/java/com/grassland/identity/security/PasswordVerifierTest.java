@@ -5,7 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 class PasswordVerifierTest {
-    private final PasswordVerifier verifier = new PasswordVerifier();
+    private final Argon2PasswordHasher argon2Hasher = new Argon2PasswordHasher();
+    private final PasswordVerifier verifier = new PasswordVerifier(argon2Hasher);
 
     @Test
     void roundTripsBcryptHash() {
@@ -25,9 +26,41 @@ class PasswordVerifierTest {
 
     @Test
     void argon2RoundTrips() {
-        Argon2PasswordHasher hasher = new Argon2PasswordHasher();
-        String hash = hasher.hash("S3cret-pass");
-        assertThat(hasher.matches("S3cret-pass", hash)).isTrue();
-        assertThat(hasher.matches("other", hash)).isFalse();
+        String hash = argon2Hasher.hash("S3cret-pass");
+        assertThat(verifier.verify("S3cret-pass", hash)).isTrue();
+        assertThat(verifier.verify("other", hash)).isFalse();
+    }
+
+    @Test
+    void detectTypeBcrypt() {
+        String hash = at.favre.lib.crypto.bcrypt.BCrypt.withDefaults()
+            .hashToString(12, "password".toCharArray());
+        assertThat(verifier.detectType(hash)).isEqualTo(PasswordVerifier.PasswordType.BCRYPT);
+    }
+
+    @Test
+    void detectTypeArgon2id() {
+        String hash = argon2Hasher.hash("password");
+        assertThat(verifier.detectType(hash)).isEqualTo(PasswordVerifier.PasswordType.ARGON2ID);
+    }
+
+    @Test
+    void detectTypeUnknown() {
+        assertThat(verifier.detectType("")).isEqualTo(PasswordVerifier.PasswordType.UNKNOWN);
+        assertThat(verifier.detectType("$x$")).isEqualTo(PasswordVerifier.PasswordType.UNKNOWN);
+        assertThat(verifier.detectType(null)).isEqualTo(PasswordVerifier.PasswordType.UNKNOWN);
+    }
+
+    @Test
+    void needsRehashBcrypt() {
+        String hash = at.favre.lib.crypto.bcrypt.BCrypt.withDefaults()
+            .hashToString(12, "password".toCharArray());
+        assertThat(verifier.needsRehash(hash)).isTrue();
+    }
+
+    @Test
+    void needsRehashArgon2id() {
+        String hash = argon2Hasher.hash("password");
+        assertThat(verifier.needsRehash(hash)).isFalse();
     }
 }

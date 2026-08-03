@@ -1,5 +1,6 @@
 package com.grassland.identity.auth;
 
+import com.grassland.identity.security.Argon2PasswordHasher;
 import com.grassland.identity.security.CookieSigner;
 import com.grassland.identity.security.LoginRateLimiter;
 import com.grassland.identity.security.PasswordVerifier;
@@ -27,15 +28,17 @@ public class LoginController {
     private final LegacyUserLookup userLookup;
     private final LegacyUserRepository userRepository;
     private final PasswordVerifier passwordVerifier;
+    private final Argon2PasswordHasher argon2Hasher;
     private final SessionWriter sessionWriter;
     private final LoginRateLimiter rateLimiter;
 
     public LoginController(LegacyUserLookup userLookup, LegacyUserRepository userRepository,
-                           PasswordVerifier passwordVerifier, SessionWriter sessionWriter,
-                           LoginRateLimiter rateLimiter) {
+                           PasswordVerifier passwordVerifier, Argon2PasswordHasher argon2Hasher,
+                           SessionWriter sessionWriter, LoginRateLimiter rateLimiter) {
         this.userLookup = userLookup;
         this.userRepository = userRepository;
         this.passwordVerifier = passwordVerifier;
+        this.argon2Hasher = argon2Hasher;
         this.sessionWriter = sessionWriter;
         this.rateLimiter = rateLimiter;
     }
@@ -67,7 +70,16 @@ public class LoginController {
             return Mono.just(build401());
         }
         AuthUser authUser = new AuthUser(user.id(), user.email(), user.displayName(), user.role(), user.status());
-        return userRepository.recordLogin(user.id())
+        // GL-P3-IDENTITY-001: 登录成功后，检查是否需要升级密码为 Argon2id
+        boolean needsRehash = passwordVerifier.needsRehash(user.passwordHash());
+        Mono<Void> loginOps = userRepository.recordLogin(user.id());
+        if (needsRehash) {
+            loginOps = loginOps.then(
+                Mono.fromCallable(() -> argon2Hasher.hash(password))
+                    .flatMap(newHash -> userRepository.upgradePasswordHash(user.id(), newHash))
+            );
+        }
+        return loginOps
             .then(sessionWriter.createSession(authUser, request))
             .map(created -> {
                 rateLimiter.recordOutcome(ip, email, false);

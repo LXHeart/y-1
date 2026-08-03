@@ -18,6 +18,7 @@ dependencyResolutionManagement {
 rootProject.name = "grassland-platform"
 
 include(
+    "platform-crypto",
     "platform-storage",
     "platform-identity-assertion",
     "services:edge-bff",

@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 
 /**
  * 门店 HTTP 入口。草场身份域 Slice 2F。挂 {@code /api/organizations/{orgId}/stores}（门店属于 org，RESTful 嵌套）。
@@ -29,6 +31,10 @@ import reactor.core.publisher.Mono;
  *   <li>POST — 建门店，需 org 内 ADMIN 及以上角色，写 outbox {@code StoreCreated} 事件。</li>
  *   <li>GET — 列 org 下门店，需 MEMBER 及以上。</li>
  *   <li>GET /{storeId} — 单查，需 MEMBER 及以上；跨 org 或不存在返回 404。</li>
+ *   <li>GL-P3-MERCHANT-001 新增：</li>
+ *   <li>POST /{storeId}/profile — 创建/更新门店详细资料，需 ADMIN 及以上。</li>
+ *   <li>GET /{storeId}/profile — 查询门店详细资料，需 MEMBER 及以上。</li>
+ *   <li>DELETE /{storeId}/profile — 删除门店详细资料，需 ADMIN 及以上。</li>
  * </ul>
  */
 @RestController
@@ -37,13 +43,15 @@ public class StoreController {
 
     private final OrgAuthorization authz;
     private final StoreRepository stores;
+    private final StoreProfileRepository storeProfiles;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
-    public StoreController(OrgAuthorization authz, StoreRepository stores, OutboxRepository outbox,
-                           TransactionalOperator transactions) {
+    public StoreController(OrgAuthorization authz, StoreRepository stores, StoreProfileRepository storeProfiles,
+                           OutboxRepository outbox, TransactionalOperator transactions) {
         this.authz = authz;
         this.stores = stores;
+        this.storeProfiles = storeProfiles;
         this.outbox = outbox;
         this.transactions = transactions;
     }
@@ -81,6 +89,41 @@ public class StoreController {
                         .switchIfEmpty(Mono.error(new IdentityException(404, "门店不存在"))));
     }
 
+    // GL-P3-MERCHANT-001: 门店详细资料端点
+
+    @PostMapping(path = "/{storeId}/profile", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> upsertProfile(@PathVariable String orgId,
+                                                                    @PathVariable String storeId,
+                                                                    @RequestBody CreateStoreProfileRequest body,
+                                                                    ServerHttpRequest request) {
+        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
+                .flatMap(account -> transactions.transactional(
+                        storeProfiles.upsert(storeId, body.address(), body.phone(),
+                                body.businessHours(), body.description(), "active"))
+                        .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile)))));
+    }
+
+    @GetMapping("/{storeId}/profile")
+    public Mono<ResponseEntity<Map<String, Object>>> getProfile(@PathVariable String orgId,
+                                                                 @PathVariable String storeId,
+                                                                 ServerHttpRequest request) {
+        return authz.requireRole(request, orgId, MembershipRole.MEMBER)
+                .flatMap(account -> storeProfiles.findById(storeId)
+                        .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))))
+                        .switchIfEmpty(Mono.just(ResponseEntity.ok(Map.of("success", true, "data", null)))));
+    }
+
+    @DeleteMapping("/{storeId}/profile")
+    public Mono<ResponseEntity<Map<String, Object>>> deleteProfile(@PathVariable String orgId,
+                                                                    @PathVariable String storeId,
+                                                                    ServerHttpRequest request) {
+        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
+                .flatMap(account -> transactions.transactional(
+                        storeProfiles.upsert(storeId, null, null, null, null, "inactive"))
+                        .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", Map.of("deleted", true)))))
+                .onErrorResume(e -> Mono.just(ResponseEntity.ok(Map.of("success", true, "data", Map.of("deleted", false)))));
+    }
+
     @ExceptionHandler(IdentityException.class)
     public ResponseEntity<Map<String, Object>> handleError(IdentityException error) {
         return ResponseEntity.status(error.status()).body(Map.of("success", false, "error", error.getMessage()));
@@ -95,4 +138,23 @@ public class StoreController {
         m.put("createdAt", store.createdAt() == null ? null : store.createdAt().toString());
         return m;
     }
+
+    private Map<String, Object> toBody(StoreProfile profile) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("storeId", profile.storeId());
+        m.put("address", profile.address());
+        m.put("phone", profile.phone());
+        m.put("businessHours", profile.businessHours());
+        m.put("description", profile.description());
+        m.put("status", profile.status());
+        m.put("createdAt", profile.createdAt() == null ? null : profile.createdAt().toString());
+        return m;
+    }
+
+    public record CreateStoreProfileRequest(
+            String address,
+            String phone,
+            String businessHours,
+            String description
+    ) {}
 }

@@ -1,5 +1,6 @@
 package com.grassland.trust.dispute;
 
+import com.grassland.trust.adjudication.AdjudicationProperties;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
 import com.grassland.trust.security.TrustCallerResolver;
@@ -43,12 +44,14 @@ public class DisputeController {
     private final MarketplaceEngagementAuthorizationClient authorizer;
     private final DeferredDisputeRequestRepository deferredRequests;
     private final MerchantRejectionFinalizer merchantRejectionFinalizer;
+    private final AdjudicationProperties adjudicationProps;
 
     public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
                              TransactionalOperator transactions,
                              MarketplaceEngagementAuthorizationClient authorizer,
                              DeferredDisputeRequestRepository deferredRequests,
-                             MerchantRejectionFinalizer merchantRejectionFinalizer) {
+                             MerchantRejectionFinalizer merchantRejectionFinalizer,
+                             AdjudicationProperties adjudicationProps) {
         this.callers = callers;
         this.disputes = disputes;
         this.outbox = outbox;
@@ -56,6 +59,7 @@ public class DisputeController {
         this.authorizer = authorizer;
         this.deferredRequests = deferredRequests;
         this.merchantRejectionFinalizer = merchantRejectionFinalizer;
+        this.adjudicationProps = adjudicationProps;
     }
 
     @PostMapping("/api/trust/disputes")
@@ -133,26 +137,18 @@ public class DisputeController {
                     }
                     return Mono.just(response(HttpStatus.OK, toBody(active)));
                 })
-                .switchIfEmpty(transactions.transactional(
-                                disputes.create(engagementRef, organizationId, openedBy, role, reason, "standard")
-                                        .flatMap(created -> outbox.append(envelope("DisputeOpened", created))
-                                                .thenReturn(created)))
-                        .then(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)))
-                        .flatMap(created -> {
-                            if ("merchant_rejection".equals(created.kind())) {
-                                // create 并发输给 merchant rejection：按同一 deferred 语义恢复。
-                                if (!"recommender".equals(role)) {
-                                    return fail(409, "该履约已有商家履约异议，须等待客服终审");
-                                }
-                                return transactions.transactional(
-                                                deferredRequests.createOrFind(created, openedBy, reason))
-                                        .then(Mono.defer(() -> deferredRequests
-                                                .findBySourceAndRecommender(created.id(), openedBy)))
-                                        .map(request -> response(HttpStatus.ACCEPTED, deferredBody(request)));
-                            }
-                            boolean ownCreation = openedBy.equals(created.openedByAccountId());
-                            return Mono.just(response(ownCreation ? HttpStatus.CREATED : HttpStatus.OK, toBody(created)));
-                        }));
+                .switchIfEmpty(
+                        // GL-P2-TRUST-001：检查冷却期（终局后恶意重复开争议）
+                        checkDisputeCooldown(engagementRef)
+                                .flatMap(cooldownElapsed -> {
+                                    if (!cooldownElapsed) {
+                                        long cooldownHours = adjudicationProps.disputeCooldownSecondsEffective() / 3600;
+                                        return fail(409, String.format(
+                                                "该履约近期已有终局争议，需等待 %d 小时后才能再次开争议（冷却期防恶意重复）",
+                                                cooldownHours));
+                                    }
+                                    return createNewDispute(engagementRef, organizationId, openedBy, role, reason);
+                                }));
     }
 
     private Map<String, Object> deferredBody(DeferredDisputeRequest request) {
@@ -279,6 +275,49 @@ public class DisputeController {
     }
 
     private record Opened(DisputeCase dispute, boolean created) {}
+
+    /** GL-P2-TRUST-001：检查争议冷却期。终局争议需等待冷却期后才可再次开争议。 */
+    private Mono<Boolean> checkDisputeCooldown(String engagementRef) {
+        // 测试环境可通过 dispute-cooldown-hours=0 跳过冷却期校验
+        long effectiveCooldown = adjudicationProps.disputeCooldownSecondsEffective();
+        if (effectiveCooldown == 0) {
+            return Mono.just(true);  // 冷却期配置为 0 = 跳过校验（测试环境）
+        }
+        return disputes.findLastFinalizedByEngagementRef(engagementRef)
+                .map(lastFinalized -> {
+                    if (lastFinalized == null || lastFinalized.decidedAt() == null) {
+                        return true;  // 无终局争议，冷却期通过
+                    }
+                    Instant cooldownDeadline = lastFinalized.decidedAt().plusSeconds(effectiveCooldown);
+                    return Instant.now().isAfter(cooldownDeadline) || Instant.now().equals(cooldownDeadline);
+                })
+                .defaultIfEmpty(true);
+    }
+
+    /** 创建新争议（无活跃争议且冷却期通过）。 */
+    private Mono<ResponseEntity<Map<String, Object>>> createNewDispute(
+            String engagementRef, String organizationId, String openedBy, String role, String reason) {
+        return transactions.transactional(
+                        disputes.create(engagementRef, organizationId, openedBy, role, reason, "standard")
+                                .flatMap(created -> outbox.append(envelope("DisputeOpened", created))
+                                        .thenReturn(created)))
+                .then(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)))
+                .flatMap(created -> {
+                    if ("merchant_rejection".equals(created.kind())) {
+                        // create 并发输给 merchant rejection：按同一 deferred 语义恢复。
+                        if (!"recommender".equals(role)) {
+                            return fail(409, "该履约已有商家履约异议，须等待客服终审");
+                        }
+                        return transactions.transactional(
+                                        deferredRequests.createOrFind(created, openedBy, reason))
+                                .then(Mono.defer(() -> deferredRequests
+                                        .findBySourceAndRecommender(created.id(), openedBy)))
+                                .map(request -> response(HttpStatus.ACCEPTED, deferredBody(request)));
+                    }
+                    boolean ownCreation = openedBy.equals(created.openedByAccountId());
+                    return Mono.just(response(ownCreation ? HttpStatus.CREATED : HttpStatus.OK, toBody(created)));
+                });
+    }
 
     private static <T> Mono<T> fail(int status, String message) {
         return Mono.error(new TrustException(status, message));

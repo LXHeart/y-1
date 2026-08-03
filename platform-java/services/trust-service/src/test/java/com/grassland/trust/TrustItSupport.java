@@ -80,6 +80,10 @@ public abstract class TrustItSupport {
         // 6C 起 trust-service 引入 Temporal：IT 用内存 test-server（免 temporal 容器），镜像 marketplace。
         r.add("spring.temporal.test-server.enabled", () -> "true");
         r.add("trust.adjudication.dispatcher.enabled", () -> "false");
+        // GL-P2-TRUST-001：测试环境禁用审判启动窗口（48h），避免测试等待
+        r.add("trust.adjudication.adjudication-window-enabled", () -> "0");
+        // GL-P2-TRUST-001：测试环境禁用争议冷却期（7天），避免测试等待
+        r.add("trust.adjudication.dispute-cooldown-hours", () -> "0");
     }
 
     protected WebTestClient client() {

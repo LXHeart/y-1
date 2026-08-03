@@ -2,16 +2,23 @@ package com.grassland.marketplace.reputation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
+
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.saga.DisputeChecker;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Mono;
 
 /**
  * 评分（V6）+ 声誉指标/等级端到端。继承 {@link MarketplaceItSupport}。
@@ -28,6 +35,15 @@ class ReputationControllerIT extends MarketplaceItSupport {
 
     @MockitoBean
     private DisputeChecker disputeChecker;
+
+    /** 配置 finance mock：release/reserve/capture 全返回成功（幂等）——非资金型任务不走 finance，但 cancel 路径会调用 release。 */
+    @BeforeEach
+    void setUpFinanceMock() {
+        when(financeClient.release(anyString(), anyString())).thenReturn(Mono.empty());
+        when(financeClient.reserve(anyString(), anyString(), anyLong(), anyString()))
+                .thenReturn(Mono.empty());
+        when(financeClient.capture(anyString(), anyString())).thenReturn(Mono.empty());
+    }
 
     @Test
     @DisplayName("确认履约后可评分，声誉指标随即反映该次完成")
@@ -55,6 +71,10 @@ class ReputationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.accountId").isEqualTo(rec)
                 .jsonPath("$.data.acceptedCount").isEqualTo(1)
                 .jsonPath("$.data.completedCount").isEqualTo(1)
+                .jsonPath("$.data.merchantCancelledCount").isEqualTo(0)
+                .jsonPath("$.data.rejectedCount").isEqualTo(0)
+                .jsonPath("$.data.withdrawnCount").isEqualTo(0)
+                .jsonPath("$.data.terminalCount").isEqualTo(1)
                 .jsonPath("$.data.completionRate").isEqualTo(1.0)
                 .jsonPath("$.data.ratingCount").isEqualTo(1)
                 .jsonPath("$.data.averageScore").isEqualTo(5.0)
@@ -75,28 +95,33 @@ class ReputationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.acceptedCount").isEqualTo(0)
                 .jsonPath("$.data.completedCount").isEqualTo(0)
+                .jsonPath("$.data.merchantCancelledCount").isEqualTo(0)
+                .jsonPath("$.data.rejectedCount").isEqualTo(0)
+                .jsonPath("$.data.withdrawnCount").isEqualTo(0)
+                .jsonPath("$.data.terminalCount").isEqualTo(0)
                 .jsonPath("$.data.completionRate").isEqualTo(0.0)
                 .jsonPath("$.data.averageScore").doesNotExist()   // 无评分 → null（不是 0）
                 .jsonPath("$.data.level").isEqualTo("Lv1");
     }
 
     @Test
-    @DisplayName("接单但未完成 → 完成率下降，等级不受评分缺失影响")
-    void acceptedButNotConfirmedLowersCompletionRate() {
+    @DisplayName("进行中的 engagement 不计入完成率分母（新公式：只计终态）")
+    void inProgressEngagementDoesNotAffectCompletionRate() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String rec = UUID.randomUUID().toString();
         String taskDone = publishTask(merchant, org);
         applyAcceptSubmitConfirm(merchant, org, rec, taskDone);
         String taskOpen = publishTask(merchant, org);
-        accept(merchant, org, taskOpen, apply(rec, taskOpen));  // 接了没完成
+        accept(merchant, org, taskOpen, apply(rec, taskOpen));  // 接了没完成，仍在进行中
 
         client().get().uri("/api/reputation/" + rec)
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.acceptedCount").isEqualTo(2)
+                .jsonPath("$.data.acceptedCount").isEqualTo(2)  // 当前 accepted 仍为 2
                 .jsonPath("$.data.completedCount").isEqualTo(1)
-                .jsonPath("$.data.completionRate").isEqualTo(0.5);
+                .jsonPath("$.data.terminalCount").isEqualTo(1)  // 只有 1 个终态
+                .jsonPath("$.data.completionRate").isEqualTo(1.0);  // 1/1 = 100%，进行中不影响
     }
 
     @Test
@@ -185,6 +210,127 @@ class ReputationControllerIT extends MarketplaceItSupport {
         client().get().uri("/api/reputation/not-a-uuid")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant"))
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("商家取消 engagement → merchantCancelledCount 增量，completionRate 正确计算")
+    void merchantCancelEngagementCountsCorrectly() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String rec = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org);
+
+        // 接受任务（但未提交凭证）
+        String app = apply(rec, task);
+        accept(merchant, org, task, app);
+
+        // 商家取消任务
+        client().post().uri("/api/tasks/" + task + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.refundedCount").isEqualTo(1);
+
+        // 验证声誉指标
+        client().get().uri("/api/reputation/" + rec)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.acceptedCount").isEqualTo(0)  // 已不再是 accepted 状态
+                .jsonPath("$.data.completedCount").isEqualTo(0)  // 未完成
+                .jsonPath("$.data.merchantCancelledCount").isEqualTo(1)  // 商家取消计数
+                .jsonPath("$.data.rejectedCount").isEqualTo(0)
+                .jsonPath("$.data.withdrawnCount").isEqualTo(0)
+                .jsonPath("$.data.terminalCount").isEqualTo(1)  // 1 个终态（商家取消）
+                .jsonPath("$.data.completionRate").isEqualTo(0.0);  // 0/1 = 0%，但这是「未完成」不是「有过错」
+    }
+
+    @Test
+    @DisplayName("完成 + 商家取消混合 → completionRate 只计终态")
+    void mixedCompletedAndCancelledCalculatesCorrectly() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String rec = UUID.randomUUID().toString();
+
+        // 第一个任务：完成
+        String task1 = publishTask(merchant, org);
+        applyAcceptSubmitConfirm(merchant, org, rec, task1);
+
+        // 第二个任务：商家取消
+        String task2 = publishTask(merchant, org);
+        String app2 = apply(rec, task2);
+        accept(merchant, org, task2, app2);
+        client().post().uri("/api/tasks/" + task2 + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1))
+                .exchange().expectStatus().isOk();
+
+        // 验证声誉指标
+        client().get().uri("/api/reputation/" + rec)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.acceptedCount").isEqualTo(1)  // 已完成的第一任务仍是 accepted 状态
+                .jsonPath("$.data.completedCount").isEqualTo(1)
+                .jsonPath("$.data.merchantCancelledCount").isEqualTo(1)
+                .jsonPath("$.data.terminalCount").isEqualTo(2)  // 1 完成 + 1 取消
+                .jsonPath("$.data.completionRate").isEqualTo(0.5);  // 1/2 = 50%
+    }
+
+    @Test
+    @DisplayName("推荐官撤销 → withdrawnCount 增量")
+    void recommenderWithdrawsCountsCorrectly() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String rec = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org);
+
+        String app = apply(rec, task);
+
+        // 推荐官撤销报名（必须在 accept 之前，withdraw 只支持 pending 状态）
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/withdraw")
+                .header("X-Grassland-Identity", sign(rec, "recommender"))
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/reputation/" + rec)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.acceptedCount").isEqualTo(0)
+                .jsonPath("$.data.completedCount").isEqualTo(0)
+                .jsonPath("$.data.merchantCancelledCount").isEqualTo(0)
+                .jsonPath("$.data.rejectedCount").isEqualTo(0)
+                .jsonPath("$.data.withdrawnCount").isEqualTo(1)
+                .jsonPath("$.data.terminalCount").isEqualTo(1)
+                .jsonPath("$.data.completionRate").isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("商家拒绝报名 → rejectedCount 增量")
+    void merchantRejectsApplicationCountsCorrectly() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String rec = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org);
+
+        String app = apply(rec, task);
+
+        // 商家拒绝
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/reject")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("note", "不符合要求"))
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/reputation/" + rec)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.acceptedCount").isEqualTo(0)
+                .jsonPath("$.data.completedCount").isEqualTo(0)
+                .jsonPath("$.data.merchantCancelledCount").isEqualTo(0)
+                .jsonPath("$.data.rejectedCount").isEqualTo(1)
+                .jsonPath("$.data.withdrawnCount").isEqualTo(0)
+                .jsonPath("$.data.terminalCount").isEqualTo(1)
+                .jsonPath("$.data.completionRate").isEqualTo(0.0);
     }
 
     // ---------- helpers ----------
