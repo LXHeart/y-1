@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 
 import com.grassland.trust.TrustItSupport;
 import java.util.Map;
@@ -271,5 +272,92 @@ class DisputeControllerIT extends TrustItSupport {
                         + " WHERE event_type = :et AND payload->>'engagementRef' = :ref")
                 .bind("et", eventType).bind("ref", engagementRef)
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
+    /**
+     * F8：推荐官尝试在活跃 merchant_rejection 期开 standard 争议 → 409（对称守卫）。
+     * 原先会返回 200 把 CS 案信息泄露给推荐官（openedByAccountId=商户，kind=merchant_rejection），
+     * 且推荐官以为争议已开、但实际 reason 被丢弃。此为真正缺陷（更甚于「重复通知」）。
+     *
+     * <p>409 消息含案号，前端可据此在 CS 终局后引导推荐官上诉 → 实现 F5 选项 C（复用既有 appeal
+     * 机制，无需新状态）。
+     */
+    @Test
+    void recommenderCannotOpenStandardDisputeWhileMerchantRejectionIsActive() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String eng = UUID.randomUUID().toString();
+
+        // Mock authorization to pass for recommender（本测聚焦 kind 守卫，非授权逻辑）
+        when(authorizer.authorize(eq(eng), eq(recommender), eq("recommender")))
+                .thenReturn(Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(eng, org)));
+
+        // 商家先开 merchant_rejection
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "engagementRef", eng, "kind", "merchant_rejection",
+                        "openedByAccountId", merchant, "organizationId", org, "reason", "系统与实际不符"))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody()
+                .jsonPath("$.data.id").isNotEmpty()
+                .jsonPath("$.data.kind").isEqualTo("merchant_rejection");
+
+        // 推荐官尝试开 standard 争议 → 409 且消息含案号
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("engagementRef", eng, "reason", "我也不同意"))
+                .exchange()
+                .expectStatus().isEqualTo(409);
+
+        // 仍只有一条 active 案
+        long count = db.sql("SELECT COUNT(*)::int FROM dispute_case WHERE engagement_ref = :ref AND status = 'open'")
+                .bind("ref", eng).map(r -> r.get("count", Long.class)).one().block();
+        assertThat(count).isEqualTo(1);
+    }
+
+    /**
+     * F8 对称情形：marketplace 尝试在活跃 standard 争议上开 merchant_rejection → 409。
+     * 虽此路径当前只由 marketplace contest 调（不会与推荐官并发），但守卫对称性防止未来误用。
+     */
+    @Test
+    void marketplaceCannotOpenMerchantRejectionWhileStandardDisputeIsActive() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String eng = UUID.randomUUID().toString();
+
+        // Mock authorization to pass for recommender（本测聚焦 kind 守卫，非授权逻辑）
+        when(authorizer.authorize(eq(eng), eq(recommender), eq("recommender")))
+                .thenReturn(Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(eng, org)));
+
+        // 推荐官先开 standard 争议
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("engagementRef", eng, "reason", "未收到报酬"))
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody()
+                .jsonPath("$.data.kind").isEqualTo("standard");
+
+        // marketplace 尝试开 merchant_rejection → 409
+        client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "engagementRef", eng, "kind", "merchant_rejection",
+                        "openedByAccountId", merchant, "organizationId", org, "reason", "质量不符"))
+                .exchange()
+                .expectStatus().isEqualTo(409);
+
+        // 仍只有一条 active 案（standard）
+        long count2 = db.sql("SELECT COUNT(*)::int FROM dispute_case WHERE engagement_ref = :ref AND status = 'open'")
+                .bind("ref", eng).map(r -> r.get("count", Long.class)).one().block();
+        assertThat(count2).isEqualTo(1);
     }
 }

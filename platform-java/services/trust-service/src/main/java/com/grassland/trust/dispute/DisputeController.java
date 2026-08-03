@@ -112,7 +112,15 @@ public class DisputeController {
     private Mono<Opened> openOrCreate(String engagementRef, String organizationId, String openedBy,
                                        String role, String reason, String kind) {
         return disputes.findActiveByEngagementRef(engagementRef)
-                .<Opened>map(d -> new Opened(d, false))
+                .flatMap(d -> {
+                    if ("merchant_rejection".equals(d.kind()) && "standard".equals(kind)) {
+                        return Mono.error(new TrustException(409, "该履约已有商家履约异议，当前仅支持客服终审（案号：" + d.id() + "）。"));
+                    }
+                    if ("standard".equals(d.kind()) && "merchant_rejection".equals(kind)) {
+                        return Mono.error(new TrustException(409, "该履约已有普通活跃争议，无法转为商家履约异议。"));
+                    }
+                    return Mono.just(new Opened(d, false));
+                })
                 .switchIfEmpty(transactions.transactional(
                         disputes.create(engagementRef, organizationId, openedBy, role, reason, kind)
                                 .<Opened>map(d -> new Opened(d, true))
@@ -120,7 +128,15 @@ public class DisputeController {
                                         .thenReturn(opened))))
                 // 同上：并发撞唯一键回读既有活跃争议，避免空 200 体。
                 .switchIfEmpty(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)
-                        .<Opened>map(d -> new Opened(d, false))
+                        .flatMap(d -> {
+                            if ("merchant_rejection".equals(d.kind()) && "standard".equals(kind)) {
+                                return Mono.error(new TrustException(409, "该履约已有商家履约异议，当前仅支持客服终审（案号：" + d.id() + "）。"));
+                            }
+                            if ("standard".equals(d.kind()) && "merchant_rejection".equals(kind)) {
+                                return Mono.error(new TrustException(409, "该履约已有普通活跃争议，无法转为商家履约异议。"));
+                            }
+                            return Mono.just(new Opened(d, false));
+                        })
                         .switchIfEmpty(Mono.error(new TrustException(409, "开争议失败，请重试")))));
     }
 
