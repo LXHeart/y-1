@@ -1,4 +1,4 @@
-package com.grassland.intelligence.bilibili;
+package com.grassland.intelligence.mediaplatform;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -9,11 +9,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link BilibiliAnalysisResultNormalizer} 单测（草场 Slice 13 Stage 5）。覆盖 snake/camel 双态、代码块围栏剥离、
+ * {@link VideoAnalysisResultNormalizer} 单测（草场 Slice 13 Stage 5）。覆盖 snake/camel 双态、代码块围栏剥离、
  * video_script 数组→多行、characters/props 缺失时按场景/字幕关键词回填线索、非法内容 502。
  */
-@DisplayName("BilibiliAnalysisResultNormalizer（移植 legacy normalizeVideoAnalysisResult）")
-class BilibiliAnalysisResultNormalizerTest {
+@DisplayName("VideoAnalysisResultNormalizer（移植 legacy normalizeVideoAnalysisResult）")
+class VideoAnalysisResultNormalizerTest {
 
     @Test
     @DisplayName("snake_case 6 字段 + runId 全量归一")
@@ -29,7 +29,7 @@ class BilibiliAnalysisResultNormalizerTest {
                   "run_id": "r1"
                 }""";
 
-        Map<String, Object> result = BilibiliAnalysisResultNormalizer.normalize(content, "meta-run");
+        Map<String, Object> result = VideoAnalysisResultNormalizer.normalize(content, "meta-run");
 
         assertThat(result).containsEntry("videoCaptions", "[00:01] 旁白");
         assertThat(result).containsEntry("videoScript", "原始脚本");
@@ -48,7 +48,7 @@ class BilibiliAnalysisResultNormalizerTest {
                 { "videoCaptions": "c", "videoScript": "s", "charactersDescription": "ch",
                   "voiceDescription": "v", "propsDescription": "p", "sceneDescription": "sc" }""";
 
-        Map<String, Object> result = BilibiliAnalysisResultNormalizer.normalize(content, "meta-run");
+        Map<String, Object> result = VideoAnalysisResultNormalizer.normalize(content, "meta-run");
 
         assertThat(result).containsEntry("runId", "meta-run");
         assertThat(result).containsEntry("sceneDescription", "sc");
@@ -62,7 +62,7 @@ class BilibiliAnalysisResultNormalizerTest {
                 { "video_captions": "x", "scene_description": "s" }
                 ```""";
 
-        Map<String, Object> result = BilibiliAnalysisResultNormalizer.normalize(content, null);
+        Map<String, Object> result = VideoAnalysisResultNormalizer.normalize(content, null);
 
         assertThat(result).containsEntry("videoCaptions", "x");
     }
@@ -78,7 +78,7 @@ class BilibiliAnalysisResultNormalizerTest {
                       "duration_seconds": 5, "notes": "暖色" }
                   ] }""";
 
-        Map<String, Object> result = BilibiliAnalysisResultNormalizer.normalize(content, null);
+        Map<String, Object> result = VideoAnalysisResultNormalizer.normalize(content, null);
 
         String script = (String) result.get("videoScript");
         assertThat(script).contains("镜头 1 | 中景 | 5s");
@@ -97,7 +97,7 @@ class BilibiliAnalysisResultNormalizerTest {
                 { "video_captions": "一位女生在吃面",
                   "scene_description": "店内环境", "voice_description": "v" }""";
 
-        Map<String, Object> result = BilibiliAnalysisResultNormalizer.normalize(content, null);
+        Map<String, Object> result = VideoAnalysisResultNormalizer.normalize(content, null);
 
         assertThat(result).containsEntry("charactersDescription", "可见出镜人物线索：一位女生在吃面");
     }
@@ -108,7 +108,7 @@ class BilibiliAnalysisResultNormalizerTest {
         String content = """
                 { "scene_description": "桌上有一个杯子和一双筷子", "voice_description": "v" }""";
 
-        Map<String, Object> result = BilibiliAnalysisResultNormalizer.normalize(content, null);
+        Map<String, Object> result = VideoAnalysisResultNormalizer.normalize(content, null);
 
         String props = (String) result.get("propsDescription");
         assertThat(props).contains("可见道具/物件：杯子");
@@ -118,7 +118,7 @@ class BilibiliAnalysisResultNormalizerTest {
     @Test
     @DisplayName("非 JSON 内容 → 502")
     void invalidJsonReturns502() {
-        assertThatThrownBy(() -> BilibiliAnalysisResultNormalizer.normalize("not json", null))
+        assertThatThrownBy(() -> VideoAnalysisResultNormalizer.normalize("not json", null))
                 .isInstanceOf(IntelligenceException.class)
                 .satisfies(e -> assertThat(((IntelligenceException) e).status()).isEqualTo(502));
     }
@@ -126,7 +126,7 @@ class BilibiliAnalysisResultNormalizerTest {
     @Test
     @DisplayName("非对象 JSON（数组）→ 502")
     void nonObjectJsonReturns502() {
-        assertThatThrownBy(() -> BilibiliAnalysisResultNormalizer.normalize("[1,2,3]", null))
+        assertThatThrownBy(() -> VideoAnalysisResultNormalizer.normalize("[1,2,3]", null))
                 .isInstanceOf(IntelligenceException.class)
                 .satisfies(e -> assertThat(((IntelligenceException) e).status()).isEqualTo(502));
     }

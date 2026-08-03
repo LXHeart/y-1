@@ -1,10 +1,11 @@
 package com.grassland.intelligence.douyin;
 
-import com.grassland.intelligence.mediaplatform.LegacyMediaProxyClient;
 import com.grassland.intelligence.mediaplatform.VideoRangeProxy;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.function.Predicate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +21,9 @@ import reactor.core.publisher.Mono;
  * <p>解 token 得 {@link DouyinMediaTarget}：使用 {@link VideoRangeProxy} 进行流式代理（Java Range/206），
  * download 附加 {@code Content-Disposition}。
  *
+ * <p>上游请求头对齐 legacy {@code streamDouyinVideo}：token 内的受信头（UA/Referer）之外，固定附加
+ * {@code Origin: https://www.douyin.com}（抖音 CDN 校验；legacy 在流式层硬编码，token 白名单不含 origin）。
+ *
  * <p>token 凭证错误（400/403/410）经全局 handler 转 {@code {success:false,error}}。
  * 公开/token-gated，无 auth。
  */
@@ -29,6 +33,8 @@ public class DouyinProxyController {
     /** 上游地址守卫：https + 抖音受信视频主机（SSRF 边界）。 */
     private static final Predicate<URI> VIDEO_URL_GUARD = uri ->
             "https".equalsIgnoreCase(uri.getScheme()) && DouyinHosts.isAllowedVideoHost(uri.getHost());
+
+    private static final String UPSTREAM_ORIGIN = "https://www.douyin.com";
 
     private final DouyinProxyToken tokenCodec;
     private final VideoRangeProxy videoRangeProxy;
@@ -57,10 +63,25 @@ public class DouyinProxyController {
                 new VideoRangeProxy.Request(
                         target.playableVideoUrl(),
                         range,
-                        target.requestHeaders(),
+                        withOrigin(target.requestHeaders()),
                         download ? buildContentDisposition(target.filename()) : null,
-                        VIDEO_URL_GUARD),
+                        VIDEO_URL_GUARD,
+                        "Douyin"),
                 exchange.getResponse());
+    }
+
+    /** 对齐 legacy：token 受信头之外固定附加 Origin（token 内已有 origin 时保留 token 值）。 */
+    private static Map<String, String> withOrigin(Map<String, String> requestHeaders) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Origin", UPSTREAM_ORIGIN);
+        if (requestHeaders != null) {
+            requestHeaders.forEach((name, value) -> {
+                if (value != null && !name.equalsIgnoreCase("Origin")) {
+                    headers.put(name, value);
+                }
+            });
+        }
+        return headers;
     }
 
     private static String buildContentDisposition(String filename) {

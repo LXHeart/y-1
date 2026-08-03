@@ -14,9 +14,6 @@ import org.bouncycastle.crypto.params.KeyParameter;
 import org.bouncycastle.crypto.InvalidCipherTextException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * BouncyCastle 信封加密实现（GL-P3-AI-001 Phase 1）。
@@ -33,11 +30,8 @@ import org.springframework.stereotype.Component;
  * )
  * </pre>
  *
- * <p>首期 KEK 从 {@code crypto.kek.encoded} 读取；KEK 未配置时 {@link #encrypt} 抛异常。
+ * <p>首期 KEK 从 {@code crypto.kek.encoded} 读取，由 {@link CryptoAutoConfiguration} 在该属性存在时装配。
  */
-@Component
-@ConditionalOnProperty("crypto.kek.encoded")
-@EnableConfigurationProperties(CryptoProperties.class)
 public final class BouncyCastleEnvelopeEncryption implements EnvelopeEncryption {
 
     private static final Logger log = LoggerFactory.getLogger(BouncyCastleEnvelopeEncryption.class);

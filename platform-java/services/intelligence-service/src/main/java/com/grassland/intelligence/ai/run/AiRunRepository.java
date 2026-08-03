@@ -1,10 +1,12 @@
 package com.grassland.intelligence.ai.run;
 
 import io.r2dbc.spi.Row;
+import io.r2dbc.spi.RowMetadata;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.r2dbc.core.Parameter;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -39,15 +41,15 @@ public class AiRunRepository {
                 )
                 RETURNING id::text
                 """)
-                .bind("orgId", run.organizationId())
+                .bind("orgId", Parameter.fromOrEmpty(run.organizationId(), String.class))
                 .bind("accountId", run.accountId())
                 .bind("capability", run.capability())
                 .bind("provider", run.provider())
-                .bindNull("model", String.class, run.model())
+                .bind("model", Parameter.fromOrEmpty(run.model(), String.class))
                 .bind("runType", run.runType())
                 .bind("budgetCents", run.budgetCents())
                 .bind("operationId", run.operationId().toString())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
     }
@@ -65,7 +67,7 @@ public class AiRunRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("actualCents", actualCents)
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -83,7 +85,7 @@ public class AiRunRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("reason", reason)
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -100,7 +102,7 @@ public class AiRunRepository {
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -116,7 +118,7 @@ public class AiRunRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("refundOpId", refundOpId.toString())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -129,7 +131,7 @@ public class AiRunRepository {
                 .one();
     }
 
-    private static AiRun map(Row row) {
+    private static AiRun map(Row row, RowMetadata meta) {
         return new AiRun(
                 uuidFromString(row.get("id", String.class)),
                 row.get("organization_id", String.class),

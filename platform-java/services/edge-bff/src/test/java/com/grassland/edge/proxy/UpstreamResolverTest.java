@@ -317,6 +317,57 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("GET", "/api/image-analysis/unknown")).isEqualTo(LEGACY);
     }
 
+    // ---------- GL-P3-MEDIA-001：Douyin 媒体链路 → intelligence（extract/analyze 精确 + proxy/download 前缀）----------
+
+    UpstreamResolver douyinMediaResolver() {
+        EdgeRoutingProperties douyin = new EdgeRoutingProperties(
+            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            List.of(
+                new RouteProperties("POST", "/api/douyin/extract-video", "intelligence", true, true),
+                new RouteProperties("POST", "/api/douyin/analyze-video", "intelligence", true, true),
+                new RouteProperties("GET", "/api/douyin/proxy", "intelligence", true),
+                new RouteProperties("GET", "/api/douyin/download", "intelligence", true),
+                new RouteProperties("GET", "/api/douyin/hot-items", "intelligence", true, true)),
+            "legacy");
+        return new UpstreamResolver(douyin);
+    }
+
+    @Test
+    void routesDouyinMediaToIntelligenceWithoutStealingLegacyWorkers() {
+        UpstreamResolver douyinResolver = douyinMediaResolver();
+        assertThat(douyinResolver.resolve("POST", "/api/douyin/extract-video")).isEqualTo(INTELLIGENCE);
+        assertThat(douyinResolver.resolve("POST", "/api/douyin/analyze-video")).isEqualTo(INTELLIGENCE);
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/proxy/token")).isEqualTo(INTELLIGENCE);
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/download/token")).isEqualTo(INTELLIGENCE);
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/hot-items")).isEqualTo(INTELLIGENCE);
+        assertThat(douyinResolver.isInternalUpstream("POST", "/api/douyin/analyze-video")).isTrue();
+        // audio/analysis-media/session 保留 legacy（FFmpeg/Playwright Node worker 边界）；exact 不抢兄弟路径。
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/audio/token")).isEqualTo(LEGACY);
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/analysis-media/x")).isEqualTo(LEGACY);
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/session")).isEqualTo(LEGACY);
+        assertThat(douyinResolver.resolve("POST", "/api/douyin/session/start")).isEqualTo(LEGACY);
+        assertThat(douyinResolver.resolve("POST", "/api/douyin/extract")).isEqualTo(LEGACY);
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/hot-items/extra")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void douyinMediaFallsBackToLegacyWhenFlagDisabled() {
+        // 回滚：EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE=false → 全部回落 legacy。
+        EdgeRoutingProperties disabled = new EdgeRoutingProperties(
+            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            List.of(
+                new RouteProperties("POST", "/api/douyin/extract-video", "intelligence", false, true),
+                new RouteProperties("POST", "/api/douyin/analyze-video", "intelligence", false, true),
+                new RouteProperties("GET", "/api/douyin/proxy", "intelligence", false),
+                new RouteProperties("GET", "/api/douyin/download", "intelligence", false)),
+            "legacy");
+        UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
+        assertThat(disabledResolver.resolve("POST", "/api/douyin/extract-video")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("POST", "/api/douyin/analyze-video")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/proxy/token")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/download/token")).isEqualTo(LEGACY);
+    }
+
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";
     private static final String APP_ID = "22222222-2222-2222-2222-222222222222";
     private static final String ORG_ID = "33333333-3333-3333-3333-333333333333";

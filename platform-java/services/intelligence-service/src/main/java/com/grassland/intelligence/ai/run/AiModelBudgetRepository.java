@@ -1,11 +1,13 @@
 package com.grassland.intelligence.ai.run;
 
 import io.r2dbc.spi.Row;
+import io.r2dbc.spi.RowMetadata;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.r2dbc.core.Parameter;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -47,31 +49,30 @@ public class AiModelBudgetRepository {
                 )
                 RETURNING id::text
                 """)
-                .bind("orgId", budget.organizationId())
+                .bind("orgId", Parameter.fromOrEmpty(budget.organizationId(), String.class))
                 .bind("capability", budget.capability())
                 .bind("provider", budget.provider())
-                .bindNull("maxTokensRun", Integer.class, budget.maxTokensPerRun())
-                .bindNull("maxTokensDaily", Long.class, budget.maxTokensDaily())
-                .bindNull("maxTokensMonthly", Long.class, budget.maxTokensMonthly())
-                .bindNull("maxCentsRun", Integer.class, budget.maxCentsPerRun())
-                .bindNull("maxCentsDaily", Long.class, budget.maxCentsDaily())
-                .bindNull("maxCentsMonthly", Long.class, budget.maxCentsMonthly())
-                .map(r -> r.get("id", String.class))
+                .bind("maxTokensRun", Parameter.fromOrEmpty(budget.maxTokensPerRun(), Integer.class))
+                .bind("maxTokensDaily", Parameter.fromOrEmpty(budget.maxTokensDaily(), Long.class))
+                .bind("maxTokensMonthly", Parameter.fromOrEmpty(budget.maxTokensMonthly(), Long.class))
+                .bind("maxCentsRun", Parameter.fromOrEmpty(budget.maxCentsPerRun(), Integer.class))
+                .bind("maxCentsDaily", Parameter.fromOrEmpty(budget.maxCentsDaily(), Long.class))
+                .bind("maxCentsMonthly", Parameter.fromOrEmpty(budget.maxCentsMonthly(), Long.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
     }
 
     /** 按组织+能力+provider 查询预算配置。 */
     public Mono<AiModelBudget> findByOrganizationAndCapability(String organizationId, String capability) {
-        return db.sql("""
-                SELECT """ + SELECT_COLS + """
-                FROM ai_model_budget
-                WHERE organization_id = :orgId
-                  AND capability = :capability
-                  AND enabled = true
-                ORDER BY created_at DESC
-                LIMIT 1
-                """)
+        // 普通字符串拼接：text block 会吃掉行尾空格，SELECT/列/FROM 会粘连成坏 SQL。
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_model_budget"
+                + " WHERE organization_id = :orgId"
+                + " AND capability = :capability"
+                + " AND enabled = true"
+                + " ORDER BY created_at DESC"
+                + " LIMIT 1")
                 .bind("orgId", organizationId)
                 .bind("capability", capability)
                 .map(AiModelBudgetRepository::map)
@@ -94,7 +95,7 @@ public class AiModelBudgetRepository {
                 .bind("id", id.toString())
                 .bind("addedTokens", addedTokens)
                 .bind("addedCents", addedCents)
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -111,7 +112,7 @@ public class AiModelBudgetRepository {
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -127,12 +128,12 @@ public class AiModelBudgetRepository {
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
 
-    private static AiModelBudget map(Row row) {
+    private static AiModelBudget map(Row row, RowMetadata meta) {
         return new AiModelBudget(
                 uuidFromString(row.get("id", String.class)),
                 row.get("organization_id", String.class),

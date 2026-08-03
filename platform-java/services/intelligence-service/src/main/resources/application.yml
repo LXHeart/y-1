@@ -99,6 +99,19 @@ ai:
     provider: ${BILIBILI_ANALYSIS_PROVIDER:qwen}
     timeout-ms: ${BILIBILI_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
+  # Douyin 视频分析（草场 GL-P3-MEDIA-001）：与 bilibili-analysis 同口径——仅平台级 Qwen，不读用户 BYOK。
+  # provider 非 qwen → intelligence 不处理，analyze 整体回落 legacy。max-single-segment-seconds：超过则回落
+  # legacy FFmpeg 切片（legacy 切片边界 30s；此处与 Bilibili 同默认 60s 单段直发 video_url）。
+  douyin-analysis:
+    provider: ${DOUYIN_ANALYSIS_PROVIDER:qwen}
+    timeout-ms: ${DOUYIN_ANALYSIS_TIMEOUT_MS:180000}
+    max-single-segment-seconds: ${DOUYIN_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
+
+# 信封加密（platform-crypto，GL-P3-AI-001）：BYOK 密钥加密存储的 KEK（32 字节 Base64）。
+# 未配置时 EnvelopeEncryption 不装配，/api/ai/keys 整体不注册（fail-closed，同视频生成能力 gate）。
+crypto:
+  kek:
+    encoded: ${CRYPTO_KEK_BASE64:}
 
 # 对象存储（platform-storage）：文章生成图片从本地卷迁到 MinIO/S3（草场 Slice 8）。
 # enabled 默认 true（与 marketplace 一致）→ S3GeneratedImageStore（多副本共享，@PostConstruct 建 bucket，缺失即显式失败）。
@@ -135,13 +148,23 @@ article-images:
     ttl-seconds: ${ARTICLE_GENERATED_IMAGE_TTL_SECONDS:1800}
     cleanup-interval-ms: ${ARTICLE_GENERATED_IMAGE_CLEANUP_INTERVAL_MS:300000}
 
-# 抖音热点（草场 Slice 13 Stage 1）：公开端点 GET /api/douyin/hot-items，无 auth/credits。
-# 上游默认 60s API；edge-bff 路由开关默认 false，关闭时回落 legacy。
+# 抖音（草场 Slice 13 Stage 1 热点 + GL-P3-MEDIA-001 媒体链路）。
+# hot：公开端点 GET /api/douyin/hot-items，无 auth/credits；上游默认 60s API。
+# proxy/fetch：extract/proxy/download/analyze 迁入项；token-secret 与 legacy 共享（同 DOUYIN_PROXY_TOKEN_SECRET），
+# 缺失/过短时 create/parse 抛错。fetch UA/超时对齐 legacy lib/env.ts 默认；extract 路由开关默认 false
+# （EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE），HTTP 阶段解析失败整体回落 legacy（Playwright/session 仍 Node）。
 douyin:
   hot:
     api-base-url: ${DOUYIN_HOT_API_BASE_URL:https://60s.viki.moe/v2/douyin}
     api-timeout-ms: ${DOUYIN_HOT_API_TIMEOUT_MS:8000}
     limit: 10
+  proxy:
+    token-secret: ${DOUYIN_PROXY_TOKEN_SECRET:}
+    token-ttl-ms: ${DOUYIN_PROXY_TOKEN_TTL_MS:900000}
+  fetch:
+    user-agent: ${DOUYIN_USER_AGENT:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36}
+    cookie-user-agent: ${DOUYIN_COOKIE_USER_AGENT:}
+    timeout-ms: ${DOUYIN_FETCH_TIMEOUT_MS:15000}
 
 # legacy Express 后端（草场 Slice 13 Stage 2）：Bilibili DASH 等 FFmpeg 路径回落 legacy 逃生。
 legacy:

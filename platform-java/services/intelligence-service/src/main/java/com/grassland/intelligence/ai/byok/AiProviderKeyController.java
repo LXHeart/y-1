@@ -1,13 +1,18 @@
 package com.grassland.intelligence.ai.byok;
 
+import com.grassland.crypto.CryptoKekConfiguredCondition;
 import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.crypto.MaskedKey;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import jakarta.validation.Valid;
+import java.util.Map;
 import java.util.UUID;
+import org.springframework.context.annotation.Conditional;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -30,9 +36,14 @@ import reactor.core.publisher.Mono;
  *   <li>PUT /api/ai/keys/{id}/key - 更换密钥（轮换）</li>
  *   <li>DELETE /api/ai/keys/{id} - 删除密钥（软删）</li>
  * </ul>
+ *
+ * <p>fail-closed 门控：KEK（{@code crypto.kek.encoded} / {@code CRYPTO_KEK_BASE64}）未配置时
+ * {@link EnvelopeEncryption} 不装配，本 controller 整体不注册（端点 404），与视频生成能力
+ * gate（GL-P0-BILL-001）同口径——加密基建不可用时不开放 BYOK 入口。
  */
 @RestController
 @RequestMapping("/api/ai/keys")
+@Conditional(CryptoKekConfiguredCondition.class)
 public class AiProviderKeyController {
 
     private final IntelligenceCallerResolver callers;
@@ -100,11 +111,11 @@ public class AiProviderKeyController {
      * GET /api/ai/keys - 列出当前用户的所有密钥（个人 + 组织）。
      */
     @GetMapping
-    public Mono<ResponseEntity<Flux<AiProviderKeyResponse>>> list(ServerWebExchange exchange) {
+    public Flux<AiProviderKeyResponse> list(ServerWebExchange exchange) {
+        // WebFlux 将 Flux 汇聚为 JSON 数组（与 legacy {success,data:[...]} 的信封差异由路由开关默认 false 兜底）
         return callers.resolve(exchange.getRequest())
-                .map(caller -> repository.findByOwner(caller.accountId())
-                        .map(AiProviderKey::toResponse))
-                .map(ResponseEntity::ok);
+                .flatMapMany(caller -> repository.findByOwner(caller.accountId())
+                        .map(AiProviderKey::toResponse));
     }
 
     /**
@@ -216,6 +227,13 @@ public class AiProviderKeyController {
                                             });
                                 })))
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "密钥不存在")));
+    }
+
+    /** V5 唯一索引（org/personal + owner + capability + provider，enabled）冲突 → 409。 */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicate(DataIntegrityViolationException error) {
+        return ResponseEntity.status(409)
+                .body(Map.of("success", false, "error", "该能力下已存在有效的密钥，请先删除旧密钥或轮换"));
     }
 
     /** 检查用户是否可以管理指定密钥。 */

@@ -1,15 +1,18 @@
-package com.grassland.intelligence.bilibili;
+package com.grassland.intelligence.mediaplatform;
 
 /**
- * Bilibili 视频分析 Qwen 提示词（移植 legacy {@code providers/qwen-provider.ts} 的
+ * 视频分析平台级 Qwen 提示词（移植 legacy {@code providers/qwen-provider.ts} 的
  * {@code QWEN_ANALYSIS_PROMPT} 与 {@code QWEN_RECREATION_PROMPT}，逐字对齐）。
+ *
+ * <p>各媒体平台（Bilibili / Douyin）Java 分析路径**共用同一份提示词**——legacy 侧 douyin/bilibili 本就都走
+ * {@code analyzeVideoContent}（同 prompt），此处保持单一副本，杜绝两份提示词漂移。
  *
  * <p>{@link #analysis()} 用于内容提取（6 字段 JSON），{@link #recreation()} 用于复刻分镜场景（scenes JSON）。
  * 与 video_url content part 一并发给视频理解模型。
  */
-public final class BilibiliAnalysisPrompts {
+public final class VideoAnalysisPrompts {
 
-    private BilibiliAnalysisPrompts() {}
+    private VideoAnalysisPrompts() {}
 
     /** 视频内容提取提示（输出 6 字段：video_captions/video_script/characters_description/voice_description/props_description/scene_description）。 */
     public static final String ANALYSIS = """

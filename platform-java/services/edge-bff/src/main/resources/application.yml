@@ -243,8 +243,8 @@ edge:
       exact: true
       enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE:true}
     # ---- 抖音热点（草场 Slice 13 Stage 1）→ intelligence-service。公开端点，无 auth/credits；
-    # exact 精确切，不抢 /api/douyin 其余子路径（extract/analyze/proxy/download/audio/session 仍走 legacy）。
-    # 默认 false：关闭时回落 legacy Express（回滚安全）。
+    # exact 精确切，不抢 /api/douyin 其余子路径（extract/analyze/proxy/download 见下方 GL-P3-MEDIA-001 路由，
+    # audio/analysis-media/session 始终 legacy）。默认 false：关闭时回落 legacy Express（回滚安全）。
     - method: GET
       path: /api/douyin/hot-items
       upstream: intelligence
@@ -274,11 +274,17 @@ edge:
       path: /api/bilibili/download
       upstream: intelligence
       enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
-    # ---- Douyin media（草场 GL-P3-MEDIA-001）→ intelligence-service。extract/proxy/download 迁移 Java，
-    # analyze 与 audio/analysis-media/session 保留 legacy（复杂 worker 首期不改）。
+    # ---- Douyin media（草场 GL-P3-MEDIA-001）→ intelligence-service。extract/proxy/download/analyze 迁移 Java：
+    # extract HTTP 阶段解析失败整体回落 legacy（Playwright/session 仍 Node）；analyze progressive+≤60s+qwen 走 Java，
+    # 超阈值需 FFmpeg 切片/非 qwen 整体回落 legacy（透传 Cookie）。audio/analysis-media/session 不路由（始终 legacy）。
     # 默认 false：关闭时回落 legacy Express（回滚安全）。
     - method: POST
       path: /api/douyin/extract-video
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+    - method: POST
+      path: /api/douyin/analyze-video
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}

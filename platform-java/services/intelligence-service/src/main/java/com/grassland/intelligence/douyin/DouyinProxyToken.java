@@ -18,8 +18,13 @@ import org.springframework.stereotype.Component;
 /**
  * 抖音代理 token 编解码（对齐 legacy {@code server/src/services/douyin-proxy.service.ts}）。
  *
- * <p>格式 {@code <base64url(payload)>.<base64url(HMAC-SHA256)>}；payload {@code {v:1,exp,kind,...}}；
- * 验签用常量时间比较；过期→410、签名不符→403、结构非法→400、上游地址非 https→400。
+ * <p>格式 {@code <base64url(payload)>.<base64url(HMAC-SHA256)>}；验签用常量时间比较；
+ * 过期→410、签名不符→403、结构非法→400、上游地址非 https→400。
+ *
+ * <p><b>跨实现兼容</b>：legacy 抖音 payload 没有 {@code kind} 字段（抖音只有 progressive），本类 create
+ * 额外写入 {@code kind:"progressive"}——legacy {@code decodePayload} 忽略未知字段，故 Java 签发的 token
+ * 仍可被 legacy {@code proxy/download/audio} 端点验签使用；反过来 parse 对缺 {@code kind} 的 legacy token
+ * 按 progressive 处理，保证切流窗口内两侧签发的 token 互通。
  */
 @Component
 public final class DouyinProxyToken {
@@ -28,8 +33,9 @@ public final class DouyinProxyToken {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Base64.Encoder URL_ENCODER = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder URL_DECODER = Base64.getUrlDecoder();
-    private static final Set<String> ALLOWED_HEADER_NAMES = Set.of("referer", "user-agent", "origin");
+    private static final Set<String> ALLOWED_HEADER_NAMES = Set.of("referer", "user-agent");
     private static final int VERSION = 1;
+    private static final String KIND_PROGRESSIVE = "progressive";
 
     private final byte[] secret;
     private final Duration ttl;
@@ -79,8 +85,12 @@ public final class DouyinProxyToken {
         JsonNode payload = decodeJson(encoded);
         int version = payload.path("v").asInt(-1);
         long exp = payload.path("exp").asLong(0L);
-        String kind = payload.path("kind").asText("");
-        if (version != VERSION || exp == 0L || kind.isEmpty()) {
+        if (version != VERSION || exp == 0L) {
+            throw new IntelligenceException(400, "视频代理凭证无效");
+        }
+        // legacy 抖音 token 无 kind 字段 → 按 progressive 处理；有 kind 则必须是 progressive（抖音无 DASH）。
+        JsonNode kindNode = payload.get("kind");
+        if (kindNode != null && !kindNode.isNull() && !KIND_PROGRESSIVE.equals(kindNode.asText(""))) {
             throw new IntelligenceException(400, "视频代理凭证无效");
         }
         if (exp < System.currentTimeMillis()) {
@@ -109,7 +119,7 @@ public final class DouyinProxyToken {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret, "HmacSHA256"));
             byte[] signature = mac.doFinal(encodedPayload.getBytes(StandardCharsets.UTF_8));
-            return URL_ENCODER.withoutPadding().encodeToString(signature);
+            return URL_ENCODER.encodeToString(signature);
         } catch (Exception e) {
             throw new IntelligenceException(500, "视频代理凭证签名失败");
         }
@@ -143,7 +153,7 @@ public final class DouyinProxyToken {
         }
     }
 
-    /** 仅保留 {referer,user-agent,origin}（小写键）的字符串值；空→ empty。对齐 legacy。 */
+    /** 仅保留 {referer,user-agent}（小写键判定）的字符串值；空→ empty。对齐 legacy allowedProxyRequestHeaderNames。 */
     private static Optional<Map<String, String>> sanitizeHeaders(Map<String, String> input) {
         if (input == null || input.isEmpty()) {
             return Optional.empty();

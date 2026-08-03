@@ -62,7 +62,7 @@ class VideoRangeProxyTest {
             String disposition = exchange.getRequest().getQueryParams().getFirst("disp");
             return new VideoRangeProxy().stream(
                     new VideoRangeProxy.Request(
-                            UPSTREAM.url("/video"), range, Map.of(), disposition, urlGuard),
+                            UPSTREAM.url("/video"), range, Map.of(), disposition, urlGuard, "Bilibili"),
                     exchange.getResponse());
         }
     }

@@ -53,13 +53,15 @@ public final class VideoRangeProxy {
         this.client = WebClient.builder().clientConnector(new ReactorClientHttpConnector(http)).build();
     }
 
-    /** 一次 progressive 视频透传请求。{@code urlGuard} 校验 scheme+host（含重定向目标）。 */
+    /** 一次 progressive 视频透传请求。{@code urlGuard} 校验 scheme+host（含重定向目标）；
+     * {@code platformLabel} 仅用于错误文案（如「Bilibili」「Douyin」）。 */
     public record Request(
             String upstreamUrl,
             String rangeHeader,
             Map<String, String> sanitizedRequestHeaders,
             String contentDisposition,
-            Predicate<URI> urlGuard) {}
+            Predicate<URI> urlGuard,
+            String platformLabel) {}
 
     public Mono<Void> stream(Request request, ServerHttpResponse response) {
         return validate(request.upstreamUrl(), request.urlGuard())
@@ -87,25 +89,27 @@ public final class VideoRangeProxy {
     private Mono<Void> handleUpstream(
             Request request, ClientResponse upstream, int redirectCount, String url, ServerHttpResponse response) {
         HttpStatusCode status = upstream.statusCode();
+        String label = request.platformLabel() == null || request.platformLabel().isBlank()
+                ? "视频" : request.platformLabel();
         if (REDIRECT_STATUSES.contains(status.value())) {
             return upstream.releaseBody().then(Mono.defer(() -> {
                 if (redirectCount >= MAX_REDIRECTS) {
-                    return Mono.error(new IntelligenceException(502, "Bilibili 上游重定向次数过多"));
+                    return Mono.error(new IntelligenceException(502, label + " 上游重定向次数过多"));
                 }
                 String location = upstream.headers().asHttpHeaders().getFirst(HttpHeaders.LOCATION);
-                return validate(resolveRedirect(url, location), request.urlGuard())
+                return validate(resolveRedirect(url, location, label), request.urlGuard())
                         .flatMap(next -> stream(request, next, redirectCount + 1, response));
             }));
         }
         if (status.is4xxClientError() || status.is5xxServerError()) {
             return upstream.releaseBody()
                     .then(Mono.error(new IntelligenceException(502,
-                            "Bilibili 上游视频请求失败（HTTP " + status.value() + "）")));
+                            label + " 上游视频请求失败（HTTP " + status.value() + "）")));
         }
         String contentType = upstream.headers().asHttpHeaders().getFirst(HttpHeaders.CONTENT_TYPE);
         if (!isVideoContentType(contentType)) {
             return upstream.releaseBody()
-                    .then(Mono.error(new IntelligenceException(502, "Bilibili 上游未返回视频流")));
+                    .then(Mono.error(new IntelligenceException(502, label + " 上游未返回视频流")));
         }
         return writeSuccess(request, upstream, response);
     }
@@ -137,14 +141,14 @@ public final class VideoRangeProxy {
         }
     }
 
-    private static String resolveRedirect(String baseUrl, String location) {
+    private static String resolveRedirect(String baseUrl, String location, String label) {
         if (location == null || location.isBlank()) {
-            throw new IntelligenceException(502, "Bilibili 上游重定向缺失 Location");
+            throw new IntelligenceException(502, label + " 上游重定向缺失 Location");
         }
         try {
             return URI.create(baseUrl).resolve(location).toString();
         } catch (Exception e) {
-            throw new IntelligenceException(502, "Bilibili 上游重定向地址无效");
+            throw new IntelligenceException(502, label + " 上游重定向地址无效");
         }
     }
 

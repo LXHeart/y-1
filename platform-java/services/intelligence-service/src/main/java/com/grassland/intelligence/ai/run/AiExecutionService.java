@@ -1,6 +1,5 @@
 package com.grassland.intelligence.ai.run;
 
-import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.ai.byok.AiProviderKey;
 import com.grassland.intelligence.ai.byok.ByokRoutingService;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
@@ -24,19 +23,18 @@ public class AiExecutionService {
     private final ModelBudgetService budgetService;
     private final ByokRoutingService routingService;
     private final PriceTableService priceTableService;
-    private final EnvelopeEncryption encryption;
     private final IntelligenceCallerResolver callers;
 
+    // 注：BYOK 密钥解密在 ByokRoutingService/密钥消费侧按需引入 EnvelopeEncryption；
+    // 本编排类不直接持有（KEK 未配置时仍可装配，fail-closed 门控在 /api/ai/keys 层）。
     public AiExecutionService(
             ModelBudgetService budgetService,
             ByokRoutingService routingService,
             PriceTableService priceTableService,
-            EnvelopeEncryption encryption,
             IntelligenceCallerResolver callers) {
         this.budgetService = budgetService;
         this.routingService = routingService;
         this.priceTableService = priceTableService;
-        this.encryption = encryption;
         this.callers = callers;
     }
 
@@ -49,7 +47,7 @@ public class AiExecutionService {
      * @param estimatedCents 预估金额
      * @return 执行上下文（包含 Provider 配置和预算检查结果）
      */
-    public Mono<ExecutionContext> prepareExecution(
+    public Mono<ExecutionResult> prepareExecution(
             ServerWebExchange exchange,
             String capability,
             int estimatedTokens,
@@ -87,13 +85,13 @@ public class AiExecutionService {
                                                 operationId
                                             );
 
-                                            return new ExecutionContext(
+                                            return ExecutionResult.allowed(new ExecutionContext(
                                                 provider,
                                                 budgetResult.reservedCents(),
                                                 operationId,
                                                 run,
                                                 null  // 暂无 decryptedKey
-                                            );
+                                            ));
                                         });
                             });
                 });

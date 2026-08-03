@@ -16,6 +16,7 @@ dependencies {
     implementation(project(":platform-storage"))
     implementation(project(":platform-crypto"))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
     implementation(libs.r2dbc.postgresql)

@@ -1,4 +1,4 @@
-package com.grassland.intelligence.bilibili;
+package com.grassland.intelligence.mediaplatform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,16 +13,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Bilibili 视频内容提取结果归一（移植 legacy {@code providers/types.ts} 的
- * {@code normalizeVideoAnalysisResult} + {@code completeVideoAnalysisResult} + {@code extractCharacterHints} +
- * {@code extractPropsHints} + {@code normalizeAdaptedScript} + {@code stripMarkdownCodeFence}）。
+ * 视频内容提取结果归一——各媒体平台（Bilibili / Douyin）Java 分析路径共用（移植 legacy
+ * {@code providers/types.ts} 的 {@code normalizeVideoAnalysisResult} + {@code completeVideoAnalysisResult} +
+ * {@code extractCharacterHints} + {@code extractPropsHints} + {@code normalizeAdaptedScript} +
+ * {@code stripMarkdownCodeFence}）。
  *
  * <p>Qwen 返回 {@code choices[0].message.content}（可能裹 ```json 代码块）→ 剥围栏 → JSON 解析 →
  * 取 6 字段（snake/camel 双态）+ runId → {@code charactersDescription}/{@code propsDescription} 缺失时按
  * 场景/字幕关键词回填线索（逐字对齐 legacy）。{@code video_script} 可能是字符串或分镜数组，数组态格式化为多行。
  * 输出 {@code null} 字段不放入 map（前端读取语义 = undefined，与 legacy 一致）。
  */
-public final class BilibiliAnalysisResultNormalizer {
+public final class VideoAnalysisResultNormalizer {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Pattern CODE_FENCE = Pattern.compile("```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?\\s*```");
@@ -35,7 +36,7 @@ public final class BilibiliAnalysisResultNormalizer {
             "笔记本电脑", "咖啡机", "高脚凳", "木桌", "桌子", "椅子", "马克杯", "杯子", "盘子", "筷子", "勺子",
             "手机", "电脑", "相机", "背包", "台灯", "柜台", "麦克风", "耳机", "屏幕", "键盘", "产品", "设备");
 
-    private BilibiliAnalysisResultNormalizer() {}
+    private VideoAnalysisResultNormalizer() {}
 
     /** 解析 Qwen content（剥代码块围栏 + JSON）→ 6 字段归一 map；非法 → 502。null 字段省略。 */
     public static Map<String, Object> normalize(String content, String runId) {

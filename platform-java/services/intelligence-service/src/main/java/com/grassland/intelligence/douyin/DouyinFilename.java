@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * 抖音下载文件名构建（对齐 legacy {@code server/src/lib/bilibili-filename.ts}）。
+ * 抖音下载文件名构建（移植 legacy {@code server/src/services/douyin-proxy.service.ts} 的 {@code buildDownloadFilename}）。
  *
  * <p>把 title/author/videoId 拼成安全的下载文件名：非法字符/空白/连续短横归一为单个 {@code -}，
  * 去首尾短横，截断至 ≤80 字符（去尾部短横），保证 {@code .mp4} 后缀。全空回退 {@code douyin-video.mp4}。

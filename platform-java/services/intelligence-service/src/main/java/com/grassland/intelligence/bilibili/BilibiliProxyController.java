@@ -57,7 +57,7 @@ public class BilibiliProxyController {
                     new VideoRangeProxy.Request(
                             p.playableVideoUrl(), range, p.requestHeaders(),
                             download ? buildContentDisposition(p.filename()) : null,
-                            VIDEO_URL_GUARD),
+                            VIDEO_URL_GUARD, "Bilibili"),
                     exchange.getResponse());
             case BilibiliMediaTarget.Dash d -> legacyMediaProxyClient.proxy(
                     "/api/bilibili/" + (download ? "download" : "proxy") + "/" + token,

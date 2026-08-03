@@ -1,6 +1,7 @@
 package com.grassland.intelligence.ai.byok;
 
 import io.r2dbc.spi.Row;
+import io.r2dbc.spi.RowMetadata;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -38,17 +39,17 @@ public class AiProviderKeyRepository {
                 )
                 RETURNING id::text
                 """)
-                .bind("orgId", key.organizationId())
+                .bind("orgId", Parameter.fromOrEmpty(key.organizationId(), String.class))  // 个人密钥可空
                 .bind("owner", key.ownerAccountId())
                 .bind("capability", key.capability())
                 .bind("provider", key.provider())
                 .bind("baseUrl", key.baseUrl())
-                .bindNull("model", String.class, key.model())  // 可空
+                .bind("model", Parameter.fromOrEmpty(key.model(), String.class))  // 可空
                 .bind("encryptedKey", key.encryptedKey())
                 .bind("keyVersion", key.keyVersion())
                 .bind("maskedHint", key.maskedHint())
                 .bind("enabled", key.enabled())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
     }
@@ -63,15 +64,14 @@ public class AiProviderKeyRepository {
 
     /** 按组织 + 能力查找有效密钥（用于运行时路由）。 */
     public Mono<AiProviderKey> findByOrganizationAndCapability(String organizationId, String capability) {
-        return db.sql("""
-                SELECT """ + SELECT_COLS + """
-                FROM ai_provider_key
-                WHERE organization_id = :orgId
-                  AND capability = :capability
-                  AND enabled = true
-                ORDER BY created_at DESC
-                LIMIT 1
-                """)
+        // 普通字符串拼接：text block 会吃掉行尾空格，SELECT/列/FROM 会粘连成坏 SQL。
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE organization_id = :orgId"
+                + " AND capability = :capability"
+                + " AND enabled = true"
+                + " ORDER BY created_at DESC"
+                + " LIMIT 1")
                 .bind("orgId", organizationId)
                 .bind("capability", capability)
                 .map(AiProviderKeyRepository::map)
@@ -80,16 +80,14 @@ public class AiProviderKeyRepository {
 
     /** 按个人账号 + 能力查找有效密钥。 */
     public Mono<AiProviderKey> findByPersonalAndCapability(String ownerAccountId, String capability) {
-        return db.sql("""
-                SELECT """ + SELECT_COLS + """
-                FROM ai_provider_key
-                WHERE organization_id IS NULL
-                  AND owner_account_id = :owner
-                  AND capability = :capability
-                  AND enabled = true
-                ORDER BY created_at DESC
-                LIMIT 1
-                """)
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE organization_id IS NULL"
+                + " AND owner_account_id = :owner"
+                + " AND capability = :capability"
+                + " AND enabled = true"
+                + " ORDER BY created_at DESC"
+                + " LIMIT 1")
                 .bind("owner", ownerAccountId)
                 .bind("capability", capability)
                 .map(AiProviderKeyRepository::map)
@@ -98,12 +96,10 @@ public class AiProviderKeyRepository {
 
     /** 列出用户的所有密钥（个人 + 组织）。 */
     public Flux<AiProviderKey> findByOwner(String ownerAccountId) {
-        return db.sql("""
-                SELECT """ + SELECT_COLS + """
-                FROM ai_provider_key
-                WHERE owner_account_id = :owner
-                ORDER BY created_at DESC
-                """)
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE owner_account_id = :owner"
+                + " ORDER BY created_at DESC")
                 .bind("owner", ownerAccountId)
                 .map(AiProviderKeyRepository::map)
                 .all();
@@ -121,8 +117,8 @@ public class AiProviderKeyRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("baseUrl", baseUrl)
-                .bindNull("model", String.class, model)
-                .map(r -> r.get("id", String.class))
+                .bind("model", Parameter.fromOrEmpty(model, String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -142,7 +138,7 @@ public class AiProviderKeyRepository {
                 .bind("encryptedKey", newEncryptedKey)
                 .bind("keyVersion", newKeyVersion)
                 .bind("maskedHint", newMaskedHint)
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -157,7 +153,7 @@ public class AiProviderKeyRepository {
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
-                .map(r -> r.get("id", String.class))
+                .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
     }
@@ -170,7 +166,7 @@ public class AiProviderKeyRepository {
                 WHERE id = CAST(:id AS uuid)
                 """)
                 .bind("id", id.toString())
-                .map(r -> r.get("owner_account_id", String.class))
+                .map((r, meta) -> r.get("owner_account_id", String.class))
                 .one()
                 .map(ownerAccountId::equals)
                 .defaultIfEmpty(false);
@@ -184,10 +180,11 @@ public class AiProviderKeyRepository {
                 WHERE id = CAST(:id AS uuid)
                 """)
                 .bind("id", id.toString())
-                .one()
+                .fetch().one()
                 .map(r -> {
-                    String owner = r.get("owner_account_id", String.class);
-                    String org = r.get("organization_id", String.class);
+                    // fetch().one() 返回 Map<String,Object> 行投影（非 Row）。
+                    String owner = (String) r.get("owner_account_id");
+                    String org = (String) r.get("organization_id");
                     // 个人密钥：只有创建者可管理
                     if (org == null) {
                         return ownerAccountId.equals(owner);
@@ -198,7 +195,7 @@ public class AiProviderKeyRepository {
                 .defaultIfEmpty(false);
     }
 
-    private static AiProviderKey map(Row row) {
+    private static AiProviderKey map(Row row, RowMetadata meta) {
         return new AiProviderKey(
                 uuidFromString(row.get("id", String.class)),
                 row.get("organization_id", String.class),
