@@ -67,6 +67,14 @@ marketplace:
   # 结算窗口（Slice 5A）：商家确认后等待的结算窗口（概念 T+2；dev/test 短默认 5s 便于 e2e）。
   settlement:
     window-seconds: ${SETTLEMENT_WINDOW_SECONDS:5}
+  # 商家确认窗口（D-03）：推荐官提交履约后，商家有 N 秒确认；到期未操作 → 自动确认结算（default-approve）。
+  # 概念 3 天（259200）；dev/test 短默认 5s 便于 e2e。prod 置 CONFIRMATION_WINDOW_SECONDS=259200。
+  confirmation:
+    window-seconds: ${CONFIRMATION_WINDOW_SECONDS:5}
+    # 补启派发器：消除 DB 提交与 Temporal start 的间隙（进程崩溃/网络失败时下轮扫描补启）。
+    dispatcher-enabled: ${MARKETPLACE_CONFIRMATION_DISPATCHER_ENABLED:true}
+    dispatcher-poll-ms: ${MARKETPLACE_CONFIRMATION_DISPATCHER_POLL_MS:2000}
+    dispatcher-batch-size: ${MARKETPLACE_CONFIRMATION_DISPATCHER_BATCH_SIZE:32}
   outbox:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}

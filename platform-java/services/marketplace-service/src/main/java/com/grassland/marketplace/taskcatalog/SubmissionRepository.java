@@ -22,7 +22,7 @@ public class SubmissionRepository {
 
     private static final String SELECT_COLS =
             "id::text, application_id::text, recommender_account_id::text, content_url, note, status,"
-                    + " review_note, reviewed_at, created_at";
+                    + " review_note, reviewed_at, created_at, confirmation_workflow_started_at";
 
     private final DatabaseClient db;
 
@@ -43,6 +43,33 @@ public class SubmissionRepository {
         spec = bindNullable(spec, "note", note);
         return spec.map(SubmissionRepository::map).one()
                 .onErrorResume(DataIntegrityViolationException.class, e -> Mono.empty());
+    }
+
+    public Mono<EngagementSubmission> findById(String submissionId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM engagement_submission WHERE id = CAST(:id AS uuid)")
+                .bind("id", submissionId)
+                .map(SubmissionRepository::map).one();
+    }
+
+    /** D-03：扫描已提交但 confirmation workflow 尚未标记启动的行（DB commit→Temporal start 间隙补偿）。 */
+    public Flux<EngagementSubmission> findConfirmationDispatchable(int limit) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM engagement_submission"
+                        + " WHERE status = 'submitted' AND confirmation_workflow_started_at IS NULL"
+                        + " ORDER BY created_at LIMIT :limit")
+                .bind("limit", Math.max(1, limit))
+                .map(SubmissionRepository::map).all();
+    }
+
+    /** start 成功或 WorkflowExecutionAlreadyStarted 后标记；guarded 防被退回/已处理行误标。 */
+    public Mono<Boolean> markConfirmationWorkflowStarted(String submissionId) {
+        return db.sql("""
+                UPDATE engagement_submission SET confirmation_workflow_started_at = now(), updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND status = 'submitted'
+                  AND confirmation_workflow_started_at IS NULL
+                """)
+                .bind("id", submissionId)
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
     }
 
     public Flux<EngagementSubmission> findByApplication(String applicationId) {
@@ -83,7 +110,8 @@ public class SubmissionRepository {
                 row.get("status", String.class),
                 row.get("review_note", String.class),
                 toInstant(row.get("reviewed_at", OffsetDateTime.class)),
-                toInstant(row.get("created_at", OffsetDateTime.class))
+                toInstant(row.get("created_at", OffsetDateTime.class)),
+                toInstant(row.get("confirmation_workflow_started_at", OffsetDateTime.class))
         );
     }
 

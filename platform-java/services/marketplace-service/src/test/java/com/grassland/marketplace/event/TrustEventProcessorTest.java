@@ -298,7 +298,7 @@ class TrustEventProcessorTest {
     }
 
     private static TaskApplication application(String id, String taskId, String recommenderAccountId) {
-        return new TaskApplication(id, taskId, recommenderAccountId, "accepted", null, null, null, null, null, null, 0L);
+        return new TaskApplication(id, taskId, recommenderAccountId, "accepted", null, null, null, null, null, null, 0L, null, null);
     }
 
     private static Task task(String id, String ownerAccountId) {

@@ -109,7 +109,7 @@ class SettlementReconciliationActivityImplTest {
         when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
         when(apps.findById(APP)).thenReturn(Mono.just(
                 new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
-                        Instant.now(), Instant.now(), 500L)));  // 冻结 500
+                        Instant.now(), Instant.now(), 500L, null, null)));  // 冻结 500
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(
                 new Task(TASK_ID, "own", ORG, "title", "desc", "published", "any", "any", null, 0L,
                         Instant.now(), Instant.now(), 1, null, null, null)));  // task 行已被改到 0
@@ -170,7 +170,7 @@ class SettlementReconciliationActivityImplTest {
         when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
         when(apps.findById(APP)).thenReturn(Mono.just(
                 new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
-                        Instant.now(), null, 0L)));  // confirmedAt=null
+                        Instant.now(), null, 0L, null, null)));  // confirmedAt=null
 
         SettlementReconciliationWorkflow.ReconciliationOutcome outcome = activity.reconcile(input());
 
@@ -187,7 +187,7 @@ class SettlementReconciliationActivityImplTest {
         when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
         when(apps.findById(APP)).thenReturn(Mono.just(
                 new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
-                        Instant.now(), Instant.now(), bounty)));  // bounty 冻结在 app（snapshot-pinning），结算读它
+                        Instant.now(), Instant.now(), bounty, null, null)));  // bounty 冻结在 app（snapshot-pinning），结算读它
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(
                 new Task(TASK_ID, "own", ORG, "title", "desc", "published", "any", "any", null, bounty,
                         Instant.now(), Instant.now(), 1, null, null, null)));

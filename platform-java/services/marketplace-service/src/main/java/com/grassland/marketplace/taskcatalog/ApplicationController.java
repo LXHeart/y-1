@@ -10,6 +10,7 @@ import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
 import com.grassland.marketplace.workflow.saga.AcceptanceInput;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
 import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
+import com.grassland.marketplace.workflow.saga.ConfirmationWorkflowStarter;
 import com.grassland.marketplace.workflow.saga.SettlementInput;
 import com.grassland.marketplace.workflow.saga.SettlementWindowWorkflow;
 import io.temporal.client.WorkflowClient;
@@ -27,6 +28,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -63,6 +66,8 @@ import reactor.core.scheduler.Schedulers;
 @RestController
 public class ApplicationController {
 
+    private static final Logger log = LoggerFactory.getLogger(ApplicationController.class);
+
     private final MarketplaceCallerResolver callers;
     private final TaskRepository tasks;
     private final TaskApplicationRepository apps;
@@ -76,8 +81,10 @@ public class ApplicationController {
     private final ObjectMapper mapper = new ObjectMapper();
     private final RatingRepository ratings;
     private final WorkflowClient workflowClient;
+    private final ConfirmationWorkflowStarter confirmationWorkflows;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
     private final long settlementWindowSeconds;
+    private final long confirmationWindowSeconds;
     private final TransactionalOperator transactions;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
@@ -90,8 +97,10 @@ public class ApplicationController {
                                  EngagementVerificationRepository verifications,
                                  RatingRepository ratings,
                                  WorkflowClient workflowClient,
+                                 ConfirmationWorkflowStarter confirmationWorkflows,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
                                  @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds,
+                                 @Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
                                  TransactionalOperator transactions) {
         this.callers = callers;
         this.tasks = tasks;
@@ -105,8 +114,10 @@ public class ApplicationController {
         this.verifications = verifications;
         this.ratings = ratings;
         this.workflowClient = workflowClient;
+        this.confirmationWorkflows = confirmationWorkflows;
         this.reconciliations = reconciliations;
         this.settlementWindowSeconds = settlementWindowSeconds;
+        this.confirmationWindowSeconds = confirmationWindowSeconds;
         this.transactions = transactions;
     }
 
@@ -248,6 +259,14 @@ public class ApplicationController {
                                                 caller.accountId(), body.mediaIds())
                                         .flatMap(atts -> workSubmitDeliverable(app, appId, caller,
                                                         body.contentUrl(), body.note(), atts, task.ownerAccountId())
+                                                .flatMap(created -> startConfirmationWorkflow(task, app, created)
+                                                        // DB 提交已成功，Temporal 瞬时失败不把提交回成 5xx；dispatcher 扫未标记行补启。
+                                                        .onErrorResume(failure -> {
+                                                            log.warn("confirmation workflow initial start failed submission={} app={}",
+                                                                    created.id(), app.id(), failure);
+                                                            return Mono.empty();
+                                                        })
+                                                        .thenReturn(created))
                                                 .map(created -> ResponseEntity.status(HttpStatus.CREATED)
                                                         .body(Map.of("success", true,
                                                                 "data", submissionBodyWithInputs(created, atts))))))));
@@ -326,29 +345,46 @@ public class ApplicationController {
         return callers.requireMerchant(request)
                 .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
                         .flatMap(task -> loadAcceptedApp(id, appId)
-                                .flatMap(app -> submissions.findPending(appId)
-                                        .switchIfEmpty(fail(409, "推荐官尚未提交履约凭证，无法确认"))
-                                        .flatMap(pending -> verifications.findBySubmission(pending.id())
-                                                .filter(v -> "failed".equalsIgnoreCase(v.status()))
-                                                .hasElement()
-                                                .flatMap(blocked -> {
-                                                    // 可选闸门：仅 failed 阻断 confirm（absent/passed/inconclusive 照常）。
-                                                    if (Boolean.TRUE.equals(blocked)) {
-                                                        return Mono.<EngagementSubmission>error(new MarketplaceException(
-                                                                409, "履约核验未通过，请退回重交或重新核验"));
-                                                    }
-                                                    return Mono.just(pending);
-                                                }))
-                                        .flatMap(pending -> submissions
-                                                .review(pending.id(), SubmissionStatus.ACCEPTED, null))
-                                        .switchIfEmpty(fail(409, "该交付物已处理"))
-                                        .thenReturn(app))
-                                .flatMap(app -> apps.confirm(appId, id)
-                                        .switchIfEmpty(fail(409, "该报名未接受或已确认"))
-                                        .flatMap(confirmed -> outbox
-                                                .append(envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
-                                                .thenReturn(confirmed)))
-                                .flatMap(app -> startSettlementWorkflow(task, app))));
+                                // 已由商家/自动路径确认 → 幂等 200，不再启动第二个 SettlementWindow。
+                                .flatMap(app -> app.confirmedAt() != null
+                                        ? Mono.just(confirmedResponse(app))
+                                        : transactions.transactional(confirmWork(id, appId, task))
+                                                .flatMap(confirmed -> startSettlementWorkflow(task, confirmed))
+                                                // 商家确认与 auto-confirm 竞态：事务内 guarded write 失败会抛标记异常并回滚；
+                                                // 回读若已确认则幂等 200，否则按原业务错误返回 409。
+                                                .onErrorResume(ConfirmationConflict.class, conflict -> apps.findById(appId)
+                                                        .filter(current -> "accepted".equals(current.status())
+                                                                && current.confirmedAt() != null)
+                                                        .map(this::confirmedResponse)
+                                                        .switchIfEmpty(fail(409, conflict.getMessage()))))));
+    }
+
+    /** 手动确认领域写：submission accepted + application confirmed + MerchantConfirmed outbox，同一事务。 */
+    private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task) {
+        return submissions.findPending(appId)
+                .switchIfEmpty(Mono.error(new ConfirmationConflict("推荐官尚未提交履约凭证，无法确认")))
+                .flatMap(pending -> verifications.findBySubmission(pending.id())
+                        .filter(v -> "failed".equalsIgnoreCase(v.status()))
+                        .hasElement()
+                        .flatMap(blocked -> {
+                            // 可选闸门：仅 failed 阻断 confirm（absent/passed/inconclusive 照常）。
+                            if (Boolean.TRUE.equals(blocked)) {
+                                return Mono.<EngagementSubmission>error(new MarketplaceException(
+                                        409, "履约核验未通过，请退回重交或重新核验"));
+                            }
+                            return Mono.just(pending);
+                        }))
+                .flatMap(pending -> submissions.review(pending.id(), SubmissionStatus.ACCEPTED, null))
+                .switchIfEmpty(Mono.error(new ConfirmationConflict("该交付物已处理")))
+                .flatMap(acceptedSubmission -> apps.confirm(appId, taskId)
+                        .switchIfEmpty(Mono.error(new ConfirmationConflict("该报名未接受或已确认"))))
+                .flatMap(confirmed -> outbox
+                        .append(envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
+                        .thenReturn(confirmed));
+    }
+
+    private ResponseEntity<Map<String, Object>> confirmedResponse(TaskApplication app) {
+        return ok(Map.of("applicationId", app.id(), "status", "confirmed"));
     }
 
     /**
@@ -448,6 +484,56 @@ public class ApplicationController {
         .onErrorResume(WorkflowExecutionAlreadyStarted.class, alreadyStarted -> Mono.just(workflowId))
         .map(wid -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("success", true, "data",
                 Map.of("workflowId", wid, "applicationId", app.id(), "status", "settling"))));
+    }
+
+    /**
+     * 启商家确认窗口 Saga（D-03）：推荐官提交履约即起，3 天（dev 5s）到期未操作 → 自动确认结算。
+     *
+     * <p>fire-and-forget（同 {@code startSettlementWorkflow}）；submitDeliverable 响应仍是 201（提交回执），
+     * 窗口状态经 {@code GET .../confirmation} 轮询。{@code workflowId = "confirm-" + appId}、双击去重
+     * （{@code WorkflowExecutionAlreadyStarted} → 复用）。阻塞 WorkflowClient 调用包 {@code boundedElastic}。
+     */
+    private Mono<String> startConfirmationWorkflow(Task task, TaskApplication app, EngagementSubmission submission) {
+        return confirmationWorkflows.start(
+                        app.id(), submission.id(), task.organizationId(), confirmationWindowSeconds)
+                .flatMap(workflowId -> submissions.markConfirmationWorkflowStarted(submission.id())
+                        .thenReturn(workflowId));
+    }
+
+    /**
+     * 轮询商家确认窗口状态（D-03）：owner 可见。返回 {@code status} + {@code deadline} + {@code remainingSeconds}（估算展示）。
+     * <ul>
+     *   <li>{@code confirmed_at} 已设 → {@code confirmed}（已确认，结算进行中/已完成，细节走 settlement 轮询）。</li>
+     *   <li>未确认 + 有 deadline → {@code awaiting_confirmation} + 倒计时（真正到期由 Temporal Timer 驱动，估算不作判定）。</li>
+     *   <li>未确认 + 无 deadline → {@code not_entered}（未提交履约）。</li>
+     * </ul>
+     */
+    @GetMapping("/api/tasks/{id}/applications/{appId}/confirmation")
+    public Mono<ResponseEntity<Map<String, Object>>> confirmation(@PathVariable String id,
+                                                                  @PathVariable String appId,
+                                                                  ServerHttpRequest request) {
+        return callers.resolve(request)
+                .flatMap(caller -> loadOwnedTask(id, caller.accountId())
+                        .flatMap(task -> apps.findById(appId)
+                                .switchIfEmpty(fail(404, "报名不存在"))
+                                .filter(app -> app.taskId().equals(id))
+                                .switchIfEmpty(fail(404, "报名不存在"))
+                                .map(this::confirmationOutcome)));
+    }
+
+    private ResponseEntity<Map<String, Object>> confirmationOutcome(TaskApplication app) {
+        if (app.confirmedAt() != null) {
+            return ok(Map.of("status", "confirmed"));
+        }
+        if (app.merchantConfirmDeadlineAt() == null) {
+            return ok(Map.of("status", "not_entered"));
+        }
+        long remainingSeconds = Math.max(0,
+                java.time.Duration.between(Instant.now(), app.merchantConfirmDeadlineAt()).toSeconds());
+        return ok(Map.of(
+                "status", "awaiting_confirmation",
+                "deadline", app.merchantConfirmDeadlineAt().toString(),
+                "remainingSeconds", remainingSeconds));
     }
 
     /**
@@ -599,6 +685,23 @@ public class ApplicationController {
                 app.id(), 1, Instant.now(), null, payload);
     }
 
+    private EventEnvelope confirmationEnvelope(
+            String eventType, TaskApplication app, String submissionId, String taskOwnerId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", app.taskId());
+        payload.put("applicationId", app.id());
+        payload.put("submissionId", submissionId);
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        payload.put("status", app.status());
+        if (taskOwnerId != null) {
+            payload.put("taskOwnerId", taskOwnerId);
+        }
+        String eventId = UUID.nameUUIDFromBytes(
+                (eventType + ":" + submissionId).getBytes(StandardCharsets.UTF_8)).toString();
+        return new EventEnvelope(eventId, eventType, "TaskApplication",
+                app.id(), 1, Instant.now(), null, payload);
+    }
+
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
@@ -682,6 +785,9 @@ public class ApplicationController {
                         .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
                         .flatMap(created -> outbox
                                 .append(submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs, taskOwnerId))
+                                .then(apps.setConfirmDeadline(app.id(), app.taskId(), confirmationWindowSeconds))
+                                .then(outbox.append(confirmationEnvelope(
+                                        "ConfirmationWindowEntered", app, created.id(), taskOwnerId)))
                                 .thenReturn(created)));
     }
 
@@ -933,6 +1039,13 @@ public class ApplicationController {
     }
 
     /** 单项核验明细（聚合前的原子结果）。 */
+    /** 仅用于手动确认与 auto-confirm 并发：抛出即触发 R2DBC 事务 rollback，外层再回读确认态。 */
+    private static final class ConfirmationConflict extends RuntimeException {
+        private ConfirmationConflict(String message) {
+            super(message);
+        }
+    }
+
     private record CheckOutcome(String type, String status, String detail, Instant checkedAt) {}
 
     private static <T> Mono<T> fail(int status, String message) {

@@ -24,7 +24,8 @@ public class TaskApplicationRepository {
 
     private static final String SELECT_COLS =
             "id::text, task_id::text, recommender_account_id::text, status, note,"
-                    + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at, bounty_cents";
+                    + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at, bounty_cents,"
+                    + " merchant_confirm_deadline_at, auto_confirmed_at";
 
     private final DatabaseClient db;
 
@@ -93,7 +94,9 @@ public class TaskApplicationRepository {
     }
 
     /** 结算确认（Slice 5A）：accepted + 未确认 → 设 confirmed_at（商家 ConfirmEngagement）。0 行（非 accepted / 已确认）→ empty。
-     *  商家身份由上游 loadOwnedTask 校验为 task owner，故不另存 confirmed_by。 */
+     *  商家身份由上游 loadOwnedTask 校验为 task owner，故不另存 confirmed_by。
+     *  <p>D-03：窗口到期自动结算复用本方法（{@code ConfirmationActivityImpl} 调）——条件 {@code confirmed_at IS NULL}
+     *  保证「商家先确认 vs 自动结算」竞态只有一方落 confirmed_at，另一方 0 行→abort，无双结算。 */
     public Mono<TaskApplication> confirm(String id, String taskId) {
         return db.sql("""
                 UPDATE task_application SET confirmed_at = now(), updated_at = now()
@@ -104,6 +107,37 @@ public class TaskApplicationRepository {
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("taskId", taskId)
+                .map(TaskApplicationRepository::map).one();
+    }
+
+    /** 窗口到期自动确认（D-03）：accepted + 未确认 → 同时设 confirmed_at / auto_confirmed_at。
+     *  0 行 = 商家先手动确认 / 非 accepted。{@code auto_confirmed_at} 支撑 activity 崩溃重试：重试见它非空可继续 capture，
+     *  仅 confirmed_at 非空则说明商家先确认，本 workflow abort。 */
+    public Mono<TaskApplication> autoConfirm(String id, String taskId) {
+        return db.sql("""
+                UPDATE task_application
+                SET confirmed_at = now(), auto_confirmed_at = now(), updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                  AND status = 'accepted'
+                  AND confirmed_at IS NULL
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .map(TaskApplicationRepository::map).one();
+    }
+
+    /** 设商家确认窗口截止（D-03）：推荐官提交履约时调，deadline = now() + windowSeconds（DB 算，避免绑时间戳）。
+     *  0 行（属该 task 的报名不存在）→ empty。 */
+    public Mono<TaskApplication> setConfirmDeadline(String id, String taskId, long windowSeconds) {
+        return db.sql("""
+                UPDATE task_application
+                SET merchant_confirm_deadline_at = now() + (:seconds * interval '1 second'), updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND task_id = CAST(:taskId AS uuid)
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId).bind("seconds", Math.max(0, windowSeconds))
                 .map(TaskApplicationRepository::map).one();
     }
 
@@ -202,7 +236,9 @@ public class TaskApplicationRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
                 toInstant(row.get("confirmed_at", OffsetDateTime.class)),
-                longValue(row.get("bounty_cents", Long.class))
+                longValue(row.get("bounty_cents", Long.class)),
+                toInstant(row.get("merchant_confirm_deadline_at", OffsetDateTime.class)),
+                toInstant(row.get("auto_confirmed_at", OffsetDateTime.class))
         );
     }
 

@@ -57,6 +57,26 @@ class ExternalNotificationRoutingTest {
     }
 
     @Test
+    void confirmationWindowEventsNotifyBothPartiesWithEngagementTemplates() {
+        for (String eventType : List.of("ConfirmationWindowEntered", "AutoSettledOnTimeout")) {
+            Map<String, Object> fields = Map.of(
+                    "taskId", "task-1", "applicationId", "app-1", "submissionId", "sub-1",
+                    "taskOwnerId", OWNER, "recommenderAccountId", RECOMMENDER);
+            assertThat(resolve(eventType, fields)).as(eventType).containsExactly(OWNER, RECOMMENDER);
+
+            NotificationTemplates.Template template = NotificationTemplates.template(eventType, payload(fields));
+            assertThat(template).as(eventType).isNotNull();
+            assertThat(template.category()).as(eventType).isEqualTo(NotificationCategory.ENGAGEMENT);
+            // 渲染 payload 只留业务定位字段，不泄露收件人账号。
+            assertThat(template.payload()).as(eventType)
+                    .containsEntry("taskId", "task-1")
+                    .containsEntry("applicationId", "app-1")
+                    .doesNotContainKey("taskOwnerId")
+                    .doesNotContainKey("recommenderAccountId");
+        }
+    }
+
+    @Test
     void sameAccountOnBothSidesNotifiedOnce() {
         assertThat(resolve("EngagementSettled", Map.of(
                 "recommenderAccountId", OWNER, "taskOwnerId", OWNER)))

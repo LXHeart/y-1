@@ -17,7 +17,9 @@ public record EngagementSubmission(
         String status,
         String reviewNote,
         Instant reviewedAt,
-        Instant createdAt
+        Instant createdAt,
+        /** D-03 确认窗口 Temporal workflow 启动成功/AlreadyStarted 的时刻；null 由 dispatcher 补启。 */
+        Instant confirmationWorkflowStartedAt
 ) {
     public boolean isPending() {
         return SubmissionStatus.SUBMITTED.dbValue().equalsIgnoreCase(status);

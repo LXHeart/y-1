@@ -58,8 +58,10 @@ class SettlementActivityImplTest {
         lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(opsCases.register(anyString(), anyString(), any(), any(), anyString()))
                 .thenReturn(Mono.empty());
-        activity = new SettlementActivityImpl(apps, tasks, outbox, finance, disputes, verification,
-                opsCases, transactions);
+        // gate+capture 钱侧逻辑已抽到 SettlementExecution（D-03）；用真实实例 + 桩 gates 覆盖 captureOrHold 全分支。
+        SettlementExecution settlementExecution =
+                new SettlementExecution(outbox, finance, disputes, verification, opsCases, transactions);
+        activity = new SettlementActivityImpl(apps, tasks, settlementExecution);
         input = new SettlementInput(APP_ID, TASK_ID, "33333333-3333-3333-3333-333333333333", ORG, 500L, 0L);
     }
 
@@ -132,7 +134,7 @@ class SettlementActivityImplTest {
     private TaskApplication app(String status, Instant confirmedAt) {
         return new TaskApplication(APP_ID, "11111111-1111-1111-1111-111111111111",
                 "55555555-5555-5555-5555-555555555555", status, null,
-                "33333333-3333-3333-3333-333333333333", null, null, null, confirmedAt, 500L);
+                "33333333-3333-3333-3333-333333333333", null, null, null, confirmedAt, 500L, null, null);
     }
 
     private Task task() {

@@ -81,6 +81,14 @@ public final class NotificationTemplates {
             case "SettlementHeld" -> new Template(
                     NotificationCategory.ENGAGEMENT, "结算被挂起",
                     "该履约的结算被暂时挂起，待条件满足后继续", LINK_ENGAGEMENTS, taskPayload(payload));
+            // marketplace：商家确认窗口（D-03）
+            case "ConfirmationWindowEntered" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "请确认履约",
+                    "有推荐官提交了履约凭证，请在确认窗口内确认或退回，逾期未操作将自动确认结算",
+                    LINK_ENGAGEMENTS, taskPayload(payload));
+            case "AutoSettledOnTimeout" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "履约已自动结算",
+                    "商家确认窗口到期未操作，系统已自动确认结算该履约", LINK_ENGAGEMENTS, taskPayload(payload));
             // ---------- trust：争议 ----------
             // marketplace 派生：有人对一笔履约开了争议，通知对方（草场 Slice 12 缺口补全）。
             case "EngagementDisputed" -> {
@@ -132,6 +140,7 @@ public final class NotificationTemplates {
         Map<String, Object> map = new LinkedHashMap<>();
         putIfText(map, payload, "taskId");
         putIfText(map, payload, "applicationId");
+        putIfText(map, payload, "submissionId");
         putIfText(map, payload, "status");
         putIfText(map, payload, "reason");
         return map;

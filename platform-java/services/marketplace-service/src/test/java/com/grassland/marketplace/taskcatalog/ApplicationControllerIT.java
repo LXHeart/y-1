@@ -357,6 +357,72 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         awaitSettlement(merchant, task, app, "held");  // 窗口到期查到争议 → held（不 capture）
     }
 
+    // ---------- 商家确认窗口（D-03） ----------
+
+    /** 推荐官提交履约即起确认窗口：deadline 落库 + outbox ConfirmationWindowEntered + 轮询 awaiting_confirmation。 */
+    @Test
+    void confirmationWindowEnteredOnSubmit() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        submit(recommender, task, app);   // 提交即起确认窗口
+
+        // 轮询 confirmation → awaiting_confirmation + deadline（窗口未到期）
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/confirmation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("awaiting_confirmation")
+                .jsonPath("$.data.deadline").isNotEmpty()
+                .jsonPath("$.data.remainingSeconds").isNumber();
+        assertThat(outboxCount("ConfirmationWindowEntered", task)).isEqualTo(1);
+    }
+
+    /** 商家在窗口内确认 → confirmed_at 设；轮询 confirmation → confirmed（与到期自动结算经 confirmed_at 条件安全收敛）。 */
+    @Test
+    void merchantConfirmDuringWindowShowsConfirmed() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString())).thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+        submit(recommender, task, app);
+
+        // 商家确认 → confirmed_at 设
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+
+        // 重复确认幂等：200 confirmed，不重启第二个 workflow、不重发 MerchantConfirmed。
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("confirmed")
+                .jsonPath("$.data.applicationId").isEqualTo(app);
+        assertThat(outboxCount("MerchantConfirmed", task)).isEqualTo(1);
+
+        // 轮询 confirmation → confirmed
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/confirmation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("confirmed");
+    }
+
     // ---------- 履约交付物（V5） ----------
 
     /**

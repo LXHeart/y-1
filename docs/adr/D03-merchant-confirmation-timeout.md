@@ -19,6 +19,17 @@
 
 **仍属实现层（后续 backlog，非本决策）**：Temporal 确认窗口定时器、拒绝端点转客服、补证计数、cancel 违约计数进信誉、通知通道接线。
 
+**实现进度（core slice，2026-08-03，commit 级未 push）**：规则 1（确认窗口）+ 规则 2（到期自动结算 default-approve）+ 规则 6（通知邮件+站内）已落：
+- `ConfirmationWindowWorkflow` + `ConfirmationActivity`（镜像 `SettlementWindowWorkflow`，复用 `marketplace-saga` worker）；抽出共享 `SettlementExecution`（gate+capture+hold，手动确认与自动确认共用，避免钱侧逻辑分叉）。
+- **submission 级窗口绑定**：`workflowId=confirm-<submissionId>`，退回重交起新窗口；旧 Timer 到期重验 submission 非 submitted → abort，不误结算新凭证。
+- `auto_confirmed_at` 区分手动/自动确认：activity 崩溃重试见它非空可继续幂等 capture；仅 `confirmed_at` 非空 = 商家先确认 → abort。
+- `ConfirmationWindowDispatcher`（@Scheduled 补启）：消除 DB commit→Temporal start 间隙（进程崩溃/网络失败时下轮扫描未标记 submission 补启，按 DB deadline 剩余秒数启动，不重置窗口）。
+- 手动确认幂等：首次 202 + 启 SettlementWindow；重复 200 confirmed 不重启（`ConfirmationConflict` 触发事务回滚 + 回读）；与自动路径经 `confirmed_at IS NULL` 条件 + finance 409→success + 确定性 eventId 安全收敛。
+- 通知：`ConfirmationWindowEntered`（提交时）+ `AutoSettledOnTimeout`（自动结算时），双方收件，ENGAGEMENT 类（identity 3-touch）。
+- V15 迁移：`task_application` 加 `merchant_confirm_deadline_at` / `auto_confirmed_at`；`engagement_submission` 加 `confirmation_workflow_started_at`（补启标记）。
+- 验证：marketplace **304 tests**（+17 D-03：ConfirmationActivityImplTest 7 / ConfirmationWindowWorkflowReplayTest 4 / ConfirmationWindowDispatcherTest 6 + ApplicationControllerIT 2）+ identity **247 tests** 全绿；bootJar 绿。
+- **仍延后（slice 2）**：规则 3（reject→客服裁定：新 reject 端点 + ops_case + dispute kind 列 + 客服 SLA）、规则 4（补证次数上限 2）、cancel 主动退款未提交 engagement、Expire-24h 通知（需窗口中段 Temporal signal）。
+
 ## 背景
 
 PRD §8 与 §9 把**商家确认**设为结算的必要步骤：推荐官提交凭证 → 系统按指标核实 → 全部达标标记「系统核实通过」→ 通知商家确认 → 商家确认后进入结算（佣金 T+2）。但 PRD **没有定义**：商家收到确认通知后**不操作**怎么办、**拒绝**（系统核实通过却拒绝）怎么办、**反复要求补证拖延**怎么办、**长期失联**怎么办。HLD §10.3 把这些列为 `TBD`；§18 把「商家确认超时规则缺失」列为风险——「履约和资金长期悬置」，要求「在 Marketplace/Finance LLD 前完成产品决策」。

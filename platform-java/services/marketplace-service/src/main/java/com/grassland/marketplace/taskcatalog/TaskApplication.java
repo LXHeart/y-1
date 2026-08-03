@@ -25,5 +25,10 @@ public record TaskApplication(
         Instant createdAt,
         Instant updatedAt,
         Instant confirmedAt,
-        long bountyCents
+        long bountyCents,
+        /** 商家确认窗口截止（D-03）：推荐官提交履约时设 = now + 窗口；null = 未进窗口。供轮询/UI 倒计时；
+         *  真正到期由 Temporal ConfirmationWindowWorkflow Timer 驱动，此列是估算展示值，不作判定依据。 */
+        Instant merchantConfirmDeadlineAt,
+        /** D-03 自动确认时刻。仅窗口到期 activity 写；用于区别商家手动确认并支撑 Temporal activity 崩溃重试。 */
+        Instant autoConfirmedAt
 ) {}

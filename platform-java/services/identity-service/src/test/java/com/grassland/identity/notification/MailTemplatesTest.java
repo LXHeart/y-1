@@ -48,6 +48,19 @@ class MailTemplatesTest {
     }
 
     @Test
+    void confirmationWindowMailMatchesEngagementNotification() {
+        JsonNode p = payload(Map.of("taskId", "t-1", "applicationId", "a-1", "submissionId", "s-1"));
+        for (String eventType : java.util.List.of("ConfirmationWindowEntered", "AutoSettledOnTimeout")) {
+            MailTemplate mail = MailTemplates.mailTemplate(eventType, p);
+            NotificationTemplates.Template notification = NotificationTemplates.template(eventType, p);
+            assertThat(mail).as(eventType).isNotNull();
+            assertThat(mail.category()).as(eventType).isEqualTo("engagement");
+            assertThat(mail.subject()).as(eventType).isEqualTo(notification.title());
+            assertThat(mail.body()).as(eventType).isEqualTo(notification.body());
+        }
+    }
+
+    @Test
     void disputeEventProducesDisputeMail() {
         MailTemplate t = MailTemplates.mailTemplate("EngagementDisputed",
                 payload(Map.of("disputeId", "d-1", "openedByRole", "merchant")));
