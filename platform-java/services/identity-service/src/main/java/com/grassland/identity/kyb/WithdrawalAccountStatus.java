@@ -21,19 +21,32 @@ public enum WithdrawalAccountStatus {
         return dbValue;
     }
 
-    /** 是否可编辑（仅 pending 状态可编辑）。 */
+    /**
+     * 是否可编辑。pending 与 **rejected** 都可编辑——被拒账户须能改完重新提交
+     * （与 {@link MerchantProfileStatus#isEditable()} 同口径）。under_review 审核中不可改。
+     */
     public boolean isEditable() {
-        return this == PENDING;
+        return this == PENDING || this == REJECTED;
     }
 
-    /** 是否可删除（仅 pending 状态可删除）。 */
+    /** 是否可删除（pending/rejected 可删；审核中与已批准的收款账户不可删）。 */
     public boolean isDeletable() {
-        return this == PENDING;
+        return this == PENDING || this == REJECTED;
     }
 
-    /** 是否终态（approved/rejected，不可再变更）。 */
+    /** 是否可提交审核（与可编辑同集合）。 */
+    public boolean canSubmit() {
+        return isEditable();
+    }
+
+    /** 是否终态。**只有 approved 是终态**——rejected 可改后重新提交。 */
     public boolean isTerminal() {
-        return this == APPROVED || this == REJECTED;
+        return this == APPROVED;
+    }
+
+    /** 是否审核中（under_review）——不可编辑、不可重复提交。 */
+    public boolean isUnderReview() {
+        return this == UNDER_REVIEW;
     }
 
     /** 从 DB 字符串解析，大小写不敏感；非法值抛 {@link IllegalArgumentException}。 */

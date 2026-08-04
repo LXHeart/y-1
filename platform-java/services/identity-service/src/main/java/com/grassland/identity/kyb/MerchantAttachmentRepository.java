@@ -71,11 +71,34 @@ public class MerchantAttachmentRepository {
                 .map(MerchantAttachmentRepository::map).one();
     }
 
-    /** 删除附件。*/
-    public Mono<Long> deleteById(UUID id) {
-        return db.sql("DELETE FROM merchant_attachment WHERE id = CAST(:id AS uuid)")
-                .bind("id", id)
+    /**
+     * 删除附件，**按 org 作用域**。GL-P3-MERCHANT-001。
+     *
+     * <p>刻意不提供无 org 限定的 `deleteById`：路径上的 orgId 已由 `OrgAuthorization` 校验过角色，
+     * 但附件 id 是独立 UUID——只按 id 删会让 A 商家的 ADMIN 猜到 id 就能删掉 B 商家的营业执照
+     * （跨租户删除）。谓词必须同时命中 org。
+     */
+    public Mono<Long> deleteByIdAndOrganization(UUID id, String organizationId) {
+        return db.sql("DELETE FROM merchant_attachment WHERE id = CAST(:id AS uuid)"
+                + " AND organization_id = CAST(:org AS uuid)")
+                .bind("id", id).bind("org", organizationId)
                 .fetch().rowsUpdated();
+    }
+
+    /** 列出组织已上传的证件类附件类型（submit 前的材料齐备校验）。*/
+    public Flux<String> findDocumentTypes(String organizationId) {
+        return db.sql("SELECT DISTINCT attachment_type FROM merchant_attachment"
+                + " WHERE organization_id = CAST(:org AS uuid)")
+                .bind("org", organizationId)
+                .map(row -> row.get("attachment_type", String.class)).all();
+    }
+
+    /** 列出组织下附件 id（提交审核时快照进 materials）。*/
+    public Flux<UUID> findIdsByOrganization(String organizationId) {
+        return db.sql("SELECT id::text FROM merchant_attachment"
+                + " WHERE organization_id = CAST(:org AS uuid) ORDER BY uploaded_at")
+                .bind("org", organizationId)
+                .map(row -> UUID.fromString(row.get("id", String.class))).all();
     }
 
     private static MerchantAttachment map(Readable row) {

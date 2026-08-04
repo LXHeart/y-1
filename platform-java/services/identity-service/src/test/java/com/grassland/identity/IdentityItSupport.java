@@ -73,6 +73,11 @@ public abstract class IdentityItSupport {
              var s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz)");
             s.execute("CREATE TABLE IF NOT EXISTS session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
+            // 注册验证码同属 legacy Express 建的表（identity 只读写，不由 Flyway 建），
+            // 列名/类型对齐 EmailVerificationService 的 SQL：明文 code、used 标记。
+            s.execute("CREATE TABLE IF NOT EXISTS email_verification_codes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
+                    + "email text NOT NULL, code text NOT NULL, used boolean NOT NULL DEFAULT false, "
+                    + "expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now())");
         }
     }
 

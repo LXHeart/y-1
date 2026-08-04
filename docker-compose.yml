@@ -93,6 +93,10 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # GL-P3-MERCHANT-001：KYB 敏感字段信封加密 KEK（与 intelligence BYOK 同一变量）。
+      # 未配置时 KYB 敏感字段端点 fail-closed 503，不落明文。
+      CRYPTO_KEK_BASE64: ${CRYPTO_KEK_BASE64:-}
+      IDENTITY_KYB_REVIEW_SLA_SECONDS: ${IDENTITY_KYB_REVIEW_SLA_SECONDS:-259200}
     depends_on:
       backend:
         condition: service_started

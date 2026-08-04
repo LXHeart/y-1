@@ -70,6 +70,10 @@ identity:
       cookie-same-site: ${SESSION_COOKIE_SAME_SITE:Lax}
       # 0 = 用默认 7 天；非 0 时须与 Express 的 SESSION_COOKIE_MAX_AGE_MS 一致（同一张 session 表）。
       cookie-max-age-ms: ${SESSION_COOKIE_MAX_AGE_MS:0}
+  # GL-P3-MERCHANT-001：KYB 审核。
+  kyb:
+    # 审核 SLA，写入 kyb_verification_request.review_deadline。默认 3 天（与 D-03 确认窗口同量级）。
+    review-sla-seconds: ${IDENTITY_KYB_REVIEW_SLA_SECONDS:259200}
   outbox:
     topic: ${IDENTITY_OUTBOX_TOPIC:grassland.identity.events}
     enabled: ${IDENTITY_OUTBOX_ENABLED:true}
@@ -130,3 +134,10 @@ identity-assertion:
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+
+# GL-P3-MERCHANT-001：KYB 敏感字段（法人身份证号/收款账号）信封加密。
+# 与 intelligence BYOK 共用同一 KEK 变量名。未配置时 EnvelopeEncryption bean 不装配，
+# KybFieldCrypto 对敏感字段 fail-closed 返 503——绝不退化为存明文。
+crypto:
+  kek:
+    encoded: ${CRYPTO_KEK_BASE64:}

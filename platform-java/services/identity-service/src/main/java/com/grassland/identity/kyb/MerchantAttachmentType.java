@@ -39,8 +39,31 @@ public enum MerchantAttachmentType {
         throw new IllegalArgumentException("unknown merchant attachment type: " + value);
     }
 
-    /** 从 HTTP 请求解析。 */
+    /**
+     * 从 HTTP 请求解析。非法值抛 {@link com.grassland.identity.auth.IdentityException} 400——
+     * 客户端传错类型是请求错误，不该冒成 500。
+     */
     public static MerchantAttachmentType fromRequest(String value) {
-        return fromDb(value);
+        try {
+            return fromDb(value);
+        } catch (IllegalArgumentException e) {
+            throw new com.grassland.identity.auth.IdentityException(400, "附件类型无效：" + value);
+        }
+    }
+
+    /** 提交 KYB 审核前必须齐备的证件类附件。 */
+    public static java.util.List<MerchantAttachmentType> requiredForSubmission() {
+        return java.util.List.of(BUSINESS_LICENSE, LEGAL_PERSON_ID_FRONT, LEGAL_PERSON_ID_BACK);
+    }
+
+    /** 中文名（用于 400 错误里列出缺失材料）。 */
+    public String displayName() {
+        return switch (this) {
+            case BUSINESS_LICENSE -> "营业执照";
+            case LEGAL_PERSON_ID_FRONT -> "法人证件正面";
+            case LEGAL_PERSON_ID_BACK -> "法人证件反面";
+            case STORE_PHOTO -> "门店照片";
+            case OTHER -> "其他材料";
+        };
     }
 }

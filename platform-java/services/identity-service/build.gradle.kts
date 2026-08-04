@@ -20,6 +20,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     // HLD 7.4：消费 BFF 签发的内部身份断言（CurrentAccountResolver 优先断言头，回退 cookie）。
     implementation(project(":platform-identity-assertion"))
+    // GL-P3-MERCHANT-001：KYB 敏感字段（法人身份证号/银行账号）信封加密。
+    implementation(project(":platform-crypto"))
     implementation(libs.r2dbc.postgresql)
     implementation(libs.bcrypt)
     implementation(libs.bouncycastle)

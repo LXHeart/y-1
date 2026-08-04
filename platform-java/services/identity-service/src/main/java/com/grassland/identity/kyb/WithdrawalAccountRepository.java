@@ -33,16 +33,21 @@ public class WithdrawalAccountRepository {
     public Mono<WithdrawalAccount> create(String organizationId, String accountType, String accountName,
                                           String accountNumberEncrypted, String bankName, String branchName) {
         UUID id = UUID.randomUUID();
-        return db.sql("""
+        var spec = db.sql("""
                 INSERT INTO withdrawal_account(id, organization_id, account_type, account_name,
                         account_number_encrypted, bank_name, branch_name)
                 VALUES (CAST(:id AS uuid), CAST(:org AS uuid), :type, :name, :numberEnc, :bank, :branch)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("org", organizationId).bind("type", accountType)
-                .bind("name", accountName).bind("numberEnc", accountNumberEncrypted)
-                .bind("bank", bankName).bind("branch", branchName)
-                .map(WithdrawalAccountRepository::map).one();
+                .bind("id", id).bind("org", organizationId)
+                .bind("numberEnc", accountNumberEncrypted);
+        // bank_name/branch_name/account_type/account_name 都可空（V18 未加 NOT NULL）。
+        // R2DBC 的 bind(name, null) 直接抛 IllegalArgumentException → 省略任一可空字段就是 500。
+        spec = bindNullable(spec, "type", accountType);
+        spec = bindNullable(spec, "name", accountName);
+        spec = bindNullable(spec, "bank", bankName);
+        spec = bindNullable(spec, "branch", branchName);
+        return spec.map(WithdrawalAccountRepository::map).one();
     }
 
     /** 查询收款账户。*/
@@ -60,19 +65,38 @@ public class WithdrawalAccountRepository {
                 .map(WithdrawalAccountRepository::map).all();
     }
 
-    /** 更新账户（仅 pending 状态可更新）。*/
-    public Mono<WithdrawalAccount> update(UUID id, String accountType, String accountName,
+    /**
+     * 更新账户。**按 org 作用域**，状态限 pending/rejected（被拒可改后重新提交，见
+     * {@link WithdrawalAccountStatus#isEditable()}；审核中与已批准不可改）。
+     *
+     * <p>此前谓词只有 {@code id = … AND status = 'pending'}：① 无 org 限定 → 跨租户改他人收款账号
+     * （收款账户是资金出口，被改指向攻击者账号是直接资金损失）；② 硬编码 pending → 被拒账户永久锁死。
+     */
+    public Mono<WithdrawalAccount> update(UUID id, String organizationId, String accountType, String accountName,
                                           String accountNumberEncrypted, String bankName, String branchName) {
         var spec = db.sql("""
                 UPDATE withdrawal_account
                 SET account_type = :type, account_name = :name, account_number_encrypted = :numberEnc,
                     bank_name = :bank, branch_name = :branch, updated_at = now()
-                WHERE id = CAST(:id AS uuid) AND status = 'pending'
+                WHERE id = CAST(:id AS uuid) AND organization_id = CAST(:org AS uuid)
+                  AND status IN ('pending', 'rejected')
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("type", accountType).bind("name", accountName)
-                .bind("numberEnc", accountNumberEncrypted).bind("bank", bankName).bind("branch", branchName);
+                .bind("id", id).bind("org", organizationId)
+                .bind("numberEnc", accountNumberEncrypted);
+        spec = bindNullable(spec, "type", accountType);
+        spec = bindNullable(spec, "name", accountName);
+        spec = bindNullable(spec, "bank", bankName);
+        spec = bindNullable(spec, "branch", branchName);
         return spec.map(WithdrawalAccountRepository::map).one();
+    }
+
+    /** 按 org 作用域查询单个账户（避免跨租户读他人收款信息）。*/
+    public Mono<WithdrawalAccount> findByIdAndOrganization(UUID id, String organizationId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM withdrawal_account"
+                + " WHERE id = CAST(:id AS uuid) AND organization_id = CAST(:org AS uuid)")
+                .bind("id", id).bind("org", organizationId)
+                .map(WithdrawalAccountRepository::map).one();
     }
 
     /** 更新状态（pending→under_review, under_review→approved/rejected）。*/
@@ -93,10 +117,11 @@ public class WithdrawalAccountRepository {
         return spec.map(WithdrawalAccountRepository::map).one();
     }
 
-    /** 删除账户（仅 pending 状态可删除）。*/
-    public Mono<Long> deleteById(UUID id) {
-        return db.sql("DELETE FROM withdrawal_account WHERE id = CAST(:id AS uuid) AND status = 'pending'")
-                .bind("id", id)
+    /** 删除账户，**按 org 作用域**；状态限 pending/rejected（审核中与已批准不可删）。*/
+    public Mono<Long> deleteByIdAndOrganization(UUID id, String organizationId) {
+        return db.sql("DELETE FROM withdrawal_account WHERE id = CAST(:id AS uuid)"
+                + " AND organization_id = CAST(:org AS uuid) AND status IN ('pending', 'rejected')")
+                .bind("id", id).bind("org", organizationId)
                 .fetch().rowsUpdated();
     }
 

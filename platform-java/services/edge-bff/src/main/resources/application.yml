@@ -74,6 +74,10 @@ edge:
     - path: /api/admin/permission-requests
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_PERMREQ_IDENTITY:true}
+    # 平台 admin KYB 审核队列（GL-P3-MERCHANT-001）。同上，必须用精确前缀 /api/admin/kyb-requests。
+    - path: /api/admin/kyb-requests
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_KYB_IDENTITY:true}
     # 推荐官画像（PRD 六）→ identity。/api/recommenders/{accountId}/profile；
     # 自维护那半边走已有的 /api/me 前缀，无需另配。
     - path: /api/recommenders

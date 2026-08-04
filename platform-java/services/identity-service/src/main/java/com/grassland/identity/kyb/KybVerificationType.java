@@ -18,6 +18,20 @@ public enum KybVerificationType {
         return dbValue;
     }
 
+    /**
+     * outbox 事件的 aggregate type。
+     *
+     * <p>此前用 {@code dbValue().substring(0,1).toUpperCase() + substring(1)} 拼，
+     * 得到的是 {@code "Merchant_profile"}（下划线残留）——与其余事件的 PascalCase 不一致。
+     */
+    public String aggregateType() {
+        return switch (this) {
+            case MERCHANT_PROFILE -> "MerchantProfile";
+            case STORE_PROFILE -> "StoreProfile";
+            case WITHDRAWAL_ACCOUNT -> "WithdrawalAccount";
+        };
+    }
+
     /** 从 DB 字符串解析，大小写不敏感；非法值抛 {@link IllegalArgumentException}。 */
     public static KybVerificationType fromDb(String value) {
         if (value == null) {

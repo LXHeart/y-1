@@ -3,6 +3,7 @@ package com.grassland.identity.kyb;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
+import com.grassland.identity.organization.CurrentAccountResolver;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -33,6 +34,7 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/api/admin/kyb-requests")
 public class KybVerificationController {
 
+    private final CurrentAccountResolver accounts;
     private final KybVerificationRequestRepository requests;
     private final MerchantProfileRepository merchantProfiles;
     private final WithdrawalAccountRepository withdrawalAccounts;
@@ -40,11 +42,13 @@ public class KybVerificationController {
     private final TransactionalOperator transactions;
 
     public KybVerificationController(
+            CurrentAccountResolver accounts,
             KybVerificationRequestRepository requests,
             MerchantProfileRepository merchantProfiles,
             WithdrawalAccountRepository withdrawalAccounts,
             OutboxRepository outbox,
             TransactionalOperator transactions) {
+        this.accounts = accounts;
         this.requests = requests;
         this.merchantProfiles = merchantProfiles;
         this.withdrawalAccounts = withdrawalAccounts;
@@ -54,7 +58,8 @@ public class KybVerificationController {
 
     @GetMapping
     public Mono<ResponseEntity<Map<String, Object>>> listPending(ServerHttpRequest request) {
-        return requests.findPending().collectList()
+        return accounts.requireAdmin(request)
+                .flatMap(admin -> requests.findPending().collectList())
                 .map(list -> ResponseEntity.ok(Map.of("success", true,
                         "data", list.stream().map(this::toBody).toList())));
     }
@@ -63,57 +68,65 @@ public class KybVerificationController {
     public Mono<ResponseEntity<Map<String, Object>>> approve(@PathVariable String id,
                                                               @RequestBody ReviewRequest body,
                                                               ServerHttpRequest request) {
-        return transactions.transactional(
-                requests.findById(UUID.fromString(id))
-                        .switchIfEmpty(Mono.error(new IdentityException(404, "审核请求不存在"))))
-                .filter(req -> !req.status().equals("approved") && !req.status().equals("rejected"))
-                .switchIfEmpty(Mono.error(new IdentityException(409, "审核请求已处理")))
-                .flatMap(req -> {
-                    String adminId = "admin"; // TODO: 从 request 获取真实 admin ID
-                    return requests.updateStatus(req.id(), "approved", adminId, body.note())
-                            .flatMap(updated -> {
-                                // 根据审核类型更新目标状态
-                                return updateTargetStatus(updated, "approved", adminId, body.note())
-                                        .thenReturn(updated);
-                            })
-                            .flatMap(updated -> emitReviewEvent(updated, "approved", body.note())
-                                    .thenReturn(updated));
-                })
-                .map(req -> ResponseEntity.ok(Map.of("success", true, "data", toBody(req))));
+        return review(id, KybRequestStatus.APPROVED, body, request);
     }
 
     @PostMapping(path = "/{id}/reject", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> reject(@PathVariable String id,
                                                               @RequestBody ReviewRequest body,
                                                               ServerHttpRequest request) {
-        return transactions.transactional(
-                requests.findById(UUID.fromString(id))
-                        .switchIfEmpty(Mono.error(new IdentityException(404, "审核请求不存在"))))
-                .filter(req -> !req.status().equals("approved") && !req.status().equals("rejected"))
-                .switchIfEmpty(Mono.error(new IdentityException(409, "审核请求已处理")))
-                .flatMap(req -> {
-                    String adminId = "admin"; // TODO: 从 request 获取真实 admin ID
-                    return requests.updateStatus(req.id(), "rejected", adminId, body.note())
-                            .flatMap(updated -> {
-                                // 根据审核类型更新目标状态
-                                return updateTargetStatus(updated, "rejected", adminId, body.note())
-                                        .thenReturn(updated);
-                            })
-                            .flatMap(updated -> emitReviewEvent(updated, "rejected", body.note())
-                                    .thenReturn(updated));
+        return review(id, KybRequestStatus.REJECTED, body, request);
+    }
+
+    /**
+     * 审核裁定。approve/reject 唯一差别是终态值，故合并到一处。
+     *
+     * <p><b>鉴权</b>：`requireAdmin` 是这里唯一的门禁——identity-service 无全局 security filter，
+     * 此前这三个端点接了 {@code ServerHttpRequest} 却从不鉴权，等于任何人可批准自己的 KYB。
+     *
+     * <p><b>reviewer</b>：用真实 {@code admin.id()}。此前硬编码字符串 {@code "admin"} 绑进
+     * {@code reviewer_account_id = CAST(:reviewer AS uuid)}，真跑必 SQL 报错。
+     */
+    private Mono<ResponseEntity<Map<String, Object>>> review(String id, KybRequestStatus decision,
+                                                              ReviewRequest body, ServerHttpRequest request) {
+        return accounts.requireAdmin(request)
+                .flatMap(admin -> {
+                    UUID requestId = KybSubmissionService.parseUuid(id, "审核请求 ID");
+                    return transactions.transactional(
+                            requests.findById(requestId)
+                                    .switchIfEmpty(Mono.error(new IdentityException(404, "审核请求不存在")))
+                                    .flatMap(req -> KybRequestStatus.fromDb(req.status()).isTerminal()
+                                            ? Mono.<KybVerificationRequest>error(
+                                                    new IdentityException(409, "审核请求已处理"))
+                                            : Mono.just(req))
+                                    .flatMap(req -> requests.updateStatus(
+                                                    req.id(), decision.dbValue(), admin.id(), body.note())
+                                            .flatMap(updated -> updateTargetStatus(
+                                                            updated, decision.dbValue(), admin.id(), body.note())
+                                                    .then(emitReviewEvent(updated, decision.dbValue(), body.note()))
+                                                    .thenReturn(updated))));
                 })
                 .map(req -> ResponseEntity.ok(Map.of("success", true, "data", toBody(req))));
     }
 
-    /** 根据审核类型更新目标表状态。*/
+    /**
+     * 根据审核类型更新目标表状态。
+     *
+     * <p>{@code submittedAt} 传原值而非 null——`updateStatus` 是全字段 SET，
+     * 传 null 会把提交时间抹掉（审核完成后就看不出这单是什么时候提交的了）。
+     */
     private Mono<Void> updateTargetStatus(KybVerificationRequest req, String status, String adminId, String note) {
         KybVerificationType type = KybVerificationType.fromDb(req.verificationType());
         return switch (type) {
-            case MERCHANT_PROFILE -> merchantProfiles.updateStatus(req.organizationId(), status,
-                    null, Instant.now(), adminId, note).then();
-            case WITHDRAWAL_ACCOUNT -> withdrawalAccounts.updateStatus(req.targetId(), status,
-                    null, Instant.now(), adminId, note).then();
-            case STORE_PROFILE -> Mono.empty(); // store_profile 暂无审核流程
+            case MERCHANT_PROFILE -> merchantProfiles.findById(req.organizationId())
+                    .flatMap(profile -> merchantProfiles.updateStatus(req.organizationId(), status,
+                            profile.submittedAt(), Instant.now(), adminId, note))
+                    .then();
+            case WITHDRAWAL_ACCOUNT -> withdrawalAccounts.findById(req.targetId())
+                    .flatMap(acc -> withdrawalAccounts.updateStatus(req.targetId(), status,
+                            acc.submittedAt(), Instant.now(), adminId, note))
+                    .then();
+            case STORE_PROFILE -> Mono.empty(); // store_profile 暂无审核流程（V16 建表但无端点，属 Slice 2）
         };
     }
 
@@ -128,12 +141,15 @@ public class KybVerificationController {
         if (eventType == null) {
             return Mono.empty();
         }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("requestId", req.id().toString());
+        payload.put("organizationId", req.organizationId());
+        payload.put("decision", decision);
+        payload.put("note", note != null ? note : "");
         return outbox.append(new EventEnvelope(
-                UUID.randomUUID().toString(), eventType, type.dbValue().substring(0, 1).toUpperCase() + type.dbValue().substring(1),
+                UUID.randomUUID().toString(), eventType, type.aggregateType(),
                 req.targetId() != null ? req.targetId().toString() : req.organizationId(),
-                1, Instant.now(), null,
-                Map.of("requestId", req.id().toString(), "organizationId", req.organizationId(),
-                        "decision", decision, "note", note != null ? note : "")));
+                1, Instant.now(), null, payload));
     }
 
     @ExceptionHandler(IdentityException.class)

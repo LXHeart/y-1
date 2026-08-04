@@ -27,6 +27,8 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/organizations", "identity", true),
             new RouteProperties(null, "/api/me", "identity", true),
             new RouteProperties(null, "/api/admin/permission-requests", "identity", true),
+            // GL-P3-MERCHANT-001：KYB 审核队列 → identity（同样必须是精确前缀，不能退化为 /api/admin）
+            new RouteProperties(null, "/api/admin/kyb-requests", "identity", true),
             new RouteProperties(null, "/api/finance", "finance", true),
             new RouteProperties(null, "/api/trust", "trust", true),
             // 推荐官画像 → identity，声誉 → marketplace（两个不同上游，前缀不得互相抢占）
@@ -159,6 +161,19 @@ class UpstreamResolverTest {
         // 若路由误配为前缀 /api/admin，这两条会被抢走 → 旧后台功能挂掉。
         assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
         assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void adminKybRequestsGoesToIdentity() {
+        // GL-P3-MERCHANT-001：此前该前缀不在 RouteManifest 里 → 经 BFF 的 admin 审核请求全落 legacy 拿 404，
+        // 审核闭环在 edge 层就断了（controller 再对也到不了）。
+        assertThat(resolver.resolve("GET", "/api/admin/kyb-requests")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/admin/kyb-requests/req-1/approve")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/admin/kyb-requests/req-1/reject")).isEqualTo(IDENTITY);
+        // 内部上游 → 会签身份断言，identity 侧才能解析出 admin 账号
+        assertThat(resolver.isInternalUpstream("POST", "/api/admin/kyb-requests/req-1/approve")).isTrue();
+        // 且仍不抢 legacy admin
+        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
     }
 
     @Test

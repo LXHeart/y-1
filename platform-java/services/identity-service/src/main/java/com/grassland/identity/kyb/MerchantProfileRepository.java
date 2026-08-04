@@ -83,6 +83,54 @@ public class MerchantProfileRepository {
         return spec.map(MerchantProfileRepository::map).one();
     }
 
+    /**
+     * 写入资料字段，**不触碰 status 与审核字段**。GL-P3-MERCHANT-001。
+     *
+     * <p>与 {@link #upsert} 的区别是关键的：`upsert` 的 {@code ON CONFLICT} 分支无条件
+     * {@code status = EXCLUDED.status}，被 controller 以 {@code "draft"} 调用时会把**已 approved 的资料
+     * 静默打回 draft**，审核结果丢失。资料编辑不应变更审核状态，状态流转一律走 {@link #updateStatus}。
+     *
+     * <p>插入新行时状态取表默认值 {@code draft}；更新既有行时保留原 status
+     * （controller 已在其前用 {@code isEditable()} 拦掉审核中/已批准的编辑）。
+     */
+    public Mono<MerchantProfile> upsertFields(
+            String organizationId, String legalName, String unifiedSocialCreditCode, String businessType,
+            String legalPersonName, String legalPersonIdNumber, Long registeredCapitalCents,
+            LocalDate establishmentDate, String businessAddress, String contactPhone, String contactEmail) {
+        var spec = db.sql("""
+                INSERT INTO merchant_profile(organization_id, legal_name, unified_social_credit_code, business_type,
+                        legal_person_name, legal_person_id_number, registered_capital_cents, establishment_date,
+                        business_address, contact_phone, contact_email)
+                VALUES (CAST(:org AS uuid), :legalName, :uscc, :businessType, :legalPersonName, :legalPersonId,
+                        :capitalCents, :establishDate, CAST(:businessAddr AS jsonb), :phone, :email)
+                ON CONFLICT (organization_id) DO UPDATE SET
+                    legal_name = EXCLUDED.legal_name,
+                    unified_social_credit_code = EXCLUDED.unified_social_credit_code,
+                    business_type = EXCLUDED.business_type,
+                    legal_person_name = EXCLUDED.legal_person_name,
+                    legal_person_id_number = EXCLUDED.legal_person_id_number,
+                    registered_capital_cents = EXCLUDED.registered_capital_cents,
+                    establishment_date = EXCLUDED.establishment_date,
+                    business_address = EXCLUDED.business_address,
+                    contact_phone = EXCLUDED.contact_phone,
+                    contact_email = EXCLUDED.contact_email,
+                    updated_at = now()
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("org", organizationId);
+        spec = bindNullable(spec, "legalName", legalName);
+        spec = bindNullable(spec, "uscc", unifiedSocialCreditCode);
+        spec = bindNullable(spec, "businessType", businessType);
+        spec = bindNullable(spec, "legalPersonName", legalPersonName);
+        spec = bindNullable(spec, "legalPersonId", legalPersonIdNumber);
+        spec = bindNullable(spec, "capitalCents", registeredCapitalCents);
+        spec = bindNullableDate(spec, "establishDate", establishmentDate);
+        spec = bindNullable(spec, "businessAddr", businessAddress);
+        spec = bindNullable(spec, "phone", contactPhone);
+        spec = bindNullable(spec, "email", contactEmail);
+        return spec.map(MerchantProfileRepository::map).one();
+    }
+
     private static GenericExecuteSpec bindNullableDate(GenericExecuteSpec spec, String name, LocalDate value) {
         return (value == null) ? spec.bindNull(name, LocalDate.class) : spec.bind(name, value);
     }

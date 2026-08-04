@@ -58,17 +58,23 @@ public class MerchantAttachmentController {
                         return attachments.findByOrganizationAndType(orgId, type.dbValue())
                                 .flatMap(existing -> Mono.<Map<String, Object>>error(
                                         new IdentityException(409, "该类型附件已存在，请先删除后再上传")))
-                                .switchIfEmpty(createAttachment(orgId, body, account.id()));
+                                .switchIfEmpty(Mono.defer(() -> createAttachment(orgId, type, body, account.id())));
                     }
-                    return createAttachment(orgId, body, account.id());
+                    return createAttachment(orgId, type, body, account.id());
                 })
                 .map(result -> ResponseEntity.status(201).body(Map.of("success", true, "data", result)));
     }
 
-    private Mono<Map<String, Object>> createAttachment(String orgId, CreateAttachmentRequest body, String accountId) {
-        UUID mediaRefId = UUID.fromString(body.mediaReferenceId());
+    /**
+     * 落库。**写入的是 {@code type.dbValue()} 而非请求原文**——原文大小写/空格未归一化时，
+     * 既绕过 {@code uq_merchant_attachment_org_type} 唯一索引（'Business_License' 与 'business_license'
+     * 被当成两种），也让提交前的材料齐备校验按 dbValue 比对时漏判。
+     */
+    private Mono<Map<String, Object>> createAttachment(String orgId, MerchantAttachmentType type,
+                                                        CreateAttachmentRequest body, String accountId) {
+        UUID mediaRefId = KybSubmissionService.parseUuid(body.mediaReferenceId(), "媒体引用 ID");
         return transactions.transactional(
-                attachments.create(orgId, body.attachmentType(), mediaRefId, body.mimeType(), body.sizeBytes(), accountId))
+                attachments.create(orgId, type.dbValue(), mediaRefId, body.mimeType(), body.sizeBytes(), accountId))
                 .map(this::toBody);
     }
 
@@ -80,19 +86,25 @@ public class MerchantAttachmentController {
                                 "data", list.stream().map(this::toBody).toList()))));
     }
 
+    /**
+     * 删除附件。谓词按 {@code (id, orgId)} 双限定——只按 id 删会让 A 商家的 ADMIN
+     * 猜到 id 就删掉 B 商家的营业执照（跨租户删除）。
+     *
+     * <p>不再用 {@code onErrorResume} 把未知错误吞成 {@code 200 {"deleted": false}}：
+     * 那会让连接失败/约束错误看起来像「删了但没删掉」，掩盖真实故障。
+     */
     @DeleteMapping("/{id}")
     public Mono<ResponseEntity<Map<String, Object>>> delete(@PathVariable String orgId,
                                                            @PathVariable String id,
                                                            ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> transactions.transactional(
-                        attachments.deleteById(UUID.fromString(id))
+                        attachments.deleteByIdAndOrganization(
+                                        KybSubmissionService.parseUuid(id, "附件 ID"), orgId)
                                 .flatMap(deleted -> deleted > 0
-                                        ? Mono.just(ResponseEntity.ok(Map.of("success", true, "data", Map.of("deleted", true))))
-                                        : Mono.error(new IdentityException(404, "附件不存在")))))
-                .onErrorResume(e -> e instanceof IdentityException
-                        ? Mono.error(e)
-                        : Mono.just(ResponseEntity.ok(Map.of("success", true, "data", Map.of("deleted", false)))));
+                                        ? Mono.just(ResponseEntity.ok(Map.of("success", true,
+                                                "data", Map.of("deleted", true))))
+                                        : Mono.error(new IdentityException(404, "附件不存在")))));
     }
 
     @ExceptionHandler(IdentityException.class)
