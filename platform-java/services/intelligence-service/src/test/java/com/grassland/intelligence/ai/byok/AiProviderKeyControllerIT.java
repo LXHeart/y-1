@@ -274,15 +274,6 @@ class AiProviderKeyControllerIT extends IntelligenceItSupport {
                 .expectStatus().isNotFound();
     }
 
-    /** 辅助：签带组织上下文的断言（org 由 edge-bff 解析注入，非请求体字段）。 */
-    private String signWithOrg(String accountId, String organizationId) {
-        Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
-                accountId, "merchant", "sid-" + accountId, organizationId, "base",
-                "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
-    }
-
     /** 辅助：以组织断言创建测试密钥并返回 ID（从 {success 无关} 响应体的 id 字段提取）。 */
     private UUID createTestKey(String capability, String provider) {
         byte[] body = client().post()

@@ -1,5 +1,6 @@
 package com.grassland.intelligence.security;
 
+import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,7 +20,7 @@ import reactor.core.publisher.Mono;
  * </ul>
  *
  * <p>断言缺/失效 → 401；{@link #requireMerchant}/{@link #requireRecommender} 额外要求对应活动身份 → 403；
- * {@link #requireServicePrincipal} 要求指定服务 principal → 403。
+ * {@link #requireServicePrincipal} 要求指定服务 principal → 403；{@link #requireAdmin} 要求平台 admin 角色 → 403。
  * 冒烟端点（{@code /api/intelligence/smoke/*}）只需 {@link #resolve}（任意登录用户）。
  *
  * <p>防冒充：服务断言 {@code activeIdentityType=null} 且 {@code callerKind=service}，{@link Caller#isMerchant}/
@@ -48,7 +49,7 @@ public class IntelligenceCallerResolver {
         }
         return Mono.justOrEmpty(signer.verify(header, Instant.now()))
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.sessionToken(),
-                        a.organizationId(), a.permissionTier(), a.callerKind(), a.principal()))
+                        a.organizationId(), a.permissionTier(), a.callerKind(), a.principal(), a.role()))
                 .switchIfEmpty(Mono.error(new IntelligenceException(401, "未登录")));
     }
 
@@ -65,6 +66,18 @@ public class IntelligenceCallerResolver {
     }
 
     /**
+     * 平台管理员（GL-P3-AI-001：平台模型配置等后台端点鉴权）。要求断言 {@code role=admin}；
+     * 服务断言恒非 admin（防冒充，同 {@link IdentityAssertion#hasRole}），其余角色 → 403。
+     * 对齐 identity 的 {@code CurrentAccountResolver.requireAdmin}，区别是 intelligence 只信 BFF 断言、
+     * 不查 {@code app_users}（identity 才是账号权威）。
+     */
+    public Mono<Caller> requireAdmin(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(Caller::isAdmin)
+                .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要平台管理员权限")));
+    }
+
+    /**
      * 仅指定服务 principal（Slice 11 Stage 1：履约附件中转读）。非该 principal 的服务断言、终端用户断言
      * 一律 403——这些端点不对浏览器/终端用户开放。缺/失效断言仍由 {@link #resolve} 返回 401。
      */
@@ -74,10 +87,11 @@ public class IntelligenceCallerResolver {
                 .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要服务身份")));
     }
 
-    /** 断言解析出的调用者。{@code activeIdentityType} 为 null=消费者；{@code callerKind}/{@code principal} 区分用户 vs 服务断言（HLD 11.1）。 */
+    /** 断言解析出的调用者。{@code activeIdentityType} 为 null=消费者；{@code callerKind}/{@code principal} 区分用户 vs 服务断言（HLD 11.1）；
+     *  {@code role} 来自 {@code app_users.role}（user/admin/customer_service），仅用户断言有意义（服务断言恒 null）。 */
     public record Caller(String accountId, String activeIdentityType, String sessionToken,
                          String organizationId, String permissionTier,
-                         String callerKind, String principal) {
+                         String callerKind, String principal, String role) {
         /** 终端商家用户。服务断言（callerKind=service）恒为 false——防止服务断言凭 activeIdentityType 冒充商家。 */
         public boolean isMerchant() {
             return !"service".equalsIgnoreCase(callerKind)
@@ -96,6 +110,14 @@ public class IntelligenceCallerResolver {
         /** 是否为指定服务 principal 的服务断言（大小写不敏感）。 */
         public boolean isServicePrincipal(String expectedPrincipal) {
             return isService() && expectedPrincipal != null && expectedPrincipal.equalsIgnoreCase(principal);
+        }
+
+        /**
+         * 平台管理员（{@code role=admin}）。服务断言恒 false——服务不是人，不该凭 role 执行平台侧动作
+         * （防冒充，同 {@link IdentityAssertion#hasRole}）。
+         */
+        public boolean isAdmin() {
+            return !"service".equalsIgnoreCase(callerKind) && "admin".equalsIgnoreCase(role);
         }
     }
 }

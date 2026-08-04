@@ -4,8 +4,11 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * AI Run 记录实体（GL-P3-AI-001 Phase 3）。
- * <p>记录每次 AI 调用的用量、成本和状态。
+ * AI Run 记录实体（GL-P3-AI-001 Phase 3 + 控制面闭环）。
+ * <p>记录每次 AI 调用的用量、成本、状态和任务上下文快照（TaskContext）。
+ *
+ * <p>{@code platformModelVersion}/{@code fallbackAuthorized} 连同 {@code priceTableVersion} 在 Run 起始冻结
+ * （HLD §6.2「模型必须保存使用时的版本快照」），使每条 Run 可复现、计费口径冻结（D-11）。
  */
 public record AiRun(
     UUID id,
@@ -40,7 +43,11 @@ public record AiRun(
     UUID refundOperationId,      // 退回预留时的 operation ID
 
     Instant createdAt,
-    Instant updatedAt
+    Instant updatedAt,
+
+    // 任务上下文快照（TaskContext，V8 新增）
+    Integer platformModelVersion, // 平台模型配置版本（平台 run 冻结；BYOK run 为 null）
+    boolean fallbackAuthorized    // 本次调用是否经授权回退平台（HLD §12.3 审计）
 ) {
     /** 创建新 Run。 */
     public static AiRun forCreate(
@@ -51,7 +58,10 @@ public record AiRun(
         String model,
         String runType,
         int budgetCents,
-        UUID operationId
+        UUID operationId,
+        int priceTableVersion,           // 当前价目表版本（首期固定 v1 → 1）
+        Integer platformModelVersion,
+        boolean fallbackAuthorized
     ) {
         return new AiRun(
             null,  // id 由数据库生成
@@ -71,127 +81,17 @@ public record AiRun(
             null,  // failureReason
             Instant.now(),
             null,  // completedAt
-            "v1",  // priceTableVersion
+            priceTableVersion == 1 ? "v1" : "v" + priceTableVersion,
             operationId,
             null,  // refundOperationId
             null,  // createdAt 由数据库默认
-            null   // updatedAt 由数据库默认
+            null,  // updatedAt 由数据库默认
+            platformModelVersion,
+            fallbackAuthorized
         );
     }
 
-    /** 标记为完成（结算）。 */
-    public AiRun complete(int actualCents) {
-        return new AiRun(
-            id,
-            organizationId,
-            accountId,
-            capability,
-            provider,
-            model,
-            runType,
-            inputTokens,
-            outputTokens,
-            imagesGenerated,
-            videoSeconds,
-            budgetCents,
-            actualCents,
-            "completed",
-            null,
-            startedAt,
-            Instant.now(),
-            priceTableVersion,
-            operationId,
-            refundOperationId,
-            createdAt,
-            Instant.now()
-        );
-    }
-
-    /** 标记为失败。 */
-    public AiRun fail(String reason) {
-        return new AiRun(
-            id,
-            organizationId,
-            accountId,
-            capability,
-            provider,
-            model,
-            runType,
-            inputTokens,
-            outputTokens,
-            imagesGenerated,
-            videoSeconds,
-            budgetCents,
-            null,  // actualCents
-            "failed",
-            reason,
-            startedAt,
-            Instant.now(),
-            priceTableVersion,
-            operationId,
-            refundOperationId,
-            createdAt,
-            Instant.now()
-        );
-    }
-
-    /** 标记为取消（用户主动 abort，不退预留）。 */
-    public AiRun cancel() {
-        return new AiRun(
-            id,
-            organizationId,
-            accountId,
-            capability,
-            provider,
-            model,
-            runType,
-            inputTokens,
-            outputTokens,
-            imagesGenerated,
-            videoSeconds,
-            budgetCents,
-            null,  // actualCents
-            "cancelled",
-            "user aborted",
-            startedAt,
-            Instant.now(),
-            priceTableVersion,
-            operationId,
-            refundOperationId,
-            createdAt,
-            Instant.now()
-        );
-    }
-
-    /** 设置退回操作 ID。 */
-    public AiRun withRefundOperation(UUID refundOpId) {
-        return new AiRun(
-            id,
-            organizationId,
-            accountId,
-            capability,
-            provider,
-            model,
-            runType,
-            inputTokens,
-            outputTokens,
-            imagesGenerated,
-            videoSeconds,
-            budgetCents,
-            actualCents,
-            status,
-            failureReason,
-            startedAt,
-            completedAt,
-            priceTableVersion,
-            operationId,
-            refundOpId,
-            createdAt,
-            Instant.now()
-        );
-    }
-
-    /** 是否已完成（成功或失败）。 */
+    /** 是否已完成（成功或失败或取消）。 */
     public boolean isFinished() {
         return "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status);
     }

@@ -125,7 +125,7 @@ class BilibiliAnalyzePreflightFilterTest {
 
     private void authenticated(String accountId) {
         when(callers.resolve(any(ServerHttpRequest.class))).thenReturn(Mono.just(
-                new IntelligenceCallerResolver.Caller(accountId, "merchant", "sid", null, null, "user", null)));
+                new IntelligenceCallerResolver.Caller(accountId, "merchant", "sid", null, null, "user", null, null)));
     }
 
     private static MockServerWebExchange post() {

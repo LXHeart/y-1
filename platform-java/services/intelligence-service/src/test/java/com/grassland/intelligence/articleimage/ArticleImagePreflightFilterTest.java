@@ -46,7 +46,7 @@ class ArticleImagePreflightFilterTest {
     void limitsAllImagePostsTogether() {
         IntelligenceCallerResolver callers = mock(IntelligenceCallerResolver.class);
         when(callers.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(Mono.just(new Caller("account-1", null, "sid", null, null, null, null)));
+                .thenReturn(Mono.just(new Caller("account-1", null, "sid", null, null, null, null, null)));
         ArticleImagePreflightFilter filter = new ArticleImagePreflightFilter(callers,
                 Clock.fixed(Instant.parse("2026-07-28T10:00:00Z"), ZoneOffset.UTC));
         WebFilterChain chain = exchange -> Mono.empty();
@@ -71,7 +71,7 @@ class ArticleImagePreflightFilterTest {
     void propagatesDownstreamFailures() {
         IntelligenceCallerResolver callers = mock(IntelligenceCallerResolver.class);
         when(callers.resolve(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(Mono.just(new Caller("account-1", null, "sid", null, null, null, null)));
+                .thenReturn(Mono.just(new Caller("account-1", null, "sid", null, null, null, null, null)));
         ArticleImagePreflightFilter filter = new ArticleImagePreflightFilter(callers, Clock.systemUTC());
         WebFilterChain chain = exchange -> Mono.error(
                 new com.grassland.intelligence.security.IntelligenceException(502, "provider down"));

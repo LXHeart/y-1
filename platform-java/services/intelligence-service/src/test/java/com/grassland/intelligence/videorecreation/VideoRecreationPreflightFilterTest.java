@@ -175,7 +175,7 @@ class VideoRecreationPreflightFilterTest {
 
     private void authenticated() {
         when(callers.resolve(any(ServerHttpRequest.class))).thenReturn(Mono.just(
-                new IntelligenceCallerResolver.Caller("acct", "recommender", "sid", null, null, "user", null)));
+                new IntelligenceCallerResolver.Caller("acct", "recommender", "sid", null, null, "user", null, null)));
     }
 
     private static MockServerWebExchange post(String path) {

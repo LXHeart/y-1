@@ -14,6 +14,8 @@ public enum CreditFeature {
     COMEDY_GENERATION("comedy_generation"),
     VIDEO_PRODUCTION_SCRIPT("video_production_script"),
     VIDEO_PRODUCTION_VIDEO("video_production_video"),
+    /** 控制面 text run（GL-P3-AI-001）：经 AiExecutionService 的平台模型 text 能力调用，按平台口径扣 1 积分；BYOK run 不扣。 */
+    AI_RUN_TEXT("ai_run_text"),
     /** 冒烟端点：真实消耗 Qwen 上游，与其它 AI 调用同等扣分（GL-P0-SEC-002，原先免费）。 */
     INTELLIGENCE_SMOKE("intelligence_smoke");
 

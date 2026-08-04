@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.Parameter;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -21,7 +22,7 @@ public class AiRunRepository {
             + "input_tokens, output_tokens, images_generated, video_seconds, "
             + "budget_cents, actual_cents, status, failure_reason, "
             + "started_at, completed_at, price_table_version, operation_id::text, refund_operation_id::text, "
-            + "created_at, updated_at";
+            + "created_at, updated_at, platform_model_version, fallback_authorized";
 
     private final DatabaseClient db;
 
@@ -34,10 +35,10 @@ public class AiRunRepository {
         return db.sql("""
                 INSERT INTO ai_run(
                     organization_id, account_id, capability, provider, model, run_type,
-                    budget_cents, operation_id
+                    budget_cents, operation_id, platform_model_version, fallback_authorized
                 ) VALUES (
                     :orgId, :accountId, :capability, :provider, :model, :runType,
-                    :budgetCents, :operationId
+                    :budgetCents, CAST(:operationId AS uuid), :platformModelVersion, :fallbackAuthorized
                 )
                 RETURNING id::text
                 """)
@@ -49,16 +50,23 @@ public class AiRunRepository {
                 .bind("runType", run.runType())
                 .bind("budgetCents", run.budgetCents())
                 .bind("operationId", run.operationId().toString())
+                .bind("platformModelVersion", Parameter.fromOrEmpty(run.platformModelVersion(), Integer.class))
+                .bind("fallbackAuthorized", run.fallbackAuthorized())
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
     }
 
-    /** 标记完成（结算）。 */
-    public Mono<Boolean> complete(UUID id, int actualCents) {
+    /** 标记完成（结算）—— 一并落用量计量（GL-P3-AI-001：原仅写 actual_cents，计量列恒空）。 */
+    public Mono<Boolean> complete(UUID id, int actualCents, Integer inputTokens, Integer outputTokens,
+                                  int imagesGenerated, int videoSeconds) {
         return db.sql("""
                 UPDATE ai_run
                 SET actual_cents = :actualCents,
+                    input_tokens = :inputTokens,
+                    output_tokens = :outputTokens,
+                    images_generated = :imagesGenerated,
+                    video_seconds = :videoSeconds,
                     status = 'completed',
                     completed_at = now(),
                     updated_at = now()
@@ -67,6 +75,10 @@ public class AiRunRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("actualCents", actualCents)
+                .bind("inputTokens", Parameter.fromOrEmpty(inputTokens, Integer.class))
+                .bind("outputTokens", Parameter.fromOrEmpty(outputTokens, Integer.class))
+                .bind("imagesGenerated", imagesGenerated)
+                .bind("videoSeconds", videoSeconds)
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
@@ -131,6 +143,25 @@ public class AiRunRepository {
                 .one();
     }
 
+    /** 按 ID 查询（GET /api/ai/runs/{id}）。 */
+    public Mono<AiRun> findById(UUID id) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_run WHERE id = CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .map(AiRunRepository::map)
+                .one();
+    }
+
+    /** 按账号列最近 Run（GET /api/ai/runs）。 */
+    public Flux<AiRun> findByAccount(String accountId, int limit) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_run WHERE account_id = :accountId ORDER BY started_at DESC LIMIT :limit")
+                .bind("accountId", accountId)
+                .bind("limit", limit)
+                .map(AiRunRepository::map)
+                .all();
+    }
+
     private static AiRun map(Row row, RowMetadata meta) {
         return new AiRun(
                 uuidFromString(row.get("id", String.class)),
@@ -154,7 +185,9 @@ public class AiRunRepository {
                 uuidFromString(row.get("operation_id", String.class)),
                 uuidFromString(row.get("refund_operation_id", String.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
-                toInstant(row.get("updated_at", OffsetDateTime.class))
+                toInstant(row.get("updated_at", OffsetDateTime.class)),
+                row.get("platform_model_version", Integer.class),
+                row.get("fallback_authorized", Boolean.class)
         );
     }
 

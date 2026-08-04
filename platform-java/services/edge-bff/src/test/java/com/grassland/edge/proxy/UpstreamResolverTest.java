@@ -29,6 +29,10 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/admin/permission-requests", "identity", true),
             // GL-P3-MERCHANT-001：KYB 审核队列 → identity（同样必须是精确前缀，不能退化为 /api/admin）
             new RouteProperties(null, "/api/admin/kyb-requests", "identity", true),
+            // GL-P3-AI-001：AI 控制面 → intelligence。/api/ai（BYOK keys + Run）全新无碰撞；
+            // /api/admin/ai（模型配置 admin）精确前缀，不抢 legacy /api/admin/users 等（同 kyb 口径）。
+            new RouteProperties(null, "/api/ai", "intelligence", true),
+            new RouteProperties(null, "/api/admin/ai", "intelligence", true),
             new RouteProperties(null, "/api/finance", "finance", true),
             new RouteProperties(null, "/api/trust", "trust", true),
             // 推荐官画像 → identity，声誉 → marketplace（两个不同上游，前缀不得互相抢占）
@@ -174,6 +178,23 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("POST", "/api/admin/kyb-requests/req-1/approve")).isTrue();
         // 且仍不抢 legacy admin
         assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void aiControlPlaneGoesToIntelligence() {
+        // GL-P3-AI-001：/api/ai（BYOK keys + Run）此前不在 manifest → 经 BFF 落 legacy 404（隐性不可达）。
+        assertThat(resolver.resolve("GET", "/api/ai/keys")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/ai/runs")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/ai/runs/" + java.util.UUID.randomUUID())).isEqualTo(INTELLIGENCE);
+        // 平台模型配置 admin CRUD → intelligence
+        assertThat(resolver.resolve("GET", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);
+        // 内部上游 → edge 签身份断言（admin role 经断言传播，intelligence 侧 requireAdmin 才能放行）
+        assertThat(resolver.isInternalUpstream("POST", "/api/ai/runs")).isTrue();
+        assertThat(resolver.isInternalUpstream("POST", "/api/admin/ai/models")).isTrue();
+        // ⚠️ 回归防护：精确前缀 /api/admin/ai 不得抢走 legacy /api/admin/users、/api/admin/adjust-credits
+        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
     }
 
     @Test

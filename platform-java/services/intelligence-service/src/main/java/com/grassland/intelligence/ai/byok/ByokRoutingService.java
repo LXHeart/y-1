@@ -1,14 +1,22 @@
 package com.grassland.intelligence.ai.byok;
 
-import com.grassland.intelligence.ai.run.PriceTableService;
+import com.grassland.intelligence.ai.controlplane.PlatformModelControlPlaneService;
+import com.grassland.intelligence.ai.controlplane.PlatformModelControlPlaneService.ResolvedPlatformModel;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 /**
- * BYOK 与平台模型分发服务（GL-P3-AI-001 Phase 5）。
- * <p>运行时根据组织策略选择平台模型或 BYOK 模型。
+ * BYOK 与平台模型分发服务（GL-P3-AI-001 Phase 5 / 控制面闭环）。
+ *
+ * <p>运行时按能力解析 provider：组织/个人 BYOK 优先；无 BYOK 时按 {@code allowFallback} 决定回落平台或拒绝。
+ * <b>HLD §12.3 硬规则</b>：无 BYOK 且 {@code allowFallback=false} 时返回 {@link ResolutionType#DENIED}——
+ * 不静默扣平台额度（回退须经调用方显式授权）。
+ *
+ * <p>解密<b>不在本层</b>：BYOK 解析仍回传密文 {@code encryptedKey}，明文解密在执行层
+ * （{@code AiExecutionService} 经 {@code EnvelopeEncryption.decrypt}）按需进行，绝不入日志/响应。
  */
 @Service
 public class ByokRoutingService {
@@ -16,13 +24,13 @@ public class ByokRoutingService {
     private static final Logger logger = LoggerFactory.getLogger(ByokRoutingService.class);
 
     private final AiProviderKeyRepository keyRepository;
-    private final PriceTableService priceTableService;
+    private final PlatformModelControlPlaneService platformModelControlPlane;
 
     public ByokRoutingService(
             AiProviderKeyRepository keyRepository,
-            PriceTableService priceTableService) {
+            PlatformModelControlPlaneService platformModelControlPlane) {
         this.keyRepository = keyRepository;
-        this.priceTableService = priceTableService;
+        this.platformModelControlPlane = platformModelControlPlane;
     }
 
     /**
@@ -31,8 +39,8 @@ public class ByokRoutingService {
      * @param organizationId 组织 ID（个人用户为 null）
      * @param accountId 账号 ID
      * @param capability 能力（text/image_generation 等）
-     * @param allowFallback 是否允许回退平台模型（BYOK 失败时）
-     * @return Provider 配置解析结果
+     * @param allowFallback 无 BYOK 时是否允许回落平台模型（HLD §12.3 须显式授权）
+     * @return provider 解析结果（BYOK / PLATFORM / DENIED）
      */
     public Mono<ProviderResolution> resolveProvider(
             String organizationId,
@@ -40,88 +48,69 @@ public class ByokRoutingService {
             String capability,
             boolean allowFallback) {
 
-        // 优先查找组织级 BYOK 配置
-        if (organizationId != null) {
-            return keyRepository.findByOrganizationAndCapability(organizationId, capability)
-                    .map(key -> ProviderResolution.byok(
-                        key.provider(),
-                        key.baseUrl(),
-                        key.model(),
-                        key.encryptedKey(),
-                        false  // BYOK 不收平台 AI 费
-                    ))
-                    .switchIfEmpty(
-                        // 组织无 BYOK，回退平台模型
-                        Mono.fromCallable(() -> ProviderResolution.platform(allowFallback))
-                    );
-        }
+        Mono<AiProviderKey> byokLookup = (organizationId != null)
+                ? keyRepository.findByOrganizationAndCapability(organizationId, capability)
+                : keyRepository.findByPersonalAndCapability(accountId, capability);
 
-        // 个人用户查找个人 BYOK
-        return keyRepository.findByPersonalAndCapability(accountId, capability)
+        return byokLookup
                 .map(key -> ProviderResolution.byok(
-                    key.provider(),
-                    key.baseUrl(),
-                    key.model(),
-                    key.encryptedKey(),
-                    false
-                ))
-                .switchIfEmpty(
-                    // 个人无 BYOK，回退平台模型
-                    Mono.fromCallable(() -> ProviderResolution.platform(allowFallback))
-                );
+                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey()))
+                .switchIfEmpty(Mono.defer(() -> {
+                    if (!allowFallback) {
+                        logger.info("No BYOK for capability={} and fallback not authorized → deny", capability);
+                        return Mono.just(ProviderResolution.denied("fallback_not_authorized"));
+                    }
+                    return platformModelControlPlane.resolve(capability)
+                            .map(opt -> opt
+                                    .map(ByokRoutingService::toPlatform)
+                                    .orElseGet(() -> ProviderResolution.denied("no_platform_model")));
+                }));
+    }
+
+    private static ProviderResolution toPlatform(ResolvedPlatformModel rpm) {
+        return ProviderResolution.platform(rpm.provider(), rpm.baseUrl(), rpm.model(), rpm.version());
     }
 
     /**
      * Provider 配置解析结果。
      */
     public record ProviderResolution(
-        ResolutionType type,       // byok / platform
-        String provider,            // qwen/openai-compatible
-        String baseUrl,             // API endpoint
-        String model,               // 模型名称
-        String encryptedKey,        // BYOK 密文（platform 时为 null）
-        boolean chargesPlatformFee  // 是否收平台 AI 费
+            ResolutionType type,
+            String provider,            // qwen/openai-compatible（DENIED 时为 null）
+            String baseUrl,
+            String model,
+            String encryptedKey,        // BYOK 密文（platform/denied 时为 null）
+            boolean chargesPlatformFee, // 是否收平台 AI 费（仅平台模型）
+            int platformModelVersion,   // 平台配置版本（TaskContext 冻结用）；非平台为 0
+            String denialReason         // DENIED 时的原因；其余为 null
     ) {
-        /** BYOK 解析结果。 */
-        public static ProviderResolution byok(
-                String provider,
-                String baseUrl,
-                String model,
-                String encryptedKey,
-                boolean chargesPlatformFee) {
-            return new ProviderResolution(
-                ResolutionType.BYOK,
-                provider,
-                baseUrl,
-                model,
-                encryptedKey,
-                chargesPlatformFee
-            );
+        public static ProviderResolution byok(String provider, String baseUrl, String model, String encryptedKey) {
+            return new ProviderResolution(ResolutionType.BYOK, provider, baseUrl, model, encryptedKey,
+                    false, 0, null);
         }
 
-        /** 平台模型解析结果。 */
-        public static ProviderResolution platform(boolean allowFallback) {
-            return new ProviderResolution(
-                ResolutionType.PLATFORM,
-                "platform",  // 使用平台默认 provider
-                null,        // baseUrl 从环境变量读取
-                null,        // model 从环境变量读取
-                null,        // 无 BYOK 密钥
-                true         // 平台模型收 AI 费
-            );
+        public static ProviderResolution platform(String provider, String baseUrl, String model, int version) {
+            return new ProviderResolution(ResolutionType.PLATFORM, provider, baseUrl, model, null,
+                    true, version, null);
         }
 
-        /** 是否是 BYOK。 */
+        public static ProviderResolution denied(String reason) {
+            return new ProviderResolution(ResolutionType.DENIED, null, null, null, null, false, 0, reason);
+        }
+
         public boolean isByok() {
             return type == ResolutionType.BYOK;
         }
 
-        /** 是否是平台模型。 */
         public boolean isPlatform() {
             return type == ResolutionType.PLATFORM;
         }
 
-        /** 是否需要解密密钥（BYOK）。 */
+        public boolean isDenied() {
+            return type == ResolutionType.DENIED;
+        }
+
+        /** BYOK 是否需要解密（有密文）。 */
         public boolean needsKeyDecryption() {
             return isByok() && encryptedKey != null;
         }
@@ -131,7 +120,9 @@ public class ByokRoutingService {
     public enum ResolutionType {
         /** 用户自带 Key。 */
         BYOK,
-        /** 平台默认模型。 */
-        PLATFORM
+        /** 平台默认模型（经控制面解析的主/备）。 */
+        PLATFORM,
+        /** 拒绝执行（无 BYOK 且回退未授权，或无平台模型可用）。 */
+        DENIED
     }
 }

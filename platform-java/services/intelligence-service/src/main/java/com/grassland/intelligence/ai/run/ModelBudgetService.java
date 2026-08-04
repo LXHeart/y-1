@@ -127,14 +127,15 @@ public class ModelBudgetService {
     }
 
     /**
-     * 完成 AI Run（结算）。
+     * 完成 AI Run（结算）—— 一并落用量计量（GL-P3-AI-001：计量列原恒空）。
      *
      * @param runId Run ID
-     * @param actualCents 实际消耗
+     * @param actualCents 实际消耗（分）
      * @return 是否成功
      */
-    public Mono<Boolean> completeRun(UUID runId, int actualCents) {
-        return runRepository.complete(runId, actualCents);
+    public Mono<Boolean> completeRun(UUID runId, int actualCents, Integer inputTokens, Integer outputTokens,
+                                     int imagesGenerated, int videoSeconds) {
+        return runRepository.complete(runId, actualCents, inputTokens, outputTokens, imagesGenerated, videoSeconds);
     }
 
     /**

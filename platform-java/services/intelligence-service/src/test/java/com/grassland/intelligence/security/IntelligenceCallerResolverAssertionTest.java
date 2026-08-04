@@ -27,11 +27,16 @@ class IntelligenceCallerResolverAssertionTest {
     private final IntelligenceCallerResolver resolver = new IntelligenceCallerResolver(signer, "X-Grassland-Identity");
 
     private String sign(String activeIdentityType) {
+        return signWithRole(activeIdentityType, null);
+    }
+
+    /** 带 role 的用户断言（GL-P3-AI-001 requireAdmin 测试用）。role 走 16 参便捷构造器。 */
+    private String signWithRole(String activeIdentityType, String role) {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
                 ACCOUNT, activeIdentityType, "sid-" + ACCOUNT, null, null,
                 "cookie-session", "level1", null, "r", "t",
-                AUDIENCE, now, now.plusSeconds(60), null, null));
+                AUDIENCE, now, now.plusSeconds(60), null, null, role));
     }
 
     /** 造一个服务断言（callerKind=service + principal），镜像 ServiceAssertionIssuer.issueForOrg 的 claims 形状。 */
@@ -115,5 +120,44 @@ class IntelligenceCallerResolverAssertionTest {
         // 服务断言 callerKind=service → isMerchant/isRecommender 恒 false，即便 activeIdentityType 非空也不可冒充
         assertThat(c.isMerchant()).isFalse();
         assertThat(c.isRecommender()).isFalse();
+    }
+
+    @Test
+    @DisplayName("requireAdmin：admin 通过并传播 role；user/customer_service → 403；缺断言 → 401")
+    void requireAdminEnforcesPlatformRole() {
+        // admin → 通过，role 正确传播
+        IntelligenceCallerResolver.Caller c =
+                resolver.requireAdmin(requestWith(signWithRole("merchant", "admin"))).block();
+        assertThat(c).isNotNull();
+        assertThat(c.accountId()).isEqualTo(ACCOUNT);
+        assertThat(c.role()).isEqualTo("admin");
+        assertThat(c.isAdmin()).isTrue();
+
+        // user（无 role）→ 403
+        assertThatThrownBy(() -> resolver.requireAdmin(requestWith(sign("merchant"))).block())
+                .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
+        // customer_service → 403
+        assertThatThrownBy(() -> resolver.requireAdmin(requestWith(signWithRole(null, "customer_service"))).block())
+                .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
+        // 缺断言 → 401
+        assertThatThrownBy(() -> resolver.requireAdmin(requestWith(null)).block())
+                .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(401));
+    }
+
+    @Test
+    @DisplayName("服务断言不可凭 role=admin 冒充平台管理员（防冒充）")
+    void serviceAssertionCannotImpersonateAdmin() {
+        // 服务断言即便构造时塞了 role，isAdmin 也恒 false（callerKind=service）
+        Instant now = Instant.now();
+        IdentityAssertion serviceWithAdminRole = new IdentityAssertion(
+                "service:marketplace", null, null, null, null,
+                "service", "internal", null, "r", "t",
+                AUDIENCE, now, now.plusSeconds(30), "service", "marketplace", "admin");
+        IntelligenceCallerResolver.Caller c = resolver.resolve(requestWith(signer.sign(serviceWithAdminRole))).block();
+        assertThat(c).isNotNull();
+        assertThat(c.isService()).isTrue();
+        assertThat(c.isAdmin()).isFalse();
+        assertThatThrownBy(() -> resolver.requireAdmin(requestWith(signer.sign(serviceWithAdminRole))).block())
+                .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
     }
 }

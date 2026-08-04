@@ -64,12 +64,27 @@ public abstract class IntelligenceItSupport {
         return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
     }
 
-    /** 签一个断言（org/tier 为 null——冒烟端点只需任意登录用户）。 */
+    /** 签一个断言（org/tier/role 为 null——冒烟端点只需任意登录用户）。 */
     protected String sign(String accountId, String activeIdentityType) {
+        return signWithRole(accountId, activeIdentityType, null, null);
+    }
+
+    /** 签带 role 的断言（GL-P3-AI-001：requireAdmin / 组织作用域测试用）。role 经 16 参构造器。 */
+    protected String signWithRole(String accountId, String activeIdentityType, String organizationId, String role) {
         Instant now = Instant.now();
         return signer.sign(new IdentityAssertion(
-                accountId, activeIdentityType, "sid-" + accountId, null, null,
+                accountId, activeIdentityType, "sid-" + accountId, organizationId, null,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-internal", now, now.plusSeconds(60), null, null, role));
+    }
+
+    /** 平台管理员断言（role=admin）。 */
+    protected String signAdmin(String accountId) {
+        return signWithRole(accountId, null, null, "admin");
+    }
+
+    /** 组织成员断言（商家活动身份 + org）。 */
+    protected String signWithOrg(String accountId, String organizationId) {
+        return signWithRole(accountId, "merchant", organizationId, null);
     }
 }
