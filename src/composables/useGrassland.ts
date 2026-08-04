@@ -59,6 +59,7 @@ import type {
   MerchantProfile,
   CreateMerchantProfileInput,
   MerchantAttachment,
+  MerchantAttachmentType,
   CreateMerchantAttachmentInput,
   WithdrawalAccount,
   CreateWithdrawalAccountInput,
@@ -831,25 +832,21 @@ export function useGrassland() {
 
   // ---------- KYB：商家资料（GL-P3-MERCHANT-001）----------
 
-  /**
-   * 获取本组织的商家资料。
-   *
-   * ⚠️ 需要当前用户是该组织的 MEMBER+；不存在时后端返回 404 → 此处转为 null。
-   */
-  async function getMerchantProfile(orgId: string): Promise<MerchantProfile | null> {
-    try {
-      return await request<MerchantProfile>(`/api/organizations/${orgId}/merchant-profile`)
-    } catch {
-      return null // 404 = 尚未创建资料，属正常状态
-    }
-  }
+  /** 获取本组织的商家资料；尚未创建时后端返回 200 data:null。 */
+  const getMerchantProfile = (orgId: string) =>
+    request<MerchantProfile | null>(`/api/organizations/${orgId}/merchant-profile`)
 
   /**
-   * 创建/更新商家资料。
-   *
-   * PUT 幂等：同一资料重复提交不会重复创建，但会更新字段。
+   * 创建商家资料。更新必须走 PUT，避免把“尚未创建”和“已存在”混为一条契约。
    */
   const createMerchantProfile = (orgId: string, input: CreateMerchantProfileInput) =>
+    run(() => request<MerchantProfile>(`/api/organizations/${orgId}/merchant-profile`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  /** 更新已有商家资料；后端仅允许 draft/rejected 状态。 */
+  const updateMerchantProfile = (orgId: string, input: CreateMerchantProfileInput) =>
     run(() => request<MerchantProfile>(`/api/organizations/${orgId}/merchant-profile`, {
       method: 'PUT',
       body: JSON.stringify(input),
@@ -874,15 +871,22 @@ export function useGrassland() {
    * 封装：申请凭据 → 直传 → confirm → 创建附件记录。
    * 返回的 mediaId 可用于创建附件记录。
    */
-  const uploadMerchantAttachment = async (orgId: string, file: File, attachmentType: string) =>
+  const uploadMerchantAttachment = async (
+    orgId: string, file: File, attachmentType: MerchantAttachmentType,
+  ) =>
     run(async () => {
+      if (!file.type) {
+        throw new Error('无法识别文件类型，请选择图片或 PDF 文件')
+      }
       // 第一步：申请上传凭据
       const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
         method: 'POST',
         body: JSON.stringify({
-          contentType: file.type || 'application/octet-stream',
-          purpose: 'merchant_kyc_attachment',
+          contentType: file.type,
+          purpose: 'user_upload',
           sizeBytes: file.size,
+          domainType: 'merchant_kyb',
+          domainId: orgId,
         }),
       })
       // 第二步：直传到 presigned URL
@@ -926,6 +930,20 @@ export function useGrassland() {
       body: JSON.stringify(input),
     }))
 
+  /** 更新仍可编辑的收款账户。 */
+  const updateWithdrawalAccount = (
+    orgId: string, accountId: string, input: CreateWithdrawalAccountInput,
+  ) => run(() => request<WithdrawalAccount>(
+    `/api/organizations/${orgId}/withdrawal-accounts/${accountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  /** 将 pending/rejected 收款账户提交到审核队列。 */
+  const submitWithdrawalAccount = (orgId: string, accountId: string) =>
+    run(() => request<WithdrawalAccount>(
+      `/api/organizations/${orgId}/withdrawal-accounts/${accountId}/submit`, { method: 'POST' }))
+
   /**
    * 设置默认收款账户。
    *
@@ -942,50 +960,27 @@ export function useGrassland() {
 
   // ---------- KYB：门店资料 ----------
 
-  /**
-   * 获取门店资料。
-   *
-   * ⚠️ 需要当前用户是该门店所属组织的 MEMBER+；不存在时后端返回 404 → 此处转为 null。
-   */
-  async function getStoreProfile(orgId: string, storeId: string): Promise<StoreProfile | null> {
-    try {
-      return await request<StoreProfile>(`/api/organizations/${orgId}/stores/${storeId}/profile`)
-    } catch {
-      return null // 404 = 尚未创建资料，属正常状态
-    }
-  }
+  /** 获取门店资料；尚未创建时后端返回 200 data:null。 */
+  const getStoreProfile = (orgId: string, storeId: string) =>
+    request<StoreProfile | null>(`/api/organizations/${orgId}/stores/${storeId}/profile`)
 
   /**
    * 创建/更新门店资料。
    *
-   * PUT 幂等：同一资料重复提交不会重复创建，但会更新字段。
+   * 后端用 POST 实现 upsert。
    */
   const createStoreProfile = (orgId: string, storeId: string, input: CreateStoreProfileInput) =>
     run(() => request<StoreProfile>(
       `/api/organizations/${orgId}/stores/${storeId}/profile`, {
-        method: 'PUT',
+        method: 'POST',
         body: JSON.stringify(input),
       }))
-
-  /**
-   * 提交门店资料审核。
-   *
-   * 仅 draft 态可提交；提交后状态变为 pending，进入审核队列。
-   */
-  const submitStoreProfile = (orgId: string, storeId: string) =>
-    run(() => request<StoreProfile>(
-      `/api/organizations/${orgId}/stores/${storeId}/profile/submit`, { method: 'POST' }))
 
   // ---------- KYB：审核申请（平台管理员）----------
 
   /** 列出所有 KYB 审核申请（管理员专用）。 */
-  const listKybVerifications = (status?: string) =>
-    run(() => request<KybVerificationRequest[]>(
-      `/api/admin/kyb-verifications${status ? `?status=${status}` : ''}`))
-
-  /** 获取 KYB 审核详情。 */
-  const getKybVerification = (verificationId: string) =>
-    run(() => request<KybVerificationRequest>(`/api/admin/kyb-verifications/${verificationId}`))
+  const listKybVerifications = () =>
+    run(() => request<KybVerificationRequest[]>('/api/admin/kyb-requests'))
 
   /**
    * 审核 KYB 申请（管理员专用）。
@@ -994,9 +989,9 @@ export function useGrassland() {
    * 终态再审 → 409。
    */
   const reviewKybVerification = (verificationId: string, decision: 'approve' | 'reject', note?: string) =>
-    run(() => request<KybVerificationRequest>(`/api/admin/kyb-verifications/${verificationId}/review`, {
+    run(() => request<KybVerificationRequest>(`/api/admin/kyb-requests/${verificationId}/${decision}`, {
       method: 'POST',
-      body: JSON.stringify(note ? { decision, note } : { decision }),
+      body: JSON.stringify(note ? { note } : {}),
     }))
 
   /**
@@ -1113,6 +1108,7 @@ export function useGrassland() {
     // KYB：商家资料
     getMerchantProfile,
     createMerchantProfile,
+    updateMerchantProfile,
     submitMerchantProfile,
     listMerchantAttachments,
     uploadMerchantAttachment,
@@ -1120,15 +1116,15 @@ export function useGrassland() {
     // KYB：收款账户
     listWithdrawalAccounts,
     createWithdrawalAccount,
+    updateWithdrawalAccount,
+    submitWithdrawalAccount,
     setDefaultWithdrawalAccount,
     deleteWithdrawalAccount,
     // KYB：门店资料
     getStoreProfile,
     createStoreProfile,
-    submitStoreProfile,
     // KYB：审核（管理员）
     listKybVerifications,
-    getKybVerification,
     reviewKybVerification,
   }
 }

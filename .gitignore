@@ -22,3 +22,4 @@ test-artifacts
 
 # Playwright MCP 会话产物（快照/截图/console 日志），不入库
 .playwright-mcp/
+tmp/e2e-validation-artifacts/

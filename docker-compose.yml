@@ -5,9 +5,17 @@ services:
       dockerfile: Dockerfile.frontend
     ports:
       - "${FRONTEND_PORT:-8080}:80"
-      - "9002:9002"  # 草场 Slice 11 Stage 3: MinIO CORS 反代端口
+      - "${MINIO_PROXY_PORT:-9002}:9002"  # 草场 Slice 11 Stage 3: MinIO CORS 反代端口
+    environment:
+      # 公网 API 默认统一经 edge-bff；应急整入口回退可临时设 backend:3000 后 recreate frontend。
+      API_UPSTREAM: ${API_UPSTREAM:-edge-bff:8080}
+      # 可信公网协议；TLS 在上游 LB/ingress 终止时必须显式设为 https，禁止透传客户端 XFP。
+      PUBLIC_FORWARDED_PROTO: ${PUBLIC_FORWARDED_PROTO:-http}
+      # 只信任实际 LB/ingress 网段；默认 loopback 不扩大公网信任面。
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-127.0.0.1/32}
     depends_on:
-      - backend
+      edge-bff:
+        condition: service_started
     restart: unless-stopped
 
   backend:
@@ -54,15 +62,14 @@ services:
       # 草场 intelligence → legacy credits 过渡通道的共享密钥（两端同值；未配则 legacy 端点 fail-closed 503）。
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     ports:
-      - "${BACKEND_PORT:-3000}:3000"
+      # legacy 只保留宿主机本地调试入口，公网流量必须经 Nginx -> edge-bff。
+      - "127.0.0.1:${BACKEND_PORT:-3000}:3000"
     volumes:
       - backend_data:/app/server/.data
     restart: unless-stopped
 
-  # 可选 Java identity-service（Epic 2 Slice 2A）：只读 legacy session/app_users，提供 /internal/identity/me。
-  # 仅在使用 --profile java-edge 时启动；复用 backend 的 DATABASE_URL（自动派生 r2dbc）。
+  # Java identity-service：默认应用栈组成部分，复用 backend 的 DATABASE_URL（自动派生 r2dbc）。
   identity-service:
-    profiles: ["java-edge"]
     build:
       context: ./platform-java
       dockerfile: services/identity-service/Dockerfile
@@ -115,7 +122,7 @@ services:
   # GL-P3-PLATFORM-001：私网 Prometheus，抓 identity 邮件死信 + marketplace 运营死信指标，加载告警规则。
   # 不发布宿主端口、不经 Nginx；告警推送至下方 Alertmanager（接收端凭据属部署侧）。
   prometheus:
-    profiles: ["java-edge"]
+    profiles: ["observability"]
     image: prom/prometheus:v3.5.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -134,7 +141,7 @@ services:
   # GL-P3-PLATFORM-001：私网 Alertmanager，承接 Prometheus 告警。UI 在内网 alertmanager:9093。
   # 真接收端（Slack/SMTP/PagerDuty）属部署侧凭据，alertmanager.yml 用占位 webhook，接入时改 receivers。
   alertmanager:
-    profiles: ["java-edge"]
+    profiles: ["observability"]
     image: prom/alertmanager:v0.27.0
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
@@ -144,11 +151,9 @@ services:
       - alertmanager_data:/alertmanager
     restart: unless-stopped
 
-  # 可选 Java Edge BFF 评估入口。
-  # 仅在使用 --profile java-edge 时启动；默认不参与，且 Nginx 仍直连 backend:3000。
-  # /api/auth/me 经 RouteManifest 路由到 identity-service，其余透传 Express。
+  # 统一 Java Edge BFF 入口。Nginx 的 /api 与 /health 默认只指向本服务；
+  # RouteManifest 将已迁移路由送往 Java 领域服务，其余透明回落 Express。
   edge-bff:
-    profiles: ["java-edge"]
     build:
       context: ./platform-java
       dockerfile: services/edge-bff/Dockerfile
@@ -160,22 +165,54 @@ services:
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
       TRUST_SERVICE_BASE_URL: http://trust-service:8085
       INTELLIGENCE_SERVICE_BASE_URL: http://intelligence-service:8086
-      EDGE_ROUTE_AUTH_ME_IDENTITY: "true"
-      EDGE_ROUTE_TASKS_MARKETPLACE: "true"
-      EDGE_ROUTE_ARTICLE_IMAGE_RECOMMENDATIONS_INTELLIGENCE: "true"
-      EDGE_ROUTE_ARTICLE_SEARCH_IMAGES_INTELLIGENCE: "true"
-      EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE: "true"
-      # Slice 13 Stage 3/4/5 Bilibili 媒体链路：默认 false，显式注入以便灰度启用/一键回退。
+      # RouteManifest 启动期切流开关。必须在 compose 显式透传，否则 .env 中的回滚配置不会进入容器。
+      EDGE_ROUTE_AUTH_ME_IDENTITY: ${EDGE_ROUTE_AUTH_ME_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_LOGIN_IDENTITY: ${EDGE_ROUTE_AUTH_LOGIN_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_LOGOUT_IDENTITY: ${EDGE_ROUTE_AUTH_LOGOUT_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_CAPTCHA_IDENTITY: ${EDGE_ROUTE_AUTH_CAPTCHA_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_SENDCODE_IDENTITY: ${EDGE_ROUTE_AUTH_SENDCODE_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_REGISTER_IDENTITY: ${EDGE_ROUTE_AUTH_REGISTER_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_REFRESH_IDENTITY: ${EDGE_ROUTE_AUTH_REFRESH_IDENTITY:-true}
+      EDGE_ROUTE_AUTH_REVOKE_IDENTITY: ${EDGE_ROUTE_AUTH_REVOKE_IDENTITY:-true}
+      EDGE_ROUTE_TASKS_MARKETPLACE: ${EDGE_ROUTE_TASKS_MARKETPLACE:-true}
+      EDGE_ROUTE_ORGANIZATIONS_IDENTITY: ${EDGE_ROUTE_ORGANIZATIONS_IDENTITY:-true}
+      EDGE_ROUTE_ME_IDENTITY: ${EDGE_ROUTE_ME_IDENTITY:-true}
+      EDGE_ROUTE_ADMIN_PERMREQ_IDENTITY: ${EDGE_ROUTE_ADMIN_PERMREQ_IDENTITY:-true}
+      EDGE_ROUTE_ADMIN_KYB_IDENTITY: ${EDGE_ROUTE_ADMIN_KYB_IDENTITY:-true}
+      EDGE_ROUTE_AI_INTELLIGENCE: ${EDGE_ROUTE_AI_INTELLIGENCE:-true}
+      EDGE_ROUTE_ADMIN_AI_INTELLIGENCE: ${EDGE_ROUTE_ADMIN_AI_INTELLIGENCE:-true}
+      EDGE_ROUTE_RECOMMENDERS_IDENTITY: ${EDGE_ROUTE_RECOMMENDERS_IDENTITY:-true}
+      EDGE_ROUTE_OPS_MARKETPLACE: ${EDGE_ROUTE_OPS_MARKETPLACE:-true}
+      EDGE_ROUTE_REPUTATION_MARKETPLACE: ${EDGE_ROUTE_REPUTATION_MARKETPLACE:-true}
+      EDGE_ROUTE_FINANCE: ${EDGE_ROUTE_FINANCE:-true}
+      EDGE_ROUTE_TRUST: ${EDGE_ROUTE_TRUST:-true}
+      EDGE_ROUTE_INTELLIGENCE_SMOKED: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:-true}
+      EDGE_ROUTE_MEDIA_INTELLIGENCE: ${EDGE_ROUTE_MEDIA_INTELLIGENCE:-true}
+      EDGE_ROUTE_COMEDY_INTELLIGENCE: ${EDGE_ROUTE_COMEDY_INTELLIGENCE:-true}
+      EDGE_ROUTE_ARTICLE_TITLES_INTELLIGENCE: ${EDGE_ROUTE_ARTICLE_TITLES_INTELLIGENCE:-true}
+      EDGE_ROUTE_ARTICLE_OUTLINE_INTELLIGENCE: ${EDGE_ROUTE_ARTICLE_OUTLINE_INTELLIGENCE:-true}
+      EDGE_ROUTE_ARTICLE_CONTENT_INTELLIGENCE: ${EDGE_ROUTE_ARTICLE_CONTENT_INTELLIGENCE:-true}
+      EDGE_ROUTE_ARTICLE_IMAGE_RECOMMENDATIONS_INTELLIGENCE: ${EDGE_ROUTE_ARTICLE_IMAGE_RECOMMENDATIONS_INTELLIGENCE:-true}
+      EDGE_ROUTE_ARTICLE_SEARCH_IMAGES_INTELLIGENCE: ${EDGE_ROUTE_ARTICLE_SEARCH_IMAGES_INTELLIGENCE:-true}
+      EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE: ${EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE:-true}
+      EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:-true}
+      EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:-true}
+      EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE: ${EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE:-false}
+      EDGE_ROUTE_IMAGE_ANALYSIS_GENERATION_INTELLIGENCE: ${EDGE_ROUTE_IMAGE_ANALYSIS_GENERATION_INTELLIGENCE:-true}
+      EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE: ${EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE:-true}
+      EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE: ${EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE:-true}
+      # Bilibili/Douyin 媒体链路默认 false，显式开启前需完成凭据与回切演练。
       EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:-false}
-      # GL-P3-MEDIA-001 Douyin 媒体链路（extract/analyze/proxy/download）：默认 false，显式注入以便灰度启用/一键回退。
       EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:-false}
-      # 抖音热点（Slice 13 Stage 1）：默认 false。
       EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:-false}
       # HLD 7.4：直读 session 表签发内部身份断言（DATABASE_URL 复用 identity 库，只读；secret 与 identity-service 一致）。
       EDGE_IDENTITY_FROM_DATABASE_URL: "true"
       DATABASE_URL: ${DATABASE_URL:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-y1.sid}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      PUBLIC_BACKEND_ORIGIN: ${PUBLIC_BACKEND_ORIGIN:-}
+      SECURITY_CSRF_ORIGIN_CHECK: ${SECURITY_CSRF_ORIGIN_CHECK:-1}
       # GL-P0-ASSERT-001 keyring 模式：edge-bff 签发用户断言到各领域服务
       IDENTITY_ASSERTION_ENABLED: "true"
       IDENTITY_ASSERTION_ISSUER: ${IDENTITY_ASSERTION_ISSUER:-edge-bff}
@@ -190,7 +227,8 @@ services:
       IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_KID: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_KID:-edge-user-intelligence-v1}
       IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE:-}
     ports:
-      - "${EDGE_BFF_PORT:-8081}:8080"
+      # Vite 本地开发仍可访问 localhost:8081；公网只能经 frontend Nginx。
+      - "127.0.0.1:${EDGE_BFF_PORT:-8081}:8080"
     depends_on:
       - backend
       - identity-service
@@ -200,16 +238,15 @@ services:
       - intelligence-service
     restart: unless-stopped
 
-  # 可选 Java marketplace-service（Epic 4）：任务/报名/履约。profile java-edge。
+  # Java marketplace-service（Epic 4）：默认应用栈组成部分。
   # 独立 Flyway 历史（marketplace_flyway_schema）；与 identity 共用 neon；消费 BFF 断言。
   marketplace-service:
-    profiles: ["java-edge"]
     build:
       context: ./platform-java
       dockerfile: services/marketplace-service/Dockerfile
     # 不发布宿主端口（GL-P0-SEC-002）：仅 Docker 网络内可达，同 identity-service。
     # 容器间调用走服务名（MARKETPLACE_SERVICE_BASE_URL=http://marketplace-service:8083）。
-    # 对外入口只有 Nginx :80 与 edge-bff（java-edge profile）。
+    # 对外入口只有 Nginx；edge-bff 的宿主端口仅绑定 loopback 供本地调试。
     environment:
       SERVER_PORT: "8083"
       DATABASE_URL: ${DATABASE_URL:-}
@@ -250,10 +287,8 @@ services:
     depends_on:
       backend:
         condition: service_started
-      minio:
-        condition: service_started
       temporal:
-        condition: service_started
+        condition: service_healthy
       finance-service:
         condition: service_started
       trust-service:
@@ -264,11 +299,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # 可选 Java finance-service（Epic 4 Slice 4D）：账户/余额地基。profile java-edge。
+  # Java finance-service（Epic 4 Slice 4D）：默认应用栈组成部分。
   # 独立 Flyway 历史（finance_flyway_schema）；与 identity/marketplace 共用 neon；消费 BFF 断言。
   # 为后续「接受报名→资金预留→激活/补偿」Saga 扫清依赖（ReserveFunds/escrow 留后续 slice）。
   finance-service:
-    profiles: ["java-edge"]
     build:
       context: ./platform-java
       dockerfile: services/finance-service/Dockerfile
@@ -293,10 +327,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # 可选 Java trust-service（Epic 6 Slice 6A）：争议受理（dispute-case）。profile java-edge。
+  # Java trust-service（Epic 6 Slice 6A）：默认应用栈组成部分。
   # 独立 Flyway 历史（trust_flyway_schema）；与 identity/marketplace/finance 共用 neon；消费 BFF/服务断言。
   trust-service:
-    profiles: ["java-edge"]
     build:
       context: ./platform-java
       dockerfile: services/trust-service/Dockerfile
@@ -325,15 +358,16 @@ services:
     depends_on:
       backend:
         condition: service_started
+      temporal:
+        condition: service_healthy
       kafka:
         condition: service_healthy
     restart: unless-stopped
 
-  # 可选 Java intelligence-service（草场 intelligence Slice 1）：AI 基建层 + 冒烟端点。profile java-edge。
+  # Java intelligence-service（草场 intelligence Slice 1）：默认应用栈组成部分。
   # 独立 Flyway 历史（intelligence_flyway_schema）；平台默认 Qwen（env 注入，不读 legacy per-user 设置）；
   # 积分经共享密钥走 legacy 内部端点（直连 backend，不经 BFF，避免 intelligence↔BFF 循环）。
   intelligence-service:
-    profiles: ["java-edge"]
     build:
       context: ./platform-java
       dockerfile: services/intelligence-service/Dockerfile
@@ -376,8 +410,8 @@ services:
       OBJECT_STORAGE_ENABLED: "true"
       MINIO_ENDPOINT: http://minio:9000
       MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9002}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
       MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
       # 积分扣减走 legacy 内部端点（共享 INTERNAL_API_KEY；legacy 不认 BFF 断言）。
       LEGACY_CREDITS_BASE_URL: http://backend:3000
@@ -386,7 +420,7 @@ services:
       backend:
         condition: service_started
       minio:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_healthy
     restart: unless-stopped
@@ -395,7 +429,7 @@ services:
   kafka:
     image: apache/kafka:4.2.1
     ports:
-      - "9092:9092"
+      - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     environment:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
@@ -420,7 +454,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     restart: unless-stopped
 
   # Epic 3：对象存储（S3 兼容）。无 profile 常驻（与 kafka/redis 一致），service name minio。
@@ -429,26 +463,32 @@ services:
   # MinIO putBucketCors API 各版本损坏（latest/2025-01=501，2024-06-13=400），不再使用。
   # MINIO_PUBLIC_BASE_URL 设为 http://localhost:9002 → presigned URL 经 nginx 注 CORS 后转 MinIO。
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
 
   # Epic 3：Temporal 工作流引擎（dev server）。无 profile 常驻（与 kafka/redis/minio 一致）。
   # CLI dev-server 自带 sqlite，零外部 DB 依赖；gRPC + Web UI 同在 :7233。
   # 本地开发用；生产应换 temporalio/server + postgres + AUTO_SETUP。
   temporal:
-    image: temporalio/temporal:latest
+    image: temporalio/temporal:1.8.1
     command: ["server", "start-dev", "--ip", "0.0.0.0", "--log-level", "error", "--db-filename", "/tmp/temporal-dev.db"]
     ports:
-      - "${TEMPORAL_GRPC_PORT:-7233}:7233"
+      - "127.0.0.1:${TEMPORAL_GRPC_PORT:-7233}:7233"
     volumes:
       - temporal_dev_data:/tmp
     restart: unless-stopped
@@ -463,7 +503,7 @@ services:
   # 起因：neon 连接不稳（实测宿主机直连 3 次 2 失败、成功一次 15.9s）、每次活动 ~10s 延迟，
   # 使 e2e 无法可靠完成。本地库实测 40/40 成功、3s 完成同一压测。生产另行换库。
   #
-  # 用法：docker compose --profile java-edge up -d   （DATABASE_URL 见 .env）
+  # 用法：docker compose up -d   （DATABASE_URL 见 .env）
   # 宿主机连（跑脚本/psql）：postgresql://grassland:grassland@localhost:55432/grassland
   #
   # ⚠️ 空库初始化顺序：Java 服务 Flyway 只建草场表；session/app_users 等 legacy 表由
@@ -471,14 +511,13 @@ services:
   # 一键种 e2e 数据：`npm run e2e:seed`
   postgres-local:
     image: postgres:18-alpine
-    container_name: y-1-postgres-local
     environment:
       POSTGRES_USER: ${LOCAL_DB_USER:-grassland}
       POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-grassland}
       POSTGRES_DB: ${LOCAL_DB_NAME:-grassland}
     ports:
       # 55432 避开宿主机可能已占用的 5432
-      - "${LOCAL_DB_PORT:-55432}:5432"
+      - "127.0.0.1:${LOCAL_DB_PORT:-55432}:5432"
     volumes:
       # postgres 18+ 要求挂 /var/lib/postgresql（非 /data 子目录），
       # 否则报 "incompatible data directory" 并重启循环。

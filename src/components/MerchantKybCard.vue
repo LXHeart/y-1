@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   MerchantProfile,
   MerchantAttachment,
+  MerchantAttachmentType,
   WithdrawalAccount,
   StoreProfile,
 } from '../types/grassland'
@@ -18,6 +19,12 @@ const emit = defineEmits<{
 }>()
 
 const grassland = useGrassland()
+const merchantReadError = ref('')
+const storeReadError = ref('')
+const merchantProfileLoaded = ref(false)
+const storeProfileLoaded = ref(false)
+let organizationLoadVersion = 0
+let storeOperationVersion = 0
 
 // 当前标签页
 type KybTab = 'merchant' | 'withdrawal' | 'store'
@@ -72,6 +79,8 @@ const statusLabels: Record<string, string> = {
   under_review: '审核中',
   approved: '已通过',
   rejected: '已拒绝',
+  active: '启用',
+  inactive: '停用',
 }
 
 const accountTypeLabels: Record<string, string> = {
@@ -83,53 +92,96 @@ const accountTypeLabels: Record<string, string> = {
 // 计算属性
 const canSubmitMerchant = computed(() => {
   const f = merchantForm.value
-  return f.legalName && f.unifiedSocialCreditCode && f.legalPersonName && f.legalPersonIdNumber
+  const hasIdNumber = Boolean(f.legalPersonIdNumber || merchantProfile.value?.legalPersonIdNumberMasked)
+  return Boolean(f.legalName && f.unifiedSocialCreditCode && f.legalPersonName && hasIdNumber)
 })
 
-const canSubmitStore = computed(() => {
-  const f = storeForm.value
-  return f.addressDetail && f.phone
-})
+const canEditMerchant = computed(() => merchantProfileLoaded.value && !merchantReadError.value
+  && (!merchantProfile.value
+    || merchantProfile.value.status === 'draft'
+    || merchantProfile.value.status === 'rejected'))
 
-// 方法
-async function loadMerchantProfile(): Promise<void> {
-  const profile = await grassland.getMerchantProfile(props.orgId)
-  if (profile) {
-    merchantProfile.value = profile
-    // 回填表单
-    const address = profile.businessAddress ? JSON.parse(profile.businessAddress) : null
-    merchantForm.value = {
-      legalName: profile.legalName || '',
-      unifiedSocialCreditCode: profile.unifiedSocialCreditCode || '',
-      businessType: profile.businessType || '',
-      legalPersonName: profile.legalPersonName || '',
-      legalPersonIdNumber: profile.legalPersonIdNumber || '',
-      registeredCapitalYuan: profile.registeredCapitalCents ? (profile.registeredCapitalCents / 100).toFixed(2) : '',
-      establishmentDate: profile.establishmentDate || '',
-      businessAddressProvince: address?.province || '',
-      businessAddressCity: address?.city || '',
-      businessAddressDistrict: address?.district || '',
-      businessAddressDetail: address?.address || '',
-      contactPhone: profile.contactPhone || '',
-      contactEmail: profile.contactEmail || '',
-    }
-    await loadMerchantAttachments()
+function parseAddress(value: string | null): Record<string, string> {
+  if (!value) return {}
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, string> : {}
+  } catch {
+    return {}
   }
 }
 
-async function loadMerchantAttachments(): Promise<void> {
-  const list = await grassland.listMerchantAttachments(props.orgId)
-  if (list) merchantAttachments.value = list
+function emptyStoreForm(): typeof storeForm.value {
+  return {
+    addressProvince: '', addressCity: '', addressDistrict: '', addressDetail: '',
+    phone: '', description: '',
+  }
+}
+
+// 方法
+function isCurrentOrganization(orgId: string, version: number): boolean {
+  return props.orgId === orgId && organizationLoadVersion === version
+}
+
+function isCurrentStoreOperation(
+  orgId: string,
+  organizationVersion: number,
+  storeId: string,
+  operationVersion: number,
+): boolean {
+  return isCurrentOrganization(orgId, organizationVersion)
+    && selectedStoreId.value === storeId
+    && storeOperationVersion === operationVersion
+}
+
+async function loadMerchantProfile(orgId: string, version: number): Promise<void> {
+  merchantReadError.value = ''
+  merchantProfileLoaded.value = false
+  try {
+    const profile = await grassland.getMerchantProfile(orgId)
+    if (!isCurrentOrganization(orgId, version)) return
+    merchantProfileLoaded.value = true
+    if (profile) {
+      merchantProfile.value = profile
+      // 回填表单
+      const address = parseAddress(profile.businessAddress)
+      merchantForm.value = {
+        legalName: profile.legalName || '',
+        unifiedSocialCreditCode: profile.unifiedSocialCreditCode || '',
+        businessType: profile.businessType || '',
+        legalPersonName: profile.legalPersonName || '',
+        legalPersonIdNumber: '',
+        registeredCapitalYuan: profile.registeredCapitalCents ? (profile.registeredCapitalCents / 100).toFixed(2) : '',
+        establishmentDate: profile.establishmentDate || '',
+        businessAddressProvince: address?.province || '',
+        businessAddressCity: address?.city || '',
+        businessAddressDistrict: address?.district || '',
+        businessAddressDetail: address?.address || '',
+        contactPhone: profile.contactPhone || '',
+        contactEmail: profile.contactEmail || '',
+      }
+    }
+  } catch (error: unknown) {
+    if (!isCurrentOrganization(orgId, version)) return
+    merchantReadError.value = error instanceof Error ? error.message : '商家资料加载失败'
+  }
+}
+
+async function loadMerchantAttachments(orgId: string, version: number): Promise<void> {
+  const list = await grassland.listMerchantAttachments(orgId)
+  if (list && isCurrentOrganization(orgId, version)) merchantAttachments.value = list
 }
 
 async function saveMerchantProfile(): Promise<void> {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
   const address = {
     province: merchantForm.value.businessAddressProvince,
     city: merchantForm.value.businessAddressCity,
     district: merchantForm.value.businessAddressDistrict,
     address: merchantForm.value.businessAddressDetail,
   }
-  const result = await grassland.createMerchantProfile(props.orgId, {
+  const input = {
     legalName: merchantForm.value.legalName || undefined,
     unifiedSocialCreditCode: merchantForm.value.unifiedSocialCreditCode || undefined,
     businessType: merchantForm.value.businessType || undefined,
@@ -139,58 +191,69 @@ async function saveMerchantProfile(): Promise<void> {
       ? Math.round(parseFloat(merchantForm.value.registeredCapitalYuan) * 100)
       : undefined,
     establishmentDate: merchantForm.value.establishmentDate || undefined,
-    businessAddress: Object.values(address).some(Boolean) ? JSON.stringify(address) : undefined,
+    businessAddress: address.address ? address : undefined,
     contactPhone: merchantForm.value.contactPhone || undefined,
     contactEmail: merchantForm.value.contactEmail || undefined,
-  })
-  if (result) {
+  }
+  const result = merchantProfile.value
+    ? await grassland.updateMerchantProfile(orgId, input)
+    : await grassland.createMerchantProfile(orgId, input)
+  if (result && isCurrentOrganization(orgId, version)) {
     merchantProfile.value = result
     emit('changed')
   }
 }
 
 async function submitMerchantProfile(): Promise<void> {
-  const result = await grassland.submitMerchantProfile(props.orgId)
-  if (result) {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.submitMerchantProfile(orgId)
+  if (result && isCurrentOrganization(orgId, version)) {
     merchantProfile.value = result
     emit('changed')
   }
 }
 
-async function handleFileUpload(event: Event, attachmentType: string): Promise<void> {
+async function handleFileUpload(event: Event, attachmentType: MerchantAttachmentType): Promise<void> {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const result = await grassland.uploadMerchantAttachment(props.orgId, file, attachmentType)
-  if (result) {
-    merchantAttachments.value.push(result)
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.uploadMerchantAttachment(orgId, file, attachmentType)
+  if (result && isCurrentOrganization(orgId, version)) {
+    merchantAttachments.value = [...merchantAttachments.value, result]
     input.value = ''
   }
 }
 
 async function deleteAttachment(attachmentId: string): Promise<void> {
-  const result = await grassland.deleteMerchantAttachment(props.orgId, attachmentId)
-  if (result !== null) {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.deleteMerchantAttachment(orgId, attachmentId)
+  if (result !== null && isCurrentOrganization(orgId, version)) {
     merchantAttachments.value = merchantAttachments.value.filter((a) => a.id !== attachmentId)
   }
 }
 
 // 收款账户
-async function loadWithdrawalAccounts(): Promise<void> {
-  const list = await grassland.listWithdrawalAccounts(props.orgId)
-  if (list) withdrawalAccounts.value = list
+async function loadWithdrawalAccounts(orgId: string, version: number): Promise<void> {
+  const list = await grassland.listWithdrawalAccounts(orgId)
+  if (list && isCurrentOrganization(orgId, version)) withdrawalAccounts.value = list
 }
 
 async function createWithdrawalAccount(): Promise<void> {
-  const result = await grassland.createWithdrawalAccount(props.orgId, {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.createWithdrawalAccount(orgId, {
     accountType: accountForm.value.accountType,
     accountName: accountForm.value.accountName,
-    accountNumberEncrypted: accountForm.value.accountNumber,
+    accountNumber: accountForm.value.accountNumber,
     bankName: accountForm.value.bankName || undefined,
     branchName: accountForm.value.branchName || undefined,
   })
-  if (result) {
-    withdrawalAccounts.value.push(result)
+  if (result && isCurrentOrganization(orgId, version)) {
+    withdrawalAccounts.value = [...withdrawalAccounts.value, result]
     accountForm.value = {
       accountType: 'bank_card',
       accountName: '',
@@ -201,9 +264,22 @@ async function createWithdrawalAccount(): Promise<void> {
   }
 }
 
+async function submitWithdrawalAccount(accountId: string): Promise<void> {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.submitWithdrawalAccount(orgId, accountId)
+  if (result && isCurrentOrganization(orgId, version)) {
+    withdrawalAccounts.value = withdrawalAccounts.value.map((account) =>
+      account.id === accountId ? result : account)
+    emit('changed')
+  }
+}
+
 async function setDefaultAccount(accountId: string): Promise<void> {
-  const result = await grassland.setDefaultWithdrawalAccount(props.orgId, accountId)
-  if (result) {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.setDefaultWithdrawalAccount(orgId, accountId)
+  if (result && isCurrentOrganization(orgId, version)) {
     withdrawalAccounts.value = withdrawalAccounts.value.map((a) => ({
       ...a,
       isDefault: a.id === accountId,
@@ -212,16 +288,18 @@ async function setDefaultAccount(accountId: string): Promise<void> {
 }
 
 async function deleteWithdrawalAccount(accountId: string): Promise<void> {
-  const result = await grassland.deleteWithdrawalAccount(props.orgId, accountId)
-  if (result !== null) {
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const result = await grassland.deleteWithdrawalAccount(orgId, accountId)
+  if (result !== null && isCurrentOrganization(orgId, version)) {
     withdrawalAccounts.value = withdrawalAccounts.value.filter((a) => a.id !== accountId)
   }
 }
 
 // 门店资料
-async function loadStores(): Promise<void> {
-  const list = await grassland.listStores(props.orgId)
-  if (list) {
+async function loadStores(orgId: string, version: number): Promise<void> {
+  const list = await grassland.listStores(orgId)
+  if (list && isCurrentOrganization(orgId, version)) {
     stores.value = list
     if (list.length > 0 && !selectedStoreId.value) {
       selectedStoreId.value = list[0].id
@@ -231,44 +309,54 @@ async function loadStores(): Promise<void> {
 
 async function loadStoreProfile(): Promise<void> {
   if (!selectedStoreId.value) return
-  const profile = await grassland.getStoreProfile(props.orgId, selectedStoreId.value)
-  if (profile) {
-    storeProfile.value = profile
-    const address = profile.address ? JSON.parse(profile.address) : null
-    storeForm.value = {
-      addressProvince: address?.province || '',
-      addressCity: address?.city || '',
-      addressDistrict: address?.district || '',
-      addressDetail: address?.address || '',
-      phone: profile.phone || '',
-      description: profile.description || '',
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const storeId = selectedStoreId.value
+  const operationVersion = ++storeOperationVersion
+  storeReadError.value = ''
+  storeProfileLoaded.value = false
+  storeProfile.value = null
+  storeForm.value = emptyStoreForm()
+  try {
+    const profile = await grassland.getStoreProfile(orgId, storeId)
+    if (!isCurrentStoreOperation(orgId, version, storeId, operationVersion)) return
+    storeProfileLoaded.value = true
+    if (profile) {
+      storeProfile.value = profile
+      const address = parseAddress(profile.address)
+      storeForm.value = {
+        addressProvince: address?.province || '',
+        addressCity: address?.city || '',
+        addressDistrict: address?.district || '',
+        addressDetail: address?.address || '',
+        phone: profile.phone || '',
+        description: profile.description || '',
+      }
     }
+  } catch (error: unknown) {
+    if (!isCurrentStoreOperation(orgId, version, storeId, operationVersion)) return
+    storeReadError.value = error instanceof Error ? error.message : '门店资料加载失败'
   }
 }
 
 async function saveStoreProfile(): Promise<void> {
   if (!selectedStoreId.value) return
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const storeId = selectedStoreId.value
+  const operationVersion = ++storeOperationVersion
   const address = {
     province: storeForm.value.addressProvince,
     city: storeForm.value.addressCity,
     district: storeForm.value.addressDistrict,
     address: storeForm.value.addressDetail,
   }
-  const result = await grassland.createStoreProfile(props.orgId, selectedStoreId.value, {
+  const result = await grassland.createStoreProfile(orgId, storeId, {
     address: Object.values(address).some(Boolean) ? JSON.stringify(address) : undefined,
     phone: storeForm.value.phone || undefined,
     description: storeForm.value.description || undefined,
   })
-  if (result) {
-    storeProfile.value = result
-    emit('changed')
-  }
-}
-
-async function submitStoreProfile(): Promise<void> {
-  if (!selectedStoreId.value) return
-  const result = await grassland.submitStoreProfile(props.orgId, selectedStoreId.value)
-  if (result) {
+  if (result && isCurrentStoreOperation(orgId, version, storeId, operationVersion)) {
     storeProfile.value = result
     emit('changed')
   }
@@ -276,14 +364,46 @@ async function submitStoreProfile(): Promise<void> {
 
 watch(selectedStoreId, () => {
   storeProfile.value = null
-  loadStoreProfile()
+  storeProfileLoaded.value = false
+  storeForm.value = emptyStoreForm()
+  void loadStoreProfile()
 })
 
-onMounted(() => {
-  loadMerchantProfile()
-  loadWithdrawalAccounts()
-  loadStores()
-})
+function resetOrganizationState(): void {
+  storeOperationVersion += 1
+  activeTab.value = 'merchant'
+  merchantProfile.value = null
+  merchantAttachments.value = []
+  merchantReadError.value = ''
+  merchantProfileLoaded.value = false
+  merchantForm.value = {
+    legalName: '', unifiedSocialCreditCode: '', businessType: '', legalPersonName: '',
+    legalPersonIdNumber: '', registeredCapitalYuan: '', establishmentDate: '',
+    businessAddressProvince: '', businessAddressCity: '', businessAddressDistrict: '',
+    businessAddressDetail: '', contactPhone: '', contactEmail: '',
+  }
+  withdrawalAccounts.value = []
+  accountForm.value = {
+    accountType: 'bank_card', accountName: '', accountNumber: '', bankName: '', branchName: '',
+  }
+  stores.value = []
+  selectedStoreId.value = ''
+  storeProfile.value = null
+  storeReadError.value = ''
+  storeProfileLoaded.value = false
+  storeForm.value = emptyStoreForm()
+}
+
+watch(() => props.orgId, (orgId) => {
+  const version = ++organizationLoadVersion
+  resetOrganizationState()
+  void Promise.all([
+    loadMerchantProfile(orgId, version),
+    loadMerchantAttachments(orgId, version),
+    loadWithdrawalAccounts(orgId, version),
+    loadStores(orgId, version),
+  ])
+}, { immediate: true })
 </script>
 
 <template>
@@ -309,6 +429,13 @@ onMounted(() => {
       >门店资料</button>
     </div>
 
+    <p v-if="activeTab === 'merchant' && merchantReadError" class="error-message" role="alert">
+      {{ merchantReadError }}
+    </p>
+    <p v-if="activeTab === 'store' && storeReadError" class="error-message" role="alert">
+      {{ storeReadError }}
+    </p>
+
     <!-- 商家资料 -->
     <div v-if="activeTab === 'merchant'" class="kyb-section">
       <div v-if="merchantProfile" class="kyb-status">
@@ -331,7 +458,12 @@ onMounted(() => {
         </div>
         <div class="form-row">
           <label>法人姓名 <input v-model="merchantForm.legalPersonName" placeholder="请输入法人姓名" /></label>
-          <label>法人身份证号 <input v-model="merchantForm.legalPersonIdNumber" placeholder="请输入法人身份证号" /></label>
+          <label>法人身份证号
+            <input v-model="merchantForm.legalPersonIdNumber" placeholder="请输入法人身份证号" />
+            <span v-if="merchantProfile?.legalPersonIdNumberMasked" class="masked-value">
+              已保存证件：{{ merchantProfile.legalPersonIdNumberMasked }}
+            </span>
+          </label>
         </div>
         <div class="form-row">
           <label>成立日期 <input v-model="merchantForm.establishmentDate" type="date" /></label>
@@ -353,12 +485,13 @@ onMounted(() => {
         <div class="form-actions">
           <button
             type="button"
-            :disabled="grassland.loading.value"
+            :disabled="grassland.loading.value || !canEditMerchant"
             @click="saveMerchantProfile"
           >保存资料</button>
           <button
             type="button"
-            :disabled="grassland.loading.value || !canSubmitMerchant || merchantProfile?.status !== 'draft'"
+            :disabled="grassland.loading.value || !canSubmitMerchant
+              || !merchantProfile || !['draft', 'rejected'].includes(merchantProfile.status)"
             @click="submitMerchantProfile"
           >提交审核</button>
         </div>
@@ -375,7 +508,7 @@ onMounted(() => {
             </span>
             <button
               type="button"
-              :disabled="grassland.loading.value"
+              :disabled="grassland.loading.value || !canEditMerchant"
               @click="deleteAttachment(att.id)"
             >删除</button>
           </div>
@@ -386,7 +519,7 @@ onMounted(() => {
             <input
               type="file"
               accept="image/*,.pdf"
-              :disabled="grassland.loading.value"
+              :disabled="grassland.loading.value || !canEditMerchant"
               @change="(e) => handleFileUpload(e, 'business_license')"
             />
           </label>
@@ -395,7 +528,7 @@ onMounted(() => {
             <input
               type="file"
               accept="image/*,.pdf"
-              :disabled="grassland.loading.value"
+              :disabled="grassland.loading.value || !canEditMerchant"
               @change="(e) => handleFileUpload(e, 'legal_person_id_front')"
             />
           </label>
@@ -404,7 +537,7 @@ onMounted(() => {
             <input
               type="file"
               accept="image/*,.pdf"
-              :disabled="grassland.loading.value"
+              :disabled="grassland.loading.value || !canEditMerchant"
               @change="(e) => handleFileUpload(e, 'legal_person_id_back')"
             />
           </label>
@@ -413,7 +546,7 @@ onMounted(() => {
             <input
               type="file"
               accept="image/*,.pdf"
-              :disabled="grassland.loading.value"
+              :disabled="grassland.loading.value || !canEditMerchant"
               @change="(e) => handleFileUpload(e, 'store_photo')"
             />
           </label>
@@ -422,7 +555,7 @@ onMounted(() => {
             <input
               type="file"
               accept="image/*,.pdf"
-              :disabled="grassland.loading.value"
+              :disabled="grassland.loading.value || !canEditMerchant"
               @change="(e) => handleFileUpload(e, 'other')"
             />
           </label>
@@ -436,15 +569,22 @@ onMounted(() => {
         <div v-for="acc in withdrawalAccounts" :key="acc.id" class="account-item">
           <div class="account-info">
             <span class="account-type">{{ accountTypeLabels[acc.accountType] || acc.accountType }}</span>
-            <span class="account-number">{{ acc.accountNumberEncrypted }}</span>
+            <span class="account-number">{{ acc.accountNumberMasked }}</span>
             <span v-if="acc.bankName" class="bank-name">{{ acc.bankName }}</span>
             <span v-if="acc.branchName" class="branch-name">{{ acc.branchName }}</span>
             <span :class="`status-${acc.status}`">
               {{ statusLabels[acc.status] || acc.status }}
             </span>
             <span v-if="acc.isDefault" class="default-badge">默认</span>
+            <span v-if="acc.reviewNote" class="review-note">{{ acc.reviewNote }}</span>
           </div>
           <div class="account-actions">
+            <button
+              v-if="acc.status === 'pending' || acc.status === 'rejected'"
+              type="button"
+              :disabled="grassland.loading.value"
+              @click="submitWithdrawalAccount(acc.id)"
+            >提交审核</button>
             <button
               v-if="acc.status === 'approved' && !acc.isDefault"
               type="button"
@@ -526,14 +666,10 @@ onMounted(() => {
         <div class="form-actions">
           <button
             type="button"
-            :disabled="grassland.loading.value"
+            :disabled="grassland.loading.value || !storeProfileLoaded || Boolean(storeReadError)
+              || !storeForm.addressDetail"
             @click="saveStoreProfile"
           >保存资料</button>
-          <button
-            type="button"
-            :disabled="grassland.loading.value || !canSubmitStore || storeProfile?.status !== 'draft'"
-            @click="submitStoreProfile"
-          >提交审核</button>
         </div>
       </form>
 
@@ -583,6 +719,12 @@ onMounted(() => {
 
 .kyb-section {
   padding: 16px 0;
+}
+
+.error-message {
+  margin: 0 0 12px;
+  color: #b91c1c;
+  font-size: 13px;
 }
 
 .kyb-status {

@@ -7,6 +7,7 @@ import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
+import com.grassland.identity.organization.OrganizationRepository;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -44,6 +45,7 @@ import reactor.core.publisher.Mono;
 public class MerchantProfileController {
 
     private final OrgAuthorization authz;
+    private final OrganizationRepository organizations;
     private final MerchantProfileRepository profiles;
     private final MerchantAttachmentRepository attachments;
     private final KybSubmissionService submissions;
@@ -54,6 +56,7 @@ public class MerchantProfileController {
 
     public MerchantProfileController(
             OrgAuthorization authz,
+            OrganizationRepository organizations,
             MerchantProfileRepository profiles,
             MerchantAttachmentRepository attachments,
             KybSubmissionService submissions,
@@ -61,6 +64,7 @@ public class MerchantProfileController {
             OutboxRepository outbox,
             TransactionalOperator transactions) {
         this.authz = authz;
+        this.organizations = organizations;
         this.profiles = profiles;
         this.attachments = attachments;
         this.submissions = submissions;
@@ -76,9 +80,11 @@ public class MerchantProfileController {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 // 状态守卫：此前 POST 无守卫且 upsert 无条件覆盖 status，
                 // 已 approved 的资料被 POST 一下就静默打回 draft，审核结果丢失。
-                .flatMap(account -> profiles.findById(orgId)
-                        .flatMap(existing -> requireEditable(existing).thenReturn(existing))
-                        .then(saveFields(orgId, body)))
+                .flatMap(account -> transactions.transactional(
+                        lockOrganization(orgId)
+                                .then(profiles.findById(orgId)
+                                        .flatMap(existing -> requireEditable(existing).thenReturn(existing)))
+                                .then(saveFields(orgId, body))))
                 .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))));
     }
 
@@ -89,11 +95,11 @@ public class MerchantProfileController {
                     String encryptedId = crypto.encrypt(body.legalPersonIdNumber());
                     return new Object[]{establishmentDate, encryptedId};
                 })
-                .flatMap(prepared -> transactions.transactional(profiles.upsertFields(
+                .flatMap(prepared -> profiles.upsertFields(
                         orgId, body.legalName(), body.unifiedSocialCreditCode(), body.businessType(),
                         body.legalPersonName(), (String) prepared[1], body.registeredCapitalCents(),
                         (LocalDate) prepared[0], serializeAddress(body.businessAddress()),
-                        body.contactPhone(), body.contactEmail())))
+                        body.contactPhone(), body.contactEmail()))
                 .onErrorMap(DataIntegrityViolationException.class,
                         e -> new IdentityException(409, "该统一社会信用代码已被其他商家使用"));
     }
@@ -149,9 +155,13 @@ public class MerchantProfileController {
                                                               @RequestBody CreateMerchantProfileRequest body,
                                                               ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> profiles.findById(orgId)
-                        .switchIfEmpty(Mono.error(new IdentityException(404, "商家资料不存在，请先创建")))
-                        .flatMap(profile -> requireEditable(profile).then(saveFields(orgId, body))))
+                .flatMap(account -> transactions.transactional(
+                        lockOrganization(orgId)
+                                .then(profiles.findById(orgId)
+                                        .switchIfEmpty(Mono.error(
+                                                new IdentityException(404, "商家资料不存在，请先创建")))
+                                        .flatMap(profile -> requireEditable(profile)
+                                                .then(saveFields(orgId, body))))))
                 .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))));
     }
 
@@ -163,24 +173,27 @@ public class MerchantProfileController {
     @PostMapping("/submit")
     public Mono<ResponseEntity<Map<String, Object>>> submit(@PathVariable String orgId, ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> profiles.findById(orgId)
-                        .switchIfEmpty(Mono.error(new IdentityException(404, "商家资料不存在")))
-                        .flatMap(profile -> {
-                            MerchantProfileStatus status = MerchantProfileStatus.fromDb(profile.status());
-                            if (status.isUnderReview()) {
-                                return Mono.<MerchantProfile>error(new IdentityException(409, "资料已在审核中"));
-                            }
-                            if (!status.canSubmit()) {
-                                return Mono.<MerchantProfile>error(new IdentityException(409, "资料已通过审核，无需重复提交"));
-                            }
-                            KybSubmissionService.requireCompleteProfile(profile);
-                            return attachments.findDocumentTypes(orgId).collectList()
-                                    .doOnNext(KybSubmissionService::requireDocuments)
-                                    .thenReturn(profile);
-                        })
-                        .flatMap(profile -> attachments.findIdsByOrganization(orgId).collectList()
-                                .flatMap(materialIds -> transactions.transactional(
-                                        profiles.updateStatus(orgId, MerchantProfileStatus.PENDING.dbValue(),
+                .flatMap(account -> transactions.transactional(
+                        lockOrganization(orgId).then(profiles.findById(orgId))
+                                .switchIfEmpty(Mono.error(new IdentityException(404, "商家资料不存在")))
+                                .flatMap(profile -> {
+                                    MerchantProfileStatus status = MerchantProfileStatus.fromDb(profile.status());
+                                    if (status.isUnderReview()) {
+                                        return Mono.<MerchantProfile>error(
+                                                new IdentityException(409, "资料已在审核中"));
+                                    }
+                                    if (!status.canSubmit()) {
+                                        return Mono.<MerchantProfile>error(
+                                                new IdentityException(409, "资料已通过审核，无需重复提交"));
+                                    }
+                                    KybSubmissionService.requireCompleteProfile(profile);
+                                    return attachments.findDocumentTypes(orgId).collectList()
+                                            .doOnNext(KybSubmissionService::requireDocuments)
+                                            .thenReturn(profile);
+                                })
+                                .flatMap(profile -> attachments.findIdsByOrganization(orgId).collectList()
+                                        .flatMap(materialIds -> profiles.updateStatus(
+                                                        orgId, MerchantProfileStatus.PENDING.dbValue(),
                                                         Instant.now(), null, null, null)
                                                 .flatMap(updated -> submissions.enqueue(
                                                                 KybVerificationType.MERCHANT_PROFILE, orgId,
@@ -188,6 +201,12 @@ public class MerchantProfileController {
                                                         .flatMap(req -> outbox.append(submittedEvent(orgId, req))
                                                                 .thenReturn(updated)))))))
                 .map(profile -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(profile))));
+    }
+
+    private Mono<Void> lockOrganization(String orgId) {
+        return organizations.findByIdForUpdate(orgId)
+                .switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
+                .then();
     }
 
     /**
@@ -236,6 +255,8 @@ public class MerchantProfileController {
         m.put("status", profile.status());
         m.put("submittedAt", profile.submittedAt() == null ? null : profile.submittedAt().toString());
         m.put("reviewedAt", profile.reviewedAt() == null ? null : profile.reviewedAt().toString());
+        m.put("reviewerAccountId", profile.reviewerAccountId());
+        m.put("reviewNote", profile.reviewNote());
         m.put("createdAt", profile.createdAt() == null ? null : profile.createdAt().toString());
         return m;
     }

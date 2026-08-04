@@ -101,6 +101,7 @@ public class KybVerificationController {
                                             : Mono.just(req))
                                     .flatMap(req -> requests.updateStatus(
                                                     req.id(), decision.dbValue(), admin.id(), body.note())
+                                            .switchIfEmpty(Mono.error(new IdentityException(409, "审核请求已处理")))
                                             .flatMap(updated -> updateTargetStatus(
                                                             updated, decision.dbValue(), admin.id(), body.note())
                                                     .then(emitReviewEvent(updated, decision.dbValue(), body.note()))
@@ -161,9 +162,12 @@ public class KybVerificationController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", req.id());
         m.put("organizationId", req.organizationId());
+        m.put("requesterAccountId", req.requesterAccountId());
         m.put("verificationType", req.verificationType());
         m.put("targetId", req.targetId());
+        m.put("materials", req.materials());
         m.put("status", req.status());
+        m.put("reviewerAccountId", req.reviewerAccountId());
         m.put("reviewNote", req.reviewNote());
         m.put("reviewDeadline", req.reviewDeadline() == null ? null : req.reviewDeadline().toString());
         m.put("createdAt", req.createdAt() == null ? null : req.createdAt().toString());

@@ -4,7 +4,7 @@ import type { NextFunction, Request } from 'express'
 const { envMock } = vi.hoisted(() => ({
   envMock: {
     DATABASE_URL: 'postgres://test' as string | undefined,
-    SESSION_SECRET: '12345678901234567890123456789012' as string | undefined,
+    SESSION_SECRET: '12345678901234567890123456789012' as string | undefined, // secret-scan: allow - test fixture
   },
 }))
 
@@ -23,7 +23,7 @@ const {
 describe('auth helpers', () => {
   beforeEach(() => {
     envMock.DATABASE_URL = 'postgres://test'
-    envMock.SESSION_SECRET = '12345678901234567890123456789012'
+    envMock.SESSION_SECRET = '12345678901234567890123456789012' // secret-scan: allow - test fixture
   })
 
   it('returns session user when present', () => {

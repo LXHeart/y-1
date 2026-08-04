@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // env holder 必须用 vi.hoisted——vi.mock 工厂被提升到文件顶部，普通 const 会因 TDZ 报错。
 const { envMock } = vi.hoisted(() => ({
-  envMock: { INTERNAL_API_KEY: 'shared-secret' } as { INTERNAL_API_KEY: string | undefined },
+  envMock: { INTERNAL_API_KEY: 'shared-secret' } as { INTERNAL_API_KEY: string | undefined }, // secret-scan: allow - test fixture
 }))
 vi.mock('../lib/env.js', () => ({ env: envMock }))
 
@@ -42,7 +42,7 @@ function mockReq(body: unknown, internalKey?: string, headers: Record<string, st
 
 describe('requireInternalKey', () => {
   beforeEach(() => {
-    envMock.INTERNAL_API_KEY = 'shared-secret'
+    envMock.INTERNAL_API_KEY = 'shared-secret' // secret-scan: allow - test fixture
   })
 
   it('密钥未配置 → fail-closed 503', () => {

@@ -562,7 +562,7 @@ export interface EngagementVerification {
 // ---------- intelligence：media 直传（三步上传）----------
 
 /** 附件用途。履约附件是唯一允许 marketplace 跨账号读的 purpose（服务间断点的放行条件）。 */
-export type MediaPurpose = 'engagement_attachment' | 'article_image' | 'avatar'
+export type MediaPurpose = 'engagement_attachment' | 'video_asset' | 'user_upload'
 
 /**
  * 上传凭据（第一步 `POST /api/media/upload-tickets` 的响应）。
@@ -890,6 +890,14 @@ export function parseVerificationChecks(raw: string | null | undefined): OpsVeri
 /** 商家资料状态。 */
 export type MerchantProfileStatus = 'draft' | 'pending' | 'under_review' | 'approved' | 'rejected'
 
+/** 商家经营地址请求结构；响应中的 jsonb 暂仍由 Java 序列化为字符串。 */
+export interface BusinessAddress {
+  province?: string
+  city?: string
+  district?: string
+  address: string
+}
+
 /** 商家主体详细资料。 */
 export interface MerchantProfile {
   organizationId: string
@@ -897,7 +905,7 @@ export interface MerchantProfile {
   unifiedSocialCreditCode: string | null
   businessType: string | null
   legalPersonName: string | null
-  legalPersonIdNumber: string | null
+  legalPersonIdNumberMasked: string | null
   registeredCapitalCents: number | null
   establishmentDate: string | null // YYYY-MM-DD
   businessAddress: string | null // JSON: {province,city,district,address,longitude,latitude}
@@ -920,7 +928,7 @@ export interface CreateMerchantProfileInput {
   legalPersonIdNumber?: string
   registeredCapitalCents?: number
   establishmentDate?: string // YYYY-MM-DD
-  businessAddress?: string // JSON string
+  businessAddress?: BusinessAddress
   contactPhone?: string
   contactEmail?: string
 }
@@ -964,7 +972,7 @@ export interface WithdrawalAccount {
   organizationId: string
   accountType: WithdrawalAccountType
   accountName: string
-  accountNumberEncrypted: string // 加密显示，如 ****1234
+  accountNumberMasked: string
   bankName: string | null
   branchName: string | null
   isDefault: boolean
@@ -980,7 +988,7 @@ export interface WithdrawalAccount {
 export interface CreateWithdrawalAccountInput {
   accountType: WithdrawalAccountType
   accountName: string
-  accountNumberEncrypted: string
+  accountNumber: string
   bankName?: string
   branchName?: string
 }
@@ -1024,4 +1032,3 @@ export interface CreateStoreProfileInput {
   businessHours?: string // JSON string
   description?: string
 }
-

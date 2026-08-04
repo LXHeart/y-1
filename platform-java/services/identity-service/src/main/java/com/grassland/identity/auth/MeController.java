@@ -16,7 +16,7 @@ import reactor.core.publisher.Mono;
  *
  * <p>身份解析委托 {@link CurrentAccountResolver}（Slice 2K 起 assertion 优先、cookie 回退），
  * 故 /api/auth/me 也能消费 edge-bff 签发的 {@code X-Grassland-Identity} 断言——不再各自重复 cookie 解析逻辑。
- * 账号停用守卫（403）保留在本控制器（仅 /me 的展示策略，非所有受保护端点的统一策略）。
+ * 账号停用守卫由 {@link CurrentAccountResolver} 统一执行，所有受保护端点口径一致。
  */
 @RestController
 public class MeController {
@@ -29,8 +29,6 @@ public class MeController {
     @GetMapping("/api/auth/me")
     public Mono<ResponseEntity<Map<String, Object>>> me(ServerHttpRequest request) {
         return accounts.resolve(request)
-                .filter(AuthUser::isActive)
-                .switchIfEmpty(Mono.error(new IdentityException(403, "当前账号不可用")))
                 .map(this::toResponse);
     }
 

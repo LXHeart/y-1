@@ -27,11 +27,13 @@ public class StoreProfileRepository {
     }
 
     /** 创建或更新门店资料（upsert，基于 store_id）。*/
-    public Mono<StoreProfile> upsert(String storeId, String address, String phone,
+    public Mono<StoreProfile> upsert(String organizationId, String storeId, String address, String phone,
                                       String businessHours, String description, String status) {
         var spec = db.sql("""
                 INSERT INTO store_profile(store_id, address, phone, business_hours, description, status)
-                VALUES (CAST(:id AS uuid), CAST(:addr AS jsonb), :phone, CAST(:hours AS jsonb), :desc, :status)
+                SELECT s.id, CAST(:addr AS jsonb), :phone, CAST(:hours AS jsonb), :desc, :status
+                FROM store s
+                WHERE s.id = CAST(:id AS uuid) AND s.organization_id = CAST(:org AS uuid)
                 ON CONFLICT (store_id) DO UPDATE SET
                     address = EXCLUDED.address,
                     phone = EXCLUDED.phone,
@@ -41,7 +43,8 @@ public class StoreProfileRepository {
                     updated_at = now()
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", storeId);
+                .bind("id", storeId)
+                .bind("org", organizationId);
         spec = bindNullable(spec, "addr", address);
         spec = bindNullable(spec, "phone", phone);
         spec = bindNullable(spec, "hours", businessHours);
@@ -51,8 +54,32 @@ public class StoreProfileRepository {
     }
 
     /** 查询门店资料。*/
-    public Mono<StoreProfile> findById(String storeId) {
-        return db.sql("SELECT " + SELECT_COLS + " FROM store_profile WHERE store_id = CAST(:id AS uuid)")
+    public Mono<StoreProfile> findByOrganizationAndId(String organizationId, String storeId) {
+        return db.sql("""
+                SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
+                       sp.description, sp.status, sp.created_at, sp.updated_at
+                FROM store_profile sp
+                INNER JOIN store s ON s.id = sp.store_id
+                WHERE s.organization_id = CAST(:org AS uuid) AND sp.store_id = CAST(:id AS uuid)
+                """)
+                .bind("org", organizationId)
+                .bind("id", storeId)
+                .map(StoreProfileRepository::map).one();
+    }
+
+    /** 按组织和门店双重作用域停用已有资料，保留必填地址与历史内容。 */
+    public Mono<StoreProfile> deactivate(String organizationId, String storeId) {
+        return db.sql("""
+                UPDATE store_profile sp
+                SET status = 'inactive', updated_at = now()
+                FROM store s
+                WHERE sp.store_id = s.id
+                  AND s.organization_id = CAST(:org AS uuid)
+                  AND sp.store_id = CAST(:id AS uuid)
+                RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
+                          sp.description, sp.status, sp.created_at, sp.updated_at
+                """)
+                .bind("org", organizationId)
                 .bind("id", storeId)
                 .map(StoreProfileRepository::map).one();
     }
@@ -60,11 +87,12 @@ public class StoreProfileRepository {
     /** 列出组织下所有门店资料。*/
     public Flux<StoreProfile> findByOrganization(String organizationId) {
         return db.sql("""
-                SELECT sp.%s FROM store_profile sp
+                SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
+                       sp.description, sp.status, sp.created_at, sp.updated_at
+                FROM store_profile sp
                 INNER JOIN store s ON s.id = sp.store_id
                 WHERE s.organization_id = CAST(:org AS uuid) ORDER BY sp.created_at
-                """.formatted(SELECT_COLS.replace("store_id::text", "sp.store_id::text")
-                        .replace("address::text", "sp.address::text").replace("business_hours::text", "sp.business_hours::text")))
+                """)
                 .bind("org", organizationId)
                 .map(StoreProfileRepository::map).all();
     }

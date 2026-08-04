@@ -72,10 +72,10 @@ describe('article image service', () => {
   beforeEach(() => {
     vi.resetModules()
     process.env.QWEN_ANALYSIS_BASE_URL = 'https://dashscope.example.com/compatible-mode/v1'
-    process.env.QWEN_ANALYSIS_API_KEY = 'qwen-env-key'
+    process.env.QWEN_ANALYSIS_API_KEY = 'qwen-env-key' // secret-scan: allow - test fixture
     process.env.QWEN_ANALYSIS_MODEL = 'qwen3.5-flash'
     process.env.IMAGE_GENERATION_BASE_URL = 'https://images.example.com/v1'
-    process.env.IMAGE_GENERATION_API_KEY = 'image-env-key'
+    process.env.IMAGE_GENERATION_API_KEY = 'image-env-key' // secret-scan: allow - test fixture
     process.env.IMAGE_GENERATION_MODEL = 'gpt-image-1'
 
     loadSettingsMock.mockReset()

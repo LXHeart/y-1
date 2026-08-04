@@ -9,7 +9,7 @@ import org.springframework.http.server.reactive.ServerHttpRequest;
  * 从请求头提取的设备指纹。草场身份域 Slice 2I（HLD D-08 多设备视图）。
  *
  * <p>{@code deviceId} = sha256(userAgent) 前 16 hex（无 UA 时用常量），作为多设备去重/标识；
- * {@code ipAddress} 优先取 {@code X-Forwarded-For} 首段（BFF/反代场景），否则取 socket 远端地址。
+ * {@code ipAddress} 优先取受控 Nginx 追加的 {@code X-Forwarded-For} 最右一段，否则取 socket 远端地址。
  * {@code deviceLabel} 来自客户端可选自报头 {@code X-Device-Label}。
  */
 public record DeviceFingerprint(String deviceId, String deviceLabel, String ipAddress, String userAgent) {
@@ -28,8 +28,8 @@ public record DeviceFingerprint(String deviceId, String deviceLabel, String ipAd
     private static String resolveIp(ServerHttpRequest request) {
         String forwarded = request.getHeaders().getFirst("x-forwarded-for");
         if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
+            int comma = forwarded.lastIndexOf(',');
+            return (comma >= 0 ? forwarded.substring(comma + 1) : forwarded).trim();
         }
         return request.getRemoteAddress() == null ? null
                 : request.getRemoteAddress().getAddress().getHostAddress();

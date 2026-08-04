@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node typecheck, unit tests, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run security:secrets
+      - run: npm audit --audit-level=high
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run coverage:changed
+        env:
+          COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CHANGED_COVERAGE_THRESHOLD: '80'
+      - run: npm run build
+      - name: Upload Node coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  java:
+    name: Java full tests and boot jars
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: Run all Gradle tests and package every service
+        working-directory: platform-java
+        run: >-
+          ./gradlew test
+          :services:edge-bff:bootJar
+          :services:identity-service:bootJar
+          :services:marketplace-service:bootJar
+          :services:finance-service:bootJar
+          :services:trust-service:bootJar
+          :services:intelligence-service:bootJar
+          --no-daemon --console=plain
+      - name: Upload service jars for the Docker E2E job
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-service-jars
+          path: platform-java/services/*/build/libs/*.jar
+          if-no-files-found: error
+
+  e2e:
+    name: Docker Edge public-entry E2E
+    needs: [node, java]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - run: npm ci
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Restore packaged Java services
+        uses: actions/download-artifact@v4
+        with:
+          name: java-service-jars
+          path: platform-java/services
+      - name: Run isolated Compose E2E through the public Nginx port
+        env:
+          CI: 'true'
+          COMPOSE_PROJECT_NAME: grassland-ci-${{ github.run_id }}
+          SKIP_JAVA_BUILD: '1'
+        run: npm run e2e:ci
+      - name: Upload browser and Compose diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

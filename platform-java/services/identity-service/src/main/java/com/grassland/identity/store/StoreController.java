@@ -1,13 +1,20 @@
 package com.grassland.identity.store;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.format.DateTimeParseException;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +29,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 
 /**
  * 门店 HTTP 入口。草场身份域 Slice 2F。挂 {@code /api/organizations/{orgId}/stores}（门店属于 org，RESTful 嵌套）。
@@ -46,6 +52,7 @@ public class StoreController {
     private final StoreProfileRepository storeProfiles;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final ObjectMapper json = new ObjectMapper();
 
     public StoreController(OrgAuthorization authz, StoreRepository stores, StoreProfileRepository storeProfiles,
                            OutboxRepository outbox, TransactionalOperator transactions) {
@@ -97,9 +104,10 @@ public class StoreController {
                                                                     @RequestBody CreateStoreProfileRequest body,
                                                                     ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> transactions.transactional(
-                        storeProfiles.upsert(storeId, body.address(), body.phone(),
-                                body.businessHours(), body.description(), "active"))
+                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
+                        .then(transactions.transactional(
+                                storeProfiles.upsert(orgId, storeId, requireAddress(body.address()), body.phone(),
+                                        requireBusinessHours(body.businessHours()), body.description(), "active")))
                         .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile)))));
     }
 
@@ -108,9 +116,10 @@ public class StoreController {
                                                                  @PathVariable String storeId,
                                                                  ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.MEMBER)
-                .flatMap(account -> storeProfiles.findById(storeId)
+                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
+                        .then(storeProfiles.findByOrganizationAndId(orgId, storeId))
                         .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))))
-                        .switchIfEmpty(Mono.just(ResponseEntity.ok(Map.of("success", true, "data", null)))));
+                        .defaultIfEmpty(ResponseEntity.ok(envelope(null))));
     }
 
     @DeleteMapping("/{storeId}/profile")
@@ -118,10 +127,13 @@ public class StoreController {
                                                                     @PathVariable String storeId,
                                                                     ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> transactions.transactional(
-                        storeProfiles.upsert(storeId, null, null, null, null, "inactive"))
-                        .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", Map.of("deleted", true)))))
-                .onErrorResume(e -> Mono.just(ResponseEntity.ok(Map.of("success", true, "data", Map.of("deleted", false)))));
+                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
+                        .then(transactions.transactional(
+                                storeProfiles.deactivate(orgId, storeId)
+                                        .switchIfEmpty(Mono.error(new IdentityException(
+                                                404, "门店资料不存在")))))
+                        .map(profile -> ResponseEntity.ok(Map.of(
+                                "success", true, "data", Map.of("deleted", true)))));
     }
 
     @ExceptionHandler(IdentityException.class)
@@ -137,6 +149,78 @@ public class StoreController {
         m.put("status", store.status());
         m.put("createdAt", store.createdAt() == null ? null : store.createdAt().toString());
         return m;
+    }
+
+    private Mono<Void> requireStoreInOrganization(String orgId, String storeId) {
+        return stores.findByOrganizationAndId(orgId, storeId)
+                .switchIfEmpty(Mono.error(new IdentityException(404, "门店不存在")))
+                .then();
+    }
+
+    private String requireAddress(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IdentityException(400, "门店地址不能为空");
+        }
+        try {
+            JsonNode address = json.readTree(value);
+            JsonNode street = address == null ? null : address.get("address");
+            if (address == null || !address.isObject() || street == null
+                    || !street.isTextual() || street.asText().isBlank()) {
+                throw new IdentityException(400, "门店地址格式无效");
+            }
+            return value;
+        } catch (JsonProcessingException error) {
+            throw new IdentityException(400, "门店地址格式无效");
+        }
+    }
+
+    private String requireBusinessHours(String value) {
+        if (value == null) {
+            return null;
+        }
+        if (value.isBlank()) {
+            throw new IdentityException(400, "门店营业时间格式无效");
+        }
+        try {
+            JsonNode businessHours = json.readTree(value);
+            if (businessHours == null || !businessHours.isArray()) {
+                throw new IdentityException(400, "门店营业时间格式无效");
+            }
+            if (businessHours.size() > 7) {
+                throw new IdentityException(400, "门店营业时间格式无效");
+            }
+            Set<Integer> seenDays = new HashSet<>();
+            for (JsonNode item : businessHours) {
+                JsonNode dayOfWeek = item.get("dayOfWeek");
+                JsonNode openTime = item.get("openTime");
+                JsonNode closeTime = item.get("closeTime");
+                if (!item.isObject() || item.size() != 3
+                        || dayOfWeek == null || !dayOfWeek.isIntegralNumber() || !dayOfWeek.canConvertToInt()
+                        || dayOfWeek.intValue() < 1 || dayOfWeek.intValue() > 7
+                        || openTime == null || !openTime.isTextual()
+                        || closeTime == null || !closeTime.isTextual()
+                        || !openTime.textValue().matches("(?:[01]\\d|2[0-3]):[0-5]\\d")
+                        || !closeTime.textValue().matches("(?:[01]\\d|2[0-3]):[0-5]\\d")
+                        || !seenDays.add(dayOfWeek.intValue())) {
+                    throw new IdentityException(400, "门店营业时间格式无效");
+                }
+                LocalTime opensAt = LocalTime.parse(openTime.textValue());
+                LocalTime closesAt = LocalTime.parse(closeTime.textValue());
+                if (!opensAt.isBefore(closesAt)) {
+                    throw new IdentityException(400, "门店营业时间格式无效");
+                }
+            }
+            return json.writeValueAsString(businessHours);
+        } catch (JsonProcessingException | DateTimeParseException error) {
+            throw new IdentityException(400, "门店营业时间格式无效");
+        }
+    }
+
+    private static Map<String, Object> envelope(Map<String, Object> data) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        return body;
     }
 
     private Map<String, Object> toBody(StoreProfile profile) {

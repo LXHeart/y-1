@@ -86,7 +86,7 @@ public class KybVerificationRequestRepository {
                 UPDATE kyb_verification_request
                 SET status = :status, reviewer_account_id = CAST(:reviewer AS uuid),
                     review_note = :note, updated_at = now()
-                WHERE id = CAST(:id AS uuid)
+                WHERE id = CAST(:id AS uuid) AND status IN ('pending', 'under_review')
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("status", status).bind("reviewer", reviewerAccountId);

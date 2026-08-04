@@ -20,8 +20,8 @@ import reactor.test.StepVerifier;
 class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
 
     private static final String CONSUMER_NAME = "marketplace-trust-consumer";
-    private static final String CLAIM_TOKEN_A = "11111111-1111-1111-1111-111111111111";
-    private static final String CLAIM_TOKEN_B = "22222222-2222-2222-2222-222222222222";
+    private static final String CLAIM_TOKEN_A = "11111111-1111-1111-1111-111111111111"; // secret-scan: allow - test fixture
+    private static final String CLAIM_TOKEN_B = "22222222-2222-2222-2222-222222222222"; // secret-scan: allow - test fixture
     private static final String PAYLOAD_SHA256 = "a".repeat(64);
     private static final String CONFLICTING_PAYLOAD_SHA256 = "b".repeat(64);
 

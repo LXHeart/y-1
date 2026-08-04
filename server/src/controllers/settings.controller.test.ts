@@ -87,10 +87,10 @@ describe('settings controller', () => {
 
     loadSettingsForUserMock.mockResolvedValue({
       features: {
-        video: { provider: 'qwen', apiKey: 'secret', model: 'qwen-max' },
-        image: { apiKey: 'image-secret', model: 'qwen-vl-max' },
-        article: { apiKey: 'article-secret', model: 'qwen-plus' },
-        imageGeneration: { apiKey: 'image-generation-secret', model: 'wanx2.1-t2i-turbo' },
+        video: { provider: 'qwen', apiKey: 'secret', model: 'qwen-max' }, // secret-scan: allow - test fixture
+        image: { apiKey: 'image-secret', model: 'qwen-vl-max' }, // secret-scan: allow - test fixture
+        article: { apiKey: 'article-secret', model: 'qwen-plus' }, // secret-scan: allow - test fixture
+        imageGeneration: { apiKey: 'image-generation-secret', model: 'wanx2.1-t2i-turbo' }, // secret-scan: allow - test fixture
       },
     })
     maskSettingsSecretsMock.mockImplementation((settings) => ({
@@ -115,7 +115,7 @@ describe('settings controller', () => {
     loadHomepageSettingsForUserMock.mockResolvedValue({
       hotItems: {
         provider: 'alapi',
-        alapiToken: 'secret-token',
+        alapiToken: 'secret-token', // secret-scan: allow - test fixture
       },
     })
     maskHomepageSettingsSecretsMock.mockImplementation((settings) => ({

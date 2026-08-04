@@ -63,7 +63,8 @@ public class SessionIdentityResolver {
     }
 
     private Mono<ResolvedIdentity> loadAccount(String accountId, String sid) {
-        return db.sql("SELECT id::text, email, display_name, role, status FROM app_users WHERE id = CAST(:id AS uuid)")
+        return db.sql("SELECT id::text, email, display_name, role, status FROM app_users"
+                        + " WHERE id = CAST(:id AS uuid) AND lower(status) = 'active'")
                 .bind("id", accountId)
                 .map(row -> new AccountRow(
                         row.get("id", String.class),

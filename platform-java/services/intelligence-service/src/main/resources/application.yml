@@ -121,8 +121,8 @@ object-storage:
   endpoint: ${MINIO_ENDPOINT:http://minio:9000}
   public-base-url: ${MINIO_PUBLIC_BASE_URL:http://localhost:9002}
   region: ${MINIO_REGION:us-east-1}
-  access-key: ${MINIO_ACCESS_KEY:minioadmin}
-  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  access-key: ${MINIO_ACCESS_KEY:}
+  secret-key: ${MINIO_SECRET_KEY:}
   bucket: ${MINIO_BUCKET:grassland}
   path-style-access: ${MINIO_PATH_STYLE:true}
   auto-create-bucket: ${MINIO_AUTO_CREATE_BUCKET:true}

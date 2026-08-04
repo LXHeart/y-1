@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 /** 验签铁律：任何失败一律 empty（不抛），调用方据此回退 cookie。 */
 class IdentityAssertionSignerTest {
 
-    private static final byte[] SECRET = "super-secret-key".getBytes();
+    private static final byte[] SECRET = "super-secret-key".getBytes(); // secret-scan: allow - test fixture
     private static final Instant NOW = Instant.parse("2026-07-23T12:00:00Z");
 
     private final IdentityAssertionSigner signer = new IdentityAssertionSigner(SECRET, "grassland-internal", Duration.ofSeconds(5));

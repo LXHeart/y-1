@@ -47,10 +47,11 @@ class LedgerRepositoryIT extends com.grassland.finance.FinanceItSupport {
 
         assertThat(ledger.sumBalance(LedgerAccount.Type.ESCROW, org).block()).isEqualTo(150L);
         // FEE 无 owner：sumBalance(type, null)
+        long feeBalanceBefore = ledger.sumBalance(LedgerAccount.Type.FEE, null).block();
         post(org, JournalEntry.Type.CAPTURE, "c1-" + org, List.of(
                 Posting.debit(LedgerAccount.reserve(org, ref), 50),
                 Posting.credit(LedgerAccount.fee(), 50)));
-        assertThat(ledger.sumBalance(LedgerAccount.Type.FEE, null).block()).isEqualTo(50L);
+        assertThat(ledger.sumBalance(LedgerAccount.Type.FEE, null).block()).isEqualTo(feeBalanceBefore + 50L);
     }
 
     @Test

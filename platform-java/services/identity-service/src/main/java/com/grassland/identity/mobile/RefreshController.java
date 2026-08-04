@@ -18,7 +18,7 @@ import reactor.core.publisher.Mono;
  * <p>token 两种给法：{@code Authorization: Bearer <refresh_token>} 头，或 JSON body {@code refresh_token}
  * （设计文档 §3.4）。因此<b>不声明 consumes</b>——Bearer-only 调用可能没有 JSON body/Content-Type。
  *
- * <p>IP 取 {@link DeviceFingerprint}（XFF 首段感知）而非 LoginController 的裸 remote address：
+ * <p>IP 取 {@link DeviceFingerprint}（受控 Nginx 重建的 XFF 最右一段）而非裸 remote address：
  * 移动端经 edge-bff 进来时 remote address 恒为容器网络 IP，限流会全量打到同一键。
  */
 @RestController

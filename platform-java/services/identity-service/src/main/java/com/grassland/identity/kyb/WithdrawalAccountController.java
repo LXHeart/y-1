@@ -68,10 +68,10 @@ public class WithdrawalAccountController {
                                                               @RequestBody CreateAccountRequest body,
                                                               ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> Mono.fromCallable(() -> encryptAccountNumber(body))
+                .flatMap(account -> Mono.fromCallable(() -> prepareAccount(body))
                         .flatMap(cipher -> transactions.transactional(
-                                accounts.create(orgId, body.accountType(), body.accountName(),
-                                        cipher, body.bankName(), body.branchName()))))
+                                accounts.create(orgId, cipher.accountType(), body.accountName().trim(),
+                                        cipher.encryptedNumber(), body.bankName(), body.branchName()))))
                 .map(acc -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(acc))));
     }
 
@@ -84,6 +84,18 @@ public class WithdrawalAccountController {
             throw new IdentityException(400, "收款账号不能为空");
         }
         return crypto.encrypt(body.accountNumber());
+    }
+
+    private PreparedAccount prepareAccount(CreateAccountRequest body) {
+        if (body.accountName() == null || body.accountName().isBlank()) {
+            throw new IdentityException(400, "账户名称不能为空");
+        }
+        try {
+            String type = WithdrawalAccountType.fromRequest(body.accountType()).dbValue();
+            return new PreparedAccount(type, encryptAccountNumber(body));
+        } catch (IllegalArgumentException error) {
+            throw new IdentityException(400, "账户类型无效");
+        }
     }
 
     @GetMapping
@@ -101,10 +113,12 @@ public class WithdrawalAccountController {
                                                               ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> Mono.fromCallable(() -> new Object[]{
-                                KybSubmissionService.parseUuid(id, "账户 ID"), encryptAccountNumber(body)})
+                                KybSubmissionService.parseUuid(id, "账户 ID"), prepareAccount(body)})
                         .flatMap(prepared -> transactions.transactional(
-                                accounts.update((UUID) prepared[0], orgId, body.accountType(), body.accountName(),
-                                        (String) prepared[1], body.bankName(), body.branchName()))))
+                                accounts.update((UUID) prepared[0], orgId,
+                                        ((PreparedAccount) prepared[1]).accountType(), body.accountName().trim(),
+                                        ((PreparedAccount) prepared[1]).encryptedNumber(),
+                                        body.bankName(), body.branchName()))))
                 .switchIfEmpty(Mono.error(new IdentityException(409, "账户不存在或当前状态不可编辑")))
                 .map(acc -> ResponseEntity.ok(Map.of("success", true, "data", toBody(acc))));
     }
@@ -133,8 +147,14 @@ public class WithdrawalAccountController {
                     // 先按 org 确认归属，再 setDefault——否则可把他人账户置为本 org 默认。
                     return accounts.findByIdAndOrganization(accountId, orgId)
                             .switchIfEmpty(Mono.error(new IdentityException(404, "账户不存在")))
+                            .flatMap(existing -> WithdrawalAccountStatus.fromDb(existing.status())
+                                            == WithdrawalAccountStatus.APPROVED
+                                    ? Mono.just(existing)
+                                    : Mono.error(new IdentityException(409, "仅已通过审核的账户可设为默认")))
                             .flatMap(existing -> transactions.transactional(
-                                    accounts.setDefault(accountId, orgId)));
+                                    accounts.setDefault(accountId, orgId)
+                                            .switchIfEmpty(Mono.error(new IdentityException(
+                                                    409, "账户状态已变化，请刷新后重试")))));
                 })
                 .map(acc -> ResponseEntity.ok(Map.of("success", true, "data", toBody(acc))));
     }
@@ -199,9 +219,13 @@ public class WithdrawalAccountController {
         m.put("status", acc.status());
         m.put("submittedAt", acc.submittedAt() == null ? null : acc.submittedAt().toString());
         m.put("reviewedAt", acc.reviewedAt() == null ? null : acc.reviewedAt().toString());
+        m.put("reviewerAccountId", acc.reviewerAccountId());
+        m.put("reviewNote", acc.reviewNote());
         m.put("createdAt", acc.createdAt() == null ? null : acc.createdAt().toString());
         return m;
     }
+
+    private record PreparedAccount(String accountType, String encryptedNumber) {}
 
     /**
      * 创建/更新请求体。

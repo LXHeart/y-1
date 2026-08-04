@@ -72,7 +72,7 @@ public class CurrentAccountResolver {
                 IdentityAssertion assertion = verified.get();
                 return userLookup.findById(assertion.accountId())
                         .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")))
-                        .map(user -> new SessionPrincipal(user, assertion.sessionToken()));
+                        .flatMap(user -> activePrincipal(user, assertion.sessionToken()));
             }
             log.warn("identity assertion present but failed verification; falling back to cookie");
         }
@@ -88,7 +88,14 @@ public class CurrentAccountResolver {
                 .switchIfEmpty(Mono.error(new IdentityException(401, "请先登录")))
                 .flatMap(userLookup::findById)
                 .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")))
-                .map(user -> new SessionPrincipal(user, sid));
+                .flatMap(user -> activePrincipal(user, sid));
+    }
+
+    private Mono<SessionPrincipal> activePrincipal(AuthUser user, String sid) {
+        if (!user.isActive()) {
+            return Mono.error(new IdentityException(403, "当前账号不可用"));
+        }
+        return Mono.just(new SessionPrincipal(user, sid));
     }
 
     /**

@@ -206,7 +206,7 @@ describe('analyzeVideoContent', () => {
 
     await analyzeVideoContent('https://backend.example.com/api/douyin/proxy/token', {
       analysisConfig: {
-        apiToken: 'request-token',
+        apiToken: 'request-token', // secret-scan: allow - test fixture
       },
     })
 
@@ -292,7 +292,7 @@ describe('analyzeVideoContent', () => {
     }))
     globalThis.fetch = fetchMock
     process.env.QWEN_ANALYSIS_BASE_URL = 'https://dashscope.example.com/compatible-mode/v1'
-    process.env.QWEN_ANALYSIS_API_KEY = 'qwen-env-key'
+    process.env.QWEN_ANALYSIS_API_KEY = 'qwen-env-key' // secret-scan: allow - test fixture
     process.env.QWEN_ANALYSIS_MODEL = 'qwen3.5-flash'
 
     const { analyzeVideoContent } = await import('./video-analysis.service.js')
@@ -333,7 +333,7 @@ describe('analyzeVideoContent', () => {
         video: {
           provider: 'qwen',
           baseUrl: 'https://video-qwen.example.com/v1',
-          apiKey: 'saved-qwen-key',
+          apiKey: 'saved-qwen-key', // secret-scan: allow - test fixture
           model: 'qwen-plus',
         },
         image: {},
@@ -368,7 +368,7 @@ describe('analyzeVideoContent', () => {
         video: {
           provider: 'coze',
           baseUrl: 'https://video-coze.example.com/run',
-          apiToken: 'saved-coze-token',
+          apiToken: 'saved-coze-token', // secret-scan: allow - test fixture
         },
         image: {},
         article: {},
@@ -404,7 +404,7 @@ describe('analyzeVideoContent', () => {
         video: {
           provider: 'coze',
           baseUrl: 'https://global.example.com/run',
-          apiToken: 'global-token',
+          apiToken: 'global-token', // secret-scan: allow - test fixture
         },
         image: {},
         article: {},
@@ -415,7 +415,7 @@ describe('analyzeVideoContent', () => {
         video: {
           provider: 'qwen',
           baseUrl: 'https://user-video.example.com/v1',
-          apiKey: 'user-qwen-key',
+          apiKey: 'user-qwen-key', // secret-scan: allow - test fixture
           model: 'qwen-user-model',
         },
         image: {},
@@ -441,7 +441,7 @@ describe('analyzeVideoContent', () => {
 
     await expect(resolveFeatureProviderConfig('video', 'qwen', 'user-1')).resolves.toMatchObject({
       baseUrl: 'https://user-video.example.com/v1',
-      apiKey: 'user-qwen-key',
+      apiKey: 'user-qwen-key', // secret-scan: allow - test fixture
       model: 'qwen-user-model',
       dispatcher: expect.any(Object),
     })
@@ -449,7 +449,7 @@ describe('analyzeVideoContent', () => {
 
   it('uses dedicated image-generation env defaults and does not reuse text model fallback', async () => {
     process.env.IMAGE_GENERATION_BASE_URL = 'https://images.example.com/v1'
-    process.env.IMAGE_GENERATION_API_KEY = 'image-gen-env-key'
+    process.env.IMAGE_GENERATION_API_KEY = 'image-gen-env-key' // secret-scan: allow - test fixture
     process.env.IMAGE_GENERATION_MODEL = ''
 
     const { resolveFeatureProviderConfig } = await import('./video-analysis.service.js')
@@ -463,7 +463,7 @@ describe('analyzeVideoContent', () => {
       requireModel: false,
     })).resolves.toMatchObject({
       baseUrl: 'https://images.example.com/v1',
-      apiKey: 'image-gen-env-key',
+      apiKey: 'image-gen-env-key', // secret-scan: allow - test fixture
       model: undefined,
       dispatcher: expect.any(Object),
     })
@@ -477,7 +477,7 @@ describe('analyzeVideoContent', () => {
         article: {},
         imageGeneration: {
           baseUrl: 'https://user-images.example.com/v1',
-          apiKey: 'user-image-key',
+          apiKey: 'user-image-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
       },
@@ -487,7 +487,7 @@ describe('analyzeVideoContent', () => {
 
     await expect(resolveFeatureProviderConfig('imageGeneration', 'qwen', 'user-1')).resolves.toMatchObject({
       baseUrl: 'https://user-images.example.com/v1',
-      apiKey: 'user-image-key',
+      apiKey: 'user-image-key', // secret-scan: allow - test fixture
       model: 'wanx2.1-t2i-turbo',
       dispatcher: expect.any(Object),
     })
@@ -502,7 +502,7 @@ describe('analyzeVideoContent', () => {
     }))
     globalThis.fetch = fetchMock
     process.env.VIDEO_ANALYSIS_API_BASE_URL = 'https://legacy-coze.example.com/run'
-    process.env.VIDEO_ANALYSIS_API_TOKEN = 'legacy-token'
+    process.env.VIDEO_ANALYSIS_API_TOKEN = 'legacy-token' // secret-scan: allow - test fixture
 
     const { analyzeVideoContent } = await import('./video-analysis.service.js')
 

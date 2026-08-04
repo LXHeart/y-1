@@ -168,6 +168,16 @@ class SessionIdentityResolverIT {
                 .verifyComplete();
     }
 
+    @Test
+    void inactiveAccountIsEmptyEvenWhenSessionIsStillValid() {
+        Seeded seeded = seed("suspended@grassland.local", "merchant");
+        db.sql("UPDATE app_users SET status = 'suspended' WHERE id = CAST(:id AS uuid)")
+                .bind("id", seeded.accountId).then().block();
+
+        StepVerifier.create(resolver.resolve(requestWithCookie(seeded.cookie)))
+                .verifyComplete();
+    }
+
     /** seed 账号 + 未过期 session（+可选 identity_session 行），返回登录态 cookie。 */
     private Seeded seed(String email, String activeType) {
         String accountId = UUID.randomUUID().toString();

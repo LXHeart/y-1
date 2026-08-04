@@ -128,7 +128,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", sign(BYOK_ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","provider":"openai-compatible","baseUrl":"%s","model":"byok-model","apiKey":"sk-byok-secret"}
+                        {"capability":"text","provider":"openai-compatible","baseUrl":"%s","model":"byok-model","apiKey":"sk-test-byok-secret"}
                         """.formatted(QWEN.baseUrl()))
                 .exchange().expectStatus().isCreated();
 

@@ -3,6 +3,7 @@ package com.grassland.identity.kyb;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
+import com.grassland.identity.organization.OrganizationRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -34,15 +35,21 @@ import reactor.core.publisher.Mono;
 public class MerchantAttachmentController {
 
     private final OrgAuthorization authz;
+    private final OrganizationRepository organizations;
     private final MerchantAttachmentRepository attachments;
+    private final MerchantProfileRepository profiles;
     private final TransactionalOperator transactions;
 
     public MerchantAttachmentController(
             OrgAuthorization authz,
+            OrganizationRepository organizations,
             MerchantAttachmentRepository attachments,
+            MerchantProfileRepository profiles,
             TransactionalOperator transactions) {
         this.authz = authz;
+        this.organizations = organizations;
         this.attachments = attachments;
+        this.profiles = profiles;
         this.transactions = transactions;
     }
 
@@ -51,17 +58,19 @@ public class MerchantAttachmentController {
                                                               @RequestBody CreateAttachmentRequest body,
                                                               ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> {
-                    MerchantAttachmentType type = MerchantAttachmentType.fromRequest(body.attachmentType());
-                    // 证件类附件唯一约束校验
-                    if (type.isDocumentType()) {
-                        return attachments.findByOrganizationAndType(orgId, type.dbValue())
-                                .flatMap(existing -> Mono.<Map<String, Object>>error(
-                                        new IdentityException(409, "该类型附件已存在，请先删除后再上传")))
-                                .switchIfEmpty(Mono.defer(() -> createAttachment(orgId, type, body, account.id())));
-                    }
-                    return createAttachment(orgId, type, body, account.id());
-                })
+                .flatMap(account -> transactions.transactional(
+                        lockOrganization(orgId).then(requireAttachmentsEditable(orgId)).then(Mono.defer(() -> {
+                            MerchantAttachmentType type = MerchantAttachmentType.fromRequest(body.attachmentType());
+                            // 证件类附件唯一约束校验
+                            if (type.isDocumentType()) {
+                                return attachments.findByOrganizationAndType(orgId, type.dbValue())
+                                        .flatMap(existing -> Mono.<Map<String, Object>>error(
+                                                new IdentityException(409, "该类型附件已存在，请先删除后再上传")))
+                                        .switchIfEmpty(Mono.defer(() ->
+                                                createAttachment(orgId, type, body, account.id())));
+                            }
+                            return createAttachment(orgId, type, body, account.id());
+                        }))))
                 .map(result -> ResponseEntity.status(201).body(Map.of("success", true, "data", result)));
     }
 
@@ -73,8 +82,7 @@ public class MerchantAttachmentController {
     private Mono<Map<String, Object>> createAttachment(String orgId, MerchantAttachmentType type,
                                                         CreateAttachmentRequest body, String accountId) {
         UUID mediaRefId = KybSubmissionService.parseUuid(body.mediaReferenceId(), "媒体引用 ID");
-        return transactions.transactional(
-                attachments.create(orgId, type.dbValue(), mediaRefId, body.mimeType(), body.sizeBytes(), accountId))
+        return attachments.create(orgId, type.dbValue(), mediaRefId, body.mimeType(), body.sizeBytes(), accountId)
                 .map(this::toBody);
     }
 
@@ -99,12 +107,35 @@ public class MerchantAttachmentController {
                                                            ServerHttpRequest request) {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> transactions.transactional(
-                        attachments.deleteByIdAndOrganization(
-                                        KybSubmissionService.parseUuid(id, "附件 ID"), orgId)
-                                .flatMap(deleted -> deleted > 0
-                                        ? Mono.just(ResponseEntity.ok(Map.of("success", true,
-                                                "data", Map.of("deleted", true))))
-                                        : Mono.error(new IdentityException(404, "附件不存在")))));
+                        lockOrganization(orgId).then(requireAttachmentsEditable(orgId))
+                                .then(
+                                        attachments.deleteByIdAndOrganization(
+                                                        KybSubmissionService.parseUuid(id, "附件 ID"), orgId)
+                                                .flatMap(deleted -> deleted > 0
+                                                        ? Mono.just(ResponseEntity.ok(Map.of("success", true,
+                                                                "data", Map.of("deleted", true))))
+                                                        : Mono.error(new IdentityException(404, "附件不存在"))))));
+    }
+
+    private Mono<Void> requireAttachmentsEditable(String orgId) {
+        return profiles.findById(orgId)
+                .flatMap(profile -> {
+                    MerchantProfileStatus status = MerchantProfileStatus.fromDb(profile.status());
+                    if (status.isUnderReview()) {
+                        return Mono.error(new IdentityException(409, "资料审核中，暂不可变更附件"));
+                    }
+                    if (!status.isEditable()) {
+                        return Mono.error(new IdentityException(409, "资料已通过审核，暂不可变更附件"));
+                    }
+                    return Mono.empty();
+                })
+                .then();
+    }
+
+    private Mono<Void> lockOrganization(String orgId) {
+        return organizations.findByIdForUpdate(orgId)
+                .switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
+                .then();
     }
 
     @ExceptionHandler(IdentityException.class)

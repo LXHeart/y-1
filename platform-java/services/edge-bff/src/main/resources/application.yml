@@ -19,6 +19,11 @@ management:
 
 edge:
   default-upstream: legacy
+  security:
+    # 与 legacy Express 的全局写请求 Origin/Referer 门禁同口径；0/false 仅用于应急兼容排障。
+    csrf-origin-check: ${SECURITY_CSRF_ORIGIN_CHECK:1}
+    allowed-origins: ${CORS_ORIGIN:},${PUBLIC_BACKEND_ORIGIN:}
+    internal-identity-header: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
   identity:
     # true 时 edge-bff 直读 session 表签发内部身份断言（HLD 7.4）；与 identity-assertion.enabled 同开。
     from-database-url: ${EDGE_IDENTITY_FROM_DATABASE_URL:false}
@@ -54,6 +59,17 @@ edge:
       path: /api/auth/register
       upstream: identity
       enabled: ${EDGE_ROUTE_AUTH_REGISTER_IDENTITY:true}
+    # 移动端 refresh/revoke 必须直达 identity；access token 换内部断言仍由后续 AccessTokenFilter 提供。
+    - method: POST
+      path: /api/auth/refresh
+      upstream: identity
+      exact: true
+      enabled: ${EDGE_ROUTE_AUTH_REFRESH_IDENTITY:true}
+    - method: POST
+      path: /api/auth/revoke
+      upstream: identity
+      exact: true
+      enabled: ${EDGE_ROUTE_AUTH_REVOKE_IDENTITY:true}
     # 任务大厅（task-catalog + application，Epic 4 Slice 4A/4B）→ marketplace-service。
     # 无 method：匹配所有方法；path 前缀覆盖 /api/tasks 与 /api/tasks/{id}/applications/* 全部子路径。
     # marketplace 为内部上游 → InternalAssertionFilter 签发 X-Grassland-Identity（HLD 7.4）。

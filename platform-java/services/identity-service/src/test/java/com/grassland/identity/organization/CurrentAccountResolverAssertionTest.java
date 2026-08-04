@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.grassland.identity.IdentityItSupport;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.auth.IdentityException;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,6 +65,27 @@ class CurrentAccountResolverAssertionTest extends IdentityItSupport {
         StepVerifier.create(resolver.resolvePrincipal(request(tokenForB, a.cookie())))
                 .assertNext(p -> assertThat(p.user().id()).isEqualTo(b.accountId()))
                 .verifyComplete();
+    }
+
+    @Test
+    void inactiveAccountIsRejectedForAssertionAndCookiePaths() {
+        Seeded seeded = seedAccount("assert-inactive@grassland.local");
+        db.sql("UPDATE app_users SET status = 'suspended' WHERE id = CAST(:id AS uuid)")
+                .bind("id", seeded.accountId()).then().block();
+
+        String token = sign(seeded.accountId(), "merchant", "sid-from-bff");
+        StepVerifier.create(resolver.resolvePrincipal(request(token, null)))
+                .expectErrorSatisfies(error -> assertInactive(error))
+                .verify();
+        StepVerifier.create(resolver.resolvePrincipal(request(null, seeded.cookie())))
+                .expectErrorSatisfies(error -> assertInactive(error))
+                .verify();
+    }
+
+    private static void assertInactive(Throwable error) {
+        assertThat(error).isInstanceOf(IdentityException.class);
+        assertThat(((IdentityException) error).status()).isEqualTo(403);
+        assertThat(error).hasMessage("当前账号不可用");
     }
 
     private String sign(String accountId, String active, String sid) {

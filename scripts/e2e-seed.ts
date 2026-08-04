@@ -14,8 +14,8 @@
 import bcrypt from 'bcryptjs'
 import { queryDb } from '../server/src/lib/db'
 
-/** 统一测试口令——e2e 脚本与手工验证共用。 */
-const PASSWORD = 'E2ePass!2026'
+/** 统一测试口令——e2e 脚本与手工验证共用，可通过 E2E_PASSWORD 覆盖。 */
+const PASSWORD = process.env.E2E_PASSWORD || 'test-password-2026'
 const MERCHANT_EMAIL = 'e2e-merchant@test.local'
 const CS_EMAIL = 'e2e-cs@test.local'
 /** 平台管理员：D-05 权限审核队列的门禁是 `app_users.role == 'admin'`。 */

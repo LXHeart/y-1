@@ -33,7 +33,7 @@ class WithdrawalAccountControllerIT extends IdentityItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Cookie", "y1.sid=" + cookie)
                 .bodyValue("""
-                        {"accountType":"bank","accountName":"草场测试商贸有限公司","accountNumber":"%s",
+                        {"accountType":"bank_card","accountName":"草场测试商贸有限公司","accountNumber":"%s",
                          "bankName":"招商银行","branchName":"上海分行"}
                         """.formatted(accountNumber))
                 .exchange()
@@ -74,8 +74,42 @@ class WithdrawalAccountControllerIT extends IdentityItSupport {
         client().post().uri("/api/organizations/" + orgId + "/withdrawal-accounts")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Cookie", "y1.sid=" + owner.cookie())
-                .bodyValue("{\"accountType\":\"bank\",\"accountName\":\"空账号\",\"bankName\":\"招商银行\"}")
+                .bodyValue("{\"accountType\":\"bank_card\",\"accountName\":\"空账号\",\"bankName\":\"招商银行\"}")
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("非法账户类型或空账户名 → 400")
+    void invalidTypeOrBlankNameIsBadRequest() {
+        var owner = seedAccount("wd-invalid-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "Withdrawal Invalid Org");
+        String cookie = "y1.sid=" + owner.cookie();
+
+        client().post().uri("/api/organizations/" + orgId + "/withdrawal-accounts")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue("{\"accountType\":\"crypto\",\"accountName\":\"测试\",\"accountNumber\":\"1234\"}")
+                .exchange().expectStatus().isBadRequest();
+
+        client().post().uri("/api/organizations/" + orgId + "/withdrawal-accounts")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue("{\"accountType\":\"bank_card\",\"accountName\":\"  \",\"accountNumber\":\"1234\"}")
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("pending 账户不能设为默认，失败不改变默认账户")
+    void pendingAccountCannotBecomeDefault() {
+        var owner = seedAccount("wd-default-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "Withdrawal Default Org");
+        String accountId = createAccount(orgId, owner.cookie(), ACCOUNT_NUMBER);
+
+        client().post().uri("/api/organizations/" + orgId + "/withdrawal-accounts/" + accountId + "/set-default")
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange().expectStatus().isEqualTo(409);
+
+        Boolean isDefault = db.sql("SELECT is_default FROM withdrawal_account WHERE id = CAST(:id AS uuid)")
+                .bind("id", accountId).map(row -> row.get(0, Boolean.class)).one().block();
+        assertThat(isDefault).isFalse();
     }
 
     @Test
@@ -95,7 +129,7 @@ class WithdrawalAccountControllerIT extends IdentityItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Cookie", attackerCookie)
                 .bodyValue("""
-                        {"accountType":"bank","accountName":"攻击者","accountNumber":"6222029999999999999",
+                        {"accountType":"bank_card","accountName":"攻击者","accountNumber":"6222029999999999999",
                          "bankName":"攻击者银行"}
                         """)
                 .exchange().expectStatus().isEqualTo(409);
@@ -150,7 +184,7 @@ class WithdrawalAccountControllerIT extends IdentityItSupport {
         client().put().uri("/api/organizations/" + orgId + "/withdrawal-accounts/" + accountId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Cookie", "y1.sid=" + owner.cookie())
-                .bodyValue("{\"accountType\":\"bank\",\"accountName\":\"改名\",\"accountNumber\":\"" + ACCOUNT_NUMBER + "\"}")
+                .bodyValue("{\"accountType\":\"bank_card\",\"accountName\":\"改名\",\"accountNumber\":\"" + ACCOUNT_NUMBER + "\"}")
                 .exchange().expectStatus().isEqualTo(409);
     }
 

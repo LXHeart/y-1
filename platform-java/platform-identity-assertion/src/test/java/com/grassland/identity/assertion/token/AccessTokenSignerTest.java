@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 /** 验签铁律：任何失败一律 empty（不抛），调用方据此降级匿名。 */
 class AccessTokenSignerTest {
 
-    private static final byte[] SECRET = "mobile-access-token-secret-32chars!!".getBytes();
+    private static final byte[] SECRET = "mobile-access-token-secret-32chars!!".getBytes(); // secret-scan: allow - test fixture
     private static final Instant NOW = Instant.parse("2026-08-04T08:00:00Z");
 
     private final AccessTokenSigner signer = new AccessTokenSigner(SECRET, "access-token-v1", Duration.ofSeconds(5));

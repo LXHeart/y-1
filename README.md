@@ -132,7 +132,7 @@ npm run start
 
 ## Docker Compose 部署
 
-适用于服务器部署。前后端拆分容器，前端通过 Nginx 反向代理 `/api` 到后端。
+适用于服务器部署。公网 API 统一经 Nginx → Edge BFF；Edge 将已迁移路由送到 Java 领域服务，其余透明转发 Express legacy/worker。
 
 > 当前 Compose 方案不包含 Playwright 浏览器登录增强 / browser fallback。
 
@@ -142,7 +142,7 @@ npm run start
 cp .env.docker.example .env.docker
 ```
 
-编辑 `.env.docker`，配置 `FRONTEND_ORIGIN`、`PUBLIC_BACKEND_ORIGIN`、`CORS_ORIGIN`、`DATABASE_URL` 等。
+编辑 `.env.docker`，配置 `FRONTEND_ORIGIN`、`PUBLIC_BACKEND_ORIGIN`、`CORS_ORIGIN`、`DATABASE_URL` 等；首次启动还必须填写 `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY` 四个对象存储凭据，Compose 会在缺失时 fail-fast。
 
 ### 2. 构建并启动
 
@@ -151,35 +151,57 @@ docker compose --env-file .env.docker build
 docker compose --env-file .env.docker up -d
 ```
 
-默认映射：前端 `8080 -> 80`，后端 `3000 -> 3000`。可通过 `FRONTEND_PORT` / `BACKEND_PORT` 调整。
+默认公网映射只有前端 `8080 -> 80` 和对象存储上传代理 `9002`。Express `3000` 与 Edge `8081` 只绑定 `127.0.0.1`，用于本机诊断和 Vite 开发。
 
 ### 3. 验证
 
 ```bash
-docker compose --env-file .env.docker config   # 检查配置
-curl http://<host>:<BACKEND_PORT>/health        # 检查后端健康
+docker compose --env-file .env.docker config --quiet
+curl http://<host>:<FRONTEND_PORT>/health
+curl -i http://<host>:<FRONTEND_PORT>/api/auth/captcha
 ```
 
-### 4. 可选：Java Edge BFF 评估（Epic 0/1）
+### 4. Edge BFF 切流与回退
 
-草场后端正向 Java 微服务渐进迁移。本仓库新增独立的 `platform-java/` 工程，并附带一个**可选**的 `edge-bff`（Spring Cloud Gateway WebFlux）透明代理。
+`edge-bff` 是默认 API 入口，保留 Cookie、SSE、Multipart、Range 和 legacy wire 契约。对象存储 presigned PUT 仍按设计直传 `9002`，不经过 BFF。
 
-- 默认流量**不变**：Nginx 仍直连 `backend:3000`。
-- `edge-bff` 仅在使用 `--profile java-edge` 时启动，默认映射 `EDGE_BFF_PORT=8081`。
-- 启用后可通过 `http://localhost:8081/api/**` 和 `http://localhost:8081/health` 并行验证，不影响现有入口。
+- 单路由回退：设置对应 `EDGE_ROUTE_*` 为 `false`，recreate `edge-bff`。
+- 整入口应急回退：设置 `API_UPSTREAM=backend:3000`，用 `--no-deps` 只 recreate `frontend`。
+- TLS 在上游 LB/ingress 终止时设置 `PUBLIC_FORWARDED_PROTO=https` 和实际的 `TRUSTED_PROXY_CIDR`；Nginx 会覆盖协议头并从可信代理链重建客户端 IP。
+- 不配置自动 upstream failover，避免非幂等 POST 被两个上游重复执行。
+- 整入口回退时 Java 独占路径会降级为 legacy 404，不是功能等价回滚。
 
 ```bash
 # 本地 Java 构建（需要 JDK 25；可用 brew install openjdk@25）
 cd platform-java
 ./gradlew clean build
 
-# Compose 可选 BFF 评估（仍保留 backend 与 Nginx 直连）
-EDGE_BFF_PORT=8081 docker compose --env-file .env.docker --profile java-edge up -d --build backend edge-bff
+# 默认栈已包含 Edge 与五个 Java 领域服务
+docker compose --env-file .env.docker up -d --build
 curl -i http://localhost:8081/health
 curl -i http://localhost:8081/api/auth/captcha
+
+# 整入口应急回退（显式操作，恢复时改回 edge-bff:8080）
+API_UPSTREAM=backend:3000 docker compose --env-file .env.docker up -d --no-deps --force-recreate frontend
 ```
 
-兼容约束和契约矩阵见 [`docs/草场旧API兼容契约矩阵.md`](docs/草场旧API兼容契约矩阵.md)。回滚方式：停用 `java-edge` Profile，流量自动回到 Nginx → Express。
+### 5. CI 与公共入口 E2E
+
+本地可以用与 GitHub Actions 相同的隔离 Compose 流程验证公共 Nginx → Edge BFF → Java 服务入口：
+
+```bash
+# 需要 Docker、Node 20+、Chromium，以及用于 Gradle toolchain 的 JDK 25
+npx playwright install chromium
+npm run e2e:ci
+```
+
+`scripts/ci-e2e.sh` 会创建独立的 Compose project，生成临时密钥和 E2E 账号，先运行 legacy migration，再构建六个 Java `bootJar`、启动完整栈并执行 Playwright。macOS 默认 Java 8/21 时会自动查找 Homebrew JDK 25；也可以显式设置 `JAVA_HOME`。E2E 使用不可调用的占位 Qwen 地址，仅用于通过 Intelligence 的启动配置校验，不会发起模型请求。
+
+失败时脚本会保存 `test-artifacts/compose.log`、`test-artifacts/compose-ps.txt` 和 Playwright 报告；无论成功或失败都会清理隔离 Compose project 及卷。GitHub Actions 的 `node`、`java`、`e2e` 三个 job 会分别执行已跟踪文件密钥扫描、类型检查、全源覆盖率测试与构建；全量 Gradle 测试与 jar artifact；公共入口浏览器测试。
+
+Node 全源覆盖率本次实测约为 statements/lines 47.7%、branches 75.1%、functions 68.9%；CI 保留 statements/lines 46%、branches 74%、functions 66% 的全局 ratchet，并对 Git diff 中变更的可执行行执行 80% 门禁、上传 HTML 报告。总体覆盖率仍未达到 80%，不能把 CI 绿色解释为全仓覆盖率目标已完成。
+
+兼容约束和契约矩阵见 [`docs/草场旧API兼容契约矩阵.md`](docs/草场旧API兼容契约矩阵.md)。可观测性组件按需使用 `--profile observability` 启动。
 
 ## 环境变量
 

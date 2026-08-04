@@ -172,14 +172,14 @@ describe('app login rate limit', () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const response = await request(app)
         .post('/api/auth/login')
-        .send({ email: 'inactive@example.com', password: 'inactivepass1' })
+        .send({ email: 'inactive@example.com', password: 'inactivepass1' }) // secret-scan: allow - test fixture
 
       expect(response.status).toBe(403)
     }
 
     const response = await request(app)
       .post('/api/auth/login')
-      .send({ email: 'inactive@example.com', password: 'inactivepass1' })
+      .send({ email: 'inactive@example.com', password: 'inactivepass1' }) // secret-scan: allow - test fixture
 
     expect(response.status).toBe(429)
     expect(response.headers['ratelimit-limit']).toBe('5')

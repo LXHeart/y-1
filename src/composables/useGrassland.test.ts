@@ -97,6 +97,132 @@ describe('身份端点请求契约', () => {
   })
 })
 
+describe('KYB 请求契约', () => {
+  test('资料不存在的 200/null 原样返回，鉴权和服务端错误不会伪装成未创建', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data: null }),
+      })
+      .mockResolvedValueOnce({
+        ok: false, status: 403, headers: { get: () => 'application/json' },
+        json: async () => ({ success: false, error: '无权访问该组织' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false, status: 500, headers: { get: () => 'application/json' },
+        json: async () => ({ success: false, error: '服务暂不可用' }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const { getMerchantProfile, getStoreProfile } = useGrassland()
+
+    await expect(getMerchantProfile('org-1')).resolves.toBeNull()
+    await expect(getMerchantProfile('org-1')).rejects.toThrow('无权访问该组织')
+    await expect(getStoreProfile('org-1', 'store-1')).rejects.toThrow('服务暂不可用')
+  })
+
+  test('商家资料创建用 POST，更新用 PUT，地址保持结构化对象', async () => {
+    const spy = mockFetchOk()
+    const address = { province: '上海市', city: '上海市', district: '静安区', address: '南京西路 1 号' }
+    const { createMerchantProfile, updateMerchantProfile } = useGrassland()
+
+    await createMerchantProfile('org-1', { legalName: '草场商贸', businessAddress: address })
+    await updateMerchantProfile('org-1', { legalName: '草场商贸二店', businessAddress: address })
+
+    expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/merchant-profile')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect(bodyOf(spy, 0).businessAddress).toEqual(address)
+    expect(spy.mock.calls[1][0]).toBe('/api/organizations/org-1/merchant-profile')
+    expect((spy.mock.calls[1][1] as RequestInit).method).toBe('PUT')
+    expect(bodyOf(spy, 1).businessAddress).toEqual(address)
+  })
+
+  test('创建收款账户发送 accountNumber，并可显式提交审核', async () => {
+    const spy = mockFetchOk()
+    const { createWithdrawalAccount, submitWithdrawalAccount } = useGrassland()
+
+    await createWithdrawalAccount('org-1', {
+      accountType: 'bank_card', accountName: '草场商贸', accountNumber: '6222021234567890',
+    })
+    await submitWithdrawalAccount('org-1', 'account-1')
+
+    expect(bodyOf(spy, 0)).toEqual({
+      accountType: 'bank_card', accountName: '草场商贸', accountNumber: '6222021234567890',
+    })
+    expect(bodyOf(spy, 0)).not.toHaveProperty('accountNumberEncrypted')
+    expect(spy.mock.calls[1][0]).toBe('/api/organizations/org-1/withdrawal-accounts/account-1/submit')
+    expect((spy.mock.calls[1][1] as RequestInit).method).toBe('POST')
+  })
+
+  test('门店资料保存使用后端已有的 POST 契约', async () => {
+    const spy = mockFetchOk()
+    const { createStoreProfile } = useGrassland()
+
+    await createStoreProfile('org-1', 'store-1', { address: '{"address":"南京西路 1 号"}' })
+
+    expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/stores/store-1/profile')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+  })
+
+  test('商家附件以 user_upload 申请媒体票据并绑定 KYB 领域', async () => {
+    const ticket = {
+      id: 'media-1', objectKey: 'media/user_upload/media-1', uploadUrl: 'http://storage.test/media-1',
+      method: 'PUT', headers: { 'Content-Type': 'image/png' }, expiresAt: null,
+    }
+    const spy = vi.fn().mockImplementation(async (url: string) => {
+      if (url === ticket.uploadUrl) return { ok: true, status: 200 }
+      const data = url === '/api/media/upload-tickets'
+        ? ticket
+        : url === '/api/media/media-1/confirm'
+          ? { id: 'media-1', status: 'active' }
+          : { id: 'attachment-1', mediaReferenceId: 'media-1' }
+      return {
+        ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data }),
+      }
+    })
+    vi.stubGlobal('fetch', spy)
+    const { uploadMerchantAttachment } = useGrassland()
+    const file = new File([new Uint8Array(3)], 'license.png', { type: 'image/png' })
+
+    await uploadMerchantAttachment('org-1', file, 'business_license')
+
+    expect(bodyOf(spy, 0)).toEqual({
+      contentType: 'image/png', purpose: 'user_upload', sizeBytes: 3,
+      domainType: 'merchant_kyb', domainId: 'org-1',
+    })
+    expect(spy.mock.calls[3][0]).toBe('/api/organizations/org-1/merchant-attachments')
+    expect(bodyOf(spy, 3)).toEqual({
+      attachmentType: 'business_license', mediaReferenceId: 'media-1', mimeType: 'image/png', sizeBytes: 3,
+    })
+  })
+
+  test('缺少 MIME 类型的 KYB 附件在申请票据前失败', async () => {
+    const spy = mockFetchOk()
+    const { uploadMerchantAttachment, error } = useGrassland()
+    const file = new File([new Uint8Array(1)], 'unknown', { type: '' })
+
+    await expect(uploadMerchantAttachment('org-1', file, 'other')).resolves.toBeNull()
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(error.value).toContain('文件类型')
+  })
+
+  test('admin KYB 审核使用 kyb-requests 的 approve/reject 叶子端点', async () => {
+    const spy = mockFetchOk()
+    const { listKybVerifications, reviewKybVerification } = useGrassland()
+
+    await listKybVerifications()
+    await reviewKybVerification('request-1', 'approve', '材料齐全')
+    await reviewKybVerification('request-2', 'reject', '证件模糊')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/kyb-requests')
+    expect(spy.mock.calls[1][0]).toBe('/api/admin/kyb-requests/request-1/approve')
+    expect(bodyOf(spy, 1)).toEqual({ note: '材料齐全' })
+    expect(spy.mock.calls[2][0]).toBe('/api/admin/kyb-requests/request-2/reject')
+    expect(bodyOf(spy, 2)).toEqual({ note: '证件模糊' })
+  })
+})
+
 describe('商家 contest 请求契约', () => {
   test('发送拒绝理由到 marketplace contest 端点', async () => {
     const spy = vi.fn().mockResolvedValue({

@@ -184,7 +184,7 @@ class AiProviderKeyControllerIT extends IntelligenceItSupport {
     @DisplayName("PUT /api/ai/keys/{id}/key - 轮换密钥")
     void rotateKey_rotatesKey() {
         UUID createdId = createTestKey("text", "openai-compatible");
-        String newApiKey = "sk-new-rotated-key-9876543210";
+        String newApiKey = "sk-test-new-rotated-key-9876543210";
 
         client().put()
                 .uri("/api/ai/keys/" + createdId + "/key")

@@ -9,4 +9,9 @@ server/dist
 !.env.docker.example
 coverage
 test-artifacts
+playwright-report
+tests
+**/*.test.ts
+.github
+docs
 .claude

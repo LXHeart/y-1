@@ -122,7 +122,7 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     })
     const analysisConfig = {
       baseUrl: 'https://custom.example.com/run',
-      apiToken: 'request-token',
+      apiToken: 'request-token', // secret-scan: allow - test fixture
     }
 
     if (!env.PUBLIC_BACKEND_ORIGIN) {
@@ -285,7 +285,7 @@ describe('analyzeBilibiliVideoByProxyUrl', () => {
     })
     const analysisConfig = {
       baseUrl: 'https://custom.example.com/run',
-      apiToken: 'request-token',
+      apiToken: 'request-token', // secret-scan: allow - test fixture
     }
 
     createBilibiliMediaClipsMock.mockResolvedValueOnce([

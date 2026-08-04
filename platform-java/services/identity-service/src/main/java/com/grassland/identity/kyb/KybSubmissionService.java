@@ -63,6 +63,9 @@ public class KybSubmissionService {
         if (isBlank(profile.legalPersonName())) {
             missing.add("法人姓名");
         }
+        if (isBlank(profile.legalPersonIdNumber())) {
+            missing.add("法人身份证号");
+        }
         if (isBlank(profile.businessAddress())) {
             missing.add("经营地址");
         }

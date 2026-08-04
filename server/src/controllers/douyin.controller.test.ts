@@ -316,7 +316,7 @@ describe('analyzeDouyinVideoHandler', () => {
         analysisConfig: {
           provider: 'qwen',
           baseUrl: 'https://custom.example.com/run',
-          apiToken: 'request-token',
+          apiToken: 'request-token', // secret-scan: allow - test fixture
           apiKey: 'request-key',
           model: 'qwen-max',
         },
@@ -523,4 +523,3 @@ describe('downloadDouyinVideoHandler', () => {
     expect(next).not.toHaveBeenCalled()
   })
 })
-

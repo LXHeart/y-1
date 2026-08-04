@@ -12,7 +12,7 @@ npm run e2e:seed                           # 种测试数据（幂等，可重�
 npm run dev:client                         # http://localhost:5173
 ```
 
-**测试账号**（口令均为 `E2ePass!2026`）：
+**测试账号**（默认口令均为 `test-password-2026`，可通过 `E2E_PASSWORD` 覆盖）：
 
 | 角色 | 邮箱 | 用途 |
 |---|---|---|

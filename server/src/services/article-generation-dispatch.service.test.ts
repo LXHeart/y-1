@@ -53,7 +53,7 @@ describe('article generation dispatch', () => {
   beforeEach(() => {
     vi.resetModules()
     process.env.QWEN_ANALYSIS_BASE_URL = 'https://dashscope.example.com/compatible-mode/v1'
-    process.env.QWEN_ANALYSIS_API_KEY = 'qwen-env-key'
+    process.env.QWEN_ANALYSIS_API_KEY = 'qwen-env-key' // secret-scan: allow - test fixture
     process.env.QWEN_ANALYSIS_MODEL = 'qwen3.5-flash'
     loadSettingsMock.mockReset()
     loadSettingsForUserMock.mockReset()

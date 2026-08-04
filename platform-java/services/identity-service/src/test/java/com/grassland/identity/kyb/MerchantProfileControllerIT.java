@@ -107,6 +107,31 @@ class MerchantProfileControllerIT extends IdentityItSupport {
     }
 
     @Test
+    @DisplayName("更新未提供新身份证号时保留原密文和掩码")
+    void updateWithoutIdNumberPreservesCiphertext() {
+        var owner = seedAccount("kyb-preserve-id-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "KYB Preserve ID Org");
+        postDraft(orgId, owner.cookie(), draftBody("0111"), 200);
+        String before = db.sql("SELECT legal_person_id_number FROM merchant_profile "
+                        + "WHERE organization_id = CAST(:org AS uuid)")
+                .bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+        String bodyWithoutId = draftBody("0112").replace(
+                "\"legalPersonIdNumber\":\"310101199001011234\",", "");
+
+        client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue(bodyWithoutId)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****1234");
+
+        String after = db.sql("SELECT legal_person_id_number FROM merchant_profile "
+                        + "WHERE organization_id = CAST(:org AS uuid)")
+                .bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+        assertThat(after).isEqualTo(before);
+    }
+
+    @Test
     @DisplayName("资料不完整时提交 → 400 且列出缺失字段")
     void submitRejectsIncompleteProfile() {
         var owner = seedAccount("kyb-incomplete-" + UUID.randomUUID() + "@example.com");
@@ -121,7 +146,8 @@ class MerchantProfileControllerIT extends IdentityItSupport {
                 .expectStatus().isBadRequest()
                 .expectBody()
                 .jsonPath("$.error").value(msg -> assertThat((String) msg)
-                        .contains("统一社会信用代码").contains("法人姓名").contains("经营地址"));
+                        .contains("统一社会信用代码").contains("法人姓名")
+                        .contains("法人身份证号").contains("经营地址"));
     }
 
     @Test

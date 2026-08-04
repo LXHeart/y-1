@@ -113,7 +113,7 @@ describe('analysis-settings.service', () => {
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-key',
+          apiKey: 'image-generation-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -148,7 +148,7 @@ describe('analysis-settings.service', () => {
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-key',
+          apiKey: 'image-generation-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -205,7 +205,7 @@ describe('analysis-settings.service', () => {
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-key',
+          apiKey: 'image-generation-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -238,7 +238,7 @@ describe('analysis-settings.service', () => {
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-key',
+          apiKey: 'image-generation-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -286,7 +286,7 @@ describe('analysis-settings.service', () => {
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-key',
+          apiKey: 'image-generation-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -314,7 +314,7 @@ describe('analysis-settings.service', () => {
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-key',
+          apiKey: 'image-generation-key', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -329,7 +329,7 @@ describe('analysis-settings.service', () => {
       integrations: {
         feishu: {
           appId: 'cli_test_app',
-          appSecret: 'feishu-secret-key',
+          appSecret: 'feishu-secret-key', // secret-scan: allow - test fixture
           folderToken: 'fld_test_folder',
         },
       },
@@ -337,22 +337,22 @@ describe('analysis-settings.service', () => {
         video: {
           provider: 'qwen',
           baseUrl: 'https://video.example.com/v1',
-          apiKey: 'video-secret',
+          apiKey: 'video-secret', // secret-scan: allow - test fixture
           model: 'qwen3.5-flash',
         },
         image: {
           baseUrl: 'https://image.example.com/v1',
-          apiKey: 'image-secret',
+          apiKey: 'image-secret', // secret-scan: allow - test fixture
           model: 'qwen-vl-max',
         },
         article: {
           baseUrl: 'https://article.example.com/v1',
-          apiKey: 'article-secret',
+          apiKey: 'article-secret', // secret-scan: allow - test fixture
           model: 'qwen-max',
         },
         imageGeneration: {
           baseUrl: 'https://image-generation.example.com/v1',
-          apiKey: 'image-generation-secret',
+          apiKey: 'image-generation-secret', // secret-scan: allow - test fixture
           model: 'wanx2.1-t2i-turbo',
         },
         videoProduction: {},
@@ -434,4 +434,3 @@ describe('analysis-settings.service', () => {
     })).toThrowError('分析服务地址必须是有效的 HTTP(S) URL，且不能包含用户名或密码')
   })
 })
-

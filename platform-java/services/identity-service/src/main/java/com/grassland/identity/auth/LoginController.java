@@ -11,7 +11,6 @@ import com.grassland.identity.user.AuthUser;
 import com.grassland.identity.user.LegacyUserLookup;
 import com.grassland.identity.user.LegacyUserRepository;
 import com.grassland.identity.user.LoginUser;
-import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.MediaType;
@@ -54,7 +53,7 @@ public class LoginController {
         return bodyMono.flatMap(body -> {
             String email = body.email();
             String password = body.password();
-            String ip = extractIp(request);
+            String ip = DeviceFingerprint.from(request).ipAddress();
             LoginRateLimiter.CheckResult rateCheck = rateLimiter.check(ip, email);
             if (!rateCheck.allowed()) {
                 return Mono.just(build429(rateCheck));
@@ -174,8 +173,4 @@ public class LoginController {
         return ResponseEntity.status(error.status()).body(Map.of("success", false, "error", error.getMessage()));
     }
 
-    private String extractIp(ServerHttpRequest request) {
-        InetSocketAddress remote = request.getRemoteAddress();
-        return remote != null ? remote.getAddress().getHostAddress() : null;
-    }
 }

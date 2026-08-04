@@ -43,6 +43,13 @@ public class OrganizationRepository {
                 .map(OrganizationRepository::map).one();
     }
 
+    /** 在调用方事务内锁定组织，供跨表业务流程统一串行化。 */
+    public Mono<Organization> findByIdForUpdate(String id) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM organization WHERE id = CAST(:id AS uuid) FOR UPDATE")
+                .bind("id", id)
+                .map(OrganizationRepository::map).one();
+    }
+
     public Flux<Organization> findByOwner(String ownerAccountId) {
         return db.sql("SELECT " + SELECT_COLS + " FROM organization WHERE owner_account_id = CAST(:owner AS uuid) ORDER BY created_at")
                 .bind("owner", ownerAccountId)

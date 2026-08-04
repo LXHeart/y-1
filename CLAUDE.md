@@ -6,7 +6,7 @@
 
 技术栈：Vue 3 + Vite 前端，Express + TypeScript 后端，PostgreSQL 数据库。
 
-> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前是 Java 草场领域与 Express legacy/worker 并存的混合架构：identity、marketplace、finance、trust、intelligence 已有 Java 服务；Express 仍承载部分 legacy API、FFmpeg/Playwright worker 与迁移 fallback。生产默认 Nginx 仍直连 `backend:3000`，`edge-bff` 的 RouteManifest/feature flag 是启动期的逐路由切流控制。当前未完成开发与生产门禁见 `docs/草场开发进度与续接指南.md` 当前 backlog 及 memory `grassland-prioritized-backlog.md`。
+> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前是 Java 草场领域与 Express legacy/worker 并存的混合架构：identity、marketplace、finance、trust、intelligence 已有 Java 服务；Express 仍承载部分 legacy API、FFmpeg/Playwright worker 与迁移 fallback。生产默认入口为 Nginx → `edge-bff`，RouteManifest/feature flag 是启动期逐路由切流控制，未迁移路由由 Edge 透明转发 legacy。当前未完成开发与生产门禁见 `docs/草场开发进度与续接指南.md` 当前 backlog 及 memory `grassland-prioritized-backlog.md`。
 
 ## Java 平台（草场 Epic 0/1）
 
@@ -14,7 +14,7 @@
 - 模块：`services/edge-bff`、`services/identity-service`、`services/marketplace-service`、`services/finance-service`、`services/trust-service`、`services/intelligence-service`
 - 工具链：JDK 25（`brew install openjdk@25`）；通过 `./gradlew` 构建，不依赖系统 Gradle
 - `edge-bff` 是固定上游透明代理，零聚合透传 SSE / Multipart / Range，剥离 hop-by-hop header；契约矩阵见 `docs/草场旧API兼容契约矩阵.md`
-- 可选 Compose Profile：`docker compose --profile java-edge up edge-bff`；默认生产入口仍由 Nginx 直连 `backend:3000`，RouteManifest flag 是启动期配置，回滚通常需要重启或替换 edge 实例
+- 默认 `docker compose up -d` 启动 Edge 与五个 Java 领域服务；RouteManifest flag 回滚需 recreate Edge，整入口回退用 `API_UPSTREAM=backend:3000` 配合 `--no-deps` recreate frontend，不做自动 failover；TLS 在 LB/ingress 终止时必须设 `PUBLIC_FORWARDED_PROTO=https` 和实际的 `TRUSTED_PROXY_CIDR`
 - 保持既有 public API/Express 行为与兼容契约；新草场领域直接进入 Java 服务，必要时允许聚焦的 bridge、routing、worker 兼容修改，不把 FFmpeg/Playwright 塞入 WebFlux 请求线程
 
 核心功能模块：
@@ -109,7 +109,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - 草场 credits bridge 挂在 `/internal/credits/{consume,refund}`，**不在 `/api` 树下**（nginx 只反代 `/api/`，并对 `/internal/` 与旧 `/api/internal/` 显式 404）；`INTERNAL_API_KEY` 未配置时 fail-closed 503，带任一 `X-Forwarded-*`/`Forwarded` 头一律 404。Java 侧路径在 intelligence `application.yml` 里，改路径要两边一起改
 - `requireCredit()` 返回 `CreditCharge` 句柄，上游失败时调 `charge.refund(note)` 写 `refund` 流水（GL-P0-BILL-002）。退款键是 `refund:<operationId>`，靠 `operation_id` 唯一索引保证一次扣减至多一次退款；`refund()` 失败只记日志不抛，避免掩盖原始错误。用户主动 abort 不退款（内容已流出）
 - 会话 cookie 属性由 `SESSION_COOKIE_SECURE`（`auto|always|never`）/`SESSION_COOKIE_SAME_SITE` 决定，**backend 与 identity-service 必须同值**：两端写同一张 `session` 表，express-session 的 rolling 续期按库里 `sess.cookie` 重发 Set-Cookie，Java 侧写错会抹掉 Secure。Java 侧唯一真相源是 `SessionCookiePolicy`，Express 侧是 `resolveSessionCookieSecure()`。`auto` 需要 `TRUST_PROXY=1`；`always` 在 HTTP 入口上会让 express-session **整个不发 cookie**（登录静默失效），Java 侧则照发 —— 混合部署统一用 `auto`（GL-P0-AUTH-001）
-- 安全响应头在 `lib/security-headers.ts` 与 `nginx.conf` 各有一份（直连 backend 的部署没有 nginx）。nginx 侧用 `proxy_hide_header` 去掉上游同名头再发唯一一份；**不要在 `/api/` location 内写 `add_header`** —— 那会丢弃 server 级整组 `add_header`。HSTS 是双条件：`SECURITY_HSTS_ENABLED=1` **且** 本次请求确实是 HTTPS。有意不加 CSP（当前前端含内联样式，需单独一项做 report-only → 强制）
+- 安全响应头在 `lib/security-headers.ts` 与 `nginx.conf` 各有一份（直连 backend 的部署没有 nginx）。nginx 侧用 `proxy_hide_header` 去掉上游同名头再发唯一一份；**不要在 `/api/` location 内写 `add_header`** —— 那会丢弃 server 级整组 `add_header`。Nginx HSTS 与下游 HTTPS 判定都只读部署参数 `PUBLIC_FORWARDED_PROTO`，不信任客户端同名头；`TRUSTED_PROXY_CIDR` 仅填实际 LB/ingress 网段，real-ip 还原后再重建 XFF 链。legacy 自身的 HSTS 仍需 `SECURITY_HSTS_ENABLED=1`。有意不加 CSP（当前前端含内联样式，需单独做 report-only → 强制）
 - 状态变更请求（POST/PUT/PATCH/DELETE）经 `lib/csrf.ts` 校验 Origin/Referer，挂在 `/api` 之前（跨站请求应在建会话与解析 body 前被拒）。无 Origin 也无 Referer 的请求放行（非浏览器客户端），**有 Origin 就必须匹配**。同源判断刻意读 `X-Forwarded-Proto` 而非 `req.secure` —— 漏配 `TRUST_PROXY=1` 时 `req.secure` 为假，会把 HTTPS 同源请求算成跨站并全量 403。`/internal/credits` 不挂此检查（服务间通道，由 `INTERNAL_API_KEY` + `rejectForwardedRequest` 把关）
 - 事务邮件走 identity 的 `mail_outbox`（第五份 outbox，GL-P1-NOTIFY-001）：`NotificationEventProcessor.emit` 在站内通知插入的**同一事务**内 `mail_outbox.append`，保证「通知落库 ⇔ 邮件入队」原子。`MailOutboxPublisher` 轮询 SMTP 发送，失败 5 次后 `status=dead`（区别于领域 outbox 的无限重试）。`MailTemplates` **委托 `NotificationTemplates` 拿文案** + PERMISSION 过滤（高价值子集：邀请/履约/争议/资金）。**验证码保持同步直发**（`SendCodeController`→`SmtpMailSender`，用户在等，不经 outbox）。邀请事件 `MembershipInvited`/`Revoked` 邮件收件人 = `payload.email`（未注册邮箱也能发），其余 = accountId→`app_users.email`
 - KYB 敏感字段（法人身份证号、收款账号）唯一写入通道是 identity 的 `KybFieldCrypto`，接 `platform-crypto` 信封加密（KEK=`CRYPTO_KEK_BASE64`，与 intelligence BYOK 同一变量）。**未配 KEK 时相关请求 503，不得退化为存明文**；读取侧只回末 4 位掩码（`legalPersonIdNumberMasked`/`accountNumberMasked`），完整明文不出响应体也不进 outbox payload（D-10）。审核入队唯一通道是 `KybSubmissionService`——`submit` 必须在同一事务内完成「状态变更 + `kyb_verification_request` 入队 + outbox」，漏掉入队会让 admin 队列恒空、审核不可达（GL-P3-MERCHANT-001）

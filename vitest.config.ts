@@ -11,5 +11,18 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./test/setup-env.ts'],
     include: ['server/src/**/*.test.ts', 'src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'json-summary', 'json', 'html'],
+      include: ['server/src/**/*.ts', 'src/**/*.ts', 'src/**/*.vue'],
+      exclude: ['server/src/types/**', 'server/src/scripts/**', '**/*.test.ts'],
+      thresholds: {
+        // 当前 ratchet 低于实测全源覆盖率；新增/修改代码仍要求 >=80%。
+        statements: 46,
+        branches: 74,
+        functions: 66,
+        lines: 46,
+      },
+    },
   },
 })

@@ -66,10 +66,10 @@ class AdjudicationPropertiesTest {
         assertThat(props.voteWindowSecondsEffective()).isEqualTo(24 * 3600L);
         assertThat(props.appealWindowSecondsEffective()).isEqualTo(48 * 3600L);
         assertThat(props.adjudicationWindowSecondsEffective()).isEqualTo(48 * 3600L);
-        // disputeCooldownHours=0 保留为禁用（测试环境用），负值才默认为 168
-        assertThat(props.disputeCooldownSecondsEffective()).isEqualTo(0);
-        // 验证负值默认为 168
+        // disputeCooldownHours 负值默认为 168
+        assertThat(props.disputeCooldownSecondsEffective()).isEqualTo(168 * 3600L);
+        // 验证 0 保留为禁用（测试环境用）
         var propsWithDefault = new AdjudicationProperties(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0);
-        assertThat(propsWithDefault.disputeCooldownSecondsEffective()).isEqualTo(168 * 3600L);
+        assertThat(propsWithDefault.disputeCooldownSecondsEffective()).isEqualTo(0);
     }
 }

@@ -15,7 +15,7 @@ import org.springframework.test.context.DynamicPropertySource;
  */
 public abstract class MobileTokenItSupport extends IdentityItSupport {
 
-    protected static final String ACCESS_TOKEN_SECRET = "mobile-access-token-secret-32ch!";
+    protected static final String ACCESS_TOKEN_SECRET = "mobile-access-token-secret-32ch!"; // secret-scan: allow - test fixture
     protected static final String DEVICE_INFO = "{\"os\":\"iOS 18\",\"model\":\"iPhone16\"}";
 
     @DynamicPropertySource

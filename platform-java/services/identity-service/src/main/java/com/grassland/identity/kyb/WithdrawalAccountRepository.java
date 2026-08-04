@@ -128,17 +128,26 @@ public class WithdrawalAccountRepository {
     /** 设置默认账户（同组织其他账户取消默认）。*/
     public Mono<WithdrawalAccount> setDefault(UUID id, String organizationId) {
         return db.sql("""
-                UPDATE withdrawal_account SET is_default = false
-                WHERE organization_id = CAST(:org AS uuid) AND id != CAST(:id AS uuid)
-                """)
-                .bind("org", organizationId).bind("id", id)
-                .fetch().rowsUpdated()
-                .then(db.sql("""
-                        UPDATE withdrawal_account SET is_default = true, updated_at = now()
-                        WHERE id = CAST(:id AS uuid) RETURNING %s
-                        """.formatted(SELECT_COLS))
-                        .bind("id", id)
-                        .map(WithdrawalAccountRepository::map).one());
+                WITH target AS (
+                    SELECT id FROM withdrawal_account
+                    WHERE id = CAST(:id AS uuid)
+                      AND organization_id = CAST(:org AS uuid)
+                      AND status = 'approved'
+                ), cleared AS (
+                    UPDATE withdrawal_account SET is_default = false, updated_at = now()
+                    WHERE organization_id = CAST(:org AS uuid)
+                      AND id != CAST(:id AS uuid)
+                      AND EXISTS (SELECT 1 FROM target)
+                )
+                UPDATE withdrawal_account SET is_default = true, updated_at = now()
+                WHERE id = (SELECT id FROM target)
+                  AND organization_id = CAST(:org AS uuid)
+                  AND status = 'approved'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("org", organizationId)
+                .bind("id", id)
+                .map(WithdrawalAccountRepository::map).one();
     }
 
     /** Admin 审核队列：列 pending/under_review。*/

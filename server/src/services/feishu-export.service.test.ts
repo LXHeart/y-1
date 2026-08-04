@@ -347,7 +347,7 @@ describe('exportToFeishu', () => {
       }
       if (callCount === 6) {
         uploadRequestBody = init?.body ?? null
-        return mockJsonResponse({ code: 0, msg: '', data: { file_token: 'file-token-1' } })
+        return mockJsonResponse({ code: 0, msg: '', data: { file_token: 'file-token-1' } }) // secret-scan: allow - test fixture
       }
       if (callCount === 7) {
         patchRequestBody = String(init?.body)

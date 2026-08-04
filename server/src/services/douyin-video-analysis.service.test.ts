@@ -226,7 +226,7 @@ describe('analyzeDouyinVideoByProxyUrl', () => {
     })
     const analysisConfig = {
       baseUrl: 'https://custom.example.com/run',
-      apiToken: 'request-token',
+      apiToken: 'request-token', // secret-scan: allow - test fixture
     }
 
     createDouyinMediaClipsMock.mockResolvedValueOnce([

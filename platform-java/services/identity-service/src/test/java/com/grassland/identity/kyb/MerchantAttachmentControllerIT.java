@@ -1,12 +1,20 @@
 package com.grassland.identity.kyb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import com.grassland.identity.IdentityItSupport;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Sinks;
 
 /**
  * KYB 附件。GL-P3-MERCHANT-001。
@@ -15,6 +23,9 @@ import org.springframework.http.MediaType;
  * 任意组织 ADMIN 拿到别家附件 id 即可删除对方审核材料。
  */
 class MerchantAttachmentControllerIT extends IdentityItSupport {
+
+    @Autowired
+    private TransactionalOperator transactions;
 
     private String createAttachment(String orgId, String cookie, String type, int expectedStatus) {
         var body = client().post().uri("/api/organizations/" + orgId + "/merchant-attachments")
@@ -92,6 +103,71 @@ class MerchantAttachmentControllerIT extends IdentityItSupport {
         Long remaining = db.sql("SELECT count(*) FROM merchant_attachment WHERE id = CAST(:id AS uuid)")
                 .bind("id", attachmentId).map(row -> row.get(0, Long.class)).one().block();
         assertThat(remaining).isZero();
+    }
+
+    @Test
+    @DisplayName("资料进入审核后附件不可新增或删除")
+    void submittedProfileFreezesAttachments() {
+        var owner = seedAccount("kyb-att-frozen-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "Attachment Frozen Org");
+        String attachmentId = createAttachment(orgId, owner.cookie(), "business_license", 201);
+
+        db.sql("INSERT INTO merchant_profile(organization_id, status) VALUES (CAST(:org AS uuid), 'pending')")
+                .bind("org", orgId).fetch().rowsUpdated().block();
+
+        createAttachment(orgId, owner.cookie(), "store_photo", 409);
+        client().delete().uri("/api/organizations/" + orgId + "/merchant-attachments/" + attachmentId)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange()
+                .expectStatus().isEqualTo(409);
+
+        Long remaining = db.sql("SELECT count(*) FROM merchant_attachment WHERE id = CAST(:id AS uuid)")
+                .bind("id", attachmentId).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(remaining).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("附件变更与资料提交按同一资料行串行化")
+    void attachmentMutationWaitsForConcurrentSubmission() throws Exception {
+        var owner = seedAccount("kyb-att-race-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "Attachment Race Org");
+        String attachmentId = createAttachment(orgId, owner.cookie(), "business_license", 201);
+
+        CountDownLatch statusUpdated = new CountDownLatch(1);
+        Sinks.One<Void> releaseSubmission = Sinks.one();
+        CompletableFuture<Void> submission = transactions.transactional(
+                        db.sql("SELECT id::text FROM organization "
+                                        + "WHERE id = CAST(:org AS uuid) FOR UPDATE")
+                                .bind("org", orgId).map(row -> row.get(0, String.class)).one()
+                                .flatMap(ignored -> db.sql("INSERT INTO merchant_profile(organization_id, status) "
+                                                + "VALUES (CAST(:org AS uuid), 'pending')")
+                                        .bind("org", orgId).fetch().rowsUpdated())
+                                .doOnNext(ignored -> statusUpdated.countDown())
+                                .then(releaseSubmission.asMono()))
+                .then().toFuture();
+
+        assertThat(statusUpdated.await(5, TimeUnit.SECONDS)).isTrue();
+        CompletableFuture<Integer> deletion = CompletableFuture.supplyAsync(() -> client().delete()
+                .uri("/api/organizations/" + orgId + "/merchant-attachments/" + attachmentId)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange()
+                .returnResult(Void.class)
+                .getStatus().value());
+        try {
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+                Long waiting = db.sql("SELECT count(*) FROM pg_stat_activity "
+                                + "WHERE datname = current_database() AND wait_event_type = 'Lock' "
+                                + "AND query ILIKE '%organization%' AND query ILIKE '%FOR UPDATE%'")
+                        .map(row -> row.get(0, Long.class)).one().block();
+                assertThat(waiting).isGreaterThan(0L);
+            });
+            assertThat(deletion).isNotDone();
+        } finally {
+            releaseSubmission.tryEmitEmpty();
+        }
+
+        assertThat(deletion.get(5, TimeUnit.SECONDS)).isEqualTo(409);
+        submission.get(5, TimeUnit.SECONDS);
     }
 
     @Test

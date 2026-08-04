@@ -50,7 +50,8 @@ public class MerchantProfileRepository {
                     unified_social_credit_code = EXCLUDED.unified_social_credit_code,
                     business_type = EXCLUDED.business_type,
                     legal_person_name = EXCLUDED.legal_person_name,
-                    legal_person_id_number = EXCLUDED.legal_person_id_number,
+                    legal_person_id_number = COALESCE(
+                            EXCLUDED.legal_person_id_number, merchant_profile.legal_person_id_number),
                     registered_capital_cents = EXCLUDED.registered_capital_cents,
                     establishment_date = EXCLUDED.establishment_date,
                     business_address = EXCLUDED.business_address,
@@ -108,7 +109,8 @@ public class MerchantProfileRepository {
                     unified_social_credit_code = EXCLUDED.unified_social_credit_code,
                     business_type = EXCLUDED.business_type,
                     legal_person_name = EXCLUDED.legal_person_name,
-                    legal_person_id_number = EXCLUDED.legal_person_id_number,
+                    legal_person_id_number = COALESCE(
+                            EXCLUDED.legal_person_id_number, merchant_profile.legal_person_id_number),
                     registered_capital_cents = EXCLUDED.registered_capital_cents,
                     establishment_date = EXCLUDED.establishment_date,
                     business_address = EXCLUDED.business_address,

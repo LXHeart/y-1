@@ -4,8 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.IdentityItSupport;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -22,6 +27,9 @@ import org.springframework.test.context.DynamicPropertySource;
  * 绑进 {@code CAST(:reviewer AS uuid)} 必然运行期 SQL 报错），以及 rejected 后可改可重提。
  */
 class KybVerificationControllerIT extends IdentityItSupport {
+
+    @Autowired
+    private KybVerificationRequestRepository verificationRequests;
 
     @DynamicPropertySource
     static void kek(DynamicPropertyRegistry r) {
@@ -69,6 +77,22 @@ class KybVerificationControllerIT extends IdentityItSupport {
 
     private record Submitted(String orgId, String ownerCookie, String requestId, String uscc) {}
 
+    private int reviewStatus(String requestId, String action, String cookie, String note,
+                             CountDownLatch ready, CountDownLatch start) throws InterruptedException {
+        ready.countDown();
+        if (!start.await(10, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Timed out waiting for concurrent KYB review start");
+        }
+        return client().post().uri("/api/admin/kyb-requests/" + requestId + "/" + action)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{\"note\":\"" + note + "\"}")
+                .exchange()
+                .returnResult(Void.class)
+                .getStatus()
+                .value();
+    }
+
     @Test
     @DisplayName("回归：未登录 401、非 admin 成员 403（此前三个端点零认证）")
     void reviewEndpointsRequireAdmin() {
@@ -106,6 +130,8 @@ class KybVerificationControllerIT extends IdentityItSupport {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].status").isEqualTo("pending")
+                .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].requesterAccountId").exists()
+                .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].materials").exists()
                 .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].reviewDeadline").exists();
     }
 
@@ -147,6 +173,57 @@ class KybVerificationControllerIT extends IdentityItSupport {
                 .header("Cookie", "y1.sid=" + admin.cookie())
                 .bodyValue("{\"note\":\"改主意了\"}")
                 .exchange().expectStatus().isEqualTo(409);
+
+        // 并发 loser 不能用旧的 pending 快照覆盖终态；仓储条件更新必须返回空。
+        assertThat(verificationRequests.updateStatus(
+                UUID.fromString(s.requestId()), "rejected", admin.accountId(), "stale review").block())
+                .isNull();
+    }
+
+    @Test
+    @DisplayName("并发 approve/reject 恰好一个成功，目标状态与 outbox 只有一个赢家")
+    void concurrentApproveAndRejectHaveSingleWinner() throws Exception {
+        Submitted s = submitMerchant("concurrent-decision");
+        var approvingAdmin = seedAdmin("kyb-admin-approve-" + UUID.randomUUID() + "@example.com");
+        var rejectingAdmin = seedAdmin("kyb-admin-reject-" + UUID.randomUUID() + "@example.com");
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+
+        List<Integer> statuses;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var approve = executor.submit(() -> reviewStatus(
+                    s.requestId(), "approve", approvingAdmin.cookie(), "approve winner", ready, start));
+            var reject = executor.submit(() -> reviewStatus(
+                    s.requestId(), "reject", rejectingAdmin.cookie(), "reject winner", ready, start));
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            statuses = List.of(approve.get(20, TimeUnit.SECONDS), reject.get(20, TimeUnit.SECONDS));
+        }
+
+        assertThat(statuses).containsExactlyInAnyOrder(200, 409);
+        Map<String, Object> decision = db.sql("""
+                        SELECT request.status AS request_status, profile.status AS profile_status,
+                               request.reviewer_account_id::text AS request_reviewer,
+                               profile.reviewer_account_id::text AS profile_reviewer
+                        FROM kyb_verification_request request
+                        JOIN merchant_profile profile ON profile.organization_id = request.organization_id
+                        WHERE request.id = CAST(:requestId AS uuid)
+                        """)
+                .bind("requestId", s.requestId()).fetch().one().block();
+        assertThat(decision).isNotNull();
+        assertThat(decision.get("request_status")).isIn("approved", "rejected");
+        assertThat(decision.get("profile_status")).isEqualTo(decision.get("request_status"));
+        assertThat(decision.get("profile_reviewer")).isEqualTo(decision.get("request_reviewer"));
+        assertThat(decision.get("request_reviewer"))
+                .isIn(approvingAdmin.accountId(), rejectingAdmin.accountId());
+
+        Long events = db.sql("""
+                        SELECT count(*) FROM outbox
+                        WHERE aggregate_id = :org AND aggregate_type = 'MerchantProfile'
+                          AND event_type IN ('MerchantProfileApproved', 'MerchantProfileRejected')
+                        """)
+                .bind("org", s.orgId()).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(events).isEqualTo(1L);
     }
 
     @Test
@@ -166,6 +243,12 @@ class KybVerificationControllerIT extends IdentityItSupport {
         assertThat(row).isNotNull();
         assertThat(row.get("status")).isEqualTo("rejected");
         assertThat(row.get("review_note")).isEqualTo("营业执照模糊");
+
+        client().get().uri("/api/organizations/" + s.orgId() + "/merchant-profile")
+                .header("Cookie", "y1.sid=" + s.ownerCookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.reviewNote").isEqualTo("营业执照模糊")
+                .jsonPath("$.data.reviewerAccountId").isEqualTo(admin.accountId());
 
         // rejected 可编辑。
         client().put().uri("/api/organizations/" + s.orgId() + "/merchant-profile")
