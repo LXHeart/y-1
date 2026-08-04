@@ -8,7 +8,11 @@ package com.grassland.identity.identityprofile;
 public enum IdentityAuditAction {
     ACTIVATE("activate"),
     DEACTIVATE("deactivate"),
-    REVOKE_SESSION("revoke_session");
+    REVOKE_SESSION("revoke_session"),
+    /** 移动端 refresh token 撤销（/api/auth/revoke，GL-P3-IDENTITY-001）。 */
+    TOKEN_REVOKE("token_revoke"),
+    /** 移动端设备撤销（DELETE /api/me/devices/{id}，GL-P3-IDENTITY-001）。 */
+    DEVICE_REVOKE("device_revoke");
 
     private final String dbValue;
 

@@ -1,10 +1,10 @@
 package com.grassland.identity.auth;
 
+import com.grassland.identity.security.Argon2PasswordHasher;
 import com.grassland.identity.security.EmailVerificationService;
 import com.grassland.identity.security.PasswordVerifier;
 import com.grassland.identity.session.SessionWriter;
 import com.grassland.identity.user.AuthUser;
-import at.favre.lib.crypto.bcrypt.BCrypt;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 public class RegisterController {
@@ -29,11 +30,14 @@ public class RegisterController {
     private final SessionWriter sessionWriter;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final Argon2PasswordHasher argon2Hasher;
 
     public RegisterController(EmailVerificationService codeService, DatabaseClient db, SessionWriter sessionWriter,
-                              OutboxRepository outbox, TransactionalOperator transactions) {
+                              OutboxRepository outbox, TransactionalOperator transactions,
+                              Argon2PasswordHasher argon2Hasher) {
         this.codeService = codeService; this.db = db; this.sessionWriter = sessionWriter; this.outbox = outbox;
         this.transactions = transactions;
+        this.argon2Hasher = argon2Hasher;
     }
 
     @PostMapping(value = "/api/auth/register", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -52,8 +56,11 @@ public class RegisterController {
             .flatMap(valid -> {
                 if (!valid) return Mono.just(error(400, "\u9a8c\u8bc1\u7801\u65e0\u6548\u6216\u5df2\u8fc7\u671f"));
                 String userId = UUID.randomUUID().toString();
-                String hash = BCrypt.withDefaults().hashToString(12, password.toCharArray());
-                return transactions.transactional(
+                // GL-P3-IDENTITY-001：新注册直接落 argon2id（不再 bcrypt-12）。
+                // Argon2 是 64MB/3 轮的 CPU+内存重操作，必须在 boundedElastic 上跑，不能占 Netty 事件循环。
+                return Mono.fromCallable(() -> argon2Hasher.hash(password))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMap(hash -> transactions.transactional(
                     db.sql("INSERT INTO app_users(id, email, password_hash, display_name, role, status) "
                     + "VALUES (CAST(:id AS uuid), :email, :hash, :name, 'user', 'active') ON CONFLICT (email) DO NOTHING RETURNING id")
                     .bind("id", userId).bind("email", normalizedEmail).bind("hash", hash).bind("name", displayName.trim())
@@ -65,7 +72,7 @@ public class RegisterController {
                         .map(session -> ResponseEntity.status(201)
                             .header("Set-Cookie", session.setCookieHeader())
                             .body(Map.of("success", true, "data", Map.of("user", buildUser(uid, normalizedEmail, displayName.trim())))))))
-                    .switchIfEmpty(Mono.just(error(409, "\u8be5\u90ae\u7bb1\u5df2\u5b58\u5728")));
+                    .switchIfEmpty(Mono.just(error(409, "\u8be5\u90ae\u7bb1\u5df2\u5b58\u5728"))));
             });
     }
 

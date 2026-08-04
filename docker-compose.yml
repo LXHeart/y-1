@@ -97,6 +97,14 @@ services:
       # 未配置时 KYB 敏感字段端点 fail-closed 503，不落明文。
       CRYPTO_KEK_BASE64: ${CRYPTO_KEK_BASE64:-}
       IDENTITY_KYB_REVIEW_SLA_SECONDS: ${IDENTITY_KYB_REVIEW_SLA_SECONDS:-259200}
+      # 移动端 token 认证（GL-P3-IDENTITY-001）。secret 留空 = 移动端登录/刷新/撤销一律 503
+      # （fail-closed），Web cookie 路径不受影响。启用时须与 edge-bff 验签方同值。
+      IDENTITY_ACCESS_TOKEN_SECRET: ${IDENTITY_ACCESS_TOKEN_SECRET:-}
+      IDENTITY_ACCESS_TOKEN_TTL_SECONDS: ${IDENTITY_ACCESS_TOKEN_TTL_SECONDS:-900}
+      IDENTITY_REFRESH_TOKEN_TTL_DAYS: ${IDENTITY_REFRESH_TOKEN_TTL_DAYS:-30}
+      IDENTITY_REFRESH_TOKEN_MAX_ACTIVE: ${IDENTITY_REFRESH_TOKEN_MAX_ACTIVE:-10}
+      # 过期行清理定时任务：默认关（本地/测试不起），容器内开。
+      IDENTITY_REFRESH_TOKEN_CLEANUP_ENABLED: ${IDENTITY_REFRESH_TOKEN_CLEANUP_ENABLED:-true}
     depends_on:
       backend:
         condition: service_started

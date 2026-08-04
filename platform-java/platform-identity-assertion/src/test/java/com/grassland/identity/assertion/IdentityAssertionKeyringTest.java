@@ -296,9 +296,15 @@ class IdentityAssertionKeyringTest {
         // 同一个 token 重放被拒绝
         assertThat(signer.verify(token, NOW)).isEmpty();
 
-        // 过期后清理 jti，仍拒绝（jti 已消费）
-        guard.cleanExpired();
+        // jti 未过期时的清理不影响消费记录，仍拒绝。
+        // 注意：必须传固定时刻——无参重载用真实时钟，测试的 NOW 是过去时刻，
+        // 真实 now 已过 expiresAt 会把已消费 jti 清掉，断言随系统日期翻转（曾因此挂掉）。
+        guard.cleanExpired(NOW);
         assertThat(signer.verify(token, NOW)).isEmpty();
+
+        // 过了 expiresAt 后清理才移除 jti（过期 token 本就会被时间窗拒绝，无需再记）
+        guard.cleanExpired(NOW.plusSeconds(120));
+        assertThat(guard.size()).isZero();
     }
 
     @Test

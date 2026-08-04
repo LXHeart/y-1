@@ -1,5 +1,7 @@
 package com.grassland.identity.auth;
 
+import com.grassland.identity.identityprofile.DeviceFingerprint;
+import com.grassland.identity.mobile.RefreshTokenService;
 import com.grassland.identity.security.Argon2PasswordHasher;
 import com.grassland.identity.security.CookieSigner;
 import com.grassland.identity.security.LoginRateLimiter;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 public class LoginController {
@@ -31,16 +34,19 @@ public class LoginController {
     private final Argon2PasswordHasher argon2Hasher;
     private final SessionWriter sessionWriter;
     private final LoginRateLimiter rateLimiter;
+    private final RefreshTokenService refreshTokens;
 
     public LoginController(LegacyUserLookup userLookup, LegacyUserRepository userRepository,
                            PasswordVerifier passwordVerifier, Argon2PasswordHasher argon2Hasher,
-                           SessionWriter sessionWriter, LoginRateLimiter rateLimiter) {
+                           SessionWriter sessionWriter, LoginRateLimiter rateLimiter,
+                           RefreshTokenService refreshTokens) {
         this.userLookup = userLookup;
         this.userRepository = userRepository;
         this.passwordVerifier = passwordVerifier;
         this.argon2Hasher = argon2Hasher;
         this.sessionWriter = sessionWriter;
         this.rateLimiter = rateLimiter;
+        this.refreshTokens = refreshTokens;
     }
 
     @PostMapping(value = "/api/auth/login", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -70,14 +76,31 @@ public class LoginController {
             return Mono.just(build401());
         }
         AuthUser authUser = new AuthUser(user.id(), user.email(), user.displayName(), user.role(), user.status());
-        // GL-P3-IDENTITY-001: 登录成功后，检查是否需要升级密码为 Argon2id
+        // GL-P3-IDENTITY-001: 登录成功后，检查是否需要升级密码为 Argon2id。
+        // Argon2 是 CPU/内存重操作（64MB/3 轮），须在 boundedElastic 上跑，不能阻塞 Netty 事件循环。
         boolean needsRehash = passwordVerifier.needsRehash(user.passwordHash());
         Mono<Void> loginOps = userRepository.recordLogin(user.id());
         if (needsRehash) {
             loginOps = loginOps.then(
                 Mono.fromCallable(() -> argon2Hasher.hash(password))
+                    .subscribeOn(Schedulers.boundedElastic())
                     .flatMap(newHash -> userRepository.upgradePasswordHash(user.id(), newHash))
             );
+        }
+        // GL-P3-IDENTITY-001 移动端 token 模式：请求带 X-Device-Info → 签发 access/refresh token，
+        // 不建 session 行、不发 Set-Cookie（移动端无 cookie jar）。Web（无该头）路径逐字节不变。
+        String deviceInfo = header(request, "X-Device-Info");
+        if (deviceInfo != null && !deviceInfo.isBlank()) {
+            if (!refreshTokens.isConfigured()) {
+                return Mono.just(build503());
+            }
+            return loginOps
+                .then(refreshTokens.issue(authUser, DeviceFingerprint.from(request),
+                        resolveDeviceName(request), deviceInfo))
+                .map(issued -> {
+                    rateLimiter.recordOutcome(ip, email, false);
+                    return buildToken200(authUser, issued);
+                });
         }
         return loginOps
             .then(sessionWriter.createSession(authUser, request))
@@ -87,7 +110,41 @@ public class LoginController {
             });
     }
 
+    /** 设备名：X-Device-Name（设计文档）缺省回落 X-Device-Label（既有设备指纹惯例）。 */
+    private String resolveDeviceName(ServerHttpRequest request) {
+        String name = header(request, "X-Device-Name");
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+        String label = header(request, "X-Device-Label");
+        return (label != null && !label.isBlank()) ? label : null;
+    }
+
+    private String header(ServerHttpRequest request, String name) {
+        return request.getHeaders().getFirst(name);
+    }
+
     private ResponseEntity<Map<String, Object>> build200(AuthUser user, String setCookie) {
+        return ResponseEntity.ok()
+            .header("Set-Cookie", setCookie)
+            .body(Map.of("success", true, "data", Map.of("user", userInfo(user))));
+    }
+
+    /**
+     * 移动端 token 模式响应：与 Web 共用 user 字段，额外带 tokens，且刻意不发 Set-Cookie。
+     */
+    private ResponseEntity<Map<String, Object>> buildToken200(AuthUser user, RefreshTokenService.IssuedTokens issued) {
+        Map<String, Object> tokens = new LinkedHashMap<>();
+        tokens.put("access_token", issued.accessToken());
+        tokens.put("refresh_token", issued.refreshToken());
+        tokens.put("expires_in", issued.expiresInSeconds());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("user", userInfo(user));
+        data.put("tokens", tokens);
+        return ResponseEntity.ok().body(Map.of("success", true, "data", data));
+    }
+
+    private Map<String, Object> userInfo(AuthUser user) {
         Map<String, Object> userInfo = new LinkedHashMap<>();
         userInfo.put("id", user.id());
         userInfo.put("email", user.email());
@@ -95,9 +152,13 @@ public class LoginController {
             userInfo.put("displayName", user.displayName());
         }
         userInfo.put("role", user.role());
-        return ResponseEntity.ok()
-            .header("Set-Cookie", setCookie)
-            .body(Map.of("success", true, "data", Map.of("user", userInfo)));
+        return userInfo;
+    }
+
+    /** access token secret 未配置时移动端登录 fail-closed；Web 路径不受影响。 */
+    private ResponseEntity<Map<String, Object>> build503() {
+        return ResponseEntity.status(503)
+            .body(Map.of("success", false, "error", "移动端登录暂未启用"));
     }
 
     private ResponseEntity<Map<String, Object>> build401() {

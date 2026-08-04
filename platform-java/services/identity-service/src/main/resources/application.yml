@@ -97,6 +97,24 @@ identity:
     initial-backoff-ms: ${IDENTITY_MAIL_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${IDENTITY_MAIL_OUTBOX_MAX_BACKOFF_MS:30000}
     send-timeout-ms: ${IDENTITY_MAIL_OUTBOX_SEND_TIMEOUT_MS:30000}
+  # 移动端 token 认证（GL-P3-IDENTITY-001）。secret 未配置 → 移动端登录/刷新/撤销一律 503（fail-closed），
+  # Web cookie 路径不受影响。secret 必须与 edge-bff 的 EDGE_ACCESS_TOKEN_SECRET 同值（edge 验签、identity 签发）。
+  mobile:
+    access-token:
+      secret: ${IDENTITY_ACCESS_TOKEN_SECRET:}
+      kid: ${IDENTITY_ACCESS_TOKEN_KID:access-token-v1}
+      # 15 分钟：短到泄露窗口可控，长到不至于每次请求都刷新。
+      ttl-seconds: ${IDENTITY_ACCESS_TOKEN_TTL_SECONDS:900}
+      leeway-seconds: ${IDENTITY_ACCESS_TOKEN_LEEWAY_SECONDS:5}
+    refresh-token:
+      ttl-days: ${IDENTITY_REFRESH_TOKEN_TTL_DAYS:30}
+      # 每账号活跃 refresh token 上限，超出时撤销最旧的（防止无限堆积设备行）。
+      max-active-per-account: ${IDENTITY_REFRESH_TOKEN_MAX_ACTIVE:10}
+      cleanup:
+        # 默认 false（测试/本地不起定时任务），compose 置 true。
+        enabled: ${IDENTITY_REFRESH_TOKEN_CLEANUP_ENABLED:false}
+        interval-ms: ${IDENTITY_REFRESH_TOKEN_CLEANUP_INTERVAL_MS:3600000}
+        retention-days: ${IDENTITY_REFRESH_TOKEN_CLEANUP_RETENTION_DAYS:7}
   permission:
     # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
     sla-hours: ${PERMISSION_SLA_HOURS:72}
