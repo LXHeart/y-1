@@ -124,6 +124,12 @@ edge:
     - path: /api/finance
       upstream: finance
       enabled: ${EDGE_ROUTE_FINANCE:true}
+    # ---- 积分读端（GL-P3-AI-001 下属切片）→ finance-service。balance/history 由 finance 承载，
+    # 用户断言由 InternalAssertionFilter 自动签发（grassland-finance audience）。前缀窄、无碰撞；
+    # 回滚 EDGE_ROUTE_CREDITS_FINANCE=false 即回落 legacy default upstream。
+    - path: /api/credits
+      upstream: finance
+      enabled: ${EDGE_ROUTE_CREDITS_FINANCE:true}
     # ---- trust（Epic 6 Slice 6A/6C）→ trust-service。争议受理/审判/投票/上诉/客服终审。----
     - path: /api/trust
       upstream: trust

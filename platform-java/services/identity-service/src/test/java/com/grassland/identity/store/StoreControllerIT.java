@@ -106,7 +106,7 @@ class StoreControllerIT extends IdentityItSupport {
                 .header("Cookie", "y1.sid=" + victim.cookie())
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.address").isEqualTo("{\"address\": \"原地址\"}")
-                .jsonPath("$.data.status").isEqualTo("active");
+                .jsonPath("$.data.status").isEqualTo("draft");
     }
 
     @Test

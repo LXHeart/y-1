@@ -1,6 +1,7 @@
 package com.grassland.identity.kyb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 import com.grassland.identity.IdentityItSupport;
 import java.util.Base64;
@@ -72,10 +73,34 @@ class KybVerificationControllerIT extends IdentityItSupport {
 
         String requestId = db.sql("SELECT id::text FROM kyb_verification_request WHERE organization_id = CAST(:org AS uuid)")
                 .bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
-        return new Submitted(orgId, owner.cookie(), requestId, code);
+        return new Submitted(orgId, owner.cookie(), owner.accountId(), requestId, code);
     }
 
-    private record Submitted(String orgId, String ownerCookie, String requestId, String uscc) {}
+    private record Submitted(String orgId, String ownerCookie, String ownerAccountId,
+                             String requestId, String uscc) {}
+
+    private StoreSubmitted submitStoreProfile(String label) {
+        var owner = seedAccount("store-kyb-" + label + "-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "Store KYB " + label);
+        String storeId = createStore(orgId, owner.cookie(), "审核门店 " + label);
+        String uri = "/api/organizations/" + orgId + "/stores/" + storeId + "/profile";
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"南京西路 8 号\\\"}\","
+                        + "\"phone\":\"13800000000\"}")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("draft");
+        client().post().uri(uri + "/submit")
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange().expectStatus().isCreated()
+                .expectBody().jsonPath("$.data.status").isEqualTo("pending");
+        String requestId = db.sql("SELECT id::text FROM kyb_verification_request "
+                        + "WHERE verification_type='store_profile' AND target_id=CAST(:store AS uuid)")
+                .bind("store", storeId).map(row -> row.get(0, String.class)).one().block();
+        return new StoreSubmitted(orgId, storeId, owner.cookie(), requestId);
+    }
+
+    private record StoreSubmitted(String orgId, String storeId, String ownerCookie, String requestId) {}
 
     private int reviewStatus(String requestId, String action, String cookie, String note,
                              CountDownLatch ready, CountDownLatch start) throws InterruptedException {
@@ -136,6 +161,119 @@ class KybVerificationControllerIT extends IdentityItSupport {
     }
 
     @Test
+    @DisplayName("admin 详情返回脱敏主体与提交时附件快照，非 admin 不可查看")
+    void adminReadsReviewableMerchantDetail() {
+        Submitted s = submitMerchant("detail");
+        var admin = seedAdmin("kyb-admin-detail-" + UUID.randomUUID() + "@example.com");
+
+        client().get().uri("/api/admin/kyb-requests/" + s.requestId())
+                .header("Cookie", "y1.sid=" + s.ownerCookie())
+                .exchange().expectStatus().isForbidden();
+
+        client().get().uri("/api/admin/kyb-requests/" + s.requestId())
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.request.id").isEqualTo(s.requestId())
+                .jsonPath("$.data.subject.type").isEqualTo("merchant_profile")
+                .jsonPath("$.data.subject.legalName").isEqualTo("审核测试 detail")
+                .jsonPath("$.data.subject.legalPersonIdNumberMasked").isEqualTo("****5678")
+                .jsonPath("$.data.subject.legalPersonIdNumber").doesNotExist()
+                .jsonPath("$.data.attachments.length()").isEqualTo(3)
+                .jsonPath("$.data.attachments[0].mediaReferenceId").doesNotExist();
+    }
+
+    @Test
+    @DisplayName("批准前重新校验证据；证据不可用时请求、主体和事件都不改变")
+    void approvalFailsClosedWhenEvidenceIsNoLongerUsable() {
+        Submitted s = submitMerchant("stale-evidence");
+        var admin = seedAdmin("kyb-admin-stale-evidence-" + UUID.randomUUID() + "@example.com");
+        UUID mediaId = db.sql("SELECT media_reference_id::text FROM merchant_attachment "
+                        + "WHERE organization_id=CAST(:org AS uuid) ORDER BY uploaded_at LIMIT 1")
+                .bind("org", s.orgId()).map(row -> UUID.fromString(row.get(0, String.class))).one().block();
+        when(kybMediaClient.requireUsable(mediaId, s.orgId(), s.ownerAccountId()))
+                .thenReturn(reactor.core.publisher.Mono.error(
+                        new com.grassland.identity.auth.IdentityException(400, "附件媒体不存在或不可用")));
+
+        client().post().uri("/api/admin/kyb-requests/" + s.requestId() + "/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{}")
+                .exchange().expectStatus().isBadRequest();
+
+        Map<String, Object> states = db.sql("""
+                        SELECT request.status AS request_status, profile.status AS profile_status,
+                               (SELECT count(*) FROM outbox WHERE aggregate_id=:org
+                                AND event_type='MerchantProfileApproved') AS review_events
+                        FROM kyb_verification_request request
+                        JOIN merchant_profile profile ON profile.organization_id=request.organization_id
+                        WHERE request.id=CAST(:id AS uuid)
+                        """)
+                .bind("org", s.orgId()).bind("id", s.requestId()).fetch().one().block();
+        assertThat(states).containsEntry("request_status", "pending")
+                .containsEntry("profile_status", "pending")
+                .containsEntry("review_events", 0L);
+    }
+
+    @Test
+    @DisplayName("审核目标缺失时回滚请求状态且不发送审核事件")
+    void missingTargetRollsBackReview() {
+        Submitted s = submitMerchant("missing-target");
+        var admin = seedAdmin("kyb-admin-missing-target-" + UUID.randomUUID() + "@example.com");
+        db.sql("DELETE FROM merchant_profile WHERE organization_id=CAST(:org AS uuid)")
+                .bind("org", s.orgId()).fetch().rowsUpdated().block();
+
+        client().post().uri("/api/admin/kyb-requests/" + s.requestId() + "/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{}")
+                .exchange().expectStatus().isEqualTo(409);
+
+        String status = db.sql("SELECT status FROM kyb_verification_request WHERE id=CAST(:id AS uuid)")
+                .bind("id", s.requestId()).map(row -> row.get(0, String.class)).one().block();
+        assertThat(status).isEqualTo("pending");
+        Long events = db.sql("SELECT count(*) FROM outbox WHERE aggregate_id=:org "
+                        + "AND event_type='MerchantProfileApproved'")
+                .bind("org", s.orgId()).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(events).isZero();
+    }
+
+    @Test
+    @DisplayName("门店资料提交入队，admin 批准后更新资料并原子发送事件")
+    void storeProfileCompletesReviewFlow() {
+        StoreSubmitted submitted = submitStoreProfile("approve");
+        var admin = seedAdmin("store-kyb-admin-" + UUID.randomUUID() + "@example.com");
+
+        client().post().uri("/api/admin/kyb-requests/" + submitted.requestId() + "/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"note\":\"门店信息核验通过\"}")
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/organizations/" + submitted.orgId() + "/stores/"
+                        + submitted.storeId() + "/profile")
+                .header("Cookie", "y1.sid=" + submitted.ownerCookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("approved")
+                .jsonPath("$.data.reviewerAccountId").isEqualTo(admin.accountId())
+                .jsonPath("$.data.reviewNote").isEqualTo("门店信息核验通过")
+                .jsonPath("$.data.submittedAt").exists()
+                .jsonPath("$.data.reviewedAt").exists();
+
+        Long events = db.sql("SELECT count(*) FROM outbox WHERE aggregate_id = :store "
+                        + "AND event_type IN ('StoreProfileSubmitted', 'StoreProfileApproved')")
+                .bind("store", submitted.storeId()).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(events).isEqualTo(2L);
+
+        client().post().uri("/api/organizations/" + submitted.orgId() + "/stores/"
+                        + submitted.storeId() + "/profile")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + submitted.ownerCookie())
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"试图覆盖\\\"}\"}")
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
     @DisplayName("approve：资料转 approved，reviewer 是真实 admin UUID，submittedAt 保留")
     void approveWritesRealReviewer() {
         Submitted s = submitMerchant("approve");
@@ -160,6 +298,12 @@ class KybVerificationControllerIT extends IdentityItSupport {
         assertThat(row.get("reviewer")).isEqualTo(admin.accountId());
         // updateTargetStatus 曾对 submitted_at 传 null 做全列 SET，抹掉提交时间。
         assertThat(row.get("has_submitted")).isEqualTo(true);
+
+        Long sealedMaterials = db.sql("SELECT count(*) FROM kyb_media_retention_sync "
+                        + "WHERE reference_id=CAST(:request AS uuid) AND desired_state='sealed' "
+                        + "AND retain_until > now()")
+                .bind("request", s.requestId()).map(result -> result.get(0, Long.class)).one().block();
+        assertThat(sealedMaterials).isEqualTo(3L);
         assertThat(row.get("has_reviewed")).isEqualTo(true);
 
         Long events = db.sql("SELECT count(*) FROM outbox WHERE aggregate_id = :org "
@@ -178,6 +322,38 @@ class KybVerificationControllerIT extends IdentityItSupport {
         assertThat(verificationRequests.updateStatus(
                 UUID.fromString(s.requestId()), "rejected", admin.accountId(), "stale review").block())
                 .isNull();
+    }
+
+    @Test
+    @DisplayName("商户材料留存行缺失时审核回滚，不产生无证据终态")
+    void reviewRollsBackWhenEvidenceRetentionIsIncomplete() {
+        Submitted submitted = submitMerchant("missing-retention");
+        var admin = seedAdmin("kyb-admin-retention-" + UUID.randomUUID() + "@example.com");
+        db.sql("""
+                        DELETE FROM kyb_media_retention_sync
+                        WHERE media_reference_id = (
+                            SELECT media_reference_id FROM kyb_media_retention_sync
+                            WHERE reference_id=CAST(:request AS uuid) AND reference_type='review_request'
+                            LIMIT 1)
+                          AND reference_id=CAST(:request AS uuid)
+                        """)
+                .bind("request", submitted.requestId()).then().block();
+
+        client().post().uri("/api/admin/kyb-requests/" + submitted.requestId() + "/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"note\":\"材料齐全\"}")
+                .exchange().expectStatus().isEqualTo(409);
+
+        Map<String, Object> states = db.sql("""
+                        SELECT request.status AS request_status, profile.status AS profile_status
+                        FROM kyb_verification_request request
+                        JOIN merchant_profile profile ON profile.organization_id=request.organization_id
+                        WHERE request.id=CAST(:request AS uuid)
+                        """)
+                .bind("request", submitted.requestId()).fetch().one().block();
+        assertThat(states).containsEntry("request_status", "pending")
+                .containsEntry("profile_status", "pending");
     }
 
     @Test
@@ -286,5 +462,28 @@ class KybVerificationControllerIT extends IdentityItSupport {
                 .header("Cookie", "y1.sid=" + admin.cookie())
                 .bodyValue("{}")
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("拒绝审核必须填写原因，校验失败不改变申请和目标状态")
+    void rejectionRequiresNote() {
+        Submitted submitted = submitMerchant("reject-note");
+        var admin = seedAdmin("kyb-admin-note-" + UUID.randomUUID() + "@example.com");
+
+        client().post().uri("/api/admin/kyb-requests/" + submitted.requestId() + "/reject")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{}")
+                .exchange().expectStatus().isBadRequest();
+
+        Map<String, Object> states = db.sql("""
+                        SELECT request.status AS request_status, profile.status AS profile_status
+                        FROM kyb_verification_request request
+                        JOIN merchant_profile profile ON profile.organization_id = request.organization_id
+                        WHERE request.id = CAST(:id AS uuid)
+                        """)
+                .bind("id", submitted.requestId()).fetch().one().block();
+        assertThat(states).containsEntry("request_status", "pending")
+                .containsEntry("profile_status", "pending");
     }
 }

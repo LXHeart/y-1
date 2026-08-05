@@ -190,7 +190,7 @@ describe('GrasslandWorkbench 商家 contest', () => {
     }
     const task = {
       id: 'task-1', ownerAccountId: 'acct-1', organizationId: 'org-1', title: '待核验任务',
-      description: null, status: 'published', contentForm: null, platform: null, maxSlots: 1,
+      description: '突出门店招牌', status: 'published', contentForm: '图文', platform: '小红书', maxSlots: 1,
       bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
       publishedAt: null, cancelledAt: null,
     }
@@ -227,6 +227,15 @@ describe('GrasslandWorkbench 商家 contest', () => {
     await flushPromises()
     await wrapper.find('button.gl-link').trigger('click')
     await flushPromises()
+
+    const createButton = wrapper.findAll('button').find((item) => item.text() === '围绕任务创作')!
+    await createButton.trigger('click')
+    expect(wrapper.emitted('open-creation')?.[0]?.[0]).toMatchObject({
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'task', taskId: 'task-1', applicationId: 'app-accepted', taskVersion: 1 },
+      prefill: { topic: '待核验任务', instructions: '突出门店招牌' },
+    })
 
     const reason = wrapper.get('[aria-label="拒绝理由 app-accepted"]')
     await reason.setValue('  画面与要求不符  ')

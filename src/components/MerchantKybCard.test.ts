@@ -33,7 +33,7 @@ function stubKybFetch(): ReturnType<typeof vi.fn> {
             : url.endsWith('/stores/store-1/profile')
               ? {
                   storeId: 'store-1', address: '{"address":"南京西路 1 号"}', phone: '13800000000',
-                  businessHours: null, description: null, status: 'active', createdAt: null,
+                  businessHours: null, description: null, status: 'draft', reviewNote: null, createdAt: null,
                 }
               : null
     return {
@@ -215,8 +215,8 @@ describe('MerchantKybCard 契约展示', () => {
       .toBe(true)
   })
 
-  test('门店资料只保存，不显示后端不存在的审核动作', async () => {
-    stubKybFetch()
+  test('门店草稿可保存并提交审核', async () => {
+    const spy = stubKybFetch()
     const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
     await flushPromises()
 
@@ -224,7 +224,14 @@ describe('MerchantKybCard 契约展示', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('保存资料')
-    expect(wrapper.findAll('button').some((button) => button.text() === '提交审核')).toBe(false)
+    const submit = wrapper.findAll('button').find((button) => button.text() === '提交审核')
+    expect(submit?.attributes('disabled')).toBeUndefined()
+    await submit!.trigger('click')
+    await flushPromises()
+
+    const request = spy.mock.calls.find(([url, init]) =>
+      String(url).endsWith('/stores/store-1/profile/submit') && (init as RequestInit)?.method === 'POST')
+    expect(request).toBeDefined()
   })
 
   test('切换到无资料门店时清空上一门店表单并禁用保存', async () => {
@@ -278,7 +285,7 @@ describe('MerchantKybCard 契约展示', () => {
         }
         return successResponse({
           storeId: 'store-a', address: JSON.stringify({ address: 'A 店最新地址' }),
-          phone: null, description: null, status: 'active', createdAt: null,
+          phone: null, description: null, status: 'draft', createdAt: null,
         })
       }
       if (url.endsWith('/stores/store-b/profile')) {
@@ -329,13 +336,13 @@ describe('MerchantKybCard 契约展示', () => {
         return successResponse({
           storeId: 'store-a',
           address: JSON.stringify({ address: storeAReads === 1 ? 'A 店初始地址' : 'A 店重载地址' }),
-          phone: null, description: null, status: 'active', createdAt: null,
+          phone: null, description: null, status: 'draft', createdAt: null,
         })
       }
       if (url.endsWith('/stores/store-b/profile')) {
         return successResponse({
           storeId: 'store-b', address: JSON.stringify({ address: 'B 店地址' }),
-          phone: null, description: null, status: 'active', createdAt: null,
+          phone: null, description: null, status: 'draft', createdAt: null,
         })
       }
       return successResponse(null)
@@ -351,7 +358,7 @@ describe('MerchantKybCard 契约展示', () => {
     await flushPromises()
     expect((wrapper.find('input[placeholder="详细地址"]').element as HTMLInputElement).value)
       .toBe('A 店重载地址')
-    expect(wrapper.find('.store-status').text()).toContain('启用')
+    expect(wrapper.find('.store-status').text()).toContain('草稿')
 
     resolveFirstStoreSave(successResponse({
       storeId: 'store-a', address: JSON.stringify({ address: 'A 店过期保存结果' }),
@@ -361,6 +368,6 @@ describe('MerchantKybCard 契约展示', () => {
 
     expect((wrapper.find('input[placeholder="详细地址"]').element as HTMLInputElement).value)
       .toBe('A 店重载地址')
-    expect(wrapper.find('.store-status').text()).toContain('启用')
+    expect(wrapper.find('.store-status').text()).toContain('草稿')
   })
 })

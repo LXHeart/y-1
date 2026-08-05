@@ -13,8 +13,10 @@ export interface VideoProductionImage {
 export interface VideoProductionForm {
   shopName: string
   industryType: IndustryType
+  targetPlatform: AiPlatformId | ''
   shopAddress: string
   shopDescription: string
   videoStyle: VideoStyle
   customPrompt: string
 }
+import type { AiPlatformId } from './ai-creation'

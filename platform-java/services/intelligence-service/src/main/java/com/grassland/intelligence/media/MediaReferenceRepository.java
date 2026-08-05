@@ -7,6 +7,7 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -27,9 +28,11 @@ public class MediaReferenceRepository {
             """;
 
     private final DatabaseClient db;
+    private final TransactionalOperator transactions;
 
-    public MediaReferenceRepository(DatabaseClient db) {
+    public MediaReferenceRepository(DatabaseClient db, TransactionalOperator transactions) {
         this.db = db;
+        this.transactions = transactions;
     }
 
     /** 全字段插入并回读（upload-ticket 建 pending 行、生成图直接建 active 行都用它）。 */
@@ -106,26 +109,41 @@ public class MediaReferenceRepository {
 
     /** active/pending→deleting：删除操作取得生命周期所有权；finalizing 不可删。 */
     public Mono<MediaReference> claimDelete(UUID id, String ownerAccountId) {
-        return db.sql("""
+        return transactions.transactional(lockForLifecycle(id).flatMap(ignored -> db.sql("""
                 UPDATE media_reference SET status='deleting', updated_at=now()
                 WHERE id=CAST(:id AS uuid) AND owner_account_id=:ownerAccountId
                   AND status IN ('pending', 'active')
+                  AND NOT EXISTS (SELECT 1 FROM media_kyb_retention r
+                                  WHERE r.media_reference_id=media_reference.id AND r.released_at IS NULL
+                                    AND (r.lease_until > now() OR r.retained_until > now()))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id.toString())
                 .bind("ownerAccountId", ownerAccountId)
-                .map(MediaReferenceRepository::map).one();
+                .map(MediaReferenceRepository::map).one()));
     }
 
     /** cleanup 专用：对到期候选取得/刷新 deleting 所有权；stale deleting 可重试。 */
     public Mono<MediaReference> claimCleanup(UUID id) {
-        return db.sql("""
+        return transactions.transactional(lockForLifecycle(id).flatMap(ignored -> db.sql("""
                 UPDATE media_reference SET status='deleting', updated_at=now()
                 WHERE id=CAST(:id AS uuid) AND status IN ('pending', 'active', 'finalizing', 'deleting')
+                  AND NOT EXISTS (SELECT 1 FROM media_kyb_retention r
+                                  WHERE r.media_reference_id=media_reference.id AND r.released_at IS NULL
+                                    AND (r.lease_until > now() OR r.retained_until > now()))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id.toString())
-                .map(MediaReferenceRepository::map).one();
+                .map(MediaReferenceRepository::map).one()));
+    }
+
+    /**
+     * 与 KYB retention 写入统一锁顺序。锁取得后的下一条 UPDATE 使用 READ COMMITTED 新快照，
+     * 能看见等待期间提交的 retention；单条 UPDATE 的固定语句快照做不到这一点。
+     */
+    private Mono<Object> lockForLifecycle(UUID id) {
+        return db.sql("SELECT id FROM media_reference WHERE id=CAST(:id AS uuid) FOR UPDATE")
+                .bind("id", id.toString()).map(row -> row.get(0)).one();
     }
 
     /** deleting→deleted，保留行作删除审计。 */
@@ -238,7 +256,12 @@ public class MediaReferenceRepository {
         return db.sql("""
                 SELECT %s FROM media_reference
                 WHERE deleted_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM media_kyb_retention r
+                                  WHERE r.media_reference_id=media_reference.id AND r.released_at IS NULL
+                                    AND (r.lease_until > now() OR r.retained_until > now()))
                   AND ((status='active' AND expires_at < now())
+                       OR (status='active' AND purpose='merchant_kyb'
+                           AND created_at < now() - (:pendingGraceMillis * interval '1 millisecond'))
                        OR (status='pending' AND created_at < now() - (:pendingGraceMillis * interval '1 millisecond'))
                        OR (status IN ('finalizing', 'deleting')
                            AND updated_at < now() - (:pendingGraceMillis * interval '1 millisecond')))

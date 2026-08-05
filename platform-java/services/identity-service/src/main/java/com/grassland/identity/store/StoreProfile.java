@@ -13,7 +13,11 @@ public record StoreProfile(
         String phone,
         String businessHours,                // JSONB: [{dayOfWeek,openTime,closeTime}]
         String description,
-        String status,                        // active/inactive
+        String status,
+        Instant submittedAt,
+        Instant reviewedAt,
+        String reviewerAccountId,
+        String reviewNote,
         Instant createdAt,
         Instant updatedAt
 ) {}

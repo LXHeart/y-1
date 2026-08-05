@@ -163,6 +163,26 @@ public class MerchantProfileRepository {
         return spec.map(MerchantProfileRepository::map).one();
     }
 
+    /** Admin 审核条件更新：保留 submitted_at，并要求目标仍处于开放审核状态。 */
+    public Mono<MerchantProfile> reviewStatus(String organizationId, String status,
+                                               Instant reviewedAt, String reviewerAccountId,
+                                               String reviewNote) {
+        var spec = db.sql("""
+                UPDATE merchant_profile
+                SET status = :status, reviewed_at = :reviewedAt,
+                    reviewer_account_id = CAST(:reviewer AS uuid), review_note = :reviewNote,
+                    updated_at = now()
+                WHERE organization_id = CAST(:id AS uuid)
+                  AND status IN ('pending', 'under_review')
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", organizationId).bind("status", status)
+                .bind("reviewedAt", reviewedAt.atOffset(ZoneOffset.UTC))
+                .bind("reviewer", reviewerAccountId);
+        spec = bindNullable(spec, "reviewNote", reviewNote);
+        return spec.map(MerchantProfileRepository::map).one();
+    }
+
     /** Admin 审核队列：列 pending/under_review。*/
     public Flux<MerchantProfile> findPending() {
         return db.sql("SELECT " + SELECT_COLS

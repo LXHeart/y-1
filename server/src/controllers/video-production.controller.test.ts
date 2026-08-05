@@ -80,6 +80,7 @@ const SCRIPT_BODY = {
   images: ['aGVsbG8='],
   shopName: '测试小馆',
   industryType: '餐饮' as const,
+  targetPlatform: 'xiaohongshu' as const,
   videoStyle: '烟火纪实' as const,
 }
 
@@ -205,6 +206,17 @@ describe('失败注入：积分退回', () => {
 
     expect(refundMock).not.toHaveBeenCalled()
     expect(res.written.some((chunk) => chunk.includes('[DONE]'))).toBe(true)
+    expect(streamVideoScriptMock).toHaveBeenCalledWith(
+      SCRIPT_BODY.images,
+      SCRIPT_BODY.shopName,
+      SCRIPT_BODY.industryType,
+      SCRIPT_BODY.targetPlatform,
+      SCRIPT_BODY.videoStyle,
+      undefined,
+      undefined,
+      undefined,
+      expect.objectContaining({ userId: 'user-1' }),
+    )
   })
 })
 

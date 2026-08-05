@@ -18,7 +18,8 @@ import reactor.core.publisher.Mono;
 public class StoreProfileRepository {
 
     private static final String SELECT_COLS =
-            "store_id::text, address::text, phone, business_hours::text, description, status, created_at, updated_at";
+            "store_id::text, address::text, phone, business_hours::text, description, status, "
+                    + "submitted_at, reviewed_at, reviewer_account_id::text, review_note, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -27,11 +28,11 @@ public class StoreProfileRepository {
     }
 
     /** 创建或更新门店资料（upsert，基于 store_id）。*/
-    public Mono<StoreProfile> upsert(String organizationId, String storeId, String address, String phone,
-                                      String businessHours, String description, String status) {
+    public Mono<StoreProfile> upsertDraft(String organizationId, String storeId, String address, String phone,
+                                         String businessHours, String description) {
         var spec = db.sql("""
                 INSERT INTO store_profile(store_id, address, phone, business_hours, description, status)
-                SELECT s.id, CAST(:addr AS jsonb), :phone, CAST(:hours AS jsonb), :desc, :status
+                SELECT s.id, CAST(:addr AS jsonb), :phone, CAST(:hours AS jsonb), :desc, 'draft'
                 FROM store s
                 WHERE s.id = CAST(:id AS uuid) AND s.organization_id = CAST(:org AS uuid)
                 ON CONFLICT (store_id) DO UPDATE SET
@@ -39,7 +40,11 @@ public class StoreProfileRepository {
                     phone = EXCLUDED.phone,
                     business_hours = EXCLUDED.business_hours,
                     description = EXCLUDED.description,
-                    status = EXCLUDED.status,
+                    status = 'draft',
+                    submitted_at = NULL,
+                    reviewed_at = NULL,
+                    reviewer_account_id = NULL,
+                    review_note = NULL,
                     updated_at = now()
                 RETURNING %s
                 """.formatted(SELECT_COLS))
@@ -49,7 +54,6 @@ public class StoreProfileRepository {
         spec = bindNullable(spec, "phone", phone);
         spec = bindNullable(spec, "hours", businessHours);
         spec = bindNullable(spec, "desc", description);
-        spec = bind(spec, "status", status != null ? status : "active");
         return spec.map(StoreProfileRepository::map).one();
     }
 
@@ -57,7 +61,8 @@ public class StoreProfileRepository {
     public Mono<StoreProfile> findByOrganizationAndId(String organizationId, String storeId) {
         return db.sql("""
                 SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                       sp.description, sp.status, sp.created_at, sp.updated_at
+                       sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
+                       sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
                 FROM store_profile sp
                 INNER JOIN store s ON s.id = sp.store_id
                 WHERE s.organization_id = CAST(:org AS uuid) AND sp.store_id = CAST(:id AS uuid)
@@ -65,6 +70,58 @@ public class StoreProfileRepository {
                 .bind("org", organizationId)
                 .bind("id", storeId)
                 .map(StoreProfileRepository::map).one();
+    }
+
+    /** 按组织和门店锁定资料行，串行化编辑、提交与审核。 */
+    public Mono<StoreProfile> findByOrganizationAndIdForUpdate(String organizationId, String storeId) {
+        return db.sql("""
+                SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
+                       sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
+                       sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
+                FROM store_profile sp
+                INNER JOIN store s ON s.id = sp.store_id
+                WHERE s.organization_id = CAST(:org AS uuid) AND sp.store_id = CAST(:id AS uuid)
+                FOR UPDATE OF sp
+                """)
+                .bind("org", organizationId)
+                .bind("id", storeId)
+                .map(StoreProfileRepository::map).one();
+    }
+
+    public Mono<StoreProfile> submit(String organizationId, String storeId, Instant submittedAt) {
+        return db.sql("""
+                UPDATE store_profile sp
+                SET status = 'pending', submitted_at = :submitted,
+                    reviewed_at = NULL, reviewer_account_id = NULL, review_note = NULL, updated_at = now()
+                FROM store s
+                WHERE sp.store_id = s.id AND s.organization_id = CAST(:org AS uuid)
+                  AND sp.store_id = CAST(:id AS uuid) AND sp.status IN ('draft', 'rejected')
+                RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
+                          sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
+                          sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
+                """)
+                .bind("org", organizationId).bind("id", storeId)
+                .bind("submitted", submittedAt.atOffset(ZoneOffset.UTC))
+                .map(StoreProfileRepository::map).one();
+    }
+
+    public Mono<StoreProfile> review(String organizationId, String storeId, String status,
+                                     Instant reviewedAt, String reviewerAccountId, String reviewNote) {
+        var spec = db.sql("""
+                UPDATE store_profile sp
+                SET status = :status, reviewed_at = :reviewed,
+                    reviewer_account_id = CAST(:reviewer AS uuid), review_note = :note, updated_at = now()
+                FROM store s
+                WHERE sp.store_id = s.id AND s.organization_id = CAST(:org AS uuid)
+                  AND sp.store_id = CAST(:id AS uuid) AND sp.status IN ('pending', 'under_review')
+                RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
+                          sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
+                          sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
+                """)
+                .bind("org", organizationId).bind("id", storeId).bind("status", status)
+                .bind("reviewed", reviewedAt.atOffset(ZoneOffset.UTC)).bind("reviewer", reviewerAccountId);
+        spec = bindNullable(spec, "note", reviewNote);
+        return spec.map(StoreProfileRepository::map).one();
     }
 
     /** 按组织和门店双重作用域停用已有资料，保留必填地址与历史内容。 */
@@ -77,7 +134,8 @@ public class StoreProfileRepository {
                   AND s.organization_id = CAST(:org AS uuid)
                   AND sp.store_id = CAST(:id AS uuid)
                 RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                          sp.description, sp.status, sp.created_at, sp.updated_at
+                          sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
+                          sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
                 """)
                 .bind("org", organizationId)
                 .bind("id", storeId)
@@ -88,7 +146,8 @@ public class StoreProfileRepository {
     public Flux<StoreProfile> findByOrganization(String organizationId) {
         return db.sql("""
                 SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                       sp.description, sp.status, sp.created_at, sp.updated_at
+                       sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
+                       sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
                 FROM store_profile sp
                 INNER JOIN store s ON s.id = sp.store_id
                 WHERE s.organization_id = CAST(:org AS uuid) ORDER BY sp.created_at
@@ -105,6 +164,10 @@ public class StoreProfileRepository {
                 row.get("business_hours", String.class),
                 row.get("description", String.class),
                 row.get("status", String.class),
+                toInstant(row.get("submitted_at", OffsetDateTime.class)),
+                toInstant(row.get("reviewed_at", OffsetDateTime.class)),
+                row.get("reviewer_account_id", String.class),
+                row.get("review_note", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );
@@ -118,7 +181,4 @@ public class StoreProfileRepository {
         return (value == null) ? spec.bindNull(name, String.class) : spec.bind(name, value);
     }
 
-    private static GenericExecuteSpec bind(GenericExecuteSpec spec, String name, String value) {
-        return spec.bind(name, value);
-    }
 }

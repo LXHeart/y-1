@@ -90,6 +90,9 @@ const envSchema = z.object({
   SEEDANCE_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
   TEMP_DIR: z.string().trim().default('server/.data/temp'),
   INTERNAL_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
+  // 积分域已迁入 finance-service（GL-P3-AI-001 下属切片）：legacy 仅作 HTTP 代理调用 finance /internal/credits/*。
+  // 直连 finance 容器（不经 edge-bff）；与 intelligence FinanceCreditsClient 共用 INTERNAL_API_KEY。
+  FINANCE_CREDITS_BASE_URL: z.string().trim().optional().transform((value) => value || undefined),
 })
 
 export const env = envSchema.parse(process.env)

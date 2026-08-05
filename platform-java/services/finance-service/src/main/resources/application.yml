@@ -66,3 +66,9 @@ identity-assertion:
       secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_FINANCE:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+
+# 积分内部端点共享密钥（GL-P3-AI-001 下属切片）。/internal/credits/{consume,refund,award} 由
+# CreditsInternalAuthFilter 校验 X-Internal-Key；未配 → 503 fail-closed（与 legacy bridge 同口径）。
+# intelligence FinanceCreditsClient 与 legacy Express 代理共用此密钥。
+credits:
+  internal-key: ${INTERNAL_API_KEY:}

@@ -596,7 +596,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useImageAnalysis } from '../composables/useImageAnalysis'
+import type { CreationHandoff } from '../types/ai-creation'
 import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage } from '../types/image-analysis'
+
+const props = defineProps<{
+  creationHandoff?: CreationHandoff | null
+}>()
 
 const {
   images,
@@ -667,6 +672,16 @@ const {
   confirmOptimizedPreferences,
   cancelOptimizePreferences,
 } = useImageAnalysis()
+
+const hydratedCreationRevision = ref<number | null>(null)
+
+watch(() => props.creationHandoff, (handoff) => {
+  if (!handoff || handoff.targetView !== 'image' || hydratedCreationRevision.value === handoff.revision) return
+  hydratedCreationRevision.value = handoff.revision
+  reset()
+  platform.value = 'dianping'
+  feelings.value = [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n')
+}, { immediate: true })
 
 const isDragging = ref(false)
 const uploadError = ref('')

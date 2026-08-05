@@ -93,8 +93,7 @@
             </div>
             <img v-if="item.cover" class="hot-cover" :src="item.cover" :alt="item.title">
             <div class="hot-actions">
-              <button class="hot-action-btn" type="button" @click.stop="emit('create-article', item.title)">写文章</button>
-              <button class="hot-action-btn hot-action-btn-comedy" type="button" @click.stop="emit('create-comedy', item.title)">写脱口秀</button>
+              <button class="hot-action-btn" type="button" @click.stop="openHotTopicCreation(item.title)">围绕热点创作</button>
             </div>
           </li>
         </ol>
@@ -110,7 +109,9 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { normalizePlatformId } from '../config/ai-platform-capabilities'
 import { useHomepageHotItems } from '../composables/useHomepageHotItems'
+import type { CreationEntry } from '../types/ai-creation'
 
 type HomeFeatureView = 'video' | 'image' | 'article' | 'image-gen' | 'comedy'
 
@@ -124,13 +125,22 @@ interface FeatureCard {
 
 const emit = defineEmits<{
   'open-view': [view: HomeFeatureView]
-  'create-article': [topic: string]
-  'create-comedy': [topic: string]
+  'open-creation': [entry: CreationEntry]
 }>()
 
 const { items, groups, provider, loading, error, loadHotItems } = useHomepageHotItems()
 
 const activePlatform = ref('')
+
+function openHotTopicCreation(title: string): void {
+  emit('open-creation', {
+    revision: Date.now(),
+    platformId: normalizePlatformId(activePlatform.value),
+    contentFormId: null,
+    source: { type: 'hot-topic', title },
+    prefill: { topic: title },
+  })
+}
 
 const showTabs = computed(() => groups.value.length > 0 && provider.value === '60s')
 

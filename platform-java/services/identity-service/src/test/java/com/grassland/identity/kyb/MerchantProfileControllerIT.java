@@ -1,8 +1,15 @@
 package com.grassland.identity.kyb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.verify;
 
 import com.grassland.identity.IdentityItSupport;
+import com.grassland.identity.event.OutboxRepository;
 import java.util.Base64;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -10,6 +17,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import reactor.core.publisher.Mono;
 
 /**
  * 商家 KYB 资料与提交闭环。GL-P3-MERCHANT-001。
@@ -23,6 +32,9 @@ import org.springframework.test.context.DynamicPropertySource;
  * </ul>
  */
 class MerchantProfileControllerIT extends IdentityItSupport {
+
+    @MockitoSpyBean
+    private OutboxRepository outbox;
 
     @DynamicPropertySource
     static void kek(DynamicPropertyRegistry r) {
@@ -195,12 +207,43 @@ class MerchantProfileControllerIT extends IdentityItSupport {
                 .bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
         assertThat(events).isEqualTo(1L);
 
+        Long reviewRetentions = db.sql("SELECT count(*) FROM kyb_media_retention_sync sync "
+                        + "JOIN kyb_verification_request request ON request.id=sync.reference_id "
+                        + "WHERE request.organization_id=CAST(:org AS uuid) "
+                        + "AND sync.reference_type='review_request' AND sync.desired_state='live'")
+                .bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(reviewRetentions).isEqualTo(3L);
+
         // 重复提交：已在审核中，既不可编辑也不该堆出第二条待审。
         client().post().uri("/api/organizations/" + orgId + "/merchant-profile/submit")
                 .header("Cookie", "y1.sid=" + owner.cookie())
                 .exchange()
                 .expectStatus().isEqualTo(409);
         postDraft(orgId, owner.cookie(), draftBody("0302"), 409);
+    }
+
+    @Test
+    @DisplayName("提交事件写入失败时回滚审核状态并补偿释放 request retention")
+    void outboxFailureRollsBackSubmissionAndReleasesReviewRetention() {
+        var owner = seedAccount("kyb-submit-outbox-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "KYB Submit Outbox Org");
+        postDraft(orgId, owner.cookie(), draftBody("0311"), 200);
+        uploadAllDocuments(orgId, owner.cookie());
+        doReturn(Mono.error(new RuntimeException("injected outbox failure")))
+                .when(outbox).append(argThat(event -> "MerchantProfileSubmitted".equals(event.eventType())));
+
+        client().post().uri("/api/organizations/" + orgId + "/merchant-profile/submit")
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange().expectStatus().is5xxServerError();
+
+        String status = db.sql("SELECT status FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
+                .bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+        assertThat(status).isEqualTo("draft");
+        Long requests = db.sql("SELECT count(*) FROM kyb_verification_request "
+                        + "WHERE organization_id = CAST(:org AS uuid)")
+                .bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(requests).isZero();
+        verify(kybMediaClient, atLeast(3)).release(any(), eq(orgId), any());
     }
 
     @Test

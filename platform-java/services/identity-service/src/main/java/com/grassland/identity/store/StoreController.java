@@ -8,11 +8,15 @@ import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
+import com.grassland.identity.kyb.KybSubmissionService;
+import com.grassland.identity.kyb.KybVerificationRequest;
+import com.grassland.identity.kyb.KybVerificationType;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -50,15 +54,18 @@ public class StoreController {
     private final OrgAuthorization authz;
     private final StoreRepository stores;
     private final StoreProfileRepository storeProfiles;
+    private final KybSubmissionService submissions;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final ObjectMapper json = new ObjectMapper();
 
     public StoreController(OrgAuthorization authz, StoreRepository stores, StoreProfileRepository storeProfiles,
-                           OutboxRepository outbox, TransactionalOperator transactions) {
+                           KybSubmissionService submissions, OutboxRepository outbox,
+                           TransactionalOperator transactions) {
         this.authz = authz;
         this.stores = stores;
         this.storeProfiles = storeProfiles;
+        this.submissions = submissions;
         this.outbox = outbox;
         this.transactions = transactions;
     }
@@ -106,9 +113,34 @@ public class StoreController {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> requireStoreInOrganization(orgId, storeId)
                         .then(transactions.transactional(
-                                storeProfiles.upsert(orgId, storeId, requireAddress(body.address()), body.phone(),
-                                        requireBusinessHours(body.businessHours()), body.description(), "active")))
+                                storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                        .flatMap(existing -> requireEditable(existing).thenReturn(existing))
+                                        .then(storeProfiles.upsertDraft(orgId, storeId,
+                                                requireAddress(body.address()), body.phone(),
+                                                requireBusinessHours(body.businessHours()), body.description()))))
                         .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile)))));
+    }
+
+    @PostMapping("/{storeId}/profile/submit")
+    public Mono<ResponseEntity<Map<String, Object>>> submitProfile(@PathVariable String orgId,
+                                                                    @PathVariable String storeId,
+                                                                    ServerHttpRequest request) {
+        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
+                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
+                        .then(transactions.transactional(
+                                storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                        .switchIfEmpty(Mono.error(new IdentityException(404, "门店资料不存在")))
+                                        .flatMap(profile -> requireSubmittable(profile).thenReturn(profile))
+                                        .flatMap(profile -> storeProfiles.submit(orgId, storeId, Instant.now())
+                                                .switchIfEmpty(Mono.error(new IdentityException(409, "门店资料状态已变化"))))
+                                        .flatMap(updated -> submissions.enqueue(
+                                                        KybVerificationType.STORE_PROFILE, orgId,
+                                                        UUID.fromString(storeId), account.id(), List.of())
+                                                .flatMap(review -> outbox.append(submittedEvent(
+                                                                orgId, storeId, review))
+                                                        .thenReturn(updated)))))
+                        .map(profile -> ResponseEntity.status(201)
+                                .body(Map.of("success", true, "data", toBody(profile)))));
     }
 
     @GetMapping("/{storeId}/profile")
@@ -129,7 +161,10 @@ public class StoreController {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> requireStoreInOrganization(orgId, storeId)
                         .then(transactions.transactional(
-                                storeProfiles.deactivate(orgId, storeId)
+                                storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                        .switchIfEmpty(Mono.error(new IdentityException(404, "门店资料不存在")))
+                                        .flatMap(existing -> requireEditable(existing)
+                                                .then(storeProfiles.deactivate(orgId, storeId)))
                                         .switchIfEmpty(Mono.error(new IdentityException(
                                                 404, "门店资料不存在")))))
                         .map(profile -> ResponseEntity.ok(Map.of(
@@ -155,6 +190,35 @@ public class StoreController {
         return stores.findByOrganizationAndId(orgId, storeId)
                 .switchIfEmpty(Mono.error(new IdentityException(404, "门店不存在")))
                 .then();
+    }
+
+    private Mono<Void> requireEditable(StoreProfile profile) {
+        StoreProfileStatus status = StoreProfileStatus.fromDb(profile.status());
+        if (status.isUnderReview()) {
+            return Mono.error(new IdentityException(409, "门店资料审核中，暂不可编辑"));
+        }
+        if (!status.isEditable()) {
+            return Mono.error(new IdentityException(409, "门店资料已通过审核，如需变更请联系客服"));
+        }
+        return Mono.empty();
+    }
+
+    private Mono<Void> requireSubmittable(StoreProfile profile) {
+        StoreProfileStatus status = StoreProfileStatus.fromDb(profile.status());
+        if (status.isUnderReview()) {
+            return Mono.error(new IdentityException(409, "门店资料已在审核中"));
+        }
+        if (!status.canSubmit()) {
+            return Mono.error(new IdentityException(409, "门店资料当前不可提交审核"));
+        }
+        return Mono.empty();
+    }
+
+    private EventEnvelope submittedEvent(String orgId, String storeId, KybVerificationRequest review) {
+        return new EventEnvelope(UUID.randomUUID().toString(), "StoreProfileSubmitted", "StoreProfile",
+                storeId, 1, Instant.now(), null,
+                Map.of("organizationId", orgId, "storeId", storeId,
+                        "requestId", review.id().toString()));
     }
 
     private String requireAddress(String value) {
@@ -231,6 +295,10 @@ public class StoreController {
         m.put("businessHours", profile.businessHours());
         m.put("description", profile.description());
         m.put("status", profile.status());
+        m.put("submittedAt", profile.submittedAt() == null ? null : profile.submittedAt().toString());
+        m.put("reviewedAt", profile.reviewedAt() == null ? null : profile.reviewedAt().toString());
+        m.put("reviewerAccountId", profile.reviewerAccountId());
+        m.put("reviewNote", profile.reviewNote());
         m.put("createdAt", profile.createdAt() == null ? null : profile.createdAt().toString());
         return m;
     }

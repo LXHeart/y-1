@@ -20,10 +20,11 @@ async function main() {
   )
   console.log('User:', result.rows[0])
 
+  // 积分账户已迁入 finance 域的 credits_account 表（GL-P3-AI-001 下属切片）；seed 直写同库新表。
   await queryDb(
-    `INSERT INTO user_credits (user_id, balance, total_earned)
-     SELECT id, 1000, 1000 FROM app_users
-     ON CONFLICT (user_id) DO UPDATE SET balance = 1000, total_earned = 1000, updated_at = now()`,
+    `INSERT INTO credits_account (account_id, balance, total_earned, total_spent)
+     SELECT id, 1000, 1000, 0 FROM app_users
+     ON CONFLICT (account_id) DO UPDATE SET balance = 1000, total_earned = 1000, updated_at = now()`,
   )
   console.log('All users credits set to 1000')
 

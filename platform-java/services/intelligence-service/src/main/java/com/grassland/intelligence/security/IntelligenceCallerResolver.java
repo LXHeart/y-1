@@ -32,6 +32,8 @@ public class IntelligenceCallerResolver {
 
     /** 受信任的履约编排服务 principal（marketplace 经 IntelligenceMediaClient 中转读附件，Slice 11）。 */
     public static final String MARKETPLACE_SERVICE = "marketplace";
+    /** 受信任的身份服务 principal（仅用于 KYB 媒体归属校验）。 */
+    public static final String IDENTITY_SERVICE = "identity";
 
     private final IdentityAssertionSigner signer;
     private final String headerName;

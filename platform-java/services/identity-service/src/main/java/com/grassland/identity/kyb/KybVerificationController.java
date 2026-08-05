@@ -4,6 +4,7 @@ import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
+import com.grassland.identity.store.StoreProfileRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -38,6 +39,10 @@ public class KybVerificationController {
     private final KybVerificationRequestRepository requests;
     private final MerchantProfileRepository merchantProfiles;
     private final WithdrawalAccountRepository withdrawalAccounts;
+    private final StoreProfileRepository storeProfiles;
+    private final KybReviewDetailService details;
+    private final KybMediaRetentionCommandRepository retentionCommands;
+    private final KybMediaRetentionProperties retentionProperties;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
@@ -46,12 +51,20 @@ public class KybVerificationController {
             KybVerificationRequestRepository requests,
             MerchantProfileRepository merchantProfiles,
             WithdrawalAccountRepository withdrawalAccounts,
+            StoreProfileRepository storeProfiles,
+            KybReviewDetailService details,
+            KybMediaRetentionCommandRepository retentionCommands,
+            KybMediaRetentionProperties retentionProperties,
             OutboxRepository outbox,
             TransactionalOperator transactions) {
         this.accounts = accounts;
         this.requests = requests;
         this.merchantProfiles = merchantProfiles;
         this.withdrawalAccounts = withdrawalAccounts;
+        this.storeProfiles = storeProfiles;
+        this.details = details;
+        this.retentionCommands = retentionCommands;
+        this.retentionProperties = retentionProperties;
         this.outbox = outbox;
         this.transactions = transactions;
     }
@@ -62,6 +75,34 @@ public class KybVerificationController {
                 .flatMap(admin -> requests.findPending().collectList())
                 .map(list -> ResponseEntity.ok(Map.of("success", true,
                         "data", list.stream().map(this::toBody).toList())));
+    }
+
+    @GetMapping("/{id}")
+    public Mono<ResponseEntity<Map<String, Object>>> detail(@PathVariable String id,
+                                                            ServerHttpRequest request) {
+        return accounts.requireAdmin(request)
+                .flatMap(admin -> requests.findById(KybSubmissionService.parseUuid(id, "审核请求 ID"))
+                        .switchIfEmpty(Mono.error(new IdentityException(404, "审核请求不存在"))))
+                .flatMap(req -> details.load(req).map(detail -> {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("request", toBody(req));
+                    data.put("subject", detail.subject());
+                    data.put("attachments", detail.attachments());
+                    return ResponseEntity.ok(Map.of("success", true, "data", data));
+                }));
+    }
+
+    @GetMapping("/{id}/attachments/{attachmentId}/download-url")
+    public Mono<ResponseEntity<Map<String, Object>>> attachmentDownload(
+            @PathVariable String id,
+            @PathVariable String attachmentId,
+            ServerHttpRequest request) {
+        return accounts.requireAdmin(request)
+                .flatMap(admin -> requests.findById(KybSubmissionService.parseUuid(id, "审核请求 ID"))
+                        .switchIfEmpty(Mono.error(new IdentityException(404, "审核请求不存在"))))
+                .flatMap(req -> details.issueDownload(req,
+                                KybSubmissionService.parseUuid(attachmentId, "附件 ID"))
+                        .map(download -> ResponseEntity.ok(Map.of("success", true, "data", download))));
     }
 
     @PostMapping(path = "/{id}/approve", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -92,6 +133,7 @@ public class KybVerificationController {
         return accounts.requireAdmin(request)
                 .flatMap(admin -> {
                     UUID requestId = KybSubmissionService.parseUuid(id, "审核请求 ID");
+                    String note = requireReviewNote(decision, body);
                     return transactions.transactional(
                             requests.findById(requestId)
                                     .switchIfEmpty(Mono.error(new IdentityException(404, "审核请求不存在")))
@@ -99,15 +141,44 @@ public class KybVerificationController {
                                             ? Mono.<KybVerificationRequest>error(
                                                     new IdentityException(409, "审核请求已处理"))
                                             : Mono.just(req))
+                                    .flatMap(req -> decision == KybRequestStatus.APPROVED
+                                            ? details.requireCurrentEvidence(req).thenReturn(req)
+                                            : Mono.just(req))
                                     .flatMap(req -> requests.updateStatus(
-                                                    req.id(), decision.dbValue(), admin.id(), body.note())
+                                                    req.id(), decision.dbValue(), admin.id(), note)
                                             .switchIfEmpty(Mono.error(new IdentityException(409, "审核请求已处理")))
                                             .flatMap(updated -> updateTargetStatus(
-                                                            updated, decision.dbValue(), admin.id(), body.note())
-                                                    .then(emitReviewEvent(updated, decision.dbValue(), body.note()))
+                                                            updated, decision.dbValue(), admin.id(), note)
+                                                    .then(emitReviewEvent(updated, decision.dbValue(), note))
+                                                    .then(retentionCommands.sealReference(
+                                                            updated.id(), updated.organizationId(),
+                                                            retentionProperties.terminalDeadline(
+                                                                    decision.dbValue(), Instant.now()))
+                                                            .flatMap(sealed -> requireCompleteRetentionSeal(
+                                                                    updated, sealed)))
                                                     .thenReturn(updated))));
                 })
                 .map(req -> ResponseEntity.ok(Map.of("success", true, "data", toBody(req))));
+    }
+
+    private Mono<Void> requireCompleteRetentionSeal(KybVerificationRequest request, long sealed) {
+        int expected = details.evidenceCount(request);
+        if (KybVerificationType.fromDb(request.verificationType()) == KybVerificationType.MERCHANT_PROFILE
+                && (expected == 0 || sealed != expected)) {
+            return Mono.error(new IdentityException(409, "审核材料留存状态不完整"));
+        }
+        return Mono.empty();
+    }
+
+    private String requireReviewNote(KybRequestStatus decision, ReviewRequest body) {
+        String note = body == null || body.note() == null ? null : body.note().trim();
+        if (decision == KybRequestStatus.REJECTED && (note == null || note.isBlank())) {
+            throw new IdentityException(400, "拒绝审核时必须填写原因");
+        }
+        if (note != null && note.length() > 500) {
+            throw new IdentityException(400, "审核备注不能超过 500 个字符");
+        }
+        return note == null || note.isBlank() ? null : note;
     }
 
     /**
@@ -119,15 +190,18 @@ public class KybVerificationController {
     private Mono<Void> updateTargetStatus(KybVerificationRequest req, String status, String adminId, String note) {
         KybVerificationType type = KybVerificationType.fromDb(req.verificationType());
         return switch (type) {
-            case MERCHANT_PROFILE -> merchantProfiles.findById(req.organizationId())
-                    .flatMap(profile -> merchantProfiles.updateStatus(req.organizationId(), status,
-                            profile.submittedAt(), Instant.now(), adminId, note))
+            case MERCHANT_PROFILE -> merchantProfiles.reviewStatus(
+                            req.organizationId(), status, Instant.now(), adminId, note)
+                    .switchIfEmpty(Mono.error(new IdentityException(409, "商家资料状态已变化")))
                     .then();
-            case WITHDRAWAL_ACCOUNT -> withdrawalAccounts.findById(req.targetId())
-                    .flatMap(acc -> withdrawalAccounts.updateStatus(req.targetId(), status,
-                            acc.submittedAt(), Instant.now(), adminId, note))
+            case WITHDRAWAL_ACCOUNT -> withdrawalAccounts.reviewStatus(
+                            req.targetId(), req.organizationId(), status, Instant.now(), adminId, note)
+                    .switchIfEmpty(Mono.error(new IdentityException(409, "收款账户状态已变化")))
                     .then();
-            case STORE_PROFILE -> Mono.empty(); // store_profile 暂无审核流程（V16 建表但无端点，属 Slice 2）
+            case STORE_PROFILE -> storeProfiles.review(req.organizationId(), req.targetId().toString(),
+                            status, Instant.now(), adminId, note)
+                    .switchIfEmpty(Mono.error(new IdentityException(409, "门店资料状态已变化")))
+                    .then();
         };
     }
 
@@ -137,11 +211,8 @@ public class KybVerificationController {
         String eventType = switch (type) {
             case MERCHANT_PROFILE -> decision.equals("approved") ? "MerchantProfileApproved" : "MerchantProfileRejected";
             case WITHDRAWAL_ACCOUNT -> decision.equals("approved") ? "WithdrawalAccountApproved" : "WithdrawalAccountRejected";
-            case STORE_PROFILE -> null; // 暂无事件
+            case STORE_PROFILE -> decision.equals("approved") ? "StoreProfileApproved" : "StoreProfileRejected";
         };
-        if (eventType == null) {
-            return Mono.empty();
-        }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("requestId", req.id().toString());
         payload.put("organizationId", req.organizationId());

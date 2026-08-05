@@ -31,7 +31,7 @@ export async function listUsersWithCredits(): Promise<UserWithCredits[]> {
     `SELECT u.id, u.email, u.display_name, u.role, u.status, u.created_at,
             uc.balance, uc.total_earned, uc.total_spent
      FROM app_users u
-     LEFT JOIN user_credits uc ON uc.user_id = u.id
+     LEFT JOIN credits_account uc ON uc.account_id = u.id
      ORDER BY u.created_at DESC`,
   )
 

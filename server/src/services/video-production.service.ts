@@ -60,6 +60,7 @@ const SCRIPT_SYSTEM_PROMPT = `你是一位专业的短视频脚本策划师，�
 4. 语言简洁有力，突出店铺特色和吸引力
 5. 适合 {videoStyle} 风格
 6. 行业类型：{industryType}
+7. 目标发布平台：{targetPlatform}，脚本节奏、开场钩子、字幕密度和表达方式必须符合该平台用户习惯
 
 ## 输出格式
 直接输出脚本内容，包含镜头描述和旁白文字。不需要 JSON 格式，纯文本即可。
@@ -82,6 +83,7 @@ export async function* streamVideoScript(
   images: string[],
   shopName: string,
   industryType: string,
+  targetPlatform: string,
   videoStyle: string,
   shopAddress?: string,
   shopDescription?: string,
@@ -93,6 +95,7 @@ export async function* streamVideoScript(
   const systemPrompt = SCRIPT_SYSTEM_PROMPT
     .replace('{videoStyle}', videoStyle)
     .replace('{industryType}', industryType)
+    .replace('{targetPlatform}', targetPlatform)
 
   const userParts: string[] = []
   userParts.push(`店铺名称：${shopName}`)
@@ -106,7 +109,7 @@ export async function* streamVideoScript(
     image_url: { url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}` },
   }))
 
-  logger.info({ shopName, industryType, videoStyle, imageCount: images.length }, 'Streaming video production script')
+  logger.info({ shopName, industryType, targetPlatform, videoStyle, imageCount: images.length }, 'Streaming video production script')
 
   yield* requestTextChatStream(
     config,

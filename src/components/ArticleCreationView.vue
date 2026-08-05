@@ -22,7 +22,7 @@
       </header>
 
       <div class="completed-preview">
-        <div class="completed-body" v-html="renderMarkdown(contentWithImages)"></div>
+        <div class="completed-body" v-html="renderSafeMarkdown(contentWithImages)"></div>
       </div>
 
       <div class="action-row">
@@ -364,6 +364,12 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import { useArticleCreation } from '../composables/useArticleCreation'
+import { renderSafeMarkdown } from '../lib/safe-markdown'
+import type { CreationHandoff } from '../types/ai-creation'
+
+const props = defineProps<{
+  creationHandoff?: CreationHandoff | null
+}>()
 
 const {
   stage, topic, platform, titles, selectedTitle, outline, content,
@@ -377,6 +383,21 @@ const {
 } = useArticleCreation()
 
 const articleInitialTopic = inject<Ref<string>>('articleInitialTopic')
+const hydratedCreationRevision = ref<number | null>(null)
+
+watch(() => props.creationHandoff, (handoff) => {
+  if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
+  hydratedCreationRevision.value = handoff.revision
+  setTopic(handoff.prefill?.topic || '')
+  const platformByEntry = {
+    'wechat-official': 'wechat',
+    zhihu: 'zhihu',
+    xiaohongshu: 'xiaohongshu',
+  } as const
+  if (handoff.platformId in platformByEntry) {
+    platform.value = platformByEntry[handoff.platformId as keyof typeof platformByEntry]
+  }
+}, { immediate: true })
 
 watch(articleInitialTopic!, (val) => {
   if (val) {
@@ -432,23 +453,6 @@ async function copyContent(): Promise<void> {
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
   }
-}
-
-function renderMarkdown(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/!\[(.+?)\]\((.+?)\)/g, '</p><figure class="content-img-wrap"><img src="$2" alt="$1" class="content-img clickable-img" /></figure><p>')
-    .replace(/\n{2,}/g, '</p><p>')
-    .replace(/\n/g, '<br>')
-    .replace(/^/, '<p>')
-    .replace(/$/, '</p>')
-    .replace(/<p><\/p>/g, '')
 }
 
 const contentWithImages = computed(() => {
@@ -1055,41 +1059,31 @@ const contentWithImages = computed(() => {
   color: var(--color-text);
 }
 
-.completed-body :is(h1, h2, h3) {
+.completed-body :deep(:is(h1, h2, h3)) {
   margin: 1em 0 0.5em;
   font-weight: 600;
 }
 
-.completed-body h2 {
+.completed-body :deep(h2) {
   font-size: 1.15em;
 }
 
-.completed-body h3 {
+.completed-body :deep(h3) {
   font-size: 1.05em;
 }
 
-.completed-body p {
+.completed-body :deep(p) {
   margin: 0.5em 0;
 }
 
-.content-img-wrap {
-  margin: 1.2em 0;
-  display: grid;
-  gap: 6px;
-}
-
-.content-img {
+.completed-body :deep(img) {
+  display: block;
   width: 100%;
   max-height: 320px;
   object-fit: cover;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-}
-
-.content-img-wrap figcaption {
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--color-text-muted);
+  margin: 1.2em 0;
 }
 
 .clickable-img {

@@ -76,6 +76,13 @@
           </select>
         </div>
         <div class="form-field">
+          <label for="vp-platform">发布平台 *</label>
+          <select id="vp-platform" v-model="form.targetPlatform">
+            <option value="">请选择发布平台</option>
+            <option v-for="item in videoPlatforms" :key="item.id" :value="item.id">{{ item.label }}</option>
+          </select>
+        </div>
+        <div class="form-field">
           <label for="vp-address">店铺地址</label>
           <input id="vp-address" v-model="form.shopAddress" type="text" placeholder="选填" />
         </div>
@@ -91,7 +98,7 @@
         </div>
         <div class="form-field form-field-wide">
           <label for="vp-prompt">自定义要求</label>
-          <textarea id="vp-prompt" v-model="form.customPrompt" rows="2" placeholder="对视频脚本有什么特殊要求？（选填）"></textarea>
+          <textarea id="vp-prompt" v-model="form.customPrompt" rows="2" maxlength="1500" placeholder="对视频脚本有什么特殊要求？（选填）"></textarea>
         </div>
       </div>
 
@@ -229,9 +236,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { AI_PLATFORM_DEFINITIONS } from '../config/ai-platform-capabilities'
 import { useVideoProduction } from '../composables/useVideoProduction'
+import type { CreationHandoff } from '../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../types/video-production'
+
+const props = defineProps<{
+  creationHandoff?: CreationHandoff | null
+}>()
 
 const {
   stage, images, form, script, videoUrl,
@@ -244,7 +257,28 @@ const {
   reset,
 } = useVideoProduction()
 
+const hydratedCreationRevision = ref<number | null>(null)
+
+watch(() => props.creationHandoff, (handoff) => {
+  if (!handoff || handoff.targetView !== 'video-production' || hydratedCreationRevision.value === handoff.revision) return
+  hydratedCreationRevision.value = handoff.revision
+  reset()
+  const promptParts = [
+    handoff.prefill?.topic ? `创作主题：${handoff.prefill.topic}` : '',
+    handoff.prefill?.instructions || '',
+  ].filter(Boolean)
+  form.value = {
+    ...form.value,
+    targetPlatform: handoff.platformId,
+    shopName: handoff.prefill?.storeName || '',
+    shopAddress: handoff.prefill?.address || '',
+    shopDescription: handoff.prefill?.storeDescription || '',
+    customPrompt: promptParts.join('\n'),
+  }
+}, { immediate: true })
+
 const MAX_IMAGES = 9
+const videoPlatforms = AI_PLATFORM_DEFINITIONS.filter((item) => item.forms.some((form) => form.id === 'video'))
 
 const steps = [
   { key: 'upload' as const, label: '上传素材' },

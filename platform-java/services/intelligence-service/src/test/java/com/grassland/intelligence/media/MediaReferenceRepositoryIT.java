@@ -6,8 +6,16 @@ import com.grassland.intelligence.IntelligenceItSupport;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
+import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
 
 /** media_reference 仓储 + V4 状态机集成测试。testcontainers postgres，Flyway V4 已建表。 */
@@ -15,6 +23,12 @@ class MediaReferenceRepositoryIT extends IntelligenceItSupport {
 
     @Autowired
     private MediaReferenceRepository repo;
+
+    @Autowired
+    private KybMediaRetentionRepository kybRetentions;
+
+    @Autowired
+    private TransactionalOperator transactions;
 
     @Test
     void insertPersistsBothKeysAndFindsById() {
@@ -181,15 +195,156 @@ class MediaReferenceRepositoryIT extends IntelligenceItSupport {
     void findCleanupCandidatesReturnsExpiredAndStaleRowsOnly() {
         MediaReference expired = newMedia(MediaStatus.ACTIVE, Instant.now().minusSeconds(3600));
         MediaReference fresh = newMedia(MediaStatus.ACTIVE, Instant.now().plusSeconds(3600));
+        MediaReference retainedKyb = newKybMedia(MediaStatus.ACTIVE, Instant.now().plusSeconds(3600));
         repo.insert(expired).block();
         repo.insert(fresh).block();
+        repo.insert(retainedKyb).block();
+        kybRetentions.retain(retainedKyb.id(), retainedKyb.organizationId(), UUID.randomUUID()).block();
 
         StepVerifier.create(repo.findCleanupCandidates(Duration.ofHours(1)).map(MediaReference::id).collectList())
                 .assertNext(ids -> {
                     assertThat(ids).contains(expired.id());
-                    assertThat(ids).doesNotContain(fresh.id());
+                    assertThat(ids).doesNotContain(fresh.id(), retainedKyb.id());
                 })
                 .verifyComplete();
+        StepVerifier.create(repo.claimCleanup(retainedKyb.id())).verifyComplete();
+        StepVerifier.create(repo.claimDelete(retainedKyb.id(), retainedKyb.ownerAccountId())).verifyComplete();
+    }
+
+    @Test
+    void kybRetentionBlocksDeleteUntilAllReferencesAreReleased() {
+        MediaReference unbound = newKybMedia(MediaStatus.ACTIVE, null);
+        repo.insert(unbound).block();
+        StepVerifier.create(repo.claimDelete(unbound.id(), unbound.ownerAccountId()))
+                .assertNext(claimed -> assertThat(claimed.status()).isEqualTo(MediaStatus.DELETING))
+                .verifyComplete();
+
+        MediaReference retained = newKybMedia(MediaStatus.ACTIVE, null);
+        repo.insert(retained).block();
+        UUID requestId = UUID.randomUUID();
+        assertThat(kybRetentions.retain(retained.id(), retained.organizationId(), requestId).block()).isTrue();
+        StepVerifier.create(repo.claimDelete(retained.id(), retained.ownerAccountId())).verifyComplete();
+        StepVerifier.create(repo.claimCleanup(retained.id())).verifyComplete();
+
+        assertThat(kybRetentions.release(retained.id(), retained.organizationId(), requestId).block()).isTrue();
+        StepVerifier.create(repo.claimDelete(retained.id(), retained.ownerAccountId()))
+                .assertNext(claimed -> assertThat(claimed.status()).isEqualTo(MediaStatus.DELETING))
+                .verifyComplete();
+    }
+
+    @Test
+    void kybLeaseRenewalCannotShortenAndExpiredLeaseStopsBlockingDelete() {
+        MediaReference retained = newKybMedia(MediaStatus.ACTIVE, null);
+        repo.insert(retained).block();
+        UUID referenceId = UUID.randomUUID();
+
+        KybMediaRetentionRepository.Retention first = kybRetentions.upsertLease(
+                retained.id(), retained.organizationId(), referenceId, "attachment", Duration.ofHours(2)).block();
+        KybMediaRetentionRepository.Retention renewed = kybRetentions.upsertLease(
+                retained.id(), retained.organizationId(), referenceId, "attachment", Duration.ofMinutes(5)).block();
+
+        assertThat(first).isNotNull();
+        assertThat(renewed).isNotNull();
+        assertThat(renewed.leaseUntil()).isAfterOrEqualTo(first.leaseUntil());
+        assertThat(kybRetentions.isRetained(retained.id()).block()).isTrue();
+
+        db.sql("UPDATE media_kyb_retention SET lease_until=now()-interval '1 second' "
+                        + "WHERE media_reference_id=CAST(:media AS uuid) AND reference_id=CAST(:reference AS uuid)")
+                .bind("media", retained.id()).bind("reference", referenceId).then().block();
+
+        assertThat(kybRetentions.isRetained(retained.id()).block()).isFalse();
+        StepVerifier.create(repo.claimDelete(retained.id(), retained.ownerAccountId()))
+                .assertNext(claimed -> assertThat(claimed.status()).isEqualTo(MediaStatus.DELETING))
+                .verifyComplete();
+    }
+
+    @Test
+    void sealedRetentionCannotBeShortenedOrReleasedBeforeItsDeadline() {
+        MediaReference retained = newKybMedia(MediaStatus.ACTIVE, null);
+        repo.insert(retained).block();
+        UUID requestId = UUID.randomUUID();
+        Instant retainUntil = Instant.now().plus(Duration.ofDays(30));
+
+        KybMediaRetentionRepository.Retention sealed = kybRetentions.seal(
+                retained.id(), retained.organizationId(), requestId, "review_request", retainUntil).block();
+        KybMediaRetentionRepository.Retention shorter = kybRetentions.seal(
+                retained.id(), retained.organizationId(), requestId, "review_request",
+                Instant.now().plus(Duration.ofDays(1))).block();
+
+        assertThat(sealed).isNotNull();
+        assertThat(shorter).isNotNull();
+        assertThat(shorter.retainedUntil()).isAfterOrEqualTo(sealed.retainedUntil());
+        assertThat(kybRetentions.release(retained.id(), retained.organizationId(), requestId).block()).isFalse();
+        assertThat(kybRetentions.isRetained(retained.id()).block()).isTrue();
+
+        db.sql("UPDATE media_kyb_retention SET retained_until=now()-interval '1 second' "
+                        + "WHERE media_reference_id=CAST(:media AS uuid) AND reference_id=CAST(:reference AS uuid)")
+                .bind("media", retained.id()).bind("reference", requestId).then().block();
+
+        assertThat(kybRetentions.release(retained.id(), retained.organizationId(), requestId).block()).isTrue();
+        assertThat(kybRetentions.isRetained(retained.id()).block()).isFalse();
+    }
+
+    @Test
+    void retentionCommittedWhileOwnerDeleteWaitsPreventsDeleteClaim() throws Exception {
+        assertConcurrentRetentionWins(ref -> repo.claimDelete(ref.id(), ref.ownerAccountId()));
+    }
+
+    @Test
+    void retentionCommittedWhileCleanupWaitsPreventsCleanupClaim() throws Exception {
+        assertConcurrentRetentionWins(ref -> repo.claimCleanup(ref.id()));
+    }
+
+    private void assertConcurrentRetentionWins(Function<MediaReference, Mono<MediaReference>> claim) throws Exception {
+        MediaReference retained = newKybMedia(MediaStatus.ACTIVE, null);
+        repo.insert(retained).block();
+        UUID referenceId = UUID.randomUUID();
+        CountDownLatch mediaLocked = new CountDownLatch(1);
+        Sinks.Empty<Void> allowRetentionInsert = Sinks.empty();
+
+        CompletableFuture<Void> retention = transactions.transactional(
+                        db.sql("SELECT id FROM media_reference WHERE id=CAST(:media AS uuid) FOR UPDATE")
+                                .bind("media", retained.id()).map(row -> row.get(0)).one()
+                                .doOnNext(ignored -> mediaLocked.countDown())
+                                .then(allowRetentionInsert.asMono())
+                                .then(kybRetentions.upsertLease(retained.id(), retained.organizationId(), referenceId,
+                                        "review_request", Duration.ofDays(7)))
+                                .then())
+                .subscribeOn(Schedulers.boundedElastic()).toFuture();
+
+        assertThat(mediaLocked.await(5, TimeUnit.SECONDS)).isTrue();
+        CompletableFuture<MediaReference> deletion = claim.apply(retained)
+                .subscribeOn(Schedulers.boundedElastic()).toFuture();
+        Thread.sleep(150);
+        assertThat(deletion).isNotDone();
+
+        allowRetentionInsert.tryEmitEmpty();
+        retention.get(5, TimeUnit.SECONDS);
+        assertThat(deletion.get(5, TimeUnit.SECONDS)).isNull();
+        assertThat(repo.findById(retained.id()).block().status()).isEqualTo(MediaStatus.ACTIVE);
+        assertThat(kybRetentions.isRetained(retained.id()).block()).isTrue();
+    }
+
+    private static MediaReference newKybMedia(MediaStatus status, Instant expiresAt) {
+        UUID id = UUID.randomUUID();
+        String organizationId = UUID.randomUUID().toString();
+        return new MediaReference(
+                id,
+                "acct-" + UUID.randomUUID(),
+                organizationId,
+                MediaPurpose.MERCHANT_KYB.db(),
+                MediaPurpose.MERCHANT_KYB.db(),
+                organizationId,
+                "media/merchant_kyb/" + id,
+                "media-pending/" + id,
+                "image/png",
+                8L,
+                null,
+                "upload",
+                status,
+                null,
+                expiresAt,
+                null);
     }
 
     private static MediaReference newMedia(MediaStatus status, Instant expiresAt) {

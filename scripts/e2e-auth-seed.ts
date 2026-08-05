@@ -1,27 +1,39 @@
-/** Seed one isolated login account for the public Edge E2E smoke. */
+/** Seed isolated merchant and administrator accounts for public Edge E2E flows. */
 import bcrypt from 'bcryptjs'
 import { queryDb } from '../server/src/lib/db.js'
 
 const email = process.env.E2E_EMAIL?.trim().toLowerCase()
 const password = process.env.E2E_PASSWORD
 const displayName = process.env.E2E_DISPLAY_NAME || 'CI E2E User'
+const adminEmail = process.env.E2E_ADMIN_EMAIL?.trim().toLowerCase()
+const adminPassword = process.env.E2E_ADMIN_PASSWORD
+const adminDisplayName = process.env.E2E_ADMIN_DISPLAY_NAME || 'CI E2E Admin'
 
-if (!email || !password) {
-  throw new Error('E2E_EMAIL and E2E_PASSWORD are required')
+if (!email || !password || !adminEmail || !adminPassword) {
+  throw new Error('E2E_EMAIL, E2E_PASSWORD, E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD are required')
 }
 
-const passwordHash = bcrypt.hashSync(password, 10)
-
-await queryDb(
-  `INSERT INTO app_users (id, email, password_hash, display_name, role, status)
-   VALUES (gen_random_uuid(), $1, $2, $3, 'user', 'active')
+async function upsertAccount(
+  targetEmail: string,
+  targetPassword: string,
+  targetDisplayName: string,
+  role: 'user' | 'admin',
+): Promise<void> {
+  const passwordHash = bcrypt.hashSync(targetPassword, 10)
+  await queryDb(
+    `INSERT INTO app_users (id, email, password_hash, display_name, role, status)
+   VALUES (gen_random_uuid(), $1, $2, $3, $4, 'active')
    ON CONFLICT (email) DO UPDATE SET
      password_hash = EXCLUDED.password_hash,
      display_name = EXCLUDED.display_name,
-     role = 'user',
+     role = $4,
      status = 'active',
      updated_at = now()` ,
-  [email, passwordHash, displayName],
-)
+    [targetEmail, passwordHash, targetDisplayName, role],
+  )
+}
 
-console.log(`[e2e-auth-seed] ready: ${email}`)
+await upsertAccount(email, password, displayName, 'user')
+await upsertAccount(adminEmail, adminPassword, adminDisplayName, 'admin')
+
+console.log(`[e2e-auth-seed] ready: ${email}, ${adminEmail}`)

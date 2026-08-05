@@ -7,6 +7,9 @@ import com.grassland.identity.organization.OrganizationRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -34,10 +37,16 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/api/organizations/{orgId}/merchant-attachments")
 public class MerchantAttachmentController {
 
+    private static final Logger log = LoggerFactory.getLogger(MerchantAttachmentController.class);
+
     private final OrgAuthorization authz;
     private final OrganizationRepository organizations;
     private final MerchantAttachmentRepository attachments;
     private final MerchantProfileRepository profiles;
+    private final KybMediaClient mediaClient;
+    private final KybMediaValidator mediaValidator;
+    private final KybMediaRetentionCommandRepository retentionCommands;
+    private final KybMediaRetentionProperties retentionProperties;
     private final TransactionalOperator transactions;
 
     public MerchantAttachmentController(
@@ -45,12 +54,38 @@ public class MerchantAttachmentController {
             OrganizationRepository organizations,
             MerchantAttachmentRepository attachments,
             MerchantProfileRepository profiles,
+            KybMediaClient mediaClient,
+            KybMediaValidator mediaValidator,
+            KybMediaRetentionCommandRepository retentionCommands,
+            KybMediaRetentionProperties retentionProperties,
             TransactionalOperator transactions) {
         this.authz = authz;
         this.organizations = organizations;
         this.attachments = attachments;
         this.profiles = profiles;
+        this.mediaClient = mediaClient;
+        this.mediaValidator = mediaValidator;
+        this.retentionCommands = retentionCommands;
+        this.retentionProperties = retentionProperties;
         this.transactions = transactions;
+    }
+
+    /** 由 identity 的组织鉴权上下文代申请票据，避免浏览器当前活动组织污染媒体归属。 */
+    @PostMapping(path = "/upload-ticket", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> createUploadTicket(
+            @PathVariable String orgId,
+            @RequestBody CreateKybUploadTicketRequest body,
+            ServerHttpRequest request) {
+        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
+                .flatMap(account -> requireAttachmentsEditable(orgId).then(Mono.defer(() -> {
+                    if (body == null || body.sizeBytes() == null || body.sizeBytes() < 1) {
+                        return Mono.error(new IdentityException(400, "文件大小无效"));
+                    }
+                    String contentType = mediaValidator.requireAllowedMime(body.contentType());
+                    return mediaClient.createUploadTicket(
+                            orgId, account.id(), contentType, body.sizeBytes());
+                })))
+                .map(ticket -> ResponseEntity.ok(Map.of("success", true, "data", ticket)));
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -60,17 +95,27 @@ public class MerchantAttachmentController {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> transactions.transactional(
                         lockOrganization(orgId).then(requireAttachmentsEditable(orgId)).then(Mono.defer(() -> {
+                            if (body == null) {
+                                return Mono.error(new IdentityException(400, "附件请求不能为空"));
+                            }
                             MerchantAttachmentType type = MerchantAttachmentType.fromRequest(body.attachmentType());
+                            UUID mediaRefId = KybSubmissionService.parseUuid(body.mediaReferenceId(), "媒体引用 ID");
                             // 证件类附件唯一约束校验
                             if (type.isDocumentType()) {
                                 return attachments.findByOrganizationAndType(orgId, type.dbValue())
                                         .flatMap(existing -> Mono.<Map<String, Object>>error(
                                                 new IdentityException(409, "该类型附件已存在，请先删除后再上传")))
-                                        .switchIfEmpty(Mono.defer(() ->
-                                                createAttachment(orgId, type, body, account.id())));
+                                        .switchIfEmpty(attachments.findByOrganizationAndMediaReference(orgId, mediaRefId)
+                                                .flatMap(existing -> Mono.<Map<String, Object>>error(
+                                                        new IdentityException(409,
+                                                                "同一媒体不能重复作为多种审核证件")))
+                                                .switchIfEmpty(Mono.defer(() -> createAttachment(
+                                                        orgId, type, mediaRefId, account.id()))));
                             }
-                            return createAttachment(orgId, type, body, account.id());
+                            return createAttachment(orgId, type, mediaRefId, account.id());
                         }))))
+                .onErrorMap(DataIntegrityViolationException.class,
+                        error -> new IdentityException(409, "附件类型或媒体已存在"))
                 .map(result -> ResponseEntity.status(201).body(Map.of("success", true, "data", result)));
     }
 
@@ -80,9 +125,23 @@ public class MerchantAttachmentController {
      * 被当成两种），也让提交前的材料齐备校验按 dbValue 比对时漏判。
      */
     private Mono<Map<String, Object>> createAttachment(String orgId, MerchantAttachmentType type,
-                                                        CreateAttachmentRequest body, String accountId) {
-        UUID mediaRefId = KybSubmissionService.parseUuid(body.mediaReferenceId(), "媒体引用 ID");
-        return attachments.create(orgId, type.dbValue(), mediaRefId, body.mimeType(), body.sizeBytes(), accountId)
+                                                        UUID mediaRefId, String accountId) {
+        UUID attachmentId = UUID.randomUUID();
+        return mediaClient.requireUsable(mediaRefId, orgId, accountId)
+                .flatMap(media -> mediaClient.acquireLease(
+                                mediaRefId, orgId, attachmentId, "attachment",
+                                retentionProperties.liveLeaseSeconds())
+                        .flatMap(receipt -> attachments.create(
+                                        attachmentId, orgId, type.dbValue(), mediaRefId,
+                                        media.mimeType(), media.sizeBytes(), accountId)
+                                .flatMap(attachment -> retentionCommands.upsertLive(
+                                                mediaRefId, attachmentId, orgId, "attachment",
+                                                receipt.leaseUntil())
+                                        .thenReturn(attachment))
+                                // 外部租约成功而本地事务失败时立即释放；进程崩溃则由有限租约自动收敛。
+                                .onErrorResume(error -> mediaClient.release(mediaRefId, orgId, attachmentId)
+                                        .onErrorResume(releaseError -> Mono.empty())
+                                        .then(Mono.error(error)))))
                 .map(this::toBody);
     }
 
@@ -108,13 +167,29 @@ public class MerchantAttachmentController {
         return authz.requireRole(request, orgId, MembershipRole.ADMIN)
                 .flatMap(account -> transactions.transactional(
                         lockOrganization(orgId).then(requireAttachmentsEditable(orgId))
-                                .then(
-                                        attachments.deleteByIdAndOrganization(
-                                                        KybSubmissionService.parseUuid(id, "附件 ID"), orgId)
-                                                .flatMap(deleted -> deleted > 0
-                                                        ? Mono.just(ResponseEntity.ok(Map.of("success", true,
-                                                                "data", Map.of("deleted", true))))
-                                                        : Mono.error(new IdentityException(404, "附件不存在"))))));
+                                .then(Mono.defer(() -> {
+                                    UUID attachmentId = KybSubmissionService.parseUuid(id, "附件 ID");
+                                    return attachments.findByIdAndOrganization(attachmentId, orgId)
+                                            .switchIfEmpty(Mono.error(new IdentityException(404, "附件不存在")))
+                                            .flatMap(attachment -> attachments.deleteByIdAndOrganization(
+                                                            attachmentId, orgId)
+                                                    .flatMap(deleted -> deleted > 0
+                                                            ? retentionCommands.markReleased(
+                                                                            attachment.mediaReferenceId(),
+                                                                            attachment.id(), orgId)
+                                                                    .thenReturn(attachment)
+                                                            : Mono.error(new IdentityException(404, "附件不存在"))));
+                                }))))
+                // 本地删除和 desired_state=released 已原子提交；同步释放只用于加速，失败由 worker 重试。
+                .flatMap(attachment -> mediaClient.release(attachment.mediaReferenceId(), orgId, attachment.id())
+                        .then(retentionCommands.markReleasedSynced(
+                                attachment.mediaReferenceId(), attachment.id(), orgId))
+                        .onErrorResume(error -> {
+                            log.warn("KYB attachment retention release deferred: attachmentId={}", attachment.id());
+                            return Mono.empty();
+                        })
+                        .thenReturn(ResponseEntity.ok(Map.of(
+                                "success", true, "data", Map.of("deleted", true)))));
     }
 
     private Mono<Void> requireAttachmentsEditable(String orgId) {
@@ -161,4 +236,6 @@ public class MerchantAttachmentController {
             String mimeType,
             Long sizeBytes
     ) {}
+
+    public record CreateKybUploadTicketRequest(String contentType, Long sizeBytes) {}
 }

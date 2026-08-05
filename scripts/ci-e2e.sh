@@ -21,6 +21,9 @@ export TEMPORAL_GRPC_PORT="${TEMPORAL_GRPC_PORT:-17233}"
 export E2E_EMAIL="${E2E_EMAIL:-e2e-ci@test.local}"
 export E2E_PASSWORD="${E2E_PASSWORD:-E2e!$(openssl rand -hex 16)}"
 export E2E_DISPLAY_NAME="${E2E_DISPLAY_NAME:-CI E2E User}"
+export E2E_ADMIN_EMAIL="${E2E_ADMIN_EMAIL:-e2e-admin-ci@test.local}"
+export E2E_ADMIN_PASSWORD="${E2E_ADMIN_PASSWORD:-Admin!$(openssl rand -hex 16)}"
+export E2E_ADMIN_DISPLAY_NAME="${E2E_ADMIN_DISPLAY_NAME:-CI E2E Admin}"
 export PUBLIC_FORWARDED_PROTO=http
 export TRUSTED_PROXY_CIDR=127.0.0.1/32
 export FRONTEND_ORIGIN="http://127.0.0.1:${FRONTEND_PORT}"
@@ -56,6 +59,7 @@ for key in \
   IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_FINANCE \
   IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST \
   IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE \
+  IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE \
   IDENTITY_ASSERTION_KEY_TRUST_SERVICE_FINANCE \
   IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE; do
   printf -v "$key" '%s' "$(openssl rand -hex 32)"
@@ -152,4 +156,4 @@ wait_for_public_endpoint /api/finance/wallets/me 401
 wait_for_public_endpoint /api/trust/disputes 405
 wait_for_public_endpoint /api/media/media 404
 
-BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" npm run e2e
+BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" npm run e2e

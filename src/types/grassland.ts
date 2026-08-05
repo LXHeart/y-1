@@ -562,7 +562,7 @@ export interface EngagementVerification {
 // ---------- intelligence：media 直传（三步上传）----------
 
 /** 附件用途。履约附件是唯一允许 marketplace 跨账号读的 purpose（服务间断点的放行条件）。 */
-export type MediaPurpose = 'engagement_attachment' | 'video_asset' | 'user_upload'
+export type MediaPurpose = 'engagement_attachment' | 'merchant_kyb' | 'video_asset' | 'user_upload'
 
 /**
  * 上传凭据（第一步 `POST /api/media/upload-tickets` 的响应）。
@@ -956,8 +956,6 @@ export interface MerchantAttachment {
 export interface CreateMerchantAttachmentInput {
   attachmentType: MerchantAttachmentType
   mediaReferenceId: string
-  mimeType: string
-  sizeBytes: number
 }
 
 /** 收款账户类型。 */
@@ -1014,14 +1012,82 @@ export interface KybVerificationRequest {
   createdAt: string | null
 }
 
+export interface KybReviewAttachment {
+  id: string
+  attachmentType: MerchantAttachmentType
+  mimeType: string | null
+  sizeBytes: number | null
+  uploadedAt: string | null
+}
+
+export interface MerchantProfileReviewSubject {
+  type: 'merchant_profile'
+  organizationId: string
+  legalName: string | null
+  unifiedSocialCreditCode: string | null
+  businessType: string | null
+  legalPersonName: string | null
+  legalPersonIdNumberMasked: string | null
+  registeredCapitalCents: number | null
+  establishmentDate: string | null
+  businessAddress: string | null
+  contactPhone: string | null
+  contactEmail: string | null
+  status: MerchantProfileStatus
+}
+
+export interface WithdrawalAccountReviewSubject {
+  type: 'withdrawal_account'
+  id: string
+  organizationId: string
+  accountType: WithdrawalAccountType
+  accountName: string
+  accountNumberMasked: string
+  bankName: string | null
+  branchName: string | null
+  status: WithdrawalAccountStatus
+}
+
+export interface StoreProfileReviewSubject {
+  type: 'store_profile'
+  storeId: string
+  address: string | null
+  phone: string | null
+  businessHours: string | null
+  description: string | null
+  status: StoreProfileStatus
+}
+
+export type KybReviewSubject =
+  | MerchantProfileReviewSubject
+  | WithdrawalAccountReviewSubject
+  | StoreProfileReviewSubject
+
+export interface KybVerificationDetail {
+  request: KybVerificationRequest
+  subject: KybReviewSubject
+  attachments: KybReviewAttachment[]
+}
+
+export interface KybAttachmentDownload {
+  downloadUrl: string
+  expiresAt: string | null
+}
+
 /** 门店详细资料。 */
+export type StoreProfileStatus = 'draft' | 'pending' | 'under_review' | 'approved' | 'rejected' | 'inactive'
+
 export interface StoreProfile {
   storeId: string
   address: string | null // JSON: {province,city,district,address,longitude,latitude}
   phone: string | null
   businessHours: string | null // JSON: [{dayOfWeek,openTime,closeTime}]
   description: string | null
-  status: string
+  status: StoreProfileStatus
+  submittedAt: string | null
+  reviewedAt: string | null
+  reviewerAccountId: string | null
+  reviewNote: string | null
   createdAt: string | null
 }
 

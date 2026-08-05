@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -17,9 +18,15 @@ import reactor.core.publisher.Mono;
  * <p>legacy 不识别 {@code X-Grassland-Identity} 断言，故走共享密钥 {@code X-Internal-Key}（两端同
  * {@code INTERNAL_API_KEY}）。直连 legacy 容器（{@code credits.legacy.base-url}），不经 edge-bff
  * （避免 intelligence↔edge-bff 循环；与 marketplace→finance 直连同模式）。
- * 退役：草场 {@code usage-account} 落地后，此实现整体替换为本地用量记账。
+ *
+ * <p><b>回滚实现</b>：积分存储已迁入 finance（{@link FinanceCreditsClient} 默认）。仅当
+ * {@code credits.client.impl=legacy} 时装配，用于 finance 积分域异常时的应急回退（同时需
+ * {@code EDGE_ROUTE_CREDITS_FINANCE=false} 让读端也回 legacy）。
+ * ⚠️ 已知缺陷：{@code refund} 透传原始 consume operationId，与 consume 行 operation_id 撞车被 dedup 吞掉——
+ * 回滚期间退款不生效；finance 路径已在 {@link FinanceCreditsClient} 派生 {@code refund:<consumeId>} 修正。
  */
 @Component
+@ConditionalOnProperty(name = "credits.client.impl", havingValue = "legacy")
 public class LegacyCreditsClient implements CreditsClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(LegacyCreditsClient.class);

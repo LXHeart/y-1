@@ -34,6 +34,8 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/ai", "intelligence", true),
             new RouteProperties(null, "/api/admin/ai", "intelligence", true),
             new RouteProperties(null, "/api/finance", "finance", true),
+            // GL-P3-AI-001 下属切片：积分读端 → finance（balance/history，内部上游 → 签身份断言）
+            new RouteProperties(null, "/api/credits", "finance", true),
             new RouteProperties(null, "/api/trust", "trust", true),
             // 推荐官画像 → identity，声誉 → marketplace（两个不同上游，前缀不得互相抢占）
             new RouteProperties(null, "/api/recommenders", "identity", true),
@@ -154,6 +156,29 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("POST", "/api/finance/reservations/eng-1/release")).isEqualTo(FINANCE);
         assertThat(resolver.resolve("POST", "/api/trust/disputes")).isEqualTo(TRUST);
         assertThat(resolver.resolve("POST", "/api/trust/disputes/d-1/votes")).isEqualTo(TRUST);
+    }
+
+    @Test
+    void routesCreditsReadsToFinanceAsInternalUpstream() {
+        // GL-P3-AI-001 下属切片：积分 balance/history → finance；前缀窄，不抢 legacy /api/admin/*。
+        assertThat(resolver.resolve("GET", "/api/credits/balance")).isEqualTo(FINANCE);
+        assertThat(resolver.resolve("GET", "/api/credits/history")).isEqualTo(FINANCE);
+        // 内部上游 → InternalAssertionFilter 签发 grassland-finance 用户断言，finance 才能解析 accountId。
+        assertThat(resolver.isInternalUpstream("GET", "/api/credits/balance")).isTrue();
+        // 回归防护：legacy admin 不被抢（/api/credits 与 /api/admin 无前缀重叠，显式锁死）。
+        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/credits/unknown-leaf")).isEqualTo(FINANCE);
+    }
+
+    @Test
+    void creditsReadsFallBackToLegacyWhenFlagDisabled() {
+        // 回滚：EDGE_ROUTE_CREDITS_FINANCE=false → /api/credits 回落 legacy default upstream。
+        EdgeRoutingProperties disabled = new EdgeRoutingProperties(
+            Map.of("legacy", LEGACY, "finance", FINANCE),
+            List.of(new RouteProperties(null, "/api/credits", "finance", false)),
+            "legacy");
+        UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
+        assertThat(disabledResolver.resolve("GET", "/api/credits/balance")).isEqualTo(LEGACY);
     }
 
     @Test

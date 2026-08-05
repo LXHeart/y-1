@@ -15,6 +15,7 @@ import java.util.Locale;
 public enum MediaPurpose {
     ARTICLE_GENERATED("article_generated"),
     ENGAGEMENT_ATTACHMENT("engagement_attachment"),
+    MERCHANT_KYB("merchant_kyb"),
     VIDEO_ASSET("video_asset"),
     USER_UPLOAD("user_upload");
 

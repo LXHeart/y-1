@@ -64,6 +64,8 @@ import type {
   WithdrawalAccount,
   CreateWithdrawalAccountInput,
   KybVerificationRequest,
+  KybVerificationDetail,
+  KybAttachmentDownload,
   StoreProfile,
   CreateStoreProfileInput,
 } from '../types/grassland'
@@ -879,14 +881,12 @@ export function useGrassland() {
         throw new Error('无法识别文件类型，请选择图片或 PDF 文件')
       }
       // 第一步：申请上传凭据
-      const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
+      const ticket = await request<MediaUploadTicket>(
+        `/api/organizations/${orgId}/merchant-attachments/upload-ticket`, {
         method: 'POST',
         body: JSON.stringify({
           contentType: file.type,
-          purpose: 'user_upload',
           sizeBytes: file.size,
-          domainType: 'merchant_kyb',
-          domainId: orgId,
         }),
       })
       // 第二步：直传到 presigned URL
@@ -901,8 +901,6 @@ export function useGrassland() {
           body: JSON.stringify({
             attachmentType,
             mediaReferenceId: confirmed.id,
-            mimeType: file.type,
-            sizeBytes: file.size,
           } as CreateMerchantAttachmentInput),
         })
       return attachment
@@ -976,11 +974,23 @@ export function useGrassland() {
         body: JSON.stringify(input),
       }))
 
+  /** 提交门店资料进入统一 KYB 审核队列。 */
+  const submitStoreProfile = (orgId: string, storeId: string) =>
+    run(() => request<StoreProfile>(
+      `/api/organizations/${orgId}/stores/${storeId}/profile/submit`, { method: 'POST' }))
+
   // ---------- KYB：审核申请（平台管理员）----------
 
   /** 列出所有 KYB 审核申请（管理员专用）。 */
   const listKybVerifications = () =>
     run(() => request<KybVerificationRequest[]>('/api/admin/kyb-requests'))
+
+  const getKybVerificationDetail = (verificationId: string) =>
+    run(() => request<KybVerificationDetail>(`/api/admin/kyb-requests/${verificationId}`))
+
+  const getKybAttachmentDownload = (verificationId: string, attachmentId: string) =>
+    run(() => request<KybAttachmentDownload>(
+      `/api/admin/kyb-requests/${verificationId}/attachments/${attachmentId}/download-url`))
 
   /**
    * 审核 KYB 申请（管理员专用）。
@@ -1123,8 +1133,11 @@ export function useGrassland() {
     // KYB：门店资料
     getStoreProfile,
     createStoreProfile,
+    submitStoreProfile,
     // KYB：审核（管理员）
     listKybVerifications,
+    getKybVerificationDetail,
+    getKybAttachmentDownload,
     reviewKybVerification,
   }
 }

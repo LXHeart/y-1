@@ -153,24 +153,27 @@ describe('KYB 请求契约', () => {
     expect((spy.mock.calls[1][1] as RequestInit).method).toBe('POST')
   })
 
-  test('门店资料保存使用后端已有的 POST 契约', async () => {
+  test('门店资料可保存并显式提交统一审核', async () => {
     const spy = mockFetchOk()
-    const { createStoreProfile } = useGrassland()
+    const { createStoreProfile, submitStoreProfile } = useGrassland()
 
     await createStoreProfile('org-1', 'store-1', { address: '{"address":"南京西路 1 号"}' })
+    await submitStoreProfile('org-1', 'store-1')
 
     expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/stores/store-1/profile')
     expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect(spy.mock.calls[1][0]).toBe('/api/organizations/org-1/stores/store-1/profile/submit')
+    expect((spy.mock.calls[1][1] as RequestInit).method).toBe('POST')
   })
 
-  test('商家附件以 user_upload 申请媒体票据并绑定 KYB 领域', async () => {
+  test('商家附件通过 identity 的组织作用域端点申请 KYB 媒体票据且不提交客户端元数据', async () => {
     const ticket = {
-      id: 'media-1', objectKey: 'media/user_upload/media-1', uploadUrl: 'http://storage.test/media-1',
+      id: 'media-1', objectKey: 'media/merchant_kyb/media-1', uploadUrl: 'http://storage.test/media-1',
       method: 'PUT', headers: { 'Content-Type': 'image/png' }, expiresAt: null,
     }
     const spy = vi.fn().mockImplementation(async (url: string) => {
       if (url === ticket.uploadUrl) return { ok: true, status: 200 }
-      const data = url === '/api/media/upload-tickets'
+      const data = url === '/api/organizations/org-1/merchant-attachments/upload-ticket'
         ? ticket
         : url === '/api/media/media-1/confirm'
           ? { id: 'media-1', status: 'active' }
@@ -186,13 +189,11 @@ describe('KYB 请求契约', () => {
 
     await uploadMerchantAttachment('org-1', file, 'business_license')
 
-    expect(bodyOf(spy, 0)).toEqual({
-      contentType: 'image/png', purpose: 'user_upload', sizeBytes: 3,
-      domainType: 'merchant_kyb', domainId: 'org-1',
-    })
+    expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/merchant-attachments/upload-ticket')
+    expect(bodyOf(spy, 0)).toEqual({ contentType: 'image/png', sizeBytes: 3 })
     expect(spy.mock.calls[3][0]).toBe('/api/organizations/org-1/merchant-attachments')
     expect(bodyOf(spy, 3)).toEqual({
-      attachmentType: 'business_license', mediaReferenceId: 'media-1', mimeType: 'image/png', sizeBytes: 3,
+      attachmentType: 'business_license', mediaReferenceId: 'media-1',
     })
   })
 
@@ -220,6 +221,18 @@ describe('KYB 请求契约', () => {
     expect(bodyOf(spy, 1)).toEqual({ note: '材料齐全' })
     expect(spy.mock.calls[2][0]).toBe('/api/admin/kyb-requests/request-2/reject')
     expect(bodyOf(spy, 2)).toEqual({ note: '证件模糊' })
+  })
+
+  test('admin KYB 详情和材料下载使用审核请求作用域端点', async () => {
+    const spy = mockFetchOk()
+    const { getKybVerificationDetail, getKybAttachmentDownload } = useGrassland()
+
+    await getKybVerificationDetail('request-1')
+    await getKybAttachmentDownload('request-1', 'attachment-1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/kyb-requests/request-1')
+    expect(spy.mock.calls[1][0]).toBe(
+      '/api/admin/kyb-requests/request-1/attachments/attachment-1/download-url')
   })
 })
 

@@ -28,8 +28,8 @@
             </svg>
           </div>
           <div class="brand-copy">
-            <h1 class="brand-title">全功能营销工具库</h1>
-            <p class="brand-subtitle">视频提取 · 图片评价 · 文章创作 · 脱口秀生成</p>
+            <h1 class="brand-title">AI 内容创作中心</h1>
+            <p class="brand-subtitle">按发布平台组织任务、门店与热点创作</p>
           </div>
         </div>
 
@@ -92,11 +92,38 @@
 
       <p v-if="authBannerMessage" class="auth-banner">{{ authBannerMessage }}</p>
 
-      <nav class="nav-tabs" role="tablist" aria-label="功能选择">
+      <nav class="nav-tabs" aria-label="功能选择">
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'ai-center' }"
+          :aria-current="currentView === 'ai-center' ? 'page' : undefined"
+          type="button"
+          @click="currentView = 'ai-center'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.5l1.2 3.3L12.5 6 9.2 7.2 8 10.5 6.8 7.2 3.5 6l3.3-1.2L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <path d="M12.5 10l.6 1.6 1.4.5-1.4.6-.6 1.8-.6-1.8-1.4-.6 1.4-.5.6-1.6z" fill="currentColor"/>
+          </svg>
+          AI 内容创作中心
+        </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': legacyViews.includes(currentView) }"
+          type="button"
+          :aria-expanded="showLegacyTools"
+          aria-controls="legacy-tools-panel"
+          @click="showLegacyTools = !showLegacyTools"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 3h4v4H3V3zm6 0h4v4H9V3zM3 9h4v4H3V9zm6 0h4v4H9V9z" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+          更多工具
+        </button>
+        <div v-if="showLegacyTools" id="legacy-tools-panel" class="legacy-tools-menu" role="group" aria-label="独立工具">
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'home' }"
-          :aria-selected="currentView === 'home'"
+          :aria-current="currentView === 'home' ? 'page' : undefined"
           type="button"
           @click="currentView = 'home'"
         >
@@ -108,7 +135,7 @@
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'video' }"
-          :aria-selected="currentView === 'video'"
+          :aria-current="currentView === 'video' ? 'page' : undefined"
           type="button"
           @click="currentView = 'video'"
         >
@@ -121,7 +148,7 @@
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'image' }"
-          :aria-selected="currentView === 'image'"
+          :aria-current="currentView === 'image' ? 'page' : undefined"
           type="button"
           @click="currentView = 'image'"
         >
@@ -135,7 +162,7 @@
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'article' }"
-          :aria-selected="currentView === 'article'"
+          :aria-current="currentView === 'article' ? 'page' : undefined"
           type="button"
           @click="currentView = 'article'"
         >
@@ -148,7 +175,7 @@
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'image-gen' }"
-          :aria-selected="currentView === 'image-gen'"
+          :aria-current="currentView === 'image-gen' ? 'page' : undefined"
           type="button"
           @click="currentView = 'image-gen'"
         >
@@ -162,7 +189,7 @@
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'comedy' }"
-          :aria-selected="currentView === 'comedy'"
+          :aria-current="currentView === 'comedy' ? 'page' : undefined"
           type="button"
           @click="currentView = 'comedy'"
         >
@@ -175,7 +202,7 @@
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'video-production' }"
-          :aria-selected="currentView === 'video-production'"
+          :aria-current="currentView === 'video-production' ? 'page' : undefined"
           type="button"
           @click="currentView = 'video-production'"
         >
@@ -186,11 +213,12 @@
           </svg>
           视频制作
         </button>
+        </div>
         <button
           v-if="isAuthenticated"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'grassland' }"
-          :aria-selected="currentView === 'grassland'"
+          :aria-current="currentView === 'grassland' ? 'page' : undefined"
           type="button"
           @click="currentView = 'grassland'"
         >
@@ -204,7 +232,7 @@
           v-if="isAuthenticated && (currentUser?.role === 'admin' || currentUser?.role === 'customer_service')"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'ops' }"
-          :aria-selected="currentView === 'ops'"
+          :aria-current="currentView === 'ops' ? 'page' : undefined"
           type="button"
           @click="currentView = 'ops'"
         >
@@ -218,7 +246,7 @@
           v-if="isAuthenticated && currentUser?.role === 'admin'"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'admin' }"
-          :aria-selected="currentView === 'admin'"
+          :aria-current="currentView === 'admin' ? 'page' : undefined"
           type="button"
           @click="currentView = 'admin'"
         >
@@ -232,8 +260,18 @@
     </header>
 
     <main class="view-area">
-      <KeepAlive>
-        <component :is="currentViewComponent" @open-view="handleOpenView" @create-article="handleCreateArticleFromTopic" @create-comedy="handleCreateComedyFromTopic" />
+      <KeepAlive :key="creationContextEpoch">
+        <component
+          :is="currentViewComponent"
+          v-bind="currentViewProps"
+          @open-view="handleOpenView"
+          @create-article="handleCreateArticleFromTopic"
+          @create-comedy="handleCreateComedyFromTopic"
+          @open-creation="handleOpenCreation"
+          @start-workflow="handleStartWorkflow"
+          @request-login="openLoginModal('任务和门店资料按账号隔离，请先登录。')"
+          @open-grassland="handleOpenGrassland"
+        />
       </KeepAlive>
     </main>
 
@@ -267,6 +305,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, provide, ref, watch, type Component } from 'vue'
+import AiCreationCenter from './components/AiCreationCenter.vue'
 import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
 import ArticleCreationView from './components/ArticleCreationView.vue'
 import ComedyWritingView from './components/ComedyWritingView.vue'
@@ -286,13 +325,20 @@ import { useHomepageSettings } from './composables/useHomepageSettings'
 import { useTheme, type ThemeMode } from './composables/useTheme'
 import { useCredits } from './composables/useCredits'
 import type { LoginFormValues, RegisterFormValues } from './types/auth'
+import type { CreationEntry, CreationHandoff } from './types/ai-creation'
 import type { NotificationLinkTarget } from './types/notification'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-type AppView = 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'ops' | 'admin'
+type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'ops' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
-const currentView = ref<AppView>('home')
+const currentView = ref<AppView>('ai-center')
+const creationContextEpoch = ref(0)
+const showLegacyTools = ref(false)
+const legacyViews: readonly AppView[] = ['home', 'video', 'image', 'article', 'image-gen', 'comedy', 'video-production']
+const creationEntry = ref<CreationEntry | null>(null)
+const creationHandoff = ref<CreationHandoff | null>(null)
+let creationRevision = Date.now()
 /** 通知点击后要滚到的草场卡片锚点；工作台消费后置空（见 handleNotificationNavigate）。 */
 const grasslandAnchor = ref('')
 const articleInitialTopic = ref('')
@@ -395,6 +441,15 @@ watch(isAuthenticated, (authed) => {
   if (authed) void loadCreditBalance()
 })
 
+watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
+  if (accountId !== previousAccountId) {
+    creationEntry.value = null
+    creationHandoff.value = null
+    currentView.value = 'ai-center'
+    creationContextEpoch.value += 1
+  }
+})
+
 async function handleSaveSettings(newSettings: AnalysisSettings, newHomepageSettings: HomepageSettings): Promise<void> {
   const [analysisOk, homepageOk] = await Promise.all([
     saveSettings(newSettings),
@@ -411,6 +466,7 @@ function handleFetchModels(feature: AnalysisFeature, provider: AnalysisProvider 
 }
 
 const viewComponentMap: Record<AppView, Component> = {
+  'ai-center': AiCreationCenter,
   home: HomeView,
   video: VideoAnalysisView,
   image: ImageAnalysisView,
@@ -424,6 +480,19 @@ const viewComponentMap: Record<AppView, Component> = {
 }
 
 const currentViewComponent = computed(() => viewComponentMap[currentView.value])
+const currentViewProps = computed<Record<string, unknown>>(() => {
+  if (currentView.value === 'ai-center') {
+    return { authenticated: isAuthenticated.value, entry: creationEntry.value }
+  }
+  if (creationHandoff.value?.targetView === currentView.value) {
+    return { creationHandoff: creationHandoff.value }
+  }
+  return {}
+})
+
+watch(currentView, () => {
+  showLegacyTools.value = false
+})
 
 const themeToggleTitle = computed(() => {
   if (themeMode.value === 'light') return '浅色模式 — 点击切换'
@@ -433,6 +502,41 @@ const themeToggleTitle = computed(() => {
 
 function handleOpenView(view: HomeFeatureView): void {
   currentView.value = view
+}
+
+function nextCreationRevision(): number {
+  creationRevision = Math.max(creationRevision + 1, Date.now())
+  return creationRevision
+}
+
+function handleOpenCreation(entry: CreationEntry): void {
+  creationEntry.value = { ...entry, revision: nextCreationRevision() }
+  creationHandoff.value = null
+  currentView.value = 'ai-center'
+}
+
+function handleStartWorkflow(handoff: CreationHandoff): void {
+  creationEntry.value = {
+    revision: handoff.revision,
+    platformId: handoff.platformId,
+    contentFormId: handoff.contentFormId,
+    source: { ...handoff.source },
+    prefill: handoff.prefill ? { ...handoff.prefill } : undefined,
+  }
+  creationHandoff.value = {
+    ...handoff,
+    source: { ...handoff.source },
+    prefill: handoff.prefill ? { ...handoff.prefill } : undefined,
+  }
+  currentView.value = handoff.targetView
+}
+
+function handleOpenGrassland(): void {
+  if (!isAuthenticated.value) {
+    openLoginModal('从任务创作需要先登录。')
+    return
+  }
+  currentView.value = 'grassland'
 }
 
 function handleCreateArticleFromTopic(topic: string): void {
@@ -521,6 +625,9 @@ async function handleLogout(): Promise<void> {
   }
 
   showSettingsModal.value = false
+  creationEntry.value = null
+  creationHandoff.value = null
+  currentView.value = 'ai-center'
   authBannerMessage.value = '你已退出登录。'
 }
 
@@ -739,6 +846,7 @@ async function handleOpenSettings(): Promise<void> {
 }
 
 .nav-tabs {
+  position: relative;
   display: flex;
   gap: 4px;
   padding: 5px;
@@ -748,6 +856,22 @@ async function handleOpenSettings(): Promise<void> {
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--color-border);
   width: fit-content;
+}
+
+.legacy-tools-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 4px;
+  width: min(620px, calc(100vw - 40px));
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
 }
 
 .nav-tab {
@@ -807,6 +931,16 @@ async function handleOpenSettings(): Promise<void> {
     width: 100%;
     overflow-x: auto;
     scrollbar-width: none;
+  }
+
+  .legacy-tools-menu {
+    position: fixed;
+    top: auto;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    width: auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .nav-tabs::-webkit-scrollbar {

@@ -17,14 +17,24 @@ export const VIDEO_STYLES = [
   '复古胶片',
 ] as const
 
+export const VIDEO_TARGET_PLATFORMS = [
+  'xiaohongshu',
+  'douyin',
+  'dianping',
+  'kuaishou',
+  'wechat-channels',
+  'bilibili',
+] as const
+
 export const generateScriptRequestSchema = z.object({
   images: z.array(z.string().min(1, '图片数据不能为空')).min(1, '请至少上传 1 张图片').max(9, '最多上传 9 张图片'),
   shopName: z.string().trim().min(1, '请输入店铺名称').max(100),
   industryType: z.enum(INDUSTRY_TYPES, { message: '请选择行业类型' }),
+  targetPlatform: z.enum(VIDEO_TARGET_PLATFORMS, { message: '请选择发布平台' }),
   shopAddress: z.string().trim().max(200).optional(),
   shopDescription: z.string().trim().max(500).optional(),
   videoStyle: z.enum(VIDEO_STYLES, { message: '请选择视频风格' }),
-  customPrompt: z.string().trim().max(500).optional(),
+  customPrompt: z.string().trim().max(1500).optional(),
 })
 
 export const generateVideoRequestSchema = z.object({

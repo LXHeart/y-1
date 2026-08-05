@@ -101,6 +101,13 @@ const canEditMerchant = computed(() => merchantProfileLoaded.value && !merchantR
     || merchantProfile.value.status === 'draft'
     || merchantProfile.value.status === 'rejected'))
 
+const canEditStore = computed(() => storeProfileLoaded.value && !storeReadError.value
+  && (!storeProfile.value
+    || ['draft', 'rejected', 'inactive'].includes(storeProfile.value.status)))
+
+const canSubmitStore = computed(() => storeProfile.value !== null
+  && ['draft', 'rejected'].includes(storeProfile.value.status))
+
 function parseAddress(value: string | null): Record<string, string> {
   if (!value) return {}
   try {
@@ -356,6 +363,19 @@ async function saveStoreProfile(): Promise<void> {
     phone: storeForm.value.phone || undefined,
     description: storeForm.value.description || undefined,
   })
+  if (result && isCurrentStoreOperation(orgId, version, storeId, operationVersion)) {
+    storeProfile.value = result
+    emit('changed')
+  }
+}
+
+async function submitStoreProfile(): Promise<void> {
+  if (!selectedStoreId.value || !canSubmitStore.value) return
+  const orgId = props.orgId
+  const version = organizationLoadVersion
+  const storeId = selectedStoreId.value
+  const operationVersion = ++storeOperationVersion
+  const result = await grassland.submitStoreProfile(orgId, storeId)
   if (result && isCurrentStoreOperation(orgId, version, storeId, operationVersion)) {
     storeProfile.value = result
     emit('changed')
@@ -644,6 +664,9 @@ watch(() => props.orgId, (orgId) => {
         状态：<span :class="`status-${storeProfile.status}`">
           {{ statusLabels[storeProfile.status] || storeProfile.status }}
         </span>
+        <span v-if="storeProfile.reviewNote" class="review-note">
+          （审核意见：{{ storeProfile.reviewNote }}）
+        </span>
       </div>
 
       <form v-if="selectedStoreId" class="kyb-form" @submit.prevent>
@@ -667,9 +690,14 @@ watch(() => props.orgId, (orgId) => {
           <button
             type="button"
             :disabled="grassland.loading.value || !storeProfileLoaded || Boolean(storeReadError)
-              || !storeForm.addressDetail"
+              || !canEditStore || !storeForm.addressDetail"
             @click="saveStoreProfile"
           >保存资料</button>
+          <button
+            type="button"
+            :disabled="grassland.loading.value || !canSubmitStore"
+            @click="submitStoreProfile"
+          >提交审核</button>
         </div>
       </form>
 

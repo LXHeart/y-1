@@ -117,6 +117,26 @@ public class WithdrawalAccountRepository {
         return spec.map(WithdrawalAccountRepository::map).one();
     }
 
+    /** Admin 审核条件更新：限定组织和开放审核状态，保留 submitted_at。 */
+    public Mono<WithdrawalAccount> reviewStatus(UUID id, String organizationId, String status,
+                                                 Instant reviewedAt, String reviewerAccountId,
+                                                 String reviewNote) {
+        var spec = db.sql("""
+                UPDATE withdrawal_account
+                SET status = :status, reviewed_at = :reviewedAt,
+                    reviewer_account_id = CAST(:reviewer AS uuid), review_note = :reviewNote,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND organization_id = CAST(:org AS uuid)
+                  AND status IN ('pending', 'under_review')
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("org", organizationId).bind("status", status)
+                .bind("reviewedAt", reviewedAt.atOffset(ZoneOffset.UTC))
+                .bind("reviewer", reviewerAccountId);
+        spec = bindNullable(spec, "reviewNote", reviewNote);
+        return spec.map(WithdrawalAccountRepository::map).one();
+    }
+
     /** 删除账户，**按 org 作用域**；状态限 pending/rejected（审核中与已批准不可删）。*/
     public Mono<Long> deleteByIdAndOrganization(UUID id, String organizationId) {
         return db.sql("DELETE FROM withdrawal_account WHERE id = CAST(:id AS uuid)"

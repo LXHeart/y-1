@@ -24,6 +24,7 @@ export function useVideoProduction() {
   const form = ref<VideoProductionForm>({
     shopName: '',
     industryType: '餐饮',
+    targetPlatform: '',
     shopAddress: '',
     shopDescription: '',
     videoStyle: '烟火纪实',
@@ -49,6 +50,7 @@ export function useVideoProduction() {
   const canProceedToScript = computed(() => {
     return images.value.length >= 1
       && form.value.shopName.trim().length > 0
+      && form.value.targetPlatform.length > 0
   })
 
   async function addImages(files: File[]): Promise<void> {
@@ -111,6 +113,7 @@ export function useVideoProduction() {
           images: imageBase64List,
           shopName: form.value.shopName.trim(),
           industryType: form.value.industryType,
+          targetPlatform: form.value.targetPlatform,
           shopAddress: form.value.shopAddress.trim() || undefined,
           shopDescription: form.value.shopDescription.trim() || undefined,
           videoStyle: form.value.videoStyle,
@@ -241,6 +244,7 @@ export function useVideoProduction() {
     form.value = {
       shopName: '',
       industryType: '餐饮',
+      targetPlatform: '',
       shopAddress: '',
       shopDescription: '',
       videoStyle: '烟火纪实',

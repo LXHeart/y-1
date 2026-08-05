@@ -52,6 +52,8 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
         registry.add("bilibili.proxy.token-secret", () -> SECRET);
         registry.add("app.public-backend-origin", () -> PUBLIC_ORIGIN);
         registry.add("credits.legacy.base-url", LEGACY::baseUrl);
+        // 默认 CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
+        registry.add("credits.finance.base-url", LEGACY::baseUrl);
         registry.add("legacy.backend.base-url", LEGACY::baseUrl);
         registry.add("ai.bilibili-analysis.provider", () -> "qwen");
         registry.add("ai.bilibili-analysis.max-single-segment-seconds", () -> "60");

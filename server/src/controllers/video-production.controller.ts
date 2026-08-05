@@ -12,7 +12,7 @@ export async function generateScriptHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt } = generateScriptRequestSchema.parse(req.body)
+    const { images, shopName, industryType, targetPlatform, shopAddress, shopDescription, videoStyle, customPrompt } = generateScriptRequestSchema.parse(req.body)
 
     const charge = await requireCredit(getSessionUser(req)!.id, 'video_production_script')
 
@@ -31,7 +31,7 @@ export async function generateScriptHandler(
 
     try {
       for await (const chunk of videoProduction.streamVideoScript(
-        images, shopName, industryType, videoStyle,
+        images, shopName, industryType, targetPlatform, videoStyle,
         shopAddress, shopDescription, customPrompt,
         {
           signal: controller.signal,

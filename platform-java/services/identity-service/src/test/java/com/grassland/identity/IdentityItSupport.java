@@ -6,6 +6,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.grassland.identity.kyb.KybMediaClient;
+import com.grassland.identity.kyb.KybMediaMetadata;
+import com.grassland.identity.kyb.KybMediaRetentionReceipt;
+import java.time.Instant;
+import reactor.core.publisher.Mono;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -31,6 +41,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class IdentityItSupport {
+
+    @MockitoBean
+    protected KybMediaClient kybMediaClient;
 
     /** 共享单例容器：类加载即启动一次，全程不重启 → 端口稳定。 */
     public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -58,6 +71,7 @@ public abstract class IdentityItSupport {
                 + "@" + host + ":" + p + "/" + name);
         r.add("management.server.port", () -> "0");
         r.add("identity.outbox.enabled", () -> "false");
+        r.add("identity.kyb.retention.enabled", () -> "false");
         r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
         // Slice 2K：启用内部身份断言消费（signer bean 注入）。仅在请求带断言头时触发，其余走 cookie 路径。
         r.add("identity-assertion.enabled", () -> "true");
@@ -79,6 +93,28 @@ public abstract class IdentityItSupport {
                     + "email text NOT NULL, code text NOT NULL, used boolean NOT NULL DEFAULT false, "
                     + "expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now())");
         }
+    }
+
+    @BeforeEach
+    void stubKybMediaValidation() {
+        when(kybMediaClient.retain(any(), any(), any())).thenReturn(Mono.empty());
+        when(kybMediaClient.release(any(), any(), any())).thenReturn(Mono.empty());
+        when(kybMediaClient.acquireLease(any(), any(), any(), any(), any(Long.class)))
+                .thenAnswer(invocation -> Mono.just(new KybMediaRetentionReceipt(
+                        invocation.getArgument(0), invocation.getArgument(2), invocation.getArgument(3),
+                        Instant.now().plusSeconds(invocation.getArgument(4)), null)));
+        when(kybMediaClient.seal(any(), any(), any(), any(), any()))
+                .thenAnswer(invocation -> Mono.just(new KybMediaRetentionReceipt(
+                        invocation.getArgument(0), invocation.getArgument(2), invocation.getArgument(3),
+                        null, invocation.getArgument(4))));
+        when(kybMediaClient.requireUsable(any(), any(), any())).thenAnswer(invocation -> {
+            UUID mediaId = invocation.getArgument(0);
+            String organizationId = invocation.getArgument(1);
+            String accountId = invocation.getArgument(2);
+            return Mono.just(new KybMediaMetadata(mediaId, accountId, organizationId,
+                    "merchant_kyb", "merchant_kyb", organizationId, "active",
+                    "image/png", 4096L, null));
+        });
     }
 
     protected WebTestClient client() {

@@ -74,6 +74,19 @@ identity:
   kyb:
     # 审核 SLA，写入 kyb_verification_request.review_deadline。默认 3 天（与 D-03 确认窗口同量级）。
     review-sla-seconds: ${IDENTITY_KYB_REVIEW_SLA_SECONDS:259200}
+    retention:
+      # 安全默认开启；测试环境显式关闭。否则有限租约到期后仍在使用的 KYB 证据可能被 GC。
+      enabled: ${IDENTITY_KYB_RETENTION_ENABLED:true}
+      poll-interval-ms: ${IDENTITY_KYB_RETENTION_POLL_INTERVAL_MS:2000}
+      batch-size: ${IDENTITY_KYB_RETENTION_BATCH_SIZE:50}
+      max-concurrency: ${IDENTITY_KYB_RETENTION_MAX_CONCURRENCY:4}
+      claim-lease-ms: ${IDENTITY_KYB_RETENTION_CLAIM_LEASE_MS:60000}
+      live-lease-seconds: ${IDENTITY_KYB_RETENTION_LIVE_LEASE_SECONDS:604800}
+      renew-ahead-seconds: ${IDENTITY_KYB_RETENTION_RENEW_AHEAD_SECONDS:172800}
+      initial-backoff-ms: ${IDENTITY_KYB_RETENTION_INITIAL_BACKOFF_MS:1000}
+      max-backoff-ms: ${IDENTITY_KYB_RETENTION_MAX_BACKOFF_MS:60000}
+      approved-retention-days: ${IDENTITY_KYB_APPROVED_RETENTION_DAYS:2555}
+      rejected-retention-days: ${IDENTITY_KYB_REJECTED_RETENTION_DAYS:365}
   outbox:
     topic: ${IDENTITY_OUTBOX_TOPIC:grassland.identity.events}
     enabled: ${IDENTITY_OUTBOX_ENABLED:true}
@@ -143,6 +156,11 @@ identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
   issuer: ${IDENTITY_ASSERTION_ISSUER:identity}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+  signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_KID:identity-service-intelligence-v1}
+      purpose: service
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE:}
   # identity 验证 edge-bff 用户断言
   verify-keys:
     - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY_KID:edge-user-identity-v1}
@@ -152,6 +170,11 @@ identity-assertion:
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+
+# KYB 附件元数据只经容器网络直连 intelligence，并使用 identity 服务断言鉴权。
+intelligence:
+  service:
+    base-url: ${INTELLIGENCE_SERVICE_BASE_URL:http://intelligence-service:8086}
 
 # GL-P3-MERCHANT-001：KYB 敏感字段（法人身份证号/收款账号）信封加密。
 # 与 intelligence BYOK 共用同一 KEK 变量名。未配置时 EnvelopeEncryption bean 不装配，

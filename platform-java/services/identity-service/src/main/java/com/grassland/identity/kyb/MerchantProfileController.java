@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -28,6 +29,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -49,6 +51,10 @@ public class MerchantProfileController {
     private final MerchantProfileRepository profiles;
     private final MerchantAttachmentRepository attachments;
     private final KybSubmissionService submissions;
+    private final KybEvidenceService evidence;
+    private final KybMediaClient mediaClient;
+    private final KybMediaRetentionCommandRepository retentionCommands;
+    private final KybMediaRetentionProperties retentionProperties;
     private final KybFieldCrypto crypto;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
@@ -60,6 +66,10 @@ public class MerchantProfileController {
             MerchantProfileRepository profiles,
             MerchantAttachmentRepository attachments,
             KybSubmissionService submissions,
+            KybEvidenceService evidence,
+            KybMediaClient mediaClient,
+            KybMediaRetentionCommandRepository retentionCommands,
+            KybMediaRetentionProperties retentionProperties,
             KybFieldCrypto crypto,
             OutboxRepository outbox,
             TransactionalOperator transactions) {
@@ -68,6 +78,10 @@ public class MerchantProfileController {
         this.profiles = profiles;
         this.attachments = attachments;
         this.submissions = submissions;
+        this.evidence = evidence;
+        this.mediaClient = mediaClient;
+        this.retentionCommands = retentionCommands;
+        this.retentionProperties = retentionProperties;
         this.crypto = crypto;
         this.outbox = outbox;
         this.transactions = transactions;
@@ -187,20 +201,52 @@ public class MerchantProfileController {
                                                 new IdentityException(409, "资料已通过审核，无需重复提交"));
                                     }
                                     KybSubmissionService.requireCompleteProfile(profile);
-                                    return attachments.findDocumentTypes(orgId).collectList()
-                                            .doOnNext(KybSubmissionService::requireDocuments)
-                                            .thenReturn(profile);
+                                    return attachments.findByOrganization(orgId).collectList()
+                                            .flatMap(items -> evidence.requireCurrent(orgId, items)
+                                                    .thenReturn(profile));
                                 })
-                                .flatMap(profile -> attachments.findIdsByOrganization(orgId).collectList()
-                                        .flatMap(materialIds -> profiles.updateStatus(
+                                .flatMap(profile -> attachments.findByOrganization(orgId).collectList()
+                                        .flatMap(materialItems -> profiles.updateStatus(
                                                         orgId, MerchantProfileStatus.PENDING.dbValue(),
                                                         Instant.now(), null, null, null)
-                                                .flatMap(updated -> submissions.enqueue(
-                                                                KybVerificationType.MERCHANT_PROFILE, orgId,
-                                                                UUID.fromString(orgId), account.id(), materialIds)
-                                                        .flatMap(req -> outbox.append(submittedEvent(orgId, req))
+                                                        .flatMap(updated -> submissions.enqueueMerchant(
+                                                                orgId, UUID.fromString(orgId), account.id(), materialItems)
+                                                        .flatMap(req -> retainReviewMaterials(orgId, materialItems, req.id())
+                                                                .then(outbox.append(submittedEvent(orgId, req)))
+                                                                .onErrorResume(error -> releaseReviewMaterials(
+                                                                                orgId, materialItems, req.id())
+                                                                        .then(Mono.error(error)))
                                                                 .thenReturn(updated)))))))
                 .map(profile -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(profile))));
+    }
+
+    /**
+     * 审核请求持有独立 retention token，避免提交后删除/清理附件对应的媒体对象。
+     * 外部留存不是数据库事务的一部分，因此部分成功时尽力释放已创建的 token；本地事务随后回滚。
+     */
+    private Mono<Void> retainReviewMaterials(String orgId, List<MerchantAttachment> materials, UUID requestId) {
+        return Flux.fromIterable(materials)
+                .concatMap(item -> mediaClient.acquireLease(
+                                item.mediaReferenceId(), orgId, requestId, "review_request",
+                                retentionProperties.liveLeaseSeconds())
+                        .flatMap(receipt -> retentionCommands.upsertLive(
+                                item.mediaReferenceId(), requestId, orgId,
+                                "review_request", receipt.leaseUntil())))
+                .then()
+                .onErrorResume(error -> Flux.fromIterable(materials)
+                        .concatMap(item -> releaseReviewMaterial(orgId, item, requestId))
+                        .then(Mono.error(error)));
+    }
+
+    private Mono<Void> releaseReviewMaterials(String orgId, List<MerchantAttachment> materials, UUID requestId) {
+        return Flux.fromIterable(materials)
+                .concatMap(item -> releaseReviewMaterial(orgId, item, requestId))
+                .then();
+    }
+
+    private Mono<Void> releaseReviewMaterial(String orgId, MerchantAttachment material, UUID requestId) {
+        return mediaClient.release(material.mediaReferenceId(), orgId, requestId)
+                .onErrorResume(releaseError -> Mono.empty());
     }
 
     private Mono<Void> lockOrganization(String orgId) {

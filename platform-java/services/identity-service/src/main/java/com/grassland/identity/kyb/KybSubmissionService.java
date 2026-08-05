@@ -1,12 +1,16 @@
 package com.grassland.identity.kyb;
 
 import com.grassland.identity.auth.IdentityException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -22,6 +26,7 @@ public class KybSubmissionService {
 
     private final KybVerificationRequestRepository requests;
     private final Duration reviewSla;
+    private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
 
     public KybSubmissionService(
             KybVerificationRequestRepository requests,
@@ -40,15 +45,52 @@ public class KybSubmissionService {
     public Mono<KybVerificationRequest> enqueue(KybVerificationType type, String organizationId,
                                                 UUID targetId, String requesterAccountId,
                                                 List<UUID> materialIds) {
-        String materials = materialIds == null || materialIds.isEmpty()
-                ? null
-                : materialIds.stream().map(id -> "\"" + id + "\"").collect(Collectors.joining(",", "[", "]"));
+        String materials = serializeIds(materialIds);
+        return enqueueWithMaterials(type, organizationId, targetId, requesterAccountId, materials);
+    }
+
+    /** 商家资料使用不可变的材料元数据快照，审核详情不依赖可变附件表。 */
+    public Mono<KybVerificationRequest> enqueueMerchant(
+            String organizationId, UUID targetId, String requesterAccountId,
+            List<MerchantAttachment> attachmentItems) {
+        List<Map<String, Object>> snapshots = attachmentItems == null ? List.of()
+                : attachmentItems.stream().map(item -> {
+                    Map<String, Object> snapshot = new java.util.LinkedHashMap<>();
+                    snapshot.put("id", item.id().toString());
+                    snapshot.put("attachmentType", item.attachmentType());
+                    snapshot.put("mediaReferenceId", item.mediaReferenceId().toString());
+                    snapshot.put("mimeType", item.mimeType());
+                    snapshot.put("sizeBytes", item.sizeBytes());
+                    snapshot.put("uploadedAt", item.uploadedAt() == null ? null : item.uploadedAt().toString());
+                    snapshot.put("uploadedByAccountId", item.uploadedByAccountId());
+                    return snapshot;
+                }).toList();
+        try {
+            return enqueueWithMaterials(KybVerificationType.MERCHANT_PROFILE, organizationId,
+                    targetId, requesterAccountId,
+                    snapshots.isEmpty() ? null : json.writeValueAsString(snapshots));
+        } catch (JsonProcessingException error) {
+            return Mono.error(new IdentityException(500, "审核材料快照生成失败"));
+        }
+    }
+
+    private Mono<KybVerificationRequest> enqueueWithMaterials(KybVerificationType type,
+                                                               String organizationId, UUID targetId,
+                                                               String requesterAccountId, String materials) {
         return requests.findByTypeAndTarget(type.dbValue(), targetId)
                 .flatMap(existing -> KybRequestStatus.isOpen(existing.status())
                         ? Mono.<KybVerificationRequest>error(new IdentityException(409, "已有待审核申请，请等待审核结果"))
                         : Mono.<KybVerificationRequest>empty())
                 .switchIfEmpty(Mono.defer(() -> requests.create(organizationId, requesterAccountId,
-                        type.dbValue(), targetId, materials, Instant.now().plus(reviewSla))));
+                        type.dbValue(), targetId, materials, Instant.now().plus(reviewSla))))
+                .onErrorMap(DataIntegrityViolationException.class,
+                        error -> new IdentityException(409, "已有待审核申请，请等待审核结果"));
+    }
+
+    private String serializeIds(List<UUID> materialIds) {
+        return materialIds == null || materialIds.isEmpty()
+                ? null
+                : materialIds.stream().map(id -> "\"" + id + "\"").collect(Collectors.joining(",", "[", "]"));
     }
 
     /** 校验 merchant profile 提交前的必填字段，缺失则抛 400 并列出字段名。 */

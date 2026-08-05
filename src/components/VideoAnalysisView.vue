@@ -112,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import BilibiliParsePanel from './BilibiliParsePanel.vue'
 import DouyinParsePanel from './DouyinParsePanel.vue'
 import DouyinSessionPanel from './DouyinSessionPanel.vue'
@@ -121,6 +121,11 @@ import { useBilibiliVideoAnalysis } from '../composables/useBilibiliVideoAnalysi
 import { useDouyinParse } from '../composables/useDouyinParse'
 import { useDouyinSession } from '../composables/useDouyinSession'
 import { useDouyinVideoAnalysis } from '../composables/useDouyinVideoAnalysis'
+import type { CreationHandoff } from '../types/ai-creation'
+
+const props = defineProps<{
+  creationHandoff?: CreationHandoff | null
+}>()
 
 const autoOpenSessionErrorPatterns = [
   '校验',
@@ -173,6 +178,7 @@ const emptyCopyByPlatform: Record<SupportedPlatform, string> = {
 const activePlatform = ref<SupportedPlatform>('douyin')
 const videoInput = ref('')
 const showSessionPanel = ref(false)
+const hydratedCreationRevision = ref<number | null>(null)
 
 const {
   extractedVideo,
@@ -289,6 +295,14 @@ function handleReset(): void {
   resetParse()
   resetBilibiliParse()
 }
+
+watch(() => props.creationHandoff, (handoff) => {
+  if (!handoff || handoff.targetView !== 'video' || hydratedCreationRevision.value === handoff.revision) return
+  hydratedCreationRevision.value = handoff.revision
+  const nextPlatform: SupportedPlatform = handoff.platformId === 'bilibili' ? 'bilibili' : 'douyin'
+  handleSwitchPlatform(nextPlatform)
+  videoInput.value = handoff.source.type === 'reference' ? handoff.source.sourceUrl || '' : ''
+}, { immediate: true })
 </script>
 
 <style scoped>

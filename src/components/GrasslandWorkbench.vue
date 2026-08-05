@@ -12,8 +12,10 @@ import MyWalletCard from './MyWalletCard.vue'
 import OrgTeamCard from './OrgTeamCard.vue'
 import PermissionReviewPanel from './PermissionReviewPanel.vue'
 import RecommenderReputationBadge from './RecommenderReputationBadge.vue'
+import { normalizeTaskCreationSelection } from '../config/ai-platform-capabilities'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
+import type { CreationEntry } from '../types/ai-creation'
 import type {
   FinanceAccount,
   Organization,
@@ -35,6 +37,9 @@ import type {
 
 const grassland = useGrassland()
 const { currentUser } = useAuth()
+const emit = defineEmits<{
+  'open-creation': [entry: CreationEntry]
+}>()
 
 /** 平台 admin 才看得到审核队列。真正的门禁在服务端（identity 查 app_users.role）。 */
 const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
@@ -63,7 +68,7 @@ const newOrgName = ref('')
 const creditAmountYuan = ref(1000)
 /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
 const taskForm = ref({
-  title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '',
+  title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '',
 })
 /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
 const editingDraft = ref<{ id: string; version: number } | null>(null)
@@ -104,6 +109,9 @@ const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.val
 const canPublishBounty = computed(() => activeOrg.value?.permissionTier === 'finance_transaction')
 const balanceYuan = computed(() =>
   account.value ? (account.value.balanceCents / 100).toFixed(2) : '—')
+const selectedTask = computed(() => {
+  return [...tasks.value, ...feedItems.value].find((task) => task.id === selectedTaskId.value) ?? null
+})
 
 /**
  * 报名列表按等级 / 完成率筛选。
@@ -128,6 +136,26 @@ function yuanToCents(yuan: number): number {
 
 function setNotice(message: string): void {
   notice.value = message
+}
+
+function openAcceptedTaskCreation(application: TaskApplication): void {
+  const task = selectedTask.value
+  if (!task || application.status !== 'accepted' || application.taskId !== task.id) return
+  const selection = normalizeTaskCreationSelection(task.platform, task.contentForm)
+  emit('open-creation', {
+    revision: Date.now(),
+    ...selection,
+    source: {
+      type: 'task',
+      taskId: task.id,
+      applicationId: application.id,
+      taskVersion: task.version,
+    },
+    prefill: {
+      topic: task.title,
+      instructions: task.description || undefined,
+    },
+  })
 }
 
 // ---------- 初始化 ----------
@@ -280,6 +308,7 @@ async function publishTask(): Promise<void> {
     title: taskForm.value.title.trim(),
     description: taskForm.value.description.trim() || undefined,
     platform: taskForm.value.platform.trim() || undefined,
+    contentForm: taskForm.value.contentForm.trim() || undefined,
     maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
     applicationDeadline: deadlineIso(),
@@ -308,7 +337,7 @@ function isoToLocalInput(iso: string | null): string {
 }
 
 function resetTaskForm(): void {
-  taskForm.value = { title: '', description: '', platform: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '' }
+  taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '' }
   editingDraft.value = null
   revisingTask.value = null
 }
@@ -325,6 +354,7 @@ async function saveDraft(): Promise<void> {
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
       platform: taskForm.value.platform.trim() || undefined,
+      contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
@@ -342,6 +372,7 @@ async function saveDraft(): Promise<void> {
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
       platform: taskForm.value.platform.trim() || undefined,
+      contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
@@ -354,6 +385,7 @@ async function saveDraft(): Promise<void> {
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
       platform: taskForm.value.platform.trim() || undefined,
+      contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
@@ -373,6 +405,7 @@ function editDraft(task: Task): void {
     title: task.title,
     description: task.description || '',
     platform: task.platform || '',
+    contentForm: task.contentForm || '',
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
@@ -390,6 +423,7 @@ function editPublished(task: Task): void {
     title: task.title,
     description: task.description || '',
     platform: task.platform || '',
+    contentForm: task.contentForm || '',
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
@@ -803,6 +837,7 @@ function statusLabel(status: string): string {
         <div class="gl-row">
           <input v-model="taskForm.title" placeholder="任务标题" />
           <input v-model="taskForm.platform" placeholder="平台（可选）" />
+          <input v-model="taskForm.contentForm" placeholder="内容形式（可选）" />
         </div>
         <div class="gl-row">
           <input v-model="taskForm.description" placeholder="任务描述（可选）" />
@@ -883,6 +918,7 @@ function statusLabel(status: string): string {
                     <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
                     <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
                     <template v-if="a.status === 'accepted'">
+                      <button type="button" @click="openAcceptedTaskCreation(a)">围绕任务创作</button>
                       <button type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
                       <input
                         v-model="contestReasons[a.id]"
@@ -977,9 +1013,10 @@ function statusLabel(status: string): string {
               <td><code>{{ a.id.slice(0, 8) }}…</code></td>
               <td>{{ statusLabel(a.status) }}</td>
               <td>
-                <button v-if="a.status === 'accepted'" type="button" :disabled="grassland.loading.value" @click="dispute(a)">
-                  开启争议
-                </button>
+                <template v-if="a.status === 'accepted'">
+                  <button type="button" @click="openAcceptedTaskCreation(a)">开始创作</button>
+                  <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
+                </template>
                 <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="withdrawApp(a)">
                   撤销
                 </button>

@@ -32,7 +32,19 @@ public class MerchantAttachmentRepository {
     public Mono<MerchantAttachment> create(String organizationId, String attachmentType,
                                            UUID mediaReferenceId, String mimeType, Long sizeBytes,
                                            String uploadedByAccountId) {
-        UUID id = UUID.randomUUID();
+        return create(UUID.randomUUID(), organizationId, attachmentType, mediaReferenceId,
+                mimeType, sizeBytes, uploadedByAccountId);
+    }
+
+    /**
+     * 创建指定 ID 的附件记录。
+     *
+     * <p>附件 ID 同时作为 intelligence 的 retention token，因此必须由调用方在绑定媒体前生成并传入，
+     * 才能让「媒体留存」与「附件记录」引用同一个不可变标识。
+     */
+    public Mono<MerchantAttachment> create(UUID id, String organizationId, String attachmentType,
+                                           UUID mediaReferenceId, String mimeType, Long sizeBytes,
+                                           String uploadedByAccountId) {
         return db.sql("""
                 INSERT INTO merchant_attachment(id, organization_id, attachment_type, media_reference_id,
                         mime_type, size_bytes, uploaded_by_account_id)
@@ -50,6 +62,23 @@ public class MerchantAttachmentRepository {
     public Mono<MerchantAttachment> findById(UUID id) {
         return db.sql("SELECT " + SELECT_COLS + " FROM merchant_attachment WHERE id = CAST(:id AS uuid)")
                 .bind("id", id)
+                .map(MerchantAttachmentRepository::map).one();
+    }
+
+    public Mono<MerchantAttachment> findByIdAndOrganization(UUID id, String organizationId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM merchant_attachment"
+                        + " WHERE id = CAST(:id AS uuid) AND organization_id = CAST(:org AS uuid)")
+                .bind("id", id).bind("org", organizationId)
+                .map(MerchantAttachmentRepository::map).one();
+    }
+
+    public Mono<MerchantAttachment> findByOrganizationAndMediaReference(
+            String organizationId, UUID mediaReferenceId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM merchant_attachment"
+                        + " WHERE organization_id = CAST(:org AS uuid)"
+                        + " AND media_reference_id = CAST(:media AS uuid)"
+                        + " AND attachment_type IN ('business_license','legal_person_id_front','legal_person_id_back')")
+                .bind("org", organizationId).bind("media", mediaReferenceId)
                 .map(MerchantAttachmentRepository::map).one();
     }
 

@@ -73,6 +73,11 @@ identity-assertion:
       purpose: service
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_KID:identity-service-intelligence-v1}
+      issuer: identity
+      purpose: service
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 
@@ -182,8 +187,16 @@ bilibili:
     user-agent: ${BILIBILI_USER_AGENT:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36}
     timeout-ms: ${BILIBILI_FETCH_TIMEOUT_MS:15000}
 
-# 积分扣减：经 legacy 内部端点（过渡期；legacy 不认 X-Grassland-Identity，用共享密钥）。
+# 积分扣减：默认经 finance-service（Java 原生积分域，GL-P3-AI-001）；credits.client.impl=legacy 回退 bridge。
 credits:
+  client:
+    impl: ${CREDITS_CLIENT_IMPL:finance}
+  finance:
+    # 直连 finance 容器（不经 edge-bff，避免 intelligence↔edge 循环；同 marketplace→finance 模式）。
+    base-url: ${FINANCE_CREDITS_BASE_URL:http://finance-service:8084}
+    internal-key: ${INTERNAL_API_KEY:}
+    consume-path: /internal/credits/consume
+    refund-path: /internal/credits/refund
   legacy:
     base-url: ${LEGACY_CREDITS_BASE_URL:http://backend:3000}
     internal-key: ${INTERNAL_API_KEY:}

@@ -42,6 +42,10 @@ class AiRunControllerIT extends IntelligenceItSupport {
         r.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
         r.add("credits.legacy.base-url", CREDITS::baseUrl);
         r.add("credits.legacy.internal-key", () -> "test-internal-key");
+        // 默认 CreditsClient 已是 FinanceCreditsClient（GL-P3-AI-001）；把它指向同一个 WireMock，
+        // 使 consume/refund 走生产路径打到桩端点。credits.legacy.* 退化为未使用配置。
+        r.add("credits.finance.base-url", CREDITS::baseUrl);
+        r.add("credits.finance.internal-key", () -> "test-internal-key");
     }
 
     @BeforeEach
