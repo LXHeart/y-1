@@ -142,10 +142,14 @@ public class DisputeController {
                         checkDisputeCooldown(engagementRef)
                                 .flatMap(cooldownElapsed -> {
                                     if (!cooldownElapsed) {
-                                        long cooldownHours = adjudicationProps.disputeCooldownSecondsEffective() / 3600;
+                                        long effective = adjudicationProps.disputeCooldownSecondsEffective();
+                                        // 秒级覆盖（dev/e2e）下 effective 可能 < 1h，按小时显示会截断成 0；按量级择单位。
+                                        String wait = effective >= 3600L
+                                                ? (effective / 3600L) + " 小时"
+                                                : Math.max(1L, effective) + " 秒";
                                         return fail(409, String.format(
-                                                "该履约近期已有终局争议，需等待 %d 小时后才能再次开争议（冷却期防恶意重复）",
-                                                cooldownHours));
+                                                "该履约近期已有终局争议，需等待 %s 后才能再次开争议（冷却期防恶意重复）",
+                                                wait));
                                     }
                                     return createNewDispute(engagementRef, organizationId, openedBy, role, reason);
                                 }));

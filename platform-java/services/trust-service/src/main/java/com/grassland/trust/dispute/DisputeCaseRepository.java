@@ -77,14 +77,17 @@ public class DisputeCaseRepository {
 
     /**
      * 某 engagement 的<b>最近终局</b>争议（GL-P2-TRUST-001：冷却期检查）。
-     * 按 decided_at 降序取第一条 final 态争议。无 → empty。
+     * 按 decided_at 降序取第一条 final 态争议。无 → empty（调用方用 {@code defaultIfEmpty(true)} 兜底）。
+     *
+     * <p>历史上结尾挂 {@code .defaultIfEmpty(null)}——modern Reactor 的 {@code defaultIfEmpty} 会 {@code Objects.requireNonNull}
+     * 直接抛 NPE，但冷却期在所有既有 IT 里恒被禁用，这条路径从未被执行，bug 一直潜伏（T5 启用冷却后暴露）。
      */
     public Mono<DisputeCase> findLastFinalizedByEngagementRef(String engagementRef) {
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM dispute_case WHERE engagement_ref = :ref AND status = 'final'"
                 + " ORDER BY decided_at DESC NULLS LAST LIMIT 1")
                 .bind("ref", engagementRef)
-                .map(DisputeCaseRepository::map).one().defaultIfEmpty(null);
+                .map(DisputeCaseRepository::map).one();
     }
 
     /** 手动裁决（终局）：open→final，记 decision + decided_at + final_decision + version+1。0 行（非 open）→ empty。 */

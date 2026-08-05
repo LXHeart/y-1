@@ -35,7 +35,9 @@ public record AdjudicationProperties(
         /** 上诉窗口秒级覆盖（>0 时优先于 {@code appealWindowHours}）。 */
         long appealWindowSeconds,
         /** 审判启动窗口秒级覆盖（>0 时优先于 {@code adjudicationWindowHours}）。dev/e2e 用。 */
-        long adjudicationWindowSeconds) {
+        long adjudicationWindowSeconds,
+        /** 争议冷却期秒级覆盖（>0 时优先于 {@code disputeCooldownHours}）。dev/e2e 用（T5 恢复 DisputeCooldownIT）。 */
+        long disputeCooldownSeconds) {
 
     public AdjudicationProperties {
         if (panelSize <= 0) {
@@ -77,7 +79,15 @@ public record AdjudicationProperties(
         if (adjudicationWindowSeconds < 0) {
             adjudicationWindowSeconds = 0;
         }
-        // adjudicationWindowEnabled: 1=启用（默认），0=禁用（测试环境跳过校验）
+        if (disputeCooldownSeconds < 0) {
+            disputeCooldownSeconds = 0;
+        }
+        // adjudicationWindowEnabled: 1=启用（默认），0=禁用（测试环境跳过校验）。
+        // GL-P2-TRUST-001 T4：非 0/1 的非法值归一为 1（启用）。注意——0 是合法的"禁用"哨兵，
+        // 故"生产默认启用"由 application.yml 的 adjudication-window-enabled:1 兜底，本守卫只防显式垃圾值。
+        if (adjudicationWindowEnabled != 0 && adjudicationWindowEnabled != 1) {
+            adjudicationWindowEnabled = 1;
+        }
     }
 
     /**
@@ -111,10 +121,11 @@ public record AdjudicationProperties(
     /**
      * 争议冷却期实际秒数（GL-P2-TRUST-001）。
      *
-     * <p>争议终局后需等待此时间才可再次开争议，防止恶意重复开争议。
-     * 默认 7 天（168 小时）。
+     * <p>争议终局后需等待此时间才可再次开争议，防止恶意重复开争议。秒级覆盖优先，否则小时换算（默认 7 天=168 小时）。
      */
     public long disputeCooldownSecondsEffective() {
-        return Math.max(0, disputeCooldownHours) * 3600L;
+        return disputeCooldownSeconds > 0
+                ? disputeCooldownSeconds
+                : Math.max(0, disputeCooldownHours) * 3600L;
     }
 }

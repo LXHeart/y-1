@@ -7,7 +7,6 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.UUID;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -15,25 +14,26 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /**
- * 争议冷却期端到端测试（GL-P2-TRUST-001）。
+ * 争议冷却期端到端测试（GL-P2-TRUST-001，T5 恢复）。
  *
  * <p>冷却期规则：争议终局后需等待默认 7 天（可配置）才能再次开争议，防止恶意重复开争议。
  * 测试环境用较短冷却期（1 秒）以加快测试。
  *
- * <p><b>注意</b>：本测试需要启用冷却期（dispute-cooldown-hours > 0），与 TrustItSupport 默认配置不同。
+ * <p><b>注意</b>：本测试启用冷却期（dispute-cooldown-seconds=1），与 TrustItSupport 默认（禁用）不同——
+ * 靠本类专属 {@code @DynamicPropertySource} 覆盖基类。冷却期"禁用"路径（hours=0/seconds=0 → 不拦）
+ * 是 TrustItSupport 默认，由其余争议 IT 隐式覆盖（它们自由开争议不被冷却拦截）。
  */
-@Disabled("冷却期测试需要时间等待，暂时禁用；生产环境冷却期由配置保证")
 class DisputeCooldownIT extends TrustItSupport {
 
     /**
      * 冷却期测试专用配置：启用 1 秒冷却期。
      *
-     * <p>与 TrustItSupport 默认配置不同，本测试需要启用冷却期。
+     * <p>用秒级覆盖（T5 新增 {@code disputeCooldownSeconds} 字段）——历史版本错把 {@code dispute-cooldown-hours=0}
+     * （语义=禁用）当作"启用 1 秒"，且 {@code dispute-cooldown-seconds} 当时不是 record 字段，故整个类被 {@code @Disabled}。
      */
     @DynamicPropertySource
     static void cooldownProps(DynamicPropertyRegistry r) {
-        // 启用 1 秒冷却期（默认 168 小时 = 7 天）
-        r.add("trust.adjudication.dispute-cooldown-hours", () -> "0");  // 秒级覆盖，1 秒
+        // 秒级覆盖优先于 dispute-cooldown-hours：1 秒冷却期（默认 168 小时 = 7 天）
         r.add("trust.adjudication.dispute-cooldown-seconds", () -> "1");
     }
 
@@ -48,7 +48,7 @@ class DisputeCooldownIT extends TrustItSupport {
         String firstId = open(merchant, org, eng);
         decide(merchant, org, firstId);
 
-        // 立即尝试开第二轮争议 → 409 冷却期错误
+        // 立即尝试开第二轮争议 → 409 冷却期错误（TrustErrorHandler 信封用 $.error）
         client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -56,7 +56,7 @@ class DisputeCooldownIT extends TrustItSupport {
                 .exchange()
                 .expectStatus().isEqualTo(409)
                 .expectBody()
-                .jsonPath("$.message").value(msg -> assertThat(msg).asString()
+                .jsonPath("$.error").value(msg -> assertThat(msg).asString()
                         .contains("近期已有终局争议").contains("冷却期"));
     }
 
@@ -90,26 +90,6 @@ class DisputeCooldownIT extends TrustItSupport {
                         + " WHERE engagement_ref = :ref AND status = 'final'")
                 .bind("ref", eng).map(r -> r.get("count", Long.class)).one().block();
         assertThat(count).isEqualTo(1);  // 第一条终局
-    }
-
-    @Test
-    @DisplayName("冷却期配置为 0 时禁用校验（测试环境）")
-    void cooldownDisabledWhenConfigZero() {
-        // 默认配置下 cooldown-hours=0，冷却期被禁用
-        String merchant = UUID.randomUUID().toString();
-        String org = MARKETPLACE_ORG;
-        String eng = UUID.randomUUID().toString();
-
-        String firstId = open(merchant, org, eng);
-        decide(merchant, org, firstId);
-
-        // 冷却期禁用时，可立即开新争议
-        client().post().uri("/api/trust/disputes")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("engagementRef", eng, "reason", "冷却期禁用"))
-                .exchange()
-                .expectStatus().isCreated();
     }
 
     @Test
