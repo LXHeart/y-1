@@ -7,6 +7,7 @@ import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -45,13 +46,15 @@ public class DisputeController {
     private final DeferredDisputeRequestRepository deferredRequests;
     private final MerchantRejectionFinalizer merchantRejectionFinalizer;
     private final AdjudicationProperties adjudicationProps;
+    private final DisputeEvidenceService evidenceService;
 
     public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
                              TransactionalOperator transactions,
                              MarketplaceEngagementAuthorizationClient authorizer,
                              DeferredDisputeRequestRepository deferredRequests,
                              MerchantRejectionFinalizer merchantRejectionFinalizer,
-                             AdjudicationProperties adjudicationProps) {
+                             AdjudicationProperties adjudicationProps,
+                             DisputeEvidenceService evidenceService) {
         this.callers = callers;
         this.disputes = disputes;
         this.outbox = outbox;
@@ -60,6 +63,7 @@ public class DisputeController {
         this.deferredRequests = deferredRequests;
         this.merchantRejectionFinalizer = merchantRejectionFinalizer;
         this.adjudicationProps = adjudicationProps;
+        this.evidenceService = evidenceService;
     }
 
     @PostMapping("/api/trust/disputes")
@@ -84,7 +88,7 @@ public class DisputeController {
                     return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
                             .switchIfEmpty(fail(403, "无权对该履约开争议"))
                             .flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(),
-                                    caller.accountId(), caller.activeIdentityType(), body.reason()));
+                                    caller.accountId(), caller.activeIdentityType(), body.reason(), body.evidence()));
                 });
     }
 
@@ -108,6 +112,9 @@ public class DisputeController {
                                         body.openedByAccountId(), "merchant", body.reason(), "merchant_rejection")
                                 .map(d -> new Opened(d, true))
                                 .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
+                                        .thenReturn(opened))
+                                .flatMap(opened -> evidenceService
+                                        .submit(opened.dispute().id(), body.openedByAccountId(), "merchant", body.evidence())
                                         .thenReturn(opened))))
                 // create 撞唯一键 → 空（并发对手已开案）。必须回读，否则返回空 200 体，
                 // marketplace 侧 TrustDisputeClient 解析不到 data.id 会抛错 → 商家收到 500。
@@ -120,7 +127,8 @@ public class DisputeController {
 
     /** 用户普通争议：无活跃案则即时创建；推荐官遇 merchant_rejection 时持久化 deferred request。 */
     private Mono<ResponseEntity<Map<String, Object>>> openOrDefer(
-            String engagementRef, String organizationId, String openedBy, String role, String reason) {
+            String engagementRef, String organizationId, String openedBy, String role, String reason,
+            List<OpenDisputeRequest.EvidenceItem> evidence) {
         return disputes.findActiveByEngagementRef(engagementRef)
                 .flatMap(active -> {
                     if ("merchant_rejection".equals(active.kind())) {
@@ -151,7 +159,7 @@ public class DisputeController {
                                                 "该履约近期已有终局争议，需等待 %s 后才能再次开争议（冷却期防恶意重复）",
                                                 wait));
                                     }
-                                    return createNewDispute(engagementRef, organizationId, openedBy, role, reason);
+                                    return createNewDispute(engagementRef, organizationId, openedBy, role, reason, evidence);
                                 }));
     }
 
@@ -300,10 +308,13 @@ public class DisputeController {
 
     /** 创建新争议（无活跃争议且冷却期通过）。 */
     private Mono<ResponseEntity<Map<String, Object>>> createNewDispute(
-            String engagementRef, String organizationId, String openedBy, String role, String reason) {
+            String engagementRef, String organizationId, String openedBy, String role, String reason,
+            List<OpenDisputeRequest.EvidenceItem> evidence) {
         return transactions.transactional(
                         disputes.create(engagementRef, organizationId, openedBy, role, reason, "standard")
                                 .flatMap(created -> outbox.append(envelope("DisputeOpened", created))
+                                        .thenReturn(created))
+                                .flatMap(created -> evidenceService.submit(created.id(), openedBy, role, evidence)
                                         .thenReturn(created)))
                 .then(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)))
                 .flatMap(created -> {

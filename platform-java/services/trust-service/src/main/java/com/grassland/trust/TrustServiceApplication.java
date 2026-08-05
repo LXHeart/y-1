@@ -1,6 +1,7 @@
 package com.grassland.trust;
 
 import com.grassland.trust.adjudication.AdjudicationProperties;
+import com.grassland.trust.dispute.EvidenceProperties;
 import com.grassland.trust.event.OutboxProperties;
 import io.r2dbc.spi.ConnectionFactory;
 import org.springframework.boot.SpringApplication;
@@ -13,7 +14,7 @@ import org.springframework.transaction.ReactiveTransactionManager;
 import org.springframework.transaction.reactive.TransactionalOperator;
 
 @EnableScheduling
-@EnableConfigurationProperties({AdjudicationProperties.class, OutboxProperties.class})
+@EnableConfigurationProperties({AdjudicationProperties.class, OutboxProperties.class, EvidenceProperties.class})
 @SpringBootApplication
 public class TrustServiceApplication {
     public static void main(String[] args) {

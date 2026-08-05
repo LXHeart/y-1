@@ -67,6 +67,17 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
+    /**
+     * 更新脱敏证据句柄（GL-P2-TRUST-001 T1）：首次提交证据时把死字段 evidence_ref 点亮，指向证据集。
+     * 仅写句柄（非 raw），调用方在提交证据的<b>同一事务</b>内调用。
+     */
+    public Mono<Integer> updateEvidenceRef(String id, String evidenceRef) {
+        var spec = db.sql("UPDATE dispute_case SET evidence_ref = :ref, updated_at = now() WHERE id = CAST(:id AS uuid)")
+                .bind("id", id);
+        spec = (evidenceRef == null || evidenceRef.isBlank()) ? spec.bindNull("ref", String.class) : spec.bind("ref", evidenceRef);
+        return spec.fetch().rowsUpdated().map(Long::intValue).defaultIfEmpty(0);
+    }
+
     /** 某 engagement 的<b>活跃</b>（未终局，status<>'final'）争议（DisputeChecker + 开争议幂等用）。无 → empty。 */
     public Mono<DisputeCase> findActiveByEngagementRef(String engagementRef) {
         return db.sql("SELECT " + SELECT_COLS

@@ -1,7 +1,10 @@
 package com.grassland.trust.adjudication;
 
+import com.grassland.trust.audit.DisputeEvidenceAccessAuditRepository;
 import com.grassland.trust.dispute.DisputeCase;
 import com.grassland.trust.dispute.DisputeCaseRepository;
+import com.grassland.trust.dispute.DisputeEvidence;
+import com.grassland.trust.dispute.DisputeEvidenceRepository;
 import com.grassland.trust.dispute.MerchantRejectionFinalizer;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -63,12 +67,17 @@ public class AdjudicationController {
     private final DisputeAudience audience;
     private final TransactionalOperator transactions;
     private final MerchantRejectionFinalizer merchantRejectionFinalizer;
+    private final DisputeEvidenceRepository evidenceRepo;
+    private final CaseEvidenceRedactor evidenceRedactor;
+    private final DisputeEvidenceAccessAuditRepository evidenceAccessAudit;
 
     public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
                                   JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props,
                                   AdjudicationWorkflowStarter workflowStarter, DisputeAudience audience,
                                   TransactionalOperator transactions,
-                                  MerchantRejectionFinalizer merchantRejectionFinalizer) {
+                                  MerchantRejectionFinalizer merchantRejectionFinalizer,
+                                  DisputeEvidenceRepository evidenceRepo, CaseEvidenceRedactor evidenceRedactor,
+                                  DisputeEvidenceAccessAuditRepository evidenceAccessAudit) {
         this.audience = audience;
         this.callers = callers;
         this.disputes = disputes;
@@ -78,6 +87,9 @@ public class AdjudicationController {
         this.workflowStarter = workflowStarter;
         this.transactions = transactions;
         this.merchantRejectionFinalizer = merchantRejectionFinalizer;
+        this.evidenceRepo = evidenceRepo;
+        this.evidenceRedactor = evidenceRedactor;
+        this.evidenceAccessAudit = evidenceAccessAudit;
     }
 
     @PostMapping("/api/trust/disputes/{id}/adjudicate")
@@ -197,7 +209,9 @@ public class AdjudicationController {
                         // 不要在此就地展开——「读争议是谁的权限」只应有一个答案，见该类 javadoc 记的四次同类缺陷。
                         .filterWhen(d -> audience.canRead(caller, d))
                         .switchIfEmpty(fail(403, "无权查询该争议"))
-                        .flatMap(this::snapshot)
+                        // GL-P2-TRUST-001 T2：快照附加<b>脱敏</b>证据（审判官/客服只看 redactedRef + caption，
+                        // 不见 raw/uploader），并在<b>受限访问者（面板审判官/客服）</b>查看时写证据访问审计（D-10）。
+                        .flatMap(d -> snapshot(d).flatMap(snap -> attachEvidence(snap, d, caller)))
                         .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
     }
 
@@ -329,6 +343,39 @@ public class AdjudicationController {
             base.put("tallies", tallyMap(tally));
             return base;
         });
+    }
+
+    /**
+     * GL-P2-TRUST-001 T2：快照附加脱敏证据 + 受限访问审计。
+     *
+     * <p>证据经 {@link CaseEvidenceRedactor} 脱敏后放入 {@code snap.evidence}（审判官/客服安全视图）。
+     * 当查看者是<b>受限访问者</b>（本轮面板审判官 / 客服）时，为每条被查看的证据 append 一条
+     * {@code dispute_evidence_access_audit}（D-10：证据是受限展示对象，须留访问痕迹）。当事方查看自身争议
+     * 证据不记（是自己的数据）。
+     */
+    private Mono<Map<String, Object>> attachEvidence(Map<String, Object> snap, DisputeCase d,
+                                                     TrustCallerResolver.Caller caller) {
+        return evidenceRepo.listByDispute(d.id()).collectList().flatMap(evidence -> {
+            snap.put("evidence", evidenceRedactor.redact(evidence));
+            if (evidence.isEmpty()) {
+                return Mono.just(snap);
+            }
+            boolean cs = caller.isCustomerService();
+            Mono<Boolean> shouldAudit = cs ? Mono.just(true) : isJudgeViewer(caller, d);
+            return shouldAudit.flatMap(audit -> audit
+                    ? Flux.fromIterable(evidence).concatMap(e -> evidenceAccessAudit.append(
+                            e.id(), d.id(), caller.accountId(), cs ? "customer_service" : "judge", "adjudication"))
+                            .then(Mono.just(snap))
+                    : Mono.just(snap));
+        });
+    }
+
+    /** 查看者是否为本轮面板审判官（推荐官 + 在 panel 上 + 已开审 round>0）。 */
+    private Mono<Boolean> isJudgeViewer(TrustCallerResolver.Caller caller, DisputeCase d) {
+        if (!caller.isRecommender() || d.round() <= 0) {
+            return Mono.just(false);
+        }
+        return judges.isPanelMember(d.id(), d.round(), caller.accountId());
     }
 
     /**

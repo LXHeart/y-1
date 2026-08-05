@@ -1,5 +1,6 @@
 package com.grassland.trust.dispute;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -12,9 +13,20 @@ import java.util.UUID;
  * <p>D-03 slice 2：{@code kind}（standard / merchant_rejection，默认 standard）。
  * {@code openedByAccountId} + {@code organizationId} 仅 marketplace 服务断言代商家开 merchant_rejection 争议时携带
  * （终端用户路径由 authorizer 解析 canonical org）。
+ *
+ * <p>GL-P2-TRUST-001 T1：{@code evidence} 可选——开争议时可一并提交初始证据（文本/截图句柄/外链）。
+ * 缺省空列表；提交后在同一事务内落 dispute_evidence + 点亮 dispute_case.evidence_ref。
  */
 public record OpenDisputeRequest(String engagementRef, String reason, String kind,
-                                 String openedByAccountId, String organizationId) {
+                                 String openedByAccountId, String organizationId,
+                                 List<EvidenceItem> evidence) {
+
+    /** 向后兼容：不带 evidence 的 5 参构造（既有调用方）。 */
+    public OpenDisputeRequest(String engagementRef, String reason, String kind,
+                              String openedByAccountId, String organizationId) {
+        this(engagementRef, reason, kind, openedByAccountId, organizationId, null);
+    }
+
     public OpenDisputeRequest {
         if (engagementRef == null || engagementRef.isBlank()) {
             throw new IllegalArgumentException("engagementRef is required");
@@ -27,5 +39,28 @@ public record OpenDisputeRequest(String engagementRef, String reason, String kin
         if (kind == null || kind.isBlank()) {
             kind = "standard";
         }
+        if (evidence == null) {
+            evidence = List.of();
+        }
+        // 校验每条证据项的字段，避免非法值落到 DB/outbox。
+        for (EvidenceItem item : evidence) {
+            if (item == null) {
+                throw new IllegalArgumentException("evidence item 不能为空");
+            }
+            item.validate();
+        }
+    }
+
+    /** 开争议时携带的初始证据项。{@code kind}=text/screenshot/link；{@code contentRef}=文本原文/media id/外链。 */
+    public record EvidenceItem(String kind, String contentRef, String caption) {
+        public void validate() {
+            if (kind == null || kind.isBlank()) {
+                throw new IllegalArgumentException("evidence.kind is required");
+            }
+            if (contentRef == null || contentRef.isBlank()) {
+                throw new IllegalArgumentException("evidence.contentRef is required");
+            }
+        }
     }
 }
+
