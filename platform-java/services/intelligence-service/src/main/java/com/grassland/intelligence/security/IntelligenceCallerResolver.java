@@ -80,6 +80,17 @@ public class IntelligenceCallerResolver {
     }
 
     /**
+     * 要求当前调用方持有任一指定后台角色（GL-P2-ADMIN-001，含 PLATFORM_ADMIN 超集语义）。
+     * intelligence 只信 BFF 断言的 role claim（不查 app_users，identity 才是账号权威）；
+     * 服务断言恒 false（防冒充）。未登录 → 401；登录但无所需角色 → 403。
+     */
+    public Mono<Caller> requireRole(ServerHttpRequest request, com.grassland.identity.assertion.BackendRole... required) {
+        return resolve(request)
+                .filter(caller -> caller.hasBackendRole(required))
+                .switchIfEmpty(Mono.error(new IntelligenceException(403, "权限不足")));
+    }
+
+    /**
      * 仅指定服务 principal（Slice 11 Stage 1：履约附件中转读）。非该 principal 的服务断言、终端用户断言
      * 一律 403——这些端点不对浏览器/终端用户开放。缺/失效断言仍由 {@link #resolve} 返回 401。
      */
@@ -115,11 +126,21 @@ public class IntelligenceCallerResolver {
         }
 
         /**
-         * 平台管理员（{@code role=admin}）。服务断言恒 false——服务不是人，不该凭 role 执行平台侧动作
+         * 平台管理员。服务断言恒 false——服务不是人，不该凭 role 执行平台侧动作
          * （防冒充，同 {@link IdentityAssertion#hasRole}）。
+         *
+         * <p>GL-P2-ADMIN-001：检查 backend_role 含 platform_admin；旧值 {@code "admin"} 兜底（backfill 已迁）。
          */
         public boolean isAdmin() {
-            return !"service".equalsIgnoreCase(callerKind) && "admin".equalsIgnoreCase(role);
+            return hasBackendRole(com.grassland.identity.assertion.BackendRole.PLATFORM_ADMIN)
+                    || (!isService() && "admin".equalsIgnoreCase(role));
+        }
+
+        /**
+         * 是否持有任一指定后台角色（含 PLATFORM_ADMIN 超集语义）。服务断言恒 false。
+         */
+        public boolean hasBackendRole(com.grassland.identity.assertion.BackendRole... required) {
+            return !isService() && com.grassland.identity.assertion.BackendRoles.hasAny(role, required);
         }
     }
 }

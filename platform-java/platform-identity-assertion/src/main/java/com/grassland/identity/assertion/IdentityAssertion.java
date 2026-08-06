@@ -114,9 +114,31 @@ public record IdentityAssertion(
     /**
      * 是否具备指定平台角色（大小写不敏感）。服务断言恒 false——
      * 服务不是人，不该凭 role 执行平台侧动作（同 {@code isMerchant} 的防冒充原则）。
+     *
+     * <p>多值语义（GL-P2-ADMIN-001）：{@code role} claim 可为逗号分隔多值（如
+     * {@code "platform_admin,content_reviewer"}）。本方法用 {@link BackendRoles#hasAny} 判定
+     * （含 PLATFORM_ADMIN 超集语义）。传入 legacy 值（{@code "admin"}/{@code "customer_service"}）时，
+     * 因 {@link BackendRole#fromDb} 对未知值返回 null，会回退到原大小写不敏感相等比较（向后兼容）。
      */
     public boolean hasRole(String expectedRole) {
-        return !isService() && expectedRole != null && expectedRole.equalsIgnoreCase(role);
+        if (isService() || expectedRole == null) {
+            return false;
+        }
+        BackendRole parsed = BackendRole.fromDb(expectedRole);
+        if (parsed != null) {
+            return BackendRoles.hasAny(role, parsed);
+        }
+        // legacy 值（admin/customer_service 未迁新枚举前）回退：逗号边界大小写不敏感包含比较
+        String normalized = role == null ? "" : role.toLowerCase(java.util.Locale.ROOT);
+        String want = expectedRole.toLowerCase(java.util.Locale.ROOT);
+        return java.util.Arrays.stream(normalized.split(",")).anyMatch(want::equals);
+    }
+
+    /**
+     * 解析 {@code role} claim 为后台角色集合（GL-P2-ADMIN-001）。服务断言返回空集（防冒充）。
+     */
+    public java.util.Set<BackendRole> backendRoles() {
+        return isService() ? java.util.Set.of() : BackendRoles.fromClaim(role);
     }
 
     /** 是否为 BFF 签发的终端用户断言（{@code callerKind} 缺省视为 user）。 */

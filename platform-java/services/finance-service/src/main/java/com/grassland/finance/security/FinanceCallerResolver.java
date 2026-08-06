@@ -46,7 +46,7 @@ public class FinanceCallerResolver {
         }
         return Mono.justOrEmpty(signer.verify(header, Instant.now()))
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(),
-                        a.permissionTier(), a.callerKind(), a.principal()))
+                        a.permissionTier(), a.callerKind(), a.principal(), a.role()))
                 .switchIfEmpty(Mono.error(new FinanceException(401, "未登录")));
     }
 
@@ -55,6 +55,17 @@ public class FinanceCallerResolver {
         return resolve(request)
                 .filter(Caller::isMerchant)
                 .switchIfEmpty(Mono.error(new FinanceException(403, "需要商家身份")));
+    }
+
+    /**
+     * 要求当前调用方持有任一指定后台角色（GL-P2-ADMIN-001，含 PLATFORM_ADMIN 超集语义）。
+     * 为财务对账台（GL-P2-ADMIN-006）铺路；finance 只信 BFF 断言的 role claim；服务断言恒 false。
+     */
+    public Mono<Caller> requireRole(ServerHttpRequest request,
+                                     com.grassland.identity.assertion.BackendRole... required) {
+        return resolve(request)
+                .filter(caller -> caller.hasBackendRole(required))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "权限不足")));
     }
 
     /**
@@ -98,7 +109,7 @@ public class FinanceCallerResolver {
      *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级资源授权自查。
      *  {@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）。 */
     public record Caller(String accountId, String activeIdentityType, String organizationId,
-                         String permissionTier, String callerKind, String principal) {
+                         String permissionTier, String callerKind, String principal, String role) {
         /** 终端商家用户。服务断言（callerKind=service）恒为 false——防止服务断言凭 activeIdentityType 冒充商家。 */
         public boolean isMerchant() {
             return !"service".equalsIgnoreCase(callerKind)
@@ -125,6 +136,13 @@ public class FinanceCallerResolver {
                 }
             }
             return false;
+        }
+
+        /**
+         * 是否持有任一指定后台角色（GL-P2-ADMIN-001，含 PLATFORM_ADMIN 超集语义）。服务断言恒 false。
+         */
+        public boolean hasBackendRole(com.grassland.identity.assertion.BackendRole... required) {
+            return !isService() && com.grassland.identity.assertion.BackendRoles.hasAny(role, required);
         }
     }
 }

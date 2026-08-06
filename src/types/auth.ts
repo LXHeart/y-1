@@ -3,6 +3,8 @@ export interface AuthUser {
   email: string
   displayName?: string
   role: string
+  /** GL-P2-ADMIN-001：后端角色数组（多值，来自 backend_role 表）。旧用户可能缺失 → 视为空数组。 */
+  roles?: string[]
 }
 
 export interface AuthSuccessResponse {

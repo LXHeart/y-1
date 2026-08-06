@@ -73,6 +73,17 @@ public class MarketplaceCallerResolver {
                 .switchIfEmpty(Mono.error(new MarketplaceException(403, "需要运营或管理员角色")));
     }
 
+    /**
+     * 要求当前调用方持有任一指定后台角色（GL-P2-ADMIN-001，含 PLATFORM_ADMIN 超集语义）。
+     * marketplace 只信 BFF 断言的 role claim；服务断言恒 false（防冒充）。
+     */
+    public Mono<Caller> requireRole(ServerHttpRequest request,
+                                     com.grassland.identity.assertion.BackendRole... required) {
+        return resolve(request)
+                .filter(caller -> caller.hasBackendRole(required))
+                .switchIfEmpty(Mono.error(new MarketplaceException(403, "权限不足")));
+    }
+
     /** 断言解析出的调用者。{@code activeIdentityType} 为 null=消费者；merchant 发布任务 / recommender 报名。
      *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级授权/限额（4B+）。
      *  {@code role} 是平台角色（{@code app_users.role}：user/admin/customer_service），供运营处置台闸门。 */
@@ -94,10 +105,17 @@ public class MarketplaceCallerResolver {
          * 服务断言不可冒充 —— {@code callerKind=service} 恒 false（服务没有人类 role）。
          */
         public boolean isOpsOperator() {
-            if ("service".equalsIgnoreCase(callerKind)) {
-                return false;
-            }
-            return "customer_service".equalsIgnoreCase(role) || "admin".equalsIgnoreCase(role);
+            // GL-P2-ADMIN-001：backend_role 含 CUSTOMER_SERVICE 或 PLATFORM_ADMIN（超集）；旧值兜底
+            return hasBackendRole(com.grassland.identity.assertion.BackendRole.CUSTOMER_SERVICE)
+                    || (!isService() && ("customer_service".equalsIgnoreCase(role)
+                            || "admin".equalsIgnoreCase(role)));
+        }
+
+        /**
+         * 是否持有任一指定后台角色（含 PLATFORM_ADMIN 超集语义）。服务断言恒 false。
+         */
+        public boolean hasBackendRole(com.grassland.identity.assertion.BackendRole... required) {
+            return !isService() && com.grassland.identity.assertion.BackendRoles.hasAny(role, required);
         }
 
         public boolean isService() {

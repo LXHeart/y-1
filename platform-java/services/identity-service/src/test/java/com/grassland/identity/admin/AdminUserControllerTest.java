@@ -34,6 +34,7 @@ class AdminUserControllerTest {
     private CurrentAccountResolver accounts;
     private AdminUserRepository adminUsers;
     private FinanceCreditsAdminClient financeCredits;
+    private BackendRoleRepository backendRoles;
     private AdminUserController controller;
 
     @BeforeEach
@@ -41,13 +42,16 @@ class AdminUserControllerTest {
         accounts = mock(CurrentAccountResolver.class);
         adminUsers = mock(AdminUserRepository.class);
         financeCredits = mock(FinanceCreditsAdminClient.class);
+        backendRoles = mock(BackendRoleRepository.class);
         // requireAdmin 默认放行（admin 鉴权由 IT 覆盖）
         when(accounts.requireAdmin(any())).thenReturn(Mono.just(stubAdmin()));
+        // backendRoles 默认返回空集（角色授予/撤销由 IT 覆盖）
+        when(backendRoles.findByAccountId(anyString())).thenReturn(Mono.just(java.util.Set.of()));
         // finance 默认成功
         when(financeCredits.fetchBalances(any())).thenReturn(Mono.just(Map.of()));
         when(financeCredits.award(anyString(), anyInt(), anyString())).thenReturn(Mono.empty());
         when(financeCredits.refund(anyString(), anyInt(), anyString())).thenReturn(Mono.empty());
-        controller = new AdminUserController(accounts, adminUsers, financeCredits);
+        controller = new AdminUserController(accounts, adminUsers, financeCredits, backendRoles);
     }
 
     @Test

@@ -37,6 +37,27 @@ const sendingCode = ref(false)
 export function useAuth() {
   const isAuthenticated = computed(() => currentUser.value !== null)
 
+  /**
+   * 当前账号的后台角色集合（GL-P2-ADMIN-001）。优先读 roles 数组；旧用户缺失时回落单值 role 兜底
+   * （admin → platform_admin / customer_service → customer_service），保证向后兼容。
+   */
+  const backendRoles = computed<string[]>(() => {
+    const u = currentUser.value
+    if (!u) return []
+    if (u.roles && u.roles.length > 0) return u.roles
+    // 兜底：旧用户无 roles 数组，从单值 role 推导
+    if (u.role === 'admin') return ['platform_admin']
+    if (u.role === 'customer_service') return ['customer_service']
+    return []
+  })
+
+  /** 是否持有指定后台角色（含 platform_admin 超集语义）。 */
+  function hasBackendRole(role: string): boolean {
+    const roles = backendRoles.value
+    if (roles.includes('platform_admin')) return true
+    return roles.includes(role)
+  }
+
   function clearLoginError(): void {
     loginError.value = ''
   }
@@ -241,6 +262,8 @@ export function useAuth() {
   return {
     currentUser,
     isAuthenticated,
+    backendRoles,
+    hasBackendRole,
     loading,
     loaded,
     loggingIn,

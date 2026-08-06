@@ -79,17 +79,41 @@ public class SessionIdentityResolver {
                             Mono<OrgTier> tier = "merchant".equalsIgnoreCase(session.activeIdentityType())
                                     ? orgTier(accountId).defaultIfEmpty(OrgTier.EMPTY)
                                     : Mono.just(OrgTier.EMPTY);
-                            return tier.map(o -> new ResolvedIdentity(
-                                    account.id(),
-                                    account.role(),
-                                    account.status(),
-                                    session.activeIdentityType(),
-                                    sid,
-                                    o.orgId(),
-                                    o.tier(),
-                                    session.reauthenticatedAt(),
-                                    session.authStrength()));
+                            // GL-P2-ADMIN-001：role claim 合并 backend_role 多值（逗号分隔），
+                            // app_users.role 单值作兜底（backfill 已把老 admin/customer_service 迁入 backend_role）。
+                            return backendRolesClaim(accountId)
+                                    .defaultIfEmpty("")
+                                    .flatMap(rolesClaim -> tier.map(o -> new ResolvedIdentity(
+                                            account.id(),
+                                            mergeRoleClaim(account.role(), rolesClaim),
+                                            account.status(),
+                                            session.activeIdentityType(),
+                                            sid,
+                                            o.orgId(),
+                                            o.tier(),
+                                            session.reauthenticatedAt(),
+                                            session.authStrength())));
                         }));
+    }
+
+    /** 读 backend_role 表的多值角色，拼成逗号分隔 claim（如 "platform_admin,content_reviewer"）。 */
+    private Mono<String> backendRolesClaim(String accountId) {
+        return db.sql("SELECT role FROM backend_role WHERE account_id = CAST(:acct AS uuid) ORDER BY granted_at")
+                .bind("acct", accountId)
+                .map(row -> row.get("role", String.class))
+                .all()
+                .collect(java.util.stream.Collectors.joining(","));
+    }
+
+    /**
+     * 合并 app_users.role（单值兜底）与 backend_role（多值权威）。backend_role 非空时以其为准
+     * （backfill 后权威源），否则回落 app_users.role（向后兼容无 backend_role 行的老用户）。
+     */
+    private static String mergeRoleClaim(String appUsersRole, String backendRolesClaim) {
+        if (backendRolesClaim != null && !backendRolesClaim.isBlank()) {
+            return backendRolesClaim;
+        }
+        return appUsersRole == null ? "" : appUsersRole;
     }
 
     /** 在 Row 仍有效期间提前抽取字段（r2dbc Row 生命周期仅限 map 阶段，不可透传到下游 flatMap）。 */

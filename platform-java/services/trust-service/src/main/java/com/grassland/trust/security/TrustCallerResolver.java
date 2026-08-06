@@ -88,6 +88,17 @@ public class TrustCallerResolver {
                 .switchIfEmpty(Mono.error(new TrustException(403, "需要客服身份")));
     }
 
+    /**
+     * 要求当前调用方持有任一指定后台角色（GL-P2-ADMIN-001，含 PLATFORM_ADMIN 超集语义）。
+     * trust 只信 BFF 断言的 role claim；服务断言恒 false（防冒充）。
+     */
+    public Mono<Caller> requireRole(ServerHttpRequest request,
+                                     com.grassland.identity.assertion.BackendRole... required) {
+        return resolve(request)
+                .filter(caller -> caller.hasBackendRole(required))
+                .switchIfEmpty(Mono.error(new TrustException(403, "权限不足")));
+    }
+
     /** 仅指定服务 principal 且组织匹配。供权威对账读取，终端用户不可调用。 */
     public Mono<Caller> requireServiceForOrg(
             ServerHttpRequest request, String organizationId, String servicePrincipal) {
@@ -144,10 +155,17 @@ public class TrustCallerResolver {
          * 服务断言不可冒充——callerKind=service 恒 false。
          */
         public boolean isCustomerService() {
-            if ("service".equalsIgnoreCase(callerKind)) {
-                return false;
-            }
-            return "customer_service".equalsIgnoreCase(role) || "admin".equalsIgnoreCase(role);
+            // GL-P2-ADMIN-001：backend_role 含 CUSTOMER_SERVICE 或 PLATFORM_ADMIN（超集）；旧值兜底
+            return hasBackendRole(com.grassland.identity.assertion.BackendRole.CUSTOMER_SERVICE)
+                    || (!isService() && ("customer_service".equalsIgnoreCase(role)
+                            || "admin".equalsIgnoreCase(role)));
+        }
+
+        /**
+         * 是否持有任一指定后台角色（含 PLATFORM_ADMIN 超集语义）。服务断言恒 false。
+         */
+        public boolean hasBackendRole(com.grassland.identity.assertion.BackendRole... required) {
+            return !isService() && com.grassland.identity.assertion.BackendRoles.hasAny(role, required);
         }
 
         public boolean isService() {

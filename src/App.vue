@@ -229,7 +229,7 @@
           草场
         </button>
         <button
-          v-if="isAuthenticated && (currentUser?.role === 'admin' || currentUser?.role === 'customer_service')"
+          v-if="isAuthenticated && (hasBackendRole('platform_admin') || hasBackendRole('customer_service'))"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'ops' }"
           :aria-current="currentView === 'ops' ? 'page' : undefined"
@@ -243,7 +243,7 @@
           运营处置
         </button>
         <button
-          v-if="isAuthenticated && currentUser?.role === 'admin'"
+          v-if="isAuthenticated && hasBackendRole('platform_admin')"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'admin' }"
           :aria-current="currentView === 'admin' ? 'page' : undefined"
@@ -358,6 +358,7 @@ const authBannerMessage = ref('')
 const {
   currentUser,
   isAuthenticated,
+  hasBackendRole,
   loaded: authLoaded,
   loggingIn,
   registering,

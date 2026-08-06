@@ -1,5 +1,8 @@
 package com.grassland.identity.organization;
 
+import com.grassland.identity.admin.BackendRoleRepository;
+import com.grassland.identity.assertion.BackendRole;
+import com.grassland.identity.assertion.BackendRoles;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import com.grassland.identity.auth.IdentityException;
@@ -36,18 +39,21 @@ public class CurrentAccountResolver {
     private final String cookieName;
     private final ObjectProvider<IdentityAssertionSigner> signerProvider;
     private final String assertionHeaderName;
+    private final BackendRoleRepository backendRoles;
 
     public CurrentAccountResolver(LegacySessionBridge sessionBridge, LegacyUserLookup userLookup,
                                   CookieSigner cookieSigner,
                                   @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName,
                                   ObjectProvider<IdentityAssertionSigner> signerProvider,
-                                  @Value("${identity-assertion.header-name:X-Grassland-Identity}") String assertionHeaderName) {
+                                  @Value("${identity-assertion.header-name:X-Grassland-Identity}") String assertionHeaderName,
+                                  BackendRoleRepository backendRoles) {
         this.sessionBridge = sessionBridge;
         this.userLookup = userLookup;
         this.cookieSigner = cookieSigner;
         this.cookieName = cookieName;
         this.signerProvider = signerProvider;
         this.assertionHeaderName = assertionHeaderName;
+        this.backendRoles = backendRoles;
     }
 
     public Mono<AuthUser> resolve(ServerHttpRequest request) {
@@ -101,11 +107,37 @@ public class CurrentAccountResolver {
     /**
      * 要求当前账号为平台管理员（{@code role==admin}），放行返回该账号；非管理员 → 403；未登录 → 401（由 {@link #resolve} 抛）。
      * 草场身份域 Slice 2H（D-05 平台 admin 门禁）。
+     *
+     * <p>向后兼容（GL-P2-ADMIN-001）：先查 backend_role 表是否含 platform_admin；
+     * 旧用户无 backend_role 行时回退 {@code app_users.role=='admin'} 判定（backfill 已把老 admin 迁入 backend_role，
+     * 但保留兜底防御 backfill 缺失）。
      */
     public Mono<AuthUser> requireAdmin(ServerHttpRequest request) {
         return resolve(request)
-                .filter(user -> "admin".equalsIgnoreCase(user.role()))
+                .filterWhen(user -> backendRoles.findByAccountId(user.id())
+                        .map(roles -> roles.contains(BackendRole.PLATFORM_ADMIN))
+                        .defaultIfEmpty("admin".equalsIgnoreCase(user.role())))
                 .switchIfEmpty(Mono.error(new IdentityException(403, "需要平台管理员权限")));
+    }
+
+    /**
+     * 要求当前账号持有任一指定后台角色（含 PLATFORM_ADMIN 超集语义）。
+     * identity 是 account 权威，**自查 backend_role 表**（不信 BFF 断言的 role claim）。
+     * 未登录 → 401（由 {@link #resolve} 抛）；登录但无所需角色 → 403。
+     *
+     * @param required 所需角色（任一匹配即通过；PLATFORM_ADMIN 恒通过）
+     */
+    public Mono<AuthUser> requireRole(ServerHttpRequest request, BackendRole... required) {
+        return resolve(request)
+                .filterWhen(user -> backendRoles.findByAccountId(user.id())
+                        .map(roles -> BackendRoles.hasAny(roles, required))
+                        .defaultIfEmpty(false))
+                .switchIfEmpty(Mono.error(new IdentityException(403, "权限不足")));
+    }
+
+    /** 当前账号的后台角色集合（查 backend_role 表）。供 MeController / AdminUserRepository 合并展示。 */
+    public Mono<java.util.Set<BackendRole>> resolveBackendRoles(String accountId) {
+        return backendRoles.findByAccountId(accountId);
     }
 
     private String extractSid(ServerHttpRequest request) {

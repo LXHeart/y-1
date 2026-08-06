@@ -2,6 +2,7 @@ package com.grassland.identity.admin;
 
 import com.grassland.identity.admin.AdminUserRepository.AdminUserRow;
 import com.grassland.identity.admin.FinanceCreditsAdminClient.AccountBalance;
+import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import java.util.LinkedHashMap;
@@ -13,9 +14,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -35,14 +39,17 @@ public class AdminUserController {
     private final CurrentAccountResolver accounts;
     private final AdminUserRepository adminUsers;
     private final FinanceCreditsAdminClient financeCredits;
+    private final BackendRoleRepository backendRoles;
 
     public AdminUserController(
             CurrentAccountResolver accounts,
             AdminUserRepository adminUsers,
-            FinanceCreditsAdminClient financeCredits) {
+            FinanceCreditsAdminClient financeCredits,
+            BackendRoleRepository backendRoles) {
         this.accounts = accounts;
         this.adminUsers = adminUsers;
         this.financeCredits = financeCredits;
+        this.backendRoles = backendRoles;
     }
 
     @GetMapping("/api/admin/users")
@@ -52,12 +59,32 @@ public class AdminUserController {
                         .flatMap(rows -> {
                             List<String> accountIds = rows.stream().map(AdminUserRow::id).toList();
                             return financeCredits.fetchBalances(accountIds)
-                                    .map(balances -> rows.stream()
-                                            .map(row -> toUserItem(row, balances.get(row.id())))
-                                            .toList());
+                                    .flatMap(balances -> collectBackendRoles(accountIds)
+                                            .map(roleMap -> rows.stream()
+                                                    .map(row -> toUserItem(row,
+                                                            balances.get(row.id()),
+                                                            roleMap.getOrDefault(row.id(), List.of())))
+                                                    .toList()));
                         })
                         .map(users -> ResponseEntity.ok(Map.of("success", true,
                                 "data", Map.of("users", users)))));
+    }
+
+    @PutMapping(value = "/api/admin/users/{id}/roles", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> updateRoles(
+            @PathVariable String id, @RequestBody UpdateRolesRequest body, ServerHttpRequest request) {
+        return accounts.requireRole(request, BackendRole.PLATFORM_ADMIN)
+                .flatMap(admin -> {
+                    String userId = validateUserId(id);
+                    BackendRole role = validateRole(body.role());
+                    return switch (body.action()) {
+                        case "grant" -> backendRoles.grant(userId, role, admin.id())
+                                .thenReturn(ResponseEntity.ok(Map.of("success", true, "data", Map.of("granted", true))));
+                        case "revoke" -> backendRoles.revoke(userId, role)
+                                .thenReturn(ResponseEntity.ok(Map.of("success", true, "data", Map.of("revoked", true))));
+                        default -> Mono.error(new IllegalArgumentException("action 仅支持 grant/revoke"));
+                    };
+                });
     }
 
     @PostMapping(value = "/api/admin/adjust-credits", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -86,7 +113,7 @@ public class AdminUserController {
         return ResponseEntity.badRequest().body(Map.of("success", false, "error", error.getMessage()));
     }
 
-    private static Map<String, Object> toUserItem(AdminUserRow row, AccountBalance balance) {
+    private static Map<String, Object> toUserItem(AdminUserRow row, AccountBalance balance, List<String> roles) {
         AccountBalance b = balance == null ? new AccountBalance(0, 0, 0) : balance;
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", row.id());
@@ -98,7 +125,28 @@ public class AdminUserController {
         item.put("balance", b.balance());
         item.put("totalEarned", b.totalEarned());
         item.put("totalSpent", b.totalSpent());
+        item.put("roles", roles);
         return item;
+    }
+
+    /** 批量取多账号的后台角色（用于列表展示）。 */
+    private Mono<Map<String, List<String>>> collectBackendRoles(List<String> accountIds) {
+        return Flux.fromIterable(accountIds)
+                .flatMap(accountId -> backendRoles.findByAccountId(accountId)
+                        .map(roles -> Map.entry(accountId,
+                                roles.stream().map(BackendRole::dbValue).sorted().toList())))
+                .collectMap(Map.Entry::getKey, Map.Entry::getValue);
+    }
+
+    private static BackendRole validateRole(String role) {
+        if (role == null || role.isBlank()) {
+            throw new IllegalArgumentException("缺少 role");
+        }
+        BackendRole parsed = BackendRole.fromDb(role);
+        if (parsed == null) {
+            throw new IllegalArgumentException("未知角色: " + role);
+        }
+        return parsed;
     }
 
     private static String validateUserId(String userId) {
@@ -126,4 +174,7 @@ public class AdminUserController {
 
     /** adjust-credits 请求体：amount 可正可负（正=award / 负=refund），对齐 legacy schema。 */
     public record AdjustCreditsRequest(String userId, int amount, String note) {}
+
+    /** update-roles 请求体：action=grant/revoke，role 为 BackendRole dbValue。 */
+    public record UpdateRolesRequest(String action, String role) {}
 }

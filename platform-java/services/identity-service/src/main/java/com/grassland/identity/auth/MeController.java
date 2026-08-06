@@ -1,5 +1,6 @@
 package com.grassland.identity.auth;
 
+import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.user.AuthUser;
 import java.util.LinkedHashMap;
@@ -29,18 +30,27 @@ public class MeController {
     @GetMapping("/api/auth/me")
     public Mono<ResponseEntity<Map<String, Object>>> me(ServerHttpRequest request) {
         return accounts.resolve(request)
-                .map(this::toResponse);
+                .flatMap(this::toResponse);
     }
 
-    private ResponseEntity<Map<String, Object>> toResponse(AuthUser user) {
-        Map<String, Object> userInfo = new LinkedHashMap<>();
-        userInfo.put("id", user.id());
-        userInfo.put("email", user.email());
-        if (user.displayName() != null && !user.displayName().isBlank()) {
-            userInfo.put("displayName", user.displayName());
-        }
-        userInfo.put("role", user.role());
-        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("user", userInfo)));
+    private Mono<ResponseEntity<Map<String, Object>>> toResponse(AuthUser user) {
+        return accounts.resolveBackendRoles(user.id())
+                .defaultIfEmpty(java.util.Set.of())
+                .map(roles -> {
+                    Map<String, Object> userInfo = new LinkedHashMap<>();
+                    userInfo.put("id", user.id());
+                    userInfo.put("email", user.email());
+                    if (user.displayName() != null && !user.displayName().isBlank()) {
+                        userInfo.put("displayName", user.displayName());
+                    }
+                    userInfo.put("role", user.role());
+                    // GL-P2-ADMIN-001：后端角色数组（多值），供前端动态渲染后台入口
+                    userInfo.put("roles", roles.stream()
+                            .map(BackendRole::dbValue)
+                            .sorted()
+                            .toList());
+                    return ResponseEntity.ok(Map.of("success", true, "data", Map.of("user", userInfo)));
+                });
     }
 
     @ExceptionHandler(IdentityException.class)
