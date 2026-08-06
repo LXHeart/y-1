@@ -53,6 +53,9 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/ops", "marketplace", true),
             // intelligence Slice 1：/api/intelligence 前缀 → intelligence（冒烟端点 + 后续业务）
             new RouteProperties(null, "/api/intelligence", "intelligence", true),
+            // Legacy 迁移：用户级分析设置 + 首页热点聚合 → intelligence
+            new RouteProperties(null, "/api/settings", "intelligence", true),
+            new RouteProperties(null, "/api/homepage", "intelligence", true),
             // intelligence Slice 8：media-reference 鉴权上传/签名读 → intelligence
             new RouteProperties(null, "/api/media", "intelligence", true),
             // intelligence Slice 2：/api/comedy-generation 前缀 → intelligence（脱口秀迁入，路径沿用 legacy）
@@ -303,6 +306,23 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("DELETE", "/api/media/" + APP_ID)).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("GET", "/api/media/" + APP_ID)).isTrue();
         assertThat(resolver.resolve("GET", "/api/medialibrary")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void routesSettingsAndHomepageToIntelligence() {
+        // Legacy 迁移：用户级分析设置 + 首页热点。路径沿用 legacy → 前端零改动。
+        assertThat(resolver.resolve("GET", "/api/settings/analysis")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("PUT", "/api/settings/analysis")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/settings/analysis/models")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/settings/analysis/verify-model")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/settings/homepage")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/homepage/hot-items")).isEqualTo(INTELLIGENCE);
+        // 内部上游：BFF 须签发身份断言（settings 读写用户密钥，homepage 读用户 provider 偏好）。
+        assertThat(resolver.isInternalUpstream("GET", "/api/settings/analysis")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/homepage/hot-items")).isTrue();
+        // 前缀不误吞：/api/settingsx、/api/homepages 仍走 legacy。
+        assertThat(resolver.resolve("GET", "/api/settingsx")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/homepages")).isEqualTo(LEGACY);
     }
 
     @Test

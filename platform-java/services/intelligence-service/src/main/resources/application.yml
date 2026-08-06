@@ -204,3 +204,13 @@ credits:
     # 仅容器网络直连 backend:3000 可达。
     consume-path: /internal/credits/consume
     refund-path: /internal/credits/refund
+
+# 首页热点聚合（Legacy 迁移）。60s 为无鉴权公共源；ALAPI 需用户级 token（存 user_settings，不在此配）。
+# 60s 结果落 DB 缓存（intelligence_cached_hot_topics，2h TTL，上游失败降级到过期缓存）；ALAPI 走进程内 5min 缓存。
+hot-items:
+  sixty-s:
+    base-url: ${DOUYIN_HOT_API_BASE_URL:https://60s.viki.moe/v2/douyin}
+    timeout-ms: ${DOUYIN_HOT_API_TIMEOUT_MS:8000}
+  alapi:
+    base-url: ${ALAPI_BASE_URL:https://v3.alapi.cn}
+    timeout-ms: ${ALAPI_TIMEOUT_MS:8000}

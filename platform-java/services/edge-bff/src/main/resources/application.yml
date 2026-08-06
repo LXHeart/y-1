@@ -166,6 +166,17 @@ edge:
     - path: /api/intelligence
       upstream: intelligence
       enabled: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:true}
+    # ---- 用户级分析设置（Legacy 迁移）→ intelligence-service。AI provider 配置同域。----
+    # /api/settings/analysis（GET/PUT）、/analysis/models、/analysis/verify-model、/api/settings/homepage。
+    # 密钥在响应中掩码（**** + 末4位）；PUT 掩码原样回传 = 不变，空串 = 清空。
+    - path: /api/settings
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_SETTINGS_INTELLIGENCE:true}
+    # ---- 首页热点聚合（Legacy 迁移）→ intelligence-service。GET /api/homepage/hot-items。----
+    # 不强制登录：登录用户按其 homepage settings 选 provider（60s/alapi），未登录走平台默认 60s。
+    - path: /api/homepage
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_HOMEPAGE_INTELLIGENCE:true}
     # ---- media-reference（草场 Slice 8 第二步）→ intelligence-service。----
     # 鉴权三步上传 / confirm / 签名读 / 删除审计；内部上游自动签发身份断言。
     - path: /api/media

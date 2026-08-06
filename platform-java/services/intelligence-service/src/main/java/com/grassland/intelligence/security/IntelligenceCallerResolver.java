@@ -55,6 +55,14 @@ public class IntelligenceCallerResolver {
                 .switchIfEmpty(Mono.error(new IntelligenceException(401, "未登录")));
     }
 
+    /**
+     * 可选身份（GL: homepage 迁移）：断言缺/失效返回 {@code Mono.empty()} 而非 401。
+     * 用于公开端点上的「登录则用个人设置、未登录用平台默认」语义（如 {@code /api/homepage/hot-items}）。
+     */
+    public Mono<Caller> resolveOptional(ServerHttpRequest request) {
+        return resolve(request).onErrorResume(IntelligenceException.class, e -> Mono.empty());
+    }
+
     public Mono<Caller> requireMerchant(ServerHttpRequest request) {
         return resolve(request)
                 .filter(Caller::isMerchant)
