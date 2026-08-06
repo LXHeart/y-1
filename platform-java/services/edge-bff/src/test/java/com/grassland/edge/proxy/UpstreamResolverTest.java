@@ -29,6 +29,8 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/admin/permission-requests", "identity", true),
             // GL-P3-MERCHANT-001：KYB 审核队列 → identity（同样必须是精确前缀，不能退化为 /api/admin）
             new RouteProperties(null, "/api/admin/kyb-requests", "identity", true),
+            // GL-P2-ADMIN-002：推荐官认证审核队列 → identity
+            new RouteProperties(null, "/api/admin/recommender-requests", "identity", true),
             // GL-P3-AI-001：AI 控制面 → intelligence。/api/ai（BYOK keys + Run）全新无碰撞；
             // /api/admin/ai（模型配置 admin）精确前缀，不抢其它 /api/admin/*（同 kyb 口径）。
             new RouteProperties(null, "/api/ai", "intelligence", true),
@@ -198,6 +200,9 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("GET", "/api/admin/kyb-requests")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("POST", "/api/admin/kyb-requests/req-1/approve")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("POST", "/api/admin/kyb-requests/req-1/reject")).isEqualTo(IDENTITY);
+        // GL-P2-ADMIN-002：推荐官认证审核队列 → identity
+        assertThat(resolver.resolve("GET", "/api/admin/recommender-requests")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/admin/recommender-requests/req-1/approve")).isEqualTo(IDENTITY);
         // 内部上游 → 会签身份断言，identity 侧才能解析出 admin 账号
         assertThat(resolver.isInternalUpstream("POST", "/api/admin/kyb-requests/req-1/approve")).isTrue();
         // /api/admin/users 也已迁 identity（kyb-requests 更具体，排在前面，不被抢占）

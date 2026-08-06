@@ -94,6 +94,10 @@ edge:
     - path: /api/admin/kyb-requests
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_KYB_IDENTITY:true}
+    # 平台 admin 推荐官认证审核队列（GL-P2-ADMIN-002）。精确前缀，不抢其它 /api/admin/*。
+    - path: /api/admin/recommender-requests
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_RECOMMENDER_IDENTITY:true}
     # 平台 AI 控制面（GL-P3-AI-001）→ intelligence-service。
     # /api/ai 前缀：BYOK 密钥管理（/api/ai/keys，Phase 1 已交付）+ 控制面 Run（/api/ai/runs）。
     # 全新路径、无 legacy 碰撞——此前 /api/ai/keys 经 edge 落 legacy 404（隐性不可达 bug），本路由让其首次可达。

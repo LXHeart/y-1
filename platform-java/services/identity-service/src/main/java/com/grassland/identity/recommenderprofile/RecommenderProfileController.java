@@ -35,14 +35,17 @@ public class RecommenderProfileController {
     private final CurrentAccountResolver accounts;
     private final RecommenderProfileRepository profiles;
     private final IdentityProfileRepository identities;
+    private final RecommenderVerificationRepository verifications;
 
     public RecommenderProfileController(
             CurrentAccountResolver accounts,
             RecommenderProfileRepository profiles,
-            IdentityProfileRepository identities) {
+            IdentityProfileRepository identities,
+            RecommenderVerificationRepository verifications) {
         this.accounts = accounts;
         this.profiles = profiles;
         this.identities = identities;
+        this.verifications = verifications;
     }
 
     @GetMapping("/api/me/recommender-profile")
@@ -50,7 +53,7 @@ public class RecommenderProfileController {
         return accounts.resolve(request)
                 .flatMap(account -> profiles.findByAccount(account.id())
                         .defaultIfEmpty(RecommenderProfile.empty(account.id()))
-                        .map(profile -> ok(toBody(profile))));
+                        .flatMap(profile -> verificationBody(account.id(), profile)));
     }
 
     @PutMapping(value = "/api/me/recommender-profile", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -61,7 +64,7 @@ public class RecommenderProfileController {
                 .flatMap(account -> identities.findByAccountAndType(account.id(), IdentityType.RECOMMENDER.dbValue())
                         .switchIfEmpty(Mono.error(new IdentityException(409, "未开通推荐官身份，请先开通")))
                         .then(profiles.upsert(account.id(), body))
-                        .map(profile -> ok(toBody(profile))));
+                        .flatMap(profile -> verificationBody(account.id(), profile)));
     }
 
     @GetMapping("/api/recommenders/{accountId}/profile")
@@ -71,7 +74,7 @@ public class RecommenderProfileController {
                 .flatMap(viewer -> profiles.findByAccount(accountId)
                         // 没填过资料 → 空画像，而不是 404：对商家而言「这人没填」才是事实
                         .defaultIfEmpty(RecommenderProfile.empty(accountId))
-                        .map(profile -> ok(toBody(profile))));
+                        .flatMap(profile -> verificationBody(accountId, profile)));
     }
 
     @ExceptionHandler(IdentityException.class)
@@ -87,6 +90,26 @@ public class RecommenderProfileController {
 
     private static ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    private Mono<ResponseEntity<Map<String, Object>>> verificationBody(
+            String accountId, RecommenderProfile profile) {
+        return verifications.findLatestByAccount(accountId)
+                .map(request -> {
+                    Map<String, Object> body = toBody(profile);
+                    body.put("verificationStatus", request.status());
+                    body.put("verified", "approved".equalsIgnoreCase(request.status()));
+                    return ok(body);
+                })
+                .defaultIfEmpty(okWithVerification(profile, "none", false));
+    }
+
+    private static ResponseEntity<Map<String, Object>> okWithVerification(
+            RecommenderProfile profile, String status, boolean verified) {
+        Map<String, Object> body = toBody(profile);
+        body.put("verificationStatus", status);
+        body.put("verified", verified);
+        return ok(body);
     }
 
     private static Map<String, Object> toBody(RecommenderProfile profile) {
