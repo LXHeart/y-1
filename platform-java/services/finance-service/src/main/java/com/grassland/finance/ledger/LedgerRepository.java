@@ -77,6 +77,62 @@ public class LedgerRepository {
                 .map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
+    /**
+     * 列出某组织（可空=全量）的 journal，按时间倒序分页（GL-P2-ADMIN-006 财务对账台）。
+     * 利用 idx_journal_org(org, created_at DESC) 索引。
+     */
+    public reactor.core.publisher.Flux<JournalEntry> listJournals(
+            String organizationId, java.time.Instant from, java.time.Instant to, int limit) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT id::text, journal_type, operation_id, currency, organization_id::text AS org,
+                       engagement_ref, memo, created_at
+                  FROM journal
+                """);
+        var conditions = new java.util.ArrayList<String>();
+        if (organizationId != null && !organizationId.isBlank()) {
+            conditions.add("organization_id = CAST(:orgId AS uuid)");
+        }
+        if (from != null) {
+            conditions.add("created_at >= :from");
+        }
+        if (to != null) {
+            conditions.add("created_at < :to");
+        }
+        if (!conditions.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", conditions));
+        }
+        sql.append(" ORDER BY created_at DESC LIMIT :limit");
+
+        GenericExecuteSpec spec = db.sql(sql.toString()).bind("limit", Math.max(1, Math.min(limit, 200)));
+        if (organizationId != null && !organizationId.isBlank()) {
+            spec = spec.bind("orgId", organizationId);
+        }
+        if (from != null) {
+            spec = spec.bind("from", java.time.OffsetDateTime.ofInstant(from, java.time.ZoneOffset.UTC));
+        }
+        if (to != null) {
+            spec = spec.bind("to", java.time.OffsetDateTime.ofInstant(to, java.time.ZoneOffset.UTC));
+        }
+        return spec.map(LedgerRepository::mapJournalEntry).all();
+    }
+
+    private static JournalEntry mapJournalEntry(Readable row) {
+        String typeRaw = row.get("journal_type", String.class);
+        return new JournalEntry(
+                UUID.fromString(row.get("id", String.class)),
+                JournalEntry.Type.valueOf(typeRaw),
+                row.get("operation_id", String.class),
+                row.get("currency", String.class),
+                row.get("org", String.class),
+                row.get("engagement_ref", String.class),
+                row.get("memo", String.class),
+                toInstant(row.get("created_at", java.time.OffsetDateTime.class)));
+    }
+
+    private static java.time.Instant toInstant(java.time.OffsetDateTime value) {
+        return value == null ? null : value.toInstant();
+    }
+
     private Mono<Void> postJournalHead(JournalEntry journal) {
         // created_at 由 DB DEFAULT now() 填充（避免 text→timestamptz 的绑定类型问题）。
         GenericExecuteSpec spec = db.sql("""

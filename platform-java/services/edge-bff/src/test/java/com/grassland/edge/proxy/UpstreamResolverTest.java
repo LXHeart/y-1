@@ -38,6 +38,8 @@ class UpstreamResolverTest {
             // Legacy 迁移：admin 用户管理 + 积分调整 → identity（排在更具体的 permission/kyb/ai 之后）
             new RouteProperties(null, "/api/admin/users", "identity", true),
             new RouteProperties(null, "/api/admin/adjust-credits", "identity", true),
+            // GL-P2-ADMIN-006：财务对账台 → finance
+            new RouteProperties(null, "/api/admin/finance", "finance", true),
             new RouteProperties(null, "/api/finance", "finance", true),
             // GL-P3-AI-001 下属切片：积分读端 → finance（balance/history，内部上游 → 签身份断言）
             new RouteProperties(null, "/api/credits", "finance", true),

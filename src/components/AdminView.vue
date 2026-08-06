@@ -17,6 +17,9 @@
         @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
         推荐官认证 <span v-if="recommenderRequests.length" class="count-badge">{{ recommenderRequests.length }}</span>
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'finance'"
+        :class="{ active: activeSection === 'finance' }"
+        @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
         :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
     </div>
@@ -97,6 +100,37 @@
               </td>
             </tr>
             <tr v-if="recommenderRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核认证</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-else-if="activeSection === 'finance'" class="admin-panel" role="tabpanel">
+      <div class="panel-toolbar">
+        <div><h3>账本流水</h3><p>双录账本（journal/posting），按组织筛选。真实 PSP 接入前仅 sandbox 流水。</p></div>
+        <button class="refresh-btn" type="button" :disabled="journalLoading" @click="loadJournals">刷新</button>
+      </div>
+      <div class="ops-filters" style="margin-bottom: 12px;">
+        <label>组织 ID
+          <input v-model="journalOrgFilter" type="text" placeholder="留空 = 全量" @keyup.enter="loadJournals" />
+        </label>
+        <button type="button" class="refresh-btn" :disabled="journalLoading" @click="loadJournals">查询</button>
+      </div>
+      <p v-if="journalError" class="error-msg" role="alert">{{ journalError }}</p>
+      <div v-if="journalLoading" class="loading-state">加载中...</div>
+      <div v-else class="table-card">
+        <table class="user-table kyb-table">
+          <thead><tr><th>类型</th><th>组织</th><th>关联</th><th>备注</th><th>幂等键</th><th>时间</th></tr></thead>
+          <tbody>
+            <tr v-for="j in journals" :key="j.id">
+              <td><span class="type-tag">{{ JOURNAL_TYPE_LABELS[j.type] || j.type }}</span></td>
+              <td class="id-cell" :title="j.organizationId || ''">{{ j.organizationId || '—' }}</td>
+              <td class="id-cell" :title="j.engagementRef || ''">{{ j.engagementRef || '—' }}</td>
+              <td>{{ j.memo || '—' }}</td>
+              <td class="id-cell" :title="j.operationId || ''">{{ j.operationId ? j.operationId.slice(0, 16) + '…' : '—' }}</td>
+              <td class="td-time">{{ formatDateTime(j.createdAt) }}</td>
+            </tr>
+            <tr v-if="journals.length === 0"><td colspan="6" class="td-empty">暂无流水</td></tr>
           </tbody>
         </table>
       </div>
@@ -235,7 +269,7 @@ interface UserItem {
 }
 
 const users = ref<UserItem[]>([])
-const activeSection = ref<'users' | 'kyb' | 'recommenders' | 'ai-models'>('users')
+const activeSection = ref<'users' | 'kyb' | 'recommenders' | 'finance' | 'ai-models'>('users')
 const loading = ref(false)
 const loadError = ref('')
 
@@ -253,6 +287,21 @@ const recommenderRequests = ref<RecommenderVerificationRequest[]>([])
 const recommenderLoading = ref(false)
 const recommenderError = ref('')
 const recommenderNotes = ref<Record<string, string>>({})
+
+interface JournalEntry {
+  id: string
+  type: string
+  operationId: string | null
+  currency: string
+  organizationId: string | null
+  engagementRef: string | null
+  memo: string | null
+  createdAt: string | null
+}
+const journals = ref<JournalEntry[]>([])
+const journalLoading = ref(false)
+const journalError = ref('')
+const journalOrgFilter = ref('')
 const reviewTarget = ref<KybVerificationRequest | null>(null)
 const reviewDecision = ref<'approve' | 'reject'>('approve')
 const reviewNote = ref('')
@@ -272,6 +321,23 @@ const accountTypeLabels: Record<WithdrawalAccountType, string> = {
   bank_card: '银行卡',
   alipay: '支付宝',
   wechat: '微信',
+}
+
+const JOURNAL_TYPE_LABELS: Record<string, string> = {
+  DEPOSIT: '充值', RESERVE: '预留', RELEASE: '释放',
+  CAPTURE: '结算', REVERSE: '冲正', WITHDRAW: '提现', OPENING: '期初',
+}
+
+async function loadJournals(): Promise<void> {
+  journalLoading.value = true
+  journalError.value = ''
+  const result = await grassland.listFinanceJournals({
+    organizationId: journalOrgFilter.value || undefined,
+    limit: 100,
+  })
+  if (result) journals.value = result as unknown as JournalEntry[]
+  else journalError.value = grassland.error.value || '账本流水加载失败'
+  journalLoading.value = false
 }
 
 const attachmentTypeLabels: Record<MerchantAttachmentType, string> = {

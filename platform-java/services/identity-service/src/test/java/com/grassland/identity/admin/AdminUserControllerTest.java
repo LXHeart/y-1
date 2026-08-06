@@ -14,6 +14,7 @@ import com.grassland.identity.admin.AdminUserController.AdjustCreditsRequest;
 import com.grassland.identity.admin.AdminUserRepository.AdminUserRow;
 import com.grassland.identity.admin.FinanceCreditsAdminClient.AccountBalance;
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.identityprofile.IdentityAuditLogRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import java.time.Instant;
 import java.util.List;
@@ -35,6 +36,7 @@ class AdminUserControllerTest {
     private AdminUserRepository adminUsers;
     private FinanceCreditsAdminClient financeCredits;
     private BackendRoleRepository backendRoles;
+    private IdentityAuditLogRepository identityAudits;
     private AdminUserController controller;
 
     @BeforeEach
@@ -43,15 +45,17 @@ class AdminUserControllerTest {
         adminUsers = mock(AdminUserRepository.class);
         financeCredits = mock(FinanceCreditsAdminClient.class);
         backendRoles = mock(BackendRoleRepository.class);
+        identityAudits = mock(IdentityAuditLogRepository.class);
         // requireAdmin 默认放行（admin 鉴权由 IT 覆盖）
         when(accounts.requireAdmin(any())).thenReturn(Mono.just(stubAdmin()));
         // backendRoles 默认返回空集（角色授予/撤销由 IT 覆盖）
         when(backendRoles.findByAccountId(anyString())).thenReturn(Mono.just(java.util.Set.of()));
+        when(identityAudits.findByAccount(anyString())).thenReturn(reactor.core.publisher.Flux.empty());
         // finance 默认成功
         when(financeCredits.fetchBalances(any())).thenReturn(Mono.just(Map.of()));
         when(financeCredits.award(anyString(), anyInt(), anyString())).thenReturn(Mono.empty());
         when(financeCredits.refund(anyString(), anyInt(), anyString())).thenReturn(Mono.empty());
-        controller = new AdminUserController(accounts, adminUsers, financeCredits, backendRoles);
+        controller = new AdminUserController(accounts, adminUsers, financeCredits, backendRoles, identityAudits);
     }
 
     @Test

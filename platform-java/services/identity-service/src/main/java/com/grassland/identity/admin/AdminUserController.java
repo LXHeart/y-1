@@ -4,6 +4,8 @@ import com.grassland.identity.admin.AdminUserRepository.AdminUserRow;
 import com.grassland.identity.admin.FinanceCreditsAdminClient.AccountBalance;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.identityprofile.IdentityAuditLog;
+import com.grassland.identity.identityprofile.IdentityAuditLogRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,16 +42,19 @@ public class AdminUserController {
     private final AdminUserRepository adminUsers;
     private final FinanceCreditsAdminClient financeCredits;
     private final BackendRoleRepository backendRoles;
+    private final IdentityAuditLogRepository identityAudits;
 
     public AdminUserController(
             CurrentAccountResolver accounts,
             AdminUserRepository adminUsers,
             FinanceCreditsAdminClient financeCredits,
-            BackendRoleRepository backendRoles) {
+            BackendRoleRepository backendRoles,
+            IdentityAuditLogRepository identityAudits) {
         this.accounts = accounts;
         this.adminUsers = adminUsers;
         this.financeCredits = financeCredits;
         this.backendRoles = backendRoles;
+        this.identityAudits = identityAudits;
     }
 
     @GetMapping("/api/admin/users")
@@ -101,6 +106,35 @@ public class AdminUserController {
                     return mutation.thenReturn(ResponseEntity.ok(Map.of("success", true,
                             "data", Map.of("adjusted", true))));
                 });
+    }
+
+    /**
+     * 某账号的身份切换审计时间线（GL-P2-ADMIN-009）。门闩 PLATFORM_ADMIN（审计是高敏感度操作）。
+     * 复用已有 {@link IdentityAuditLogRepository#findByAccount}（此前 0 调用方）。
+     */
+    @GetMapping("/api/admin/users/{id}/audit")
+    public Mono<ResponseEntity<Map<String, Object>>> userAudit(
+            @PathVariable String id, ServerHttpRequest request) {
+        return accounts.requireRole(request, BackendRole.PLATFORM_ADMIN)
+                .thenMany(identityAudits.findByAccount(validateUserId(id))
+                        .map(AdminUserController::identityAuditBody))
+                .collectList()
+                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+    }
+
+    private static Map<String, Object> identityAuditBody(IdentityAuditLog log) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", log.id());
+        item.put("accountId", log.accountId());
+        item.put("action", log.action());
+        item.put("fromIdentityType", log.fromIdentityType());
+        item.put("toIdentityType", log.toIdentityType());
+        item.put("sessionId", log.sessionToken());
+        item.put("deviceId", log.deviceId());
+        item.put("ipAddress", log.ipAddress());
+        item.put("userAgent", log.userAgent());
+        item.put("occurredAt", log.occurredAt() == null ? null : log.occurredAt().toString());
+        return item;
     }
 
     @ExceptionHandler(IdentityException.class)

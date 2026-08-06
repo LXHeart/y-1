@@ -1037,6 +1037,27 @@ export function useGrassland() {
     return `${prefix}-${rand}`
   }
 
+  // ---------- 财务对账台（GL-P2-ADMIN-006）----------
+
+  const listFinanceJournals = (params?: { organizationId?: string; from?: string; to?: string; limit?: number }) =>
+    run(() => {
+      const qs = new URLSearchParams()
+      if (params?.organizationId) qs.set('organizationId', params.organizationId)
+      if (params?.from) qs.set('from', params.from)
+      if (params?.to) qs.set('to', params.to)
+      qs.set('limit', String(params?.limit ?? 50))
+      return request<Record<string, unknown>[]>(`/api/admin/finance/journals?${qs}`)
+    })
+
+  const getJournalPostings = (journalId: string) =>
+    run(() => request<Record<string, unknown>[]>(`/api/admin/finance/journals/${encodeURIComponent(journalId)}/postings`))
+
+  const reconcileEscrow = (orgId: string) =>
+    run(() => request<Record<string, unknown>>(`/api/admin/finance/reconcile/escrow/${encodeURIComponent(orgId)}`))
+
+  const reconcileWallet = (accountId: string) =>
+    run(() => request<Record<string, unknown>>(`/api/admin/finance/reconcile/wallet/${encodeURIComponent(accountId)}`))
+
   return {
     loading,
     error,
@@ -1165,5 +1186,10 @@ export function useGrassland() {
     // 推荐官平台认证审核（GL-P2-ADMIN-002）
     listRecommenderVerifications,
     reviewRecommenderVerification,
+    // 财务对账台（GL-P2-ADMIN-006）
+    listFinanceJournals,
+    getJournalPostings,
+    reconcileEscrow,
+    reconcileWallet,
   }
 }
