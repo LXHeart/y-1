@@ -17,6 +17,11 @@
         @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
         推荐官认证 <span v-if="recommenderRequests.length" class="count-badge">{{ recommenderRequests.length }}</span>
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'tasks'"
+        :class="{ active: activeSection === 'tasks' }"
+        @click="activeSection = 'tasks'; void loadReviewTasks()">
+        任务审核 <span v-if="reviewTasks.length" class="count-badge">{{ reviewTasks.length }}</span>
+      </button>
       <button type="button" role="tab" :aria-selected="activeSection === 'finance'"
         :class="{ active: activeSection === 'finance' }"
         @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
@@ -100,6 +105,36 @@
               </td>
             </tr>
             <tr v-if="recommenderRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核认证</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-else-if="activeSection === 'tasks'" class="admin-panel" role="tabpanel">
+      <div class="panel-toolbar">
+        <div><h3>待审核任务</h3><p>全审政策：所有任务提交后需审核通过才在大厅上架</p></div>
+        <button class="refresh-btn" type="button" :disabled="taskReviewLoading" @click="loadReviewTasks">刷新</button>
+      </div>
+      <p v-if="taskReviewError" class="error-msg" role="alert">{{ taskReviewError }}</p>
+      <div v-if="taskReviewLoading" class="loading-state">加载中...</div>
+      <div v-else class="table-card">
+        <table class="user-table kyb-table">
+          <thead><tr><th>标题</th><th>平台</th><th>赏金</th><th>组织</th><th>驳回原因</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="t in reviewTasks" :key="t.id">
+              <td>{{ t.title }}</td>
+              <td><span class="type-tag">{{ t.platform || '—' }}</span></td>
+              <td class="td-balance">{{ t.bountyCents ? '¥' + (t.bountyCents / 100).toFixed(2) : '—' }}</td>
+              <td class="id-cell" :title="t.organizationId">{{ t.organizationId }}</td>
+              <td>
+                <input v-model="taskReviewNotes[t.id]" class="field-input" type="text" maxlength="500" placeholder="驳回原因（驳回必填）" />
+              </td>
+              <td class="review-actions">
+                <button class="approve-btn" type="button" @click="reviewTask(t, 'approve')">通过</button>
+                <button class="reject-btn" type="button" @click="reviewTask(t, 'reject')">驳回</button>
+              </td>
+            </tr>
+            <tr v-if="reviewTasks.length === 0"><td colspan="6" class="td-empty">暂无待审核任务</td></tr>
           </tbody>
         </table>
       </div>
@@ -252,6 +287,7 @@ import type {
   KybVerificationRequest,
   KybVerificationType,
   RecommenderVerificationRequest,
+  Task,
   MerchantAttachmentType,
   WithdrawalAccountType,
 } from '../types/grassland'
@@ -269,7 +305,7 @@ interface UserItem {
 }
 
 const users = ref<UserItem[]>([])
-const activeSection = ref<'users' | 'kyb' | 'recommenders' | 'finance' | 'ai-models'>('users')
+const activeSection = ref<'users' | 'kyb' | 'recommenders' | 'tasks' | 'finance' | 'ai-models'>('users')
 const loading = ref(false)
 const loadError = ref('')
 
@@ -302,6 +338,11 @@ const journals = ref<JournalEntry[]>([])
 const journalLoading = ref(false)
 const journalError = ref('')
 const journalOrgFilter = ref('')
+
+const reviewTasks = ref<Task[]>([])
+const taskReviewLoading = ref(false)
+const taskReviewError = ref('')
+const taskReviewNotes = ref<Record<string, string>>({})
 const reviewTarget = ref<KybVerificationRequest | null>(null)
 const reviewDecision = ref<'approve' | 'reject'>('approve')
 const reviewNote = ref('')
@@ -326,6 +367,33 @@ const accountTypeLabels: Record<WithdrawalAccountType, string> = {
 const JOURNAL_TYPE_LABELS: Record<string, string> = {
   DEPOSIT: '充值', RESERVE: '预留', RELEASE: '释放',
   CAPTURE: '结算', REVERSE: '冲正', WITHDRAW: '提现', OPENING: '期初',
+}
+
+async function loadReviewTasks(): Promise<void> {
+  taskReviewLoading.value = true
+  taskReviewError.value = ''
+  const result = await grassland.listPendingReviewTasks()
+  if (result) reviewTasks.value = [...result]
+  else taskReviewError.value = grassland.error.value || '待审核任务加载失败'
+  taskReviewLoading.value = false
+}
+
+async function reviewTask(task: Task, decision: 'approve' | 'reject'): Promise<void> {
+  const note = (taskReviewNotes.value[task.id] || '').trim()
+  if (decision === 'reject' && !note) {
+    taskReviewError.value = '驳回任务必须填写原因'
+    return
+  }
+  taskReviewError.value = ''
+  const result = decision === 'approve'
+    ? await grassland.approveTaskReview(task.id, task.version)
+    : await grassland.rejectTaskReview(task.id, task.version, note)
+  if (result) {
+    reviewTasks.value = reviewTasks.value.filter(item => item.id !== task.id)
+    delete taskReviewNotes.value[task.id]
+  } else {
+    taskReviewError.value = grassland.error.value || '审核失败'
+  }
 }
 
 async function loadJournals(): Promise<void> {

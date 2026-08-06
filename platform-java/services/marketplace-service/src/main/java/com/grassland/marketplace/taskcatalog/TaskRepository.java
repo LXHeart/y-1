@@ -42,8 +42,8 @@ public class TaskRepository {
     public record FeedFilter(String platform, String contentForm, Long minBountyCents) {}
 
     /**
-     * 创建即发布（兼容 {@code POST /api/tasks}）：status=published，published_at=now，落 v1 快照。
-     * 由 controller 包进「INSERT task + INSERT task_version + outbox」同一 R2DBC 事务。
+     * 创建即提交审核（GL-P2-ADMIN-003 全审政策）：status=pending_review，不设 published_at（审核通过时才设），
+     * 不落快照（审核通过时才落）。由 controller 包进「INSERT task + outbox」同一 R2DBC 事务。
      */
     public Mono<Task> create(String ownerAccountId, String organizationId, String title,
                              String description, String contentForm, String platform, Integer maxSlots,
@@ -51,10 +51,10 @@ public class TaskRepository {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
                 INSERT INTO task(id, owner_account_id, organization_id, title, description, status,
-                                 content_form, platform, max_slots, bounty_cents, published_at, application_deadline)
+                                 content_form, platform, max_slots, bounty_cents, application_deadline)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), :title,
-                        :desc, 'published', :contentForm, :platform, :maxSlots, :bountyCents,
-                        now(), :deadline)
+                        :desc, 'pending_review', :contentForm, :platform, :maxSlots, :bountyCents,
+                        :deadline)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
@@ -64,8 +64,7 @@ public class TaskRepository {
         spec = bindNullableInt(spec, "maxSlots", maxSlots);
         spec = bindNullableLong(spec, "bountyCents", bountyCents);
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
-        return spec.map(TaskRepository::map).one()
-                .flatMap(task -> appendVersion(task, ownerAccountId).thenReturn(task));
+        return spec.map(TaskRepository::map).one();
     }
 
     /** 创建草稿（status=draft, version=0）。draft 创建不占发布额度、不需资金权限。 */
@@ -111,17 +110,18 @@ public class TaskRepository {
         return spec.map(TaskRepository::map).one();
     }
 
-    /** 发布草稿（draft→published，published_at=now，version+1）+ 同事务落 task_version 快照。
-     *  0 行（非 draft / 版本冲突）→ empty。快照取 RETURNING 的当前字段（已含编辑后的值）。 */
-    public Mono<Task> publish(String id, int expectedVersion, String publishedBy) {
+    /**
+     * 提交审核（GL-P2-ADMIN-003 全审政策）：draft→pending_review，version+1。
+     * 不设 published_at（审核通过时才设），不落快照。0 行（非 draft / 版本冲突）→ empty。
+     */
+    public Mono<Task> publish(String id, int expectedVersion) {
         return db.sql("""
-                UPDATE task SET status = 'published', published_at = now(), version = version + 1, updated_at = now()
+                UPDATE task SET status = 'pending_review', version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'draft' AND version = :expected
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("expected", expectedVersion)
-                .map(TaskRepository::map).one()
-                .flatMap(task -> appendVersion(task, publishedBy).thenReturn(task));
+                .map(TaskRepository::map).one();
     }
 
     /** 关闭报名（published→closed，version+1）。既有履约不受影响。0 行（非 published / 版本冲突）→ empty。 */
@@ -159,15 +159,53 @@ public class TaskRepository {
                 .flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
     }
 
-    /** 取消任务（draft|published→cancelled，cancelled_at=now，version+1）。0 行（终态 / 版本冲突）→ empty。 */
+    /** 取消任务（draft|published|pending_review→cancelled，cancelled_at=now，version+1）。0 行 → empty。 */
     public Mono<Task> cancel(String id, int expectedVersion) {
         return db.sql("""
                 UPDATE task SET status = 'cancelled', cancelled_at = now(), version = version + 1, updated_at = now()
-                WHERE id = CAST(:id AS uuid) AND status IN ('draft', 'published') AND version = :expected
+                WHERE id = CAST(:id AS uuid) AND status IN ('draft', 'published', 'pending_review') AND version = :expected
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("expected", expectedVersion)
                 .map(TaskRepository::map).one();
+    }
+
+    /**
+     * 审核通过（GL-P2-ADMIN-003 全审政策）：pending_review→published，published_at=now，version+1，
+     * 同事务落 v1 task_version 快照（审核通过 = 正式上架，published_at 才反映真正上架时刻）。
+     * 0 行（非 pending_review / 版本冲突）→ empty。
+     */
+    public Mono<Task> reviewApprove(String id, int expectedVersion, String approvedBy) {
+        return db.sql("""
+                UPDATE task SET status = 'published', published_at = now(), version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'pending_review' AND version = :expected
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("expected", expectedVersion)
+                .map(TaskRepository::map).one()
+                .flatMap(task -> appendVersion(task, approvedBy).thenReturn(task));
+    }
+
+    /**
+     * 审核驳回（全审政策）：pending_review→draft（退回让商家修改后重新提交），version+1。
+     * 0 行（非 pending_review / 版本冲突）→ empty。
+     */
+    public Mono<Task> reviewReject(String id, int expectedVersion) {
+        return db.sql("""
+                UPDATE task SET status = 'draft', version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'pending_review' AND version = :expected
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("expected", expectedVersion)
+                .map(TaskRepository::map).one();
+    }
+
+    /** 列出待审核任务（内容审核员队列），按提交时间正序。 */
+    public reactor.core.publisher.Flux<Task> findPendingReview(int limit) {
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM task WHERE status = 'pending_review' ORDER BY created_at LIMIT :limit")
+                .bind("limit", Math.max(1, Math.min(limit, 200)))
+                .map(TaskRepository::map).all();
     }
 
     public Mono<Task> findById(String id) {

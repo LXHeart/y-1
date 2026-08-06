@@ -95,12 +95,13 @@ describe('GrasslandWorkbench 登录态', () => {
   })
 
   /**
-   * 商家任务列表必须四态全取（GL-P1-TASK-001 Stage 3 浏览器实测发现）。
+   * 商家任务列表必须全态取（GL-P1-TASK-001 Stage 3 浏览器实测发现 + GL-P2-ADMIN-003 全审加 pending_review）。
    *
-   * 原实现只取 `status=published`：刚存下的草稿在列表里不出现，「编辑 / 发布」无从触达；
+   * 原实现只取 `status=published`：刚存下的草稿在列表里不出现，「编辑 / 提交审核」无从触达；
    * 关闭报名后整条任务从列表消失，商家再也无法处理已提交的报名。
+   * 全审政策下若漏 pending_review，刚提交审核的任务会从列表消失（同类 bug 的第三次）。
    */
-  test('商家任务列表按 draft/published/closed/cancelled 四态拉取', async () => {
+  test('商家任务列表按 draft/pending_review/published/closed/cancelled 五态拉取', async () => {
     const { urls } = stubFetch()
     mount(GrasslandWorkbench)
 
@@ -110,7 +111,7 @@ describe('GrasslandWorkbench 登录态', () => {
     const statuses = urls
       .filter((url) => url.startsWith('/api/tasks?organizationId='))
       .map((url) => new URL(url, 'http://localhost').searchParams.get('status'))
-    expect(statuses).toEqual(['draft', 'published', 'closed', 'cancelled'])
+    expect(statuses).toEqual(['draft', 'pending_review', 'published', 'closed', 'cancelled'])
   })
 
   test('recommender-only 账号直接激活推荐官，不尝试 merchant', async () => {

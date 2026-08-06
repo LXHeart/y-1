@@ -5,6 +5,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.identity.assertion.BackendRole;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
@@ -49,16 +50,19 @@ public class TaskController {
 
     private final MarketplaceCallerResolver callers;
     private final TaskRepository tasks;
+    private final TaskReviewRepository taskReviews;
     private final OutboxRepository outbox;
     private final TaskApplicationRepository apps;
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
 
-    public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, OutboxRepository outbox,
+    public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
+                          TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions) {
         this.callers = callers;
         this.tasks = tasks;
+        this.taskReviews = taskReviews;
         this.outbox = outbox;
         this.apps = apps;
         this.finance = finance;
@@ -100,7 +104,7 @@ public class TaskController {
                                             tasks.create(merchant.accountId(), body.organizationId(), body.title(),
                                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                     body.bountyCents(), body.applicationDeadline())
-                                                    .flatMap(task -> outbox.append(taskPublishedEnvelope(task)).thenReturn(task))));
+                                                    .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))));
                 })
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
@@ -136,7 +140,7 @@ public class TaskController {
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
-    /** 发布草稿（owner；tier/额度/资金闸门；落快照；outbox TaskPublished）。 */
+    /** 提交草稿审核（GL-P2-ADMIN-003 全审：draft→pending_review；闸门仍跑；outbox TaskSubmittedForReview）。 */
     @PostMapping(value = "/api/tasks/{id}/publish", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> publish(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                              ServerHttpRequest request) {
@@ -145,9 +149,9 @@ public class TaskController {
                         .flatMap(draft -> enforcePublishGates(merchant, draft.bountyCents())
                                 .thenReturn(draft)
                                 .flatMap(ignored -> transactions.transactional(
-                                        tasks.publish(id, body.expectedVersion(), merchant.accountId())
+                                        tasks.publish(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                                .flatMap(task -> outbox.append(taskPublishedEnvelope(task)).thenReturn(task))))))
+                                                .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -184,7 +188,9 @@ public class TaskController {
                                         .map(count -> ResponseEntity.ok(Map.of("success", true,
                                                 "data", cancelBody(owned, count))));
                             }
-                            if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)) {
+                            if (!TaskStatus.DRAFT.dbValue().equals(status)
+                                    && !TaskStatus.PUBLISHED.dbValue().equals(status)
+                                    && !TaskStatus.PENDING_REVIEW.dbValue().equals(status)) {
                                 return Mono.<ResponseEntity<Map<String, Object>>>error(
                                         new MarketplaceException(409, "任务已结束，不可取消"));
                             }
@@ -273,6 +279,70 @@ public class TaskController {
                             .map(list -> ResponseEntity.ok(Map.of("success", true,
                                     "data", list.stream().map(this::toBody).toList())));
                 });
+    }
+
+    // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
+
+    /** 待审核任务队列（内容审核员视角）。门闩 requireRole(CONTENT_REVIEWER)，PLATFORM_ADMIN 超集。 */
+    @GetMapping("/api/admin/tasks/review")
+    public Mono<ResponseEntity<Map<String, Object>>> listPendingReview(
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "50") int limit,
+            ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
+                .thenMany(tasks.findPendingReview(limit).map(this::toBody))
+                .collectList()
+                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+    }
+
+    /**
+     * 审核通过（pending_review→published，正式上架）。
+     *
+     * <p>闸门 4+5（活跃/月度额度）重跑——审核期间商家可能别处又发了任务导致额度已满。
+     * 闸门 2+3（tier/资金）也重跑——审核期间 tier 可能被降。
+     * owner tier 从 task 行的 ownerAccountId + organizationId 反查（审核员不是 merchant）。
+     */
+    @PostMapping(value = "/api/admin/tasks/{id}/review/approve", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> reviewApprove(
+            @PathVariable String id, @RequestBody TaskLifecycleRequest body, ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
+                .flatMap(reviewer -> tasks.findById(id)
+                        .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在")))
+                        .flatMap(task -> {
+                            if (!TaskStatus.PENDING_REVIEW.dbValue().equals(task.status())) {
+                                return Mono.<Task>error(new MarketplaceException(409, "该任务不在待审核状态"));
+                            }
+                            return transactions.transactional(
+                                    tasks.reviewApprove(id, body.expectedVersion(), reviewer.accountId())
+                                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+                                            .flatMap(approved -> taskReviews.append(id, "approved", reviewer.accountId(), null)
+                                                    .then(outbox.append(taskPublishedEnvelope(approved)).thenReturn(approved))));
+                        }))
+                .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+    }
+
+    /**
+     * 审核驳回（pending_review→draft，退回让商家修改后重新提交）。
+     */
+    @PostMapping(value = "/api/admin/tasks/{id}/review/reject", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> reviewReject(
+            @PathVariable String id, @RequestBody TaskReviewRequest body, ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
+                .flatMap(reviewer -> {
+                    String note = body.requireNote();
+                    return tasks.findById(id)
+                            .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在")))
+                            .flatMap(task -> {
+                                if (!TaskStatus.PENDING_REVIEW.dbValue().equals(task.status())) {
+                                    return Mono.<Task>error(new MarketplaceException(409, "该任务不在待审核状态"));
+                                }
+                                return transactions.transactional(
+                                        tasks.reviewReject(id, body.expectedVersion())
+                                                .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+                                                .flatMap(rejected -> taskReviews.append(id, "rejected", reviewer.accountId(), note)
+                                                        .thenReturn(rejected)));
+                            });
+                })
+                .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
     /**
@@ -416,6 +486,15 @@ public class TaskController {
         }
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskPublished", "Task",
                 task.id(), task.version(), Instant.now(), null, payload);
+    }
+
+    /** GL-P2-ADMIN-003 全审政策：提交审核事件（与 TaskPublished 同构，区分审核态）。 */
+    private EventEnvelope taskSubmittedEnvelope(Task task) {
+        return new EventEnvelope(UUID.randomUUID().toString(), "TaskSubmittedForReview", "Task",
+                task.id(), task.version(), Instant.now(), null,
+                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
+                        "ownerAccountId", task.ownerAccountId(), "title", task.title(),
+                        "version", task.version()));
     }
 
     private EventEnvelope taskDraftUpdatedEnvelope(Task task) {

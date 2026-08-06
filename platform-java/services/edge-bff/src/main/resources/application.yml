@@ -113,6 +113,10 @@ edge:
     - path: /api/admin/finance
       upstream: finance
       enabled: ${EDGE_ROUTE_ADMIN_FINANCE:true}
+    # 任务内容审核（GL-P2-ADMIN-003）→ marketplace。精确前缀，不抢 /api/tasks/* 用户侧流量。
+    - path: /api/admin/tasks
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ADMIN_TASKS_MARKETPLACE:true}
     # 平台 admin 用户管理 + 积分调整（迁自 legacy Express）→ identity。
     # 精确路径，不抢同前缀的 permission-requests/kyb-requests/ai（它们排在前面，更具体优先）。
     # 同一 flag 绑定两者（同属一次迁移，不应分开切流）。

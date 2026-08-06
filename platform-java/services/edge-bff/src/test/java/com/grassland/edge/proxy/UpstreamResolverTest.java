@@ -40,6 +40,8 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/admin/adjust-credits", "identity", true),
             // GL-P2-ADMIN-006：财务对账台 → finance
             new RouteProperties(null, "/api/admin/finance", "finance", true),
+            // GL-P2-ADMIN-003：任务内容审核 → marketplace
+            new RouteProperties(null, "/api/admin/tasks", "marketplace", true),
             new RouteProperties(null, "/api/finance", "finance", true),
             // GL-P3-AI-001 下属切片：积分读端 → finance（balance/history，内部上游 → 签身份断言）
             new RouteProperties(null, "/api/credits", "finance", true),

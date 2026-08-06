@@ -17,8 +17,9 @@ export interface GrasslandResponse<T> {
 
 // ---------- marketplace ----------
 
-/** 任务状态（GL-P1-TASK-001）：draft=草稿；published=大厅可见；closed=已关闭报名；cancelled=已取消。 */
-export type TaskStatus = 'draft' | 'published' | 'closed' | 'cancelled'
+/** 任务状态（GL-P1-TASK-001 + GL-P2-ADMIN-003 全审政策）：
+ * draft=草稿；pending_review=待审核；published=大厅可见；closed=已关闭报名；cancelled=已取消。 */
+export type TaskStatus = 'draft' | 'pending_review' | 'published' | 'closed' | 'cancelled'
 
 export interface Task {
   id: string

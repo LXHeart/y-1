@@ -1037,6 +1037,21 @@ export function useGrassland() {
     return `${prefix}-${rand}`
   }
 
+  // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
+
+  const listPendingReviewTasks = () =>
+    run(() => request<Task[]>('/api/admin/tasks/review'))
+
+  const approveTaskReview = (taskId: string, expectedVersion: number) =>
+    run(() => request<Task>(`/api/admin/tasks/${encodeURIComponent(taskId)}/review/approve`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion }),
+    }))
+
+  const rejectTaskReview = (taskId: string, expectedVersion: number, note: string) =>
+    run(() => request<Task>(`/api/admin/tasks/${encodeURIComponent(taskId)}/review/reject`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion, note }),
+    }))
+
   // ---------- 财务对账台（GL-P2-ADMIN-006）----------
 
   const listFinanceJournals = (params?: { organizationId?: string; from?: string; to?: string; limit?: number }) =>
@@ -1186,6 +1201,10 @@ export function useGrassland() {
     // 推荐官平台认证审核（GL-P2-ADMIN-002）
     listRecommenderVerifications,
     reviewRecommenderVerification,
+    // 任务内容审核（GL-P2-ADMIN-003）
+    listPendingReviewTasks,
+    approveTaskReview,
+    rejectTaskReview,
     // 财务对账台（GL-P2-ADMIN-006）
     listFinanceJournals,
     getJournalPostings,

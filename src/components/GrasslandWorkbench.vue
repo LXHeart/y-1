@@ -282,7 +282,7 @@ async function credit(): Promise<void> {
 // ---------- 商家：任务 / 报名 ----------
 
 /** 商家列表展示的任务状态；顺序即列表顺序（待处理的排前面）。 */
-const MERCHANT_TASK_STATUSES = ['draft', 'published', 'closed', 'cancelled'] as const
+const MERCHANT_TASK_STATUSES = ['draft', 'pending_review', 'published', 'closed', 'cancelled'] as const
 
 /**
  * 商家任务列表：四态全取。
@@ -315,7 +315,7 @@ async function publishTask(): Promise<void> {
   })
   if (!created) return
   resetTaskForm()
-  setNotice(`任务「${created.title}」已发布`)
+  setNotice(`任务「${created.title}」已提交审核，审核通过后将在大厅上架`)
   await refreshTasks()
 }
 
@@ -433,7 +433,7 @@ function editPublished(task: Task): void {
 async function publishDraft(task: Task): Promise<void> {
   const published = await grassland.publishDraft(task.id, task.version)
   if (!published) return
-  setNotice(`任务「${published.title}」已发布`)
+  setNotice(`任务「${published.title}」已提交审核，审核通过后将在大厅上架`)
   await refreshTasks()
 }
 
@@ -462,7 +462,8 @@ async function cancelTaskAction(task: Task): Promise<void> {
 
 function taskStatusLabel(status: string): string {
   const map: Record<string, string> = {
-    draft: '草稿', published: '已发布', closed: '已关闭报名', cancelled: '已取消',
+    draft: '草稿', pending_review: '待审核', published: '已发布',
+    closed: '已关闭报名', cancelled: '已取消',
   }
   return map[status] || status
 }
@@ -833,7 +834,7 @@ function statusLabel(status: string): string {
       </article>
 
       <article class="gl-card gl-card-wide">
-        <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「发布」）</span></h3>
+        <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「提交审核」）</span><span v-else class="gl-hint"> · 提交后经平台内容审核，通过后在大厅上架</span></h3>
         <div class="gl-row">
           <input v-model="taskForm.title" placeholder="任务标题" />
           <input v-model="taskForm.platform" placeholder="平台（可选）" />
@@ -848,7 +849,7 @@ function statusLabel(status: string): string {
           <label>报名截止 <input v-model="taskForm.applicationDeadline" type="datetime-local" /></label>
         </div>
         <div class="gl-row">
-          <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">立即发布</button>
+          <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">提交审核</button>
           <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="saveDraft">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
           <button v-if="editingDraft || revisingTask" type="button" :disabled="grassland.loading.value" @click="resetTaskForm">取消编辑</button>
         </div>
@@ -865,10 +866,15 @@ function statusLabel(status: string): string {
             </button>
             <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
             <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
-            <!-- 草稿：编辑 / 发布 / 取消 -->
+            <!-- 草稿：编辑 / 提交审核 / 取消 -->
             <template v-if="t.status === 'draft'">
               <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
-              <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">发布</button>
+              <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">提交审核</button>
+              <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消</button>
+            </template>
+            <!-- 待审核：平台内容审核中，仅可取消（编辑需先驳回或取消重建） -->
+            <template v-else-if="t.status === 'pending_review'">
+              <span class="gl-hint">平台审核中</span>
               <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消</button>
             </template>
             <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
