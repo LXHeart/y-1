@@ -47,10 +47,9 @@ class OutboxPublisherTest {
                 .thenReturn(sendFuture);
         when(repository.markPublished(anyString(), anyString())).thenReturn(Mono.just(true));
 
-        publisher.publishBatch().subscribe();
-
-        verify(repository, never()).markPublished(any(), any());
+        // 先 complete sendFuture（Kafka ack），再同步等待 publishBatch 完成后验证 markPublished
         sendFuture.complete(new SendResult<>(null, mock(RecordMetadata.class)));
+        StepVerifier.create(publisher.publishBatch()).verifyComplete();
 
         verify(repository).markPublished(eq("7a979ae8-e0bb-49f3-b612-554974dd0f6b"), anyString());
         assertThat(meterRegistry.counter("marketplace.outbox.published").count()).isEqualTo(1.0);

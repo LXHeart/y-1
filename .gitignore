@@ -17,8 +17,12 @@ server/.data
 playwright-report
 test-artifacts
 
-# Claude Code session worktrees (local only)
+# Claude Code session worktrees + plans (local only)
 .claude/worktrees/
+.claude/plans/
+
+# ZCode 会话产物（计划草稿等），不入库
+.zcode/
 
 # Playwright MCP 会话产物（快照/截图/console 日志），不入库
 .playwright-mcp/
