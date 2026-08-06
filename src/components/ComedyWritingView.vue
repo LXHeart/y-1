@@ -2,8 +2,26 @@
   <section class="comedy-view">
     <header class="section-header">
       <h2 class="section-title">脱口秀创作</h2>
-      <p class="section-desc">输入一个题材，选择时长，AI 帮你生成脱口秀文稿</p>
+      <p class="section-desc">输入一个题材，选择表达风格与时长，AI 帮你生成脱口秀文稿</p>
     </header>
+
+    <div class="style-selector">
+      <p class="style-selector-label">表达风格</p>
+      <div class="style-grid">
+        <button
+          v-for="tpl in styleTemplates"
+          :key="tpl.id"
+          class="style-card"
+          :class="{ 'style-card-active': styleId === tpl.id }"
+          type="button"
+          :aria-pressed="styleId === tpl.id"
+          @click="styleId = tpl.id"
+        >
+          <span class="style-card-title">{{ tpl.label }}</span>
+          <span class="style-card-desc">{{ tpl.description }}</span>
+        </button>
+      </div>
+    </div>
 
     <div class="comedy-card">
       <textarea
@@ -64,11 +82,14 @@
 
 <script setup lang="ts">
 import { computed, inject, onActivated, ref, type Ref, watch } from 'vue'
+import { getStyleTemplate, STYLE_TEMPLATES, type StyleTemplateId } from '../config/style-templates'
 
 const API_BASE = ''
 
 const topic = ref('')
 const duration = ref(60)
+const styleId = ref<StyleTemplateId>('light-comedy')
+const styleTemplates = STYLE_TEMPLATES
 const script = ref('')
 const generating = ref(false)
 const error = ref('')
@@ -155,6 +176,16 @@ function readSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncIt
   }
 }
 
+/**
+ * 风格仅影响前端提示词拼装：把选中风格的抽象表达特征描述并入 topic 文本，
+ * 请求字段名（topic/duration）与后端契约保持不变。
+ */
+function buildStyledTopic(rawTopic: string): string {
+  const template = getStyleTemplate(styleId.value)
+  if (!template) return rawTopic
+  return `请以「${template.label}」的表达风格创作：${template.description}\n\n题材：${rawTopic}`
+}
+
 async function handleGenerate(): Promise<void> {
   if (!canGenerate.value) return
 
@@ -168,7 +199,7 @@ async function handleGenerate(): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ topic: trimmed, duration: duration.value }),
+      body: JSON.stringify({ topic: buildStyledTopic(trimmed), duration: duration.value }),
     })
 
     if (!response.ok) {
@@ -219,6 +250,61 @@ async function handleGenerate(): Promise<void> {
   font-size: 0.88rem;
   color: var(--color-text-muted);
   margin: 0;
+}
+
+.style-selector {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.style-selector-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-sm);
+}
+
+.style-card {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--gradient-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.style-card:hover {
+  border-color: var(--color-border-hover);
+}
+
+.style-card-active {
+  border-color: var(--color-border-accent);
+  background: var(--color-surface-highlight);
+}
+
+.style-card-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.style-card-active .style-card-title {
+  color: var(--color-accent);
+}
+
+.style-card-desc {
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
 }
 
 .comedy-card {

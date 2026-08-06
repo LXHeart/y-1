@@ -72,7 +72,7 @@ function normalizePayload(value: unknown): HomepageHotItemsPayload | null {
         .filter((group): group is HomepageHotItemGroup => group !== null)
     : undefined
 
-  return { provider, items, groups }
+  return { provider, items, groups, fetchedAt: normalizeOptionalString(value.fetchedAt) }
 }
 
 async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
@@ -90,6 +90,7 @@ export function useHomepageHotItems() {
   const items = ref<HomepageHotItem[]>([])
   const groups = ref<HomepageHotItemGroup[]>([])
   const provider = ref<HotItemsProvider>('60s')
+  const fetchedAt = ref('')
   const loading = ref(false)
   const error = ref('')
 
@@ -112,9 +113,11 @@ export function useHomepageHotItems() {
       items.value = normalizedData.items
       groups.value = normalizedData.groups ?? []
       provider.value = normalizedData.provider
+      fetchedAt.value = normalizedData.fetchedAt ?? ''
     } catch (requestError: unknown) {
       items.value = []
       groups.value = []
+      fetchedAt.value = ''
       error.value = requestError instanceof Error ? requestError.message : '加载全网热点失败'
     } finally {
       loading.value = false
@@ -125,6 +128,7 @@ export function useHomepageHotItems() {
     items,
     groups,
     provider,
+    fetchedAt,
     loading,
     error,
     loadHotItems,

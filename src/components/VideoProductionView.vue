@@ -102,6 +102,121 @@
         </div>
       </div>
 
+      <!-- 可选输入方式：参考视频链接 / 热点主题 -->
+      <section class="input-methods" aria-label="可选输入方式">
+        <div class="input-method">
+          <button
+            class="input-method-toggle"
+            type="button"
+            :aria-expanded="showReferenceInput"
+            @click="showReferenceInput = !showReferenceInput"
+          >
+            <span class="toggle-caret" aria-hidden="true">{{ showReferenceInput ? '▾' : '▸' }}</span>
+            粘贴参考视频链接（可选）
+          </button>
+
+          <div v-if="showReferenceInput" class="reference-area">
+            <p class="field-note">粘贴抖音或 B 站分享文本/链接，提取视频并 AI 分析；分析结果只作为创作建议，可带入脚本生成。</p>
+
+            <div class="reference-platform-switch" role="tablist" aria-label="参考视频平台">
+              <button
+                class="reference-platform-tab"
+                :class="{ 'reference-platform-tab-active': referencePlatform === 'douyin' }"
+                :aria-selected="referencePlatform === 'douyin'"
+                type="button"
+                @click="handleSwitchReferencePlatform('douyin')"
+              >抖音</button>
+              <button
+                class="reference-platform-tab"
+                :class="{ 'reference-platform-tab-active': referencePlatform === 'bilibili' }"
+                :aria-selected="referencePlatform === 'bilibili'"
+                type="button"
+                @click="handleSwitchReferencePlatform('bilibili')"
+              >B 站</button>
+            </div>
+
+            <textarea
+              v-model="referenceInput"
+              class="reference-input"
+              rows="3"
+              :placeholder="referencePlatform === 'douyin' ? '例如：7.54 复制打开抖音 https://v.douyin.com/xxxx/' : '例如：https://www.bilibili.com/video/BV1xxxxxxxxx'"
+              :disabled="referenceParseLoading"
+            ></textarea>
+
+            <div class="action-row action-row-start">
+              <button
+                class="btn-secondary"
+                :disabled="referenceParseLoading || !referenceInput.trim()"
+                @click="handleExtractReference"
+              >
+                {{ referenceParseLoading ? '提取中…' : '提取并分析' }}
+              </button>
+              <button class="btn-secondary" :disabled="referenceParseLoading" @click="handleClearReference">清空</button>
+            </div>
+
+            <DouyinParsePanel
+              v-if="referencePlatform === 'douyin'"
+              :extracted-video="douyinExtractedVideo"
+              :loading="douyinParseLoading"
+              :error="douyinParseError"
+              :analysis="douyinVideoAnalysis"
+              :analysis-loading="douyinAnalysisLoading"
+              :analysis-error="douyinAnalysisError"
+              @retry="handleExtractReference"
+              @retry-analysis="handleRetryDouyinAnalysis"
+            />
+
+            <BilibiliParsePanel
+              v-else
+              :extracted-video="bilibiliExtractedVideo"
+              :loading="bilibiliParseLoading"
+              :error="bilibiliParseError"
+              :analysis="bilibiliVideoAnalysis"
+              :analysis-loading="bilibiliAnalysisLoading"
+              :analysis-error="bilibiliAnalysisError"
+              @retry="handleExtractReference"
+              @retry-analysis="handleRetryBilibiliAnalysis"
+            />
+
+            <div v-if="referenceCards.length > 0" class="reference-apply">
+              <p class="field-note">勾选要带入脚本生成的分析产出：</p>
+              <label v-for="card in referenceCards" :key="card.key" class="reference-card-option">
+                <input v-model="card.selected" type="checkbox" />
+                <span>{{ card.label }}</span>
+              </label>
+              <div class="action-row action-row-start">
+                <button class="btn-primary" :disabled="!hasSelectedReferenceCards" @click="applyReferenceToPrompt">带入自定义要求</button>
+              </div>
+              <p v-if="referenceApplied" class="field-note reference-applied-hint">已带入自定义要求，可在上方「自定义要求」中查看和编辑。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-method">
+          <button
+            class="input-method-toggle"
+            type="button"
+            :aria-expanded="showTopicInput"
+            @click="showTopicInput = !showTopicInput"
+          >
+            <span class="toggle-caret" aria-hidden="true">{{ showTopicInput ? '▾' : '▸' }}</span>
+            从热点选主题（可选）
+          </button>
+          <div v-if="showTopicInput" class="topic-area">
+            <p class="field-note">输入热点话题或主题关键词，会作为创作主题带入自定义要求。</p>
+            <div class="topic-row">
+              <input
+                v-model="hotTopicInput"
+                type="text"
+                class="topic-input"
+                placeholder="例如：城市夜骑、冬日暖胃计划"
+              />
+              <button class="btn-secondary" :disabled="!hotTopicInput.trim()" @click="applyHotTopicToPrompt">带入主题</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div v-if="error" class="error-hint">{{ error }}</div>
 
       <div class="action-row">
@@ -129,6 +244,7 @@
         </div>
         <h2 class="card-title">编辑推广脚本</h2>
         <p class="field-note">AI 根据素材和信息生成脚本，你可以自由编辑修改。</p>
+        <p v-if="referenceApplied" class="field-note reference-applied-note">已包含参考输入（参考视频分析 / 热点主题），见自定义要求。</p>
       </header>
 
       <div class="script-thumbnails">
@@ -204,7 +320,7 @@
         <video :src="videoUrl" controls class="result-video"></video>
         <div class="action-row">
           <a :href="videoUrl" download class="btn-primary" target="_blank">下载视频</a>
-          <button class="btn-secondary" @click="reset">新建视频</button>
+          <button class="btn-secondary" @click="handleResetAll">新建视频</button>
         </div>
       </div>
 
@@ -220,7 +336,7 @@
         <p class="field-note">视频生成服务即将上线，敬请期待！</p>
         <div class="action-row">
           <button class="btn-secondary" @click="goBackToScript">返回脚本</button>
-          <button class="btn-secondary" @click="reset">新建视频</button>
+          <button class="btn-secondary" @click="handleResetAll">新建视频</button>
         </div>
       </div>
     </section>
@@ -236,9 +352,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS } from '../config/ai-platform-capabilities'
+import BilibiliParsePanel from './BilibiliParsePanel.vue'
+import DouyinParsePanel from './DouyinParsePanel.vue'
+import { useBilibiliParse } from '../composables/useBilibiliParse'
+import { useBilibiliVideoAnalysis } from '../composables/useBilibiliVideoAnalysis'
+import { useDouyinParse } from '../composables/useDouyinParse'
+import { useDouyinVideoAnalysis } from '../composables/useDouyinVideoAnalysis'
 import { useVideoProduction } from '../composables/useVideoProduction'
+import { buildVideoAnalysisDisplayCards } from '../types/video-recreation'
 import type { CreationHandoff } from '../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../types/video-production'
 
@@ -259,10 +382,60 @@ const {
 
 const hydratedCreationRevision = ref<number | null>(null)
 
+type ReferencePlatform = 'douyin' | 'bilibili'
+
+interface ReferenceCardOption {
+  key: string
+  label: string
+  content: string
+  selected: boolean
+}
+
+const showReferenceInput = ref(false)
+const showTopicInput = ref(false)
+const referencePlatform = ref<ReferencePlatform>('douyin')
+const referenceInput = ref('')
+const hotTopicInput = ref('')
+const referenceCards = ref<ReferenceCardOption[]>([])
+const referenceApplied = ref(false)
+
+const {
+  extractedVideo: douyinExtractedVideo,
+  loading: douyinParseLoading,
+  error: douyinParseError,
+  extractVideo: extractDouyinVideo,
+  reset: resetDouyinParse,
+} = useDouyinParse()
+
+const {
+  analysis: douyinVideoAnalysis,
+  loading: douyinAnalysisLoading,
+  error: douyinAnalysisError,
+  analyzeVideo: analyzeDouyinVideo,
+  reset: resetDouyinAnalysis,
+} = useDouyinVideoAnalysis()
+
+const {
+  extractedVideo: bilibiliExtractedVideo,
+  loading: bilibiliParseLoading,
+  error: bilibiliParseError,
+  extractVideo: extractBilibiliVideo,
+  reset: resetBilibiliParse,
+} = useBilibiliParse()
+
+const {
+  analysis: bilibiliVideoAnalysis,
+  loading: bilibiliAnalysisLoading,
+  error: bilibiliAnalysisError,
+  analyzeVideo: analyzeBilibiliVideo,
+  reset: resetBilibiliAnalysis,
+} = useBilibiliVideoAnalysis()
+
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'video-production' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
   reset()
+  clearOptionalInputState()
   const promptParts = [
     handoff.prefill?.topic ? `创作主题：${handoff.prefill.topic}` : '',
     handoff.prefill?.instructions || '',
@@ -325,6 +498,108 @@ function openLightbox(src: string): void {
 
 function closeLightbox(): void {
   lightboxSrc.value = ''
+}
+
+// ---- 可选输入方式：参考视频链接 / 热点主题 ----
+
+const referenceParseLoading = computed(() => {
+  return referencePlatform.value === 'douyin' ? douyinParseLoading.value : bilibiliParseLoading.value
+})
+
+const activeReferenceAnalysis = computed(() => {
+  return referencePlatform.value === 'douyin' ? douyinVideoAnalysis.value : bilibiliVideoAnalysis.value
+})
+
+const hasSelectedReferenceCards = computed(() => referenceCards.value.some((card) => card.selected))
+
+watch(activeReferenceAnalysis, (analysis) => {
+  referenceCards.value = buildVideoAnalysisDisplayCards(analysis)
+    .filter((card) => !card.isFallback)
+    .map((card) => ({ key: card.key, label: card.label, content: card.content, selected: true }))
+})
+
+function handleSwitchReferencePlatform(platform: ReferencePlatform): void {
+  referencePlatform.value = platform
+}
+
+async function handleExtractReference(): Promise<void> {
+  referenceCards.value = []
+  referenceApplied.value = false
+
+  if (referencePlatform.value === 'douyin') {
+    resetDouyinAnalysis()
+    const data = await extractDouyinVideo(referenceInput.value)
+    if (!data) return
+    await analyzeDouyinVideo(data.proxyVideoUrl)
+    return
+  }
+
+  resetBilibiliAnalysis()
+  const data = await extractBilibiliVideo(referenceInput.value)
+  if (!data) return
+  await analyzeBilibiliVideo(data.proxyVideoUrl)
+}
+
+async function handleRetryDouyinAnalysis(): Promise<void> {
+  const proxyVideoUrl = douyinExtractedVideo.value?.proxyVideoUrl
+  if (!proxyVideoUrl) return
+  await analyzeDouyinVideo(proxyVideoUrl)
+}
+
+async function handleRetryBilibiliAnalysis(): Promise<void> {
+  const proxyVideoUrl = bilibiliExtractedVideo.value?.proxyVideoUrl
+  if (!proxyVideoUrl) return
+  await analyzeBilibiliVideo(proxyVideoUrl)
+}
+
+function handleClearReference(): void {
+  referenceInput.value = ''
+  referenceCards.value = []
+  resetDouyinAnalysis()
+  resetBilibiliAnalysis()
+  resetDouyinParse()
+  resetBilibiliParse()
+}
+
+function appendToCustomPrompt(text: string): void {
+  const existing = form.value.customPrompt.trim()
+  form.value.customPrompt = existing ? `${existing}\n${text}` : text
+}
+
+function applyReferenceToPrompt(): void {
+  const selectedCards = referenceCards.value.filter((card) => card.selected)
+  if (selectedCards.length === 0) return
+
+  const referenceText = [
+    '参考视频分析产出（仅为创作建议）：',
+    ...selectedCards.map((card) => `【${card.label}】\n${card.content}`),
+  ].join('\n')
+
+  appendToCustomPrompt(referenceText)
+  referenceApplied.value = true
+}
+
+function applyHotTopicToPrompt(): void {
+  const topic = hotTopicInput.value.trim()
+  if (!topic) return
+  appendToCustomPrompt(`创作主题：${topic}`)
+  referenceApplied.value = true
+}
+
+function clearOptionalInputState(): void {
+  referenceInput.value = ''
+  hotTopicInput.value = ''
+  referenceCards.value = []
+  referenceApplied.value = false
+  resetDouyinAnalysis()
+  resetBilibiliAnalysis()
+  resetDouyinParse()
+  resetBilibiliParse()
+}
+
+function handleResetAll(): void {
+  reset()
+  clearOptionalInputState()
 }
 </script>
 
@@ -469,6 +744,126 @@ function closeLightbox(): void {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.input-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.input-method-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.input-method-toggle:hover {
+  color: var(--color-accent, #6366f1);
+}
+
+.toggle-caret {
+  color: var(--color-text-muted, #888);
+  font-size: 12px;
+}
+
+.reference-area,
+.topic-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.reference-platform-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  width: fit-content;
+}
+
+.reference-platform-tab {
+  padding: 4px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #888);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.reference-platform-tab-active {
+  background: var(--color-accent, #6366f1);
+  color: #fff;
+}
+
+.reference-input,
+.topic-input {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.reference-input:focus,
+.topic-input:focus {
+  outline: none;
+  border-color: var(--color-accent, #6366f1);
+}
+
+.action-row-start {
+  justify-content: flex-start;
+}
+
+.reference-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.reference-card-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.reference-applied-hint,
+.reference-applied-note {
+  color: rgba(34, 197, 94, 0.9);
+}
+
+.topic-row {
+  display: flex;
+  gap: 8px;
+}
+
+.topic-input {
+  flex: 1;
 }
 
 .form-grid {

@@ -12,6 +12,7 @@ function buttons(wrapper: ReturnType<typeof mount>) {
 }
 
 function button(wrapper: ReturnType<typeof mount>, label: string) {
+  if (label === '开始创作') return wrapper.get('button.primary-command')
   return buttons(wrapper).find((item) => item.text().includes(label))!
 }
 
@@ -26,6 +27,73 @@ function choiceButton(wrapper: ReturnType<typeof mount>, groupLabel: string, lab
 }
 
 describe('AI 内容创作中心', () => {
+  test('未登录访问运行记录或模型密钥时请求登录，并停留在创作入口', async () => {
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: false, entry: null },
+      global: {
+        stubs: {
+          AiRunHistoryPanel: { template: '<div data-testid="run-history-panel" />' },
+          AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel" />' },
+        },
+      },
+    })
+    const tabs = wrapper.findAll('[role="tab"]')
+
+    expect(tabs.map((tab) => tab.text())).toEqual(['开始创作', '运行记录', '模型密钥'])
+
+    await tabs[1].trigger('click')
+    await tabs[2].trigger('click')
+
+    expect(wrapper.emitted('request-login')).toHaveLength(2)
+    expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
+    expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+  })
+
+  test('登录后按 tab 懒挂载运行记录和模型密钥面板', async () => {
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: {
+        stubs: {
+          AiRunHistoryPanel: { template: '<div data-testid="run-history-panel">运行记录面板</div>' },
+          AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel">模型密钥面板</div>' },
+        },
+      },
+    })
+    const tabs = wrapper.findAll('[role="tab"]')
+
+    expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
+
+    await tabs[1].trigger('click')
+    expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-platform-id]')).toHaveLength(0)
+
+    await tabs[2].trigger('click')
+    expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(true)
+
+    await wrapper.setProps({ authenticated: false })
+    expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
+
+    await wrapper.setProps({ authenticated: true })
+    await tabs[1].trigger('click')
+    await wrapper.setProps({
+      entry: {
+        revision: 12,
+        platformId: 'zhihu',
+        contentFormId: 'graphic',
+        source: { type: 'independent' },
+        prefill: { topic: '任务带入的新创作' },
+      },
+    })
+    expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
+  })
+
   test('第一步只展示九个发布平台，不先展示独立工具', () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
 
@@ -80,11 +148,31 @@ describe('AI 内容创作中心', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  test('不支持的已规划组合显示尚未接入且不能开始', async () => {
+  test('抖音图文点亮后进入长图文工作流，不再提示尚未接入', async () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
 
     await wrapper.get('[data-platform-id="douyin"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('门店探店')
+
+    expect(wrapper.text()).not.toContain('该创作路径尚未接入')
+    const start = button(wrapper, '开始创作')
+    expect(start.attributes('disabled')).toBeUndefined()
+    await start.trigger('click')
+
+    const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as Record<string, unknown>
+    expect(handoff).toMatchObject({
+      platformId: 'douyin', contentFormId: 'graphic', source: { type: 'independent' },
+      workflowId: 'longform', targetView: 'article',
+    })
+  })
+
+  test('不支持的已规划组合显示尚未接入且不能开始', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+
+    await wrapper.get('[data-platform-id="moments"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图片 + 文字').trigger('click')
     await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
     await wrapper.get('textarea[name="creation-topic"]').setValue('门店探店')
 
@@ -160,6 +248,54 @@ describe('AI 内容创作中心', () => {
     })
   })
 
+  test('从热点创作可浏览热点、切换平台分组并选为选题', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/homepage/hot-items') {
+        return new Response(JSON.stringify({
+          success: true,
+          data: {
+            provider: '60s',
+            items: [],
+            fetchedAt: '2026-08-06T06:00:00.000Z',
+            groups: [
+              { platform: 'douyin', label: '抖音', items: [{ rank: 1, title: '城市夜经济升温', hotValue: '999' }] },
+              { platform: 'weibo', label: '微博', items: [{ rank: 1, title: '微博热搜话题', hotValue: '500' }] },
+            ],
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ success: true, data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.hot-picker-note').text()).toContain('来源 60s')
+    expect(wrapper.get('.hot-picker-note').text()).toContain('抓取于')
+    expect(wrapper.get('.hot-list').text()).toContain('城市夜经济升温')
+
+    await wrapper.findAll('.hot-tabs button')[1].trigger('click')
+    expect(wrapper.get('.hot-list').text()).toContain('微博热搜话题')
+    await wrapper.findAll('.hot-tabs button')[0].trigger('click')
+
+    await wrapper.get('button.hot-pick').trigger('click')
+    expect((wrapper.get('textarea[name="creation-topic"]').element as HTMLTextAreaElement).value).toBe('城市夜经济升温')
+    expect(wrapper.get('button.hot-pick').text()).toBe('已选')
+
+    await button(wrapper, '开始创作').trigger('click')
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'hot-topic', title: '城市夜经济升温' },
+      targetView: 'article',
+    })
+  })
+
   test('参考素材要求输入链接，并把链接交给对应视频分析工作流', async () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
     await wrapper.get('[data-platform-id="bilibili"]').trigger('click')
@@ -175,6 +311,145 @@ describe('AI 内容创作中心', () => {
       source: { type: 'reference', sourceUrl: 'https://www.bilibili.com/video/BV1example' },
       targetView: 'video',
     })
+  })
+
+  test('抖音视频参考素材发出 reference-analyze 工作流并落到视频提取分析视图', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '参考素材').trigger('click')
+    await wrapper.get('textarea[name="reference-url"]').setValue('7.54 复制打开抖音 https://v.douyin.com/xxxx/')
+    await button(wrapper, '开始创作').trigger('click')
+
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'reference', sourceUrl: '7.54 复制打开抖音 https://v.douyin.com/xxxx/' },
+      workflowId: 'reference-analyze',
+      targetView: 'video',
+    })
+  })
+
+  test('非视频平台的参考素材组合保持尚未接入且不能开始', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '参考素材').trigger('click')
+    await wrapper.get('textarea[name="reference-url"]').setValue('https://example.com/share')
+
+    expect(wrapper.text()).toContain('该创作路径尚未接入')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
+    await button(wrapper, '开始创作').trigger('click')
+    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+  })
+
+  test('大众点评图文进入点评文案工作流并落到图片评价文案视图', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="dianping"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('招牌牛肉面')
+    await button(wrapper, '开始创作').trigger('click')
+
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      platformId: 'dianping',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      workflowId: 'review-copy',
+      targetView: 'image',
+      prefill: { topic: '招牌牛肉面' },
+    })
+  })
+
+  test('快手与视频号视频进入视频脚本工作流并落到视频制作视图', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="kuaishou"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('后厨实拍')
+    await button(wrapper, '开始创作').trigger('click')
+
+    const emitted = wrapper.emitted('start-workflow') as Array<[Record<string, unknown>]>
+    expect(emitted[0][0]).toMatchObject({
+      platformId: 'kuaishou',
+      contentFormId: 'video',
+      workflowId: 'video-script',
+      targetView: 'video-production',
+    })
+
+    await wrapper.get('[data-platform-id="wechat-channels"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('门店日常')
+    await button(wrapper, '开始创作').trigger('click')
+    expect(emitted[1][0]).toMatchObject({
+      platformId: 'wechat-channels',
+      contentFormId: 'video',
+      workflowId: 'video-script',
+      targetView: 'video-production',
+    })
+  })
+
+  test('从热点创作选中的热点主题进入视频制作工作流', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: {
+        provider: '60s',
+        items: [],
+        groups: [
+          { platform: 'douyin', label: '抖音', items: [{ rank: 1, title: '城市夜经济升温', hotValue: '999' }] },
+        ],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
+    await wrapper.get('button.hot-pick').trigger('click')
+    await button(wrapper, '开始创作').trigger('click')
+
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      platformId: 'douyin',
+      contentFormId: 'video',
+      workflowId: 'video-script',
+      targetView: 'video-production',
+      source: { type: 'hot-topic', title: '城市夜经济升温' },
+      prefill: { topic: '城市夜经济升温' },
+    })
+  })
+
+  test('热点加载失败时显示错误提示，重新选择来源会自动重试', async () => {
+    let callCount = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      callCount += 1
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ success: false, error: '热点服务暂不可用' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({
+        success: true,
+        data: { provider: '60s', items: [{ rank: 1, title: '重试后的热点' }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="zhihu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('热点服务暂不可用')
+
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+
+    expect(callCount).toBe(2)
+    expect(wrapper.get('.hot-list').text()).toContain('重试后的热点')
   })
 
   test('门店资料请求完成前禁止开始创作', async () => {
@@ -245,5 +520,92 @@ describe('AI 内容创作中心', () => {
       targetView: 'video-production',
       prefill: { storeName: '云朵面馆', address: '人民路 8 号', storeDescription: '手工面与现熬汤底' },
     })
+  })
+
+  test('门店 handoff 自动恢复组织、门店和资料快照后允许继续创作', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url)
+      let data: unknown = null
+      if (url === '/api/organizations') data = [{ id: 'org-1', name: '云朵餐饮' }]
+      if (url === '/api/organizations/org-1/stores') {
+        data = [{ id: 'store-1', organizationId: 'org-1', name: '云朵面馆' }]
+      }
+      if (url === '/api/organizations/org-1/stores/store-1/profile') {
+        data = { storeId: 'store-1', address: '{"address":"人民路 8 号"}', description: '手工面' }
+      }
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const wrapper = mount(AiCreationCenter, {
+      props: {
+        authenticated: true,
+        entry: {
+          revision: 42,
+          platformId: 'xiaohongshu',
+          contentFormId: 'video',
+          source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' },
+          prefill: { topic: '门店夏日新品' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(calls).toEqual([
+      '/api/organizations',
+      '/api/organizations/org-1/stores',
+      '/api/organizations/org-1/stores/store-1/profile',
+    ])
+    expect(wrapper.get('select[name="organization"]').element).toHaveProperty('value', 'org-1')
+    expect(wrapper.get('select[name="store"]').element).toHaveProperty('value', 'store-1')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeUndefined()
+
+    await button(wrapper, '开始创作').trigger('click')
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' },
+      prefill: { topic: '门店夏日新品', storeName: '云朵面馆', address: '人民路 8 号' },
+    })
+  })
+
+  test('切换非门店入口或登出后清除旧账号门店上下文', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      let data: unknown = null
+      if (url === '/api/organizations') data = [{ id: 'org-old', name: '旧组织' }]
+      if (url === '/api/organizations/org-old/stores') data = [{ id: 'store-old', organizationId: 'org-old', name: '旧门店' }]
+      if (url.endsWith('/profile')) data = { storeId: 'store-old', description: '旧账号资料' }
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const storeEntry: CreationEntry = {
+      revision: 50,
+      platformId: 'xiaohongshu',
+      contentFormId: 'video',
+      source: { type: 'store', organizationId: 'org-old', storeId: 'store-old' },
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: storeEntry } })
+    await flushPromises()
+
+    await wrapper.setProps({
+      entry: {
+        revision: 51,
+        platformId: 'xiaohongshu',
+        contentFormId: 'video',
+        source: { type: 'independent' },
+      },
+    })
+    await choiceButton(wrapper, '创作来源', '从门店创作').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('select[name="organization"]').element).toHaveProperty('value', '')
+    expect(wrapper.get('select[name="store"]').element).toHaveProperty('value', '')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ authenticated: false })
+    await wrapper.setProps({ authenticated: true, entry: storeEntry })
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledTimes(7)
   })
 })

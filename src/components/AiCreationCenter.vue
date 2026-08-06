@@ -3,29 +3,42 @@
     <header class="center-head">
       <div>
         <p class="section-kicker">AI 内容创作中心</p>
-        <h2 id="creation-center-title">选择发布平台</h2>
+        <h2 id="creation-center-title">{{ sectionTitle }}</h2>
       </div>
       <p class="capability-version">规则 {{ AI_PLATFORM_CAPABILITY_VERSION }}</p>
     </header>
 
-    <div class="platform-grid" role="list" aria-label="发布平台">
+    <nav class="center-tabs" role="tablist" aria-label="创作中心模块">
       <button
-        v-for="platform in AI_PLATFORM_DEFINITIONS"
-        :key="platform.id"
+        v-for="section in centerSections"
+        :key="section.id"
         type="button"
-        class="platform-option"
-        :class="{ selected: platform.id === platformId }"
-        :data-platform-id="platform.id"
-        :aria-pressed="platform.id === platformId"
-        :disabled="platformLocked"
-        @click="selectPlatform(platform.id)"
-      >
-        <strong>{{ platform.label }}</strong>
-        <span>{{ platform.forms.map((form) => form.label).join(' / ') }}</span>
-      </button>
-    </div>
+        role="tab"
+        :aria-selected="activeSection === section.id"
+        :class="{ active: activeSection === section.id }"
+        @click="selectSection(section.id)"
+      >{{ section.label }}</button>
+    </nav>
 
-    <section v-if="selectedPlatform" class="choice-band" aria-labelledby="content-form-title">
+    <template v-if="activeSection === 'create'">
+      <div class="platform-grid" role="list" aria-label="发布平台">
+        <button
+          v-for="platform in AI_PLATFORM_DEFINITIONS"
+          :key="platform.id"
+          type="button"
+          class="platform-option"
+          :class="{ selected: platform.id === platformId }"
+          :data-platform-id="platform.id"
+          :aria-pressed="platform.id === platformId"
+          :disabled="platformLocked"
+          @click="selectPlatform(platform.id)"
+        >
+          <strong>{{ platform.label }}</strong>
+          <span>{{ platform.forms.map((form) => form.label).join(' / ') }}</span>
+        </button>
+      </div>
+
+      <section v-if="selectedPlatform" class="choice-band" aria-labelledby="content-form-title">
       <div class="choice-title-row">
         <h3 id="content-form-title">内容形式</h3>
         <span>{{ selectedPlatform.label }}</span>
@@ -41,9 +54,9 @@
           @click="selectContentForm(form.id)"
         >{{ form.label }}</button>
       </div>
-    </section>
+      </section>
 
-    <section v-if="contentFormId" class="choice-band" aria-labelledby="source-title">
+      <section v-if="contentFormId" class="choice-band" aria-labelledby="source-title">
       <div class="choice-title-row">
         <h3 id="source-title">创作来源</h3>
         <span v-if="taskSourceLocked">由工作台带入</span>
@@ -63,9 +76,9 @@
           <span>{{ sourceOption.note }}</span>
         </button>
       </div>
-    </section>
+      </section>
 
-    <section v-if="sourceType" class="context-band" aria-labelledby="context-title">
+      <section v-if="sourceType" class="context-band" aria-labelledby="context-title">
       <div class="choice-title-row">
         <h3 id="context-title">创作上下文</h3>
         <span v-if="sourceType === 'task'">仅用于预填，不作为任务核实依据</span>
@@ -91,6 +104,58 @@
       <div v-if="sourceType === 'task' && !taskSourceLocked" class="inline-state">
         <p>从草场工作台中已接受的履约进入创作。</p>
         <button type="button" class="secondary-command" @click="emit('open-grassland')">打开草场</button>
+      </div>
+
+      <div v-if="sourceType === 'hot-topic'" class="hot-picker">
+        <div class="hot-picker-head">
+          <p class="hot-picker-note">{{ hotMetaNote }}</p>
+          <button type="button" class="secondary-command hot-refresh" :disabled="hotLoading" @click="refreshHotItems">
+            {{ hotLoading ? '刷新中…' : '刷新热点' }}
+          </button>
+        </div>
+
+        <div v-if="hotLoading && !hotHasContent" class="hot-skeleton-list" aria-hidden="true">
+          <div v-for="index in 4" :key="index" class="hot-skeleton"></div>
+        </div>
+
+        <p v-else-if="hotError" class="error-state" role="alert">{{ hotError }}</p>
+
+        <template v-else-if="hotHasContent">
+          <div v-if="hotGroups.length > 1" class="hot-tabs" role="tablist" aria-label="热点平台">
+            <button
+              v-for="group in hotGroups"
+              :key="group.platform"
+              type="button"
+              role="tab"
+              :aria-selected="activeHotPlatform === group.platform"
+              :class="{ active: activeHotPlatform === group.platform }"
+              @click="activeHotPlatform = group.platform"
+            >{{ group.label }}</button>
+          </div>
+
+          <ol class="hot-list">
+            <li v-for="item in hotActiveItems" :key="`${item.rank}-${item.title}`" class="hot-item">
+              <span class="hot-rank">{{ item.rank }}</span>
+              <div class="hot-main">
+                <a v-if="item.url" class="hot-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ item.title }}</a>
+                <p v-else class="hot-title">{{ item.title }}</p>
+                <span class="hot-meta">
+                  <template v-if="item.hotValue">热度 {{ item.hotValue }}</template>
+                  <template v-if="item.hotValue && item.sourceLabel"> · </template>
+                  <template v-if="item.sourceLabel">{{ item.sourceLabel }}</template>
+                </span>
+              </div>
+              <button
+                type="button"
+                class="hot-pick"
+                :class="{ selected: topic === item.title }"
+                @click="pickHotTopic(item.title)"
+              >{{ topic === item.title ? '已选' : '选为选题' }}</button>
+            </li>
+          </ol>
+        </template>
+
+        <p v-else class="hot-empty-note">暂无热点数据，稍后点击「刷新热点」重试。</p>
       </div>
 
       <label v-if="sourceType !== 'reference' && (sourceType !== 'store' || storeId)" class="topic-field">
@@ -129,20 +194,26 @@
       </div>
 
       <p v-if="contextError" class="error-state" role="alert">{{ contextError }}</p>
-    </section>
+      </section>
 
-    <footer v-if="sourceType" class="start-bar">
-      <p data-testid="selection-summary">{{ selectionSummary }}</p>
-      <div>
-        <span v-if="workflow.status === 'planned'" class="planned-state">该创作路径尚未接入</span>
-        <button type="button" class="primary-command" :disabled="!canStart" @click="startWorkflow">开始创作</button>
-      </div>
-    </footer>
+      <footer v-if="sourceType" class="start-bar">
+        <p data-testid="selection-summary">{{ selectionSummary }}</p>
+        <div>
+          <span v-if="workflow.status === 'planned'" class="planned-state">该创作路径尚未接入</span>
+          <button type="button" class="primary-command" :disabled="!canStart" @click="startWorkflow">开始创作</button>
+        </div>
+      </footer>
+    </template>
+
+    <AiRunHistoryPanel v-else-if="activeSection === 'runs'" />
+    <AiProviderKeysPanel v-else />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import AiProviderKeysPanel from './AiProviderKeysPanel.vue'
+import AiRunHistoryPanel from './AiRunHistoryPanel.vue'
 import {
   AI_PLATFORM_CAPABILITY_VERSION,
   AI_PLATFORM_DEFINITIONS,
@@ -150,6 +221,7 @@ import {
   resolveWorkflow,
 } from '../config/ai-platform-capabilities'
 import { useGrassland } from '../composables/useGrassland'
+import { useHomepageHotItems } from '../composables/useHomepageHotItems'
 import type { Organization, Store, StoreProfile } from '../types/grassland'
 import type {
   AiContentFormId,
@@ -160,6 +232,8 @@ import type {
   CreationSource,
   CreationSourceType,
 } from '../types/ai-creation'
+
+type AiCenterSection = 'create' | 'runs' | 'keys'
 
 const props = defineProps<{
   authenticated: boolean
@@ -173,6 +247,7 @@ const emit = defineEmits<{
 }>()
 
 const grassland = useGrassland()
+const activeSection = ref<AiCenterSection>('create')
 const platformId = ref<AiPlatformId | ''>('')
 const contentFormId = ref<AiContentFormId | ''>('')
 const sourceType = ref<CreationSourceType | ''>('')
@@ -191,6 +266,12 @@ const hydratedRevision = ref<number | null>(null)
 let contextRequestEpoch = 0
 let workflowRevision = Date.now()
 
+const centerSections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
+  { id: 'create', label: '开始创作' },
+  { id: 'runs', label: '运行记录' },
+  { id: 'keys', label: '模型密钥' },
+]
+
 const sourceOptions: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
   { id: 'independent', label: '独立创作', note: '从主题或想法开始' },
   { id: 'task', label: '从任务创作', note: '带入已接受履约' },
@@ -203,6 +284,11 @@ const taskSourceLocked = computed(() => props.entry?.source.type === 'task')
 const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.platformId))
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
+const sectionTitle = computed(() => {
+  if (activeSection.value === 'runs') return 'AI 运行记录'
+  if (activeSection.value === 'keys') return '模型密钥'
+  return '选择发布平台'
+})
 const workflow = computed(() => platformId.value && contentFormId.value && sourceType.value
   ? resolveWorkflow(platformId.value, contentFormId.value, sourceType.value)
   : { status: 'unsupported' as const, workflowId: null, targetView: null })
@@ -225,7 +311,14 @@ const canStart = computed(() => {
 })
 
 watch(() => props.entry, (entry) => {
-  if (!entry || hydratedRevision.value === entry.revision) return
+  if (!entry) {
+    hydratedRevision.value = null
+    clearStoreContext()
+    return
+  }
+  if (hydratedRevision.value === entry.revision) return
+  contextRequestEpoch += 1
+  activeSection.value = 'create'
   hydratedRevision.value = entry.revision
   platformId.value = entry.platformId ?? ''
   contentFormId.value = entry.contentFormId ?? ''
@@ -236,8 +329,44 @@ watch(() => props.entry, (entry) => {
   if (entry.source.type === 'store') {
     organizationId.value = entry.source.organizationId
     storeId.value = entry.source.storeId
+    if (props.authenticated) {
+      void hydrateStoreContext(entry.source.organizationId, entry.source.storeId)
+    }
+  } else {
+    clearStoreContext()
   }
 }, { immediate: true })
+
+watch(() => props.authenticated, (authenticated) => {
+  if (!authenticated) {
+    activeSection.value = 'create'
+    clearStoreContext()
+    return
+  }
+  if (props.entry?.source.type === 'store' && !storeProfileLoaded.value && !loadingContext.value) {
+    void hydrateStoreContext(props.entry.source.organizationId, props.entry.source.storeId)
+  }
+})
+
+function clearStoreContext(): void {
+  contextRequestEpoch += 1
+  organizationId.value = ''
+  storeId.value = ''
+  organizations.value = []
+  stores.value = []
+  storeProfile.value = null
+  storeProfileLoaded.value = false
+  loadingContext.value = false
+  contextError.value = ''
+}
+
+function selectSection(next: AiCenterSection): void {
+  if (next !== 'create' && !props.authenticated) {
+    emit('request-login')
+    return
+  }
+  activeSection.value = next
+}
 
 function selectPlatform(next: AiPlatformId): void {
   platformId.value = next
@@ -258,6 +387,109 @@ async function selectSource(next: CreationSourceType): Promise<void> {
   sourceType.value = next
   contextError.value = ''
   if (next === 'store' && organizations.value.length === 0) await loadOrganizations()
+}
+
+const {
+  items: hotItems,
+  groups: hotGroups,
+  provider: hotProvider,
+  fetchedAt: hotFetchedAt,
+  loading: hotLoading,
+  error: hotError,
+  loadHotItems: fetchHotItems,
+} = useHomepageHotItems()
+const hotLoaded = ref(false)
+const activeHotPlatform = ref('')
+
+const hotHasContent = computed(() => hotGroups.value.length > 0 || hotItems.value.length > 0)
+const hotActiveItems = computed(() => {
+  const group = hotGroups.value.find((entry) => entry.platform === activeHotPlatform.value)
+  return group ? group.items : hotItems.value
+})
+const hotMetaNote = computed(() => {
+  const notes = [hotProvider.value === 'alapi' ? '来源 ALAPI' : '来源 60s']
+  const parsedTime = hotFetchedAt.value ? new Date(hotFetchedAt.value) : null
+  if (parsedTime && !Number.isNaN(parsedTime.getTime())) {
+    notes.push(`抓取于 ${formatHotFetchedTime(parsedTime)}`)
+  }
+  return notes.join(' · ')
+})
+
+watch(sourceType, (next) => {
+  if (next === 'hot-topic') void ensureHotItemsLoaded()
+}, { immediate: true })
+
+watch(hotGroups, (groups) => {
+  if (groups.length === 0) {
+    activeHotPlatform.value = ''
+  } else if (!groups.some((group) => group.platform === activeHotPlatform.value)) {
+    activeHotPlatform.value = groups[0].platform
+  }
+}, { immediate: true })
+
+async function ensureHotItemsLoaded(): Promise<void> {
+  if (hotLoaded.value || hotLoading.value) return
+  await fetchHotItems()
+  // 加载失败不标记为已加载，重新选择该来源时会自动重试
+  if (!hotError.value) hotLoaded.value = true
+}
+
+async function refreshHotItems(): Promise<void> {
+  await fetchHotItems()
+  hotLoaded.value = true
+}
+
+function pickHotTopic(title: string): void {
+  topic.value = title
+}
+
+function formatHotFetchedTime(value: Date): string {
+  const pad = (num: number) => String(num).padStart(2, '0')
+  return `${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}`
+}
+
+async function hydrateStoreContext(nextOrganizationId: string, nextStoreId: string): Promise<void> {
+  const requestEpoch = ++contextRequestEpoch
+  loadingContext.value = true
+  contextError.value = ''
+  organizations.value = []
+  stores.value = []
+  storeProfile.value = null
+  storeProfileLoaded.value = false
+  try {
+    const organizationResult = await grassland.listOrganizations()
+    if (requestEpoch !== contextRequestEpoch) return
+    organizations.value = organizationResult ? [...organizationResult] : []
+    if (!organizationResult) {
+      contextError.value = grassland.error.value || '组织列表加载失败'
+      return
+    }
+    if (!organizationResult.some((item) => item.id === nextOrganizationId)) {
+      contextError.value = '当前账号无权访问该组织'
+      return
+    }
+
+    const storeResult = await grassland.listStores(nextOrganizationId)
+    if (requestEpoch !== contextRequestEpoch) return
+    stores.value = storeResult ? [...storeResult] : []
+    if (!storeResult) {
+      contextError.value = grassland.error.value || '门店列表加载失败'
+      return
+    }
+    const selectedStore = storeResult.find((item) => item.id === nextStoreId)
+    if (!selectedStore) {
+      contextError.value = '当前账号无权访问该门店'
+      return
+    }
+
+    const profile = await grassland.getStoreProfile(nextOrganizationId, nextStoreId)
+    if (requestEpoch !== contextRequestEpoch) return
+    storeProfile.value = profile
+    storeProfileLoaded.value = Boolean(profile)
+    if (!profile) contextError.value = grassland.error.value || '门店资料加载失败'
+  } finally {
+    if (requestEpoch === contextRequestEpoch) loadingContext.value = false
+  }
 }
 
 async function loadOrganizations(): Promise<void> {
@@ -397,6 +629,9 @@ function nextWorkflowRevision(): number {
 .choice-title-row h3 { font-size: 1rem; }
 .section-kicker, .capability-version, .choice-title-row span, .start-bar p { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
 .section-kicker { margin-bottom: 4px; font-weight: 700; color: var(--color-accent); }
+.center-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border); }
+.center-tabs button { min-height: 40px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-text-muted); cursor: pointer; }
+.center-tabs button.active { border-bottom-color: var(--color-accent); color: var(--color-text); font-weight: 600; }
 .platform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
 .platform-option { min-height: 78px; padding: 14px; display: grid; gap: 5px; text-align: left; background: var(--color-surface); color: var(--color-text); border: 0; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); cursor: pointer; }
 .platform-option:nth-child(3n) { border-right: 0; }
@@ -426,6 +661,29 @@ textarea { resize: vertical; min-height: 76px; }
 .primary-command:disabled { opacity: 0.45; cursor: not-allowed; }
 .planned-state { color: var(--color-warning, #a16207); font-size: 0.82rem; }
 .error-state { margin: 0; color: var(--color-danger); font-size: 0.84rem; }
+.hot-picker { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+.hot-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hot-refresh { padding: 6px 12px; font-size: 0.8rem; }
+.hot-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+.hot-picker-note { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
+.hot-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.hot-tabs button { padding: 5px 12px; border: 1px solid var(--color-border); border-radius: 999px; background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: 0.8rem; }
+.hot-tabs button.active { border-color: var(--color-accent); color: var(--color-accent); font-weight: 600; }
+.hot-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 324px; overflow-y: auto; }
+.hot-item { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-bottom: 1px solid var(--color-border); }
+.hot-item:last-child { border-bottom: 0; }
+.hot-rank { flex: 0 0 22px; text-align: center; color: var(--color-text-muted); font-size: 0.8rem; font-weight: 700; }
+.hot-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.hot-title, .hot-title-link { margin: 0; color: var(--color-text); font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hot-title-link { text-decoration: none; }
+.hot-title-link:hover { color: var(--color-accent); }
+.hot-meta { color: var(--color-text-muted); font-size: 0.74rem; }
+.hot-pick { flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer; font-size: 0.78rem; }
+.hot-pick.selected { border-color: var(--color-accent); color: var(--color-accent); font-weight: 600; }
+.hot-skeleton-list { display: grid; gap: 8px; }
+.hot-skeleton { height: 34px; border-radius: 6px; background: var(--color-surface-muted); animation: hot-pulse 1.2s ease-in-out infinite; }
+.hot-empty-note { margin: 0; color: var(--color-text-muted); font-size: 0.84rem; }
+@keyframes hot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (max-width: 760px) {
   .platform-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .platform-option:nth-child(3n) { border-right: 1px solid var(--color-border); }

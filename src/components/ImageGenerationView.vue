@@ -2,7 +2,7 @@
   <section class="image-gen-view">
     <header class="section-header">
       <h2 class="section-title">图片生成</h2>
-      <p class="section-desc">输入描述提示词，上传参考素材，AI 帮你生成图片</p>
+      <p class="section-desc">为图文/视频制作生成封面、配图与素材：输入描述提示词，上传参考素材保持风格一致，AI 帮你生成图片</p>
     </header>
 
     <div class="gen-card">
@@ -16,6 +16,8 @@
           </div>
         </div>
       </div>
+
+      <p class="auth-note">请确认您拥有上传素材的使用权；涉及人脸、商标、店铺招牌或个人信息的内容需已获得授权。</p>
 
       <div class="prompt-area" style="position: relative">
         <textarea
@@ -412,6 +414,17 @@ async function handleGenerate(): Promise<void> {
 .materials-label {
   font-size: 0.82rem;
   color: var(--color-text-muted);
+}
+
+.auth-note {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
 }
 
 .materials-grid {

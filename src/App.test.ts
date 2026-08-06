@@ -6,20 +6,41 @@ import AiCreationCenter from './components/AiCreationCenter.vue'
 import { useAuth } from './composables/useAuth'
 import type { CreationHandoff } from './types/ai-creation'
 
-vi.mock('./components/AnalysisSettingsModal.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/ComedyWritingView.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/AdminView.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/OpsConsole.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/GrasslandWorkbench.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/HomeView.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/ImageAnalysisView.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/ImageGenerationView.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('./components/AnalysisSettingsModal.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+// 视图/弹窗组件在 App.vue 中经 defineAsyncComponent 动态导入，mock 需带 __esModule 让 Vue 解包 default
+vi.mock('./components/ComedyWritingView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./components/AdminView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./components/OpsConsole.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./components/GrasslandWorkbench.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./components/HomeView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./components/ImageAnalysisView.vue', () => ({ __esModule: true,
+  default: {
+    props: ['creationHandoff'],
+    template: `
+      <section>
+        <input id="ia-platform" :value="creationHandoff?.platformId || ''" />
+        <textarea id="ia-feelings">{{ [creationHandoff?.prefill?.topic, creationHandoff?.prefill?.instructions].filter(Boolean).join(' | ') }}</textarea>
+      </section>
+    `,
+  },
+}))
+vi.mock('./components/ImageGenerationView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./components/NotificationBell.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/VideoAnalysisView.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('./components/LoginModal.vue', () => ({
+vi.mock('./components/VideoAnalysisView.vue', () => ({ __esModule: true,
+  default: {
+    props: ['creationHandoff'],
+    template: `
+      <section>
+        <input id="va-platform" :value="creationHandoff?.platformId || ''" />
+        <textarea id="va-source-url">{{ creationHandoff?.source?.type === 'reference' ? creationHandoff.source.sourceUrl || '' : '' }}</textarea>
+      </section>
+    `,
+  },
+}))
+vi.mock('./components/LoginModal.vue', () => ({ __esModule: true,
   default: { props: ['visible'], template: '<div v-if="visible" role="dialog" />' },
 }))
-vi.mock('./components/ArticleCreationView.vue', () => ({
+vi.mock('./components/ArticleCreationView.vue', () => ({ __esModule: true,
   default: {
     props: ['creationHandoff'],
     template: `
@@ -30,7 +51,7 @@ vi.mock('./components/ArticleCreationView.vue', () => ({
     `,
   },
 }))
-vi.mock('./components/VideoProductionView.vue', () => ({
+vi.mock('./components/VideoProductionView.vue', () => ({ __esModule: true,
   default: {
     props: ['creationHandoff'],
     template: `
@@ -147,5 +168,69 @@ describe('App AI 创作中心集成', () => {
     expect((wrapper.get('#vp-address').element as HTMLInputElement).value).toBe('人民路 8 号')
     expect((wrapper.get('#vp-desc').element as HTMLTextAreaElement).value).toBe('手工面与现熬汤底')
     expect((wrapper.get('#vp-prompt').element as HTMLTextAreaElement).value).toContain('突出手工现做')
+  })
+
+  test('热点选题 handoff 把热点主题带入视频制作视图', async () => {
+    installFetchStub()
+    const wrapper = mount(App)
+    await flushPromises()
+    const handoff: CreationHandoff = {
+      revision: 103,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'hot-topic', title: '城市夜经济升温' },
+      workflowId: 'video-script',
+      targetView: 'video-production',
+      prefill: { topic: '城市夜经济升温' },
+    }
+
+    wrapper.getComponent(AiCreationCenter).vm.$emit('start-workflow', handoff)
+    await flushPromises()
+
+    expect(wrapper.findComponent(AiCreationCenter).exists()).toBe(false)
+    expect((wrapper.get('#vp-platform').element as HTMLInputElement).value).toBe('douyin')
+  })
+
+  test('reference handoff 落到视频参考提取视图并带入平台与参考链接', async () => {
+    installFetchStub()
+    const wrapper = mount(App)
+    await flushPromises()
+    const handoff: CreationHandoff = {
+      revision: 104,
+      platformId: 'bilibili',
+      contentFormId: 'video',
+      source: { type: 'reference', sourceUrl: 'https://www.bilibili.com/video/BV1example' },
+      workflowId: 'reference-analyze',
+      targetView: 'video',
+    }
+
+    wrapper.getComponent(AiCreationCenter).vm.$emit('start-workflow', handoff)
+    await flushPromises()
+
+    expect(wrapper.findComponent(AiCreationCenter).exists()).toBe(false)
+    expect((wrapper.get('#va-platform').element as HTMLInputElement).value).toBe('bilibili')
+    expect((wrapper.get('#va-source-url').element as HTMLTextAreaElement).value).toBe('https://www.bilibili.com/video/BV1example')
+  })
+
+  test('点评文案 handoff 落到图片评价文案视图并带入主题', async () => {
+    installFetchStub()
+    const wrapper = mount(App)
+    await flushPromises()
+    const handoff: CreationHandoff = {
+      revision: 105,
+      platformId: 'dianping',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      workflowId: 'review-copy',
+      targetView: 'image',
+      prefill: { topic: '招牌牛肉面' },
+    }
+
+    wrapper.getComponent(AiCreationCenter).vm.$emit('start-workflow', handoff)
+    await flushPromises()
+
+    expect(wrapper.findComponent(AiCreationCenter).exists()).toBe(false)
+    expect((wrapper.get('#ia-platform').element as HTMLInputElement).value).toBe('dianping')
+    expect((wrapper.get('#ia-feelings').element as HTMLTextAreaElement).value).toContain('招牌牛肉面')
   })
 })

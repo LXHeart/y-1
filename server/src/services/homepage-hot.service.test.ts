@@ -99,6 +99,7 @@ describe('loadHomepageHotItems', () => {
     const result = await loadHomepageHotItems()
 
     expect(result.provider).toBe('60s')
+    expect(result.fetchedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
     expect(result.groups).toHaveLength(2)
     expect(result.groups![0].platform).toBe('douyin')
     expect(result.groups![0].items).toHaveLength(20)
@@ -476,10 +477,11 @@ describe('loadHomepageHotItems', () => {
         hotItems: { provider: '60s' },
       })
 
+      const cachedAt = new Date()
       queryDbMock.mockResolvedValue({
         rows: [{
           items: mockGroups,
-          fetched_at: new Date(),
+          fetched_at: cachedAt,
         }],
       })
 
@@ -489,6 +491,7 @@ describe('loadHomepageHotItems', () => {
       expect(result.provider).toBe('60s')
       expect(result.groups).toEqual(mockGroups)
       expect(result.groups).toHaveLength(2)
+      expect(result.fetchedAt).toBe(cachedAt.toISOString())
     })
 
     it('fetches fresh data when cache is expired', async () => {
@@ -542,6 +545,7 @@ describe('loadHomepageHotItems', () => {
       const result = await loadHomepageHotItems()
 
       expect(result.groups![0].items[0].title).toBe('旧缓存')
+      expect(result.fetchedAt).toBe(staleDate.toISOString())
       expect(loggerWarnMock).toHaveBeenCalledWith(
         { err: expect.any(AppError) },
         '60s hot topics API failed, returning stale cache',

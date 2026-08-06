@@ -143,7 +143,7 @@
             <rect x="1.5" y="3" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
             <path d="M6.5 6.5l3.5 1.5-3.5 1.5V6.5z" fill="currentColor"/>
           </svg>
-          视频提取分析
+          视频参考提取
         </button>
         <button
           class="nav-tab"
@@ -276,6 +276,7 @@
     </main>
 
     <AnalysisSettingsModal
+      v-if="settingsModalMounted"
       :visible="showSettingsModal"
       :settings="analysisSettings"
       :saving="settingsSaving"
@@ -291,6 +292,7 @@
     />
 
     <LoginModal
+      v-if="loginModalMounted"
       :visible="showLoginModal"
       :submitting="loggingIn || registering"
       :error="loginError || registerError || sendCodeError"
@@ -304,21 +306,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, provide, ref, watch, type Component } from 'vue'
+import { computed, defineAsyncComponent, onMounted, provide, ref, watch, type Component } from 'vue'
 import AiCreationCenter from './components/AiCreationCenter.vue'
-import AnalysisSettingsModal from './components/AnalysisSettingsModal.vue'
-import ArticleCreationView from './components/ArticleCreationView.vue'
-import ComedyWritingView from './components/ComedyWritingView.vue'
-import AdminView from './components/AdminView.vue'
-import OpsConsole from './components/OpsConsole.vue'
-import GrasslandWorkbench from './components/GrasslandWorkbench.vue'
-import HomeView from './components/HomeView.vue'
-import ImageAnalysisView from './components/ImageAnalysisView.vue'
-import ImageGenerationView from './components/ImageGenerationView.vue'
-import LoginModal from './components/LoginModal.vue'
 import NotificationBell from './components/NotificationBell.vue'
-import VideoAnalysisView from './components/VideoAnalysisView.vue'
-import VideoProductionView from './components/VideoProductionView.vue'
+
+// 非首屏视图与弹窗按需加载（代码分割），默认视图 AiCreationCenter 保留在主 chunk 避免首屏延迟
+const AnalysisSettingsModal = defineAsyncComponent(() => import('./components/AnalysisSettingsModal.vue'))
+const ArticleCreationView = defineAsyncComponent(() => import('./components/ArticleCreationView.vue'))
+const ComedyWritingView = defineAsyncComponent(() => import('./components/ComedyWritingView.vue'))
+const AdminView = defineAsyncComponent(() => import('./components/AdminView.vue'))
+const OpsConsole = defineAsyncComponent(() => import('./components/OpsConsole.vue'))
+const GrasslandWorkbench = defineAsyncComponent(() => import('./components/GrasslandWorkbench.vue'))
+const HomeView = defineAsyncComponent(() => import('./components/HomeView.vue'))
+const ImageAnalysisView = defineAsyncComponent(() => import('./components/ImageAnalysisView.vue'))
+const ImageGenerationView = defineAsyncComponent(() => import('./components/ImageGenerationView.vue'))
+const LoginModal = defineAsyncComponent(() => import('./components/LoginModal.vue'))
+const VideoAnalysisView = defineAsyncComponent(() => import('./components/VideoAnalysisView.vue'))
+const VideoProductionView = defineAsyncComponent(() => import('./components/VideoProductionView.vue'))
 import { useAnalysisSettings } from './composables/useAnalysisSettings'
 import { useAuth } from './composables/useAuth'
 import { useHomepageSettings } from './composables/useHomepageSettings'
@@ -345,6 +349,9 @@ const articleInitialTopic = ref('')
 const comedyInitialTopic = ref('')
 const showSettingsModal = ref(false)
 const showLoginModal = ref(false)
+// 弹窗按需挂载（配合 defineAsyncComponent 分包）；首次打开后保持挂载以保留内部状态
+const settingsModalMounted = ref(false)
+const loginModalMounted = ref(false)
 const loginModalMessage = ref('')
 const authBannerMessage = ref('')
 
@@ -577,6 +584,7 @@ function handleVerifyModel(
 }
 
 function openLoginModal(message = ''): void {
+  loginModalMounted.value = true
   clearLoginError()
   clearRegisterError()
   clearLogoutError()
@@ -651,6 +659,7 @@ async function handleOpenSettings(): Promise<void> {
     homepageSettingsLoaded.value ? Promise.resolve() : loadHomepageSettingsAction(),
   ])
 
+  settingsModalMounted.value = true
   showSettingsModal.value = true
 }
 </script>

@@ -5,7 +5,7 @@
         <header class="section-head">
           <div>
             <p class="section-kicker">图片评价</p>
-            <h2 class="section-title">上传图片后生成更自然的评价文案</h2>
+            <h2 class="section-title">上传图片后生成探店评价与消费体验文案</h2>
           </div>
           <p class="section-note">支持 JPG、PNG、WebP，最多 6 张，每张不超过 5 MB。</p>
         </header>
@@ -95,6 +95,13 @@
               >
             </label>
           </div>
+
+          <p v-if="platform === 'dianping'" class="platform-position-hint">
+            大众点评探店定位：围绕探店评价、消费体验与推荐理由展开，覆盖门店环境、菜品与服务细节，可补充评分建议、到店提示与真实体验描述。
+          </p>
+          <p v-else class="platform-position-hint">
+            淘宝评价定位：围绕商品体验与真实感受展开，突出包装、质量与使用细节。
+          </p>
         </div>
 
         <div class="field-block">
@@ -131,6 +138,56 @@
       </article>
 
       <section class="preview-column">
+        <section class="session-versions-card glass-card" aria-label="本次会话版本对比">
+          <header class="session-versions-head">
+            <div>
+              <p class="session-versions-title">多版本对比</p>
+              <p class="session-versions-copy">本次会话内保存的评价草稿版本，可切换查看对比，仅保存在当前页面内存。</p>
+            </div>
+            <button
+              class="btn-secondary btn-sm"
+              type="button"
+              :disabled="loading || !result || isEditing"
+              @click="saveVersionSnapshot()"
+            >
+              保存当前版本
+            </button>
+          </header>
+
+          <p v-if="sessionVersions.length === 0" class="session-versions-empty">
+            暂无保存的版本。生成或编辑评价后，点「保存当前版本」即可积累可对比的版本。
+          </p>
+
+          <template v-else>
+            <ol class="session-versions-list">
+              <li v-for="version in sessionVersions" :key="version.id" class="session-version-item">
+                <button
+                  type="button"
+                  class="session-version-btn"
+                  :class="{ 'session-version-btn-active': selectedVersionId === version.id }"
+                  @click="selectVersion(version.id)"
+                >
+                  {{ version.label }} · {{ version.platformLabel }} · {{ version.savedAt }}
+                </button>
+                <button class="session-version-remove" type="button" :aria-label="`删除 ${version.label}`" @click="removeVersion(version.id)">&times;</button>
+              </li>
+            </ol>
+
+            <div v-if="selectedVersion" class="session-version-detail">
+              <h4 v-if="selectedVersion.data.title" class="result-label">标题</h4>
+              <p v-if="selectedVersion.data.title" class="result-text result-emphasis">{{ selectedVersion.data.title }}</p>
+              <h4 class="result-label">评价内容</h4>
+              <p class="result-text">{{ selectedVersion.data.review }}</p>
+              <div v-if="selectedVersion.data.tags?.length" class="result-tags-wrap">
+                <h4 class="result-label">标签</h4>
+                <div class="result-tags">
+                  <span v-for="tag in selectedVersion.data.tags" :key="tag" class="result-tag">{{ tag }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </section>
+
         <section v-if="generationStage === 'drafting'" class="progress-card glass-card fade-in">
           <header class="result-head">
             <div>
@@ -304,6 +361,9 @@
               </button>
               <button v-if="!isEditing" class="btn-secondary" type="button" :disabled="loadingPreferences" @click="toggleStylePreferences">
                 {{ showStylePreferences ? '收起风格偏好' : '查看风格偏好' }}
+              </button>
+              <button v-if="!isEditing" class="btn-secondary" type="button" :disabled="loading" @click="saveVersionSnapshot()">
+                保存为对比版本
               </button>
             </div>
           </header>
@@ -597,7 +657,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useImageAnalysis } from '../composables/useImageAnalysis'
 import type { CreationHandoff } from '../types/ai-creation'
-import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage } from '../types/image-analysis'
+import type { GenerationStage, ImageAnalysisProgressEvent, ImageAnalysisProgressStage, ImageAnalysisResult } from '../types/image-analysis'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -693,6 +753,66 @@ const newTagInput = ref('')
 const now = ref(Date.now())
 const previewIndex = ref<number | null>(null)
 let nowTimer: number | null = null
+
+// --- 本次会话多版本对比（纯前端内存态，不引入持久化） ---
+
+interface SessionVersion {
+  id: string
+  label: string
+  platformLabel: string
+  savedAt: string
+  data: ImageAnalysisResult
+}
+
+const sessionVersions = ref<SessionVersion[]>([])
+const selectedVersionId = ref<string | null>(null)
+let versionCounter = 0
+
+const selectedVersion = computed(() =>
+  sessionVersions.value.find((v) => v.id === selectedVersionId.value) ?? null,
+)
+
+function versionLabelForStage(stage: GenerationStage): string {
+  if (stage === 'draft-review') return '初稿'
+  if (stage === 'complete') {
+    if (stepResults.value['style-refine']) return '风格优化版'
+    if (stepResults.value.optimize) return '润色版'
+    return '终版'
+  }
+  return '草稿'
+}
+
+function saveVersionSnapshot(label?: string): void {
+  if (!result.value) return
+  versionCounter += 1
+  const snapshot: SessionVersion = {
+    id: `session-version-${versionCounter}`,
+    label: label ?? versionLabelForStage(generationStage.value),
+    platformLabel: platform.value === 'dianping' ? '大众点评' : '淘宝',
+    savedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    data: {
+      ...result.value,
+      tags: result.value.tags ? [...result.value.tags] : undefined,
+    },
+  }
+  sessionVersions.value = [...sessionVersions.value, snapshot]
+  selectedVersionId.value = snapshot.id
+}
+
+function selectVersion(id: string): void {
+  selectedVersionId.value = selectedVersionId.value === id ? null : id
+}
+
+function removeVersion(id: string): void {
+  sessionVersions.value = sessionVersions.value.filter((v) => v.id !== id)
+  if (selectedVersionId.value === id) selectedVersionId.value = null
+}
+
+watch(generationStage, (stage) => {
+  if ((stage === 'draft-review' || stage === 'complete') && result.value) {
+    saveVersionSnapshot()
+  }
+})
 
 function previewImage(index: number): void {
   previewIndex.value = index
@@ -826,6 +946,8 @@ function handleReset(): void {
   isDragging.value = false
   uploadError.value = ''
   showGenerationSteps.value = false
+  sessionVersions.value = []
+  selectedVersionId.value = null
   reset()
 }
 
@@ -2078,5 +2200,113 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.84rem;
   font-weight: 600;
+}
+
+.platform-position-hint {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(114, 132, 248, 0.24);
+  background: rgba(114, 132, 248, 0.07);
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.session-versions-card {
+  align-content: start;
+}
+
+.session-versions-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-versions-title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.session-versions-copy,
+.session-versions-empty {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.session-versions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.session-version-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-version-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.session-version-btn:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.session-version-btn-active {
+  background: var(--surface-card);
+  border-color: var(--color-border-accent);
+  color: var(--color-text);
+}
+
+.session-version-remove {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.session-version-remove:hover {
+  color: var(--color-danger);
+  background: rgba(239, 107, 107, 0.08);
+}
+
+.session-version-detail {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--surface-page);
 }
 </style>

@@ -18,6 +18,35 @@ function response(data: unknown, envelope = true): Response {
 }
 
 describe('AdminView KYB 审核', () => {
+  test('第三个管理 tab 懒挂载 AI 模型面板且不显示 KYB 队列', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === '/api/admin/users') return response({ users: [] }, false)
+      if (url === '/api/admin/kyb-requests') return response([])
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, {
+      global: {
+        stubs: {
+          Teleport: true,
+          AiPlatformModelsPanel: { template: '<div data-testid="ai-models-panel">AI 模型配置</div>' },
+        },
+      },
+    })
+    await flushPromises()
+    const tabs = wrapper.findAll('[role="tab"]')
+
+    expect(tabs.map((tab) => tab.text().trim())).toEqual(['用户与积分', 'KYB 审核', 'AI 模型'])
+    expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
+
+    await tabs[2].trigger('click')
+
+    expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('待审核申请')
+    expect(tabs[2].attributes('aria-selected')).toBe('true')
+  })
+
   test('加载待审队列并携带拒绝备注提交，成功后移出队列', async () => {
     const request = {
       id: 'request-1', organizationId: 'org-1', requesterAccountId: 'account-1',

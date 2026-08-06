@@ -2,33 +2,34 @@
   <div class="home-view fade-in">
     <section class="hero glass-card">
       <div class="hero-copy">
-        <p class="eyebrow">工作台</p>
-        <h2 class="hero-title">把提取、分析与创作收进一个更顺手的入口。</h2>
-        <p class="hero-note">先选任务，再直接进入对应流程；下方热点区可以继续帮你找题材、抓趋势、扩展灵感。</p>
+        <p class="eyebrow">创作灵感</p>
+        <h2 class="hero-title">从热点与灵感出发，进入 AI 内容创作中心。</h2>
+        <p class="hero-note">热点是创作的一种手段，不是终点。选好题材后，主路径是进入 AI 中心完成图文与视频创作；下方热点区帮你找题材、抓趋势、扩展灵感。</p>
       </div>
       <div class="hero-meta">
         <div class="meta-pill">
           <span class="meta-dot"></span>
-          <span>本地优先处理</span>
+          <span>热点是创作手段</span>
         </div>
         <div class="meta-pill">
           <span class="meta-dot meta-dot-cyan"></span>
-          <span>热点实时拉取</span>
+          <span>AI 中心一站式创作</span>
         </div>
       </div>
     </section>
 
-    <section class="feature-grid" aria-label="功能入口">
+    <section class="feature-grid" aria-label="创作入口">
       <button
         v-for="feature in features"
         :key="feature.view"
         class="feature-card glass-card"
+        :class="{ 'feature-card-primary': feature.primary }"
         type="button"
         @click="emit('open-view', feature.view)"
       >
         <div class="feature-head">
           <p class="eyebrow">{{ feature.eyebrow }}</p>
-          <span class="feature-badge">进入</span>
+          <span class="feature-badge" :class="{ 'feature-badge-primary': feature.primary }">{{ feature.primary ? '主入口' : '进入' }}</span>
         </div>
         <h3 class="feature-title">{{ feature.title }}</h3>
         <p class="feature-copy">{{ feature.copy }}</p>
@@ -42,14 +43,17 @@
       <header class="card-head">
         <div class="card-head-row">
           <div>
-            <p class="eyebrow">多平台热点</p>
+            <p class="eyebrow">创作灵感</p>
             <h2 class="card-title">热门话题</h2>
           </div>
-          <button class="btn-secondary btn-sm" type="button" :disabled="loading" @click="loadHotItems">
-            {{ loading ? '刷新中…' : '刷新' }}
-          </button>
+          <div class="hot-refresh-group">
+            <span v-if="hotFetchedNote" class="hot-fetched-note">{{ hotFetchedNote }}</span>
+            <button class="btn-secondary btn-sm" type="button" :disabled="loading" @click="loadHotItems">
+              {{ loading ? '刷新中…' : '刷新' }}
+            </button>
+          </div>
         </div>
-        <p class="field-note">热点数据由服务端拉取并归一化展示，可直接作为视频分析或文章选题参考。</p>
+        <p class="field-note">热点数据由服务端拉取并归一化展示，可作为创作灵感与选题参考，一键带入 AI 中心创作。</p>
       </header>
 
       <div v-if="loading && !activeItems.length" class="hot-skeleton-list" aria-hidden="true">
@@ -93,7 +97,7 @@
             </div>
             <img v-if="item.cover" class="hot-cover" :src="item.cover" :alt="item.title">
             <div class="hot-actions">
-              <button class="hot-action-btn" type="button" @click.stop="openHotTopicCreation(item.title)">围绕热点创作</button>
+              <button class="hot-action-btn" type="button" @click.stop="openHotTopicCreation(item.title)">带入 AI 中心创作</button>
             </div>
           </li>
         </ol>
@@ -113,7 +117,7 @@ import { normalizePlatformId } from '../config/ai-platform-capabilities'
 import { useHomepageHotItems } from '../composables/useHomepageHotItems'
 import type { CreationEntry } from '../types/ai-creation'
 
-type HomeFeatureView = 'video' | 'image' | 'article' | 'image-gen' | 'comedy'
+type HomeFeatureView = 'ai-center' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy'
 
 interface FeatureCard {
   view: HomeFeatureView
@@ -121,6 +125,7 @@ interface FeatureCard {
   title: string
   copy: string
   points: string[]
+  primary?: boolean
 }
 
 const emit = defineEmits<{
@@ -128,7 +133,15 @@ const emit = defineEmits<{
   'open-creation': [entry: CreationEntry]
 }>()
 
-const { items, groups, provider, loading, error, loadHotItems } = useHomepageHotItems()
+const { items, groups, provider, fetchedAt, loading, error, loadHotItems } = useHomepageHotItems()
+
+const hotFetchedNote = computed(() => {
+  if (!fetchedAt.value) return ''
+  const parsedTime = new Date(fetchedAt.value)
+  if (Number.isNaN(parsedTime.getTime())) return ''
+  const pad = (num: number) => String(num).padStart(2, '0')
+  return `抓取于 ${pad(parsedTime.getMonth() + 1)}-${pad(parsedTime.getDate())} ${pad(parsedTime.getHours())}:${pad(parsedTime.getMinutes())}`
+})
 
 const activePlatform = ref('')
 
@@ -171,6 +184,14 @@ watch(groups, (newGroups) => {
 }, { immediate: true })
 
 const features: FeatureCard[] = [
+  {
+    view: 'ai-center',
+    eyebrow: 'AI 内容创作中心',
+    title: '进入 AI 中心，完成图文与视频一站式创作',
+    copy: '主路径入口：选平台、定形式，从选题到成稿都在 AI 中心完成，热点灵感可直接带入。',
+    points: ['支持多种内容形式', '热点选题一键带入', '从灵感到成品一站式'],
+    primary: true,
+  },
   {
     view: 'video',
     eyebrow: '视频提取分析',
@@ -275,6 +296,17 @@ onMounted(() => {
   line-height: 1.5;
 }
 
+.hot-refresh-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.hot-fetched-note {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
 .hero-meta {
   display: grid;
   gap: var(--space-sm);
@@ -329,6 +361,17 @@ onMounted(() => {
   border-color: var(--color-border-hover);
   background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
   box-shadow: var(--shadow-elevated);
+}
+
+.feature-card-primary {
+  border-color: var(--color-border-accent);
+  background: var(--color-surface-highlight);
+}
+
+.feature-badge-primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
 }
 
 .feature-head,

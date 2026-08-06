@@ -37,6 +37,18 @@ describe('AI 平台能力矩阵', () => {
       status: 'available', workflowId: 'review-copy', targetView: 'image',
     })
     expect(resolveWorkflow('douyin', 'graphic', 'independent')).toEqual({
+      status: 'available', workflowId: 'longform', targetView: 'article',
+    })
+    expect(resolveWorkflow('xiaohongshu', 'graphic', 'independent')).toEqual({
+      status: 'available', workflowId: 'longform', targetView: 'article',
+    })
+    expect(resolveWorkflow('zhihu', 'graphic', 'task')).toEqual({
+      status: 'available', workflowId: 'longform', targetView: 'article',
+    })
+    expect(resolveWorkflow('moments', 'image-text', 'independent')).toEqual({
+      status: 'planned', workflowId: null, targetView: null,
+    })
+    expect(resolveWorkflow('moments', 'video-text', 'store')).toEqual({
       status: 'planned', workflowId: null, targetView: null,
     })
     expect(resolveWorkflow('kuaishou', 'graphic', 'independent')).toEqual({
@@ -48,6 +60,11 @@ describe('AI 平台能力矩阵', () => {
     expect(resolveWorkflow('douyin', 'video', 'reference').targetView).toBe('video')
     expect(resolveWorkflow('bilibili', 'video', 'reference').workflowId).toBe('reference-analyze')
     expect(resolveWorkflow('xiaohongshu', 'video', 'store').targetView).toBe('video-production')
+    for (const platformId of ['kuaishou', 'wechat-channels', 'bilibili'] as const) {
+      expect(resolveWorkflow(platformId, 'video', 'independent')).toEqual({
+        status: 'available', workflowId: 'video-script', targetView: 'video-production',
+      })
+    }
   })
 
   test('非法平台或内容形式返回 null，不依赖 UI 隐藏来保证合法性', () => {

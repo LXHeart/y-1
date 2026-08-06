@@ -21,6 +21,13 @@
         <p class="field-note">{{ selectedTitle }}</p>
       </header>
 
+      <div v-if="formatRule" class="format-rule-bar" :class="{ 'format-rule-bar-warn': formatIssues.length > 0 }" role="note">
+        <p class="format-rule-summary">{{ formatRuleSummary }}</p>
+        <ul v-if="formatIssues.length > 0" class="format-rule-warnings">
+          <li v-for="issue in formatIssues" :key="issue">{{ issue }}</li>
+        </ul>
+      </div>
+
       <div class="completed-preview">
         <div class="completed-body" v-html="renderSafeMarkdown(contentWithImages)"></div>
       </div>
@@ -36,7 +43,7 @@
       <header class="card-head">
         <p class="eyebrow">第一步</p>
         <h2 class="card-title">先确定主题和发布平台</h2>
-        <p class="field-note">从一个明确主题开始，再决定内容更偏公众号、知乎还是小红书的表达方式。</p>
+        <p class="field-note">从一个明确主题开始，再决定内容更偏公众号、知乎、小红书还是抖音的表达方式。</p>
       </header>
 
       <textarea
@@ -54,25 +61,36 @@
             class="platform-btn"
             :class="{ 'platform-btn-active': platform === 'wechat' }"
             :disabled="titlesLoading"
-            @click="platform = 'wechat'"
+            @click="selectNonDouyinPlatform('wechat')"
           >微信公众号</button>
           <button
             type="button"
             class="platform-btn"
             :class="{ 'platform-btn-active': platform === 'zhihu' }"
             :disabled="titlesLoading"
-            @click="platform = 'zhihu'"
+            @click="selectNonDouyinPlatform('zhihu')"
           >知乎</button>
           <button
             type="button"
             class="platform-btn"
-            :class="{ 'platform-btn-active': platform === 'xiaohongshu' }"
+            :class="{ 'platform-btn-active': platform === 'xiaohongshu' && !isDouyinMode }"
             :disabled="titlesLoading"
-            @click="platform = 'xiaohongshu'"
+            @click="selectNonDouyinPlatform('xiaohongshu')"
           >小红书</button>
+          <button
+            type="button"
+            class="platform-btn"
+            :class="{ 'platform-btn-active': platform === 'xiaohongshu' && isDouyinMode }"
+            :disabled="titlesLoading"
+            @click="selectDouyin"
+          >抖音</button>
         </div>
         <p class="field-note">Ctrl + Enter 可直接生成标题</p>
       </div>
+
+      <p v-if="platform === 'xiaohongshu' && isDouyinMode" class="platform-mode-hint">
+        抖音定位图集短文案：短句式表达、强开场突出卖点、结尾带话题标签，配图建议竖版封面并按顺序编排。
+      </p>
 
       <div class="action-row">
         <button
@@ -99,6 +117,11 @@
         <h2 class="card-title">从候选标题里选一个方向</h2>
         <p class="field-note">可直接点选，也可以在下方手动改写成你更想要的标题。</p>
       </header>
+
+      <div v-if="formatRule" class="format-rule-bar" :class="{ 'format-rule-bar-warn': titleOverLimit }" role="note">
+        <p class="format-rule-summary">{{ formatRuleSummary }}</p>
+        <p v-if="titleOverLimit" class="format-rule-warn">标题已超过 {{ formatRule.maxTitleChars }} 字建议上限，建议精简后再发布。</p>
+      </div>
 
       <ul class="title-list">
         <li v-for="(t, i) in titles" :key="i">
@@ -205,6 +228,14 @@
           </button>
         </div>
       </header>
+
+      <div v-if="formatRule" class="format-rule-bar" :class="{ 'format-rule-bar-warn': formatIssues.length > 0 }" role="note">
+        <p class="format-rule-summary">{{ formatRuleSummary }}</p>
+        <p v-if="formatRule.tagHint" class="format-rule-hint">{{ formatRule.tagHint }}</p>
+        <ul v-if="formatIssues.length > 0" class="format-rule-warnings">
+          <li v-for="issue in formatIssues" :key="issue">{{ issue }}</li>
+        </ul>
+      </div>
 
       <div class="stream-area stream-area-large">
         <textarea
@@ -364,6 +395,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import { useArticleCreation } from '../composables/useArticleCreation'
+import { getPlatformFormatRule } from '../config/platform-format-rules'
 import { renderSafeMarkdown } from '../lib/safe-markdown'
 import type { CreationHandoff } from '../types/ai-creation'
 
@@ -385,6 +417,23 @@ const {
 const articleInitialTopic = inject<Ref<string>>('articleInitialTopic')
 const hydratedCreationRevision = ref<number | null>(null)
 
+// 抖音（图集短文案）复用现有小红书平台契约，仅前端提示词/文案层差异，API 契约不变。
+const isDouyinMode = ref(false)
+
+function selectDouyin(): void {
+  platform.value = 'xiaohongshu'
+  isDouyinMode.value = true
+}
+
+function selectNonDouyinPlatform(target: 'wechat' | 'zhihu' | 'xiaohongshu'): void {
+  platform.value = target
+  isDouyinMode.value = false
+}
+
+watch(platform, (value) => {
+  if (value !== 'xiaohongshu') isDouyinMode.value = false
+})
+
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
@@ -396,6 +445,9 @@ watch(() => props.creationHandoff, (handoff) => {
   } as const
   if (handoff.platformId in platformByEntry) {
     platform.value = platformByEntry[handoff.platformId as keyof typeof platformByEntry]
+    isDouyinMode.value = false
+  } else if (handoff.platformId === 'douyin') {
+    selectDouyin()
   }
 }, { immediate: true })
 
@@ -407,6 +459,47 @@ watch(articleInitialTopic!, (val) => {
 
 const copied = ref(false)
 const lightboxSrc = ref('')
+
+// 平台规范提示（PRD §4.7）：只读提示，不阻断复制导出。
+const formatRulePlatformId = computed(() => {
+  if (platform.value === 'wechat') return 'wechat-official'
+  if (platform.value === 'xiaohongshu' && isDouyinMode.value) return 'douyin'
+  return platform.value
+})
+
+const formatRule = computed(() => getPlatformFormatRule(formatRulePlatformId.value))
+
+const formatRuleSummary = computed(() => {
+  const rule = formatRule.value
+  if (!rule) return ''
+  const titlePart = rule.maxTitleChars === null
+    ? '无独立标题，由文案开头承担'
+    : `标题上限 ${rule.maxTitleChars} 字`
+  return `${rule.platformLabel}规范建议：正文 ${rule.minChars}-${rule.maxChars} 字；${titlePart}。`
+})
+
+const contentCharCount = computed(() => content.value.replace(/!\[[^\]]*\]\([^)]*\)/g, '').trim().length)
+
+const titleOverLimit = computed(() =>
+  formatRule.value?.maxTitleChars != null && selectedTitle.value.trim().length > formatRule.value.maxTitleChars,
+)
+
+const formatIssues = computed(() => {
+  const rule = formatRule.value
+  if (!rule) return []
+  const issues: string[] = []
+  const count = contentCharCount.value
+  if (count > 0 && count > rule.maxChars) {
+    issues.push(`正文约 ${count} 字，超过建议上限 ${rule.maxChars} 字，发布时可能被截断或影响传播。`)
+  }
+  if (count > 0 && count < rule.minChars) {
+    issues.push(`正文约 ${count} 字，低于建议下限 ${rule.minChars} 字，建议补充核心信息。`)
+  }
+  if (titleOverLimit.value) {
+    issues.push(`标题 ${selectedTitle.value.trim().length} 字，超过建议上限 ${rule.maxTitleChars} 字。`)
+  }
+  return issues
+})
 
 function openLightbox(src: string): void {
   lightboxSrc.value = src
@@ -845,6 +938,61 @@ const contentWithImages = computed(() => {
 .error-card {
   border-color: rgba(239, 107, 107, 0.28);
   background: rgba(239, 107, 107, 0.08);
+}
+
+.platform-mode-hint {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(114, 132, 248, 0.28);
+  background: rgba(114, 132, 248, 0.08);
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.format-rule-bar {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--surface-page);
+}
+
+.format-rule-summary {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.format-rule-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.format-rule-warnings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.format-rule-warnings li,
+.format-rule-warn {
+  margin: 0;
+  color: var(--color-danger, #d97706);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.format-rule-bar-warn {
+  border-color: rgba(239, 107, 107, 0.28);
+  background: rgba(239, 107, 107, 0.06);
 }
 
 @media (max-width: 720px) {

@@ -5,7 +5,7 @@ import type {
   CreationWorkflowResolution,
 } from '../types/ai-creation'
 
-export const AI_PLATFORM_CAPABILITY_VERSION = '2026-08-05'
+export const AI_PLATFORM_CAPABILITY_VERSION = '2026-08-06'
 
 export interface AiContentFormDefinition {
   id: AiContentFormId
@@ -150,8 +150,9 @@ export function resolveWorkflow(
 
   if (formId === 'video') return available('video-script', 'video-production')
   if (formId === 'graphic' && platformId === 'dianping') return available('review-copy', 'image')
-  if (formId === 'graphic' && ['xiaohongshu', 'wechat-official', 'zhihu'].includes(platformId)) {
+  if (formId === 'graphic' && ['xiaohongshu', 'douyin', 'wechat-official', 'zhihu'].includes(platformId)) {
     return available('longform', 'article')
   }
+  // 朋友圈的图片+文字/视频+文字是 PRD 合法组合，尚未接入工作流，显式返回 planned，不静默降级。
   return PLANNED
 }

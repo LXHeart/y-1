@@ -25,6 +25,8 @@ export interface HomepageHotItemsResult {
   provider: HotItemsProvider
   items: HomepageHotItem[]
   groups?: HomepageHotItemGroup[]
+  /** 热点数据抓取时间（ISO 8601）；PRD §4.3 要求展示来源与抓取时间，避免使用过期趋势 */
+  fetchedAt: string
 }
 
 const MAX_HOMEPAGE_ITEMS = 100
@@ -37,6 +39,7 @@ const ALAPI_CACHE_TTL_MS = 5 * 60 * 1000
 
 const alapiHotItemsCache = new Map<string, {
   expiresAt: number
+  fetchedAt: string
   items: HomepageHotItem[]
 }>()
 
@@ -196,7 +199,7 @@ async function fetchAlapiJson<T>(
   return await response.json() as AlapiEnvelope<T>
 }
 
-async function loadAlapiHotItems(userId?: string): Promise<HomepageHotItem[]> {
+async function loadAlapiHotItems(userId?: string): Promise<{ items: HomepageHotItem[]; fetchedAt: string }> {
   const settings = userId ? await loadHomepageSettingsForUser(userId) : loadHomepageSettings()
   const token = settings.hotItems.alapiToken
 
@@ -208,7 +211,7 @@ async function loadAlapiHotItems(userId?: string): Promise<HomepageHotItem[]> {
   const cached = alapiHotItemsCache.get(token)
   if (cached && cached.expiresAt > now) {
     logger.info({ itemCount: cached.items.length }, 'ALAPI homepage hot items cache hit')
-    return cached.items
+    return { items: cached.items, fetchedAt: cached.fetchedAt }
   }
 
   logger.info({ ttlMs: ALAPI_CACHE_TTL_MS }, 'ALAPI homepage hot items cache miss')
@@ -252,12 +255,14 @@ async function loadAlapiHotItems(userId?: string): Promise<HomepageHotItem[]> {
         rank: index + 1,
       }))
 
+    const fetchedAt = new Date().toISOString()
     alapiHotItemsCache.set(token, {
       expiresAt: Date.now() + ALAPI_CACHE_TTL_MS,
+      fetchedAt,
       items,
     })
 
-    return items
+    return { items, fetchedAt }
   } catch (error: unknown) {
     if (error instanceof AppError) {
       throw error
@@ -283,7 +288,7 @@ function isValidGroupsCache(items: unknown): items is HomepageHotItemGroup[] {
   return Array.isArray(items) && items.every((g) => typeof g === 'object' && g !== null && Array.isArray((g as HomepageHotItemGroup).items))
 }
 
-async function load60sHotItems(): Promise<{ items: HomepageHotItem[]; groups: HomepageHotItemGroup[] }> {
+async function load60sHotItems(): Promise<{ items: HomepageHotItem[]; groups: HomepageHotItemGroup[]; fetchedAt: string }> {
   const cached = await readCachedHotTopics()
 
   if (cached && isValidGroupsCache(cached.items)) {
@@ -291,20 +296,21 @@ async function load60sHotItems(): Promise<{ items: HomepageHotItem[]; groups: Ho
     if (age < HOT_TOPICS_CACHE_TTL_MS) {
       const totalItems = cached.items.reduce((sum, g) => sum + g.items.length, 0)
       logger.info({ groupCount: cached.items.length, totalItems, ageMs: age }, '60s hot topics cache hit')
-      return { items: [], groups: cached.items }
+      return { items: [], groups: cached.items, fetchedAt: cached.fetched_at.toISOString() }
     }
   }
 
   try {
+    const fetchedAt = new Date().toISOString()
     const result = await loadMultiPlatformHotTopics()
 
     await persistCachedHotTopics(result.groups)
 
-    return { items: [], groups: result.groups }
+    return { items: [], groups: result.groups, fetchedAt }
   } catch (error: unknown) {
     if (cached) {
       logger.warn({ err: error }, '60s hot topics API failed, returning stale cache')
-      return { items: [], groups: cached.items }
+      return { items: [], groups: cached.items, fetchedAt: cached.fetched_at.toISOString() }
     }
 
     throw error
@@ -354,10 +360,10 @@ export async function loadHomepageHotItems(userId?: string): Promise<HomepageHot
   const provider = settings.hotItems.provider
 
   if (provider === 'alapi') {
-    const items = await loadAlapiHotItems(userId)
-    return { provider: 'alapi', items }
+    const { items, fetchedAt } = await loadAlapiHotItems(userId)
+    return { provider: 'alapi', items, fetchedAt }
   }
 
-  const { items, groups } = await load60sHotItems()
-  return { provider: '60s', items, groups }
+  const { items, groups, fetchedAt } = await load60sHotItems()
+  return { provider: '60s', items, groups, fetchedAt }
 }

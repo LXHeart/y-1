@@ -2,7 +2,7 @@
   <section class="admin-view">
     <header class="section-header">
       <h2 class="section-title">平台管理</h2>
-      <p class="section-desc">处理用户积分与商户资质审核</p>
+      <p class="section-desc">处理用户积分、商户资质审核与 AI 能力配置</p>
     </header>
 
     <div class="admin-tabs" role="tablist" aria-label="管理模块">
@@ -12,6 +12,8 @@
         :class="{ active: activeSection === 'kyb' }" @click="activeSection = 'kyb'">
         KYB 审核 <span v-if="kybRequests.length" class="count-badge">{{ kybRequests.length }}</span>
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
+        :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
     </div>
 
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
@@ -35,7 +37,7 @@
       </div>
     </div>
 
-    <div v-else class="admin-panel" role="tabpanel">
+    <div v-else-if="activeSection === 'kyb'" class="admin-panel" role="tabpanel">
       <div class="panel-toolbar">
         <div><h3>待审核申请</h3><p>按提交时间顺序处理商户、门店和收款账户资料</p></div>
         <button class="refresh-btn" type="button" :disabled="kybLoading" @click="loadKybRequests">刷新</button>
@@ -63,6 +65,10 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div v-else class="admin-panel" role="tabpanel">
+      <AiPlatformModelsPanel />
     </div>
 
     <Teleport to="body">
@@ -170,6 +176,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import AiPlatformModelsPanel from './AiPlatformModelsPanel.vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   KybVerificationDetail,
@@ -192,7 +199,7 @@ interface UserItem {
 }
 
 const users = ref<UserItem[]>([])
-const activeSection = ref<'users' | 'kyb'>('users')
+const activeSection = ref<'users' | 'kyb' | 'ai-models'>('users')
 const loading = ref(false)
 const loadError = ref('')
 

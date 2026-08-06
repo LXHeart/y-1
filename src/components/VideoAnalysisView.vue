@@ -1,5 +1,17 @@
 <template>
-  <div class="video-analysis">
+  <div class="video-analysis-page">
+    <header class="view-header">
+      <div class="view-header-copy">
+        <p class="view-kicker">视频制作 · 可选输入手段</p>
+        <h1 class="view-title">视频参考提取</h1>
+        <p class="view-copy">提取与分析抖音 / B 站参考视频，作为视频制作过程中的可选参考输入；分析结果只产生创作建议，可在视频制作中带入脚本、分镜、角色、道具和场景生成。</p>
+      </div>
+      <button class="btn-secondary view-header-action" type="button" @click="emit('open-view', 'video-production')">
+        去视频制作
+      </button>
+    </header>
+
+    <div class="video-analysis">
     <section class="input-column">
       <article class="editor-card glass-card">
         <header class="card-head">
@@ -108,6 +120,7 @@
         <p class="empty-copy">{{ emptyCopy }}</p>
       </section>
     </section>
+    </div>
   </div>
 </template>
 
@@ -125,6 +138,10 @@ import type { CreationHandoff } from '../types/ai-creation'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
+}>()
+
+const emit = defineEmits<{
+  'open-view': [view: 'video-production']
 }>()
 
 const autoOpenSessionErrorPatterns = [
@@ -306,6 +323,71 @@ watch(() => props.creationHandoff, (handoff) => {
 </script>
 
 <style scoped>
+.video-analysis-page {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+.view-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.view-header-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.view-kicker {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.view-title {
+  margin: 0;
+  font-size: 1.42rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--color-text);
+}
+
+.view-copy {
+  margin: 0;
+  max-width: 64ch;
+  color: var(--color-text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.view-header-action {
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--surface-card);
+  color: var(--color-text-secondary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.view-header-action:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
 .video-analysis {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);

@@ -53,6 +53,32 @@
           >
 
           <template v-if="mode === 'register'">
+            <label class="login-label" id="login-identity-label">初始身份</label>
+            <div class="login-identity-options" role="radiogroup" aria-labelledby="login-identity-label">
+              <button
+                class="login-identity-card"
+                :class="{ 'login-identity-card-active': initialIdentity === 'recommender' }"
+                type="button"
+                role="radio"
+                :aria-checked="initialIdentity === 'recommender'"
+                @click="initialIdentity = 'recommender'"
+              >
+                <span class="login-identity-name">推荐官</span>
+                <span class="login-identity-desc">分享好物，推荐好物赚取佣金</span>
+              </button>
+              <button
+                class="login-identity-card"
+                :class="{ 'login-identity-card-active': initialIdentity === 'merchant' }"
+                type="button"
+                role="radio"
+                :aria-checked="initialIdentity === 'merchant'"
+                @click="initialIdentity = 'merchant'"
+              >
+                <span class="login-identity-name">商家</span>
+                <span class="login-identity-desc">发布商品，接受推荐官推广</span>
+              </button>
+            </div>
+
             <label class="login-label" for="login-display-name">显示名称</label>
             <input
               id="login-display-name"
@@ -178,6 +204,14 @@ const emit = defineEmits<{
 }>()
 
 const mode = ref<AuthMode>('login')
+// 初始身份选择（商家/推荐官）。
+// 【后端契约缺口 · 情况 B】server/src/schemas/auth.ts 的 registerRequestSchema 目前只接受
+// email/password/confirmPassword/displayName/verificationCode，没有身份字段。
+// 因此该选择**不随注册请求发送**，仅在本地写入 localStorage（grassland-preferred-identity）
+// 作为偏好预埋，等后端扩展注册契约后再接入。UI 上不提示“已保存”，避免误导性承诺。
+type InitialIdentity = 'recommender' | 'merchant'
+const IDENTITY_STORAGE_KEY = 'grassland-preferred-identity'
+const initialIdentity = ref<InitialIdentity>('recommender')
 const email = ref('')
 const displayName = ref('')
 const password = ref('')
@@ -239,6 +273,7 @@ function handleSendCode(): void {
 
 function resetForm(): void {
   mode.value = 'login'
+  initialIdentity.value = 'recommender'
   email.value = ''
   displayName.value = ''
   password.value = ''
@@ -274,6 +309,12 @@ function handleSubmit(): void {
   }
 
   if (mode.value === 'register') {
+    // 后端契约缺口（情况 B）：身份选择不进入注册请求体，只写入 localStorage 作为偏好预埋。
+    try {
+      localStorage.setItem(IDENTITY_STORAGE_KEY, initialIdentity.value)
+    } catch {
+      // localStorage 不可用（如隐私模式）时静默跳过，不阻塞注册。
+    }
     emit('register', {
       email: email.value,
       displayName: displayName.value,
@@ -446,6 +487,47 @@ function handleSubmit(): void {
   border-color: var(--color-border-accent);
   background: var(--surface-card);
   box-shadow: var(--focus-ring);
+}
+
+.login-identity-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.login-identity-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.login-identity-card:hover {
+  border-color: var(--color-border-hover);
+  background: var(--color-surface-hover);
+}
+
+.login-identity-card-active {
+  border-color: var(--color-border-accent);
+  background: var(--surface-card);
+  box-shadow: var(--focus-ring);
+}
+
+.login-identity-name {
+  color: var(--color-text);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.login-identity-desc {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .login-checkbox {
