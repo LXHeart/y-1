@@ -220,6 +220,8 @@ services:
       EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:-false}
       # HLD 7.4：直读 session 表签发内部身份断言（DATABASE_URL 复用 identity 库，只读；secret 与 identity-service 一致）。
       EDGE_IDENTITY_FROM_DATABASE_URL: "true"
+      # GL-P3-IDENTITY-001：移动端 access token 验签 secret（与 identity-service 的 IDENTITY_ACCESS_TOKEN_SECRET 同值）。
+      EDGE_ACCESS_TOKEN_SECRET: ${IDENTITY_ACCESS_TOKEN_SECRET:-}
       DATABASE_URL: ${DATABASE_URL:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-y1.sid}

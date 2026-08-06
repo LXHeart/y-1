@@ -45,13 +45,16 @@ public class InternalAssertionFilter implements WebFilter {
     private final IdentityAssertionSigner signer;
     private final IdentityAssertionProperties properties;
     private final UpstreamResolver upstreamResolver;
+    private final org.springframework.beans.factory.ObjectProvider<AccessTokenIdentityResolver> accessTokenResolverProvider;
 
     public InternalAssertionFilter(SessionIdentityResolver resolver, IdentityAssertionSigner signer,
-                                   IdentityAssertionProperties properties, UpstreamResolver upstreamResolver) {
+                                   IdentityAssertionProperties properties, UpstreamResolver upstreamResolver,
+                                   org.springframework.beans.factory.ObjectProvider<AccessTokenIdentityResolver> accessTokenResolverProvider) {
         this.resolver = resolver;
         this.signer = signer;
         this.properties = properties;
         this.upstreamResolver = upstreamResolver;
+        this.accessTokenResolverProvider = accessTokenResolverProvider;
     }
 
     @Override
@@ -65,11 +68,34 @@ public class InternalAssertionFilter implements WebFilter {
         if (!upstreamResolver.isInternalUpstream(method, path)) {
             requestMono = Mono.just(stripInternalHeaders(request));
         } else {
-            requestMono = resolver.resolve(request)
+            requestMono = resolveIdentity(request)
                     .map(identity -> stripAndSign(request, identity, method, path))
                     .defaultIfEmpty(stripInternalHeaders(request));
         }
         return requestMono.flatMap(mutated -> chain.filter(exchange.mutate().request(mutated).build()));
+    }
+
+    /**
+     * 解析当前请求身份：Bearer access token 优先（移动端），cookie session 回退（Web 端）。
+     * 两者都失败 → empty（匿名放行）。
+     *
+     * <p>refresh/revoke 端点跳过 Bearer（它们用 refresh_token 作 Bearer，格式不同于 access token，
+     * identity 侧自鉴权）。
+     */
+    private Mono<ResolvedIdentity> resolveIdentity(ServerHttpRequest request) {
+        String path = request.getURI().getPath();
+        AccessTokenIdentityResolver accessTokenResolver = accessTokenResolverProvider.getIfAvailable();
+        if (accessTokenResolver != null
+                && request.getHeaders().getFirst("Authorization") != null
+                && !isAuthEndpoint(path)) {
+            return accessTokenResolver.resolve(request)
+                    .switchIfEmpty(Mono.defer(() -> resolver.resolve(request)));
+        }
+        return resolver.resolve(request);
+    }
+
+    private static boolean isAuthEndpoint(String path) {
+        return "/api/auth/refresh".equals(path) || "/api/auth/revoke".equals(path);
     }
 
     /** 剥离 denylist 头（防御纵深：清掉客户端伪造的内部身份头）。 */
@@ -130,13 +156,17 @@ public class InternalAssertionFilter implements WebFilter {
      */
     private IdentityAssertion buildBaseAssertion(ResolvedIdentity identity, ServerHttpRequest request) {
         Instant now = Instant.now();
+        // authMethod：移动端 Bearer → access-token；Web cookie → cookie-session
+        String authMethod = request.getHeaders().getFirst("Authorization") != null
+                && !isAuthEndpoint(request.getURI().getPath())
+                ? "access-token" : "cookie-session";
         return new IdentityAssertion(
                 identity.accountId(),
                 identity.activeIdentityType(),
                 identity.sessionToken(),
                 identity.organizationId(),
                 identity.permissionTier(),
-                "cookie-session",
+                authMethod,
                 // 认证强度与重认证时刻取自 identity_session（V7）——此前硬编码 level1/null，
                 // 导致 trust 客服终审的 MFA 近期性校验恒失败（403）。
                 identity.authStrength() == null ? "level1" : identity.authStrength(),
