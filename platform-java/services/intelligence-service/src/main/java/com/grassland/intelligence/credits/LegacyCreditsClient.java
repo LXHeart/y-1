@@ -3,8 +3,6 @@ package com.grassland.intelligence.credits;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.Map;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
@@ -22,14 +20,11 @@ import reactor.core.publisher.Mono;
  * <p><b>回滚实现</b>：积分存储已迁入 finance（{@link FinanceCreditsClient} 默认）。仅当
  * {@code credits.client.impl=legacy} 时装配，用于 finance 积分域异常时的应急回退（同时需
  * {@code EDGE_ROUTE_CREDITS_FINANCE=false} 让读端也回 legacy）。
- * ⚠️ 已知缺陷：{@code refund} 透传原始 consume operationId，与 consume 行 operation_id 撞车被 dedup 吞掉——
- * 回滚期间退款不生效；finance 路径已在 {@link FinanceCreditsClient} 派生 {@code refund:<consumeId>} 修正。
+ * 退款与 finance 路径使用相同的 {@code refund:<consumeId>} 幂等键。
  */
 @Component
 @ConditionalOnProperty(name = "credits.client.impl", havingValue = "legacy")
 public class LegacyCreditsClient implements CreditsClient {
-
-    private static final Logger LOG = LoggerFactory.getLogger(LegacyCreditsClient.class);
 
     private final WebClient webClient;
     private final String consumePath;
@@ -49,7 +44,12 @@ public class LegacyCreditsClient implements CreditsClient {
 
     @Override
     public Mono<CreditCharge> consume(String accountId, CreditFeature feature) {
-        CreditCharge charge = new CreditCharge(accountId, feature, UUID.randomUUID().toString());
+        return consume(accountId, feature, UUID.randomUUID().toString());
+    }
+
+    @Override
+    public Mono<CreditCharge> consume(String accountId, CreditFeature feature, String operationId) {
+        CreditCharge charge = new CreditCharge(accountId, feature, operationId);
 
         return webClient.post().uri(consumePath)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -76,15 +76,22 @@ public class LegacyCreditsClient implements CreditsClient {
                 .bodyValue(Map.of(
                         "accountId", charge.accountId(),
                         "feature", charge.feature().key(),
-                        "operationId", charge.operationId(),
+                        "operationId", "refund:" + charge.operationId(),
                         "note", note))
                 .retrieve()
-                .bodyToMono(Void.class)
-                // 退款失败不能覆盖用户看到的原始上游错误；legacy 侧幂等，安全重投
-                .onErrorResume(error -> {
-                    LOG.error("Credit refund failed accountId={} feature={} operationId={}",
-                            charge.accountId(), charge.feature().key(), charge.operationId(), error);
-                    return Mono.empty();
-                });
+                .onStatus(s -> s.is4xxClientError(),
+                        r -> Mono.error(new IntelligenceException(400, "积分退款请求无效")))
+                .onStatus(s -> s.is5xxServerError(),
+                        r -> Mono.error(new IntelligenceException(502, "积分服务暂不可用")))
+                .bodyToMono(Void.class);
+    }
+
+    @Override
+    public Mono<Void> compensate(CreditCharge charge, String note) {
+        // Replaying the original idempotent consume serializes behind any in-flight writer.
+        // Once it returns, the charge is known to exist and refund:<operationId> is safe.
+        return consume(charge.accountId(), charge.feature(), charge.operationId())
+                .then(refund(charge, note))
+                .onErrorResume(InsufficientCreditsException.class, error -> Mono.empty());
     }
 }

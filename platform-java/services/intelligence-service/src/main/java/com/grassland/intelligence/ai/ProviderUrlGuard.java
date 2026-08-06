@@ -3,6 +3,7 @@ package com.grassland.intelligence.ai;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -16,8 +17,8 @@ import java.util.regex.Pattern;
  *       纯字面解析，<b>不触发 DNS</b>，启动期/离线/测试皆安全。</li>
  * </ul>
  *
- * <p>域名视为可信（不做 DNS 解析）——攻击面限于 env 注入。用户可传 URL 的 BYOK 场景再补
- * pinned-DNS + {@code TRUSTED_PUBLIC_API_SUFFIXES} 受信后缀白名单（legacy 全貌），留后续 slice（卡 D-11）。
+ * <p>{@link #validate(String)} 保留给受信的平台配置；用户 BYOK 必须走严格的保存/执行校验，
+ * 解析全部 DNS 地址并配合固定地址连接，拒绝私网目标与 DNS rebinding。
  */
 public final class ProviderUrlGuard {
 
@@ -53,6 +54,95 @@ public final class ProviderUrlGuard {
         return url;
     }
 
+    /** 保存用户 BYOK provider 时执行严格校验，并固定当前全部公网 DNS 地址。 */
+    public static URI validateByokForStorage(String raw, DnsPinningResolver resolver) {
+        URI url = validateByokStructure(raw);
+        Set<String> addresses = resolvePublicAddresses(url.getHost(), resolver);
+        resolver.pinDomain(url.getHost(), addresses);
+        return url;
+    }
+
+    /** 执行 BYOK provider 请求前重新校验全部地址与已固定集合完全一致。 */
+    public static URI validateByokForExecution(String raw, DnsPinningResolver resolver) {
+        URI url = validateByokStructure(raw);
+        Set<String> addresses = resolvePublicAddresses(url.getHost(), resolver);
+        Set<String> pinned = resolver.getPinnedIps(url.getHost());
+        if (pinned.isEmpty()) {
+            // 进程重启后内存 pin 会丢失；首次执行以当前全部公网地址重新建立 pin。
+            resolver.pinDomain(url.getHost(), addresses);
+        } else if (!pinned.equals(addresses)) {
+            throw new IllegalArgumentException("AI base-url DNS 地址与固定记录不一致，已拒绝");
+        }
+        return url;
+    }
+
+    private static URI validateByokStructure(String raw) {
+        URI url = parse(raw);
+        if (!"https".equalsIgnoreCase(url.getScheme())) {
+            throw new IllegalArgumentException("BYOK AI base-url 必须使用 HTTPS");
+        }
+        if (url.getUserInfo() != null && !url.getUserInfo().isBlank()) {
+            throw new IllegalArgumentException("AI base-url 不得含凭据");
+        }
+        String host = normalizeHost(url.getHost());
+        if (host.isBlank()) {
+            throw new IllegalArgumentException("AI base-url 缺主机");
+        }
+        if ("localhost".equals(host) || host.endsWith(".localhost")) {
+            throw new IllegalArgumentException("AI base-url 指向内网/私有/环回地址，已拒绝");
+        }
+        return url;
+    }
+
+    private static Set<String> resolvePublicAddresses(String host, DnsPinningResolver resolver) {
+        try {
+            String normalizedHost = normalizeHost(host);
+            Set<String> addresses = isIpLiteral(normalizedHost)
+                    ? Set.of(InetAddress.getByName(normalizedHost).getHostAddress())
+                    : resolver.resolveAll(normalizedHost);
+            if (addresses.isEmpty()) {
+                throw new IllegalArgumentException("AI base-url DNS 未返回地址，已拒绝");
+            }
+            for (String address : addresses) {
+                InetAddress parsed = InetAddress.getByName(address);
+                if (isPrivateAddress(parsed)) {
+                    throw new IllegalArgumentException("AI base-url 指向内网/私有/环回地址，已拒绝");
+                }
+            }
+            return addresses;
+        } catch (UnknownHostException e) {
+            throw new IllegalArgumentException("AI base-url DNS 解析失败，已拒绝", e);
+        }
+    }
+
+    private static boolean isIpLiteral(String host) {
+        return IPV4.matcher(host).matches() || host.indexOf(':') >= 0;
+    }
+
+    private static URI parse(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("AI base-url 格式非法");
+        }
+        try {
+            return URI.create(raw);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("AI base-url 格式非法");
+        }
+    }
+
+    private static String normalizeHost(String host) {
+        if (host == null) {
+            return "";
+        }
+        String normalized = host.toLowerCase(Locale.ROOT);
+        if (normalized.endsWith(".")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized.startsWith("[") && normalized.endsWith("]")
+                ? normalized.substring(1, normalized.length() - 1)
+                : normalized;
+    }
+
     /**
      * 仅对 IP 字面量做私有地址判定（字面解析，无 DNS——离线/启动期安全）。域名返回 false（视为可信平台配置）。
      * IPv6 字面量在 URI 中以 {@code [::1]} 形式出现，先剥方括号；其含 {@code :} 即判为字面量。
@@ -77,11 +167,22 @@ public final class ProviderUrlGuard {
         }
     }
 
-    private static boolean isPrivateAddress(InetAddress a) {
-        return a.isAnyLocalAddress()      // 0.0.0.0 / ::
+    static boolean isPrivateAddress(InetAddress a) {
+        if (a.isAnyLocalAddress()         // 0.0.0.0 / ::
                 || a.isLoopbackAddress()  // 127.0.0.0/8 / ::1
                 || a.isLinkLocalAddress() // 169.254.0.0/16 / fe80::/10
                 || a.isSiteLocalAddress() // 10/8、172.16/12、192.168/16
-                || a.isMulticastAddress();
+                || a.isMulticastAddress()) {
+            return true;
+        }
+        byte[] bytes = a.getAddress();
+        if (bytes.length == 4) {
+            int first = Byte.toUnsignedInt(bytes[0]);
+            int second = Byte.toUnsignedInt(bytes[1]);
+            return first == 0
+                    || (first == 100 && second >= 64 && second <= 127) // carrier-grade NAT
+                    || (first == 198 && (second == 18 || second == 19)); // benchmark network
+        }
+        return bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc; // IPv6 unique-local fc00::/7
     }
 }

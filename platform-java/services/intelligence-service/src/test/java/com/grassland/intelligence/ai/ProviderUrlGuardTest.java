@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
+import java.net.InetAddress;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -57,5 +58,56 @@ class ProviderUrlGuardTest {
     @DisplayName("IPv6 环回字面量拒绝")
     void rejectsIpv6Loopback() {
         assertThatThrownBy(() -> ProviderUrlGuard.validate("http://[::1]")).hasMessageContaining("已拒绝");
+    }
+
+    @Test
+    @DisplayName("BYOK 只允许 HTTPS 且拒绝 localhost 与 metadata")
+    void strictByokRejectsHttpLocalhostAndMetadata() throws Exception {
+        DnsPinningResolver resolver = DnsPinningResolver.create(host -> new InetAddress[]{
+                InetAddress.getByName("8.8.8.8")
+        });
+
+        assertThatThrownBy(() -> ProviderUrlGuard.validateByokForStorage("http://api.example.com", resolver))
+                .hasMessageContaining("HTTPS");
+        assertThatThrownBy(() -> ProviderUrlGuard.validateByokForStorage("https://localhost", resolver))
+                .hasMessageContaining("已拒绝");
+        assertThatThrownBy(() -> ProviderUrlGuard.validateByokForStorage("https://169.254.169.254", resolver))
+                .hasMessageContaining("已拒绝");
+        assertThatThrownBy(() -> ProviderUrlGuard.validateByokForStorage(
+                "https://user:pass@api.example.com", resolver)).hasMessageContaining("凭据");
+    }
+
+    @Test
+    @DisplayName("BYOK 域名任一解析地址非公网即拒绝")
+    void strictByokRejectsMixedPublicAndPrivateDnsAnswers() throws Exception {
+        DnsPinningResolver resolver = DnsPinningResolver.create(host -> new InetAddress[]{
+                InetAddress.getByName("8.8.8.8"),
+                InetAddress.getByName("10.0.0.2")
+        });
+
+        assertThatThrownBy(() -> ProviderUrlGuard.validateByokForStorage(
+                "https://api.example.com", resolver)).hasMessageContaining("已拒绝");
+        assertThat(resolver.getPinnedIps("api.example.com")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("BYOK 公网域名保存时固定全部地址，执行时校验 pin")
+    void strictByokPinsPublicDnsAndRevalidatesAtExecution() throws Exception {
+        var answers = new java.util.concurrent.atomic.AtomicReference<>(new InetAddress[]{
+                InetAddress.getByName("8.8.8.8"),
+                InetAddress.getByName("1.1.1.1")
+        });
+        DnsPinningResolver resolver = DnsPinningResolver.create(host -> answers.get());
+
+        assertThat(ProviderUrlGuard.validateByokForStorage("https://api.example.com", resolver))
+                .isEqualTo(URI.create("https://api.example.com"));
+        assertThat(resolver.getPinnedIps("api.example.com"))
+                .containsExactlyInAnyOrder("8.8.8.8", "1.1.1.1");
+        assertThat(ProviderUrlGuard.validateByokForExecution("https://api.example.com", resolver))
+                .isEqualTo(URI.create("https://api.example.com"));
+
+        answers.set(new InetAddress[]{InetAddress.getByName("8.8.8.8")});
+        assertThatThrownBy(() -> ProviderUrlGuard.validateByokForExecution(
+                "https://api.example.com", resolver)).hasMessageContaining("DNS");
     }
 }

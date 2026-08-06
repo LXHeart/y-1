@@ -18,9 +18,19 @@ public interface CreditsClient {
      */
     Mono<CreditCharge> consume(String accountId, CreditFeature feature);
 
-    /**
-     * 退回一次扣减。幂等——重复调用只退一次（legacy 侧按 operationId 去重）。
-     * 退款自身失败不应覆盖原始上游错误，故实现返回空 Mono 而不向外抛。
-     */
+    /** Uses a caller-owned idempotency key when the surrounding operation is already durable. */
+    default Mono<CreditCharge> consume(String accountId, CreditFeature feature, String operationId) {
+        return consume(accountId, feature);
+    }
+
+    /** 退回一次已确认扣减。幂等；失败必须传播给持久化补偿 worker。 */
     Mono<Void> refund(CreditCharge charge, String note);
+
+    /**
+     * Reconcile and compensate a consume whose HTTP response may have been lost.
+     * Implementations must prevent compensation from racing with a late consume.
+     */
+    default Mono<Void> compensate(CreditCharge charge, String note) {
+        return refund(charge, note);
+    }
 }

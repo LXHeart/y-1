@@ -1,20 +1,48 @@
 package com.grassland.intelligence.ai.run;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.http.Fault;
+import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.ai.DnsPinningResolver;
+import com.grassland.intelligence.credits.CreditFeature;
+import com.grassland.intelligence.credits.CreditsClient;
+import java.net.InetAddress;
+import java.time.Duration;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.web.server.MockServerWebExchange;
+import reactor.core.publisher.Mono;
 
 /**
  * 控制面 Run 执行闭环（GL-P3-AI-001）：平台 run（扣分/结算/事件）、平台 run 失败退款、
@@ -24,6 +52,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * KEK 注入使 BYOK 密钥创建 + 运行时解密可用（与 {@code AiProviderKeyControllerIT} 同值）。
  */
 @DisplayName("AiRunController (控制面执行闭环)")
+@Import(AiRunControllerIT.DnsTestConfiguration.class)
 class AiRunControllerIT extends IntelligenceItSupport {
 
     private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
@@ -36,6 +65,27 @@ class AiRunControllerIT extends IntelligenceItSupport {
     static {
         CREDITS.start();
     }
+
+    @Autowired
+    EnvelopeEncryption encryption;
+
+    @Autowired
+    DnsPinningResolver dnsPinningResolver;
+
+    @MockitoSpyBean
+    ModelBudgetService budgetService;
+
+    @MockitoSpyBean
+    TextCompletionClient textClient;
+
+    @MockitoSpyBean
+    AiRunRepository runRepository;
+
+    @MockitoSpyBean
+    CreditsClient creditsClient;
+
+    @Autowired
+    AiRunController runController;
 
     @DynamicPropertySource
     static void extraProps(DynamicPropertyRegistry r) {
@@ -51,15 +101,22 @@ class AiRunControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void clean() {
         db.sql("DELETE FROM intelligence_outbox").then().block();
+        db.sql("DELETE FROM ai_credit_compensation").then().block();
         db.sql("DELETE FROM ai_run").then().block();
         db.sql("DELETE FROM ai_provider_key").then().block();
         db.sql("DELETE FROM ai_model_budget").then().block();
+        db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
         // 自种子平台 text/primary 配置指向 QWEN（不依赖启动期 seeder，保证跨测试类隔离）
-        db.sql("INSERT INTO platform_model_config(capability, model_role, provider, model, base_url, "
-                + "health_status, enabled, version) VALUES ('text','primary','qwen','qwen-plus',:baseUrl,'healthy',true,1)")
-                .bind("baseUrl", QWEN.baseUrl()).then().block();
+        String platformConfigId = db.sql("INSERT INTO platform_model_config(capability, model_role, provider, model, "
+                        + "base_url, max_concurrency, health_status, enabled, version) "
+                        + "VALUES ('text','primary','qwen','qwen-plus',:baseUrl,1,'healthy',true,1) RETURNING id::text")
+                .bind("baseUrl", QWEN.baseUrl())
+                .map((row, meta) -> row.get("id", String.class)).one().block();
+        db.sql("INSERT INTO platform_model_concurrency_slot(config_id, slot_no) VALUES (CAST(:id AS uuid), 1)")
+                .bind("id", platformConfigId).then().block();
         CREDITS.resetAll();
+        QWEN.resetRequests();
         stubCreditsOk();
     }
 
@@ -71,7 +128,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","prompt":"写一句问候","maxTokens":128}
+                        {"capability":"text","prompt":"写一句问候","maxTokens":128,"allowFallback":true}
                         """)
                 .exchange()
                 .expectStatus().isOk()
@@ -90,8 +147,11 @@ class AiRunControllerIT extends IntelligenceItSupport {
         Long completed = db.sql("SELECT COUNT(*) AS n FROM ai_run WHERE status='completed' AND input_tokens=10 AND output_tokens=5")
                 .map((r, m) -> r.get("n", Long.class)).one().block();
         assertThat(completed).isEqualTo(1);
+        String operationId = db.sql("SELECT operation_id::text AS operation_id FROM ai_run LIMIT 1")
+                .map((row, meta) -> row.get("operation_id", String.class)).one().block();
         // 平台扣分一次
-        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume"))
+                .withRequestBody(matchingJsonPath("$.operationId", equalTo(operationId))));
         CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
         // outbox AiRunCompleted
         Long events = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type='AiRunCompleted'")
@@ -108,7 +168,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","prompt":"x","maxTokens":64}
+                        {"capability":"text","prompt":"x","maxTokens":64,"allowFallback":true}
                         """)
                 .exchange()
                 .expectStatus().is5xxServerError();
@@ -116,24 +176,152 @@ class AiRunControllerIT extends IntelligenceItSupport {
         Long failed = db.sql("SELECT COUNT(*) AS n FROM ai_run WHERE status='failed'")
                 .map((r, m) -> r.get("n", Long.class)).one().block();
         assertThat(failed).isEqualTo(1);
+        String operationId = db.sql("SELECT operation_id::text AS operation_id FROM ai_run LIMIT 1")
+                .map((row, meta) -> row.get("operation_id", String.class)).one().block();
         CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume")));
-        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/refund")));  // 失败退款（GL-P0-BILL-002）
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations"))
+                .withRequestBody(matchingJsonPath("$.consumeOperationId", equalTo(operationId))));
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
         Long events = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type='AiRunFailed'")
                 .map((r, m) -> r.get("n", Long.class)).one().block();
         assertThat(events).isEqualTo(1);
     }
 
     @Test
+    @DisplayName("consume 响应丢失会持久化补偿意图并释放预算")
+    void consumeResponseLossPersistsCompensationIntent() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume"))
+                .atPriority(1)
+                .willReturn(aResponse().withFault(Fault.EMPTY_RESPONSE)));
+        CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume-compensations"))
+                .atPriority(1)
+                .willReturn(aResponse().withStatus(500)));
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().is5xxServerError();
+
+        Long failed = db.sql("SELECT COUNT(*) AS n FROM ai_run WHERE status='failed'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        Long pending = db.sql("SELECT COUNT(*) AS n FROM ai_credit_compensation "
+                        + "WHERE status='pending' AND attempt_count=1 AND last_error_code IS NOT NULL")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        Long reserved = db.sql("SELECT current_daily_tokens FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG).map((row, meta) -> row.get("current_daily_tokens", Long.class)).one().block();
+        assertThat(failed).isEqualTo(1);
+        assertThat(pending).isEqualTo(1);
+        assertThat(reserved).isZero();
+        QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+    }
+
+    @Test
+    @DisplayName("HTTP 取消会收尾 Run、释放预算与并发 lease，但不退积分")
+    void clientCancellationFinalizesRunAndReleasesBudget() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        doReturn(Mono.never()).when(textClient)
+                .complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
+        var request = MockServerHttpRequest.post("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .build();
+        var exchange = MockServerWebExchange.from(request);
+
+        var subscription = runController.execute(
+                        new ExecuteRunRequest("text", "x", 16, true), exchange)
+                .subscribe(ignored -> { }, ignored -> { });
+        awaitRunStatus("running");
+        subscription.dispose();
+        awaitRunStatus("cancelled");
+
+        Long reserved = db.sql("SELECT current_daily_tokens FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG).map((row, meta) -> row.get("current_daily_tokens", Long.class)).one().block();
+        Long cancelledEvents = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type='AiRunCancelled'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        Long leasedSlots = db.sql("SELECT COUNT(*) AS n FROM platform_model_concurrency_slot WHERE lease_token IS NOT NULL")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(reserved).isZero();
+        assertThat(cancelledEvents).isEqualTo(1);
+        assertThat(leasedSlots).isZero();
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
+    }
+
+    @Test
+    @DisplayName("扣分响应前 HTTP 取消会收尾 Run、释放预算并补偿未知扣费")
+    void cancellationDuringCreditConsumeFinalizesPreparation() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        doReturn(Mono.never()).when(creditsClient)
+                .consume(eq(ORG_ACCOUNT), eq(CreditFeature.AI_RUN_TEXT), anyString());
+        var request = MockServerHttpRequest.post("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .build();
+        var exchange = MockServerWebExchange.from(request);
+
+        var subscription = runController.execute(
+                        new ExecuteRunRequest("text", "x", 16, true), exchange)
+                .subscribe(ignored -> { }, ignored -> { });
+        awaitRunStatus("running");
+        subscription.dispose();
+        awaitRunStatus("cancelled");
+
+        Long reserved = db.sql("SELECT current_daily_tokens FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG).map((row, meta) -> row.get("current_daily_tokens", Long.class)).one().block();
+        Long cancelledEvents = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type='AiRunCancelled'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(reserved).isZero();
+        assertThat(cancelledEvents).isEqualTo(1);
+        QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+        awaitCreditRequest("/internal/credits/consume-compensations");
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
+    }
+
+    @Test
+    @DisplayName("Run 创建期间 HTTP 取消会回滚预算预留")
+    void cancellationDuringRunCreationRollsBackReservation() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        doReturn(Mono.never()).when(runRepository).create(any(AiRun.class));
+        var request = MockServerHttpRequest.post("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .build();
+        var exchange = MockServerWebExchange.from(request);
+
+        var subscription = runController.execute(
+                        new ExecuteRunRequest("text", "x", 16, true), exchange)
+                .subscribe(ignored -> { }, ignored -> { });
+        verify(runRepository, timeout(5000)).create(any(AiRun.class));
+        subscription.dispose();
+
+        Long reserved = db.sql("SELECT current_daily_tokens FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG).map((row, meta) -> row.get("current_daily_tokens", Long.class)).one().block();
+        assertThat(reserved).isZero();
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+    }
+
+    @Test
     @DisplayName("BYOK run：解密密钥→调用 provider；actualCents=0；不扣平台积分")
     void byokRunDecryptsAndCalls() {
-        stubQwenOk();
-        // 注册个人 BYOK 密钥（baseUrl=QWEN，provider 调用时用解密后的 bearer）
+        doReturn(Mono.just(new TextCompletionResult("hello", 10, 5)))
+                .when(textClient).complete(
+                        eq("https://api.example.com"), eq("sk-test-byok-secret"), eq("byok-model"),
+                        eq("x"), eq(32), eq(true));
+        // 注册个人 BYOK 密钥；provider 调用通过 spy 验证解密后的 bearer 参数。
         client().post().uri("/api/ai/keys")
                 .header("X-Grassland-Identity", sign(BYOK_ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","provider":"openai-compatible","baseUrl":"%s","model":"byok-model","apiKey":"sk-test-byok-secret"}
-                        """.formatted(QWEN.baseUrl()))
+                        {"capability":"text","provider":"openai-compatible","baseUrl":"https://api.example.com","model":"byok-model","apiKey":"sk-test-byok-secret"}
+                        """)
                 .exchange().expectStatus().isCreated();
 
         client().post().uri("/api/ai/runs")
@@ -174,6 +362,171 @@ class AiRunControllerIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("未声明 allowFallback 默认拒绝平台模型，不扣分、不落 Run")
+    void omittedFallbackDefaultsToDenied() {
+        stubQwenOk();
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16}
+                        """)
+                .exchange()
+                .expectStatus().isForbidden();
+
+        Long runs = db.sql("SELECT COUNT(*) AS n FROM ai_run").map((r, m) -> r.get("n", Long.class)).one().block();
+        assertThat(runs).isEqualTo(0);
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("当前同步入口拒绝非 text capability")
+    void nonTextCapabilityRejected() {
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"image_generation","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        Long runs = db.sql("SELECT COUNT(*) AS n FROM ai_run")
+                .map((r, m) -> r.get("n", Long.class)).one().block();
+        assertThat(runs).isZero();
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("provider URL 同步校验失败也会标记 Run 失败并退款")
+    void synchronousProviderValidationFailureRefundsAndMarksRunFailed() {
+        doThrow(new IllegalArgumentException("synchronous provider validation failure"))
+                .when(textClient).complete(
+                        anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        Long failed = db.sql("SELECT COUNT(*) AS n FROM ai_run WHERE status = 'failed'")
+                .map((r, m) -> r.get("n", Long.class)).one().block();
+        assertThat(failed).isEqualTo(1);
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+        Long events = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type = 'AiRunFailed'")
+                .map((r, m) -> r.get("n", Long.class)).one().block();
+        assertThat(events).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("BYOK 在预算检查中估算为 0 分")
+    void byokUsesZeroEstimatedCents() {
+        doReturn(Mono.just(new TextCompletionResult("hello", 10, 5)))
+                .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_cents_per_run, enabled) "
+                        + "VALUES (:org, 'text', 'platform', 0, true)")
+                .bind("org", ORG).then().block();
+        db.sql("""
+                INSERT INTO ai_provider_key(owner_account_id, capability, provider, base_url, model,
+                    encrypted_key, key_version, masked_hint, enabled)
+                VALUES (:owner, 'text', 'openai-compatible', 'https://api.example.com', 'unpriced-byok',
+                    :encrypted, 'v1', 'sk-***', true)
+                """)
+                .bind("owner", ORG_ACCOUNT)
+                .bind("encrypted", encryption.encrypt("sk-byok-secret"))
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16}
+                        """)
+                .exchange()
+                .expectStatus().isOk();
+
+        Integer reserved = db.sql("SELECT budget_cents FROM ai_run WHERE account_id = :account")
+                .bind("account", ORG_ACCOUNT)
+                .map((r, m) -> r.get("budget_cents", Integer.class)).one().block();
+        assertThat(reserved).isZero();
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("平台执行只使用 platform 预算，不受同组织 BYOK 预算影响")
+    void platformRunUsesPlatformBudget() {
+        stubQwenOk();
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_per_run, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1, true), "
+                + "(:org, 'text', 'openai-compatible', 1000, true)")
+                .bind("org", ORG).then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().isEqualTo(402);
+
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("BYOK 执行只使用解析后的 provider 预算")
+    void byokRunUsesResolvedProviderBudget() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_per_run, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true), "
+                + "(:org, 'text', 'openai-compatible', 1, true)")
+                .bind("org", ORG).then().block();
+        db.sql("""
+                INSERT INTO ai_provider_key(owner_account_id, capability, provider, base_url, model,
+                    encrypted_key, key_version, masked_hint, enabled)
+                VALUES (:owner, 'text', 'openai-compatible', 'https://api.example.com', 'byok-model',
+                    :encrypted, 'v1', 'sk-***', true)
+                """)
+                .bind("owner", ORG_ACCOUNT)
+                .bind("encrypted", encryption.encrypt("sk-byok-secret"))
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16}
+                        """)
+                .exchange().expectStatus().isEqualTo(402);
+
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("无价目表的平台模型 fail-closed 且不扣积分、不落 Run")
+    void unknownPlatformModelPriceFailsClosed() {
+        db.sql("UPDATE platform_model_config SET model = 'unpriced-platform-model' WHERE enabled = true")
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange()
+                .expectStatus().isEqualTo(503);
+
+        Long runs = db.sql("SELECT COUNT(*) AS n FROM ai_run")
+                .map((r, m) -> r.get("n", Long.class)).one().block();
+        assertThat(runs).isZero();
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
     @DisplayName("组织预算超限 → 402 exceeds_run_budget")
     void budgetExceededDenied() {
         stubQwenOk();
@@ -184,12 +537,210 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","prompt":"x","maxTokens":128}
+                        {"capability":"text","prompt":"x","maxTokens":128,"allowFallback":true}
                         """)
                 .exchange()
                 .expectStatus().isEqualTo(402);
 
         CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("预算原子预留：同一余额只允许一个并发请求通过")
+    void budgetReservationIsAtomic() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 100, true)").bind("org", ORG).then().block();
+        var results = reactor.core.publisher.Flux.merge(
+                        budgetService.checkAndReserve(ORG, "text", "platform", 80, 0),
+                        budgetService.checkAndReserve(ORG, "text", "platform", 80, 0))
+                .collectList().block();
+
+        assertThat(results).hasSize(2);
+        assertThat(results.stream().filter(ModelBudgetService.BudgetCheckResult::allowed).count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("BYOK 低报 usage 不能释放服务端 token 预留，金额保持为零")
+    void byokUsageCountsTowardOrganizationTokenBudget() {
+        doReturn(Mono.just(new TextCompletionResult("hello", 10, 5)))
+                .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'openai-compatible', 1000, true)").bind("org", ORG).then().block();
+        db.sql("""
+                INSERT INTO ai_provider_key(owner_account_id, capability, provider, base_url, model,
+                    encrypted_key, key_version, masked_hint, enabled)
+                VALUES (:owner, 'text', 'openai-compatible', 'https://api.example.com', 'byok-model',
+                    :encrypted, 'v1', 'sk-***', true)
+                """)
+                .bind("owner", ORG_ACCOUNT)
+                .bind("encrypted", encryption.encrypt("sk-byok-secret"))
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":32}
+                        """)
+                .exchange().expectStatus().isOk();
+
+        var usage = db.sql("SELECT current_daily_tokens, current_daily_cents FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG)
+                .map((row, meta) -> java.util.List.of(
+                        row.get("current_daily_tokens", Long.class), row.get("current_daily_cents", Long.class)))
+                .one().block();
+        assertThat(usage).containsExactly(33L, 0L);
+    }
+
+    @Test
+    @DisplayName("预算估算包含 prompt 与最大输出 token")
+    void promptTokensCountTowardRunBudget() {
+        stubQwenOk();
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_per_run, enabled) "
+                + "VALUES (:org, 'text', 'platform', 10, true)").bind("org", ORG).then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"这是一个明显超过十个字符的提示内容","maxTokens":1,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().isEqualTo(402);
+
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("emoji 按 UTF-8 字节保守估算输入 token")
+    void emojiPromptUsesConservativeTokenEstimate() {
+        stubQwenOk();
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_per_run, enabled) "
+                + "VALUES (:org, 'text', 'platform', 2, true)").bind("org", ORG).then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"😀","maxTokens":1,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().isEqualTo(402);
+
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("预算结算失败时 Run 转 failed 且不发送 completed 事件")
+    void settlementFailureDoesNotPublishCompletedEvent() {
+        stubQwenOk();
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        doReturn(Mono.just(false)).when(budgetService)
+                .settleReservation(any(ModelBudgetService.BudgetCheckResult.class), anyLong(), anyLong());
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().is5xxServerError();
+
+        Long completedEvents = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type='AiRunCompleted'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        Long failedRuns = db.sql("SELECT COUNT(*) AS n FROM ai_run WHERE status='failed'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(completedEvents).isZero();
+        assertThat(failedRuns).isEqualTo(1);
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+    }
+
+    @Test
+    @DisplayName("Run 完成状态写入失败时不发送 completed 事件")
+    void completionStateFailureDoesNotPublishCompletedEvent() {
+        stubQwenOk();
+        doReturn(Mono.just(false)).when(runRepository)
+                .complete(any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt());
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().is5xxServerError();
+
+        Long completedEvents = db.sql("SELECT COUNT(*) AS n FROM intelligence_outbox WHERE event_type='AiRunCompleted'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        Long failedRuns = db.sql("SELECT COUNT(*) AS n FROM ai_run WHERE status='failed'")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(completedEvents).isZero();
+        assertThat(failedRuns).isEqualTo(1);
+        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+    }
+
+    @Test
+    @DisplayName("跨日释放预留不会扣减新日窗口")
+    void reservationReleaseDoesNotPolluteNextDailyWindow() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        ModelBudgetService.BudgetCheckResult reservation =
+                budgetService.checkAndReserve(ORG, "text", "platform", 20, 4).block();
+        db.sql("UPDATE ai_model_budget SET current_daily_tokens=7, current_daily_cents=3, "
+                + "last_reset_date=CURRENT_DATE + 1 WHERE organization_id=:org")
+                .bind("org", ORG).then().block();
+
+        assertThat(budgetService.releaseReservation(reservation).block()).isTrue();
+
+        var daily = db.sql("SELECT current_daily_tokens, current_daily_cents FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG)
+                .map((row, meta) -> java.util.List.of(
+                        row.get("current_daily_tokens", Long.class), row.get("current_daily_cents", Long.class)))
+                .one().block();
+        assertThat(daily).containsExactly(7L, 3L);
+    }
+
+    @Test
+    @DisplayName("跨月释放预留不会扣减新月窗口")
+    void reservationReleaseDoesNotPolluteNextMonthlyWindow() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_monthly, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        ModelBudgetService.BudgetCheckResult reservation =
+                budgetService.checkAndReserve(ORG, "text", "platform", 20, 4).block();
+        db.sql("UPDATE ai_model_budget SET current_monthly_tokens=11, current_monthly_cents=5, "
+                + "last_reset_date=(CURRENT_DATE + INTERVAL '1 month')::date WHERE organization_id=:org")
+                .bind("org", ORG).then().block();
+
+        assertThat(budgetService.releaseReservation(reservation).block()).isTrue();
+
+        var monthly = db.sql("SELECT current_monthly_tokens, current_monthly_cents FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG)
+                .map((row, meta) -> java.util.List.of(
+                        row.get("current_monthly_tokens", Long.class), row.get("current_monthly_cents", Long.class)))
+                .one().block();
+        assertThat(monthly).containsExactly(11L, 5L);
+    }
+
+    @Test
+    @DisplayName("Run 落库失败时不会扣减积分并释放预算")
+    void runInsertFailureDoesNotConsumeCreditsAndReleasesBudget() {
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
+                + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
+        doReturn(Mono.error(new IllegalStateException("insert failed")))
+                .when(runRepository).create(any(AiRun.class));
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().is5xxServerError();
+
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
+        Long reserved = db.sql("SELECT current_daily_tokens FROM ai_model_budget WHERE organization_id=:org")
+                .bind("org", ORG).map((row, meta) -> row.get("current_daily_tokens", Long.class)).one().block();
+        assertThat(reserved).isZero();
     }
 
     @Test
@@ -200,7 +751,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","prompt":"x","maxTokens":32}
+                        {"capability":"text","prompt":"x","maxTokens":32,"allowFallback":true}
                         """)
                 .exchange()
                 .expectStatus().isOk();
@@ -234,10 +785,42 @@ class AiRunControllerIT extends IntelligenceItSupport {
     private void stubCreditsOk() {
         CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume")).willReturn(aResponse().withStatus(200)));
         CREDITS.stubFor(post(urlEqualTo("/internal/credits/refund")).willReturn(aResponse().withStatus(200)));
+        CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume-compensations"))
+                .willReturn(aResponse().withStatus(200)));
     }
 
     private String firstRunId() {
         return db.sql("SELECT id::text AS id FROM ai_run ORDER BY started_at DESC LIMIT 1")
                 .map((r, m) -> r.get("id", String.class)).one().block();
+    }
+
+    private void awaitRunStatus(String status) {
+        Mono.defer(() -> db.sql("SELECT status FROM ai_run ORDER BY started_at DESC LIMIT 1")
+                        .map((row, meta) -> row.get("status", String.class)).one())
+                .filter(status::equals)
+                .repeatWhenEmpty(repeats -> repeats.delayElements(Duration.ofMillis(25)))
+                .block(Duration.ofSeconds(5));
+    }
+
+    private void awaitCreditRequest(String path) {
+        Mono.fromSupplier(() -> CREDITS.findAll(postRequestedFor(urlEqualTo(path))).size())
+                .filter(count -> count > 0)
+                .repeatWhenEmpty(repeats -> repeats.delayElements(Duration.ofMillis(25)))
+                .block(Duration.ofSeconds(5));
+    }
+
+    @TestConfiguration
+    static class DnsTestConfiguration {
+        @Bean
+        @Primary
+        DnsPinningResolver deterministicDnsPinningResolver() {
+            return DnsPinningResolver.create(host -> {
+                try {
+                    return new InetAddress[]{InetAddress.getByName("8.8.8.8")};
+                } catch (java.net.UnknownHostException e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+        }
     }
 }

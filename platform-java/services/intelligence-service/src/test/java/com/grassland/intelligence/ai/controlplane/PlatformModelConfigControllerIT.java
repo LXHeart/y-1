@@ -21,6 +21,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void clean() {
         db.sql("DELETE FROM platform_model_config_history").then().block();
+        db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
     }
 
@@ -49,6 +50,60 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .expectBody().jsonPath("$.length()").isEqualTo(1);
 
         assertThat(historyCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("配置并发上限时创建对应数据库槽位")
+    void createsConcurrencySlots() {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                         "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com","maxConcurrency":2}
+                        """)
+                .exchange().expectStatus().isCreated();
+
+        Long slots = db.sql("SELECT COUNT(*) AS n FROM platform_model_concurrency_slot")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(slots).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("拒绝异常大的并发上限")
+    void rejectsExcessiveConcurrencyLimit() {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                         "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com","maxConcurrency":1001}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("平台凭据只允许发往受信 Qwen origin")
+    void rejectsUntrustedProviderDestination() {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"openai-compatible",
+                         "model":"gpt-4","baseUrl":"https://attacker.example/v1"}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                         "model":"qwen-plus","baseUrl":"https://attacker.example/v1"}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+
+        assertThat(historyCount()).isZero();
     }
 
     @Test

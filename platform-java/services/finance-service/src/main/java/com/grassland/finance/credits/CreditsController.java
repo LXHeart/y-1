@@ -3,9 +3,11 @@ package com.grassland.finance.credits;
 import com.grassland.finance.credits.CreditsRepository.CreditsAccount;
 import com.grassland.finance.credits.CreditsRepository.CreditsTransaction;
 import com.grassland.finance.credits.CreditsService.MutationResult;
+import com.grassland.finance.credits.CreditsService.CompensationResult;
 import com.grassland.finance.security.FinanceCallerResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,6 +31,9 @@ import reactor.core.publisher.Mono;
 public class CreditsController {
 
     private static final int HISTORY_LIMIT = 50;
+    private static final int MAX_FEATURE_LENGTH = 64;
+    private static final int MAX_OPERATION_ID_LENGTH = 256;
+    private static final int MAX_NOTE_LENGTH = 512;
 
     private final FinanceCallerResolver callers;
     private final CreditsService credits;
@@ -69,6 +74,13 @@ public class CreditsController {
         return credits.refund(body.accountId(), amount, body.feature(), body.note(), body.operationId())
                 .map(r -> success(Map.of("refunded", true, "balance", r.balance(),
                         "deduplicated", r.deduplicated(), "transactionId", r.transactionId())));
+    }
+
+    @PostMapping("/internal/credits/consume-compensations")
+    public Mono<Map<String, Object>> compensateConsume(@RequestBody ConsumeCompensationRequest body) {
+        return credits.compensateConsume(
+                        body.accountId(), body.feature(), body.consumeOperationId(), body.note())
+                .map(CreditsController::compensationBody);
     }
 
     @PostMapping("/internal/credits/award")
@@ -113,6 +125,13 @@ public class CreditsController {
         return body;
     }
 
+    private static Map<String, Object> compensationBody(CompensationResult result) {
+        return success(Map.of(
+                "state", result.state(),
+                "action", result.action(),
+                "balance", result.balance()));
+    }
+
     private static Map<String, Object> historyItem(CreditsTransaction txn) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", txn.id());
@@ -155,6 +174,26 @@ public class CreditsController {
         }
     }
 
+    /** Consume compensation derives the refund key server-side and never accepts an amount. */
+    public record ConsumeCompensationRequest(
+            String accountId, String feature, String consumeOperationId, String note) {
+        public ConsumeCompensationRequest {
+            if (accountId == null || accountId.isBlank()) {
+                throw new IllegalArgumentException("缺少 accountId");
+            }
+            requireCanonicalUuid(accountId, "accountId 无效");
+            if (feature == null || feature.isBlank()) {
+                throw new IllegalArgumentException("缺少 feature");
+            }
+            requireMaxLength(feature, MAX_FEATURE_LENGTH, "feature 过长");
+            if (consumeOperationId == null || consumeOperationId.isBlank()) {
+                throw new IllegalArgumentException("缺少 consumeOperationId");
+            }
+            requireMaxLength(consumeOperationId, MAX_OPERATION_ID_LENGTH, "consumeOperationId 过长");
+            requireMaxLength(note, MAX_NOTE_LENGTH, "note 过长");
+        }
+    }
+
     /** award 请求体：注册赠送 / admin 正向调整。amount 必填正整数。 */
     public record AwardRequest(String accountId, Integer amount, String note, String operationId) {
         public AwardRequest {
@@ -164,6 +203,22 @@ public class CreditsController {
             if (amount == null || amount <= 0) {
                 throw new IllegalArgumentException("赠送金额必须为正");
             }
+        }
+    }
+
+    private static void requireCanonicalUuid(String value, String message) {
+        try {
+            if (!UUID.fromString(value).toString().equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException(message);
+            }
+        } catch (IllegalArgumentException error) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private static void requireMaxLength(String value, int maxLength, String message) {
+        if (value != null && value.length() > maxLength) {
+            throw new IllegalArgumentException(message);
         }
     }
 

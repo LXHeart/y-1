@@ -51,12 +51,89 @@ public class CreditsRepository {
         if (operationId == null || operationId.isBlank()) {
             return Mono.empty();
         }
-        return db.sql("SELECT id::text, balance_after FROM credits_transaction WHERE operation_id = :op LIMIT 1")
+        return db.sql("SELECT id::text, balance_after, account_id::text, type, feature "
+                        + "FROM credits_transaction WHERE operation_id = :op LIMIT 1")
                 .bind("op", operationId)
                 .map(row -> new ExistingOperation(
                         row.get("id", String.class),
-                        row.get("balance_after", Integer.class)))
+                        row.get("balance_after", Integer.class),
+                        row.get("account_id", String.class),
+                        row.get("type", String.class),
+                        row.get("feature", String.class)))
                 .one();
+    }
+
+    /** Create-or-lock the consume fence. Must be subscribed inside the caller's transaction. */
+    public Mono<ConsumeOperation> lockOrCreateConsumeOperation(
+            String accountId, String feature, String operationId, String initialState) {
+        return db.sql("""
+                INSERT INTO credits_consume_operation(operation_id, account_id, feature, state)
+                VALUES (:operationId, CAST(:accountId AS uuid), :feature, :initialState)
+                ON CONFLICT (operation_id) DO NOTHING
+                """)
+                .bind("operationId", operationId)
+                .bind("accountId", accountId)
+                .bind("feature", feature)
+                .bind("initialState", initialState)
+                .fetch().rowsUpdated()
+                .flatMap(inserted -> db.sql("""
+                        SELECT operation_id, account_id::text, feature, state,
+                               consume_transaction_id::text, refund_transaction_id::text,
+                               consume_balance_after
+                        FROM credits_consume_operation
+                        WHERE operation_id = :operationId
+                        FOR UPDATE
+                        """)
+                        .bind("operationId", operationId)
+                        .map(row -> new ConsumeOperation(
+                                row.get("operation_id", String.class),
+                                row.get("account_id", String.class),
+                                row.get("feature", String.class),
+                                row.get("state", String.class),
+                                row.get("consume_transaction_id", String.class),
+                                row.get("refund_transaction_id", String.class),
+                                row.get("consume_balance_after", Integer.class),
+                                inserted > 0))
+                        .one());
+    }
+
+    public Mono<Boolean> markConsumeOperationConsumed(
+            String operationId, String transactionId, int balanceAfter) {
+        return db.sql("""
+                UPDATE credits_consume_operation
+                SET state = 'consumed',
+                    consume_transaction_id = CAST(:transactionId AS uuid),
+                    consume_balance_after = :balanceAfter,
+                    updated_at = now()
+                WHERE operation_id = :operationId AND state = 'open'
+                """)
+                .bind("operationId", operationId)
+                .bind("transactionId", transactionId)
+                .bind("balanceAfter", balanceAfter)
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
+    public Mono<Boolean> markConsumeOperationFenced(String operationId) {
+        return db.sql("""
+                UPDATE credits_consume_operation
+                SET state = 'compensated', updated_at = now()
+                WHERE operation_id = :operationId AND state = 'open'
+                """)
+                .bind("operationId", operationId)
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
+    public Mono<Boolean> markConsumeOperationRefunded(String operationId, String refundTransactionId) {
+        return db.sql("""
+                UPDATE credits_consume_operation
+                SET state = 'compensated',
+                    refund_transaction_id = CAST(:refundTransactionId AS uuid),
+                    updated_at = now()
+                WHERE operation_id = :operationId AND state = 'consumed'
+                """)
+                .bind("operationId", operationId)
+                .bind("refundTransactionId", refundTransactionId)
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
     }
 
     /** 条件扣 1：余额不足（或账户不存在）→ empty。镜像 legacy {@code consumeCredit} 的 UPDATE。 */
@@ -159,5 +236,21 @@ public class CreditsRepository {
                                      String feature, String note, String operationId, Instant createdAt) {}
 
     /** 幂等预检命中行。 */
-    public record ExistingOperation(String transactionId, int balanceAfter) {}
+    public record ExistingOperation(
+            String transactionId, int balanceAfter, String accountId, String type, String feature) {
+        public ExistingOperation(String transactionId, int balanceAfter) {
+            this(transactionId, balanceAfter, null, null, null);
+        }
+    }
+
+    /** Durable serialization point shared by consume and compensation. */
+    public record ConsumeOperation(
+            String operationId,
+            String accountId,
+            String feature,
+            String state,
+            String consumeTransactionId,
+            String refundTransactionId,
+            Integer consumeBalanceAfter,
+            boolean created) {}
 }

@@ -3,6 +3,7 @@ package com.grassland.intelligence.ai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.InetAddress;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +20,34 @@ class DnsPinningResolverTest {
     @BeforeEach
     void setup() {
         resolver = DnsPinningResolver.create();
+    }
+
+    @Test
+    @DisplayName("pinDomainByDns 固定解析到的全部地址")
+    void pinDomainByDnsPinsEveryResolvedAddress() throws Exception {
+        resolver = DnsPinningResolver.create(host -> new InetAddress[]{
+                InetAddress.getByName("8.8.8.8"),
+                InetAddress.getByName("1.1.1.1")
+        });
+
+        assertThat(resolver.pinDomainByDns("api.example.com")).isTrue();
+        assertThat(resolver.getPinnedIps("api.example.com"))
+                .containsExactlyInAnyOrder("8.8.8.8", "1.1.1.1");
+    }
+
+    @Test
+    @DisplayName("运行时 DNS 地址集合变化时拒绝目标")
+    void rejectsChangedDnsAddressSet() throws Exception {
+        var answers = new java.util.concurrent.atomic.AtomicReference<>(new InetAddress[]{
+                InetAddress.getByName("8.8.8.8"),
+                InetAddress.getByName("1.1.1.1")
+        });
+        resolver = DnsPinningResolver.create(host -> answers.get());
+        assertThat(resolver.pinDomainByDns("api.example.com")).isTrue();
+
+        answers.set(new InetAddress[]{InetAddress.getByName("8.8.8.8")});
+
+        assertThat(resolver.isSafeTarget("https://api.example.com/v1")).isFalse();
     }
 
     @Test

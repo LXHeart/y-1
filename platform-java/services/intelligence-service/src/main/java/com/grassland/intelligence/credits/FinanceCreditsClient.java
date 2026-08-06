@@ -3,8 +3,7 @@ package com.grassland.intelligence.credits;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.Map;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
@@ -28,26 +27,38 @@ import reactor.core.publisher.Mono;
 @ConditionalOnProperty(name = "credits.client.impl", havingValue = "finance", matchIfMissing = true)
 public class FinanceCreditsClient implements CreditsClient {
 
-    private static final Logger LOG = LoggerFactory.getLogger(FinanceCreditsClient.class);
-
     private final WebClient webClient;
     private final String consumePath;
     private final String refundPath;
+    private final String compensationPath;
     private final String internalKey;
 
+    @Autowired
     public FinanceCreditsClient(@Value("${credits.finance.base-url:http://finance-service:8084}") String baseUrl,
                                 @Value("${credits.finance.consume-path:/internal/credits/consume}") String consumePath,
                                 @Value("${credits.finance.refund-path:/internal/credits/refund}") String refundPath,
+                                @Value("${credits.finance.compensation-path:/internal/credits/consume-compensations}")
+                                String compensationPath,
                                 @Value("${credits.finance.internal-key:}") String internalKey) {
         this.webClient = WebClient.builder().baseUrl(baseUrl).build();
         this.consumePath = consumePath;
         this.refundPath = refundPath;
+        this.compensationPath = compensationPath;
         this.internalKey = internalKey;
+    }
+
+    FinanceCreditsClient(String baseUrl, String consumePath, String refundPath, String internalKey) {
+        this(baseUrl, consumePath, refundPath, "/internal/credits/consume-compensations", internalKey);
     }
 
     @Override
     public Mono<CreditCharge> consume(String accountId, CreditFeature feature) {
-        CreditCharge charge = new CreditCharge(accountId, feature, UUID.randomUUID().toString());
+        return consume(accountId, feature, UUID.randomUUID().toString());
+    }
+
+    @Override
+    public Mono<CreditCharge> consume(String accountId, CreditFeature feature, String operationId) {
+        CreditCharge charge = new CreditCharge(accountId, feature, operationId);
 
         return webClient.post().uri(consumePath)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -77,12 +88,29 @@ public class FinanceCreditsClient implements CreditsClient {
                         "operationId", "refund:" + charge.operationId(),   // 派生退款键（修正既有 bug）
                         "note", note))
                 .retrieve()
-                .bodyToMono(Void.class)
-                // 退款失败不能覆盖用户看到的原始上游错误；finance 侧幂等，安全重投
-                .onErrorResume(error -> {
-                    LOG.error("Credit refund failed accountId={} feature={} operationId={}",
-                            charge.accountId(), charge.feature().key(), charge.operationId(), error);
-                    return Mono.empty();
-                });
+                .onStatus(s -> s.is4xxClientError(),
+                        r -> Mono.error(new IntelligenceException(400, "积分退款请求无效")))
+                .onStatus(s -> s.is5xxServerError(),
+                        r -> Mono.error(new IntelligenceException(502, "积分服务暂不可用")))
+                .bodyToMono(Void.class);
+    }
+
+    @Override
+    public Mono<Void> compensate(CreditCharge charge, String note) {
+        return webClient.post().uri(compensationPath)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Internal-Key", internalKey)
+                .bodyValue(Map.of(
+                        "accountId", charge.accountId(),
+                        "feature", charge.feature().key(),
+                        "consumeOperationId", charge.operationId(),
+                        "note", note))
+                .retrieve()
+                .onStatus(s -> s.is4xxClientError(),
+                        r -> Mono.error(new IntelligenceException(
+                                r.statusCode().value(), "积分补偿请求无效")))
+                .onStatus(s -> s.is5xxServerError(),
+                        r -> Mono.error(new IntelligenceException(502, "积分服务暂不可用")))
+                .bodyToMono(Void.class);
     }
 }

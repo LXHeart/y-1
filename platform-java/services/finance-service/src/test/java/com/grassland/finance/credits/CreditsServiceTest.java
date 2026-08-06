@@ -11,12 +11,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.finance.credits.CreditsRepository.CreditsAccount;
+import com.grassland.finance.credits.CreditsRepository.ConsumeOperation;
 import com.grassland.finance.credits.CreditsRepository.ExistingOperation;
 import com.grassland.finance.credits.CreditsService.MutationResult;
-import io.r2dbc.spi.R2dbcNonTransientException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -45,10 +44,12 @@ class CreditsServiceTest {
     @Test
     void consumeUpdatesBalanceAndInsertsConsumeTxn() {
         String acct = "acct-1";
-        when(repo.findOperation("op-1")).thenReturn(Mono.empty());
+        when(repo.lockOrCreateConsumeOperation(acct, "comedy_generation", "op-1", "open"))
+                .thenReturn(Mono.just(operation("op-1", acct, "comedy_generation", "open", null, null, true)));
         when(repo.consumeOne(acct)).thenReturn(Mono.just(new CreditsAccount(acct, 4, 5, 1)));
         when(repo.insertTransaction(eq(acct), eq(-1), eq(4), eq("consume"), eq("comedy_generation"), eq(null), eq("op-1")))
                 .thenReturn(Mono.just("txn-1"));
+        when(repo.markConsumeOperationConsumed("op-1", "txn-1", 4)).thenReturn(Mono.just(true));
 
         StepVerifier.create(service.consume(acct, "comedy_generation", "op-1"))
                 .assertNext(r -> {
@@ -61,7 +62,9 @@ class CreditsServiceTest {
     @Test
     void consumeDeduplicatesWhenOperationIdExists() {
         String acct = "acct-2";
-        when(repo.findOperation("op-2")).thenReturn(Mono.just(new ExistingOperation("txn-prev", 3)));
+        when(repo.lockOrCreateConsumeOperation(acct, "article_generation", "op-2", "open"))
+                .thenReturn(Mono.just(operation(
+                        "op-2", acct, "article_generation", "consumed", "txn-prev", 3, false)));
 
         StepVerifier.create(service.consume(acct, "article_generation", "op-2"))
                 .assertNext(r -> {
@@ -77,7 +80,8 @@ class CreditsServiceTest {
     @Test
     void consumeIsInsufficientWhenBalanceZero() {
         String acct = "acct-3";
-        when(repo.findOperation("op-3")).thenReturn(Mono.empty());
+        when(repo.lockOrCreateConsumeOperation(acct, "video_analysis", "op-3", "open"))
+                .thenReturn(Mono.just(operation("op-3", acct, "video_analysis", "open", null, null, true)));
         when(repo.consumeOne(acct)).thenReturn(Mono.empty());   // 0 行 = 余额不足
 
         StepVerifier.create(service.consume(acct, "video_analysis", "op-3"))
@@ -87,22 +91,17 @@ class CreditsServiceTest {
     }
 
     @Test
-    void concurrentUniqueConflictReReadsWinnerAsDedup() {
-        // 预检未命中、插入时另一请求已写入同 operation_id → 23505 → 事务回滚 → 事务外重读胜者。
+    void lateConsumeIsRejectedWhenCompensationWonTheFence() {
         String acct = "acct-4";
-        when(repo.findOperation("op-4")).thenReturn(Mono.empty())
-                .thenReturn(Mono.just(new ExistingOperation("txn-winner", 2)));
-        when(repo.consumeOne(acct)).thenReturn(Mono.just(new CreditsAccount(acct, 2, 5, 3)));
-        when(repo.insertTransaction(eq(acct), eq(-1), eq(2), eq("consume"), eq("image_analysis"), eq(null), eq("op-4")))
-                .thenReturn(Mono.error(new DataIntegrityViolationException("uq",
-                        new R2dbcNonTransientException("unique violation", "23505") {})));
+        when(repo.lockOrCreateConsumeOperation(acct, "image_analysis", "op-4", "open"))
+                .thenReturn(Mono.just(operation(
+                        "op-4", acct, "image_analysis", "compensated", null, null, false)));
 
         StepVerifier.create(service.consume(acct, "image_analysis", "op-4"))
-                .assertNext(r -> {
-                    assertThat(r.deduplicated()).isTrue();
-                    assertThat(r.balance()).isEqualTo(2);
-                    assertThat(r.transactionId()).isEqualTo("txn-winner");
-                }).verifyComplete();
+                .verifyErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOfSatisfying(com.grassland.finance.security.FinanceException.class,
+                                exception -> assertThat(exception.status()).isEqualTo(409)));
+        verify(repo, never()).consumeOne(anyString());
     }
 
     @Test
@@ -131,5 +130,17 @@ class CreditsServiceTest {
         MutationResult r = service.award(acct, 3, "注册赠送", null).block();
         assertThat(r.balance()).isEqualTo(3);
         verify(repo).creditAccount(acct, 3, 3, 0);
+    }
+
+    private static ConsumeOperation operation(
+            String operationId,
+            String accountId,
+            String feature,
+            String state,
+            String consumeTransactionId,
+            Integer balanceAfter,
+            boolean created) {
+        return new ConsumeOperation(operationId, accountId, feature, state,
+                consumeTransactionId, null, balanceAfter, created);
     }
 }

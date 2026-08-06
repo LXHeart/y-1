@@ -5,6 +5,8 @@ import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.crypto.MaskedKey;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.ai.DnsPinningResolver;
+import com.grassland.intelligence.ai.ProviderUrlGuard;
 import jakarta.validation.Valid;
 import java.util.Map;
 import java.util.UUID;
@@ -23,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
- * AI Provider BYOK 密钥管理 API（GL-P3-AI-001 Phase 1）。
+ * AI Provider BYOK 密钥管理 API（GL-P3-AI-001 Phase 1）。当前只支持个人 BYOK；组织级
+ * BYOK 在组织角色与管理策略具备权威校验前保持关闭。
  *
  * <p>端点：
  * <ul>
@@ -49,40 +53,43 @@ public class AiProviderKeyController {
     private final IntelligenceCallerResolver callers;
     private final AiProviderKeyRepository repository;
     private final EnvelopeEncryption encryption;
+    private final DnsPinningResolver dnsPinning;
 
     public AiProviderKeyController(
             IntelligenceCallerResolver callers,
             AiProviderKeyRepository repository,
-            EnvelopeEncryption encryption) {
+            EnvelopeEncryption encryption,
+            DnsPinningResolver dnsPinning) {
         this.callers = callers;
         this.repository = repository;
         this.encryption = encryption;
+        this.dnsPinning = dnsPinning;
     }
 
     /**
      * POST /api/ai/keys - 创建 BYOK 密钥。
      *
-     * <p>鉴权：需要登录。个人用户只能创建个人密钥；组织成员可创建组织密钥。
+     * <p>鉴权：需要登录。密钥始终归当前账号所有，即使调用者断言带组织上下文也不创建组织密钥。
      */
     @PostMapping
     public Mono<ResponseEntity<AiProviderKeyResponse>> create(
             @Valid @RequestBody CreateAiProviderKeyRequest body,
             ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> {
+                .flatMap(caller -> validateForStorage(body.baseUrl()).then(Mono.defer(() -> {
                     // 加密明文密钥
                     String encryptedKey = encryption.encrypt(body.apiKey());
                     String maskedHint = MaskedKey.mask(body.apiKey());
 
                     AiProviderKey key = AiProviderKey.forCreate(
-                            caller.organizationId(),  // 个人用户为 null
+                            null,  // 组织级 BYOK 暂未开放，避免普通成员替整个组织切换密钥
                             caller.accountId(),
                             body.capability(),
                             body.provider(),
                             body.baseUrl(),
                             body.model(),
                             encryptedKey,
-                            "v1",  // 首期固定 v1
+                            encryption.keyVersion(encryptedKey),
                             maskedHint
                     );
 
@@ -104,38 +111,32 @@ public class AiProviderKeyController {
                             ))
                             .map(AiProviderKey::toResponse)
                             .map(resp -> ResponseEntity.status(201).body(resp));
-                });
+                })));
     }
 
     /**
-     * GET /api/ai/keys - 列出当前用户的所有密钥（个人 + 组织）。
+     * GET /api/ai/keys - 列出当前用户的个人密钥。
      */
     @GetMapping
     public Flux<AiProviderKeyResponse> list(ServerWebExchange exchange) {
         // WebFlux 将 Flux 汇聚为 JSON 数组（与 legacy {success,data:[...]} 的信封差异由路由开关默认 false 兜底）
         return callers.resolve(exchange.getRequest())
-                .flatMapMany(caller -> repository.findByOwner(caller.accountId())
+                .flatMapMany(caller -> repository.findPersonalByOwner(caller.accountId())
                         .map(AiProviderKey::toResponse));
     }
 
     /**
      * GET /api/ai/keys/{id} - 获取密钥详情。
      *
-     * <p>鉴权：用户只能查看自己拥有的密钥（个人密钥或所属组织密钥）。
+     * <p>鉴权：用户只能查看自己拥有的个人密钥。
      */
     @GetMapping("/{id}")
     public Mono<ResponseEntity<AiProviderKeyResponse>> getById(
             @PathVariable UUID id,
             ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> repository.findById(id)
-                        .flatMap(key -> canManage(key.id(), caller.accountId(), caller.organizationId())
-                                .flatMap(canManage -> {
-                                    if (!canManage) {
-                                        return Mono.error(new IntelligenceException(403, "无权访问此密钥"));
-                                    }
-                                    return Mono.just(ResponseEntity.ok(key.toResponse()));
-                                })))
+                .flatMap(caller -> repository.findPersonalByIdAndOwner(id, caller.accountId())
+                        .map(key -> ResponseEntity.ok(key.toResponse())))
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "密钥不存在")));
     }
 
@@ -150,21 +151,14 @@ public class AiProviderKeyController {
             @Valid @RequestBody UpdateAiProviderKeyRequest body,
             ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> repository.findById(id)
-                        .flatMap(key -> canManage(key.id(), caller.accountId(), caller.organizationId())
-                                .flatMap(canManage -> {
-                                    if (!canManage) {
-                                        return Mono.error(new IntelligenceException(403, "无权修改此密钥"));
-                                    }
-                                    return repository.updateConfig(id, body.baseUrl(), body.model())
-                                            .flatMap(updated -> {
-                                                if (!updated) {
-                                                    return Mono.error(new IntelligenceException(404, "密钥不存在"));
-                                                }
-                                                return repository.findById(id);  // 重新获取更新后的记录
-                                            })
-                                            .map(k -> ResponseEntity.ok(k.toResponse()));
-                                })))
+                .flatMap(caller -> repository.findPersonalByIdAndOwner(id, caller.accountId())
+                        .flatMap(key -> validateForStorage(body.baseUrl())
+                                .then(repository.updatePersonalConfig(
+                                            id, caller.accountId(), body.baseUrl(), body.model())
+                                    .flatMap(updated -> updated
+                                            ? repository.findPersonalByIdAndOwner(id, caller.accountId())
+                                            : Mono.empty())
+                                    .map(k -> ResponseEntity.ok(k.toResponse())))))
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "密钥不存在")));
     }
 
@@ -179,26 +173,20 @@ public class AiProviderKeyController {
             @Valid @RequestBody RotateAiProviderKeyRequest body,
             ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> repository.findById(id)
-                        .flatMap(key -> canManage(key.id(), caller.accountId(), caller.organizationId())
-                                .flatMap(canManage -> {
-                                    if (!canManage) {
-                                        return Mono.error(new IntelligenceException(403, "无权修改此密钥"));
-                                    }
-                                    // 加密新密钥
-                                    String encryptedKey = encryption.encrypt(body.apiKey());
-                                    String maskedHint = MaskedKey.mask(body.apiKey());
-                                    String newKeyVersion = encryption.rotateKey();
+                .flatMap(caller -> repository.findPersonalByIdAndOwner(id, caller.accountId())
+                        .flatMap(key -> {
+                            encryption.rotateKey();
+                            String encryptedKey = encryption.encrypt(body.apiKey());
+                            String maskedHint = MaskedKey.mask(body.apiKey());
+                            String newKeyVersion = encryption.keyVersion(encryptedKey);
 
-                                    return repository.updateKey(id, encryptedKey, newKeyVersion, maskedHint)
-                                            .flatMap(updated -> {
-                                                if (!updated) {
-                                                    return Mono.error(new IntelligenceException(404, "密钥不存在"));
-                                                }
-                                                return repository.findById(id);  // 重新获取更新后的记录
-                                            })
-                                            .map(k -> ResponseEntity.ok(k.toResponse()));
-                                })))
+                            return repository.updatePersonalKey(
+                                            id, caller.accountId(), encryptedKey, newKeyVersion, maskedHint)
+                                    .flatMap(updated -> updated
+                                            ? repository.findPersonalByIdAndOwner(id, caller.accountId())
+                                            : Mono.empty())
+                                    .map(k -> ResponseEntity.ok(k.toResponse()));
+                        }))
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "密钥不存在")));
     }
 
@@ -212,42 +200,25 @@ public class AiProviderKeyController {
             @PathVariable UUID id,
             ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> repository.findById(id)
-                        .flatMap(key -> canManage(key.id(), caller.accountId(), caller.organizationId())
-                                .flatMap(canManage -> {
-                                    if (!canManage) {
-                                        return Mono.error(new IntelligenceException(403, "无权删除此密钥"));
-                                    }
-                                    return repository.delete(id)
-                                            .map(deleted -> {
-                                                if (!deleted) {
-                                                    throw new IntelligenceException(404, "密钥不存在");
-                                                }
-                                                return ResponseEntity.noContent().<Void>build();
-                                            });
-                                })))
+                .flatMap(caller -> repository.findPersonalByIdAndOwner(id, caller.accountId())
+                        .flatMap(key -> repository.deletePersonal(id, caller.accountId())
+                                .flatMap(deleted -> deleted
+                                        ? Mono.just(ResponseEntity.noContent().<Void>build())
+                                        : Mono.empty())))
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "密钥不存在")));
     }
 
-    /** V5 唯一索引（org/personal + owner + capability + provider，enabled）冲突 → 409。 */
+    /** V13 唯一索引（个人 owner + capability，enabled）冲突 -> 409。 */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Map<String, Object>> handleDuplicate(DataIntegrityViolationException error) {
         return ResponseEntity.status(409)
                 .body(Map.of("success", false, "error", "该能力下已存在有效的密钥，请先删除旧密钥或轮换"));
     }
 
-    /** 检查用户是否可以管理指定密钥。 */
-    private Mono<Boolean> canManage(UUID id, String accountId, String userOrgId) {
-        // 这里简化处理：如果用户是密钥的创建者，或者密钥属于用户的组织
-        // 实际的组织成员检查需要跨服务调用 identity，这里暂时只检查 ownerAccountId
-        return repository.isOwner(id, accountId)
-                .map(isOwner -> {
-                    if (isOwner) {
-                        return true;
-                    }
-                    // TODO: 如果密钥有 organizationId，需要检查用户是否是该组织的成员
-                    // 这需要跨服务调用 identity 的组织成员 API
-                    return false;
-                });
+    private Mono<Void> validateForStorage(String baseUrl) {
+        return Mono.fromCallable(() -> ProviderUrlGuard.validateByokForStorage(baseUrl, dnsPinning))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then();
     }
+
 }

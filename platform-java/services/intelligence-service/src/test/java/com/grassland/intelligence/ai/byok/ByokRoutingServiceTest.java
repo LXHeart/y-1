@@ -1,6 +1,8 @@
 package com.grassland.intelligence.ai.byok;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
@@ -32,11 +34,11 @@ class ByokRoutingServiceTest {
     ByokRoutingService service;
 
     @Test
-    @DisplayName("组织 BYOK 存在 → BYOK 解析（回传密文，解密不在本层）")
-    void orgByokPresent() {
-        AiProviderKey key = new AiProviderKey(UUID.randomUUID(), "org", "acct", "text",
+    @DisplayName("带组织上下文仍只解析当前账号的个人 BYOK")
+    void organizationContextUsesPersonalByok() {
+        AiProviderKey key = new AiProviderKey(UUID.randomUUID(), null, "acct", "text",
                 "openai-compatible", "http://host", "byok-model", "ciphertext", "v1", "sk-***", true, null, null);
-        when(keyRepository.findByOrganizationAndCapability("org", "text")).thenReturn(Mono.just(key));
+        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.just(key));
 
         ProviderResolution r = service.resolveProvider("org", "acct", "text", false).block();
 
@@ -44,6 +46,8 @@ class ByokRoutingServiceTest {
         assertThat(r.needsKeyDecryption()).isTrue();
         assertThat(r.encryptedKey()).isEqualTo("ciphertext");
         assertThat(r.chargesPlatformFee()).isFalse();
+        verify(keyRepository).findByPersonalAndCapability("acct", "text");
+        verifyNoMoreInteractions(keyRepository);
     }
 
     @Test
@@ -51,7 +55,8 @@ class ByokRoutingServiceTest {
     void noByokFallbackToPlatform() {
         when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.empty());
         when(platformModelControlPlane.resolve("text")).thenReturn(
-                Mono.just(Optional.of(new ResolvedPlatformModel("qwen", "qwen-plus", "http://host", 1, "primary"))));
+                Mono.just(Optional.of(new ResolvedPlatformModel(
+                        UUID.randomUUID(), "qwen", "qwen-plus", "http://host", 1, "primary", 4))));
 
         ProviderResolution r = service.resolveProvider(null, "acct", "text", true).block();
 
@@ -59,6 +64,7 @@ class ByokRoutingServiceTest {
         assertThat(r.chargesPlatformFee()).isTrue();
         assertThat(r.platformModelVersion()).isEqualTo(1);
         assertThat(r.model()).isEqualTo("qwen-plus");
+        assertThat(r.maxConcurrency()).isEqualTo(4);
     }
 
     @Test

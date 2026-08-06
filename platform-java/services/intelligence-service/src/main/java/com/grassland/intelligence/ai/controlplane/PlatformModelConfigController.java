@@ -41,14 +41,17 @@ public class PlatformModelConfigController {
     private final IntelligenceCallerResolver callers;
     private final PlatformModelConfigRepository repository;
     private final TransactionalOperator transactions;
+    private final PlatformProviderPolicy providerPolicy;
 
     public PlatformModelConfigController(
             IntelligenceCallerResolver callers,
             PlatformModelConfigRepository repository,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions,
+            PlatformProviderPolicy providerPolicy) {
         this.callers = callers;
         this.repository = repository;
         this.transactions = transactions;
+        this.providerPolicy = providerPolicy;
     }
 
     @GetMapping
@@ -104,12 +107,14 @@ public class PlatformModelConfigController {
                                 : Mono.error(notFound(capability, modelRole))));
     }
 
-    private static PlatformModelConfig buildForCreate(CreatePlatformModelRequest body) {
+    private PlatformModelConfig buildForCreate(CreatePlatformModelRequest body) {
+        providerPolicy.validate(body.provider(), body.baseUrl());
         return new PlatformModelConfig(null, body.capability(), body.modelRole(), body.provider(), body.model(),
                 body.baseUrl(), body.maxConcurrency(), healthOrDefault(body.healthStatus()), true, 1, null, null, null);
     }
 
-    private static PlatformModelConfig buildForUpdate(String capability, String modelRole, UpdatePlatformModelRequest body) {
+    private PlatformModelConfig buildForUpdate(String capability, String modelRole, UpdatePlatformModelRequest body) {
+        providerPolicy.validate(body.provider(), body.baseUrl());
         return new PlatformModelConfig(null, capability, modelRole, body.provider(), body.model(), body.baseUrl(),
                 body.maxConcurrency(), healthOrDefault(body.healthStatus()), true, 1, null, null, null);
     }

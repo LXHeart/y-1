@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component;
 /**
  * 平台默认 AI 模型配置（HLD §12.3 平台默认配置的第一步）。从环境变量读 Qwen base-url/api-key/model。
  *
- * <p>intelligence **不读 legacy per-user 设置**——所有用户统一用平台默认 Qwen（迈向 HLD §12.3 平台默认）。
- * BYOK / 能力路由 / 预算 / 健康检查（model-control-plane 全貌）留后续 slice（卡未决的 D-11 成本归属）。
+ * <p>intelligence **不读 legacy per-user 设置**。此对象只承载平台 Qwen 凭据与启动默认值；
+ * 运行时模型、主备、健康和并发配置由 model-control-plane 解析，个人 BYOK 由独立密钥控制面处理。
  * 启动期 {@link #validate} 校验 base-url/api-key 非空 + SSRF 防护；缺失或非法即 fail-fast。
  */
 @Component

@@ -28,4 +28,13 @@ public enum CreditFeature {
     public String key() {
         return key;
     }
+
+    public static CreditFeature fromKey(String key) {
+        for (CreditFeature feature : values()) {
+            if (feature.key.equals(key)) {
+                return feature;
+            }
+        }
+        throw new IllegalArgumentException("未知积分功能键: " + key);
+    }
 }

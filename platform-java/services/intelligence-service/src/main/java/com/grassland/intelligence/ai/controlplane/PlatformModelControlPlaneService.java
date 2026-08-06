@@ -1,6 +1,7 @@
 package com.grassland.intelligence.ai.controlplane;
 
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -36,7 +37,8 @@ public class PlatformModelControlPlaneService {
                     PlatformModelConfig chosen = pick(primary, backup);
                     return Optional.ofNullable(chosen)
                             .map(c -> new ResolvedPlatformModel(
-                                    c.provider(), c.model(), c.baseUrl(), c.version(), c.modelRole()));
+                                    c.id(), c.provider(), c.model(), c.baseUrl(), c.version(), c.modelRole(),
+                                    c.maxConcurrency()));
                 });
     }
 
@@ -51,20 +53,23 @@ public class PlatformModelControlPlaneService {
         if (primary != null && primary.isHealthy()) {
             return primary;
         }
-        // primary 缺失或不健康 → backup（只要存在就用，含 degraded；unhealthy 仍兜底优于无）
-        if (backup != null) {
+        if (backup != null && backup.isHealthy()) {
             return backup;
         }
-        // primary 存在但不健康、无 backup：仍返回 primary（让调用方/健康检查感知，优于直接判定无模型）
-        return primary;
+        if (primary != null && primary.isAvailable()) {
+            return primary;
+        }
+        return backup != null && backup.isAvailable() ? backup : null;
     }
 
     /** 解析结果（运行时路由消费；version 供 TaskContext 冻结）。 */
     public record ResolvedPlatformModel(
+            UUID configId,
             String provider,
             String model,
             String baseUrl,
             int version,
-            String modelRole) {
+            String modelRole,
+            Integer maxConcurrency) {
     }
 }

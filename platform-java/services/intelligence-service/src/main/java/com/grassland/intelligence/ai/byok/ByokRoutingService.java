@@ -3,6 +3,7 @@ package com.grassland.intelligence.ai.byok;
 import com.grassland.intelligence.ai.controlplane.PlatformModelControlPlaneService;
 import com.grassland.intelligence.ai.controlplane.PlatformModelControlPlaneService.ResolvedPlatformModel;
 import java.util.Optional;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -11,7 +12,8 @@ import reactor.core.publisher.Mono;
 /**
  * BYOK 与平台模型分发服务（GL-P3-AI-001 Phase 5 / 控制面闭环）。
  *
- * <p>运行时按能力解析 provider：组织/个人 BYOK 优先；无 BYOK 时按 {@code allowFallback} 决定回落平台或拒绝。
+ * <p>运行时按能力解析 provider：当前账号的个人 BYOK 优先；无 BYOK 时按 {@code allowFallback} 决定回落平台或拒绝。
+ * 组织级 BYOK 在组织角色与管理策略具备权威校验前保持关闭，因此 {@code organizationId} 不参与 Key 查询。
  * <b>HLD §12.3 硬规则</b>：无 BYOK 且 {@code allowFallback=false} 时返回 {@link ResolutionType#DENIED}——
  * 不静默扣平台额度（回退须经调用方显式授权）。
  *
@@ -48,9 +50,7 @@ public class ByokRoutingService {
             String capability,
             boolean allowFallback) {
 
-        Mono<AiProviderKey> byokLookup = (organizationId != null)
-                ? keyRepository.findByOrganizationAndCapability(organizationId, capability)
-                : keyRepository.findByPersonalAndCapability(accountId, capability);
+        Mono<AiProviderKey> byokLookup = keyRepository.findByPersonalAndCapability(accountId, capability);
 
         return byokLookup
                 .map(key -> ProviderResolution.byok(
@@ -68,7 +68,8 @@ public class ByokRoutingService {
     }
 
     private static ProviderResolution toPlatform(ResolvedPlatformModel rpm) {
-        return ProviderResolution.platform(rpm.provider(), rpm.baseUrl(), rpm.model(), rpm.version());
+        return ProviderResolution.platform(rpm.configId(), rpm.provider(), rpm.baseUrl(), rpm.model(), rpm.version(),
+                rpm.maxConcurrency());
     }
 
     /**
@@ -82,20 +83,25 @@ public class ByokRoutingService {
             String encryptedKey,        // BYOK 密文（platform/denied 时为 null）
             boolean chargesPlatformFee, // 是否收平台 AI 费（仅平台模型）
             int platformModelVersion,   // 平台配置版本（TaskContext 冻结用）；非平台为 0
+            UUID platformConfigId,
+            Integer maxConcurrency,
             String denialReason         // DENIED 时的原因；其余为 null
     ) {
         public static ProviderResolution byok(String provider, String baseUrl, String model, String encryptedKey) {
             return new ProviderResolution(ResolutionType.BYOK, provider, baseUrl, model, encryptedKey,
-                    false, 0, null);
+                    false, 0, null, null, null);
         }
 
-        public static ProviderResolution platform(String provider, String baseUrl, String model, int version) {
+        public static ProviderResolution platform(
+                UUID configId, String provider, String baseUrl, String model,
+                int version, Integer maxConcurrency) {
             return new ProviderResolution(ResolutionType.PLATFORM, provider, baseUrl, model, null,
-                    true, version, null);
+                    true, version, configId, maxConcurrency, null);
         }
 
         public static ProviderResolution denied(String reason) {
-            return new ProviderResolution(ResolutionType.DENIED, null, null, null, null, false, 0, reason);
+            return new ProviderResolution(
+                    ResolutionType.DENIED, null, null, null, null, false, 0, null, null, reason);
         }
 
         public boolean isByok() {

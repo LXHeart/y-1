@@ -36,4 +36,8 @@ public record PlatformModelConfig(
     public boolean isHealthy() {
         return HEALTH_HEALTHY.equalsIgnoreCase(healthStatus);
     }
+
+    public boolean isAvailable() {
+        return isHealthy() || HEALTH_DEGRADED.equalsIgnoreCase(healthStatus);
+    }
 }

@@ -95,7 +95,9 @@ public class PlatformModelConfigRepository {
                 .map((r, m) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString)
-                .flatMap(id -> insertHistory(id, c, 1, "create", adminId).thenReturn(id));
+                .flatMap(id -> createConcurrencySlots(id, c.maxConcurrency())
+                        .then(insertHistory(id, c, 1, "create", adminId))
+                        .thenReturn(id));
     }
 
     /**
@@ -127,7 +129,8 @@ public class PlatformModelConfigRepository {
                                 .map((r, m) -> r.get("id", String.class))
                                 .one()
                                 .map(UUID::fromString)
-                                .flatMap(id -> insertHistory(id, next, current.version() + 1, "update", adminId)
+                                .flatMap(id -> createConcurrencySlots(id, next.maxConcurrency())
+                                        .then(insertHistory(id, next, current.version() + 1, "update", adminId))
                                         .thenReturn(id)))
                         .flatMap(id -> findCurrent(capability, modelRole)));
     }
@@ -152,6 +155,19 @@ public class PlatformModelConfigRepository {
                 .map((r, m) -> r.get("id", String.class))
                 .one()
                 .hasElement();
+    }
+
+    private Mono<Void> createConcurrencySlots(UUID configId, Integer maximum) {
+        if (maximum == null) {
+            return Mono.empty();
+        }
+        return db.sql("""
+                INSERT INTO platform_model_concurrency_slot(config_id, slot_no)
+                SELECT CAST(:configId AS uuid), generate_series(1, :maximum)
+                """)
+                .bind("configId", configId.toString())
+                .bind("maximum", maximum)
+                .then();
     }
 
     private Mono<Void> insertHistory(UUID configId, PlatformModelConfig c, int version, String changeType, String changedBy) {

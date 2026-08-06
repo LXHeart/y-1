@@ -58,8 +58,8 @@ class LegacyCreditsClientTest {
     }
 
     @Test
-    @DisplayName("consume 带 operationId 幂等键；refund 复用同一 key（GL-P0-CRED-001）")
-    void consumeCarriesOperationIdAndRefundReusesIt() {
+    @DisplayName("consume 带 operationId；refund 使用派生幂等键（GL-P0-CRED-001）")
+    void consumeCarriesOperationIdAndRefundDerivesItsKey() {
         wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
@@ -78,23 +78,23 @@ class LegacyCreditsClientTest {
 
         client.refund(charge, "上游失败自动退回").block();
 
-        // 退款必须复用扣减的 operationId——legacy 侧据此保证「一次扣减最多一次退款」
+        // refund 使用独立命名空间，避免与 consume 行的 operationId 去重冲突。
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/refund"))
                 .withHeader("X-Internal-Key", equalTo("shared-secret"))
-                .withRequestBody(containing("\"operationId\":\"" + charge.operationId() + "\""))
+                .withRequestBody(containing("\"operationId\":\"refund:" + charge.operationId() + "\""))
                 .withRequestBody(containing("\"feature\":\"comedy_generation\"")));
     }
 
     @Test
-    @DisplayName("refund 上游失败不抛——不覆盖用户看到的原始上游错误")
-    void refundSwallowsUpstreamFailure() {
+    @DisplayName("refund 上游失败必须向可靠补偿 worker 传播")
+    void refundPropagatesUpstreamFailure() {
         wireMock.stubFor(post(urlEqualTo("/internal/credits/refund"))
                 .willReturn(aResponse().withStatus(500).withBody("down")));
 
         CreditCharge charge = new CreditCharge(ACCOUNT, CreditFeature.VIDEO_ANALYSIS, "op-1");
 
-        // 不抛异常即为期望行为（失败已记日志）
-        client.refund(charge, "失败退回").block();
+        assertThatThrownBy(() -> client.refund(charge, "失败退回").block())
+                .isInstanceOf(RuntimeException.class);
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/refund")));
     }

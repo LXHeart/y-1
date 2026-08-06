@@ -1,10 +1,12 @@
 package com.grassland.finance.credits;
 
 import com.grassland.finance.credits.CreditsRepository.CreditsAccount;
+import com.grassland.finance.credits.CreditsRepository.ConsumeOperation;
 import com.grassland.finance.credits.CreditsRepository.CreditsTransaction;
 import com.grassland.finance.credits.CreditsRepository.ExistingOperation;
 import com.grassland.finance.security.FinanceException;
 import io.r2dbc.spi.R2dbcException;
+import java.util.Objects;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -42,11 +44,27 @@ public class CreditsService {
 
     /** 扣 1 积分（consume）。operationId 非空即幂等；余额不足 → 402。 */
     public Mono<MutationResult> consume(String accountId, String feature, String operationId) {
+        if (operationId != null && !operationId.isBlank()) {
+            return fencedConsume(accountId, feature, operationId);
+        }
         return idempotent(accountId, operationId, () -> repo.consumeOne(accountId)
                 .switchIfEmpty(Mono.error(new FinanceException(402, "积分不足")))
                 .flatMap(acct -> repo.insertTransaction(
                         accountId, -1, acct.balance(), "consume", feature, null, operationId)
                         .map(txnId -> new MutationResult(acct.balance(), txnId, false))));
+    }
+
+    /**
+     * Atomically fence or reverse a consume whose HTTP result may be unknown.
+     * The caller supplies only the original consume operation; refund identity is derived here.
+     */
+    public Mono<CompensationResult> compensateConsume(
+            String accountId, String feature, String operationId, String note) {
+        Mono<CompensationResult> body = repo.lockOrCreateConsumeOperation(
+                        accountId, feature, operationId, "compensated")
+                .flatMap(operation -> validateScope(operation, accountId, feature)
+                        .then(compensateLocked(operation, note)));
+        return repo.ensureAccount(accountId).then(transactions.transactional(body));
     }
 
     /** 退还积分（refund）。amount 为正幅度；operationId 非空即幂等（调用方传 {@code refund:<consumeId>}）。 */
@@ -81,6 +99,94 @@ public class CreditsService {
     }
 
     // ---------- 内部 ----------
+
+    private Mono<MutationResult> fencedConsume(String accountId, String feature, String operationId) {
+        Mono<MutationResult> body = repo.lockOrCreateConsumeOperation(
+                        accountId, feature, operationId, "open")
+                .flatMap(operation -> validateScope(operation, accountId, feature)
+                        .then(Mono.defer(() -> switch (operation.state()) {
+                            case "consumed" -> Mono.just(new MutationResult(
+                                    operation.consumeBalanceAfter(), operation.consumeTransactionId(), true));
+                            case "compensated" -> Mono.error(new FinanceException(
+                                    409, "该积分扣减已被补偿，拒绝迟到扣费"));
+                            case "open" -> performFencedConsume(accountId, feature, operationId);
+                            default -> Mono.error(new IllegalStateException(
+                                    "未知积分扣减状态: " + operation.state()));
+                        })));
+        return repo.ensureAccount(accountId).then(transactions.transactional(body));
+    }
+
+    private Mono<MutationResult> performFencedConsume(String accountId, String feature, String operationId) {
+        return repo.consumeOne(accountId)
+                .switchIfEmpty(Mono.error(new FinanceException(402, "积分不足")))
+                .flatMap(acct -> repo.insertTransaction(
+                                accountId, -1, acct.balance(), "consume", feature, null, operationId)
+                        .flatMap(transactionId -> repo.markConsumeOperationConsumed(
+                                        operationId, transactionId, acct.balance())
+                                .flatMap(updated -> updated
+                                        ? Mono.just(new MutationResult(acct.balance(), transactionId, false))
+                                        : Mono.error(new IllegalStateException("积分扣减 fence 状态更新失败")))));
+    }
+
+    private Mono<CompensationResult> compensateLocked(ConsumeOperation operation, String note) {
+        return switch (operation.state()) {
+            case "compensated" -> repo.findAccount(operation.accountId())
+                    .map(account -> new CompensationResult(
+                            "compensated", operation.created() ? "fenced" : "deduplicated", account.balance()));
+            case "open" -> repo.markConsumeOperationFenced(operation.operationId())
+                    .flatMap(updated -> updated
+                            ? repo.findAccount(operation.accountId()).map(account -> new CompensationResult(
+                                    "compensated", "fenced", account.balance()))
+                            : Mono.error(new IllegalStateException("积分补偿 fence 状态更新失败")));
+            case "consumed" -> refundConsumedOperation(operation, note);
+            default -> Mono.error(new IllegalStateException("未知积分扣减状态: " + operation.state()));
+        };
+    }
+
+    private Mono<CompensationResult> refundConsumedOperation(ConsumeOperation operation, String note) {
+        String refundOperationId = "refund:" + operation.operationId();
+        return repo.findOperation(refundOperationId)
+                .flatMap(existing -> reconcileExistingRefund(operation, existing))
+                .switchIfEmpty(Mono.defer(() -> createCompensationRefund(
+                        operation, note, refundOperationId)));
+    }
+
+    /** Rolling upgrades may have an old client refund before it starts calling the fenced endpoint. */
+    private Mono<CompensationResult> reconcileExistingRefund(
+            ConsumeOperation operation, ExistingOperation existing) {
+        if (!operation.accountId().equals(existing.accountId())
+                || !"refund".equals(existing.type())
+                || !Objects.equals(operation.feature(), existing.feature())) {
+            return Mono.error(new FinanceException(409, "既有积分退款作用域冲突"));
+        }
+        return repo.markConsumeOperationRefunded(operation.operationId(), existing.transactionId())
+                .flatMap(updated -> updated
+                        ? repo.findAccount(operation.accountId()).map(account -> new CompensationResult(
+                                "compensated", "deduplicated", account.balance()))
+                        : Mono.error(new IllegalStateException("既有积分退款 fence 收敛失败")));
+    }
+
+    private Mono<CompensationResult> createCompensationRefund(
+            ConsumeOperation operation, String note, String refundOperationId) {
+        return repo.creditAccount(operation.accountId(), 1, 0, -1)
+                .flatMap(account -> repo.insertTransaction(
+                                operation.accountId(), 1, account.balance(), "refund",
+                                operation.feature(), note, refundOperationId)
+                        .flatMap(transactionId -> repo.markConsumeOperationRefunded(
+                                        operation.operationId(), transactionId)
+                                .flatMap(updated -> updated
+                                        ? Mono.just(new CompensationResult(
+                                                "compensated", "refunded", account.balance()))
+                                        : Mono.error(new IllegalStateException("积分补偿状态更新失败")))));
+    }
+
+    private static Mono<Void> validateScope(
+            ConsumeOperation operation, String accountId, String feature) {
+        if (!operation.accountId().equals(accountId) || !operation.feature().equals(feature)) {
+            return Mono.error(new FinanceException(409, "积分 operationId 作用域冲突"));
+        }
+        return Mono.empty();
+    }
 
     /** 改余额 + 插流水（type 由调用方定）。不含预检——预检由 {@link #idempotent} 组装。 */
     private Mono<MutationResult> mutate(String accountId, int amount, int deltaEarned, int deltaSpent,
@@ -132,4 +238,7 @@ public class CreditsService {
 
     /** 一次积分写入结果。{@code deduplicated=true} 表示命中既有 operation_id，本次未改余额。 */
     public record MutationResult(int balance, String transactionId, boolean deduplicated) {}
+
+    /** Conditional consume compensation result. */
+    public record CompensationResult(String state, String action, int balance) {}
 }

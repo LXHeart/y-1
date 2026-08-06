@@ -33,6 +33,14 @@ public interface EnvelopeEncryption {
     String decrypt(String ciphertext);
 
     /**
+     * 读取密文中携带的密钥版本，不解密明文。
+     *
+     * @param ciphertext Base64 编码的密文
+     * @return 版本标识（如 "v1"）
+     */
+    String keyVersion(String ciphertext);
+
+    /**
      * 生成新的 DEK 并加密 KEK（密钥轮换时使用）。
      *
      * @return 新的 Key Version 标识符（如 "v2"）

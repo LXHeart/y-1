@@ -1,9 +1,8 @@
 package com.grassland.intelligence.ai.run;
 
+import java.time.LocalDate;
 import java.util.UUID;
 import reactor.core.publisher.Mono;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -12,8 +11,6 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class ModelBudgetService {
-
-    private static final Logger logger = LoggerFactory.getLogger(ModelBudgetService.class);
 
     private final AiModelBudgetRepository budgetRepository;
     private final AiRunRepository runRepository;
@@ -32,88 +29,68 @@ public class ModelBudgetService {
      * @param capability 能力（text/image_generation 等）
      * @param estimatedTokens 预估 token 数
      * @param estimatedCents 预估金额（分）
-     * @param operationId 操作 ID（幂等键）
      * @return 预算检查结果
      */
     public Mono<BudgetCheckResult> checkAndReserve(
             String organizationId,
             String capability,
+            String provider,
             int estimatedTokens,
-            int estimatedCents,
-            UUID operationId) {
+            int estimatedCents) {
 
         if (organizationId == null) {
-            // 个人用户默认无预算限制（TODO：可添加个人级预算）
-            return Mono.just(BudgetCheckResult.allowed(estimatedCents));
+            return Mono.just(BudgetCheckResult.allowed(null, null, estimatedTokens, estimatedCents));
         }
 
-        return budgetRepository.findByOrganizationAndCapability(organizationId, capability)
+        return budgetRepository.findByOrganizationAndCapability(organizationId, capability, provider)
                 .flatMap(budget -> {
-                    // 自动重置（跨日/跨月）
-                    AiModelBudget resetBudget = budget;
-                    if (budget.needsDailyReset()) {
-                        logger.info("Resetting daily budget for org: {}, capability: {}", organizationId, capability);
-                        resetBudget = resetBudget.resetDaily();
-                        return budgetRepository.resetDaily(budget.id())
-                                .then(Mono.just(resetBudget));
-                    }
-                    if (budget.needsMonthlyReset()) {
-                        logger.info("Resetting monthly budget for org: {}, capability: {}", organizationId, capability);
-                        resetBudget = resetBudget.resetMonthly();
-                        return budgetRepository.resetMonthly(budget.id())
-                                .then(Mono.just(resetBudget));
-                    }
-                    return Mono.just(budget);
-                })
-                .flatMap(budget -> {
-                    // 检查单次 Run 预算
                     if (budget.exceedsRunBudget(estimatedTokens, estimatedCents)) {
-                        logger.warn("Run budget exceeded for org: {}, capability: {}, tokens: {}, cents: {}",
-                                organizationId, capability, estimatedTokens, estimatedCents);
                         return Mono.just(BudgetCheckResult.denied("exceeds_run_budget"));
                     }
-
-                    // 检查每日预算
-                    if (budget.exceedsDailyBudget(estimatedTokens, estimatedCents)) {
-                        logger.warn("Daily budget exceeded for org: {}, capability: {}", organizationId, capability);
-                        return Mono.just(BudgetCheckResult.denied("exceeds_daily_budget"));
-                    }
-
-                    // 检查每月预算
-                    if (budget.exceedsMonthlyBudget(estimatedTokens, estimatedCents)) {
-                        logger.warn("Monthly budget exceeded for org: {}, capability: {}", organizationId, capability);
-                        return Mono.just(BudgetCheckResult.denied("exceeds_monthly_budget"));
-                    }
-
-                    // 通过检查，预留成功
-                    return Mono.just(BudgetCheckResult.allowed(estimatedCents));
+                    return budgetRepository.reserve(budget.id(), estimatedTokens, estimatedCents)
+                            .map(reservationDate -> BudgetCheckResult.allowed(
+                                    budget.id(), reservationDate, estimatedTokens, estimatedCents))
+                            .switchIfEmpty(denialAfterReservationConflict(
+                                    organizationId, capability, provider, estimatedTokens, estimatedCents));
                 })
-                .switchIfEmpty(Mono.just(BudgetCheckResult.allowed(estimatedCents)));  // 无预算配置=允许
+                .switchIfEmpty(Mono.just(BudgetCheckResult.allowed(
+                        null, null, estimatedTokens, estimatedCents)));
     }
 
-    /**
-     * 累加实际用量（Run 完成后调用）。
-     *
-     * @param organizationId 组织 ID
-     * @param capability 能力
-     * @param actualTokens 实际 token 数
-     * @param actualCents 实际金额（分）
-     * @return 是否成功累加
-     */
-    public Mono<Boolean> accumulateUsage(
-            String organizationId,
-            String capability,
-            long actualTokens,
-            long actualCents) {
+    private Mono<BudgetCheckResult> denialAfterReservationConflict(
+            String organizationId, String capability, String provider,
+            int estimatedTokens, int estimatedCents) {
+        return budgetRepository.findByOrganizationAndCapability(organizationId, capability, provider)
+                .map(current -> {
+                    if (current.exceedsRunBudget(estimatedTokens, estimatedCents)) {
+                        return BudgetCheckResult.denied("exceeds_run_budget");
+                    }
+                    if (current.exceedsDailyBudget(estimatedTokens, estimatedCents)) {
+                        return BudgetCheckResult.denied("exceeds_daily_budget");
+                    }
+                    return BudgetCheckResult.denied("exceeds_monthly_budget");
+                })
+                .defaultIfEmpty(BudgetCheckResult.denied("exceeds_daily_budget"));
+    }
 
-        if (organizationId == null) {
-            // 个人用户不统计
+    public Mono<Boolean> settleReservation(
+            BudgetCheckResult reservation, long actualTokens, long actualCents) {
+        if (reservation.budgetId() == null) {
             return Mono.just(true);
         }
+        return budgetRepository.settleReservation(
+                reservation.budgetId(), reservation.reservationDate(),
+                reservation.reservedTokens(), reservation.reservedCents(),
+                actualTokens, actualCents);
+    }
 
-        return budgetRepository.findByOrganizationAndCapability(organizationId, capability)
-                .flatMap(budget -> budgetRepository.accumulate(budget.id(), actualTokens, actualCents))
-                .switchIfEmpty(Mono.just(true));  // 无预算配置=跳过
+    public Mono<Boolean> releaseReservation(BudgetCheckResult reservation) {
+        if (reservation.budgetId() == null) {
+            return Mono.just(true);
+        }
+        return budgetRepository.releaseReservation(
+                reservation.budgetId(), reservation.reservationDate(),
+                reservation.reservedTokens(), reservation.reservedCents());
     }
 
     /**
@@ -165,16 +142,21 @@ public class ModelBudgetService {
     public record BudgetCheckResult(
             boolean allowed,
             String denialReason,
+            UUID budgetId,
+            LocalDate reservationDate,
+            int reservedTokens,
             int reservedCents
     ) {
         /** 允许执行。 */
-        public static BudgetCheckResult allowed(int reservedCents) {
-            return new BudgetCheckResult(true, null, reservedCents);
+        public static BudgetCheckResult allowed(
+                UUID budgetId, LocalDate reservationDate, int reservedTokens, int reservedCents) {
+            return new BudgetCheckResult(
+                    true, null, budgetId, reservationDate, reservedTokens, reservedCents);
         }
 
         /** 拒绝执行。 */
         public static BudgetCheckResult denied(String reason) {
-            return new BudgetCheckResult(false, reason, 0);
+            return new BudgetCheckResult(false, reason, null, null, 0, 0);
         }
     }
 }

@@ -104,6 +104,20 @@ class BouncyCastleEnvelopeEncryptionTest {
     }
 
     @Test
+    @DisplayName("可从密文头读取密钥版本且轮换后保持一致")
+    void ciphertextVersionMatchesActiveVersion() {
+        String legacyCiphertext = encryption.encrypt("legacy-secret");
+        assertThat(encryption.keyVersion(legacyCiphertext)).isEqualTo("v1");
+
+        assertThat(encryption.rotateKey()).isEqualTo("v2");
+        String rotatedCiphertext = encryption.encrypt("rotated-secret");
+
+        assertThat(encryption.keyVersion(rotatedCiphertext)).isEqualTo("v2");
+        assertThat(encryption.decrypt(legacyCiphertext)).isEqualTo("legacy-secret");
+        assertThat(encryption.decrypt(rotatedCiphertext)).isEqualTo("rotated-secret");
+    }
+
+    @Test
     @DisplayName("encrypt 长明文")
     void encrypt_longPlaintext() {
         String longKey = "sk-" + "a".repeat(100) + "-xyz";

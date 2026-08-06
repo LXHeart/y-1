@@ -150,6 +150,22 @@ public final class BouncyCastleEnvelopeEncryption implements EnvelopeEncryption 
     }
 
     @Override
+    public String keyVersion(String ciphertext) {
+        if (ciphertext == null || ciphertext.isBlank()) {
+            throw new IllegalArgumentException("ciphertext cannot be blank");
+        }
+        try {
+            byte[] decoded = Base64.getDecoder().decode(ciphertext);
+            if (decoded.length == 0) {
+                throw new IllegalArgumentException("ciphertext too short");
+            }
+            return "v" + Byte.toUnsignedInt(decoded[0]);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("ciphertext must be valid Base64 envelope data", e);
+        }
+    }
+
+    @Override
     public String rotateKey() {
         int newVersion = keyVersion.incrementAndGet();
         log.info("Key version rotated to: v{}", newVersion);

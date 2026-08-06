@@ -1,7 +1,5 @@
 package com.grassland.intelligence.ai;
 
-import java.util.Set;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -11,10 +9,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * <p>通过 {@code ai.dns-pinning.*} 前缀配置。
  */
 @ConfigurationProperties("ai.dns-pinning")
-@ConditionalOnProperty(prefix = "ai.dns-pinning", name = "enabled", havingValue = "true", matchIfMissing = false)
 public record DnsPinningProperties(
 
-        /** 是否启用 DNS Pinning（默认关闭，BYOK 场景建议开启） */
+        /** 兼容旧配置；严格 BYOK DNS 校验始终启用，不能通过此开关关闭。 */
         @DefaultValue("false")
         boolean enabled,
 
@@ -23,7 +20,7 @@ public record DnsPinningProperties(
         String trustedDomains
 
 ) {
-    /** 空配置（禁用时使用）。 */
+    /** 空的预载配置；严格 BYOK DNS 校验仍保持启用。 */
     public static DnsPinningProperties disabled() {
         return new DnsPinningProperties(false, "");
     }

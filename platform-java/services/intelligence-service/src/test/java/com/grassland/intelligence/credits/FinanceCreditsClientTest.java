@@ -90,15 +90,30 @@ class FinanceCreditsClientTest {
     }
 
     @Test
-    @DisplayName("refund 上游失败不抛——不覆盖用户看到的原始上游错误")
-    void refundSwallowsUpstreamFailure() {
+    @DisplayName("compensate 发送原 consume operationId 到原子补偿端点")
+    void compensateUsesAtomicFinanceEndpoint() {
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/consume-compensations"))
+                .willReturn(aResponse().withStatus(200)));
+        CreditCharge charge = new CreditCharge(ACCOUNT, CreditFeature.AI_RUN_TEXT, "op-ai-1");
+
+        client.compensate(charge, "AI run failed").block();
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/consume-compensations"))
+                .withHeader("X-Internal-Key", equalTo("shared-secret"))
+                .withRequestBody(containing("\"consumeOperationId\":\"op-ai-1\""))
+                .withRequestBody(containing("\"feature\":\"ai_run_text\"")));
+    }
+
+    @Test
+    @DisplayName("refund 上游失败必须向可靠补偿 worker 传播")
+    void refundPropagatesUpstreamFailure() {
         wireMock.stubFor(post(urlEqualTo("/internal/credits/refund"))
                 .willReturn(aResponse().withStatus(500).withBody("down")));
 
         CreditCharge charge = new CreditCharge(ACCOUNT, CreditFeature.VIDEO_ANALYSIS, "op-1");
 
-        // 不抛异常即为期望行为（失败已记日志）
-        client.refund(charge, "失败退回").block();
+        assertThatThrownBy(() -> client.refund(charge, "失败退回").block())
+                .isInstanceOf(RuntimeException.class);
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/refund")));
     }

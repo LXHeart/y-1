@@ -1,6 +1,5 @@
 package com.grassland.intelligence.ai;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -8,10 +7,9 @@ import org.springframework.context.annotation.Configuration;
 /**
  * DNS Pinning 自动配置（GL-P3-AI-001 Phase 2）。
  *
- * <p>当 {@code ai.dns-pinning.enabled=true} 时装配 {@link DnsPinningResolver} bean。
+ * <p>解析器始终装配：严格 BYOK 校验不能被配置关闭。配置项仅用于预载运维固定地址。
  */
 @Configuration
-@ConditionalOnProperty(prefix = "ai.dns-pinning", name = "enabled", havingValue = "true", matchIfMissing = false)
 @EnableConfigurationProperties(DnsPinningProperties.class)
 public class DnsPinningAutoConfiguration {
 

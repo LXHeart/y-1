@@ -1,6 +1,7 @@
 package com.grassland.finance.credits;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.grassland.finance.FinanceItSupport;
 import java.util.Map;
@@ -10,6 +11,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.transaction.reactive.TransactionalOperator;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 /**
  * 积分域端到端（GL-P3-AI-001 下属切片）：award/consume/refund 的余额、流水、幂等与余额不足；
@@ -20,6 +24,9 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 class CreditsControllerIT extends FinanceItSupport {
 
     private static final String INTERNAL_KEY = "test-internal-key";
+
+    @org.springframework.beans.factory.annotation.Autowired
+    TransactionalOperator transactions;
 
     @DynamicPropertySource
     static void creditsProps(DynamicPropertyRegistry r) {
@@ -128,6 +135,154 @@ class CreditsControllerIT extends FinanceItSupport {
     }
 
     @Test
+    void compensationAfterConsumeRefundsExactlyOnce() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "consume-before-compensate-" + acct;
+        award(acct, 2);
+        consume(acct, "ai_run_text", operationId);
+
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.action").isEqualTo("refunded")
+                .jsonPath("$.data.balance").isEqualTo(2);
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.action").isEqualTo("deduplicated");
+
+        assertThat(balanceOf(acct)).isEqualTo(2);
+        assertThat(txnCount(acct)).isEqualTo(3); // award + consume + one refund
+    }
+
+    @Test
+    void compensationBeforeConsumeFencesLateCharge() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "compensate-before-consume-" + acct;
+        award(acct, 2);
+
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.action").isEqualTo("fenced")
+                .jsonPath("$.data.balance").isEqualTo(2);
+        internalConsume(acct, "ai_run_text", operationId).expectStatus().isEqualTo(409);
+
+        assertThat(balanceOf(acct)).isEqualTo(2);
+        assertThat(txnCount(acct)).isEqualTo(1); // award only
+    }
+
+    @Test
+    void compensationRejectsOperationScopeMismatch() {
+        String acct = UUID.randomUUID().toString();
+        String other = UUID.randomUUID().toString();
+        String operationId = "scope-" + acct;
+        award(acct, 1);
+        consume(acct, "ai_run_text", operationId);
+
+        internalCompensate(other, "ai_run_text", operationId)
+                .expectStatus().isEqualTo(409);
+        assertThat(balanceOf(acct)).isZero();
+    }
+
+    @Test
+    void compensationRejectsMalformedOrOversizedInput() {
+        String acct = UUID.randomUUID().toString();
+
+        internalCompensate("not-a-uuid", "ai_run_text", "operation")
+                .expectStatus().isBadRequest();
+        internalCompensate(acct, "f".repeat(65), "operation")
+                .expectStatus().isBadRequest();
+        internalCompensate(acct, "ai_run_text", "o".repeat(257))
+                .expectStatus().isBadRequest();
+        client().post().uri("/internal/credits/consume-compensations")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "accountId", acct,
+                        "feature", "ai_run_text",
+                        "consumeOperationId", "operation",
+                        "note", "n".repeat(513)))
+                .exchange().expectStatus().isBadRequest();
+
+        assertThat(txnCount(acct)).isZero();
+    }
+
+    @Test
+    void concurrentConsumeAndCompensationNeverLoseOrMintCredit() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "race-" + acct;
+        award(acct, 2);
+        WebClient webClient = WebClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .defaultHeader("X-Internal-Key", INTERNAL_KEY)
+                .build();
+
+        var statuses = reactor.core.publisher.Mono.zip(
+                        webClient.post().uri("/internal/credits/consume")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(Map.of("accountId", acct, "feature", "ai_run_text",
+                                        "operationId", operationId))
+                                .exchangeToMono(response -> Mono.just(response.statusCode().value())),
+                        webClient.post().uri("/internal/credits/consume-compensations")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(Map.of("accountId", acct, "feature", "ai_run_text",
+                                        "consumeOperationId", operationId, "note", "race"))
+                                .exchangeToMono(response -> Mono.just(response.statusCode().value())))
+                .block();
+
+        assertThat(statuses).isNotNull();
+        assertThat(statuses.getT2()).isEqualTo(200);
+        assertThat(statuses.getT1()).isIn(200, 409);
+        assertThat(balanceOf(acct)).isEqualTo(2);
+        assertThat(txnCount(acct)).isIn(1L, 3L);
+    }
+
+    @Test
+    void fencedCompensationReconcilesRefundFromOldClientWithoutDoubleCredit() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "rolling-upgrade-" + acct;
+        award(acct, 2);
+        consume(acct, "ai_run_text", operationId);
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "ai_run_text",
+                        "operationId", "refund:" + operationId, "note", "old client"))
+                .exchange().expectStatus().isOk();
+
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.action").isEqualTo("deduplicated");
+
+        assertThat(balanceOf(acct)).isEqualTo(2);
+        assertThat(txnCount(acct)).isEqualTo(3);
+    }
+
+    @Test
+    void compensationRefundsConsumeWrittenByOldFinanceInstanceAfterMigration() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "old-finance-consume-" + acct;
+        award(acct, 2);
+        oldFinanceConsume(acct, "ai_run_text", operationId).block();
+
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.action").isEqualTo("refunded");
+
+        assertThat(balanceOf(acct)).isEqualTo(2);
+        assertThat(txnCount(acct)).isEqualTo(3);
+    }
+
+    @Test
+    void compensationFenceRejectsLateConsumeFromOldFinanceInstance() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "old-finance-late-" + acct;
+        award(acct, 2);
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk();
+
+        assertThatThrownBy(() -> oldFinanceConsume(acct, "ai_run_text", operationId).block())
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(balanceOf(acct)).isEqualTo(2);
+        assertThat(txnCount(acct)).isEqualTo(1);
+    }
+
+    @Test
     void internalEndpointsRequireSharedKey() {
         String acct = UUID.randomUUID().toString();
         // 无 X-Internal-Key → 401
@@ -176,6 +331,40 @@ class CreditsControllerIT extends FinanceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", feature, "operationId", operationId))
                 .exchange();
+    }
+
+    private WebTestClient.ResponseSpec internalCompensate(String acct, String feature, String operationId) {
+        return client().post().uri("/internal/credits/consume-compensations")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountId", acct, "feature", feature,
+                        "consumeOperationId", operationId, "note", "AI run failed"))
+                .exchange();
+    }
+
+    private Mono<Void> oldFinanceConsume(String acct, String feature, String operationId) {
+        Mono<Void> mutation = db.sql("""
+                        UPDATE credits_account
+                        SET balance = balance - 1, total_spent = total_spent + 1, updated_at = now()
+                        WHERE account_id = CAST(:accountId AS uuid) AND balance >= 1
+                        RETURNING balance
+                        """)
+                .bind("accountId", acct)
+                .map((row, meta) -> row.get("balance", Integer.class))
+                .one()
+                .flatMap(balance -> db.sql("""
+                                INSERT INTO credits_transaction(
+                                    id, account_id, amount, balance_after, type, feature, operation_id)
+                                VALUES (CAST(:id AS uuid), CAST(:accountId AS uuid), -1, :balance,
+                                        'consume', :feature, :operationId)
+                                """)
+                        .bind("id", UUID.randomUUID().toString())
+                        .bind("accountId", acct)
+                        .bind("balance", balance)
+                        .bind("feature", feature)
+                        .bind("operationId", operationId)
+                        .then());
+        return transactions.transactional(mutation);
     }
 
     private int balanceOf(String acct) {

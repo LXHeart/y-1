@@ -54,26 +54,15 @@ public class AiProviderKeyRepository {
                 .map(UUID::fromString);
     }
 
-    /** 按 ID 查询。 */
-    public Mono<AiProviderKey> findById(UUID id) {
-        return db.sql("SELECT " + SELECT_COLS + " FROM ai_provider_key WHERE id = CAST(:id AS uuid)")
-                .bind("id", id.toString())
-                .map(AiProviderKeyRepository::map)
-                .one();
-    }
-
-    /** 按组织 + 能力查找有效密钥（用于运行时路由）。 */
-    public Mono<AiProviderKey> findByOrganizationAndCapability(String organizationId, String capability) {
-        // 普通字符串拼接：text block 会吃掉行尾空格，SELECT/列/FROM 会粘连成坏 SQL。
+    /** 按 ID + owner 查询个人密钥；历史组织密钥和其他账号密钥都表现为不存在。 */
+    public Mono<AiProviderKey> findPersonalByIdAndOwner(UUID id, String ownerAccountId) {
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM ai_provider_key"
-                + " WHERE organization_id = :orgId"
-                + " AND capability = :capability"
-                + " AND enabled = true"
-                + " ORDER BY created_at DESC"
-                + " LIMIT 1")
-                .bind("orgId", organizationId)
-                .bind("capability", capability)
+                + " WHERE id = CAST(:id AS uuid)"
+                + " AND owner_account_id = :owner"
+                + " AND organization_id IS NULL")
+                .bind("id", id.toString())
+                .bind("owner", ownerAccountId)
                 .map(AiProviderKeyRepository::map)
                 .one();
     }
@@ -94,11 +83,12 @@ public class AiProviderKeyRepository {
                 .one();
     }
 
-    /** 列出用户的所有密钥（个人 + 组织）。 */
-    public Flux<AiProviderKey> findByOwner(String ownerAccountId) {
+    /** 列出当前账号的有效及已停用个人密钥；历史组织密钥不再进入可用控制面。 */
+    public Flux<AiProviderKey> findPersonalByOwner(String ownerAccountId) {
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM ai_provider_key"
                 + " WHERE owner_account_id = :owner"
+                + " AND organization_id IS NULL"
                 + " ORDER BY created_at DESC")
                 .bind("owner", ownerAccountId)
                 .map(AiProviderKeyRepository::map)
@@ -106,16 +96,19 @@ public class AiProviderKeyRepository {
     }
 
     /** 更新配置（不含 apiKey）。返回是否更新成功。 */
-    public Mono<Boolean> updateConfig(UUID id, String baseUrl, String model) {
+    public Mono<Boolean> updatePersonalConfig(UUID id, String ownerAccountId, String baseUrl, String model) {
         return db.sql("""
                 UPDATE ai_provider_key
                 SET base_url = :baseUrl,
                     model = :model,
                     updated_at = now()
                 WHERE id = CAST(:id AS uuid)
+                  AND owner_account_id = :owner
+                  AND organization_id IS NULL
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
+                .bind("owner", ownerAccountId)
                 .bind("baseUrl", baseUrl)
                 .bind("model", Parameter.fromOrEmpty(model, String.class))
                 .map((r, meta) -> r.get("id", String.class))
@@ -124,7 +117,8 @@ public class AiProviderKeyRepository {
     }
 
     /** 更换密钥（密钥轮换）。返回是否更新成功。 */
-    public Mono<Boolean> updateKey(UUID id, String newEncryptedKey, String newKeyVersion, String newMaskedHint) {
+    public Mono<Boolean> updatePersonalKey(
+            UUID id, String ownerAccountId, String newEncryptedKey, String newKeyVersion, String newMaskedHint) {
         return db.sql("""
                 UPDATE ai_provider_key
                 SET encrypted_key = :encryptedKey,
@@ -132,9 +126,12 @@ public class AiProviderKeyRepository {
                     masked_hint = :maskedHint,
                     updated_at = now()
                 WHERE id = CAST(:id AS uuid)
+                  AND owner_account_id = :owner
+                  AND organization_id IS NULL
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
+                .bind("owner", ownerAccountId)
                 .bind("encryptedKey", newEncryptedKey)
                 .bind("keyVersion", newKeyVersion)
                 .bind("maskedHint", newMaskedHint)
@@ -144,55 +141,22 @@ public class AiProviderKeyRepository {
     }
 
     /** 软删除（enabled=false）。返回是否删除成功。 */
-    public Mono<Boolean> delete(UUID id) {
+    public Mono<Boolean> deletePersonal(UUID id, String ownerAccountId) {
         return db.sql("""
                 UPDATE ai_provider_key
                 SET enabled = false,
                     updated_at = now()
-                WHERE id = CAST(:id AS uuid) AND enabled = true
+                WHERE id = CAST(:id AS uuid)
+                  AND owner_account_id = :owner
+                  AND organization_id IS NULL
+                  AND enabled = true
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
+                .bind("owner", ownerAccountId)
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();
-    }
-
-    /** 检查用户是否拥有指定密钥。 */
-    public Mono<Boolean> isOwner(UUID id, String ownerAccountId) {
-        return db.sql("""
-                SELECT owner_account_id::text
-                FROM ai_provider_key
-                WHERE id = CAST(:id AS uuid)
-                """)
-                .bind("id", id.toString())
-                .map((r, meta) -> r.get("owner_account_id", String.class))
-                .one()
-                .map(ownerAccountId::equals)
-                .defaultIfEmpty(false);
-    }
-
-    /** 检查用户是否可以管理指定密钥（个人密钥或组织成员）。 */
-    public Mono<Boolean> canManage(UUID id, String ownerAccountId, String organizationId) {
-        return db.sql("""
-                SELECT organization_id::text, owner_account_id::text
-                FROM ai_provider_key
-                WHERE id = CAST(:id AS uuid)
-                """)
-                .bind("id", id.toString())
-                .fetch().one()
-                .map(r -> {
-                    // fetch().one() 返回 Map<String,Object> 行投影（非 Row）。
-                    String owner = (String) r.get("owner_account_id");
-                    String org = (String) r.get("organization_id");
-                    // 个人密钥：只有创建者可管理
-                    if (org == null) {
-                        return ownerAccountId.equals(owner);
-                    }
-                    // 组织密钥：需要组织成员关系（由 Controller 层验证）
-                    return true;
-                })
-                .defaultIfEmpty(false);
     }
 
     private static AiProviderKey map(Row row, RowMetadata meta) {

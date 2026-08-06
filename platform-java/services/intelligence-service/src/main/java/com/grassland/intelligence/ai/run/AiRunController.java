@@ -5,6 +5,7 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import jakarta.validation.Valid;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,33 +42,32 @@ public class AiRunController {
     private final AiExecutionService aiExecution;
     private final TextCompletionClient textClient;
     private final AiRunRepository runRepository;
-    private final PriceTableService priceTableService;
     private final PlatformModelConfig platformDefaults;
+    private final PlatformConcurrencyLimiter concurrencyLimiter;
 
     public AiRunController(
             IntelligenceCallerResolver callers,
             AiExecutionService aiExecution,
             TextCompletionClient textClient,
             AiRunRepository runRepository,
-            PriceTableService priceTableService,
-            PlatformModelConfig platformDefaults) {
+            PlatformModelConfig platformDefaults,
+            PlatformConcurrencyLimiter concurrencyLimiter) {
         this.callers = callers;
         this.aiExecution = aiExecution;
         this.textClient = textClient;
         this.runRepository = runRepository;
-        this.priceTableService = priceTableService;
         this.platformDefaults = platformDefaults;
+        this.concurrencyLimiter = concurrencyLimiter;
     }
 
     @PostMapping
     public Mono<ResponseEntity<AiRunResponse>> execute(
             @Valid @RequestBody ExecuteRunRequest body, ServerWebExchange exchange) {
-        boolean allowFallback = body.allowFallback() == null || body.allowFallback();
+        boolean allowFallback = Boolean.TRUE.equals(body.allowFallback());
         int maxTokens = body.maxTokens() == null ? DEFAULT_MAX_TOKENS : body.maxTokens();
-        int estCents = safeEstimate(maxTokens);
-
+        int estimatedInputTokens = body.prompt().getBytes(StandardCharsets.UTF_8).length;
         return aiExecution.prepareExecution(exchange, body.capability(), CreditFeature.AI_RUN_TEXT,
-                maxTokens, estCents, allowFallback)
+                estimatedInputTokens, maxTokens, allowFallback)
                 .flatMap(result -> result.allowed()
                         ? doExecute(result.context(), body.prompt(), maxTokens)
                         : Mono.error(deniedException(result.denialReason())));
@@ -76,12 +76,31 @@ public class AiRunController {
     private Mono<ResponseEntity<AiRunResponse>> doExecute(
             AiExecutionService.ExecutionContext ctx, String prompt, int maxTokens) {
         String bearer = ctx.provider().isPlatform() ? platformDefaults.apiKey() : ctx.decryptedKey();
-        return textClient.complete(ctx.provider().baseUrl(), bearer, ctx.provider().model(), prompt, maxTokens)
-                .flatMap(completion -> aiExecution.settleSuccess(ctx, completion.inputTokens(), completion.outputTokens(), 0, 0)
-                        .then(runRepository.findById(ctx.runId()))
-                        .map(run -> ResponseEntity.ok(AiRunResponse.executed(run, completion))))
+        return Mono.usingWhen(
+                        Mono.just(ctx),
+                        ignored -> executeWithLease(ctx, prompt, maxTokens, bearer)
+                                .map(completion -> aiExecution.normalizeProviderUsage(ctx, completion))
+                                .flatMap(completion -> aiExecution.settleSuccess(
+                                                ctx, completion.inputTokens(), completion.outputTokens(), 0, 0)
+                                        .then(runRepository.findById(ctx.runId()))
+                                        .map(run -> ResponseEntity.ok(AiRunResponse.executed(run, completion)))),
+                        ignored -> Mono.empty(),
+                        (ignored, error) -> Mono.empty(),
+                        ignored -> aiExecution.handleCancellation(ctx).then())
                 .onErrorResume(error -> aiExecution.handleFailure(ctx, errorMessage(error))
                         .then(Mono.error(error)));
+    }
+
+    private Mono<TextCompletionResult> executeWithLease(
+            AiExecutionService.ExecutionContext ctx, String prompt, int maxTokens, String bearer) {
+        return Mono.usingWhen(
+                        concurrencyLimiter.acquire(ctx.provider()),
+                        ignored -> textClient.complete(
+                                ctx.provider().baseUrl(), bearer, ctx.provider().model(), prompt, maxTokens,
+                                ctx.provider().isByok()),
+                        PlatformConcurrencyLimiter.Lease::release,
+                        (lease, error) -> lease.release(),
+                        PlatformConcurrencyLimiter.Lease::release);
     }
 
     @GetMapping
@@ -100,14 +119,6 @@ public class AiRunController {
                         .switchIfEmpty(Mono.error(new IntelligenceException(404, "Run 不存在"))));
     }
 
-    private int safeEstimate(int estTokens) {
-        try {
-            return priceTableService.estimateCost(platformDefaults.model(), estTokens, 0, 0);
-        } catch (IllegalArgumentException e) {
-            return 0;  // 价目表无该模型：预算按 0 估（平台承担，已知缺口）
-        }
-    }
-
     private static String errorMessage(Throwable error) {
         return error.getMessage() != null ? error.getMessage() : "AI run failed";
     }
@@ -120,6 +131,7 @@ public class AiRunController {
                     new IntelligenceException(402, "已达模型预算上限：" + reason);
             case "fallback_not_authorized" -> new IntelligenceException(403, "无 BYOK 且未授权回退平台模型");
             case "no_platform_model" -> new IntelligenceException(503, "平台未配置该能力的模型");
+            case "unpriced_model" -> new IntelligenceException(503, "平台模型缺少价目配置");
             default -> new IntelligenceException(403, "执行被拒绝：" + reason);
         };
     }

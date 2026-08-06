@@ -63,20 +63,113 @@ public class AiModelBudgetRepository {
                 .map(UUID::fromString);
     }
 
-    /** 按组织+能力+provider 查询预算配置。 */
-    public Mono<AiModelBudget> findByOrganizationAndCapability(String organizationId, String capability) {
+    /** 按组织+能力+解析后的 provider 查询预算配置。 */
+    public Mono<AiModelBudget> findByOrganizationAndCapability(
+            String organizationId, String capability, String provider) {
         // 普通字符串拼接：text block 会吃掉行尾空格，SELECT/列/FROM 会粘连成坏 SQL。
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM ai_model_budget"
                 + " WHERE organization_id = :orgId"
                 + " AND capability = :capability"
+                + " AND provider = :provider"
                 + " AND enabled = true"
                 + " ORDER BY created_at DESC"
                 + " LIMIT 1")
                 .bind("orgId", organizationId)
                 .bind("capability", capability)
+                .bind("provider", provider)
                 .map(AiModelBudgetRepository::map)
                 .one();
+    }
+
+    /** Atomically resets elapsed windows and reserves capacity under all configured limits. */
+    public Mono<LocalDate> reserve(UUID id, long tokens, long cents) {
+        return db.sql("""
+                UPDATE ai_model_budget
+                SET current_daily_tokens =
+                        (CASE WHEN last_reset_date < CURRENT_DATE THEN 0 ELSE current_daily_tokens END) + :tokens,
+                    current_daily_cents =
+                        (CASE WHEN last_reset_date < CURRENT_DATE THEN 0 ELSE current_daily_cents END) + :cents,
+                    current_monthly_tokens =
+                        (CASE WHEN date_trunc('month', last_reset_date) < date_trunc('month', CURRENT_DATE)
+                              THEN 0 ELSE current_monthly_tokens END) + :tokens,
+                    current_monthly_cents =
+                        (CASE WHEN date_trunc('month', last_reset_date) < date_trunc('month', CURRENT_DATE)
+                              THEN 0 ELSE current_monthly_cents END) + :cents,
+                    last_reset_date = CURRENT_DATE,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND enabled = true
+                  AND (max_tokens_per_run IS NULL OR :tokens <= max_tokens_per_run)
+                  AND (max_cents_per_run IS NULL OR :cents <= max_cents_per_run)
+                  AND (max_tokens_daily IS NULL OR
+                       (CASE WHEN last_reset_date < CURRENT_DATE THEN 0 ELSE current_daily_tokens END) + :tokens
+                       <= max_tokens_daily)
+                  AND (max_cents_daily IS NULL OR
+                       (CASE WHEN last_reset_date < CURRENT_DATE THEN 0 ELSE current_daily_cents END) + :cents
+                       <= max_cents_daily)
+                  AND (max_tokens_monthly IS NULL OR
+                       (CASE WHEN date_trunc('month', last_reset_date) < date_trunc('month', CURRENT_DATE)
+                             THEN 0 ELSE current_monthly_tokens END) + :tokens <= max_tokens_monthly)
+                  AND (max_cents_monthly IS NULL OR
+                       (CASE WHEN date_trunc('month', last_reset_date) < date_trunc('month', CURRENT_DATE)
+                             THEN 0 ELSE current_monthly_cents END) + :cents <= max_cents_monthly)
+                RETURNING last_reset_date AS reservation_date
+                """)
+                .bind("id", id.toString())
+                .bind("tokens", tokens)
+                .bind("cents", cents)
+                .map((row, meta) -> row.get("reservation_date", LocalDate.class))
+                .one();
+    }
+
+    /** Replace a reservation with actual usage by applying the signed delta. */
+    public Mono<Boolean> settleReservation(
+            UUID id, LocalDate reservationDate,
+            long reservedTokens, long reservedCents, long actualTokens, long actualCents) {
+        return adjustReservation(
+                id, reservationDate, actualTokens - reservedTokens, actualCents - reservedCents);
+    }
+
+    /** Release a reservation after preparation/provider failure. */
+    public Mono<Boolean> releaseReservation(
+            UUID id, LocalDate reservationDate, long reservedTokens, long reservedCents) {
+        return adjustReservation(id, reservationDate, -reservedTokens, -reservedCents);
+    }
+
+    private Mono<Boolean> adjustReservation(
+            UUID id, LocalDate reservationDate, long tokenDelta, long centDelta) {
+        return db.sql("""
+                UPDATE ai_model_budget
+                SET current_daily_tokens = CASE
+                        WHEN last_reset_date = :reservationDate
+                        THEN GREATEST(0, current_daily_tokens + :tokenDelta)
+                        ELSE current_daily_tokens END,
+                    current_daily_cents = CASE
+                        WHEN last_reset_date = :reservationDate
+                        THEN GREATEST(0, current_daily_cents + :centDelta)
+                        ELSE current_daily_cents END,
+                    current_monthly_tokens = CASE
+                        WHEN date_trunc('month', last_reset_date) =
+                             date_trunc('month', CAST(:reservationDate AS date))
+                        THEN GREATEST(0, current_monthly_tokens + :tokenDelta)
+                        ELSE current_monthly_tokens END,
+                    current_monthly_cents = CASE
+                        WHEN date_trunc('month', last_reset_date) =
+                             date_trunc('month', CAST(:reservationDate AS date))
+                        THEN GREATEST(0, current_monthly_cents + :centDelta)
+                        ELSE current_monthly_cents END,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                RETURNING id::text
+                """)
+                .bind("id", id.toString())
+                .bind("reservationDate", reservationDate)
+                .bind("tokenDelta", tokenDelta)
+                .bind("centDelta", centDelta)
+                .map((row, meta) -> row.get("id", String.class))
+                .one()
+                .hasElement();
     }
 
     /** 累加用量（含自动重置）。 */

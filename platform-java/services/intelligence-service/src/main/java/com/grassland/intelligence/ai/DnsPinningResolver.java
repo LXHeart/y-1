@@ -3,6 +3,8 @@ package com.grassland.intelligence.ai;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -20,7 +22,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>使用示例：
  * <pre>{@code
- *   DnsPinningResolver resolver = new DnsPinningResolver();
+ *   DnsPinningResolver resolver = DnsPinningResolver.create();
  *   resolver.pinDomain("api.openai.com", Set.of("104.16.123.45"));
  *   boolean safe = resolver.isSafeTarget("https://api.openai.com/v1/chat");
  * }</pre>
@@ -35,11 +37,23 @@ public final class DnsPinningResolver {
     /** 域名 → 首次解析时间（用于监控） */
     private final Map<String, Long> pinnedTime = new ConcurrentHashMap<>();
 
-    private DnsPinningResolver() {}
+    private final HostResolver hostResolver;
+
+    private DnsPinningResolver(HostResolver hostResolver) {
+        this.hostResolver = hostResolver;
+    }
 
     /** 创建默认实例（不含任何 pinning，需显式调用 pinDomain）。 */
     public static DnsPinningResolver create() {
-        return new DnsPinningResolver();
+        return new DnsPinningResolver(InetAddress::getAllByName);
+    }
+
+    /** 创建使用指定 DNS 解析函数的实例，供确定性测试和受控运行环境使用。 */
+    public static DnsPinningResolver create(HostResolver hostResolver) {
+        if (hostResolver == null) {
+            throw new IllegalArgumentException("hostResolver is required");
+        }
+        return new DnsPinningResolver(hostResolver);
     }
 
     /**
@@ -49,7 +63,7 @@ public final class DnsPinningResolver {
      *                        例如：{@code api.openai.com=104.16.123.45;dashscope.aliyuncs.com=47.96.23.1}
      */
     public static DnsPinningResolver fromEnv(String trustedDomainsEnv) {
-        DnsPinningResolver resolver = new DnsPinningResolver();
+        DnsPinningResolver resolver = create();
         if (trustedDomainsEnv != null && !trustedDomainsEnv.isBlank()) {
             String[] domains = trustedDomainsEnv.split(";");
             for (String domainEntry : domains) {
@@ -71,26 +85,30 @@ public final class DnsPinningResolver {
      * @param ipAddresses 该域名解析出的 IP 地址集合（支持多 IP 负载均衡）
      */
     public void pinDomain(String domain, Set<String> ipAddresses) {
-        pinnedIps.put(domain, ipAddresses);
-        pinnedTime.put(domain, System.currentTimeMillis());
-        logger.info("DNS pinned: {} -> {}", domain, ipAddresses);
+        String normalizedDomain = normalizeHost(domain);
+        Set<String> normalizedIps = ipAddresses == null ? Set.of() : ipAddresses.stream()
+                .map(String::trim)
+                .filter(ip -> !ip.isBlank())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (normalizedDomain.isBlank() || normalizedIps.isEmpty()) {
+            throw new IllegalArgumentException("domain and ipAddresses are required");
+        }
+        pinnedIps.put(normalizedDomain, normalizedIps);
+        pinnedTime.put(normalizedDomain, System.currentTimeMillis());
+        logger.info("DNS pinned: {} -> {}", normalizedDomain, normalizedIps);
     }
 
     /**
      * 固定域名（自动 DNS 解析一次）。
      *
-     * <p>仅用于平台默认 provider；用户 BYOK 域名需运维审查后手动配置。
+     * <p>解析结果必须由调用方完成公网地址校验后才能用于用户 BYOK。
      *
      * @param domain 域名
      * @return 是否成功解析并固定
      */
     public boolean pinDomainByDns(String domain) {
         try {
-            Set<String> ips = Set.of();
-            InetAddress[] addrs = InetAddress.getAllByName(domain);
-            for (InetAddress addr : addrs) {
-                ips = Set.copyOf(ips);
-            }
+            Set<String> ips = resolveAll(domain);
             if (ips.isEmpty()) {
                 logger.warn("DNS resolve returned empty for domain: {}", domain);
                 return false;
@@ -119,13 +137,7 @@ public final class DnsPinningResolver {
             return false;
         }
 
-        // IP 字面量直接检查是否在白名单
-        if (isIpLiteral(host)) {
-            return isIpPinned(host);
-        }
-
-        // 域名检查是否已 pin
-        Set<String> allowedIps = pinnedIps.get(host);
+        Set<String> allowedIps = pinnedIps.get(normalizeHost(host));
         if (allowedIps == null || allowedIps.isEmpty()) {
             logger.warn("Domain not pinned: {}", host);
             return false;
@@ -133,15 +145,12 @@ public final class DnsPinningResolver {
 
         // 验证当前解析的 IP 是否仍在白名单内
         try {
-            InetAddress[] currentIps = InetAddress.getAllByName(host);
-            for (InetAddress addr : currentIps) {
-                String ip = addr.getHostAddress();
-                if (!allowedIps.contains(ip)) {
-                    logger.error("DNS pinning violation: {} resolved to {}, allowed {}", host, ip, allowedIps);
-                    return false;
-                }
+            Set<String> currentIps = resolveAll(host);
+            if (!allowedIps.equals(currentIps)) {
+                logger.error("DNS pinning violation: {} resolved to {}, allowed {}", host, currentIps, allowedIps);
+                return false;
             }
-            return true;
+            return !currentIps.isEmpty();
         } catch (UnknownHostException e) {
             logger.error("DNS resolve failed for pinned domain: {}", host, e);
             return false;
@@ -155,7 +164,7 @@ public final class DnsPinningResolver {
      * @return IP 地址集合；未 pin 返回空集合
      */
     public Set<String> getPinnedIps(String domain) {
-        return pinnedIps.getOrDefault(domain, Set.of());
+        return pinnedIps.getOrDefault(normalizeHost(domain), Set.of());
     }
 
     /**
@@ -183,22 +192,43 @@ public final class DnsPinningResolver {
         }
     }
 
-    /** 判断字符串是否是 IP 字面量。 */
-    private boolean isIpLiteral(String host) {
-        // 简单判断：含点且全是数字（IPv4）或含冒号（IPv6）
-        boolean isIpv4 = host.matches("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$");
-        boolean isIpv6 = host.contains(":") && (host.startsWith("[") || !host.contains("."));
-        return isIpv4 || isIpv6;
-    }
-
-    /** 检查 IP 是否在白名单内。 */
-    private boolean isIpPinned(String ip) {
-        // 反向查找：哪个域名 pin 了此 IP
-        for (Map.Entry<String, Set<String>> entry : pinnedIps.entrySet()) {
-            if (entry.getValue().contains(ip)) {
-                return true;
+    /** 返回已固定的地址；调用方可据此构造不再触发 DNS 的实际连接。 */
+    public Set<InetAddress> getPinnedAddresses(String domain) {
+        Set<InetAddress> addresses = new LinkedHashSet<>();
+        for (String ip : getPinnedIps(domain)) {
+            try {
+                addresses.add(InetAddress.getByName(ip));
+            } catch (UnknownHostException e) {
+                throw new IllegalStateException("Invalid pinned IP address", e);
             }
         }
-        return false;
+        return Set.copyOf(addresses);
+    }
+
+    /** 解析域名的全部地址并去重。 */
+    public Set<String> resolveAll(String domain) throws UnknownHostException {
+        Set<String> result = new LinkedHashSet<>();
+        for (InetAddress address : hostResolver.resolve(normalizeHost(domain))) {
+            result.add(address.getHostAddress());
+        }
+        return Set.copyOf(result);
+    }
+
+    private static String normalizeHost(String host) {
+        if (host == null) {
+            return "";
+        }
+        String value = host.trim().toLowerCase(Locale.ROOT);
+        if (value.endsWith(".")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value.startsWith("[") && value.endsWith("]")
+                ? value.substring(1, value.length() - 1)
+                : value;
+    }
+
+    @FunctionalInterface
+    public interface HostResolver {
+        InetAddress[] resolve(String host) throws UnknownHostException;
     }
 }
