@@ -12,6 +12,7 @@ import type {
   EngagementVerification,
   RecommenderProfile,
   RecommenderReputation,
+  RecommenderVerificationRequest,
   UpdateRecommenderProfileInput,
   FinanceAccount,
   GrasslandResponse,
@@ -828,9 +829,16 @@ export function useGrassland() {
       body: JSON.stringify({ replay, operationId }),
     }))
 
-  /** 「待判定」核验只读窗（无处置动作——inconclusive 永不阻断结算）。 */
+  /** 「待判定」核验队列（GL-P2-ADMIN-004：尚未人工改判的 inconclusive）。 */
   const listOpsPendingVerifications = () =>
     run(() => request<OpsPendingVerification[]>('/api/ops/pending-verifications'))
+
+  /** 人工改判 inconclusive 核验；自动核验真相不变，服务端写 verification_override。 */
+  const overrideOpsVerification = (submissionId: string, status: 'passed' | 'failed', note: string) =>
+    run(() => request<Record<string, unknown>>(
+      `/api/ops/pending-verifications/${encodeURIComponent(submissionId)}/override`,
+      { method: 'POST', body: JSON.stringify({ status, note }) },
+    ))
 
   // ---------- KYB：商家资料（GL-P3-MERCHANT-001）----------
 
@@ -1004,6 +1012,20 @@ export function useGrassland() {
       body: JSON.stringify(note ? { note } : {}),
     }))
 
+  // ---------- 推荐官平台认证审核（GL-P2-ADMIN-002）----------
+
+  const listRecommenderVerifications = () =>
+    run(() => request<RecommenderVerificationRequest[]>('/api/admin/recommender-requests'))
+
+  const reviewRecommenderVerification = (
+    verificationId: string,
+    decision: 'approve' | 'reject',
+    note?: string,
+  ) => run(() => request<RecommenderVerificationRequest>(
+    `/api/admin/recommender-requests/${encodeURIComponent(verificationId)}/${decision}`,
+    { method: 'POST', body: JSON.stringify(note ? { note } : {}) },
+  ))
+
   /**
    * 幂等键生成：`crypto.randomUUID` 在 HTTPS 与 localhost 之外不可用（Safari/旧 Chrome），
    * 故带一条时间戳+随机数兜底，避免运营台在 HTTP 内网入口上整个按钮不可用。
@@ -1114,6 +1136,7 @@ export function useGrassland() {
     listOpsDlt,
     executeOpsDltAction,
     listOpsPendingVerifications,
+    overrideOpsVerification,
     newOperationId,
     // KYB：商家资料
     getMerchantProfile,
@@ -1139,5 +1162,8 @@ export function useGrassland() {
     getKybVerificationDetail,
     getKybAttachmentDownload,
     reviewKybVerification,
+    // 推荐官平台认证审核（GL-P2-ADMIN-002）
+    listRecommenderVerifications,
+    reviewRecommenderVerification,
   }
 }

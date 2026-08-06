@@ -5,12 +5,10 @@ import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
 
 /**
- * 「待判定」核验只读查询（GL-P1-OPS-001 Stage 3）。
+ * 「待判定」核验查询（GL-P1-OPS-001 + GL-P2-ADMIN-004）。
  *
- * <p>没有 insert/update：这是**派生视图**，不是新状态。数据真相在 {@code engagement_verification}，
- * 运营台只是换个切面看它 —— 加一张影子表就得处理「商家改判后影子表怎么同步」，那是白造的一致性问题。
- *
- * <p>三张表 JOIN 都是同库真 FK 路径（verification→submission→application→task），无跨服务调用。
+ * <p>查询自动核验为 inconclusive、交付物仍 submitted 且尚未有人工作出 override 的记录。
+ * 人工改判写入 marketplace 的 {@code verification_override}，不改自动核验真相表。
  */
 @Repository
 public class OpsPendingVerificationRepository {
@@ -21,12 +19,7 @@ public class OpsPendingVerificationRepository {
         this.db = db;
     }
 
-    /**
-     * 列出待判定核验，最近核验的在前。
-     *
-     * <p>{@code status='submitted'} 是关键过滤：商家 confirm/reject 之后人工判定已发生，
-     * 该条不再属于「待判定」。
-     */
+    /** 列出待人工复核核验，最近核验的在前。 */
     public Flux<OpsPendingVerification> list(int limit) {
         return db.sql("""
                         SELECT v.id::text AS verification_id, s.id::text AS submission_id,
@@ -39,7 +32,12 @@ public class OpsPendingVerificationRepository {
                         JOIN engagement_submission s ON s.id = v.submission_id
                         JOIN task_application a ON a.id = s.application_id
                         JOIN task t ON t.id = a.task_id
-                        WHERE v.status = 'inconclusive' AND s.status = 'submitted'
+                        WHERE v.status = 'inconclusive'
+                          AND s.status = 'submitted'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM verification_override vo
+                              WHERE vo.submission_id = v.submission_id
+                          )
                         ORDER BY v.last_checked_at DESC, v.id
                         LIMIT :limit
                         """)

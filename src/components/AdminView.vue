@@ -12,6 +12,11 @@
         :class="{ active: activeSection === 'kyb' }" @click="activeSection = 'kyb'">
         KYB 审核 <span v-if="kybRequests.length" class="count-badge">{{ kybRequests.length }}</span>
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'recommenders'"
+        :class="{ active: activeSection === 'recommenders' }"
+        @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
+        推荐官认证 <span v-if="recommenderRequests.length" class="count-badge">{{ recommenderRequests.length }}</span>
+      </button>
       <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
         :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
     </div>
@@ -62,6 +67,36 @@
               </td>
             </tr>
             <tr v-if="kybRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核申请</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-else-if="activeSection === 'recommenders'" class="admin-panel" role="tabpanel">
+      <div class="panel-toolbar">
+        <div><h3>推荐官平台认证</h3><p>自助开通不受影响，认证通过后获得平台认证标识</p></div>
+        <button class="refresh-btn" type="button" :disabled="recommenderLoading" @click="loadRecommenderRequests">刷新</button>
+      </div>
+      <p v-if="recommenderError" class="error-msg" role="alert">{{ recommenderError }}</p>
+      <div v-if="recommenderLoading" class="loading-state">加载中...</div>
+      <div v-else class="table-card">
+        <table class="user-table kyb-table">
+          <thead><tr><th>账号</th><th>材料</th><th>提交时间</th><th>审核时限</th><th>审核原因</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="item in recommenderRequests" :key="item.id">
+              <td class="id-cell" :title="item.accountId">{{ item.accountId }}</td>
+              <td class="materials-cell"><code>{{ item.materials || '—' }}</code></td>
+              <td class="td-time">{{ formatDateTime(item.createdAt || null) }}</td>
+              <td class="td-time">{{ formatDateTime(item.reviewDeadline || null) }}</td>
+              <td>
+                <input v-model="recommenderNotes[item.id]" class="field-input" type="text" maxlength="500" placeholder="拒绝原因（拒绝必填）" />
+              </td>
+              <td class="review-actions">
+                <button class="approve-btn" type="button" @click="reviewRecommender(item, 'approve')">通过</button>
+                <button class="reject-btn" type="button" @click="reviewRecommender(item, 'reject')">拒绝</button>
+              </td>
+            </tr>
+            <tr v-if="recommenderRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核认证</td></tr>
           </tbody>
         </table>
       </div>
@@ -182,6 +217,7 @@ import type {
   KybVerificationDetail,
   KybVerificationRequest,
   KybVerificationType,
+  RecommenderVerificationRequest,
   MerchantAttachmentType,
   WithdrawalAccountType,
 } from '../types/grassland'
@@ -199,7 +235,7 @@ interface UserItem {
 }
 
 const users = ref<UserItem[]>([])
-const activeSection = ref<'users' | 'kyb' | 'ai-models'>('users')
+const activeSection = ref<'users' | 'kyb' | 'recommenders' | 'ai-models'>('users')
 const loading = ref(false)
 const loadError = ref('')
 
@@ -213,6 +249,10 @@ const grassland = useGrassland()
 const kybRequests = ref<KybVerificationRequest[]>([])
 const kybLoading = ref(false)
 const kybError = ref('')
+const recommenderRequests = ref<RecommenderVerificationRequest[]>([])
+const recommenderLoading = ref(false)
+const recommenderError = ref('')
+const recommenderNotes = ref<Record<string, string>>({})
 const reviewTarget = ref<KybVerificationRequest | null>(null)
 const reviewDecision = ref<'approve' | 'reject'>('approve')
 const reviewNote = ref('')
@@ -274,6 +314,31 @@ async function loadKybRequests(): Promise<void> {
     kybError.value = grassland.error.value || 'KYB 审核队列加载失败'
   }
   kybLoading.value = false
+}
+
+async function loadRecommenderRequests(): Promise<void> {
+  recommenderLoading.value = true
+  recommenderError.value = ''
+  const result = await grassland.listRecommenderVerifications()
+  if (result) recommenderRequests.value = [...result]
+  else recommenderError.value = grassland.error.value || '推荐官认证队列加载失败'
+  recommenderLoading.value = false
+}
+
+async function reviewRecommender(request: RecommenderVerificationRequest, decision: 'approve' | 'reject'): Promise<void> {
+  const note = (recommenderNotes.value[request.id] || '').trim()
+  if (decision === 'reject' && !note) {
+    recommenderError.value = '拒绝推荐官认证必须填写原因'
+    return
+  }
+  recommenderError.value = ''
+  const result = await grassland.reviewRecommenderVerification(request.id, decision, note || undefined)
+  if (result) {
+    recommenderRequests.value = recommenderRequests.value.filter(item => item.id !== request.id)
+    delete recommenderNotes.value[request.id]
+  } else {
+    recommenderError.value = grassland.error.value || '审核失败'
+  }
 }
 
 async function openReview(item: KybVerificationRequest, decision: 'approve' | 'reject'): Promise<void> {

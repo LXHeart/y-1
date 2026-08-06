@@ -60,6 +60,24 @@ public class EngagementVerificationRepository {
                 .map(EngagementVerificationRepository::map).one();
     }
 
+    /**
+     * 取一份交付物的**生效**核验状态（GL-P2-ADMIN-004）：有人工改判（verification_override）则 override 优先，
+     * 否则回落自动结论（engagement_verification.status）。两者皆无 → empty。
+     *
+     * <p>供 confirm 闸门 / 结算阻断 / 运营队列三处统一调用，避免各自处理 override 逻辑。
+     */
+    public Mono<String> findEffectiveStatus(String submissionId) {
+        return db.sql("""
+                SELECT COALESCE(
+                    (SELECT vo.status FROM verification_override vo WHERE vo.submission_id = CAST(:sub AS uuid)),
+                    (SELECT v.status FROM engagement_verification v WHERE v.submission_id = CAST(:sub AS uuid))
+                ) AS status
+                """)
+                .bind("sub", submissionId)
+                .map(row -> row.get("status", String.class))
+                .one();
+    }
+
     /** 按 submission 批量取核验记录（商家查看交付物列表时，一次查全避免 N+1）。空入参 → 空 Flux。 */
     public Flux<EngagementVerification> findBySubmissions(List<String> submissionIds) {
         if (submissionIds.isEmpty()) {

@@ -845,10 +845,21 @@ export interface OpsDltMessage {
   createdAt: string | null
 }
 
+export interface RecommenderVerificationRequest {
+  id: string
+  accountId: string
+  status: 'pending' | 'approved' | 'rejected'
+  /** 提交材料 JSON 字符串（社交账号/作品链接等）。 */
+  materials?: string
+  reviewerAccountId?: string
+  reviewNote?: string
+  reviewDeadline?: string | null
+  createdAt?: string | null
+}
+
 /**
- * 「待判定」核验：自动核验 inconclusive 且交付物仍 submitted。
- *
- * **不是处置单** —— inconclusive 永不阻断结算，运营台只提供可见性，决策权仍在商家的 confirm/reject。
+ * 待判定核验（GL-P1-OPS-001 + GL-P2-ADMIN-004）。
+ * 自动核验 inconclusive 且尚未人工改判；人工结论写 verification_override。
  */
 export interface OpsPendingVerification {
   verificationId: string

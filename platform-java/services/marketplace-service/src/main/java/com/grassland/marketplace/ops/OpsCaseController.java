@@ -2,6 +2,9 @@ package com.grassland.marketplace.ops;
 
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.taskcatalog.EngagementVerificationRepository;
+import com.grassland.marketplace.taskcatalog.VerificationOverride;
+import com.grassland.marketplace.taskcatalog.VerificationOverrideRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.MediaType;
@@ -42,6 +45,8 @@ public class OpsCaseController {
     private final OpsDltMessageRepository dltMessages;
     private final OpsDltActionService dltActions;
     private final OpsPendingVerificationRepository pendingVerifications;
+    private final VerificationOverrideRepository verificationOverrides;
+    private final EngagementVerificationRepository verifications;
     private final MarketplaceCallerResolver callers;
     private final TransactionalOperator transactions;
 
@@ -49,8 +54,12 @@ public class OpsCaseController {
                              OpsCaseActionRepository actionLog, OpsCaseActionService actionService,
                              OpsDltMessageRepository dltMessages, OpsDltActionService dltActions,
                              OpsPendingVerificationRepository pendingVerifications,
+                             VerificationOverrideRepository verificationOverrides,
+                             EngagementVerificationRepository verifications,
                              MarketplaceCallerResolver callers, TransactionalOperator transactions) {
         this.pendingVerifications = pendingVerifications;
+        this.verificationOverrides = verificationOverrides;
+        this.verifications = verifications;
         this.cases = cases;
         this.audits = audits;
         this.actionLog = actionLog;
@@ -197,6 +206,69 @@ public class OpsCaseController {
                 .then(pendingVerifications.list(capped)
                         .map(OpsCaseController::toPendingVerificationBody).collectList())
                 .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+    }
+
+    /**
+     * 对 inconclusive 交付物做人工改判（GL-P2-ADMIN-004）。
+     *
+     * <p>人工结论写入独立 {@code verification_override}，不覆盖自动核验真相；confirm/结算/队列读端
+     * 统一通过 {@code findEffectiveStatus} 让 override 优先。只允许对自动 inconclusive 做改判，
+     * 避免运营覆盖已经确定的自动 passed/failed；同 submission upsert，重复改判幂等且可修正。
+     */
+    @PostMapping(value = "/api/ops/pending-verifications/{submissionId}/override",
+            consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> overrideVerification(
+            @PathVariable String submissionId,
+            @RequestBody VerificationOverrideRequest body,
+            ServerHttpRequest request) {
+        String status = body.requireStatus();
+        String note = body.requireNote();
+        return callers.requireOpsOperator(request)
+                .flatMap(caller -> verifications.findBySubmission(submissionId)
+                        .switchIfEmpty(Mono.error(new MarketplaceException(404, "核验记录不存在")))
+                        .flatMap(verification -> {
+                            if (!"inconclusive".equalsIgnoreCase(verification.status())) {
+                                return Mono.<VerificationOverride>error(new MarketplaceException(
+                                        409, "仅可人工复核 inconclusive 核验"));
+                            }
+                            return transactions.transactional(
+                                    verificationOverrides.upsert(submissionId, status, caller.accountId(), note));
+                        }))
+                .map(override -> ResponseEntity.ok(Map.of("success", true,
+                        "data", toVerificationOverrideBody(override))));
+    }
+
+    private static Map<String, Object> toVerificationOverrideBody(VerificationOverride override) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", override.id());
+        body.put("submissionId", override.submissionId());
+        body.put("status", override.status());
+        body.put("reviewerAccountId", override.reviewerAccountId());
+        body.put("reviewNote", override.reviewNote());
+        body.put("createdAt", override.createdAt());
+        body.put("updatedAt", override.updatedAt());
+        return body;
+    }
+
+    /** 人工改判请求：status 只能 passed/failed，note 必填且最多 500 字。 */
+    public record VerificationOverrideRequest(String status, String note) {
+        String requireStatus() {
+            if (status == null || (!"passed".equalsIgnoreCase(status) && !"failed".equalsIgnoreCase(status))) {
+                throw new MarketplaceException(400, "status 仅支持 passed/failed");
+            }
+            return status.toLowerCase(java.util.Locale.ROOT);
+        }
+
+        String requireNote() {
+            String trimmed = note == null ? "" : note.trim();
+            if (trimmed.isEmpty()) {
+                throw new MarketplaceException(400, "人工复核必须填写原因");
+            }
+            if (trimmed.length() > 500) {
+                throw new MarketplaceException(400, "人工复核原因过长（上限 500 字）");
+            }
+            return trimmed;
+        }
     }
 
     private static Map<String, Object> toPendingVerificationBody(OpsPendingVerification v) {

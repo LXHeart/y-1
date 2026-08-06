@@ -29,9 +29,9 @@ public class DbVerificationChecker implements VerificationChecker {
                 submissions.findByApplication(engagementRef)
                         .filter(s -> SubmissionStatus.ACCEPTED.dbValue().equalsIgnoreCase(s.status()))
                         .next()  // 最新 accepted submission（findByApplication 已按 created_at DESC）
-                        .flatMap(s -> verifications.findBySubmission(s.id())
-                                .map(v -> "failed".equalsIgnoreCase(v.status()))
-                                .defaultIfEmpty(false))  // 无核验记录 → 不阻断
+                        .flatMap(s -> verifications.findEffectiveStatus(s.id())
+                                .map(status -> "failed".equalsIgnoreCase(status))
+                                .defaultIfEmpty(false))  // 无核验记录 → 不阻断（GL-P2-ADMIN-004：含 override 优先）
                         .defaultIfEmpty(false)  // 无 accepted submission → 不阻断
                         .block());
     }

@@ -22,7 +22,7 @@ import type {
  * 三个视图对应三种性质不同的东西，刻意不合并：
  * - **处置单**：有状态机 + 双人审批 + 资金动作
  * - **死信**：有重投/弃置，但幂等键与处置单共用一套台账
- * - **待判定**：只读观察窗，inconclusive 永不阻断结算，没有任何平台侧动作
+ * - **待判定**：自动核验 inconclusive 队列；人工复核写 override，不覆盖自动核验真相
  */
 
 const grassland = useGrassland()
@@ -58,6 +58,7 @@ const dltLoaded = ref(false)
 
 const pending = ref<OpsPendingVerification[]>([])
 const pendingLoaded = ref(false)
+const pendingNotes = ref<Record<string, string>>({})
 
 const SOURCE_LABEL: Record<OpsCaseSourceKind, string> = {
   settlement_blocked: '对账阻断',
@@ -131,6 +132,22 @@ async function refreshPending(): Promise<void> {
   const list = await grassland.listOpsPendingVerifications()
   if (list) pending.value = list
   pendingLoaded.value = true
+}
+
+async function overridePending(row: OpsPendingVerification, status: 'passed' | 'failed'): Promise<void> {
+  const note = (pendingNotes.value[row.submissionId] || '').trim()
+  if (!note) {
+    say('人工复核必须填写原因', true)
+    return
+  }
+  const result = await grassland.overrideOpsVerification(row.submissionId, status, note)
+  if (result) {
+    pendingNotes.value[row.submissionId] = ''
+    say(status === 'passed' ? '已人工判定通过' : '已人工判定不通过')
+    await refreshPending()
+  } else {
+    say(grassland.error.value || '人工复核失败', true)
+  }
 }
 
 onMounted(refreshCases)
@@ -390,8 +407,8 @@ function checksOf(row: OpsPendingVerification) {
         <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshPending">刷新</button>
       </div>
       <p class="ops-hint">
-        自动核验结论为「无法判定」且交付物仍待商家处理。<strong>只读</strong> —— 该状态不阻断结算，
-        平台侧无处置动作，决策权在商家的确认/退回。
+        自动核验结论为「无法判定」且交付物仍待商家处理。人工复核会单独记录 override，
+        不覆盖自动核验原始结论；人工判定不通过会阻断商家确认与后续结算。
       </p>
       <p v-if="pendingLoaded && pending.length === 0" class="ops-hint">当前没有待判定的核验。</p>
 
@@ -412,6 +429,26 @@ function checksOf(row: OpsPendingVerification) {
             <span class="ops-check-detail">{{ check.detail || '' }}</span>
           </li>
         </ul>
+        <div class="ops-actions ops-review-actions">
+          <input
+            v-model="pendingNotes[row.submissionId]"
+            class="ops-review-note"
+            type="text"
+            maxlength="500"
+            placeholder="填写人工复核原因"
+          />
+          <button
+            type="button"
+            :disabled="grassland.loading.value"
+            @click="overridePending(row, 'passed')"
+          >判定通过</button>
+          <button
+            type="button"
+            class="ops-danger"
+            :disabled="grassland.loading.value"
+            @click="overridePending(row, 'failed')"
+          >判定不通过</button>
+        </div>
       </section>
     </div>
 

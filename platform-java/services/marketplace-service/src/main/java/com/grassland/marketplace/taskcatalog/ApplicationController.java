@@ -437,11 +437,12 @@ public class ApplicationController {
     private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task) {
         return submissions.findPending(appId)
                 .switchIfEmpty(Mono.error(new ConfirmationConflict("推荐官尚未提交履约凭证，无法确认")))
-                .flatMap(pending -> verifications.findBySubmission(pending.id())
-                        .filter(v -> "failed".equalsIgnoreCase(v.status()))
-                        .hasElement()
+                .flatMap(pending -> verifications.findEffectiveStatus(pending.id())
+                        .map(status -> "failed".equalsIgnoreCase(status))
+                        .defaultIfEmpty(false)
                         .flatMap(blocked -> {
                             // 可选闸门：仅 failed 阻断 confirm（absent/passed/inconclusive 照常）。
+                            // GL-P2-ADMIN-004：生效状态含人工改判 override（override 优先于自动结论）。
                             if (Boolean.TRUE.equals(blocked)) {
                                 return Mono.<EngagementSubmission>error(new MarketplaceException(
                                         409, "履约核验未通过，请退回重交或重新核验"));

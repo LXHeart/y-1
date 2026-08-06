@@ -10,7 +10,7 @@ import OpsConsole from './OpsConsole.vue'
  * - 每次动作都带**新生成的** operationId（复用会被后端当重放，静默不执行）；
  * - 流转请求必须回传当前 `version`（乐观锁）；
  * - 动作返回 `failed` 时 UI 必须显示失败（HTTP 200 不等于成功）；
- * - 待判定视图是只读的（不能出现任何处置按钮）。
+ * - 待判定视图展示 check 明细，并支持对 inconclusive 做带原因的人工改判。
  */
 
 const CASE_BLOCKED = {
@@ -312,8 +312,8 @@ describe('OpsConsole', () => {
     expect(wrapper.text()).toContain('已重投至 grassland.trust.events')
   })
 
-  test('待判定视图只读：展示 check 明细，无任何处置按钮', async () => {
-    const { wrapper } = await mountConsole([
+  test('待判定视图展示 check 明细并支持带原因人工改判', async () => {
+    const { wrapper, calls } = await mountConsole([
       { match: '/api/ops/cases', data: [] },
       { match: '/api/ops/pending-verifications', data: [{
         verificationId: 'v-1', submissionId: 's-1', applicationId: 'a-1', taskId: 't-1',
@@ -322,6 +322,9 @@ describe('OpsConsole', () => {
         submittedAt: '2026-08-02T01:00:00Z',
         checks: '[{"type":"ai_visual","status":"inconclusive","detail":"图片不足以判定"}]',
       }] },
+      { match: '/api/ops/pending-verifications/s-1/override', data: {
+        submissionId: 's-1', status: 'failed', reviewerAccountId: 'ops-1', reviewNote: '证据不足',
+      } },
     ])
 
     await wrapper.findAll('.ops-tab').find((b) => b.text() === '待判定核验')!.trigger('click')
@@ -332,8 +335,17 @@ describe('OpsConsole', () => {
     expect(panel.text()).toContain('门店探店视频')
     expect(panel.text()).toContain('ai_visual')
     expect(panel.text()).toContain('图片不足以判定')
-    // 只读：除筛选区的「刷新」外没有别的按钮
-    expect(panel.findAll('button').map((b: { text: () => string }) => b.text())).toEqual(['刷新'])
+    expect(panel.find('input[placeholder="填写人工复核原因"]').exists()).toBe(true)
+    expect(panel.text()).toContain('判定通过')
+    expect(panel.text()).toContain('判定不通过')
+
+    await panel.find('input[placeholder="填写人工复核原因"]').setValue('证据不足')
+    await panel.findAll('button').find((b) => b.text() === '判定不通过')!.trigger('click')
+    await flushPromises()
+
+    const call = calls.find((item) => item.url.includes('/api/ops/pending-verifications/s-1/override'))
+    expect(call?.method).toBe('POST')
+    expect(JSON.parse(call?.body || '{}')).toEqual({ status: 'failed', note: '证据不足' })
   })
 
   test('坏 checks JSON 不炸 UI（后端字段是字符串，直接遍历会逐字符展开）', async () => {
