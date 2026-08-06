@@ -111,6 +111,19 @@ public class CreditsController {
                 .map(items -> Map.<String, Object>of("history", items.stream().map(CreditsController::historyItem).toList()));
     }
 
+    /**
+     * 批量余额（admin 用户列表用，避免 N+1）。
+     *
+     * <p>容器直连，{@code X-Internal-Key} 鉴权（同其它 {@code /internal/credits/*}）。
+     * 未建户的 accountId 不在 {@code accounts} 数组里（调用方按缺失 = 0 余额处理）。
+     */
+    @PostMapping("/internal/credits/balances")
+    public Mono<Map<String, Object>> internalBalances(@RequestBody BalancesRequest body) {
+        return credits.balances(body.accountIds()).collectList()
+                .map(accounts -> success(Map.of(
+                        "accounts", accounts.stream().map(CreditsController::balanceEntry).toList())));
+    }
+
     // ---------------- helpers ----------------
 
     private static Map<String, Object> success(Object data) {
@@ -119,6 +132,16 @@ public class CreditsController {
 
     private static Map<String, Object> balanceBody(CreditsAccount acct) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("balance", acct.balance());
+        body.put("totalEarned", acct.totalEarned());
+        body.put("totalSpent", acct.totalSpent());
+        return body;
+    }
+
+    /** balances 批量端点的单条 entry（带 accountId，供调用方按 id 索引）。 */
+    private static Map<String, Object> balanceEntry(CreditsAccount acct) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("accountId", acct.accountId());
         body.put("balance", acct.balance());
         body.put("totalEarned", acct.totalEarned());
         body.put("totalSpent", acct.totalSpent());
@@ -202,6 +225,18 @@ public class CreditsController {
             }
             if (amount == null || amount <= 0) {
                 throw new IllegalArgumentException("赠送金额必须为正");
+            }
+        }
+    }
+
+    /** 批量余额请求体：accountIds 上限 1000（admin 用户列表足够，防滥用）。 */
+    public record BalancesRequest(java.util.List<String> accountIds) {
+        public BalancesRequest {
+            if (accountIds == null) {
+                throw new IllegalArgumentException("缺少 accountIds");
+            }
+            if (accountIds.size() > 1000) {
+                throw new IllegalArgumentException("accountIds 过多（上限 1000）");
             }
         }
     }

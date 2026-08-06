@@ -93,6 +93,14 @@ public class CreditsService {
                 .defaultIfEmpty(new CreditsAccount(accountId, 0, 0, 0));
     }
 
+    /** 批量余额（admin 用户列表用，避免 N+1；未建户账号不在结果里）。空入参 → empty。 */
+    public Flux<CreditsAccount> balances(java.util.Collection<String> accountIds) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return Flux.empty();
+        }
+        return repo.findAccounts(accountIds);
+    }
+
     /** 流水（最近 limit 条，默认 50）。 */
     public Flux<CreditsTransaction> history(String accountId, int limit) {
         return repo.history(accountId, Math.max(1, limit));

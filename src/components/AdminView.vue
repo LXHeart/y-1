@@ -255,8 +255,8 @@ async function loadUsers(): Promise<void> {
       const data = await res.json().catch(() => null)
       throw new Error((data as Record<string, unknown>)?.error as string || '加载失败')
     }
-    const data = await res.json() as { users: UserItem[] }
-    users.value = data.users
+    const data = await res.json() as { success: boolean; data: { users: UserItem[] } }
+    users.value = data.data.users
   } catch (e: unknown) {
     loadError.value = e instanceof Error ? e.message : '加载失败'
   } finally {

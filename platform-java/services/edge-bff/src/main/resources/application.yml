@@ -86,7 +86,7 @@ edge:
       upstream: identity
       enabled: ${EDGE_ROUTE_ME_IDENTITY:true}
     # 平台 admin 权限审核队列。⚠️ 必须用精确前缀 /api/admin/permission-requests——
-    # legacy Express 的 /api/admin（用户管理/积分调整）仍在旧库，配 /api/admin 会前缀匹配抢走它。
+    # 避免前缀匹配误抢其它 /api/admin/* 路由。
     - path: /api/admin/permission-requests
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_PERMREQ_IDENTITY:true}
@@ -101,10 +101,19 @@ edge:
       upstream: intelligence
       enabled: ${EDGE_ROUTE_AI_INTELLIGENCE:true}
     # 平台模型配置 admin CRUD（/api/admin/ai/models）。⚠️ 精确前缀 /api/admin/ai——
-    # 不抢 legacy /api/admin/users、/api/admin/adjust-credits（同 kyb-requests 口径）。
+    # 不抢其它 /api/admin/* 路由（同 kyb-requests 口径）。
     - path: /api/admin/ai
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_AI_INTELLIGENCE:true}
+    # 平台 admin 用户管理 + 积分调整（迁自 legacy Express）→ identity。
+    # 精确路径，不抢同前缀的 permission-requests/kyb-requests/ai（它们排在前面，更具体优先）。
+    # 同一 flag 绑定两者（同属一次迁移，不应分开切流）。
+    - path: /api/admin/users
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_USERS_IDENTITY:true}
+    - path: /api/admin/adjust-credits
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_USERS_IDENTITY:true}
     # 推荐官画像（PRD 六）→ identity。/api/recommenders/{accountId}/profile；
     # 自维护那半边走已有的 /api/me 前缀，无需另配。
     - path: /api/recommenders

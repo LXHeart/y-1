@@ -79,7 +79,7 @@ class RouteOwnershipContractTest {
                 Arguments.of(HttpMethod.GET, "/api/finance/wallets/me", "finance"),
                 Arguments.of(HttpMethod.GET, "/api/trust/disputes/dispute", "trust"),
                 Arguments.of(HttpMethod.GET, "/api/media/media", "intelligence"),
-                Arguments.of(HttpMethod.GET, "/api/admin/users", "legacy"),
+                Arguments.of(HttpMethod.GET, "/api/admin/users", "identity"),
                 Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "legacy"),
                 Arguments.of(HttpMethod.GET, "/health", "legacy"));
     }

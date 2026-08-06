@@ -20,7 +20,7 @@ function response(data: unknown, envelope = true): Response {
 describe('AdminView KYB 审核', () => {
   test('第三个管理 tab 懒挂载 AI 模型面板且不显示 KYB 队列', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] }, false)
+      if (url === '/api/admin/users') return response({ users: [] }, true)
       if (url === '/api/admin/kyb-requests') return response([])
       throw new Error(`unexpected request: ${url}`)
     })
@@ -63,7 +63,7 @@ describe('AdminView KYB 审核', () => {
       attachments: [],
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] }, false)
+      if (url === '/api/admin/users') return response({ users: [] }, true)
       if (url === '/api/admin/kyb-requests') return response([request])
       if (url === '/api/admin/kyb-requests/request-1' && !init?.method) return response(detail)
       if (url === '/api/admin/kyb-requests/request-1/reject' && init?.method === 'POST') {
@@ -112,7 +112,7 @@ describe('AdminView KYB 审核', () => {
       attachments: [],
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] }, false)
+      if (url === '/api/admin/users') return response({ users: [] }, true)
       if (url === '/api/admin/kyb-requests') return response([request])
       return response(detail)
     })
@@ -137,7 +137,7 @@ describe('AdminView KYB 审核', () => {
       reviewDeadline: null, createdAt: null,
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] }, false)
+      if (url === '/api/admin/users') return response({ users: [] }, true)
       if (url === '/api/admin/kyb-requests') return response([request])
       if (url === '/api/admin/kyb-requests/request-3') {
         return {
@@ -158,5 +158,70 @@ describe('AdminView KYB 审核', () => {
     expect(wrapper.text()).toContain('审核材料暂不可用')
     expect(wrapper.find('.btn-confirm').attributes('disabled')).toBeDefined()
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('AdminView 用户管理（identity 信封）', () => {
+  test('解析 {success,data:{users}} 信封并渲染用户列表 + 余额', async () => {
+    const users = [
+      { id: 'u-1', email: 'a@example.com', displayName: '用户A', role: 'user', status: 'active',
+        createdAt: '2026-01-01T00:00:00Z', balance: 5, totalEarned: 10, totalSpent: 5 },
+      { id: 'u-2', email: 'b@example.com', displayName: null, role: 'user', status: 'active',
+        createdAt: '2026-01-02T00:00:00Z', balance: 0, totalEarned: 0, totalSpent: 0 },
+    ]
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === '/api/admin/users') return response({ users })
+      if (url === '/api/admin/kyb-requests') return response([])
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('a@example.com')
+    expect(wrapper.text()).toContain('用户A')
+    expect(wrapper.text()).toContain('b@example.com')
+    // 第一行的「调整积分」按钮存在
+    expect(wrapper.findAll('.adjust-btn').length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('调整积分发送 {userId,amount,note} 且成功后重载列表', async () => {
+    const users = [
+      { id: 'u-1', email: 'a@example.com', displayName: null, role: 'user', status: 'active',
+        createdAt: '2026-01-01T00:00:00Z', balance: 3, totalEarned: 3, totalSpent: 0 },
+    ]
+    let usersCallCount = 0
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/users') {
+        usersCallCount++
+        return response({ users })
+      }
+      if (url === '/api/admin/adjust-credits') {
+        const body = JSON.parse(init?.body as string)
+        expect(body.userId).toBe('u-1')
+        expect(body.amount).toBe(-2)
+        expect(body.note).toBe('扣减测试')
+        return response({ adjusted: true })
+      }
+      if (url === '/api/admin/kyb-requests') return response([])
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.find('.adjust-btn').trigger('click')
+    await flushPromises()
+    await (wrapper.find('input[type="number"]')).setValue(-2)
+    await wrapper.find('input[placeholder*="手动充值"]').setValue('扣减测试')
+    await wrapper.find('.btn-confirm').trigger('click')
+    await flushPromises()
+
+    // 成功后重载用户列表（第二次 GET /api/admin/users）
+    expect(usersCallCount).toBe(2)
+    // 模态关闭
+    expect(wrapper.find('.modal-overlay').exists()).toBe(false)
   })
 })

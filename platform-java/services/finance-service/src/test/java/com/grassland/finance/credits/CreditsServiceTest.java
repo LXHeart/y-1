@@ -14,9 +14,11 @@ import com.grassland.finance.credits.CreditsRepository.CreditsAccount;
 import com.grassland.finance.credits.CreditsRepository.ConsumeOperation;
 import com.grassland.finance.credits.CreditsRepository.ExistingOperation;
 import com.grassland.finance.credits.CreditsService.MutationResult;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -130,6 +132,25 @@ class CreditsServiceTest {
         MutationResult r = service.award(acct, 3, "注册赠送", null).block();
         assertThat(r.balance()).isEqualTo(3);
         verify(repo).creditAccount(acct, 3, 3, 0);
+    }
+
+    @Test
+    void balancesDelegatesToRepoForNonEmptyIds() {
+        List<String> ids = List.of("a-1", "a-2");
+        when(repo.findAccounts(ids)).thenReturn(Flux.just(
+                new CreditsAccount("a-1", 5, 5, 0),
+                new CreditsAccount("a-2", 0, 0, 0)));
+
+        StepVerifier.create(service.balances(ids).collectList())
+                .assertNext(accounts -> assertThat(accounts).hasSize(2))
+                .verifyComplete();
+        verify(repo).findAccounts(ids);
+    }
+
+    @Test
+    void balancesIsEmptyForEmptyInput() {
+        StepVerifier.create(service.balances(List.of())).verifyComplete();
+        verify(repo, never()).findAccounts(any());
     }
 
     private static ConsumeOperation operation(

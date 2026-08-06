@@ -311,6 +311,57 @@ class CreditsControllerIT extends FinanceItSupport {
                 .jsonPath("$.balance").isEqualTo(0);
     }
 
+    @Test
+    void internalBalancesReturnsAllAccountsWithCredits() {
+        String acctA = UUID.randomUUID().toString();
+        String acctB = UUID.randomUUID().toString();
+        award(acctA, 7);
+        award(acctB, 3);
+
+        client().post().uri("/internal/credits/balances")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountIds", java.util.List.of(acctA, acctB)))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.accounts.length()").isEqualTo(2);
+    }
+
+    @Test
+    void internalBalancesOmitsAccountsWithoutCredits() {
+        String withCredits = UUID.randomUUID().toString();
+        String noCredits = UUID.randomUUID().toString();
+        award(withCredits, 5);
+
+        // 未建户的 accountId 不在结果里（调用方按缺失 = 0 余额处理）
+        client().post().uri("/internal/credits/balances")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountIds", java.util.List.of(withCredits, noCredits)))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.accounts.length()").isEqualTo(1)
+                .jsonPath("$.data.accounts[0].accountId").isEqualTo(withCredits)
+                .jsonPath("$.data.accounts[0].balance").isEqualTo(5);
+    }
+
+    @Test
+    void internalBalancesAcceptsEmptyListAndMissingAccounts() {
+        client().post().uri("/internal/credits/balances")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountIds", java.util.List.of()))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.accounts.length()").isEqualTo(0);
+    }
+
+    @Test
+    void internalBalancesRequiresSharedKey() {
+        client().post().uri("/internal/credits/balances")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountIds", java.util.List.of(UUID.randomUUID().toString())))
+                .exchange().expectStatus().isUnauthorized();
+    }
+
     // ---------- helpers ----------
 
     private void award(String acct, int amount) {

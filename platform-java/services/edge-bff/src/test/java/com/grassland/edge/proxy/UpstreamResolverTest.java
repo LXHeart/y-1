@@ -30,9 +30,12 @@ class UpstreamResolverTest {
             // GL-P3-MERCHANT-001：KYB 审核队列 → identity（同样必须是精确前缀，不能退化为 /api/admin）
             new RouteProperties(null, "/api/admin/kyb-requests", "identity", true),
             // GL-P3-AI-001：AI 控制面 → intelligence。/api/ai（BYOK keys + Run）全新无碰撞；
-            // /api/admin/ai（模型配置 admin）精确前缀，不抢 legacy /api/admin/users 等（同 kyb 口径）。
+            // /api/admin/ai（模型配置 admin）精确前缀，不抢其它 /api/admin/*（同 kyb 口径）。
             new RouteProperties(null, "/api/ai", "intelligence", true),
             new RouteProperties(null, "/api/admin/ai", "intelligence", true),
+            // Legacy 迁移：admin 用户管理 + 积分调整 → identity（排在更具体的 permission/kyb/ai 之后）
+            new RouteProperties(null, "/api/admin/users", "identity", true),
+            new RouteProperties(null, "/api/admin/adjust-credits", "identity", true),
             new RouteProperties(null, "/api/finance", "finance", true),
             // GL-P3-AI-001 下属切片：积分读端 → finance（balance/history，内部上游 → 签身份断言）
             new RouteProperties(null, "/api/credits", "finance", true),
@@ -165,8 +168,7 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("GET", "/api/credits/history")).isEqualTo(FINANCE);
         // 内部上游 → InternalAssertionFilter 签发 grassland-finance 用户断言，finance 才能解析 accountId。
         assertThat(resolver.isInternalUpstream("GET", "/api/credits/balance")).isTrue();
-        // 回归防护：legacy admin 不被抢（/api/credits 与 /api/admin 无前缀重叠，显式锁死）。
-        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
+        // /api/credits 与 /api/admin 无前缀重叠（admin users 已迁 identity，见 adminUsersAndAdjustCreditsGoToIdentity）。
         assertThat(resolver.resolve("GET", "/api/credits/unknown-leaf")).isEqualTo(FINANCE);
     }
 
@@ -182,14 +184,11 @@ class UpstreamResolverTest {
     }
 
     @Test
-    void adminPermissionRequestsGoesToIdentityButLegacyAdminStays() {
+    void adminPermissionRequestsGoesToIdentity() {
         // identity 的权限审核队列 → identity
         assertThat(resolver.resolve("GET", "/api/admin/permission-requests")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("POST", "/api/admin/permission-requests/req-1")).isEqualTo(IDENTITY);
-        // ⚠️ 回归防护：legacy Express 的 /api/admin/users、/api/admin/adjust-credits 必须仍走 legacy。
-        // 若路由误配为前缀 /api/admin，这两条会被抢走 → 旧后台功能挂掉。
-        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
+        // /api/admin/users、/api/admin/adjust-credits 已迁 identity（见 adminUsersAndAdjustCreditsGoToIdentity）。
     }
 
     @Test
@@ -201,8 +200,8 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("POST", "/api/admin/kyb-requests/req-1/reject")).isEqualTo(IDENTITY);
         // 内部上游 → 会签身份断言，identity 侧才能解析出 admin 账号
         assertThat(resolver.isInternalUpstream("POST", "/api/admin/kyb-requests/req-1/approve")).isTrue();
-        // 且仍不抢 legacy admin
-        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
+        // /api/admin/users 也已迁 identity（kyb-requests 更具体，排在前面，不被抢占）
+        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(IDENTITY);
     }
 
     @Test
@@ -217,9 +216,20 @@ class UpstreamResolverTest {
         // 内部上游 → edge 签身份断言（admin role 经断言传播，intelligence 侧 requireAdmin 才能放行）
         assertThat(resolver.isInternalUpstream("POST", "/api/ai/runs")).isTrue();
         assertThat(resolver.isInternalUpstream("POST", "/api/admin/ai/models")).isTrue();
-        // ⚠️ 回归防护：精确前缀 /api/admin/ai 不得抢走 legacy /api/admin/users、/api/admin/adjust-credits
-        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void adminUsersAndAdjustCreditsGoToIdentity() {
+        // Legacy 迁移：/api/admin/users + /api/admin/adjust-credits → identity
+        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/admin/adjust-credits")).isEqualTo(IDENTITY);
+        // 内部上游 → edge 签身份断言（admin role 经断言传播）
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/users")).isTrue();
+        assertThat(resolver.isInternalUpstream("POST", "/api/admin/adjust-credits")).isTrue();
+        // ⚠️ 回归防护：/api/admin/users 路由不得抢走更具体的 /api/admin/* 路由
+        assertThat(resolver.resolve("GET", "/api/admin/permission-requests")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/admin/kyb-requests")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);
     }
 
     @Test
@@ -229,8 +239,8 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("POST", "/api/finance/accounts")).isTrue();
         assertThat(resolver.isInternalUpstream("POST", "/api/trust/disputes")).isTrue();
         assertThat(resolver.isInternalUpstream("GET", "/api/admin/permission-requests")).isTrue();
-        // legacy admin 不是内部上游 → 不签断言（伪造头仍被 filter 剥离）
-        assertThat(resolver.isInternalUpstream("GET", "/api/admin/users")).isFalse();
+        // admin 用户管理已迁 identity → 内部上游，edge 签断言（admin role 经断言传播）
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/users")).isTrue();
     }
 
     // ---------- 推荐官画像 + 声誉（PRD 五/六）：两条前缀分别落到不同上游 ----------

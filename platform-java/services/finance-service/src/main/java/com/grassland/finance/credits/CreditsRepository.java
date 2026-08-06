@@ -188,6 +188,21 @@ public class CreditsRepository {
                 .one();
     }
 
+    /**
+     * 批量取余额（admin 用户列表用，避免 N+1）。空入参 → empty，不报错。
+     * 未建户的 accountId 不在结果里（调用方按缺失 = 0 余额处理）。
+     */
+    public Flux<CreditsAccount> findAccounts(java.util.Collection<String> accountIds) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return Flux.empty();
+        }
+        return db.sql("SELECT " + ACCOUNT_COLS
+                        + " FROM credits_account WHERE account_id = ANY(CAST(:ids AS uuid[]))")
+                .bind("ids", accountIds.toArray(String[]::new))
+                .map(CreditsRepository::mapAccount)
+                .all();
+    }
+
     public Flux<CreditsTransaction> history(String accountId, int limit) {
         return db.sql("SELECT " + TXN_COLS + " FROM credits_transaction"
                 + " WHERE account_id = CAST(:acct AS uuid) ORDER BY created_at DESC LIMIT :lim")
