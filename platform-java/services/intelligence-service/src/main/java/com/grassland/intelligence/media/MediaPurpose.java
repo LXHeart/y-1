@@ -8,8 +8,10 @@ import java.util.Locale;
  * <ul>
  *   <li>{@link #ARTICLE_GENERATED} — 文章生成图（服务端生成，短 TTL）。</li>
  *   <li>{@link #ENGAGEMENT_ATTACHMENT} — 履约交付物附件（Slice 11 地基）。</li>
+ *   <li>{@link #MERCHANT_KYB} — 商家 KYB 附件（Slice 11+）。</li>
  *   <li>{@link #VIDEO_ASSET} — 视频改编出图等素材（Slice 9 地基）。</li>
  *   <li>{@link #USER_UPLOAD} — 通用用户上传资产。</li>
+ *   <li>{@link #CONTENT_ASSET} — 内容素材库资产（Slice 14 / PRD §4.8，三类素材库的物理资产）。</li>
  * </ul>
  */
 public enum MediaPurpose {
@@ -17,7 +19,8 @@ public enum MediaPurpose {
     ENGAGEMENT_ATTACHMENT("engagement_attachment"),
     MERCHANT_KYB("merchant_kyb"),
     VIDEO_ASSET("video_asset"),
-    USER_UPLOAD("user_upload");
+    USER_UPLOAD("user_upload"),
+    CONTENT_ASSET("content_asset");
 
     private final String db;
 
