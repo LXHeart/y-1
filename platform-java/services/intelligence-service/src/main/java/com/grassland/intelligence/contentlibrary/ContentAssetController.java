@@ -95,7 +95,7 @@ public class ContentAssetController {
                     .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要商家组织身份")))
                     .flatMap(caller -> createAsset(caller, body, LibraryType.MERCHANT, caller.organizationId()))
                     .map(ContentAssetController::success);
-            case PUBLIC -> Mono.error(new IntelligenceException(400, "公共素材库请走管理端（Stage 3）"));
+            case PUBLIC -> createPublic(exchange, body);
         };
     }
 
@@ -124,7 +124,7 @@ public class ContentAssetController {
             case MERCHANT -> Boolean.TRUE.equals(granted)
                     ? listGrantedMerchant(exchange)
                     : listOwnMerchant(exchange, categoryRaw);
-            case PUBLIC -> Mono.error(new IntelligenceException(400, "公共素材库尚未开放（Stage 3）"));
+            case PUBLIC -> listPublic(exchange, categoryRaw);
         };
     }
 
@@ -143,6 +143,17 @@ public class ContentAssetController {
     private Mono<ResponseEntity<Map<String, Object>>> listGrantedMerchant(ServerWebExchange exchange) {
         return callers.requireRecommender(exchange.getRequest())
                 .flatMap(caller -> grants.listGrantedAssets(caller.accountId()).collectList())
+                .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
+    }
+
+    /** 公共库列表（全员只读，resolveOptional 容忍未登录）。active + 未过期，可按分类筛选。 */
+    private Mono<ResponseEntity<Map<String, Object>>> listPublic(ServerWebExchange exchange, String categoryRaw) {
+        AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
+        if (categoryRaw != null && category == null) {
+            return Mono.error(new IntelligenceException(400, "category 无效"));
+        }
+        return callers.resolveOptional(exchange.getRequest())
+                .flatMap(caller -> assets.listPublic(category).collectList())
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
@@ -237,6 +248,63 @@ public class ContentAssetController {
                 .map(ContentAssetController::success);
     }
 
+    // ---------------- 公共库审核（GL-P2-ADMIN-003 同款全审政策）----------------
+
+    /** 列待审核公共素材（内容审核员队列）。requireRole(CONTENT_REVIEWER)，PLATFORM_ADMIN 超集。 */
+    @GetMapping("/api/admin/content-assets/review")
+    public Mono<ResponseEntity<Map<String, Object>>> reviewQueue(ServerWebExchange exchange) {
+        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
+                .flatMap(caller -> assets.listPendingReview(200).collectList())
+                .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
+    }
+
+    /** 审核通过（pending_review→active）。requireRole(CONTENT_REVIEWER)，乐观锁。 */
+    @PostMapping("/api/admin/content-assets/{id}/review/approve")
+    public Mono<ResponseEntity<Map<String, Object>>> reviewApprove(
+            @PathVariable String id, @RequestBody ReviewRequest body, ServerWebExchange exchange) {
+        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
+                .flatMap(caller -> approvePublic(id, caller, body))
+                .map(ContentAssetController::success);
+    }
+
+    /** 审核驳回（pending_review→rejected，必填 note）。requireRole(CONTENT_REVIEWER)，乐观锁。 */
+    @PostMapping("/api/admin/content-assets/{id}/review/reject")
+    public Mono<ResponseEntity<Map<String, Object>>> reviewReject(
+            @PathVariable String id, @RequestBody ReviewRequest body, ServerWebExchange exchange) {
+        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
+                .flatMap(caller -> rejectPublic(id, caller, body))
+                .map(ContentAssetController::success);
+    }
+
+    private Mono<Map<String, Object>> approvePublic(String id, Caller caller, ReviewRequest body) {
+        if (body == null || body.expectedVersion() == null) {
+            return Mono.error(new IntelligenceException(400, "expectedVersion 不能为空"));
+        }
+        UUID assetId = parseUuid(id, "id");
+        return assets.reviewApprove(assetId, body.expectedVersion(), caller.accountId())
+                .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材状态已变化，请刷新后重试")))
+                .flatMap(approved -> outbox.append(assetEvent(
+                        "ContentAssetPublished", approved, caller.accountId(), null, caller.accountId()))
+                        .thenReturn(approved))
+                .as(transactions::transactional)
+                .map(ContentAssetController::toResponse);
+    }
+
+    private Mono<Map<String, Object>> rejectPublic(String id, Caller caller, ReviewRequest body) {
+        if (body == null || body.expectedVersion() == null) {
+            return Mono.error(new IntelligenceException(400, "expectedVersion 不能为空"));
+        }
+        String note = requireNonBlank(body.note(), "note");
+        UUID assetId = parseUuid(id, "id");
+        return assets.reviewReject(assetId, body.expectedVersion(), caller.accountId(), note)
+                .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材状态已变化，请刷新后重试")))
+                .flatMap(rejected -> outbox.append(assetEvent(
+                        "ContentAssetRejected", rejected, caller.accountId(), note, caller.accountId()))
+                        .thenReturn(rejected))
+                .as(transactions::transactional)
+                .map(ContentAssetController::toResponse);
+    }
+
     // ---- 创建（个人/商家库共用编排）----
 
     private Mono<Map<String, Object>> createAsset(Caller caller, CreateContentAssetRequest body,
@@ -273,6 +341,53 @@ public class ContentAssetController {
                             .as(transactions::transactional);
                 })
                 .map(ContentAssetController::toResponse);
+    }
+
+    /**
+     * 公共库上传（运营/内容审核员，PRD §4.8「公共素材必须包含来源、授权范围和有效期」）。
+     * requireRole(CONTENT_REVIEWER)（PLATFORM_ADMIN 超集）；强制 source/licenseScope/validUntil；
+     * 创建即 pending_review（审核状态机，复用任务审核同款范式）。
+     */
+    private Mono<ResponseEntity<Map<String, Object>>> createPublic(ServerWebExchange exchange,
+                                                                   CreateContentAssetRequest body) {
+        if (body == null) {
+            return Mono.error(new IntelligenceException(400, "请求体不能为空"));
+        }
+        AssetCategory category = AssetCategory.fromRequest(body.category());
+        if (category == null) {
+            return Mono.error(new IntelligenceException(400, "分类无效"));
+        }
+        String title = requireNonBlank(body.title(), "title");
+        if (title.length() > MAX_TITLE_LENGTH) {
+            return Mono.error(new IntelligenceException(400, "标题过长"));
+        }
+        String source = requireNonBlank(body.source(), "source");
+        String licenseScope = requireNonBlank(body.licenseScope(), "licenseScope");
+        Instant validUntil = parseInstant(body.validUntil());
+        if (validUntil == null) {
+            return Mono.error(new IntelligenceException(400, "公共素材必须指定有效期（validUntil）"));
+        }
+        List<String> tags = sanitizeTags(body.tags());
+        UUID mediaId = parseUuid(body.mediaId(), "mediaId");
+        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
+                .flatMap(caller -> mediaRefs.findById(mediaId)
+                        .filter(ref -> caller.accountId().equals(ref.ownerAccountId()))
+                        .switchIfEmpty(Mono.error(new IntelligenceException(404, "媒体不存在")))
+                        .flatMap(ref -> {
+                            ContentAsset asset = new ContentAsset(
+                                    UUID.randomUUID(), mediaId, LibraryType.PUBLIC, category,
+                                    caller.accountId(), null, title, tags,
+                                    ref.mimeType(), ref.sizeBytes(), validUntil,
+                                    AssetStatus.PENDING_REVIEW, 1, source, licenseScope,
+                                    null, null, null, null, null, null);
+                            return assets.create(asset);
+                        })
+                        .flatMap(created -> outbox.append(assetEvent(
+                                "ContentAssetSubmittedForReview", created, caller.accountId(), null, null))
+                                .thenReturn(created))
+                        .as(transactions::transactional))
+                .map(ContentAssetController::toResponse)
+                .map(ContentAssetController::success);
     }
 
     private Mono<Map<String, Object>> editAsset(String id, Caller caller, UpdateContentAssetRequest body) {
@@ -346,8 +461,15 @@ public class ContentAssetController {
                             ? Mono.just(asset)
                             : Mono.error(new IntelligenceException(404, "素材不存在"));
                     case MERCHANT -> canReadMerchantAsset(asset, caller);
-                    case PUBLIC -> Mono.error(new IntelligenceException(404, "素材不存在")); // Stage 3
+                    case PUBLIC -> isPublicReadable(asset)
+                            ? Mono.just(asset)
+                            : Mono.error(new IntelligenceException(404, "素材不存在"));
                 });
+    }
+
+    /** 公共库可读判定：active（loadAccessible 开头已 filter）+ 未过期。 */
+    private static boolean isPublicReadable(ContentAsset asset) {
+        return asset.validUntil() == null || asset.validUntil().isAfter(Instant.now());
     }
 
     /** 商家素材读取：同 org 商家成员直接放行；否则查 grant 表（推荐官被授权）。 */
@@ -530,11 +652,14 @@ public class ContentAssetController {
 
     public record CreateContentAssetRequest(
             String libraryType, String mediaId, String category, String title,
-            List<String> tags, String validUntil) {}
+            List<String> tags, String validUntil, String source, String licenseScope) {}
 
     public record UpdateContentAssetRequest(
             Integer expectedVersion, String category, String title, List<String> tags, String validUntil) {}
 
     /** 商家授权推荐官请求。 */
     public record GrantRequest(String granteeAccountId) {}
+
+    /** 公共库审核请求（乐观锁 + 驳回备注）。 */
+    public record ReviewRequest(Integer expectedVersion, String note) {}
 }

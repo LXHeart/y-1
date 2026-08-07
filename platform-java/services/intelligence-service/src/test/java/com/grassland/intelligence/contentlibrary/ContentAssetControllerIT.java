@@ -387,6 +387,123 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
         assertThat(grants).hasSize(1);
     }
 
+    // ---------------- Stage 3：公共与 AI 素材库 + 审核流 ----------------
+
+    @Test
+    void publicCreateRequiresContentReviewerRole() {
+        String mediaId = seedMedia("reviewer-acct");
+        // 普通用户创建公共素材 → 403
+        client().post().uri("/api/content-assets")
+                .header(header(), sign("plain-user", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "public", "mediaId", mediaId, "category", "scene",
+                        "title", "x", "source", "s", "licenseScope", "l",
+                        "validUntil", "2027-01-01T00:00:00Z"))
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void publicCreateRequiresSourceLicenseAndValidity() {
+        String mediaId = seedMedia("reviewer-acct");
+        // 缺 source/licenseScope/validUntil → 400
+        client().post().uri("/api/content-assets")
+                .header(header(), signWithRole("reviewer-acct", null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "public", "mediaId", mediaId, "category", "scene", "title", "x"))
+                .exchange()
+                .expectStatus().is4xxClientError();
+    }
+
+    @Test
+    void publicAssetGoesThroughReviewFlow() {
+        String mediaId = seedMedia("reviewer-acct");
+        // 上传即 pending_review
+        String assetId = createPublicAsset("reviewer-acct", mediaId, "行业背景图");
+
+        // 公共列表（active）还看不到
+        assertThat(countPublicItems(null)).isZero();
+
+        // 审核队列能看到（pending_review）
+        assertThat(countReviewQueue("reviewer-acct")).isOne();
+
+        // 审核通过 → active
+        client().post().uri("/api/admin/content-assets/" + assetId + "/review/approve")
+                .header(header(), signWithRole("reviewer-acct", null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1))
+                .exchange()
+                .expectStatus().isOk();
+
+        // 现在公共列表可见
+        assertThat(countPublicItems(null)).isOne();
+
+        // 详情详情能取到（登录用户）
+        client().get().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("anyone", null))
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void publicRejectRequiresNote() {
+        String mediaId = seedMedia("reviewer-acct");
+        String assetId = createPublicAsset("reviewer-acct", mediaId, "将被驳回");
+
+        // 驳回缺 note → 400
+        client().post().uri("/api/admin/content-assets/" + assetId + "/review/reject")
+                .header(header(), signWithRole("reviewer-acct", null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1))
+                .exchange()
+                .expectStatus().is4xxClientError();
+
+        // 带 note 驳回 → rejected，公共列表不可见
+        client().post().uri("/api/admin/content-assets/" + assetId + "/review/reject")
+                .header(header(), signWithRole("reviewer-acct", null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "note", "来源不明"))
+                .exchange()
+                .expectStatus().isOk();
+        assertThat(countPublicItems(null)).isZero();
+    }
+
+    @Test
+    void publicListReadableWithoutLogin() {
+        String mediaId = seedMedia("reviewer-acct");
+        createPublicAsset("reviewer-acct", mediaId, "已审素材");
+        // 先审核通过（直接改库为 active，绕过审核端点，专测「全员读」）
+        db.sql("UPDATE content_asset SET status='active' WHERE library_type='public' AND status='pending_review'")
+                .then().block();
+
+        // 无断言头（未登录）也能列公共素材
+        @SuppressWarnings("unchecked")
+        List<?> items = (List<?>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets?libraryType=public")
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(items).isNotEmpty();
+    }
+
+    @Test
+    void expiredPublicAssetExcludedFromList() {
+        String mediaId = seedMedia("reviewer-acct");
+        String assetId = createPublicAsset("reviewer-acct", mediaId, "已过期");
+        // 直接改库：active 但 valid_until 已过
+        db.sql("UPDATE content_asset SET status='active', valid_until=now() - interval '1 day'"
+                + " WHERE id=CAST(:id AS uuid)")
+                .bind("id", assetId).then().block();
+
+        assertThat(countPublicItems(null)).isZero();
+        // 详情也 404（过期的不可读）
+        client().get().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("anyone", null))
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
     // ---- 辅助 ----
 
     private String header() {
@@ -416,6 +533,41 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return ((Map<String, Object>) response.get("data")).get("id").toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createPublicAsset(String reviewer, String mediaId, String title) {
+        Map<String, Object> response = client().post().uri("/api/content-assets")
+                .header(header(), signWithRole(reviewer, null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "public", "mediaId", mediaId, "category", "scene",
+                        "title", title, "source", "平台素材", "licenseScope", "公开授权",
+                        "validUntil", "2027-01-01T00:00:00Z"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return ((Map<String, Object>) response.get("data")).get("id").toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private int countPublicItems(String category) {
+        String uri = "/api/content-assets?libraryType=public" + (category != null ? "&category=" + category : "");
+        return ((List<?>) ((Map<String, Object>)
+                client().get().uri(uri).exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items")).size();
+    }
+
+    @SuppressWarnings("unchecked")
+    private int countReviewQueue(String reviewer) {
+        return ((List<?>) ((Map<String, Object>)
+                client().get().uri("/api/admin/content-assets/review")
+                        .header(header(), signWithRole(reviewer, null, null, "content_reviewer"))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items")).size();
     }
 
     @SuppressWarnings("unchecked")

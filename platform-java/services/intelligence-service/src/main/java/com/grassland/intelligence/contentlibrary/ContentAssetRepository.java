@@ -133,6 +133,80 @@ public class ContentAssetRepository {
     }
 
     /**
+     * 列公共库素材（全员只读，仅 active + 未软删 + 未过期）。可按分类筛选（智能推荐占位：
+     * 真推荐算法留后续，首期按 category 筛选）。按创建时间倒序。
+     */
+    public Flux<ContentAsset> listPublic(AssetCategory category) {
+        String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
+                + " WHERE library_type='public' AND deleted_at IS NULL AND status='active'"
+                + " AND (valid_until IS NULL OR valid_until > now())"
+                + (category != null ? " AND category=:category" : "")
+                + " ORDER BY created_at DESC";
+        DatabaseClient.GenericExecuteSpec spec = db.sql(sql);
+        if (category != null) {
+            spec = spec.bind("category", category.db());
+        }
+        return spec.map(ContentAssetRepository::map).all();
+    }
+
+    /** 详情查询（公共库 active 未过期，全员可读）。 */
+    public Mono<ContentAsset> findPublicById(UUID id) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
+                + " WHERE id=CAST(:id AS uuid) AND library_type='public'"
+                + " AND deleted_at IS NULL AND status='active'"
+                + " AND (valid_until IS NULL OR valid_until > now())")
+                .bind("id", id.toString())
+                .map(ContentAssetRepository::map).one();
+    }
+
+    /** 列待审核公共素材（内容审核员队列，GL-P2-ADMIN-003 同款 pending_review）。按提交时间正序。 */
+    public Flux<ContentAsset> listPendingReview(int limit) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
+                + " WHERE library_type='public' AND status='pending_review' AND deleted_at IS NULL"
+                + " ORDER BY created_at LIMIT :limit")
+                .bind("limit", Math.max(1, Math.min(limit, 200)))
+                .map(ContentAssetRepository::map).all();
+    }
+
+    /**
+     * 审核通过（pending_review→active，version+1，记 reviewer/reviewed_at）。镜像
+     * {@code TaskRepository.reviewApprove}。0 行（非 pending_review / 版本冲突）→ empty（controller 转 409）。
+     */
+    public Mono<ContentAsset> reviewApprove(UUID id, int expectedVersion, String reviewer) {
+        return db.sql("""
+                UPDATE content_asset SET
+                    status='active', version=version+1, reviewed_by=:reviewer,
+                    reviewed_at=now(), updated_at=now()
+                WHERE id=CAST(:id AS uuid) AND status='pending_review' AND version=:expected
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id.toString())
+                .bind("expected", expectedVersion)
+                .bind("reviewer", reviewer)
+                .map(ContentAssetRepository::map).one();
+    }
+
+    /**
+     * 审核驳回（pending_review→rejected，记 reviewer/reviewed_at/review_note，version+1）。镜像
+     * {@code TaskRepository.reviewReject}（reject 终态——公共素材驳回不退回让运营改，运营改后重新上传）。
+     * 0 行 → empty（controller 转 409）。
+     */
+    public Mono<ContentAsset> reviewReject(UUID id, int expectedVersion, String reviewer, String note) {
+        return db.sql("""
+                UPDATE content_asset SET
+                    status='rejected', version=version+1, reviewed_by=:reviewer,
+                    reviewed_at=now(), review_note=:note, updated_at=now()
+                WHERE id=CAST(:id AS uuid) AND status='pending_review' AND version=:expected
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id.toString())
+                .bind("expected", expectedVersion)
+                .bind("reviewer", reviewer)
+                .bind("note", note)
+                .map(ContentAssetRepository::map).one();
+    }
+
+    /**
      * 编辑素材（落新 version 快照）。guarded：仅当 id 匹配 + expectedVersion 匹配 + 未软删时更新。
      * 同事务链里先 appendVersion 再 update（由 controller 用 TransactionalOperator 串）。
      * 返回更新后的行；version 不匹配/不存在 → empty（controller 转 409）。
