@@ -206,6 +206,11 @@
     </template>
 
     <AiRunHistoryPanel v-else-if="activeSection === 'runs'" />
+    <MediaLibraryPanel
+      v-else-if="activeSection === 'library'"
+      :authenticated="props.authenticated"
+      @request-login="emit('request-login')"
+    />
     <AiProviderKeysPanel v-else />
   </section>
 </template>
@@ -214,6 +219,7 @@
 import { computed, ref, watch } from 'vue'
 import AiProviderKeysPanel from './AiProviderKeysPanel.vue'
 import AiRunHistoryPanel from './AiRunHistoryPanel.vue'
+import MediaLibraryPanel from './MediaLibraryPanel.vue'
 import {
   AI_PLATFORM_CAPABILITY_VERSION,
   AI_PLATFORM_DEFINITIONS,
@@ -233,7 +239,7 @@ import type {
   CreationSourceType,
 } from '../types/ai-creation'
 
-type AiCenterSection = 'create' | 'runs' | 'keys'
+type AiCenterSection = 'create' | 'runs' | 'keys' | 'library'
 
 const props = defineProps<{
   authenticated: boolean
@@ -269,6 +275,7 @@ let workflowRevision = Date.now()
 const centerSections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
   { id: 'create', label: '开始创作' },
   { id: 'runs', label: '运行记录' },
+  { id: 'library', label: '素材库' },
   { id: 'keys', label: '模型密钥' },
 ]
 
@@ -286,6 +293,7 @@ const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
 const sectionTitle = computed(() => {
   if (activeSection.value === 'runs') return 'AI 运行记录'
+  if (activeSection.value === 'library') return '内容素材库'
   if (activeSection.value === 'keys') return '模型密钥'
   return '选择发布平台'
 })

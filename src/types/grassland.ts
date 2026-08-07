@@ -620,6 +620,82 @@ export interface MediaMetadata {
   deletedAt: string | null
 }
 
+// ---------- 内容素材库（PRD §4.8）----------
+
+/** 素材库类型（与后端 LibraryType 枚举对齐）。 */
+export type ContentLibraryType = 'personal' | 'merchant' | 'public'
+
+/** 素材分类（与后端 AssetCategory 枚举对齐）。 */
+export type ContentAssetCategory = 'store' | 'product' | 'campaign' | 'scene' | 'brand' | 'copy' | 'other'
+
+/** 素材状态（与后端 AssetStatus 枚举对齐）。 */
+export type ContentAssetStatus = 'draft' | 'pending_review' | 'active' | 'rejected' | 'expired'
+
+/** 素材条目（content_asset 表的响应投影）。mediaId 是 media_reference 的跨服务引用句柄。 */
+export interface ContentAsset {
+  id: string
+  mediaId: string
+  libraryType: ContentLibraryType
+  category: ContentAssetCategory
+  title: string
+  tags: string[]
+  status: ContentAssetStatus
+  version: number
+  mimeType?: string | null
+  sizeBytes?: number | null
+  validUntil?: string | null
+  organizationId?: string | null
+  source?: string | null
+  licenseScope?: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+/** 素材历史快照（content_asset_version，PRD §4.8「更新不覆盖历史快照」）。 */
+export interface ContentAssetVersion {
+  version: number
+  title: string
+  category: ContentAssetCategory
+  tags: string[]
+  mimeType?: string | null
+  sizeBytes?: number | null
+  validUntil?: string | null
+  snapshottedAt: string | null
+  snapshottedBy: string | null
+}
+
+/** 素材授权（content_asset_grant，商家指定推荐官可用）。 */
+export interface ContentAssetGrant {
+  grantType: string
+  granteeAccountId: string
+  grantedBy: string
+  grantedAt: string | null
+  leaseUntil?: string | null
+  retainedUntil?: string | null
+  releasedAt?: string | null
+}
+
+/** 创建素材请求（POST /api/content-assets）。个人/商家库可省略 source/licenseScope。 */
+export interface CreateContentAssetInput {
+  libraryType: ContentLibraryType
+  mediaId: string
+  category: ContentAssetCategory
+  title: string
+  tags?: string[]
+  validUntil?: string
+  source?: string
+  licenseScope?: string
+}
+
+/** 编辑素材请求（PUT /api/content-assets/{id}，乐观锁）。 */
+export interface UpdateContentAssetInput {
+  expectedVersion: number
+  category: ContentAssetCategory
+  title: string
+  tags?: string[]
+  validUntil?: string
+}
+
 /** 附件下载 URL（marketplace 经服务断言中转 intelligence 签发）。⚠️ `expiresAt` 是**资产 TTL 而非 URL 过期时间**。 */
 export interface AttachmentDownload {
   downloadUrl: string

@@ -39,12 +39,14 @@ describe('AI 内容创作中心', () => {
     })
     const tabs = wrapper.findAll('[role="tab"]')
 
-    expect(tabs.map((tab) => tab.text())).toEqual(['开始创作', '运行记录', '模型密钥'])
+    expect(tabs.map((tab) => tab.text())).toEqual(['开始创作', '运行记录', '素材库', '模型密钥'])
 
+    // 运行记录(tabs[1])、素材库(tabs[2])、模型密钥(tabs[3]) 均要求登录
     await tabs[1].trigger('click')
     await tabs[2].trigger('click')
+    await tabs[3].trigger('click')
 
-    expect(wrapper.emitted('request-login')).toHaveLength(2)
+    expect(wrapper.emitted('request-login')).toHaveLength(3)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
@@ -57,6 +59,7 @@ describe('AI 内容创作中心', () => {
       global: {
         stubs: {
           AiRunHistoryPanel: { template: '<div data-testid="run-history-panel">运行记录面板</div>' },
+          MediaLibraryPanel: { template: '<div data-testid="media-library-panel">素材库面板</div>' },
           AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel">模型密钥面板</div>' },
         },
       },
@@ -71,7 +74,8 @@ describe('AI 内容创作中心', () => {
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(0)
 
-    await tabs[2].trigger('click')
+    // tabs[2]=素材库，tabs[3]=模型密钥
+    await tabs[3].trigger('click')
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(true)
 

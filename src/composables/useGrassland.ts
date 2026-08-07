@@ -2,6 +2,12 @@ import { ref } from 'vue'
 import type {
   AdjudicationSnapshot,
   AttachmentDownload,
+  ContentAsset,
+  ContentAssetCategory,
+  ContentAssetGrant,
+  ContentAssetVersion,
+  ContentLibraryType,
+  CreateContentAssetInput,
   CreateMediaUploadTicketInput,
   CreateTaskInput,
   CreateDraftInput,
@@ -48,6 +54,7 @@ import type {
   StoreRole,
   TaskUsage,
   SettlementOutcome,
+  UpdateContentAssetInput,
   Task,
   TaskApplication,
   TaskFeedPage,
@@ -919,6 +926,86 @@ export function useGrassland() {
     run(() => request<unknown>(
       `/api/organizations/${orgId}/merchant-attachments/${attachmentId}`, { method: 'DELETE' }))
 
+  // ---------- 内容素材库（PRD §4.8 / Slice 14）----------
+  // 三类素材库共用 /api/content-assets，按 libraryType 区分。物理资产经 intelligence 三步直传
+  //（purpose=content_asset），与履约附件同底层；区别在挂接后多一层分类/标签/有效期/授权/审核业务语义。
+
+  /** 三步合一上传素材资产（purpose=content_asset），返回 mediaId 供挂接。 */
+  const uploadContentAssetFile = (file: File) =>
+    run(async () => {
+      const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          contentType: file.type || 'application/octet-stream',
+          purpose: 'content_asset',
+          sizeBytes: file.size,
+        }),
+      })
+      await putToPresignedUrl(ticket, file)
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      return confirmed.id
+    })
+
+  /** 列素材（按 libraryType 分流：personal/merchant 自有，public 全员只读，merchant+granted 被授权）。 */
+  const listContentAssets = (params: {
+    libraryType: ContentLibraryType
+    category?: ContentAssetCategory
+    granted?: boolean
+  }) => {
+    const qs = new URLSearchParams({ libraryType: params.libraryType })
+    if (params.category) qs.set('category', params.category)
+    if (params.granted) qs.set('granted', 'true')
+    return run(() => request<{ items: ContentAsset[] }>(`/api/content-assets?${qs}`))
+  }
+
+  /** 创建素材条目（挂接已 confirm 的 mediaId）。 */
+  const createContentAsset = (input: CreateContentAssetInput) =>
+    run(() => request<ContentAsset>('/api/content-assets', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  /** 素材详情。 */
+  const getContentAsset = (id: string) =>
+    run(() => request<ContentAsset>(`/api/content-assets/${id}`))
+
+  /** 列素材历史快照（PRD §4.8「更新不覆盖历史快照」）。 */
+  const listContentAssetVersions = (id: string) =>
+    run(() => request<{ items: ContentAssetVersion[] }>(`/api/content-assets/${id}/versions`))
+
+  /** 编辑素材（落新 version 快照 + 乐观锁）。 */
+  const updateContentAsset = (id: string, input: UpdateContentAssetInput) =>
+    run(() => request<ContentAsset>(`/api/content-assets/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  /** 软删素材。 */
+  const deleteContentAsset = (id: string) =>
+    run(() => request<{ deleted: boolean }>(`/api/content-assets/${id}`, { method: 'DELETE' }))
+
+  /** 素材下载签名 URL（短时 presigned GET，owner/org/grant 任一可访问）。 */
+  const getContentAssetDownloadUrl = (id: string) =>
+    run(() => request<{ downloadUrl: string; expiresIn: number }>(
+      `/api/content-assets/${id}/download-url`))
+
+  /** 商家授权某素材给推荐官（PRD §4.8「商家可指定哪些素材允许推荐官使用」）。 */
+  const grantContentAsset = (id: string, granteeAccountId: string) =>
+    run(() => request<ContentAssetGrant>(`/api/content-assets/${id}/grants`, {
+      method: 'POST',
+      body: JSON.stringify({ granteeAccountId }),
+    }))
+
+  /** 列某素材的全部授权（商家管理用）。 */
+  const listContentAssetGrants = (id: string) =>
+    run(() => request<{ items: ContentAssetGrant[] }>(`/api/content-assets/${id}/grants`))
+
+  /** 撤销授权。 */
+  const revokeContentAssetGrant = (id: string, granteeAccountId: string) =>
+    run(() => request<{ revoked: boolean }>(
+      `/api/content-assets/${id}/grants/${granteeAccountId}`, { method: 'DELETE' }))
+
   // ---------- KYB：收款账户 ----------
 
   /** 列出本组织的收款账户。 */
@@ -1210,5 +1297,17 @@ export function useGrassland() {
     getJournalPostings,
     reconcileEscrow,
     reconcileWallet,
+    // 内容素材库（PRD §4.8 / Slice 14）
+    uploadContentAssetFile,
+    listContentAssets,
+    createContentAsset,
+    getContentAsset,
+    listContentAssetVersions,
+    updateContentAsset,
+    deleteContentAsset,
+    getContentAssetDownloadUrl,
+    grantContentAsset,
+    listContentAssetGrants,
+    revokeContentAssetGrant,
   }
 }
