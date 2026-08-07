@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import AiCreationCenter from './AiCreationCenter.vue'
+import CreationAssistantPanel from './CreationAssistantPanel.vue'
 import type { CreationEntry } from '../types/ai-creation'
 
 enableAutoUnmount(afterEach)
@@ -16,6 +17,11 @@ function button(wrapper: ReturnType<typeof mount>, label: string) {
   return buttons(wrapper).find((item) => item.text().includes(label))!
 }
 
+/** 按标签取顶部分栏，不按下标 —— 新增分栏（如「创作助手」）会平移下标并让断言错位。 */
+function sectionTab(wrapper: ReturnType<typeof mount>, label: string) {
+  return wrapper.findAll('[role="tab"]').find((item) => item.text().trim() === label)!
+}
+
 function choiceButton(wrapper: ReturnType<typeof mount>, groupLabel: string, label: string) {
   return wrapper
     .get(`[aria-label="${groupLabel}"]`)
@@ -24,6 +30,18 @@ function choiceButton(wrapper: ReturnType<typeof mount>, groupLabel: string, lab
       const strong = item.find('strong')
       return strong.exists() ? strong.text().trim() === label : item.text().trim() === label
     })!
+}
+
+function sse(frames: Array<Record<string, unknown>>): Response {
+  const lines = frames.flatMap((frame) => [`data: ${JSON.stringify(frame)}`, ''])
+  lines.push('data: [DONE]', '')
+  return new Response(lines.join('\n'), { headers: { 'Content-Type': 'text/event-stream' } })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
 }
 
 describe('AI 内容创作中心', () => {
@@ -39,14 +57,15 @@ describe('AI 内容创作中心', () => {
     })
     const tabs = wrapper.findAll('[role="tab"]')
 
-    expect(tabs.map((tab) => tab.text())).toEqual(['开始创作', '运行记录', '素材库', '模型密钥'])
+    expect(tabs.map((tab) => tab.text()))
+      .toEqual(['开始创作', '创作助手', '运行记录', '素材库', '模型密钥'])
 
-    // 运行记录(tabs[1])、素材库(tabs[2])、模型密钥(tabs[3]) 均要求登录
-    await tabs[1].trigger('click')
-    await tabs[2].trigger('click')
-    await tabs[3].trigger('click')
+    // 除「开始创作」外每个分栏都要求登录（助手要按账号存草稿，同 runs/keys 口径）
+    for (const label of ['创作助手', '运行记录', '素材库', '模型密钥']) {
+      await sectionTab(wrapper, label).trigger('click')
+    }
 
-    expect(wrapper.emitted('request-login')).toHaveLength(3)
+    expect(wrapper.emitted('request-login')).toHaveLength(4)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
@@ -64,18 +83,15 @@ describe('AI 内容创作中心', () => {
         },
       },
     })
-    const tabs = wrapper.findAll('[role="tab"]')
-
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
 
-    await tabs[1].trigger('click')
+    await sectionTab(wrapper, '运行记录').trigger('click')
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(0)
 
-    // tabs[2]=素材库，tabs[3]=模型密钥
-    await tabs[3].trigger('click')
+    await sectionTab(wrapper, '模型密钥').trigger('click')
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(true)
 
@@ -84,7 +100,7 @@ describe('AI 内容创作中心', () => {
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
 
     await wrapper.setProps({ authenticated: true })
-    await tabs[1].trigger('click')
+    await sectionTab(wrapper, '运行记录').trigger('click')
     await wrapper.setProps({
       entry: {
         revision: 12,
@@ -206,6 +222,61 @@ describe('AI 内容创作中心', () => {
     expect(handoff.revision).toBeGreaterThan(entry.revision)
   })
 
+  test('创作助手收到完整任务来源和主题上下文', async () => {
+    const entry: CreationEntry = {
+      revision: 70,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'task', taskId: 'task-70', applicationId: 'app-70', taskVersion: 6 },
+      prefill: { topic: '新品探店', instructions: '必须出现门店名' },
+    }
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry },
+      global: {
+        stubs: {
+          CreationAssistantPanel: {
+            props: ['source', 'topic', 'taskRequirements', 'platform', 'contentForm'],
+            template: '<div data-testid="assistant-context" />',
+          },
+        },
+      },
+    })
+    await flushPromises()
+    await sectionTab(wrapper, '创作助手').trigger('click')
+
+    const panel = wrapper.getComponent(CreationAssistantPanel)
+    expect(panel.props('source')).toEqual(entry.source)
+    expect(panel.props('topic')).toBe('新品探店')
+    expect(panel.props('taskRequirements')).toBe('新品探店\n必须出现门店名')
+  })
+
+  test('创作助手分别保留原热点来源和结构化后的创作主题', async () => {
+    const entry: CreationEntry = {
+      revision: 71,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'hot-topic', title: '城市夜经济升温', topicId: 'hot-71' },
+      prefill: { topic: '夜经济里的小店经营机会' },
+    }
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry },
+      global: {
+        stubs: {
+          CreationAssistantPanel: {
+            props: ['source', 'topic'],
+            template: '<div data-testid="assistant-hot-context" />',
+          },
+        },
+      },
+    })
+    await flushPromises()
+    await sectionTab(wrapper, '创作助手').trigger('click')
+
+    const panel = wrapper.getComponent(CreationAssistantPanel)
+    expect(panel.props('source')).toEqual(entry.source)
+    expect(panel.props('topic')).toBe('夜经济里的小店经营机会')
+  })
+
   test('任务未提供内容形式时保留任务引用并要求用户显式选择', async () => {
     const entry: CreationEntry = {
       revision: 8,
@@ -298,6 +369,126 @@ describe('AI 内容创作中心', () => {
       source: { type: 'hot-topic', title: '城市夜经济升温' },
       targetView: 'article',
     })
+  })
+
+  test('热点拆解迟到时不会覆盖后来选择的新热点', async () => {
+    const topicResponse = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/topic-from-hot')) return topicResponse.promise
+      return new Response(JSON.stringify({
+        success: true,
+        data: {
+          provider: '60s',
+          items: [
+            { rank: 1, title: '热点甲' },
+            { rank: 2, title: '热点乙' },
+          ],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.hot-pick')[0].trigger('click')
+    await button(wrapper, 'AI 拆解为结构化选题').trigger('click')
+    await wrapper.findAll('button.hot-pick')[1].trigger('click')
+
+    topicResponse.resolve(sse([{
+      type: 'topic', topic: '热点甲的结构化选题', angle: '观察', thesis: '旧结果', audience: '用户',
+    }]))
+    await flushPromises()
+
+    expect((wrapper.get('textarea[name="creation-topic"]').element as HTMLTextAreaElement).value)
+      .toBe('热点乙')
+  })
+
+  test('热点拆解期间修改补充要求会使旧结果失效', async () => {
+    const topicResponse = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/topic-from-hot')) return topicResponse.promise
+      return new Response(JSON.stringify({
+        success: true,
+        data: { provider: '60s', items: [{ rank: 1, title: '城市夜经济' }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.hot-pick').trigger('click')
+    await wrapper.find('textarea[placeholder*="语气"]').setValue('原要求')
+    await button(wrapper, 'AI 拆解为结构化选题').trigger('click')
+    await wrapper.find('textarea[placeholder*="语气"]').setValue('新要求')
+
+    topicResponse.resolve(sse([{
+      type: 'topic', topic: '按原要求生成的旧选题', angle: '观察', thesis: '旧结果', audience: '用户',
+    }]))
+    await flushPromises()
+    expect((wrapper.get('textarea[name="creation-topic"]').element as HTMLTextAreaElement).value)
+      .toBe('城市夜经济')
+  })
+
+  test('离开热点来源会清理旧热点，迟到拆解也不会覆盖当前主题', async () => {
+    const topicResponse = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/topic-from-hot')) return topicResponse.promise
+      return new Response(JSON.stringify({
+        success: true,
+        data: { provider: '60s', items: [{ rank: 1, title: '旧热点' }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.hot-pick').trigger('click')
+    await button(wrapper, 'AI 拆解为结构化选题').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('用户的新主题')
+
+    topicResponse.resolve(sse([{
+      type: 'topic', topic: '旧热点的迟到结果', angle: '观察', thesis: '旧结果', audience: '用户',
+    }]))
+    await flushPromises()
+    expect((wrapper.get('textarea[name="creation-topic"]').element as HTMLTextAreaElement).value)
+      .toBe('用户的新主题')
+
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    expect(wrapper.text()).not.toContain('AI 拆解为结构化选题')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
+  })
+
+  test('切换平台会失效热点拆解并清理旧热点上下文', async () => {
+    const topicResponse = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/topic-from-hot')) return topicResponse.promise
+      return new Response(JSON.stringify({
+        success: true,
+        data: { provider: '60s', items: [{ rank: 1, title: '旧平台热点' }] },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.hot-pick').trigger('click')
+    await button(wrapper, 'AI 拆解为结构化选题').trigger('click')
+
+    await wrapper.get('[data-platform-id="wechat-channels"]').trigger('click')
+    topicResponse.resolve(sse([{
+      type: 'topic', topic: '旧平台迟到结果', angle: '观察', thesis: '旧结果', audience: '用户',
+    }]))
+    await flushPromises()
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
+
+    expect(wrapper.text()).not.toContain('AI 拆解为结构化选题')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
   })
 
   test('参考素材要求输入链接，并把链接交给对应视频分析工作流', async () => {

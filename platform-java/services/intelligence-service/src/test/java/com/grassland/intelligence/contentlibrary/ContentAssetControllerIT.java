@@ -6,7 +6,9 @@ import com.grassland.intelligence.IntelligenceItSupport;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 
 /**
@@ -20,6 +22,25 @@ import org.springframework.http.MediaType;
  * 乐观锁 409）、删除（软删后不可见/不可下钻）、下载（storage 未启 503）。
  */
 class ContentAssetControllerIT extends IntelligenceItSupport {
+
+    /**
+     * 清空公共库素材（含快照/授权子行）。
+     *
+     * <p>个人库与商家库的断言天然被 account/org 维度隔离（每个用例用自己的 account id），但**公共库是全局可见的**
+     * ——{@code listPublic} 没有 owner 过滤，这是产品语义而非缺陷。于是任何 {@code countPublicItems()==0} 的断言都
+     * 会被同类里其它用例遗留的 active 公共行污染，且随执行顺序时好时坏（testcontainers 容器是类间共享单例，
+     * 基座没有 per-test 清理）。审核队列同理依赖 pending_review 的全局计数。这里按库类型清一次，让计数断言重新成立。
+     */
+    @BeforeEach
+    void clearPublicLibrary() {
+        db.sql("DELETE FROM content_asset_version WHERE asset_id IN"
+                        + " (SELECT id FROM content_asset WHERE library_type='public')")
+                .then().block();
+        db.sql("DELETE FROM content_asset_grant WHERE asset_id IN"
+                        + " (SELECT id FROM content_asset WHERE library_type='public')")
+                .then().block();
+        db.sql("DELETE FROM content_asset WHERE library_type='public'").then().block();
+    }
 
     /** 直接插一行 active media_reference（绕过 MediaController 三步上传），返回 media id。 */
     @SuppressWarnings("unchecked")
@@ -145,17 +166,18 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
         String mediaId = seedMedia("user-lock");
         String assetId = createAsset("user-lock", mediaId, "锁测试");
 
-        // 用错误的 expectedVersion=99 → 409
+        // 用错误的 expectedVersion=99 → 409。错误信封是 {success:false, error:"<字符串>"}，
+        // error 是消息串不是嵌套对象（原实现把它强转 Map 直接 ClassCastException）。
         client().put().uri("/api/content-assets/" + assetId)
                 .header(header(), sign("user-lock", null))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("expectedVersion", 99, "category", "store", "title", "冲突"))
                 .exchange()
-                .expectStatus().is4xxClientError()
+                .expectStatus().isEqualTo(HttpStatus.CONFLICT)
                 .expectBody(Map.class).value(body -> {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> data = (Map<String, Object>) body.get("error");
                     assertThat(body.get("success")).isEqualTo(false);
+                    assertThat(body.get("error")).isInstanceOf(String.class);
+                    assertThat(body.get("error").toString()).contains("刷新");
                 });
     }
 

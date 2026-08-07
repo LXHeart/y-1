@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 创作草稿集成测试（草场 PRD §4.9.7 / Slice 15 Stage 1）。复用 {@link IntelligenceItSupport}
@@ -166,6 +169,106 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
         client().get().uri("/api/creation-drafts")
                 .exchange()
                 .expectStatus().isUnauthorized();
+    }
+
+    /** 自动保存落不可变旧版快照：v1 的正文进 creation_draft_version，可变行前进到 v2。 */
+    @Test
+    void autosaveAppendsImmutableVersionSnapshot() {
+        String draftId = createDraft("user-snap", "independent", "快照测试");
+        // v1 先写一段正文，这样 v2 保存时快照里能看到「旧」正文
+        save(draftId, "user-snap", 1, "第一版正文");
+        save(draftId, "user-snap", 2, "第二版正文");
+
+        // 快照表应有 v1（原始空正文）与 v2（第一版正文）两行；v3 还在可变行里
+        List<Map<String, Object>> snapshots = snapshotsOf(draftId);
+        assertThat(snapshots).hasSize(2);
+        assertThat(snapshots.get(0)).containsEntry("version", 1);
+        assertThat(snapshots.get(0).get("content")).isNull();
+        assertThat(snapshots.get(1)).containsEntry("version", 2);
+        assertThat(snapshots.get(1)).containsEntry("content", "第一版正文");
+        assertThat(snapshots).allSatisfy(row -> assertThat(row).containsEntry("snapshotted_by", "user-snap"));
+
+        assertThat(getDraft(draftId, "user-snap")).containsEntry("version", 3);
+        assertThat(getDraft(draftId, "user-snap")).containsEntry("content", "第二版正文");
+    }
+
+    /**
+     * 并发自动保存（跨设备 / debounce 抖动）：两个 PUT 带同一 expectedVersion，
+     * 一个 200 一个 409 —— 不能因 creation_draft_version 主键冲突漏成 500。
+     */
+    @Test
+    void concurrentAutosaveYieldsConflictNotServerError() {
+        String draftId = createDraft("user-race", "independent", "并发测试");
+
+        List<Integer> statuses = Flux.merge(
+                        putStatus(draftId, "user-race", 1, "设备A"),
+                        putStatus(draftId, "user-race", 1, "设备B"))
+                .collectList().block();
+
+        assertThat(statuses).hasSize(2);
+        assertThat(statuses).containsExactlyInAnyOrder(200, 409);
+        // 可变行只前进一次
+        assertThat(getDraft(draftId, "user-race")).containsEntry("version", 2);
+        // 失败方回滚，快照表只留赢家那一行
+        assertThat(snapshotsOf(draftId)).hasSize(1);
+    }
+
+    /** platform / contentForm 是 varchar(32)：超长应 400，不该漏到 Postgres 报 500。 */
+    @Test
+    void rejectsOverlongPlatformAndContentForm() {
+        String tooLong = "x".repeat(33);
+        client().post().uri("/api/creation-drafts")
+                .header(header(), sign("user-len", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("sourceType", "independent", "title", "超长平台", "platform", tooLong))
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        String draftId = createDraft("user-len", "independent", "长度测试");
+        client().put().uri("/api/creation-drafts/" + draftId)
+                .header(header(), sign("user-len", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "title", "长度测试", "contentForm", tooLong))
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    // ---- helpers ----
+
+    private void save(String draftId, String account, int expectedVersion, String content) {
+        client().put().uri("/api/creation-drafts/" + draftId)
+                .header(header(), sign(account, null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", expectedVersion, "title", "快照测试", "content", content))
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    /** 发一个 PUT 只取状态码（并发测试用，不 expectStatus 免得先失败）。 */
+    private Mono<Integer> putStatus(String draftId, String account, int expectedVersion, String content) {
+        return Mono.fromCallable(() -> client().put().uri("/api/creation-drafts/" + draftId)
+                        .header(header(), sign(account, null))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(Map.of("expectedVersion", expectedVersion, "title", "并发测试", "content", content))
+                        .exchange()
+                        .returnResult(Void.class).getStatus().value())
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** 直读快照表（controller 尚未暴露草稿历史端点，§4.9.7 历史 UI 属后续切片）。 */
+    private List<Map<String, Object>> snapshotsOf(String draftId) {
+        return db.sql("SELECT version, content, snapshotted_by FROM creation_draft_version"
+                        + " WHERE draft_id=CAST(:id AS uuid) ORDER BY version")
+                .bind("id", draftId)
+                .fetch().all()
+                .map(row -> {
+                    Map<String, Object> copy = new java.util.LinkedHashMap<>();
+                    copy.put("version", row.get("version"));
+                    copy.put("content", row.get("content"));
+                    copy.put("snapshotted_by", row.get("snapshotted_by"));
+                    return copy;
+                })
+                .collectList().block();
     }
 
     @SuppressWarnings("unchecked")

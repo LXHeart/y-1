@@ -87,8 +87,10 @@ public class CreationAssistantController {
                     Flux<String> payloads = ai.startTextRun(new TextRunCommand(
                             CreationAssistantPrompts.suggestMessages(content, body.platform(), body.title())))
                             .map(chunk -> frame(Map.of("content", chunk.content())))
+                            // 头已随 200 + text/event-stream 发出，此处 Mono.error 客户端只会看到流被截断。
+                            // 退款后改发错误帧（镜像 ArticleController 的 outline/content 流），前端可读可提示。
                             .onErrorResume(e -> credits.refund(charge, "优化建议失败自动退回")
-                                    .then(Mono.error(e)));
+                                    .thenMany(Flux.just(frame(Map.of("error", "优化建议生成失败")))));
                     return sseEntity(payloads, exchange);
                 });
     }
@@ -225,7 +227,7 @@ public class CreationAssistantController {
             if (inferredNode.isArray()) {
                 inferredNode.forEach(n -> inferred.add(n.asText()));
             }
-            Map<String, String> fields = new java.util.LinkedHashMap<>();
+            Map<String, Object> fields = new java.util.LinkedHashMap<>();
             fields.put("type", "brief");
             fields.put("angle", brief.path("angle").asText(""));
             fields.put("audience", brief.path("audience").asText(""));
@@ -249,17 +251,17 @@ public class CreationAssistantController {
         java.util.List<String> frames = new java.util.ArrayList<>();
         if (gaps.isArray()) {
             for (JsonNode gap : gaps) {
-                Map<String, String> fields = new java.util.LinkedHashMap<>();
+                Map<String, Object> fields = new java.util.LinkedHashMap<>();
                 fields.put("type", "gap");
                 fields.put("requirement", gap.path("requirement").asText(""));
                 fields.put("status", gap.path("status").asText("missing"));
                 fields.put("hint", gap.path("hint").asText(""));
-                if (!fields.get("requirement").isBlank()) {
+                if (!String.valueOf(fields.get("requirement")).isBlank()) {
                     frames.add(frame(fields));
                 }
             }
         }
-        frames.add(frame(Map.of("type", "covered", "covered", String.valueOf(covered))));
+        frames.add(frame(Map.of("type", "covered", "covered", covered)));
         return Flux.fromIterable(frames);
     }
 
@@ -281,7 +283,7 @@ public class CreationAssistantController {
         if (epNode.isArray()) {
             epNode.forEach(n -> entryPoints.add(n.asText()));
         }
-        Map<String, String> fields = new java.util.LinkedHashMap<>();
+        Map<String, Object> fields = new java.util.LinkedHashMap<>();
         fields.put("type", "topic");
         fields.put("topic", topic);
         fields.put("angle", root.path("angle").asText(""));
@@ -302,7 +304,11 @@ public class CreationAssistantController {
         return new ResponseEntity<>(sseBody, h, HttpStatus.OK);
     }
 
-    private static String frame(Map<String, String> fields) {
+    /**
+     * 序列化一个 SSE data 帧。值类型是 {@code Object} 而非 String —— boolean/数字必须以原生 JSON 类型
+     * 出去：{@code {"covered":"false"}} 在 JS 里是 truthy 字符串，前端拿它做判断必然反向。
+     */
+    private static String frame(Map<String, Object> fields) {
         try {
             return MAPPER.writeValueAsString(fields);
         } catch (Exception e) {
@@ -352,12 +358,12 @@ public class CreationAssistantController {
 
         void add(String dimension, int score, String advice) {
             frames.add(frame(Map.of("type", "score", "dimension", dimension,
-                    "score", String.valueOf(score), "advice", advice)));
+                    "score", score, "advice", advice)));
         }
 
         Flux<String> toFrames() {
             java.util.List<String> all = new java.util.ArrayList<>(frames);
-            all.add(frame(Map.of("type", "overall", "score", String.valueOf(overall))));
+            all.add(frame(Map.of("type", "overall", "score", overall)));
             return Flux.fromIterable(all);
         }
     }

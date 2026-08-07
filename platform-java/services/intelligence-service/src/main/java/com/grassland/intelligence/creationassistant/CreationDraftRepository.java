@@ -114,6 +114,11 @@ public class CreationDraftRepository {
     /**
      * 落不可变历史快照（镜像 task_version / content_asset_version）。每次保存前调用，
      * 把当前行整行镜像到 creation_draft_version。与 save 同事务（由 controller 串）。
+     *
+     * <p>{@code ON CONFLICT DO NOTHING} 是并发自动保存的必需项，不是防御性冗余：跨设备/debounce 抖动下
+     * 两个 PUT 可能读到同一 version 并各自 insert 同一 {@code (draft_id, version)} 主键。后到者会阻塞在
+     * 唯一索引上直到前者提交，然后抛 duplicate key —— 该异常不在 {@code IntelligenceErrorHandler} 覆盖内，
+     * 会漏成 500，掩盖本该由 {@link #save} 乐观锁给出的 409。同一 version 的快照内容恒等，忽略冲突安全。
      */
     public Mono<Void> appendVersion(CreationDraft draft, String savedBy) {
         DatabaseClient.GenericExecuteSpec spec = db.sql("""
@@ -123,6 +128,7 @@ public class CreationDraftRepository {
                 VALUES (
                     CAST(:draftId AS uuid), :version, :title, :sourceType, :taskId, :taskVersion, :storeId,
                     :platform, :contentForm, :topic, :articleTitle, :outline, :content, :status, :savedBy)
+                ON CONFLICT (draft_id, version) DO NOTHING
                 """)
                 .bind("draftId", draft.id().toString())
                 .bind("version", draft.version())

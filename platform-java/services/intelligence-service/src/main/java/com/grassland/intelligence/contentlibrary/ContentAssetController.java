@@ -152,8 +152,9 @@ public class ContentAssetController {
         if (categoryRaw != null && category == null) {
             return Mono.error(new IntelligenceException(400, "category 无效"));
         }
-        return callers.resolveOptional(exchange.getRequest())
-                .flatMap(caller -> assets.listPublic(category).collectList())
+        // 不 resolve 身份：公共库是全员只读，且列表内容与调用者无关。此前用 resolveOptional 再 flatMap，
+        // 未登录时 resolveOptional 返回 Mono.empty() → flatMap 空穿 → 200 但空 body（前端拿不到 items）。
+        return assets.listPublic(category).collectList()
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
@@ -246,63 +247,6 @@ public class ContentAssetController {
                                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "授权不存在或已撤销")))
                                 .thenReturn(Map.<String, Object>of("revoked", true))))
                 .map(ContentAssetController::success);
-    }
-
-    // ---------------- 公共库审核（GL-P2-ADMIN-003 同款全审政策）----------------
-
-    /** 列待审核公共素材（内容审核员队列）。requireRole(CONTENT_REVIEWER)，PLATFORM_ADMIN 超集。 */
-    @GetMapping("/api/admin/content-assets/review")
-    public Mono<ResponseEntity<Map<String, Object>>> reviewQueue(ServerWebExchange exchange) {
-        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
-                .flatMap(caller -> assets.listPendingReview(200).collectList())
-                .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
-    }
-
-    /** 审核通过（pending_review→active）。requireRole(CONTENT_REVIEWER)，乐观锁。 */
-    @PostMapping("/api/admin/content-assets/{id}/review/approve")
-    public Mono<ResponseEntity<Map<String, Object>>> reviewApprove(
-            @PathVariable String id, @RequestBody ReviewRequest body, ServerWebExchange exchange) {
-        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
-                .flatMap(caller -> approvePublic(id, caller, body))
-                .map(ContentAssetController::success);
-    }
-
-    /** 审核驳回（pending_review→rejected，必填 note）。requireRole(CONTENT_REVIEWER)，乐观锁。 */
-    @PostMapping("/api/admin/content-assets/{id}/review/reject")
-    public Mono<ResponseEntity<Map<String, Object>>> reviewReject(
-            @PathVariable String id, @RequestBody ReviewRequest body, ServerWebExchange exchange) {
-        return callers.requireRole(exchange.getRequest(), com.grassland.identity.assertion.BackendRole.CONTENT_REVIEWER)
-                .flatMap(caller -> rejectPublic(id, caller, body))
-                .map(ContentAssetController::success);
-    }
-
-    private Mono<Map<String, Object>> approvePublic(String id, Caller caller, ReviewRequest body) {
-        if (body == null || body.expectedVersion() == null) {
-            return Mono.error(new IntelligenceException(400, "expectedVersion 不能为空"));
-        }
-        UUID assetId = parseUuid(id, "id");
-        return assets.reviewApprove(assetId, body.expectedVersion(), caller.accountId())
-                .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材状态已变化，请刷新后重试")))
-                .flatMap(approved -> outbox.append(assetEvent(
-                        "ContentAssetPublished", approved, caller.accountId(), null, caller.accountId()))
-                        .thenReturn(approved))
-                .as(transactions::transactional)
-                .map(ContentAssetController::toResponse);
-    }
-
-    private Mono<Map<String, Object>> rejectPublic(String id, Caller caller, ReviewRequest body) {
-        if (body == null || body.expectedVersion() == null) {
-            return Mono.error(new IntelligenceException(400, "expectedVersion 不能为空"));
-        }
-        String note = requireNonBlank(body.note(), "note");
-        UUID assetId = parseUuid(id, "id");
-        return assets.reviewReject(assetId, body.expectedVersion(), caller.accountId(), note)
-                .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材状态已变化，请刷新后重试")))
-                .flatMap(rejected -> outbox.append(assetEvent(
-                        "ContentAssetRejected", rejected, caller.accountId(), note, caller.accountId()))
-                        .thenReturn(rejected))
-                .as(transactions::transactional)
-                .map(ContentAssetController::toResponse);
     }
 
     // ---- 创建（个人/商家库共用编排）----
@@ -502,7 +446,7 @@ public class ContentAssetController {
 
     // ---- outbox 事件 ----
 
-    private static EventEnvelope assetEvent(String eventType, ContentAsset asset, String accountId,
+    static EventEnvelope assetEvent(String eventType, ContentAsset asset, String accountId,
                                             String reviewNote, String reviewer) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("assetId", asset.id().toString());
@@ -532,7 +476,7 @@ public class ContentAssetController {
 
     // ---- 响应序列化 ----
 
-    private static Map<String, Object> toResponse(ContentAsset asset) {
+    static Map<String, Object> toResponse(ContentAsset asset) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", asset.id().toString());
         map.put("mediaId", asset.mediaReferenceId().toString());
@@ -603,13 +547,13 @@ public class ContentAssetController {
         return map;
     }
 
-    private static ResponseEntity<Map<String, Object>> success(Map<String, Object> data) {
+    static ResponseEntity<Map<String, Object>> success(Map<String, Object> data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
     // ---- 校验辅助 ----
 
-    private static String requireNonBlank(String value, String field) {
+    static String requireNonBlank(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IntelligenceException(400, field + " 不能为空");
         }
@@ -629,7 +573,7 @@ public class ContentAssetController {
         return clean;
     }
 
-    private static UUID parseUuid(String value, String field) {
+    static UUID parseUuid(String value, String field) {
         try {
             return UUID.fromString(value);
         } catch (Exception e) {
@@ -660,6 +604,4 @@ public class ContentAssetController {
     /** 商家授权推荐官请求。 */
     public record GrantRequest(String granteeAccountId) {}
 
-    /** 公共库审核请求（乐观锁 + 驳回备注）。 */
-    public record ReviewRequest(Integer expectedVersion, String note) {}
 }

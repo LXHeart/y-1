@@ -156,6 +156,34 @@
         </template>
 
         <p v-else class="hot-empty-note">暂无热点数据，稍后点击「刷新热点」重试。</p>
+
+        <div v-if="pickedHotTitle" class="hot-refine">
+          <button
+            type="button"
+            class="secondary-command"
+            :disabled="assistant.resolvingTopic.value"
+            @click="refineHotTopic"
+          >{{ assistant.resolvingTopic.value ? '生成选题中…' : 'AI 拆解为结构化选题' }}</button>
+          <p v-if="assistant.topicError.value" class="error-state" role="alert">
+            {{ assistant.topicError.value }}
+          </p>
+          <dl v-else-if="assistant.structuredTopic.value" class="hot-topic-detail">
+            <div><dt>选题</dt><dd>{{ assistant.structuredTopic.value.topic }}</dd></div>
+            <div><dt>角度</dt><dd>{{ assistant.structuredTopic.value.angle }}</dd></div>
+            <div><dt>立意</dt><dd>{{ assistant.structuredTopic.value.thesis }}</dd></div>
+            <div><dt>受众</dt><dd>{{ assistant.structuredTopic.value.audience }}</dd></div>
+            <div v-if="assistant.structuredTopic.value.entryPoints.length">
+              <dt>切入点</dt>
+              <dd>
+                <ul class="hot-entry-points">
+                  <li v-for="(point, index) in assistant.structuredTopic.value.entryPoints" :key="index">
+                    {{ point }}
+                  </li>
+                </ul>
+              </dd>
+            </div>
+          </dl>
+        </div>
       </div>
 
       <label v-if="sourceType !== 'reference' && (sourceType !== 'store' || storeId)" class="topic-field">
@@ -206,6 +234,16 @@
     </template>
 
     <AiRunHistoryPanel v-else-if="activeSection === 'runs'" />
+    <CreationAssistantPanel
+      v-else-if="activeSection === 'assistant'"
+      :authenticated="props.authenticated"
+      :platform="platformId || undefined"
+      :content-form="contentFormId || undefined"
+      :source="assistantSource"
+      :topic="topic.trim() || undefined"
+      :task-requirements="taskRequirements"
+      @request-login="emit('request-login')"
+    />
     <MediaLibraryPanel
       v-else-if="activeSection === 'library'"
       :authenticated="props.authenticated"
@@ -219,7 +257,9 @@
 import { computed, ref, watch } from 'vue'
 import AiProviderKeysPanel from './AiProviderKeysPanel.vue'
 import AiRunHistoryPanel from './AiRunHistoryPanel.vue'
+import CreationAssistantPanel from './CreationAssistantPanel.vue'
 import MediaLibraryPanel from './MediaLibraryPanel.vue'
+import { useCreationAssistant } from '../composables/useCreationAssistant'
 import {
   AI_PLATFORM_CAPABILITY_VERSION,
   AI_PLATFORM_DEFINITIONS,
@@ -239,7 +279,7 @@ import type {
   CreationSourceType,
 } from '../types/ai-creation'
 
-type AiCenterSection = 'create' | 'runs' | 'keys' | 'library'
+type AiCenterSection = 'create' | 'runs' | 'assistant' | 'keys' | 'library'
 
 const props = defineProps<{
   authenticated: boolean
@@ -253,7 +293,10 @@ const emit = defineEmits<{
 }>()
 
 const grassland = useGrassland()
+const assistant = useCreationAssistant()
 const activeSection = ref<AiCenterSection>('create')
+/** 已选热点标题（与 topic 分开存：topic 会被结构化选题覆盖，refine 仍需原标题）。 */
+const pickedHotTitle = ref('')
 const platformId = ref<AiPlatformId | ''>('')
 const contentFormId = ref<AiContentFormId | ''>('')
 const sourceType = ref<CreationSourceType | ''>('')
@@ -270,10 +313,12 @@ const contextError = ref('')
 const storeProfileLoaded = ref(false)
 const hydratedRevision = ref<number | null>(null)
 let contextRequestEpoch = 0
+let hotRefineEpoch = 0
 let workflowRevision = Date.now()
 
 const centerSections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
   { id: 'create', label: '开始创作' },
+  { id: 'assistant', label: '创作助手' },
   { id: 'runs', label: '运行记录' },
   { id: 'library', label: '素材库' },
   { id: 'keys', label: '模型密钥' },
@@ -288,11 +333,23 @@ const sourceOptions: ReadonlyArray<{ id: CreationSourceType; label: string; note
 ]
 
 const taskSourceLocked = computed(() => props.entry?.source.type === 'task')
+/**
+ * 任务要求快照，传给助手做覆盖检查（§4.9.3）。intelligence 不跨服务读 marketplace，
+ * 要求文本必须由前端从 entry 的 task 快照带入；非任务来源为 undefined（助手据此隐藏该能力）。
+ */
+const taskRequirements = computed(() => {
+  if (props.entry?.source.type !== 'task') return undefined
+  const parts = [props.entry.prefill?.topic, props.entry.prefill?.instructions]
+    .map((part) => part?.trim()).filter(Boolean)
+  return parts.length ? parts.join('\n') : undefined
+})
+const assistantSource = computed<CreationSource | undefined>(() => sourceForHandoff() ?? undefined)
 const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.platformId))
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
 const sectionTitle = computed(() => {
   if (activeSection.value === 'runs') return 'AI 运行记录'
+  if (activeSection.value === 'assistant') return '智能创作助手'
   if (activeSection.value === 'library') return '内容素材库'
   if (activeSection.value === 'keys') return '模型密钥'
   return '选择发布平台'
@@ -315,12 +372,17 @@ const canStart = computed(() => {
       && !contextError.value
   }
   if (sourceType.value === 'reference') return referenceUrl.value.trim().length > 0
+  if (sourceType.value === 'hot-topic') {
+    return Boolean(pickedHotTitle.value && topic.value.trim())
+  }
   return topic.value.trim().length > 0
 })
 
 watch(() => props.entry, (entry) => {
+  hotRefineEpoch += 1
   if (!entry) {
     hydratedRevision.value = null
+    pickedHotTitle.value = ''
     clearStoreContext()
     return
   }
@@ -333,6 +395,7 @@ watch(() => props.entry, (entry) => {
   sourceType.value = entry.source.type
   topic.value = entry.prefill?.topic || ''
   instructions.value = entry.prefill?.instructions || ''
+  pickedHotTitle.value = entry.source.type === 'hot-topic' ? entry.source.title : ''
   referenceUrl.value = entry.source.type === 'reference' ? entry.source.sourceUrl || '' : ''
   if (entry.source.type === 'store') {
     organizationId.value = entry.source.organizationId
@@ -377,20 +440,36 @@ function selectSection(next: AiCenterSection): void {
 }
 
 function selectPlatform(next: AiPlatformId): void {
+  const preservesEntryContext = props.entry?.source.type === 'hot-topic' && !platformId.value
+  if (sourceType.value === 'hot-topic') clearHotTopicContext(!preservesEntryContext)
   platformId.value = next
   contentFormId.value = ''
   if (!props.entry) sourceType.value = ''
 }
 
 function selectContentForm(next: AiContentFormId): void {
+  const preservesEntryContext = props.entry?.source.type === 'hot-topic' && !contentFormId.value
+  if (sourceType.value === 'hot-topic') clearHotTopicContext(!preservesEntryContext)
   contentFormId.value = next
   if (!props.entry) sourceType.value = ''
+}
+
+function clearHotTopicContext(clearSelection = true): void {
+  hotRefineEpoch += 1
+  assistant.structuredTopic.value = null
+  if (clearSelection) {
+    pickedHotTitle.value = ''
+    topic.value = ''
+  }
 }
 
 async function selectSource(next: CreationSourceType): Promise<void> {
   if ((next === 'task' || next === 'store') && !props.authenticated) {
     emit('request-login')
     return
+  }
+  if (sourceType.value === 'hot-topic' && next !== 'hot-topic') {
+    clearHotTopicContext()
   }
   sourceType.value = next
   contextError.value = ''
@@ -448,7 +527,39 @@ async function refreshHotItems(): Promise<void> {
 }
 
 function pickHotTopic(title: string): void {
+  hotRefineEpoch += 1
   topic.value = title
+  pickedHotTitle.value = title
+  // 换热点就丢掉上一条的结构化结果，否则「角度/立意」会挂在不相干的标题下。
+  assistant.structuredTopic.value = null
+}
+
+/**
+ * 热点 → 结构化选题（§4.9.5）。把纯标题换成角度/立意/受众/切入点，
+ * 并用结构化 topic 覆盖创作主题——后续大纲/正文拿到的是可创作的选题而不是一句热搜词。
+ */
+async function refineHotTopic(): Promise<void> {
+  if (!pickedHotTitle.value) return
+  if (!props.authenticated) {
+    emit('request-login')
+    return
+  }
+  const requestEpoch = ++hotRefineEpoch
+  const requestedHotTitle = pickedHotTitle.value
+  const topicBeforeRequest = topic.value
+  const instructionsBeforeRequest = instructions.value.trim()
+  const refined = await assistant.topicFromHot(
+    requestedHotTitle, platformId.value || undefined, instructionsBeforeRequest || undefined)
+  const stillCurrent = requestEpoch === hotRefineEpoch
+    && sourceType.value === 'hot-topic'
+    && pickedHotTitle.value === requestedHotTitle
+    && topic.value === topicBeforeRequest
+    && instructions.value.trim() === instructionsBeforeRequest
+  if (!stillCurrent) {
+    if (assistant.structuredTopic.value === refined) assistant.structuredTopic.value = null
+    return
+  }
+  if (refined) topic.value = refined.topic
 }
 
 function formatHotFetchedTime(value: Date): string {
@@ -580,7 +691,7 @@ function sourceForHandoff(): CreationSource | null {
   if (sourceType.value === 'hot-topic') {
     return {
       type: 'hot-topic',
-      title: topic.value.trim(),
+      title: pickedHotTitle.value.trim() || topic.value.trim(),
       topicId: props.entry?.source.type === 'hot-topic' ? props.entry.source.topicId : undefined,
     }
   }
@@ -691,6 +802,12 @@ textarea { resize: vertical; min-height: 76px; }
 .hot-skeleton-list { display: grid; gap: 8px; }
 .hot-skeleton { height: 34px; border-radius: 6px; background: var(--color-surface-muted); animation: hot-pulse 1.2s ease-in-out infinite; }
 .hot-empty-note { margin: 0; color: var(--color-text-muted); font-size: 0.84rem; }
+.hot-refine { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.hot-topic-detail { display: grid; gap: 6px; margin: 0; }
+.hot-topic-detail > div { display: flex; gap: 8px; font-size: 0.84rem; }
+.hot-topic-detail dt { flex: 0 0 44px; color: var(--color-text-muted); }
+.hot-topic-detail dd { margin: 0; }
+.hot-entry-points { margin: 0; padding-left: 18px; }
 @keyframes hot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (max-width: 760px) {
   .platform-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

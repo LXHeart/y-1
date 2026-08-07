@@ -87,6 +87,8 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 脱口秀 | `/api/comedy-generation/*` | generate-script (SSE) |
 | 视频制作 | `/api/video-production/*` | `capabilities`（GET）、`generate-script`（SSE）可用；`generate-video` 当前是 Seedance stub，已 gate 为 501 且不扣积分 |
 | 视频改编 | `/api/video-recreation/*` | adapt-content, generate-asset-image, generate-all-asset-images, generate-scene-image, generate-all-scene-images |
+| 创作助手 | `/api/creation-assistant/*` | score (SSE), suggest (SSE), guide (SSE), task-coverage (SSE), topic-from-hot (SSE)（intelligence-service，PRD §4.9）|
+| 创作草稿 | `/api/creation-drafts/*` | 列表/新建/读取/保存（乐观锁 PUT，冲突 409）/删除（intelligence-service，§4.9.7）|
 | 积分 | `/api/credits/*` | balance, history |
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）|
 | 设置 | `/api/settings/*` | analysis (GET/PUT), analysis/models, analysis/verify-model, homepage (GET/PUT)（需登录）|
@@ -101,6 +103,8 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - 抖音登录增强仅作为 fallback，不是默认提取路径
 - 文章生成仅支持 Qwen；Coze 是工作流引擎，不支持自由文本对话
 - 脱口秀生成使用 `enable_thinking: false` 防止推理内容混入输出
+- 创作助手 SSE 帧是**判别联合**（`type` 取 score/overall/ask/brief/gap/covered/topic），`useCreationAssistant` 的帧消费器交给回调的是整帧对象而非 `content` 字符串。帧里的 boolean/number **必须原生下发**——`{"covered":"false"}` 在 JS 里是 truthy，判断会反；前端另按 `=== true` 兜一道。流已 200 开头后无法改状态码，失败一律走 `{error}` 帧
+- 草稿自动保存是**整行覆盖 + 乐观锁**：未改字段要按当前值回填，本地 `version` 只能用服务端回传值覆盖（自增猜测会让后续每次保存都 409）。409 进冲突态后**停止自动重试**（重试一直撞同一版本），由用户选重载或覆盖
 - `npx tsx script.ts` 用于 DB 脚本（不要用 `-e` 内联模式）
 - 注册流程：图形验证码 → 邮箱验证码 → 注册
 - `provider-url.ts` 维护 `TRUSTED_PUBLIC_API_SUFFIXES` 白名单，匹配时跳过 SSRF 私有 IP 检查

@@ -33,6 +33,8 @@ import reactor.core.publisher.Mono;
 public class CreationDraftController {
 
     private static final int MAX_TITLE_LENGTH = 120;
+    /** platform / content_form 在 V19 是 varchar(32)；不在此拦就会漏成 Postgres 22001 → 500。 */
+    private static final int MAX_ENUM_LENGTH = 32;
 
     private final IntelligenceCallerResolver callers;
     private final CreationDraftRepository drafts;
@@ -109,6 +111,10 @@ public class CreationDraftController {
         if (title.length() > MAX_TITLE_LENGTH) {
             return Mono.error(new IntelligenceException(400, "标题过长"));
         }
+        String tooLong = firstOverlong(body.platform(), body.contentForm());
+        if (tooLong != null) {
+            return Mono.error(new IntelligenceException(400, tooLong + " 过长"));
+        }
         CreationDraft draft = new CreationDraft(
                 UUID.randomUUID(), caller.accountId(), null, title, sourceType,
                 body.taskId(), body.taskVersion(), body.storeId(), body.platform(), body.contentForm(),
@@ -125,15 +131,18 @@ public class CreationDraftController {
         if (title.length() > MAX_TITLE_LENGTH) {
             return Mono.error(new IntelligenceException(400, "标题过长"));
         }
+        String tooLong = firstOverlong(body.platform(), body.contentForm());
+        if (tooLong != null) {
+            return Mono.error(new IntelligenceException(400, tooLong + " 过长"));
+        }
         DraftStatus status = body.status() == null ? DraftStatus.DRAFT : DraftStatus.fromDb(body.status());
         if (status == null) {
             return Mono.error(new IntelligenceException(400, "status 无效"));
         }
-        UUID draftId = parseUuid(id, "id");
         // 先落旧版快照（appendVersion）再 save（version+1），同事务；乐观锁失败 → 409。
         return loadOwned(id, caller.accountId())
                 .flatMap(current -> drafts.appendVersion(current, caller.accountId())
-                        .then(drafts.save(draftId, body.expectedVersion(), title, body.topic(),
+                        .then(drafts.save(current.id(), body.expectedVersion(), title, body.topic(),
                                 body.articleTitle(), body.outline(), body.content(),
                                 body.platform(), body.contentForm(), status))
                         .switchIfEmpty(Mono.error(new IntelligenceException(409, "草稿已被其他设备修改，请刷新后合并")))
@@ -184,6 +193,17 @@ public class CreationDraftController {
 
     private static ResponseEntity<Map<String, Object>> success(Map<String, Object> data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /** 返回第一个超 varchar(32) 的字段名，全合规返回 null。 */
+    private static String firstOverlong(String platform, String contentForm) {
+        if (platform != null && platform.length() > MAX_ENUM_LENGTH) {
+            return "platform";
+        }
+        if (contentForm != null && contentForm.length() > MAX_ENUM_LENGTH) {
+            return "contentForm";
+        }
+        return null;
     }
 
     private static UUID parseUuid(String value, String field) {
