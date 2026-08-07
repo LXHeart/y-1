@@ -106,6 +106,7 @@ public class WalletController {
         map.put("entryType", entry.entryType());
         map.put("amountCents", entry.amountCents());
         map.put("feeCents", entry.feeCents());
+        map.put("commissionBonusCents", entry.commissionBonusCents());
         map.put("engagementRef", entry.engagementRef());
         map.put("memo", entry.memo());
         map.put("createdAt", entry.createdAt() == null ? null : entry.createdAt().toString());

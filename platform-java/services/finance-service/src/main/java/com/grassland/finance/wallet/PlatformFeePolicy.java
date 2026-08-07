@@ -32,7 +32,12 @@ public class PlatformFeePolicy {
 
     /** 平台抽成（向下取整）。 */
     public long feeFor(long grossCents) {
-        return grossCents * feeBps / MAX_BPS;
+        if (grossCents < 0) {
+            throw new IllegalArgumentException("grossCents must be non-negative");
+        }
+        long whole = Math.multiplyExact(grossCents / MAX_BPS, feeBps);
+        long remainder = Math.multiplyExact(grossCents % MAX_BPS, feeBps) / MAX_BPS;
+        return Math.addExact(whole, remainder);
     }
 
     /** 推荐官实际到账 = 毛额 - 抽成。 */

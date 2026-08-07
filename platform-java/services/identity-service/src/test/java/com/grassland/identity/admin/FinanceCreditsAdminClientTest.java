@@ -3,6 +3,7 @@ package com.grassland.identity.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.security.IdentityServiceAssertionIssuer;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -11,6 +12,8 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * {@link FinanceCreditsAdminClient} 单测：用 {@link HttpServer} stub finance，
@@ -58,7 +61,7 @@ class FinanceCreditsAdminClientTest {
     void fetchBalancesReturnsEmptyMapForEmptyInput() {
         // 空入参不发 HTTP，直接返回空 map（不需要起 server）
         FinanceCreditsAdminClient client = new FinanceCreditsAdminClient(
-                "http://127.0.0.1:1", "test-key", 1000);
+                "http://127.0.0.1:1", "test-key", 1000, assertionIssuer());
         Map<String, FinanceCreditsAdminClient.AccountBalance> balances =
                 client.fetchBalances(List.of()).block();
         assertThat(balances).isEmpty();
@@ -84,6 +87,8 @@ class FinanceCreditsAdminClientTest {
         String acct = UUID.randomUUID().toString();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/internal/credits/award", exchange -> {
+            assertThat(exchange.getRequestHeaders().getFirst("X-Grassland-Identity"))
+                    .isEqualTo("identity-finance-assertion");
             byte[] body = "{\"success\":true,\"data\":{\"awarded\":true,\"balance\":5}}".getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
@@ -101,6 +106,8 @@ class FinanceCreditsAdminClientTest {
         String acct = UUID.randomUUID().toString();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/internal/credits/refund", exchange -> {
+            assertThat(exchange.getRequestHeaders().getFirst("X-Grassland-Identity"))
+                    .isEqualTo("identity-finance-assertion");
             // 验证请求体含 feature=admin_adjust（对齐 legacy）
             String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             assertThat(request).contains("\"feature\":\"admin_adjust\"");
@@ -129,7 +136,14 @@ class FinanceCreditsAdminClientTest {
 
     private FinanceCreditsAdminClient client() {
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
-        return new FinanceCreditsAdminClient(base, "test-key", 2000);
+        return new FinanceCreditsAdminClient(base, "test-key", 2000, assertionIssuer());
+    }
+
+    private static IdentityServiceAssertionIssuer assertionIssuer() {
+        IdentityServiceAssertionIssuer issuer = mock(IdentityServiceAssertionIssuer.class);
+        when(issuer.issueForOrganization(null, "grassland-finance"))
+                .thenReturn("identity-finance-assertion");
+        return issuer;
     }
 
     private static IdentityException assertIdentityStatus(reactor.core.publisher.Mono<?> mono, int expectedStatus) {

@@ -61,6 +61,15 @@ identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
   issuer: ${IDENTITY_ASSERTION_ISSUER:intelligence}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
+  signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_KID:intelligence-service-marketplace-v1}
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_FINANCE_KID:intelligence-service-finance-v1}
+      purpose: service
+      audience: grassland-finance
+      secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_FINANCE:}
   # intelligence 验证 edge-bff 用户断言 + marketplace 服务断言
   verify-keys:
     - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_KID:edge-user-intelligence-v1}
@@ -80,6 +89,11 @@ identity-assertion:
       secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+
+marketplace:
+  service:
+    base-url: ${MARKETPLACE_SERVICE_BASE_URL:http://marketplace-service:8083}
+    ai-entitlement-timeout-seconds: ${MARKETPLACE_AI_ENTITLEMENT_TIMEOUT_SECONDS:3}
 
 # 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
 # intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。
@@ -195,8 +209,11 @@ credits:
     # 直连 finance 容器（不经 edge-bff，避免 intelligence↔edge 循环；同 marketplace→finance 模式）。
     base-url: ${FINANCE_CREDITS_BASE_URL:http://finance-service:8084}
     internal-key: ${INTERNAL_API_KEY:}
+    connect-timeout-ms: ${FINANCE_CREDITS_CONNECT_TIMEOUT_MS:3000}
+    response-timeout-ms: ${FINANCE_CREDITS_RESPONSE_TIMEOUT_MS:5000}
     consume-path: /internal/credits/consume
     refund-path: /internal/credits/refund
+    compensation-path: /internal/credits/consume-compensations
   legacy:
     base-url: ${LEGACY_CREDITS_BASE_URL:http://backend:3000}
     internal-key: ${INTERNAL_API_KEY:}

@@ -87,8 +87,6 @@ public class CreationAssistantController {
                     Flux<String> payloads = ai.startTextRun(new TextRunCommand(
                             CreationAssistantPrompts.suggestMessages(content, body.platform(), body.title())))
                             .map(chunk -> frame(Map.of("content", chunk.content())))
-                            // 头已随 200 + text/event-stream 发出，此处 Mono.error 客户端只会看到流被截断。
-                            // 退款后改发错误帧（镜像 ArticleController 的 outline/content 流），前端可读可提示。
                             .onErrorResume(e -> credits.refund(charge, "优化建议失败自动退回")
                                     .thenMany(Flux.just(frame(Map.of("error", "优化建议生成失败")))));
                     return sseEntity(payloads, exchange);
@@ -304,10 +302,7 @@ public class CreationAssistantController {
         return new ResponseEntity<>(sseBody, h, HttpStatus.OK);
     }
 
-    /**
-     * 序列化一个 SSE data 帧。值类型是 {@code Object} 而非 String —— boolean/数字必须以原生 JSON 类型
-     * 出去：{@code {"covered":"false"}} 在 JS 里是 truthy 字符串，前端拿它做判断必然反向。
-     */
+    /** Preserve native JSON types so boolean and numeric SSE fields are not emitted as truthy strings. */
     private static String frame(Map<String, Object> fields) {
         try {
             return MAPPER.writeValueAsString(fields);

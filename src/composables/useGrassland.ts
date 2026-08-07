@@ -1,5 +1,8 @@
 import { ref } from 'vue'
 import type {
+  AdminJudge,
+  AdminJudgePage,
+  AdminReputation,
   AdjudicationSnapshot,
   AttachmentDownload,
   ContentAsset,
@@ -18,14 +21,19 @@ import type {
   EngagementVerification,
   RecommenderProfile,
   RecommenderReputation,
+  ReputationPolicy,
   RecommenderVerificationRequest,
   UpdateRecommenderProfileInput,
+  UpdateJudgeAdmissionInput,
+  UpdateLv5AdmissionInput,
+  UpdateReputationPolicyInput,
   FinanceAccount,
   GrasslandResponse,
   IdentityProfile,
   IdentityType,
   Judge,
   JudgeVote,
+  Lv5Admission,
   MediaMetadata,
   MediaUploadTicket,
   OpsActionKind,
@@ -422,6 +430,28 @@ export function useGrassland() {
   const getReputation = (accountId: string) =>
     run(() => request<RecommenderReputation>(`/api/reputation/${encodeURIComponent(accountId)}`))
 
+  // ---------- marketplace：等级权益后台 ----------
+
+  const getReputationPolicy = () =>
+    run(() => request<ReputationPolicy>('/api/admin/reputation-config'))
+
+  const updateReputationPolicy = (input: UpdateReputationPolicyInput) =>
+    run(() => request<ReputationPolicy>('/api/admin/reputation-config', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  const getAdminReputation = (accountId: string) =>
+    run(() => request<AdminReputation>(
+      `/api/admin/reputation/${encodeURIComponent(accountId)}`))
+
+  const updateLv5Admission = (accountId: string, input: UpdateLv5AdmissionInput) =>
+    run(() => request<Lv5Admission>(
+      `/api/admin/reputation/${encodeURIComponent(accountId)}/lv5-admission`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }))
+
   /** 商家评分（1-5 星）。**须先确认履约**（否则 409），且一次履约只能评一次（重复 409）。 */
   const rateEngagement = (taskId: string, applicationId: string, score: number, comment?: string) =>
     run(() => request<EngagementRating>(`/api/tasks/${taskId}/applications/${applicationId}/rating`, {
@@ -759,6 +789,29 @@ export function useGrassland() {
 
   const leaveJudgePool = () =>
     run(() => request<Judge>('/api/trust/judges/me', { method: 'DELETE' }))
+
+  // ---------- trust：审判官运营后台 ----------
+
+  const listAdminJudges = (input: { cursor?: string; accountId?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    if (input.cursor) params.set('cursor', input.cursor)
+    if (input.accountId) params.set('accountId', input.accountId)
+    if (input.limit != null) params.set('limit', String(input.limit))
+    const query = params.toString()
+    return run(() => request<AdminJudgePage>(
+      `/api/admin/trust/judges${query ? `?${query}` : ''}`))
+  }
+
+  const getAdminJudge = (accountId: string) =>
+    run(() => request<AdminJudge>(
+      `/api/admin/trust/judges/${encodeURIComponent(accountId)}`))
+
+  const updateJudgeAdmission = (accountId: string, input: UpdateJudgeAdmissionInput) =>
+    run(() => request<AdminJudge>(
+      `/api/admin/trust/judges/${encodeURIComponent(accountId)}/admission`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }))
 
   /** 审判官投票（每官每轮一票，不可改；非面板成员 403）。字段名 `vote`/`rationale`。 */
   const castVote = (disputeId: string, vote: VoteChoice, rationale?: string) =>
@@ -1198,6 +1251,10 @@ export function useGrassland() {
     updateMyRecommenderProfile,
     getRecommenderProfile,
     getReputation,
+    getReputationPolicy,
+    updateReputationPolicy,
+    getAdminReputation,
+    updateLv5Admission,
     rateEngagement,
     getEngagementRating,
     submitDeliverable,
@@ -1247,6 +1304,9 @@ export function useGrassland() {
     enrollAsJudge,
     getMyJudgeStatus,
     leaveJudgePool,
+    listAdminJudges,
+    getAdminJudge,
+    updateJudgeAdmission,
     castVote,
     finalDecision,
     // 运营处置台

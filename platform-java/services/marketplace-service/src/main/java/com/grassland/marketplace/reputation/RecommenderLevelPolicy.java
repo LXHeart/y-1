@@ -1,8 +1,8 @@
 package com.grassland.marketplace.reputation;
 
 /**
- * 推荐官等级判定（PRD 五表格阈值）。纯函数 + 静态表，随查随算——等级不落库，
- * 因而 PRD「完成率降至阈值以下自动降级」天然成立（下一次查询即反映）。
+ * 默认推荐官等级判定（PRD 五表格阈值）。保留本静态入口供纯领域调用和兼容测试；
+ * HTTP 入口由 {@link ReputationService} 读取 V20 动态策略后随查随算。
  *
  * <table>
  *   <tr><td>Lv2</td><td>完成 ≥6，完成率 ≥80%</td></tr>
@@ -23,27 +23,6 @@ public final class RecommenderLevelPolicy {
     private RecommenderLevelPolicy() {}
 
     public static RecommenderLevel levelOf(ReputationStats stats) {
-        if (meets(stats, 51, 0.90, 4.5)) {
-            return RecommenderLevel.LV4;
-        }
-        if (meets(stats, 21, 0.85, 4.0)) {
-            return RecommenderLevel.LV3;
-        }
-        if (meets(stats, 6, 0.80, null)) {
-            return RecommenderLevel.LV2;
-        }
-        return RecommenderLevel.LV1;
-    }
-
-    /** 三项门槛全达标才算数。{@code minScore} 为 null 表示该级不看评分（Lv2）；
-     *  有评分要求而**尚无任何评分**时不达标——不能把「没被评过」当成好口碑。 */
-    private static boolean meets(ReputationStats stats, int minCompleted, double minRate, Double minScore) {
-        if (stats.completedCount() < minCompleted || stats.completionRate() < minRate) {
-            return false;
-        }
-        if (minScore == null) {
-            return true;
-        }
-        return stats.averageScore() != null && stats.averageScore() >= minScore;
+        return ReputationPolicy.defaults().evaluate(stats, false).effectiveLevel();
     }
 }

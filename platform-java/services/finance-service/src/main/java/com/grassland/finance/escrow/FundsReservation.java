@@ -18,8 +18,12 @@ public record FundsReservation(
         String status,
         /** 收款推荐官（V3）。由 marketplace 在预留时传入；null = 无分账对象（存量预留或非撮合场景）。 */
         String payeeAccountId,
-        /** capture 时实际打入推荐官钱包的净额（毛额 - 平台抽成）；未 capture 或无收款人时为 null。 */
+        /** capture 时实际打入推荐官钱包的总额（原赏金 - 平台抽成 + 平台补贴）；未 capture 或无收款人时为 null。 */
         Long payoutCents,
+        /** reserve 时冻结的等级佣金加成（基点）。 */
+        int commissionBonusBps,
+        /** 平台承担的佣金补贴分，按原任务赏金计算并在 reserve 时冻结。 */
+        long commissionBonusCents,
         Instant createdAt,
         Instant updatedAt
 ) {}

@@ -40,7 +40,12 @@ public record TaskApplication(
         /** F6：商家 contest 的本地 durable claim。一旦存在，手动确认与 Timer auto-confirm 均不得再 capture。 */
         Instant contestRequestedAt,
         /** 客服 SLA workflow 已成功启动（确定性 workflow id；dispatcher 可补启）。 */
-        Instant rejectionWorkflowStartedAt
+        Instant rejectionWorkflowStartedAt,
+        Integer reputationLevelAtAccept,
+        Long reputationPolicyVersionAtAccept,
+        Integer settlementDelayDaysAtAccept,
+        Integer commissionBonusBpsAtAccept,
+        Boolean premiumSupportAtAccept
 ) {
     /** 兼容既有测试/调用方的 D-03 core slice 构造器；未发生商家异议时新增字段均为空。 */
     public TaskApplication(
@@ -48,6 +53,19 @@ public record TaskApplication(
             String reviewedByAccountId, Instant decidedAt, Instant createdAt, Instant updatedAt,
             Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt) {
         this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
-                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, null, null, null, null, null);
+                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, null, null, null, null, null,
+                null, null, null, null, null);
+    }
+
+    public TaskApplication(
+            String id, String taskId, String recommenderAccountId, String status, String note,
+            String reviewedByAccountId, Instant decidedAt, Instant createdAt, Instant updatedAt,
+            Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt,
+            Instant merchantRejectedAt, String rejectionReason, String merchantRejectionDisputeId,
+            Instant contestRequestedAt, Instant rejectionWorkflowStartedAt) {
+        this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
+                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, merchantRejectedAt,
+                rejectionReason, merchantRejectionDisputeId, contestRequestedAt, rejectionWorkflowStartedAt,
+                null, null, null, null, null);
     }
 }

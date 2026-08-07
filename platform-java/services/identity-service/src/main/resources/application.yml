@@ -151,12 +151,16 @@ identity:
       finance-group-id: ${IDENTITY_NOTIFICATION_FINANCE_GROUP:identity-notification-finance-consumer}
 
 # 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
-# identity 验证 edge-bff 用户断言（回退 cookie）。
+# identity 验证 edge-bff 用户断言（回退 cookie）及 trust 服务断言。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
   issuer: ${IDENTITY_ASSERTION_ISSUER:identity}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
   signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE_KID:identity-service-finance-v1}
+      purpose: service
+      audience: grassland-finance
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE:}
     - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_KID:identity-service-intelligence-v1}
       purpose: service
       audience: grassland-intelligence
@@ -168,6 +172,11 @@ identity-assertion:
       purpose: user
       audience: grassland-identity
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY:}
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY_KID:trust-service-identity-v1}
+      issuer: trust
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 

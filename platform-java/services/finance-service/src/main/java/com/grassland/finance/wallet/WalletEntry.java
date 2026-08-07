@@ -5,9 +5,9 @@ import java.time.Instant;
 /**
  * 钱包流水行（append-only）。
  *
- * <p>{@code amountCents} 带符号（入账正 / 出账负）；{@code feeCents} 是该笔入账被平台抽走的部分
- * （毛额 = amount + fee），单独记下来是为了能向推荐官如实展示「任务赏金 ¥500，平台服务费 ¥0，到账 ¥500」，
- * 而不是只给一个到账数字。
+ * <p>{@code amountCents} 带符号（入账正 / 出账负）；{@code feeCents} 是该笔原赏金被平台抽走的部分，
+ * {@code commissionBonusCents} 是平台另行承担的等级补贴。三者拆开后可如实展示基础净额、补贴和总到账，
+ * 不会把补贴误算成商家赏金或负平台费。
  */
 public record WalletEntry(
         String id,
@@ -15,6 +15,7 @@ public record WalletEntry(
         String entryType,
         long amountCents,
         long feeCents,
+        long commissionBonusCents,
         String engagementRef,
         String memo,
         Instant createdAt

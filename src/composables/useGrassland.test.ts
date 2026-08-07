@@ -259,6 +259,59 @@ describe('商家 contest 请求契约', () => {
   })
 })
 
+describe('等级权益与审判官后台请求契约', () => {
+  test('等级策略与 Lv5 邀请始终带服务端版本', async () => {
+    const spy = mockFetchOk()
+    const {
+      getReputationPolicy,
+      updateReputationPolicy,
+      getAdminReputation,
+      updateLv5Admission,
+    } = useGrassland()
+    const levels = [{
+      levelNumber: 1, level: 'Lv1' as const, title: '新手草友', minCompleted: 0,
+      minCompletionRate: 0, minAverageScore: null, inviteOnly: false, judgeEligible: false,
+      taskPriorityWeight: 100, settlementDelayDays: 2, commissionBonusBps: 0,
+      aiQuotaMultiplierBps: 10000, premiumSupport: false, benefits: ['基础任务'],
+    }]
+
+    await getReputationPolicy()
+    await updateReputationPolicy({ expectedVersion: 7, levels })
+    await getAdminReputation('account/with space')
+    await updateLv5Admission('account/with space', {
+      admitted: true, expectedVersion: 3, note: '签约邀请',
+    })
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/reputation-config')
+    expect(spy.mock.calls[1][0]).toBe('/api/admin/reputation-config')
+    expect((spy.mock.calls[1][1] as RequestInit).method).toBe('PUT')
+    expect(bodyOf(spy, 1)).toEqual({ expectedVersion: 7, levels })
+    expect(spy.mock.calls[2][0]).toBe('/api/admin/reputation/account%2Fwith%20space')
+    expect(spy.mock.calls[3][0]).toBe(
+      '/api/admin/reputation/account%2Fwith%20space/lv5-admission')
+    expect(bodyOf(spy, 3)).toEqual({ admitted: true, expectedVersion: 3, note: '签约邀请' })
+  })
+
+  test('审判官列表、审计详情与运营准入走 trust admin 路由', async () => {
+    const spy = mockFetchOk()
+    const { listAdminJudges, getAdminJudge, updateJudgeAdmission } = useGrassland()
+
+    await listAdminJudges()
+    await getAdminJudge('judge/id')
+    await updateJudgeAdmission('judge/id', {
+      admitted: false, expectedVersion: 4, reason: '资格复核未通过',
+    })
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/trust/judges')
+    expect(spy.mock.calls[1][0]).toBe('/api/admin/trust/judges/judge%2Fid')
+    expect(spy.mock.calls[2][0]).toBe('/api/admin/trust/judges/judge%2Fid/admission')
+    expect((spy.mock.calls[2][1] as RequestInit).method).toBe('PUT')
+    expect(bodyOf(spy, 2)).toEqual({
+      admitted: false, expectedVersion: 4, reason: '资格复核未通过',
+    })
+  })
+})
+
 describe('materials 解析（响应是 JSON 字符串，不是对象）', () => {
   // 浏览器实测缺陷：审核卡片直接 Object.entries(req.materials)，而后端按 materials::text
   // 返回的是 JSON **字符串** → 被逐字符展开，界面显示成一列单字（0:'{', 1:'"', …）。

@@ -119,6 +119,16 @@ class ApplicationReservationActivityImplTest {
     }
 
     @Test
+    void reserveFunds_passesAcceptanceCommissionBonusSnapshot() {
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving", 1_000)));
+        when(finance.reserve(ORG, APP_ID, 500L, RECOMMENDER, 1_000))
+                .thenReturn(Mono.just(ReserveResult.reserved(500)));
+
+        assertThat(activity.reserveFunds(input).reserved()).isTrue();
+        verify(finance).reserve(ORG, APP_ID, 500L, RECOMMENDER, 1_000);
+    }
+
+    @Test
     void activateEngagement_reservingToAccepted() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
         when(apps.acceptFromReserving(APP_ID, TASK_ID, 500L)).thenReturn(Mono.just(app("accepted")));
@@ -170,5 +180,11 @@ class ApplicationReservationActivityImplTest {
 
     private TaskApplication app(String status) {
         return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null, null, 0L, null, null);
+    }
+
+    private TaskApplication app(String status, int commissionBonusBps) {
+        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT,
+                null, null, null, null, 0L, null, null, null, null, null, null, null,
+                3, 1L, 2, commissionBonusBps, false);
     }
 }

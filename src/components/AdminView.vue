@@ -2,7 +2,7 @@
   <section class="admin-view">
     <header class="section-header">
       <h2 class="section-title">平台管理</h2>
-      <p class="section-desc">处理用户积分、商户资质审核与 AI 能力配置</p>
+      <p class="section-desc">处理用户、审核、等级权益、信任准入与平台配置</p>
     </header>
 
     <div class="admin-tabs" role="tablist" aria-label="管理模块">
@@ -22,6 +22,12 @@
         @click="activeSection = 'tasks'; void loadReviewTasks()">
         任务审核 <span v-if="reviewTasks.length" class="count-badge">{{ reviewTasks.length }}</span>
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'reputation'"
+        :class="{ active: activeSection === 'reputation' }"
+        @click="activeSection = 'reputation'">等级与权益</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'judges'"
+        :class="{ active: activeSection === 'judges' }"
+        @click="activeSection = 'judges'">审判官准入</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'finance'"
         :class="{ active: activeSection === 'finance' }"
         @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
@@ -138,6 +144,14 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div v-else-if="activeSection === 'reputation'" class="admin-panel" role="tabpanel">
+      <ReputationAdminPanel />
+    </div>
+
+    <div v-else-if="activeSection === 'judges'" class="admin-panel" role="tabpanel">
+      <JudgeAdminPanel />
     </div>
 
     <div v-else-if="activeSection === 'finance'" class="admin-panel" role="tabpanel">
@@ -281,6 +295,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import AiPlatformModelsPanel from './AiPlatformModelsPanel.vue'
+import JudgeAdminPanel from './JudgeAdminPanel.vue'
+import ReputationAdminPanel from './ReputationAdminPanel.vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   KybVerificationDetail,
@@ -305,7 +321,9 @@ interface UserItem {
 }
 
 const users = ref<UserItem[]>([])
-const activeSection = ref<'users' | 'kyb' | 'recommenders' | 'tasks' | 'finance' | 'ai-models'>('users')
+const activeSection = ref<
+  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'ai-models'
+>('users')
 const loading = ref(false)
 const loadError = ref('')
 

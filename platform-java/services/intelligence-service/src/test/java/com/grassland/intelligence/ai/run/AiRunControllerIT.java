@@ -2,6 +2,7 @@ package com.grassland.intelligence.ai.run;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
@@ -96,6 +97,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
         // 使 consume/refund 走生产路径打到桩端点。credits.legacy.* 退化为未使用配置。
         r.add("credits.finance.base-url", CREDITS::baseUrl);
         r.add("credits.finance.internal-key", () -> "test-internal-key");
+        r.add("marketplace.service.base-url", CREDITS::baseUrl);
     }
 
     @BeforeEach
@@ -236,6 +238,8 @@ class AiRunControllerIT extends IntelligenceItSupport {
                         new ExecuteRunRequest("text", "x", 16, true), exchange)
                 .subscribe(ignored -> { }, ignored -> { });
         awaitRunStatus("running");
+        verify(textClient, timeout(5000))
+                .complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
         subscription.dispose();
         awaitRunStatus("cancelled");
 
@@ -279,8 +283,11 @@ class AiRunControllerIT extends IntelligenceItSupport {
         assertThat(reserved).isZero();
         assertThat(cancelledEvents).isEqualTo(1);
         QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
-        awaitCreditRequest("/internal/credits/consume-compensations");
-        CREDITS.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
+        Long compensationIntents = db.sql("SELECT COUNT(*) AS n FROM ai_credit_compensation"
+                        + " WHERE run_id = (SELECT id FROM ai_run ORDER BY started_at DESC LIMIT 1)"
+                        + " AND status IN ('pending', 'completed')")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(compensationIntents).isEqualTo(1);
         CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
     }
 
@@ -783,10 +790,25 @@ class AiRunControllerIT extends IntelligenceItSupport {
     }
 
     private void stubCreditsOk() {
-        CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume")).willReturn(aResponse().withStatus(200)));
+        stubEntitlement(ACCOUNT);
+        stubEntitlement(ORG_ACCOUNT);
+        CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume")).willReturn(aResponse().withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"success\":true,\"data\":{\"source\":\"quota\","
+                        + "\"policyVersion\":1,\"transactionId\":"
+                        + "\"11111111-1111-1111-1111-111111111111\"}}")));
         CREDITS.stubFor(post(urlEqualTo("/internal/credits/refund")).willReturn(aResponse().withStatus(200)));
         CREDITS.stubFor(post(urlEqualTo("/internal/credits/consume-compensations"))
                 .willReturn(aResponse().withStatus(200)));
+    }
+
+    private void stubEntitlement(String accountId) {
+        CREDITS.stubFor(get(urlEqualTo(
+                        "/internal/marketplace/reputation/" + accountId + "/ai-entitlement"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"accountId\":\"" + accountId
+                                + "\",\"aiQuotaMultiplierBps\":10000,\"policyVersion\":1}}")));
     }
 
     private String firstRunId() {
@@ -798,13 +820,6 @@ class AiRunControllerIT extends IntelligenceItSupport {
         Mono.defer(() -> db.sql("SELECT status FROM ai_run ORDER BY started_at DESC LIMIT 1")
                         .map((row, meta) -> row.get("status", String.class)).one())
                 .filter(status::equals)
-                .repeatWhenEmpty(repeats -> repeats.delayElements(Duration.ofMillis(25)))
-                .block(Duration.ofSeconds(5));
-    }
-
-    private void awaitCreditRequest(String path) {
-        Mono.fromSupplier(() -> CREDITS.findAll(postRequestedFor(urlEqualTo(path))).size())
-                .filter(count -> count > 0)
                 .repeatWhenEmpty(repeats -> repeats.delayElements(Duration.ofMillis(25)))
                 .block(Duration.ofSeconds(5));
     }

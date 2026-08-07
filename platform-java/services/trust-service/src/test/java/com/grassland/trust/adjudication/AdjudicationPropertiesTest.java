@@ -63,6 +63,7 @@ class AdjudicationPropertiesTest {
         var props = new AdjudicationProperties(0, 0, 0, 0, 0, 0, 1, -1, 0, 0, 0, 0, 0, 0);
 
         assertThat(props.panelSize()).isEqualTo(7);
+        assertThat(props.judgeEligibilityTier()).isEqualTo(5);
         assertThat(props.voteWindowSecondsEffective()).isEqualTo(24 * 3600L);
         assertThat(props.appealWindowSecondsEffective()).isEqualTo(48 * 3600L);
         assertThat(props.adjudicationWindowSecondsEffective()).isEqualTo(48 * 3600L);

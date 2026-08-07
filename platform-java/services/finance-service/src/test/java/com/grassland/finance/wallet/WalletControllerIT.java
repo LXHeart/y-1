@@ -184,7 +184,9 @@ class WalletControllerIT extends FinanceItSupport {
                 ? Map.of("engagementRef", ref, "amountCents", amount)
                 : Map.of("engagementRef", ref, "amountCents", amount, "payeeAccountId", payee);
         client().post().uri("/api/finance/accounts/" + org + "/reservations")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", payee == null
+                        ? sign(merchant, "merchant", org, "finance_transaction")
+                        : signService(org, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange().expectStatus().isCreated();
     }

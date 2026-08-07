@@ -19,12 +19,20 @@ import java.util.UUID;
  */
 public record OpenDisputeRequest(String engagementRef, String reason, String kind,
                                  String openedByAccountId, String organizationId,
+                                 String recommenderAccountId, Boolean premiumSupportAtAccept,
                                  List<EvidenceItem> evidence) {
 
     /** 向后兼容：不带 evidence 的 5 参构造（既有调用方）。 */
     public OpenDisputeRequest(String engagementRef, String reason, String kind,
                               String openedByAccountId, String organizationId) {
-        this(engagementRef, reason, kind, openedByAccountId, organizationId, null);
+        this(engagementRef, reason, kind, openedByAccountId, organizationId, null, null, null);
+    }
+
+    /** 向后兼容：带 evidence、但不带权益快照的既有调用方。 */
+    public OpenDisputeRequest(String engagementRef, String reason, String kind,
+                              String openedByAccountId, String organizationId,
+                              List<EvidenceItem> evidence) {
+        this(engagementRef, reason, kind, openedByAccountId, organizationId, null, null, evidence);
     }
 
     public OpenDisputeRequest {
@@ -41,6 +49,13 @@ public record OpenDisputeRequest(String engagementRef, String reason, String kin
         }
         if (evidence == null) {
             evidence = List.of();
+        }
+        if (recommenderAccountId != null && !recommenderAccountId.isBlank()) {
+            try {
+                recommenderAccountId = UUID.fromString(recommenderAccountId.trim()).toString();
+            } catch (IllegalArgumentException invalid) {
+                throw new IllegalArgumentException("recommenderAccountId must be a UUID");
+            }
         }
         // 校验每条证据项的字段，避免非法值落到 DB/outbox。
         for (EvidenceItem item : evidence) {
@@ -63,4 +78,3 @@ public record OpenDisputeRequest(String engagementRef, String reason, String kin
         }
     }
 }
-

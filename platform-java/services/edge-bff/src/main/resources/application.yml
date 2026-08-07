@@ -122,6 +122,18 @@ edge:
     - path: /api/admin/tasks
       upstream: marketplace
       enabled: ${EDGE_ROUTE_ADMIN_TASKS_MARKETPLACE:true}
+    # 推荐官等级策略与单账号 Lv5 准入（GL-P2-ADMIN-007）→ marketplace。
+    # 两个窄前缀共用回滚开关，避免配置读写与账号准入只切换一半。
+    - path: /api/admin/reputation-config
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ADMIN_REPUTATION_MARKETPLACE:true}
+    - path: /api/admin/reputation
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ADMIN_REPUTATION_MARKETPLACE:true}
+    # 审判官运营准入（GL-P2-TRUST-001）→ trust。不得扩大为 /api/admin，避免抢占其它后台域。
+    - path: /api/admin/trust
+      upstream: trust
+      enabled: ${EDGE_ROUTE_ADMIN_TRUST:true}
     # 内容素材库（PRD §4.8 / Slice 14）→ intelligence。/api/content-assets 三类库 CRUD + 授权 + 下载；
     # 物理资产三步上传走既有 /api/media 路由（无需另配）。全新路径，无 legacy 碰撞。
     - path: /api/content-assets

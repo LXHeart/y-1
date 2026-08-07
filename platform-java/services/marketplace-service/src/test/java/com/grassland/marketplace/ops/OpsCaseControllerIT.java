@@ -61,6 +61,26 @@ class OpsCaseControllerIT extends MarketplaceItSupport {
     }
 
     @Test
+    @DisplayName("商家异议按 accept 时专属客服权益优先，并返回客服标识")
+    void merchantRejectionQueuePrioritizesPremiumSupportSnapshot() {
+        String standardApp = seedAcceptedApplication(false);
+        String premiumApp = seedAcceptedApplication(true);
+        registrar.register(OpsCaseSource.MERCHANT_REJECTION, UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(), standardApp, "standard support").block();
+        registrar.register(OpsCaseSource.MERCHANT_REJECTION, UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(), premiumApp, "premium support").block();
+
+        client().get().uri("/api/ops/cases")
+                .header("X-Grassland-Identity", signWithRole(OPS_A, "customer_service"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].applicationId").isEqualTo(premiumApp)
+                .jsonPath("$.data[0].premiumSupport").isEqualTo(true)
+                .jsonPath("$.data[0].supportPriority").isEqualTo(100)
+                .jsonPath("$.data[1].applicationId").isEqualTo(standardApp)
+                .jsonPath("$.data[1].premiumSupport").isEqualTo(false);
+    }
+
+    @Test
     @DisplayName("登记即写 registered 审计（actor 为空 + role=system），详情带审计时间线")
     void detailCarriesAudit() {
         OpsCase c = givenCase("verification_failed");
@@ -241,5 +261,23 @@ class OpsCaseControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"expectedVersion\":1}")
                 .exchange().expectStatus().isOk();
+    }
+
+    private String seedAcceptedApplication(boolean premiumSupport) {
+        String taskId = UUID.randomUUID().toString();
+        String applicationId = UUID.randomUUID().toString();
+        db.sql("INSERT INTO task(id, owner_account_id, organization_id, title, status)"
+                        + " VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), 'support task', 'published')")
+                .bind("id", taskId).bind("owner", UUID.randomUUID().toString())
+                .bind("org", UUID.randomUUID().toString()).then().block();
+        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents,"
+                        + " reputation_level_at_accept, reputation_policy_version_at_accept,"
+                        + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept,"
+                        + " premium_support_at_accept)"
+                        + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'accepted', 0,"
+                        + " 1, 1, 2, 0, :premium)")
+                .bind("id", applicationId).bind("task", taskId).bind("rec", UUID.randomUUID().toString())
+                .bind("premium", premiumSupport).then().block();
+        return applicationId;
     }
 }

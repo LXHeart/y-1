@@ -20,7 +20,8 @@ public record CreateTaskRequest(
         String platform,
         Integer maxSlots,
         Long bountyCents,
-        Instant applicationDeadline
+        Instant applicationDeadline,
+        Integer minRecommenderLevel
 ) {
     public CreateTaskRequest {
         if (organizationId == null || organizationId.isBlank()) {
@@ -34,6 +35,9 @@ public record CreateTaskRequest(
         }
         if (bountyCents != null && bountyCents < 0) {
             throw new IllegalArgumentException("bountyCents must be >= 0");
+        }
+        if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
+            throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
         }
     }
 }

@@ -93,6 +93,21 @@ class LedgerServiceTest {
     }
 
     @Test
+    void captureCreditsPlatformFundedBonusWithoutReducingFee() {
+        // 商家原赏金 1000：基础净额 950、平台费 50；平台另补 100，钱包共到账 1050。
+        StepVerifier.create(service.postCapture("org-1", "eng-bonus", 1000, "rec-1", 1050L, 100L))
+                .verifyComplete();
+
+        List<Posting> p = postings.get(0);
+        assertBalanced(p);
+        assertThat(amount(p, LedgerAccount.Type.RESERVE, "org-1")).isEqualTo(1000);
+        assertThat(amount(p, LedgerAccount.Type.WALLET, "rec-1")).isEqualTo(1050);
+        assertThat(amount(p, LedgerAccount.Type.FEE, null)).isEqualTo(50);
+        assertThat(find(p, LedgerAccount.Type.SUBSIDY_EXPENSE, null).direction()).isEqualTo(Posting.Direction.DEBIT);
+        assertThat(amount(p, LedgerAccount.Type.SUBSIDY_EXPENSE, null)).isEqualTo(100);
+    }
+
+    @Test
     void captureWithoutPayeeCreditsFeeInFull() {
         // 无收款人：商家付款全额转平台收入，钱留平台账（与现状「money stays on platform account」一致）
         StepVerifier.create(service.postCapture("org-1", "eng-9", 1000, null, null)).verifyComplete();
@@ -125,6 +140,20 @@ class LedgerServiceTest {
         assertThat(amount(p, LedgerAccount.Type.FEE, null)).isEqualTo(50);
         assertThat(find(p, LedgerAccount.Type.ESCROW, "org-1").direction()).isEqualTo(Posting.Direction.CREDIT);
         assertThat(amount(p, LedgerAccount.Type.ESCROW, "org-1")).isEqualTo(1000);   // 全额退商家
+    }
+
+    @Test
+    void reverseClawsBackBonusButRefundsMerchantOnlyOriginalBounty() {
+        StepVerifier.create(service.postReverse("org-1", "eng-bonus", 1000, "rec-1", 1050L, 100L))
+                .verifyComplete();
+
+        List<Posting> p = postings.get(0);
+        assertBalanced(p);
+        assertThat(amount(p, LedgerAccount.Type.WALLET, "rec-1")).isEqualTo(1050);
+        assertThat(amount(p, LedgerAccount.Type.FEE, null)).isEqualTo(50);
+        assertThat(find(p, LedgerAccount.Type.SUBSIDY_EXPENSE, null).direction()).isEqualTo(Posting.Direction.CREDIT);
+        assertThat(amount(p, LedgerAccount.Type.SUBSIDY_EXPENSE, null)).isEqualTo(100);
+        assertThat(amount(p, LedgerAccount.Type.ESCROW, "org-1")).isEqualTo(1000);
     }
 
     @Test

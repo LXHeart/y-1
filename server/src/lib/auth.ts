@@ -1,6 +1,8 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express'
+import { queryDb } from './db.js'
 import { AppError } from './errors.js'
 import { env } from './env.js'
+import { logger } from './logger.js'
 
 export interface SessionUser {
   id: string
@@ -68,10 +70,26 @@ export function requireAuthenticatedUser(req: Request, _res: Response, next: Nex
   }
 }
 
-export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
+export async function requireAdmin(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
     const user = getAuthenticatedUser(req)
-    if (user.role !== 'admin') {
+    let allowed = false
+    try {
+      const result = await queryDb<{ allowed: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM backend_role
+            WHERE account_id = CAST($1 AS uuid)
+              AND role = 'platform_admin'
+         ) AS allowed`,
+        [user.id],
+      )
+      allowed = result.rows[0]?.allowed === true
+    } catch (error: unknown) {
+      logger.error({ err: error, accountId: user.id }, 'Failed to verify authoritative admin role')
+      throw new AppError('权限校验暂时不可用', 503)
+    }
+    if (!allowed) {
       throw new AppError('权限不足', 403)
     }
     next()

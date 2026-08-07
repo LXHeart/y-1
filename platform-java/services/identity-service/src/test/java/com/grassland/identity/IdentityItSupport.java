@@ -138,8 +138,15 @@ public abstract class IdentityItSupport {
     /** seed 一个平台管理员账号（role='admin'），返回登录态。草场身份域 Slice 2H（D-05 审核）。 */
     protected Seeded seedAdmin(String email) {
         String accountId = UUID.randomUUID().toString();
-        db.sql("INSERT INTO app_users(id, email, password_hash, display_name, role, status) "
-                + "VALUES (CAST(:id AS uuid), :email, 'x', 'Platform Admin', 'admin', 'active')")
+        db.sql("""
+                WITH inserted_admin AS (
+                    INSERT INTO app_users(id, email, password_hash, display_name, role, status)
+                    VALUES (CAST(:id AS uuid), :email, 'x', 'Platform Admin', 'admin', 'active')
+                    RETURNING id
+                )
+                INSERT INTO backend_role(account_id, role)
+                SELECT id, 'platform_admin' FROM inserted_admin
+                """)
                 .bind("id", accountId).bind("email", email).then().block();
         return new Seeded(signCookie(accountId), accountId);
     }

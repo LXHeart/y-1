@@ -6,6 +6,7 @@ import com.grassland.trust.dispute.DisputeCaseRepository;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
 import com.grassland.trust.judge.Judge;
+import com.grassland.trust.judge.JudgeEligibilityService;
 import com.grassland.trust.judge.JudgeRepository;
 import com.grassland.trust.judge.VoteTally;
 import com.grassland.trust.security.TrustException;
@@ -15,9 +16,11 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Mono;
 
 /**
  * 审判 workflow 活动实现（草场 Epic 6 Slice 6C Phase C / HLD §5.5、§9.3）。
@@ -28,7 +31,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
  *
  * <p><b>Slice 7C-2</b>：写活动的「领域写 + outbox append」绑进同一 R2DBC 事务——否则崩溃落在两次提交之间时，
  * 重试会被幂等守卫（「面板已存在」/「非 voting」）短路，事件**永久丢失**。状态迁移（startAdjudication/reopen）、
- * 抽签与 503、跨服务 {@code finance.*} 调用留在事务外（与本地写+outbox 原子性正交，且不改既有 503 行为）。
+ * 条件面板分配和 outbox 必须原子提交；抽签远端复验与跨服务 {@code finance.*} 调用留在事务外。
  *
  * <p>worker = {@code trust-adjudication}（application.yml 显式定义）。
  */
@@ -38,16 +41,19 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 
     private final DisputeCaseRepository disputes;
     private final JudgeRepository judges;
+    private final JudgeEligibilityService judgeEligibility;
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
     private final FinanceDecisionClient finance;
     private final TransactionalOperator transactions;
 
     public AdjudicationActivityImpl(DisputeCaseRepository disputes, JudgeRepository judges,
+                                    JudgeEligibilityService judgeEligibility,
                                     OutboxRepository outbox, AdjudicationProperties props,
                                     FinanceDecisionClient finance, TransactionalOperator transactions) {
         this.disputes = disputes;
         this.judges = judges;
+        this.judgeEligibility = judgeEligibility;
         this.outbox = outbox;
         this.props = props;
         this.finance = finance;
@@ -60,32 +66,117 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
         if (d == null || "final".equals(d.status())) {
             return;
         }
-        if (judges.countPanel(disputeId, round).block() > 0) {
-            return;  // 幂等：该轮面板已分配
+        int panelSize = props.panelSize();
+        int observedCount = judges.countPanel(disputeId, round).block();
+        if (observedCount == panelSize) {
+            return;
         }
-        if (round == 1) {
-            if ("open".equals(d.status())) {
-                disputes.startAdjudication(disputeId, 1).block();  // open→voting
-            }
-        } else if (d.round() < round) {
-            disputes.reopen(disputeId, round).block();  // voting→voting 下一轮
+        if (observedCount > panelSize) {
+            throw new TrustException(503, "审判面板人数异常，请联系平台处理");
         }
-        DisputeCase fresh = disputes.findById(disputeId).block();  // reload 取 fresh version/round
-        List<Judge> pool = judges.drawEligiblePool(props.judgeEligibilityTier(), fresh.organizationId(), props.panelSize())
-                .collectList().block();
-        if (pool == null || pool.isEmpty()) {
-            throw new TrustException(503, "无可用的合格审判官");
+        List<String> observedAccounts = judges.findPanelAccountIds(disputeId, round).collectList().block();
+        if (observedAccounts.size() != observedCount) {
+            throw new TrustException(503, "审判面板状态已变化，请重试");
         }
-        // 面板分配（INSERT）+ outbox 同事务：outbox 失败则回滚面板分配，重试不会因「面板已存在」丢事件。
+        List<Judge> pool = judgeEligibility.drawVerifiedPool(
+                props.judgeEligibilityTier(), d.organizationId(), panelSize - observedCount,
+                Set.copyOf(observedAccounts)).block();
+        List<String> newAccounts = pool.stream().map(Judge::accountId).toList();
+        List<String> finalPanelAccounts = java.util.stream.Stream.concat(
+                observedAccounts.stream(), newAccounts.stream()).toList();
+        // Identity is authoritative for all organization memberships. Re-fetch after selection and
+        // immediately before the local write transaction; any timeout or conflict aborts the draw.
+        judgeEligibility.validateNoOrganizationConflicts(finalPanelAccounts, d.organizationId()).block();
+        // 状态迁移 + 条件面板分配 + outbox 同事务；任何候选在提交前失去本地资格都会整体回滚。
         transactions.transactional(
-                judges.assignPanel(disputeId, round, pool.stream().map(Judge::accountId).toList())
-                        .then(outbox.append(envelope(round == 1 ? "DisputeAssigned" : "AdjudicationReopened", fresh, round, pool.size())))
+                judges.lockPanel(disputeId, round)
+                        .then(judges.findPanelAccountIds(disputeId, round).collectList())
+                        .flatMap(currentAccounts -> completePanelUnderLock(
+                                d, round, observedAccounts, currentAccounts, newAccounts, panelSize))
         ).block();
+    }
+
+    private Mono<Void> completePanelUnderLock(DisputeCase dispute, int round,
+                                              List<String> observedAccounts, List<String> currentAccounts,
+                                              List<String> newAccounts, int panelSize) {
+        if (currentAccounts.size() == panelSize) {
+            return Mono.empty();
+        }
+        if (currentAccounts.size() > panelSize || !sameAccounts(observedAccounts, currentAccounts)) {
+            return Mono.error(new TrustException(503, "审判面板状态已变化，请重试"));
+        }
+        return transitionForAssignment(dispute, round)
+                .flatMap(fresh -> judges.assignPanel(dispute.id(), round, newAccounts)
+                        .flatMap(inserted -> inserted == newAccounts.size()
+                                ? Mono.empty()
+                                : Mono.error(new TrustException(503, "审判官资格已变化，请重试抽签")))
+                        .then(judges.countPanel(dispute.id(), round))
+                        .flatMap(count -> count == panelSize
+                                ? Mono.empty()
+                                : Mono.error(new TrustException(503, "审判面板人数异常，请重试")))
+                        .then(Mono.defer(() -> outbox.append(envelope(
+                                round == 1 ? "DisputeAssigned" : "AdjudicationReopened",
+                                fresh, round, panelSize)))));
+    }
+
+    private static boolean sameAccounts(List<String> left, List<String> right) {
+        return left.size() == right.size() && Set.copyOf(left).equals(Set.copyOf(right));
+    }
+
+    private Mono<DisputeCase> transitionForAssignment(DisputeCase dispute, int round) {
+        if (round == 1 && "open".equals(dispute.status())) {
+            return disputes.startAdjudication(dispute.id(), 1)
+                    .switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试抽签")));
+        }
+        if (round > 1 && dispute.round() < round) {
+            return disputes.reopen(dispute.id(), round)
+                    .switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试抽签")));
+        }
+        return Mono.just(dispute);
     }
 
     @Override
     public TallyResult tallyVotes(String disputeId, int round) {
-        VoteTally t = judges.tallyVotes(disputeId, round).block();
+        // 保留历史 Workflow 的 tallyVotes Activity 命令名，同时把计票与状态迁移收进同一事务。
+        // 后续历史命令 recordDecision/escalate 会因状态已迁移而幂等 no-op。
+        return closeVotingRound(disputeId, round, round >= props.maxRounds());
+    }
+
+    public TallyResult closeVotingRound(String disputeId, int round, boolean finalRound) {
+        TallyResult result = transactions.transactional(
+                disputes.findByIdForUpdate(disputeId)
+                        .switchIfEmpty(Mono.error(new TrustException(404, "争议不存在")))
+                        .flatMap(dispute -> judges.tallyVotes(disputeId, round)
+                                .flatMap(tally -> closeVotingRoundLocked(dispute, round, finalRound, tally))))
+                .block();
+        return result == null ? TallyResult.undecided(0, 0, 0, 0) : result;
+    }
+
+    private Mono<TallyResult> closeVotingRoundLocked(
+            DisputeCase dispute, int round, boolean finalRound, VoteTally tally) {
+        TallyResult result = toTallyResult(tally);
+        if (!"voting".equals(dispute.status()) || dispute.round() != round
+                || "escalated".equals(dispute.appealState())) {
+            return Mono.just(result);
+        }
+        if (result.decided()) {
+            return disputes.recordDecision(dispute.id(), result.winner())
+                    .switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
+                    .flatMap(updated -> outbox.append(
+                            envelope("DisputeDecided", updated, round, null)).thenReturn(result));
+        }
+        if (finalRound) {
+            return disputes.markEscalated(dispute.id())
+                    .switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
+                    .flatMap(updated -> outbox.append(
+                            envelope("AdjudicationEscalated", updated, round, null)).thenReturn(result));
+        }
+        return disputes.reopen(dispute.id(), round + 1)
+                .switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
+                .thenReturn(result);
+    }
+
+    private static TallyResult toTallyResult(VoteTally t) {
         if (t == null) {
             return TallyResult.undecided(0, 0, 0, 0);
         }

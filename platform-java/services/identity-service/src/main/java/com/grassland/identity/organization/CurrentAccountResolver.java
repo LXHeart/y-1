@@ -108,15 +108,14 @@ public class CurrentAccountResolver {
      * 要求当前账号为平台管理员（{@code role==admin}），放行返回该账号；非管理员 → 403；未登录 → 401（由 {@link #resolve} 抛）。
      * 草场身份域 Slice 2H（D-05 平台 admin 门禁）。
      *
-     * <p>向后兼容（GL-P2-ADMIN-001）：先查 backend_role 表是否含 platform_admin；
-     * 旧用户无 backend_role 行时回退 {@code app_users.role=='admin'} 判定（backfill 已把老 admin 迁入 backend_role，
-     * 但保留兜底防御 backfill 缺失）。
+     * <p>{@code backend_role} 是唯一授权权威。V26 已迁移旧管理员；{@code app_users.role}
+     * 仅保留为旧 Node 服务的兼容投影，不得在角色被撤销后重新授予权限。
      */
     public Mono<AuthUser> requireAdmin(ServerHttpRequest request) {
         return resolve(request)
                 .filterWhen(user -> backendRoles.findByAccountId(user.id())
                         .map(roles -> roles.contains(BackendRole.PLATFORM_ADMIN))
-                        .defaultIfEmpty("admin".equalsIgnoreCase(user.role())))
+                        .defaultIfEmpty(false))
                 .switchIfEmpty(Mono.error(new IdentityException(403, "需要平台管理员权限")));
     }
 

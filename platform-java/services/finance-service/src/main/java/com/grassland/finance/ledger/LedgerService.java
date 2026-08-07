@@ -16,7 +16,8 @@ import reactor.core.publisher.Mono;
  * 使「余额守卫条件 UPDATE + 账本记账 + outbox append」同生共死。余额行保留为投影+并发守卫（Approach B）；
  * 账本是不可变真相源 + 可重建投影。
  *
- * <p>借/贷方向按账户语义校准（ESCROW/WALLET/FEE 负债收入类 credit 增、debit 减；RESERVE earmark 池 credit 增），
+ * <p>借/贷方向按账户语义校准（ESCROW/WALLET/FEE 负债收入类 credit 增、debit 减；RESERVE earmark 池 credit 增；
+ * SUBSIDY_EXPENSE 费用类 debit 增、credit 回冲），
  * 投影 {@code SUM(credit) - SUM(debit)} 与既有余额行逐字一致。
  *
  * <p>幂等：reserve/release/capture/reverse 带确定性 operationId（{@code <op>:<engagementRef>}），复用 credit-bridge
@@ -69,10 +70,21 @@ public class LedgerService {
      */
     public Mono<Void> postCapture(String orgId, String engagementRef, long amount,
                                   String payeeAccountId, Long payout) {
+        return postCapture(orgId, engagementRef, amount, payeeAccountId, payout, 0L);
+    }
+
+    /** 捕获含平台补贴：Dr RESERVE(amount) + Dr SUBSIDY(bonus) / Cr WALLET(total payout) + Cr FEE(fee)。 */
+    public Mono<Void> postCapture(String orgId, String engagementRef, long amount,
+                                  String payeeAccountId, Long payout, long commissionBonusCents) {
         long netPayout = (payout == null) ? 0L : payout;
-        long fee = amount - netPayout;
-        List<Posting> postings = new ArrayList<>(3);
+        validateSettlementAmounts(amount, netPayout, commissionBonusCents);
+        long basePayout = netPayout - commissionBonusCents;
+        long fee = amount - basePayout;
+        List<Posting> postings = new ArrayList<>(4);
         postings.add(Posting.debit(LedgerAccount.reserve(orgId, engagementRef), amount));
+        if (commissionBonusCents > 0) {
+            postings.add(Posting.debit(LedgerAccount.subsidy(), commissionBonusCents));
+        }
         if (netPayout > 0 && payeeAccountId != null) {
             postings.add(Posting.credit(LedgerAccount.wallet(payeeAccountId), netPayout));
         }
@@ -90,9 +102,17 @@ public class LedgerService {
      */
     public Mono<Void> postReverse(String orgId, String engagementRef, long amount,
                                   String payeeAccountId, Long payout) {
+        return postReverse(orgId, engagementRef, amount, payeeAccountId, payout, 0L);
+    }
+
+    /** 冲正含平台补贴：完整镜像 capture，但商家仍只收到原赏金 amount。 */
+    public Mono<Void> postReverse(String orgId, String engagementRef, long amount,
+                                  String payeeAccountId, Long payout, long commissionBonusCents) {
         long netPayout = (payout == null) ? 0L : payout;
-        long fee = amount - netPayout;
-        List<Posting> postings = new ArrayList<>(3);
+        validateSettlementAmounts(amount, netPayout, commissionBonusCents);
+        long basePayout = netPayout - commissionBonusCents;
+        long fee = amount - basePayout;
+        List<Posting> postings = new ArrayList<>(4);
         if (netPayout > 0 && payeeAccountId != null) {
             postings.add(Posting.debit(LedgerAccount.wallet(payeeAccountId), netPayout));
         }
@@ -100,6 +120,9 @@ public class LedgerService {
             postings.add(Posting.debit(LedgerAccount.fee(), fee));
         }
         postings.add(Posting.credit(LedgerAccount.escrow(orgId), amount));
+        if (commissionBonusCents > 0) {
+            postings.add(Posting.credit(LedgerAccount.subsidy(), commissionBonusCents));
+        }
         assertBalanced(postings);
         return post(JournalEntry.Type.REVERSE, "reverse:" + engagementRef, orgId, engagementRef,
                 "reverse " + engagementRef, postings);
@@ -140,13 +163,24 @@ public class LedgerService {
         long credits = 0L;
         for (Posting p : postings) {
             if (p.direction() == Posting.Direction.DEBIT) {
-                debits += p.amountCents();
+                debits = Math.addExact(debits, p.amountCents());
             } else {
-                credits += p.amountCents();
+                credits = Math.addExact(credits, p.amountCents());
             }
         }
         if (debits != credits) {
             throw new IllegalStateException("账本不平衡：debits=" + debits + " credits=" + credits);
         }
+    }
+
+    private static void validateSettlementAmounts(long amount, long payout, long bonus) {
+        if (amount <= 0 || payout < 0 || bonus < 0 || bonus > payout) {
+            throw new IllegalArgumentException("invalid settlement amounts");
+        }
+        long basePayout = payout - bonus;
+        if (basePayout > amount) {
+            throw new IllegalArgumentException("base payout cannot exceed merchant-funded amount");
+        }
+        Math.addExact(amount, bonus);
     }
 }

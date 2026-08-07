@@ -41,6 +41,14 @@ class PlatformFeePolicyTest {
     }
 
     @Test
+    void calculatesLargeAmountsWithoutIntermediateOverflow() {
+        PlatformFeePolicy policy = new PlatformFeePolicy(10_000);
+
+        assertThat(policy.feeFor(Long.MAX_VALUE)).isEqualTo(Long.MAX_VALUE);
+        assertThat(policy.payoutFor(Long.MAX_VALUE)).isZero();
+    }
+
+    @Test
     void rejectsOutOfRangeConfiguration() {
         assertThatThrownBy(() -> new PlatformFeePolicy(-1)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new PlatformFeePolicy(10_001)).isInstanceOf(IllegalArgumentException.class);

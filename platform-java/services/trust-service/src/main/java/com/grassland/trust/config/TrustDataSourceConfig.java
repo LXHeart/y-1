@@ -1,6 +1,7 @@
 package com.grassland.trust.config;
 
 import java.net.URI;
+import java.util.Map;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.postgresql.ds.PGSimpleDataSource;
@@ -36,6 +37,7 @@ public class TrustDataSourceConfig {
     Flyway flyway(DataSource dataSource) {
         return Flyway.configure()
                 .dataSource(dataSource)
+                .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
                 .locations("classpath:db/migration")
                 .table("trust_flyway_schema")
                 .baselineOnMigrate(true)

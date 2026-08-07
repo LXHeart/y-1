@@ -68,10 +68,15 @@ public class EngagementVerificationRepository {
      */
     public Mono<String> findEffectiveStatus(String submissionId) {
         return db.sql("""
-                SELECT COALESCE(
-                    (SELECT vo.status FROM verification_override vo WHERE vo.submission_id = CAST(:sub AS uuid)),
-                    (SELECT v.status FROM engagement_verification v WHERE v.submission_id = CAST(:sub AS uuid))
-                ) AS status
+                SELECT status FROM (
+                    SELECT COALESCE(
+                        (SELECT vo.status FROM verification_override vo
+                         WHERE vo.submission_id = CAST(:sub AS uuid)),
+                        (SELECT v.status FROM engagement_verification v
+                         WHERE v.submission_id = CAST(:sub AS uuid))
+                    ) AS status
+                ) effective
+                WHERE status IS NOT NULL
                 """)
                 .bind("sub", submissionId)
                 .map(row -> row.get("status", String.class))

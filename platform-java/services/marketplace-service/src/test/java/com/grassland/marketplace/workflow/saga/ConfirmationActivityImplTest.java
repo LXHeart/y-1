@@ -33,7 +33,7 @@ class ConfirmationActivityImplTest {
     private TaskRepository tasks;
     private SubmissionRepository submissions;
     private OutboxRepository outbox;
-    private SettlementExecution settlementExecution;
+    private SettlementWorkflowStarter settlementWorkflows;
     private TransactionalOperator transactions;
     private ConfirmationActivityImpl activity;
 
@@ -49,13 +49,13 @@ class ConfirmationActivityImplTest {
         tasks = org.mockito.Mockito.mock(TaskRepository.class);
         submissions = org.mockito.Mockito.mock(SubmissionRepository.class);
         outbox = org.mockito.Mockito.mock(OutboxRepository.class);
-        settlementExecution = org.mockito.Mockito.mock(SettlementExecution.class);
+        settlementWorkflows = org.mockito.Mockito.mock(SettlementWorkflowStarter.class);
         transactions = org.mockito.Mockito.mock(TransactionalOperator.class);
         when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
         when(outbox.append(any())).thenReturn(Mono.empty());
         when(tasks.findById(taskId)).thenReturn(Mono.empty());  // 任务缺失 → taskOwnerId=null，不阻断结算
         activity = new ConfirmationActivityImpl(
-                apps, tasks, submissions, outbox, settlementExecution, transactions);
+                apps, tasks, submissions, outbox, settlementWorkflows, transactions);
     }
 
     @Test
@@ -65,7 +65,7 @@ class ConfirmationActivityImplTest {
         ConfirmationOutcome result = activity.autoConfirmSettle(input);
 
         assertThat(result.status()).isEqualTo("aborted");
-        verify(settlementExecution, never()).captureOrHold(anyString(), anyString(), any(), any());
+        verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
     }
 
     @Test
@@ -87,7 +87,7 @@ class ConfirmationActivityImplTest {
 
         assertThat(result.status()).isEqualTo("aborted");
         verify(apps, never()).autoConfirm(anyString(), anyString());
-        verify(settlementExecution, never()).captureOrHold(anyString(), anyString(), any(), any());
+        verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
     }
 
     @Test
@@ -103,7 +103,7 @@ class ConfirmationActivityImplTest {
         assertThat(result.status()).isEqualTo("held");
         assertThat(result.reason()).isEqualTo("merchant_contest_requested");
         verify(apps, never()).autoConfirm(anyString(), anyString());
-        verify(settlementExecution, never()).captureOrHold(anyString(), anyString(), any(), any());
+        verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
     }
 
     @Test
@@ -116,8 +116,8 @@ class ConfirmationActivityImplTest {
         when(submissions.review(submissionId, SubmissionStatus.ACCEPTED, null))
                 .thenReturn(Mono.just(submission(SubmissionStatus.ACCEPTED.dbValue())));
         when(apps.autoConfirm(appId, taskId)).thenReturn(Mono.just(autoConfirmed));
-        when(settlementExecution.captureOrHold(eq(orgId), eq(appId), any(), any()))
-                .thenReturn(SettlementOutcome.settled());
+        when(settlementWorkflows.start(eq(taskId), eq(orgId), any()))
+                .thenReturn(Mono.just("settle-" + appId));
 
         ConfirmationOutcome result = activity.autoConfirmSettle(input);
 
@@ -125,7 +125,7 @@ class ConfirmationActivityImplTest {
         verify(outbox).append(argThat(event -> event != null
                 && "AutoSettledOnTimeout".equals(event.eventType())
                 && submissionId.equals(event.payload().get("submissionId"))));
-        verify(settlementExecution).captureOrHold(eq(orgId), eq(appId), any(), any());
+        verify(settlementWorkflows).start(eq(taskId), eq(orgId), any());
     }
 
     @Test
@@ -138,7 +138,7 @@ class ConfirmationActivityImplTest {
 
         assertThat(result.status()).isEqualTo("aborted");
         verify(apps, never()).autoConfirm(anyString(), anyString());
-        verify(settlementExecution, never()).captureOrHold(anyString(), anyString(), any(), any());
+        verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
     }
 
     @Test
@@ -146,28 +146,26 @@ class ConfirmationActivityImplTest {
         // 首次 activity 已写 auto_confirmed_at 后崩溃；重试跳过领域写/outbox，继续幂等 capture。
         TaskApplication autoConfirmed = app("accepted", Instant.now(), Instant.now());
         when(apps.findById(appId)).thenReturn(Mono.just(autoConfirmed));
-        when(settlementExecution.captureOrHold(eq(orgId), eq(appId), any(), any()))
-                .thenReturn(SettlementOutcome.settled());
+        when(settlementWorkflows.start(eq(taskId), eq(orgId), any()))
+                .thenReturn(Mono.just("settle-" + appId));
 
         ConfirmationOutcome result = activity.autoConfirmSettle(input);
 
         assertThat(result.status()).isEqualTo("auto_settled");
         verify(submissions, never()).findById(anyString());
         verify(outbox, never()).append(any());
-        verify(settlementExecution).captureOrHold(eq(orgId), eq(appId), any(), any());
+        verify(settlementWorkflows).start(eq(taskId), eq(orgId), any());
     }
 
     @Test
-    void captureHeldMapsToHeld() {
+    void abortsWhenSettlementWorkflowCannotBeStarted() {
         TaskApplication autoConfirmed = app("accepted", Instant.now(), Instant.now());
         when(apps.findById(appId)).thenReturn(Mono.just(autoConfirmed));
-        when(settlementExecution.captureOrHold(eq(orgId), eq(appId), any(), any()))
-                .thenReturn(SettlementOutcome.held("open_dispute"));
+        when(settlementWorkflows.start(eq(taskId), eq(orgId), any())).thenReturn(Mono.empty());
 
         ConfirmationOutcome result = activity.autoConfirmSettle(input);
 
-        assertThat(result.status()).isEqualTo("held");
-        assertThat(result.reason()).isEqualTo("open_dispute");
+        assertThat(result.status()).isEqualTo("aborted");
     }
 
     // ---------- notifyExpiring（slice 2 临到期提醒）----------

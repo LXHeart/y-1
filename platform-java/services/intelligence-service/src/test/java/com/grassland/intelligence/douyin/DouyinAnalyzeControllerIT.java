@@ -3,6 +3,7 @@ package com.grassland.intelligence.douyin;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
@@ -33,6 +34,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
 
     private static final String SECRET = "test-douyin-secret-32-chars-min!!";
     private static final String PUBLIC_ORIGIN = "https://public.test";
+    private static final String ACCOUNT = "33333333-3333-3333-3333-333333333333";
 
     static final WireMockServer LEGACY = new WireMockServer(0);
 
@@ -52,6 +54,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
         registry.add("credits.legacy.base-url", LEGACY::baseUrl);
         // 默认 CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
         registry.add("credits.finance.base-url", LEGACY::baseUrl);
+        registry.add("marketplace.service.base-url", LEGACY::baseUrl);
         registry.add("legacy.backend.base-url", LEGACY::baseUrl);
         registry.add("ai.douyin-analysis.provider", () -> "qwen");
         registry.add("ai.douyin-analysis.max-single-segment-seconds", () -> "60");
@@ -73,7 +76,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://v3-web.douyinvod.com/play.mp4", Map.of(), "file.mp4", 30L));
 
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/douyin/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk()
@@ -98,7 +101,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://v3-web.douyinvod.com/play.mp4", Map.of(), "file.mp4", 20L));
 
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/douyin/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk();
@@ -115,7 +118,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://v3-web.douyinvod.com/play.mp4", Map.of(), "file.mp4", null));
 
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/douyin/proxy/" + token))
                 .exchange()
                 .expectStatus().isEqualTo(422)
@@ -129,7 +132,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://v3-web.douyinvod.com/play.mp4", Map.of(), "file.mp4", 601L));
 
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/douyin/proxy/" + token))
                 .exchange()
                 .expectStatus().isEqualTo(422)
@@ -146,7 +149,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://v3-web.douyinvod.com/play.mp4", Map.of(), "file.mp4", 90L));
 
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .header("Cookie", "y1.sid=s%3Atok.sig")
                 .bodyValue(Map.of("proxyVideoUrl", "/api/douyin/proxy/" + token))
                 .exchange()
@@ -172,7 +175,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
         String token = legacyFormatToken();
 
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/douyin/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk()
@@ -193,7 +196,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
     @DisplayName("缺少 proxyVideoUrl → 400（legacy schema 文案）")
     void missingProxyVideoUrlReturns400() {
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of())
                 .exchange()
                 .expectStatus().isBadRequest()
@@ -204,7 +207,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
     @DisplayName("非法 proxyVideoUrl（非白名单源）→ 400")
     void invalidProxyVideoUrlReturns400() {
         client().post().uri("/api/douyin/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "https://evil.com/api/douyin/proxy/x"))
                 .exchange()
                 .expectStatus().isBadRequest()
@@ -230,8 +233,16 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
     }
 
     private void stubCreditsOk() {
+        LEGACY.stubFor(get(urlEqualTo(
+                        "/internal/marketplace/reputation/" + ACCOUNT + "/ai-entitlement"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"accountId\":\"" + ACCOUNT
+                                + "\",\"aiQuotaMultiplierBps\":10000,\"policyVersion\":1}}")));
         LEGACY.stubFor(post(urlEqualTo("/internal/credits/consume"))
-                .willReturn(aResponse().withStatus(200).withBody("{}")));
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"source\":\"quota\","
+                                + "\"policyVersion\":1,\"transactionId\":"
+                                + "\"44444444-4444-4444-4444-444444444444\"}}")));
     }
 
     private void stubLegacyAnalyzeOk(String merged) throws Exception {

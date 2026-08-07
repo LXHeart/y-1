@@ -42,6 +42,10 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/admin/finance", "finance", true),
             // GL-P2-ADMIN-003：任务内容审核 → marketplace
             new RouteProperties(null, "/api/admin/tasks", "marketplace", true),
+            // GL-P2-ADMIN-007 / GL-P2-TRUST-001：等级配置与信任准入后台
+            new RouteProperties(null, "/api/admin/reputation-config", "marketplace", true),
+            new RouteProperties(null, "/api/admin/reputation", "marketplace", true),
+            new RouteProperties(null, "/api/admin/trust", "trust", true),
             new RouteProperties(null, "/api/finance", "finance", true),
             // GL-P3-AI-001 下属切片：积分读端 → finance（balance/history，内部上游 → 签身份断言）
             new RouteProperties(null, "/api/credits", "finance", true),
@@ -253,6 +257,41 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("GET", "/api/admin/permission-requests")).isTrue();
         // admin 用户管理已迁 identity → 内部上游，edge 签断言（admin role 经断言传播）
         assertThat(resolver.isInternalUpstream("GET", "/api/admin/users")).isTrue();
+    }
+
+    @Test
+    void routesReputationAndTrustAdminWithoutStealingExistingAdminOrUserRoutes() {
+        assertThat(resolver.resolve("GET", "/api/admin/reputation-config")).isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("PUT", "/api/admin/reputation/" + ACCOUNT_ID + "/lv5-admission"))
+                .isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("GET", "/api/admin/trust/judges")).isEqualTo(TRUST);
+        assertThat(resolver.resolve("PUT", "/api/admin/trust/judges/" + ACCOUNT_ID + "/admission"))
+                .isEqualTo(TRUST);
+
+        assertThat(resolver.resolve("GET", "/api/admin/users")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/admin/finance/escrows")).isEqualTo(FINANCE);
+        assertThat(resolver.resolve("GET", "/api/admin/tasks/pending")).isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("GET", "/api/trust/disputes/" + ACCOUNT_ID)).isEqualTo(TRUST);
+
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/reputation-config")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/trust/judges")).isTrue();
+    }
+
+    @Test
+    void reputationAndTrustAdminRoutesFallBackIndependentlyWhenFlagsAreDisabled() {
+        EdgeRoutingProperties disabled = new EdgeRoutingProperties(
+            Map.of("legacy", LEGACY, "marketplace", MARKETPLACE, "trust", TRUST),
+            List.of(
+                new RouteProperties(null, "/api/admin/reputation-config", "marketplace", false),
+                new RouteProperties(null, "/api/admin/reputation", "marketplace", false),
+                new RouteProperties(null, "/api/admin/trust", "trust", false)),
+            "legacy");
+        UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
+
+        assertThat(disabledResolver.resolve("GET", "/api/admin/reputation-config")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("PUT", "/api/admin/reputation/" + ACCOUNT_ID + "/lv5-admission"))
+                .isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("GET", "/api/admin/trust/judges")).isEqualTo(LEGACY);
     }
 
     // ---------- 推荐官画像 + 声誉（PRD 五/六）：两条前缀分别落到不同上游 ----------

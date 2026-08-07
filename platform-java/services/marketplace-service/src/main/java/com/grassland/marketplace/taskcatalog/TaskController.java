@@ -5,6 +5,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import java.time.Instant;
@@ -55,11 +56,12 @@ public class TaskController {
     private final TaskApplicationRepository apps;
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
+    private final ReputationService reputationService;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
-                          TransactionalOperator transactions) {
+                          TransactionalOperator transactions, ReputationService reputationService) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -67,6 +69,7 @@ public class TaskController {
         this.apps = apps;
         this.finance = finance;
         this.transactions = transactions;
+        this.reputationService = reputationService;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -103,7 +106,7 @@ public class TaskController {
                                     : transactions.transactional(
                                             tasks.create(merchant.accountId(), body.organizationId(), body.title(),
                                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
-                                                    body.bountyCents(), body.applicationDeadline())
+                                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel())
                                                     .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))));
                 })
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
@@ -120,7 +123,7 @@ public class TaskController {
                     return transactions.transactional(
                             tasks.createDraft(merchant.accountId(), body.organizationId(), body.title(),
                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
-                                    body.bountyCents(), body.applicationDeadline()));
+                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel()));
                 })
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
@@ -134,7 +137,7 @@ public class TaskController {
                         .flatMap(ignored -> transactions.transactional(
                                 tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-                                        body.applicationDeadline())
+                                        body.applicationDeadline(), body.minRecommenderLevel())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                         .flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task)))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -240,7 +243,7 @@ public class TaskController {
                                 .flatMap(v -> transactions.transactional(
                                         tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
                                                 body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-                                                body.applicationDeadline(), merchant.accountId())
+                                                body.applicationDeadline(), body.minRecommenderLevel(), merchant.accountId())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                                 .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -275,9 +278,16 @@ public class TaskController {
                             : (caller.isMerchant() && organizationId.equals(caller.organizationId())
                                     ? status
                                     : TaskStatus.PUBLISHED.dbValue());
-                    return tasks.findByOrganization(organizationId, effectiveStatus).collectList()
-                            .map(list -> ResponseEntity.ok(Map.of("success", true,
-                                    "data", list.stream().map(this::toBody).toList())));
+                    boolean ownerView = caller.isMerchant() && organizationId.equals(caller.organizationId());
+                    Mono<List<Task>> visibleTasks = ownerView
+                            ? tasks.findByOrganization(organizationId, effectiveStatus).collectList()
+                            : visibleRecommenderLevel(caller).flatMap(level ->
+                                    tasks.findByOrganization(organizationId, effectiveStatus)
+                                            .filter(task -> !TaskStatus.PUBLISHED.dbValue().equals(task.status())
+                                                    || task.minRecommenderLevel() <= level)
+                                            .collectList());
+                    return visibleTasks.map(list -> ResponseEntity.ok(Map.of("success", true,
+                            "data", list.stream().map(this::toBody).toList())));
                 });
     }
 
@@ -365,15 +375,18 @@ public class TaskController {
                 .flatMap(caller -> {
                     int safeLimit = Math.max(1, Math.min(limit, 50));
                     FeedCursor decoded = FeedCursor.decode(cursor);
-                    TaskRepository.FeedFilter filter = new TaskRepository.FeedFilter(
-                            blankToNull(platform), blankToNull(contentForm),
-                            (minBountyCents == null || minBountyCents < 0) ? null : minBountyCents);
-                    return tasks.findFeed(filter,
-                                    decoded == null ? null : decoded.ts(),
-                                    decoded == null ? null : decoded.id(),
-                                    safeLimit + 1)
-                            .collectList()
-                            .map(rows -> feedBody(rows, safeLimit));
+                    return visibleRecommenderLevel(caller).flatMap(level -> {
+                        TaskRepository.FeedFilter filter = new TaskRepository.FeedFilter(
+                                blankToNull(platform), blankToNull(contentForm),
+                                (minBountyCents == null || minBountyCents < 0) ? null : minBountyCents,
+                                level);
+                        return tasks.findFeed(filter,
+                                        decoded == null ? null : decoded.ts(),
+                                        decoded == null ? null : decoded.id(),
+                                        safeLimit + 1)
+                                .collectList()
+                                .map(rows -> feedBody(rows, safeLimit));
+                    });
                 });
     }
 
@@ -429,11 +442,23 @@ public class TaskController {
                         .flatMap(task -> {
                             // published 对任意 caller 可见；其余状态仅 owner 可见（不泄露 draft/closed/cancelled 存在）。
                             boolean publicVisible = TaskStatus.PUBLISHED.dbValue().equals(task.status());
-                            if (publicVisible || caller.accountId().equals(task.ownerAccountId())) {
+                            boolean owner = caller.accountId().equals(task.ownerAccountId());
+                            if (owner) {
                                 return Mono.just(ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
                             }
-                            return Mono.error(new MarketplaceException(404, "任务不存在"));
+                            if (!publicVisible) {
+                                return Mono.error(new MarketplaceException(404, "任务不存在"));
+                            }
+                            return visibleRecommenderLevel(caller)
+                                    .filter(level -> level >= task.minRecommenderLevel())
+                                    .map(level -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))))
+                                    .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在")));
                         }));
+    }
+
+    private Mono<Integer> visibleRecommenderLevel(Caller caller) {
+        return reputationService.snapshot(caller.accountId())
+                .map(snapshot -> snapshot.evaluation().effectiveLevel().number());
     }
 
     /**
@@ -563,6 +588,7 @@ public class TaskController {
         m.put("platform", task.platform());
         m.put("maxSlots", task.maxSlots());
         m.put("bountyCents", task.bountyCents());
+        m.put("minRecommenderLevel", task.minRecommenderLevel());
         m.put("version", task.version());
         m.put("applicationDeadline", task.applicationDeadline() == null ? null : task.applicationDeadline().toString());
         m.put("publishedAt", task.publishedAt() == null ? null : task.publishedAt().toString());

@@ -20,7 +20,8 @@ import reactor.core.publisher.Mono;
  *
  * <p>仅接受 {@code principal=trust} 的服务断言（终端用户不可调）。判定：application 须 accepted；
  * merchant 发起 → 须为 task owner；recommender 发起 → 须为 application recommender。
- * 成功只回 {@code {engagementRef, organizationId}}（organizationId 取自 task，不取自信任方传入）。
+ * 成功回 canonical engagement/org/recommender 与 accept 时专属客服权益快照；这些值均来自 marketplace 持久事实，
+ * 不取自信任方传入。
  *
  * <p>状态：200 授权；404 application 不存在；409 非 accepted；403 非当事方/角色不符；400 非法 UUID/DTO。
  */
@@ -63,6 +64,9 @@ public class DisputeAuthorizationController {
                                         Map<String, Object> data = new LinkedHashMap<>();
                                         data.put("engagementRef", app.id());
                                         data.put("organizationId", task.organizationId());
+                                        data.put("recommenderAccountId", app.recommenderAccountId());
+                                        data.put("premiumSupportAtAccept",
+                                                Boolean.TRUE.equals(app.premiumSupportAtAccept()));
                                         return Mono.just(data);
                                     });
                         })

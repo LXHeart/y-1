@@ -6,13 +6,16 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
@@ -80,6 +83,13 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** 客服 SLA 启窗 spy（D-03 审阅 F3）：默认透传真实 starter；提交后失败用例注入异常验证不误判。 */
     @MockitoSpyBean
     private com.grassland.marketplace.workflow.saga.MerchantRejectionReviewWorkflowStarter rejectionStarter;
+
+    @MockitoSpyBean
+    private com.grassland.marketplace.workflow.saga.SettlementWorkflowStarter settlementStarter;
+
+    /** 声誉聚合 spy：列表排序必须批量读取，不能按报名数产生 N+1。 */
+    @MockitoSpyBean
+    private ReputationService reputationService;
 
     @org.springframework.beans.factory.annotation.Autowired
     private TaskApplicationRepository applicationRepo;
@@ -174,6 +184,18 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isEqualTo(409);  // 已报名
     }
 
+    @Test
+    void recommenderBelowTaskMinimumLevelCannotApply() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskAtMinimumLevel(merchant, org, 2);
+
+        client().post().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
+                .exchange().expectStatus().isForbidden();
+    }
+
     // ---------- accept（非资金型：4B 直连同步 200） ----------
 
     @Test
@@ -187,7 +209,12 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isOk().expectBody()  // 同步 200（非资金型）
                 .jsonPath("$.data.status").isEqualTo("accepted")
-                .jsonPath("$.data.reviewedByAccountId").isEqualTo(merchant);
+                .jsonPath("$.data.reviewedByAccountId").isEqualTo(merchant)
+                .jsonPath("$.data.reputationLevelAtAccept").isEqualTo(1)
+                .jsonPath("$.data.reputationPolicyVersionAtAccept").isEqualTo(1)
+                .jsonPath("$.data.settlementDelayDaysAtAccept").isEqualTo(2)
+                .jsonPath("$.data.commissionBonusBpsAtAccept").isEqualTo(0)
+                .jsonPath("$.data.premiumSupportAtAccept").isEqualTo(false);
 
         assertThat(outboxCount("ApplicationAccepted", task)).isEqualTo(1);
         assertThat(acceptedCount(task)).isEqualTo(1);
@@ -437,6 +464,42 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("confirmed");
+    }
+
+    @Test
+    void retryAfterInitialSettlementStartFailureConvergesWithoutDuplicateCapture() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+        submit(recommender, task, app);
+
+        doReturn(Mono.error(new RuntimeException("settlement start unavailable")))
+                .doCallRealMethod()
+                .when(settlementStarter).start(any(Task.class), any(TaskApplication.class));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().is5xxServerError();
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("confirmed")
+                .jsonPath("$.data.applicationId").isEqualTo(app);
+
+        verify(settlementStarter, times(2)).start(any(Task.class), any(TaskApplication.class));
+        verify(financeClient, timeout(5_000).times(1)).capture(org, app);
+        assertThat(outboxCount("MerchantConfirmed", task)).isEqualTo(1);
     }
 
     // ---------- 商家取消任务主动退款（D-03 §5） ----------
@@ -890,6 +953,59 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.length()").value(l -> assertThat((Integer) l).isEqualTo(2));
+    }
+
+    @Test
+    void ownerApplicationListRanksHigherReputationFirst() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        String lv1 = UUID.randomUUID().toString();
+        String lv2 = UUID.randomUUID().toString();
+        seedCompletedEngagements(lv2, merchant, org, 6);
+        apply(lv1, task);
+        apply(lv2, task);
+        clearInvocations(reputationService);
+
+        client().get().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].recommenderAccountId").isEqualTo(lv2)
+                .jsonPath("$.data[0].reputationLevel").isEqualTo(2)
+                .jsonPath("$.data[0].taskPriorityWeight").isEqualTo(110)
+                .jsonPath("$.data[1].reputationLevel").isEqualTo(1);
+
+        verify(reputationService).snapshots(List.of(lv1, lv2));
+        verify(reputationService, never()).snapshot(anyString());
+    }
+
+    @Test
+    void ownerApplicationListUsesIdAsStableFinalTieBreaker() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        String lowerId = "10000000-0000-0000-0000-000000000001";
+        String higherId = "f0000000-0000-0000-0000-000000000002";
+        String firstRecommender = UUID.randomUUID().toString();
+        String secondRecommender = UUID.randomUUID().toString();
+        db.sql("""
+                INSERT INTO task_application(
+                    id, task_id, recommender_account_id, status, bounty_cents, created_at, updated_at)
+                VALUES
+                    (CAST(:higherId AS uuid), CAST(:taskId AS uuid), CAST(:firstRec AS uuid),
+                     'pending', 0, TIMESTAMPTZ '2026-01-01 00:00:00Z', TIMESTAMPTZ '2026-01-01 00:00:00Z'),
+                    (CAST(:lowerId AS uuid), CAST(:taskId AS uuid), CAST(:secondRec AS uuid),
+                     'pending', 0, TIMESTAMPTZ '2026-01-01 00:00:00Z', TIMESTAMPTZ '2026-01-01 00:00:00Z')
+                """)
+                .bind("higherId", higherId).bind("lowerId", lowerId).bind("taskId", task)
+                .bind("firstRec", firstRecommender).bind("secondRec", secondRecommender)
+                .fetch().rowsUpdated().block();
+
+        client().get().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].id").isEqualTo(lowerId)
+                .jsonPath("$.data[1].id").isEqualTo(higherId);
     }
 
     /**
@@ -1425,7 +1541,49 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+        markPublished(taskId);
+        return taskId;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String publishTaskAtMinimumLevel(String merchant, String org, int minimumLevel) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("organizationId", org);
+        body.put("title", "等级专属任务");
+        body.put("minRecommenderLevel", minimumLevel);
+        Map<String, Object> response = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String taskId = (String) ((Map<String, Object>) response.get("data")).get("id");
+        markPublished(taskId);
+        return taskId;
+    }
+
+    private void seedCompletedEngagements(String recommender, String merchant, String org, int count) {
+        for (int i = 0; i < count; i++) {
+            String taskId = UUID.randomUUID().toString();
+            String applicationId = UUID.randomUUID().toString();
+            db.sql("INSERT INTO task(id, owner_account_id, organization_id, title, status, published_at) "
+                            + "VALUES (CAST(:task AS uuid), CAST(:merchant AS uuid), CAST(:org AS uuid), :title, 'published', now())")
+                    .bind("task", taskId).bind("merchant", merchant).bind("org", org).bind("title", "历史任务 " + i)
+                    .then().block();
+            db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents, "
+                            + "decided_at, confirmed_at, reputation_level_at_accept,"
+                            + "reputation_policy_version_at_accept, settlement_delay_days_at_accept,"
+                            + "commission_bonus_bps_at_accept, premium_support_at_accept)"
+                            + " VALUES (CAST(:app AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid),"
+                            + " 'accepted', 0, now(), now(), 1, 1, 2, 0, false)")
+                    .bind("app", applicationId).bind("task", taskId).bind("rec", recommender)
+                    .then().block();
+        }
+    }
+
+    private void markPublished(String taskId) {
+        db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()) "
+                        + "WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId).then().block();
     }
 
     @SuppressWarnings("unchecked")
@@ -1439,7 +1597,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+        markPublished(taskId);
+        return taskId;
     }
 
     @SuppressWarnings("unchecked")
@@ -1459,7 +1619,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+        markPublished(taskId);
+        return taskId;
     }
 
     /** 轮询预留结局，至 expected 或超时（10s，temporal test-server 通常 ms 级完成）。 */

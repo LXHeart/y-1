@@ -2,10 +2,9 @@ package com.grassland.trust.judge;
 
 import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,22 +25,23 @@ import reactor.core.publisher.Mono;
  *
  * <p>仅推荐官可入池（{@code requireJudge} 是投票门禁，此处用 {@code requireMerchantOrRecommender} 后再筛
  * recommender——商家不得自任审判官，避免既当运动员又当裁判）。
- * GL-P2-TRUST-001：入池时从 marketplace 获取声誉等级，映射为 eligibility_tier（Lv1=1, Lv2=2, ..., Lv5=5）。
+ * GL-P2-TRUST-001：入池时严格依赖 marketplace 的有效 Lv5/judgeEligible 判定；上游失败不降级放行。
  */
 @RestController
 public class JudgeController {
 
-    private static final Logger log = LoggerFactory.getLogger(JudgeController.class);
-
     private final TrustCallerResolver callers;
     private final JudgeRepository judges;
     private final MarketplaceReputationClient reputationClient;
+    private final IdentityOrganizationMembershipClient identityMemberships;
 
     public JudgeController(TrustCallerResolver callers, JudgeRepository judges,
-                          MarketplaceReputationClient reputationClient) {
+                          MarketplaceReputationClient reputationClient,
+                          IdentityOrganizationMembershipClient identityMemberships) {
         this.callers = callers;
         this.judges = judges;
         this.reputationClient = reputationClient;
+        this.identityMemberships = identityMemberships;
     }
 
     @PostMapping("/api/trust/judges")
@@ -50,15 +50,19 @@ public class JudgeController {
                 .filter(TrustCallerResolver.Caller::isRecommender)
                 .switchIfEmpty(fail(403, "仅推荐官可报名成为审判官"))
                 .flatMap(caller -> reputationClient.getLevel(caller.accountId())
-                        // 声誉查询失败时回退到 tier=1（允许入池，但不获得高 tier 权限）
-                        .onErrorResume(e -> {
-                            log.warn("Failed to fetch reputation for {}, defaulting to tier=1: {}",
-                                    caller.accountId(), e.getMessage());
-                            return Mono.just(new MarketplaceReputationClient.LevelResult(caller.accountId(), 1));
-                        })
-                        .flatMap(level -> judges.enrollWithTier(
-                                caller.accountId(), caller.organizationId(), level.level())))
+                        .onErrorMap(error -> new TrustException(503, "声誉服务暂时不可用"))
+                        .filter(MarketplaceReputationClient.LevelResult::isEligibleLv5Judge)
+                        .switchIfEmpty(fail(403, "仅有效 Lv5 推荐官可报名成为审判官"))
+                        .flatMap(level -> identityMemberships.organizationIds(caller.accountId())
+                                .onErrorMap(error -> new TrustException(503, "身份服务暂时不可用"))
+                                .flatMap(organizationIds -> judges.enrollWithTier(
+                                        caller.accountId(), soleOrganizationId(organizationIds),
+                                        level.levelNumber()))))
                 .map(judge -> ResponseEntity.ok(Map.of("success", true, "data", toBody(judge))));
+    }
+
+    private static String soleOrganizationId(Set<String> organizationIds) {
+        return organizationIds.size() == 1 ? organizationIds.iterator().next() : null;
     }
 
     @GetMapping("/api/trust/judges/me")
@@ -84,6 +88,10 @@ public class JudgeController {
         m.put("organizationId", judge.organizationId());
         m.put("eligibilityTier", judge.eligibilityTier());
         m.put("active", judge.active());
+        m.put("opsAdmitted", judge.opsAdmitted());
+        m.put("version", judge.version());
+        m.put("opsAdmittedAt", judge.opsAdmittedAt() == null ? null : judge.opsAdmittedAt().toString());
+        m.put("opsAdmittedBy", judge.opsAdmittedBy());
         m.put("createdAt", judge.createdAt() == null ? null : judge.createdAt().toString());
         return m;
     }

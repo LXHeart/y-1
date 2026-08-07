@@ -26,7 +26,9 @@ public class TaskApplicationRepository {
             "id::text, task_id::text, recommender_account_id::text, status, note,"
                     + " reviewed_by_account_id::text, decided_at, created_at, updated_at, confirmed_at, bounty_cents,"
                     + " merchant_confirm_deadline_at, auto_confirmed_at, merchant_rejected_at, rejection_reason,"
-                    + " merchant_rejection_dispute_id::text, contest_requested_at, rejection_workflow_started_at";
+                    + " merchant_rejection_dispute_id::text, contest_requested_at, rejection_workflow_started_at,"
+                    + " reputation_level_at_accept, reputation_policy_version_at_accept,"
+                    + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept, premium_support_at_accept";
 
     private final DatabaseClient db;
 
@@ -68,7 +70,7 @@ public class TaskApplicationRepository {
 
     public Flux<TaskApplication> findByTaskId(String taskId) {
         return db.sql("SELECT " + SELECT_COLS
-                + " FROM task_application WHERE task_id = CAST(:taskId AS uuid) ORDER BY created_at")
+                + " FROM task_application WHERE task_id = CAST(:taskId AS uuid) ORDER BY created_at, id")
                 .bind("taskId", taskId)
                 .map(TaskApplicationRepository::map).all();
     }
@@ -77,11 +79,17 @@ public class TaskApplicationRepository {
      * 接受（4B 直连路径）：pending → accepted，记录操作商家 + decided_at，<b>并冻结 accept 时赏金到 bounty_cents</b>
      * （snapshot-pinning：此后结算读这列而非可变 task 行）。0 行（非 pending / 不属该 task）→ empty。
      */
-    public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId, long bountyCents) {
+    public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId, long bountyCents,
+                                        ReputationEntitlementSnapshot entitlement) {
         return db.sql("""
                 UPDATE task_application
                 SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid),
-                    decided_at = now(), bounty_cents = :bounty, updated_at = now()
+                    decided_at = now(), bounty_cents = :bounty, updated_at = now(),
+                    reputation_level_at_accept = :level,
+                    reputation_policy_version_at_accept = :policyVersion,
+                    settlement_delay_days_at_accept = :settlementDays,
+                    commission_bonus_bps_at_accept = :commissionBps,
+                    premium_support_at_accept = :premiumSupport
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = :from
@@ -91,6 +99,10 @@ public class TaskApplicationRepository {
                 .bind("from", ApplicationStatus.PENDING.dbValue())
                 .bind("status", ApplicationStatus.ACCEPTED.dbValue())
                 .bind("reviewer", reviewerAccountId).bind("bounty", bountyCents)
+                .bind("level", entitlement.level()).bind("policyVersion", entitlement.policyVersion())
+                .bind("settlementDays", entitlement.settlementDelayDays())
+                .bind("commissionBps", entitlement.commissionBonusBps())
+                .bind("premiumSupport", entitlement.premiumSupport())
                 .map(TaskApplicationRepository::map).one();
     }
 
@@ -216,9 +228,71 @@ public class TaskApplicationRepository {
     }
 
     /** 开始接受（Slice 4F Saga beginAcceptance）：pending → reserving，记录操作商家 + decided_at。0 行 → empty。 */
+    public Mono<TaskApplication> beginAcceptance(String id, String taskId, String reviewerAccountId,
+                                                 ReputationEntitlementSnapshot entitlement) {
+        return db.sql("""
+                UPDATE task_application
+                SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid), decided_at = now(),
+                    reputation_level_at_accept = :level,
+                    reputation_policy_version_at_accept = :policyVersion,
+                    settlement_delay_days_at_accept = :settlementDays,
+                    commission_bonus_bps_at_accept = :commissionBps,
+                    premium_support_at_accept = :premiumSupport,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND task_id = CAST(:taskId AS uuid) AND status = :from
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId).bind("from", ApplicationStatus.PENDING.dbValue())
+                .bind("status", ApplicationStatus.RESERVING.dbValue()).bind("reviewer", reviewerAccountId)
+                .bind("level", entitlement.level()).bind("policyVersion", entitlement.policyVersion())
+                .bind("settlementDays", entitlement.settlementDelayDays())
+                .bind("commissionBps", entitlement.commissionBonusBps())
+                .bind("premiumSupport", entitlement.premiumSupport())
+                .map(TaskApplicationRepository::map).one();
+    }
+
+    /**
+     * Rolling-upgrade compatibility path. The current controller freezes the snapshot before starting the workflow,
+     * but an older caller may reach this transition with no snapshot after V21 has installed its completeness CHECK.
+     * Preserve any frozen values; otherwise atomically apply the same conservative Lv1 baseline used by V21 backfill.
+     */
     public Mono<TaskApplication> beginAcceptance(String id, String taskId, String reviewerAccountId) {
-        return transition(id, taskId, ApplicationStatus.PENDING.dbValue(), ApplicationStatus.RESERVING.dbValue(),
-                reviewerAccountId);
+        return db.sql("""
+                UPDATE task_application
+                SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid), decided_at = now(),
+                    reputation_level_at_accept = COALESCE(reputation_level_at_accept, 1),
+                    reputation_policy_version_at_accept = COALESCE(reputation_policy_version_at_accept, 1),
+                    settlement_delay_days_at_accept = COALESCE(settlement_delay_days_at_accept, 2),
+                    commission_bonus_bps_at_accept = COALESCE(commission_bonus_bps_at_accept, 0),
+                    premium_support_at_accept = COALESCE(premium_support_at_accept, false),
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND task_id = CAST(:taskId AS uuid) AND status = :from
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId).bind("from", ApplicationStatus.PENDING.dbValue())
+                .bind("status", ApplicationStatus.RESERVING.dbValue()).bind("reviewer", reviewerAccountId)
+                .map(TaskApplicationRepository::map).one();
+    }
+
+    public Mono<TaskApplication> snapshotPendingEntitlement(String id, String taskId,
+                                                            ReputationEntitlementSnapshot entitlement) {
+        return db.sql("""
+                UPDATE task_application
+                SET reputation_level_at_accept = :level,
+                    reputation_policy_version_at_accept = :policyVersion,
+                    settlement_delay_days_at_accept = :settlementDays,
+                    commission_bonus_bps_at_accept = :commissionBps,
+                    premium_support_at_accept = :premiumSupport,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND task_id = CAST(:taskId AS uuid) AND status = 'pending'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId)
+                .bind("level", entitlement.level()).bind("policyVersion", entitlement.policyVersion())
+                .bind("settlementDays", entitlement.settlementDelayDays())
+                .bind("commissionBps", entitlement.commissionBonusBps())
+                .bind("premiumSupport", entitlement.premiumSupport())
+                .map(TaskApplicationRepository::map).one();
     }
 
     /** 激活（Slice 4F Saga activate）：reserving → accepted，<b>冻结 accept 时赏金</b>（snapshot-pinning）。
@@ -229,6 +303,11 @@ public class TaskApplicationRepository {
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = :from
+                  AND reputation_level_at_accept IS NOT NULL
+                  AND reputation_policy_version_at_accept IS NOT NULL
+                  AND settlement_delay_days_at_accept IS NOT NULL
+                  AND commission_bonus_bps_at_accept IS NOT NULL
+                  AND premium_support_at_accept IS NOT NULL
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("taskId", taskId).bind("bounty", bountyCents)
@@ -242,7 +321,13 @@ public class TaskApplicationRepository {
     public Mono<TaskApplication> revertReserving(String id, String taskId) {
         return db.sql("""
                 UPDATE task_application
-                SET status = :status, reviewed_by_account_id = NULL, decided_at = NULL, updated_at = now()
+                SET status = :status, reviewed_by_account_id = NULL, decided_at = NULL,
+                    reputation_level_at_accept = NULL,
+                    reputation_policy_version_at_accept = NULL,
+                    settlement_delay_days_at_accept = NULL,
+                    commission_bonus_bps_at_accept = NULL,
+                    premium_support_at_accept = NULL,
+                    updated_at = now()
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = :from
@@ -343,7 +428,12 @@ public class TaskApplicationRepository {
                 row.get("rejection_reason", String.class),
                 row.get("merchant_rejection_dispute_id", String.class),
                 toInstant(row.get("contest_requested_at", OffsetDateTime.class)),
-                toInstant(row.get("rejection_workflow_started_at", OffsetDateTime.class))
+                toInstant(row.get("rejection_workflow_started_at", OffsetDateTime.class)),
+                row.get("reputation_level_at_accept", Integer.class),
+                row.get("reputation_policy_version_at_accept", Long.class),
+                row.get("settlement_delay_days_at_accept", Integer.class),
+                row.get("commission_bonus_bps_at_accept", Integer.class),
+                row.get("premium_support_at_accept", Boolean.class)
         );
     }
 

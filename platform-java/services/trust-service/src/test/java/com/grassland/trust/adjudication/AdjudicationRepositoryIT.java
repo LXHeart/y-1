@@ -54,11 +54,27 @@ class AdjudicationRepositoryIT extends TrustItSupport {
     }
 
     @Test
+    void drawEligiblePoolRequiresOperationalAdmissionAndLv5() {
+        db.sql("TRUNCATE judge_conflict").then().block();
+        db.sql("TRUNCATE judge CASCADE").then().block();
+        String disputeOrg = UUID.randomUUID().toString();
+        String eligible = seedJudge(UUID.randomUUID().toString(), null, 5, true, true);
+        String pending = seedJudge(UUID.randomUUID().toString(), null, 5, true, false);
+        String lowTier = seedJudge(UUID.randomUUID().toString(), null, 4, true, true);
+        String inactive = seedJudge(UUID.randomUUID().toString(), null, 5, false, true);
+
+        List<String> drawn = judges.drawEligiblePool(5, disputeOrg, 10).map(Judge::accountId).collectList().block();
+
+        assertThat(drawn).containsExactly(eligible);
+        assertThat(drawn).doesNotContain(pending, lowTier, inactive);
+    }
+
+    @Test
     void assignPanelIsIdempotent() {
         String org = UUID.randomUUID().toString();
         String disputeId = openDispute(org);
-        String a = seedJudge(UUID.randomUUID().toString(), null, 1);
-        String b = seedJudge(UUID.randomUUID().toString(), null, 1);
+        String a = seedJudge(UUID.randomUUID().toString(), null, 5);
+        String b = seedJudge(UUID.randomUUID().toString(), null, 5);
 
         assertThat(judges.assignPanel(disputeId, 1, List.of(a, b)).block()).isEqualTo(2);
         assertThat(judges.assignPanel(disputeId, 1, List.of(a, b)).block()).isEqualTo(0);  // 已存在
@@ -68,12 +84,34 @@ class AdjudicationRepositoryIT extends TrustItSupport {
     }
 
     @Test
+    void assignPanelRechecksOrganizationAndDeclaredConflictsAtFinalInsert() {
+        String disputeOrg = UUID.randomUUID().toString();
+        String disputeId = openDispute(disputeOrg);
+        String sameOrgAfterDraw = seedJudge(UUID.randomUUID().toString(), null, 5);
+        String conflictedAfterDraw = seedJudge(UUID.randomUUID().toString(), null, 5);
+
+        List<String> initiallyEligible = judges.drawEligiblePool(5, disputeOrg, 10)
+                .map(Judge::accountId).collectList().block();
+        assertThat(initiallyEligible).contains(sameOrgAfterDraw, conflictedAfterDraw);
+
+        db.sql("UPDATE judge SET organization_id=CAST(:org AS uuid)"
+                        + " WHERE account_id=CAST(:accountId AS uuid)")
+                .bind("org", disputeOrg).bind("accountId", sameOrgAfterDraw).then().block();
+        seedConflict(conflictedAfterDraw, disputeOrg);
+
+        assertThat(judges.assignPanel(disputeId, 1,
+                List.of(sameOrgAfterDraw, conflictedAfterDraw)).block()).isZero();
+        assertThat(judges.countPanel(disputeId, 1).block()).isZero();
+    }
+
+    @Test
     void recordVoteAndTally() {
         String org = UUID.randomUUID().toString();
         String disputeId = openDispute(org);
-        String a = seedJudge(UUID.randomUUID().toString(), null, 1);
-        String b = seedJudge(UUID.randomUUID().toString(), null, 1);
-        String c = seedJudge(UUID.randomUUID().toString(), null, 1);
+        String a = seedJudge(UUID.randomUUID().toString(), null, 5);
+        String b = seedJudge(UUID.randomUUID().toString(), null, 5);
+        String c = seedJudge(UUID.randomUUID().toString(), null, 5);
+        disputes.startAdjudication(disputeId, 1).block();
         judges.assignPanel(disputeId, 1, List.of(a, b, c)).block();
 
         assertThat(judges.recordVote(disputeId, 1, a, "for_merchant", null).block().vote()).isEqualTo("for_merchant");
@@ -85,6 +123,24 @@ class AdjudicationRepositoryIT extends TrustItSupport {
         assertThat(tally.forRecommender()).isEqualTo(1);
         assertThat(tally.panelSize()).isEqualTo(3);
         assertThat(tally.hasMajority()).isFalse();  // 1-of-3、1-of-3，无人过半
+    }
+
+    @Test
+    void recordVoteRechecksLocalAdmissionAtInsertTime() {
+        String disputeId = openDispute(UUID.randomUUID().toString());
+        String accountId = seedJudge(UUID.randomUUID().toString(), null, 5);
+        disputes.startAdjudication(disputeId, 1).block();
+        assertThat(judges.assignPanel(disputeId, 1, List.of(accountId)).block()).isEqualTo(1);
+        db.sql("UPDATE judge SET ops_admitted=false, ops_admitted_at=NULL, ops_admitted_by=NULL"
+                        + " WHERE account_id=CAST(:accountId AS uuid)")
+                .bind("accountId", accountId).then().block();
+
+        assertThat(judges.recordVote(disputeId, 1, accountId, "for_merchant", null).block()).isNull();
+        Integer votes = db.sql("SELECT COUNT(*)::int AS count FROM dispute_vote"
+                        + " WHERE dispute_id=CAST(:disputeId AS uuid)")
+                .bind("disputeId", disputeId)
+                .map(row -> row.get("count", Integer.class)).one().block();
+        assertThat(votes).isZero();
     }
 
     // ---------- 状态机 5 态迁移 + 守卫 ----------
@@ -150,9 +206,17 @@ class AdjudicationRepositoryIT extends TrustItSupport {
     }
 
     private String seedJudge(String accountId, String orgId, int tier) {
-        var spec = db.sql("INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active)"
-                + " VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), :tier, true)")
+        return seedJudge(accountId, orgId, tier, true, true);
+    }
+
+    private String seedJudge(String accountId, String orgId, int tier, boolean active, boolean admitted) {
+        var spec = db.sql("INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active,"
+                        + " ops_admitted, ops_admitted_at, ops_admitted_by)"
+                + " VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), :tier, :active, :admitted,"
+                        + " CASE WHEN :admitted THEN now() ELSE NULL END,"
+                        + " CASE WHEN :admitted THEN CAST(:actor AS uuid) ELSE NULL END)")
                 .bind("id", UUID.randomUUID().toString()).bind("acct", accountId).bind("tier", tier);
+        spec = spec.bind("active", active).bind("admitted", admitted).bind("actor", UUID.randomUUID().toString());
         spec = (orgId == null) ? spec.bindNull("org", String.class) : spec.bind("org", orgId);
         spec.then().block();
         return accountId;

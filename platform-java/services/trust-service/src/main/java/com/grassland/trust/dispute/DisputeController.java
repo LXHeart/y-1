@@ -88,7 +88,8 @@ public class DisputeController {
                     return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
                             .switchIfEmpty(fail(403, "无权对该履约开争议"))
                             .flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(),
-                                    caller.accountId(), caller.activeIdentityType(), body.reason(), body.evidence()));
+                                    caller.accountId(), caller.activeIdentityType(), body.reason(), body.evidence(),
+                                    auth.premiumSupportAtAccept()));
                 });
     }
 
@@ -109,7 +110,8 @@ public class DisputeController {
                         : Mono.<Opened>error(new TrustException(409, "该履约已有普通活跃争议")))
                 .switchIfEmpty(transactions.transactional(
                         disputes.create(body.engagementRef(), body.organizationId(),
-                                        body.openedByAccountId(), "merchant", body.reason(), "merchant_rejection")
+                                        body.openedByAccountId(), "merchant", body.reason(), "merchant_rejection",
+                                        Boolean.TRUE.equals(body.premiumSupportAtAccept()))
                                 .map(d -> new Opened(d, true))
                                 .flatMap(opened -> outbox.append(envelope("DisputeOpened", opened.dispute()))
                                         .thenReturn(opened))
@@ -128,7 +130,7 @@ public class DisputeController {
     /** 用户普通争议：无活跃案则即时创建；推荐官遇 merchant_rejection 时持久化 deferred request。 */
     private Mono<ResponseEntity<Map<String, Object>>> openOrDefer(
             String engagementRef, String organizationId, String openedBy, String role, String reason,
-            List<OpenDisputeRequest.EvidenceItem> evidence) {
+            List<OpenDisputeRequest.EvidenceItem> evidence, boolean premiumSupport) {
         return disputes.findActiveByEngagementRef(engagementRef)
                 .flatMap(active -> {
                     if ("merchant_rejection".equals(active.kind())) {
@@ -159,7 +161,8 @@ public class DisputeController {
                                                 "该履约近期已有终局争议，需等待 %s 后才能再次开争议（冷却期防恶意重复）",
                                                 wait));
                                     }
-                                    return createNewDispute(engagementRef, organizationId, openedBy, role, reason, evidence);
+                                    return createNewDispute(engagementRef, organizationId, openedBy, role, reason,
+                                            evidence, premiumSupport);
                                 }));
     }
 
@@ -282,6 +285,9 @@ public class DisputeController {
         m.put("version", d.version());
         m.put("appealState", d.appealState());
         m.put("finalDecision", d.finalDecision());
+        m.put("premiumSupport", d.premiumSupport());
+        m.put("supportPriority", d.supportPriority());
+        m.put("supportBadge", d.premiumSupport() ? "premium" : "standard");
         m.put("createdAt", d.createdAt() == null ? null : d.createdAt().toString());
         return m;
     }
@@ -309,9 +315,10 @@ public class DisputeController {
     /** 创建新争议（无活跃争议且冷却期通过）。 */
     private Mono<ResponseEntity<Map<String, Object>>> createNewDispute(
             String engagementRef, String organizationId, String openedBy, String role, String reason,
-            List<OpenDisputeRequest.EvidenceItem> evidence) {
+            List<OpenDisputeRequest.EvidenceItem> evidence, boolean premiumSupport) {
         return transactions.transactional(
-                        disputes.create(engagementRef, organizationId, openedBy, role, reason, "standard")
+                        disputes.create(engagementRef, organizationId, openedBy, role, reason, "standard",
+                                        premiumSupport)
                                 .flatMap(created -> outbox.append(envelope("DisputeOpened", created))
                                         .thenReturn(created))
                                 .flatMap(created -> evidenceService.submit(created.id(), openedBy, role, evidence)

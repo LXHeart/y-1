@@ -1,10 +1,13 @@
 package com.grassland.trust.judge;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 import com.grassland.trust.TrustItSupport;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
 /**
  * 审判官池入口端到端（解 Slice 6C 遗留缺口：judge 表原先无 HTTP 入口 → adjudicate 恒 503）。
@@ -13,17 +16,72 @@ import org.junit.jupiter.api.Test;
 class JudgeControllerIT extends TrustItSupport {
 
     @Test
-    void recommenderEnrollsAndBecomesDraftable() {
+    void eligibleLv5EnrollsPendingOperationsAdmission() {
         String acct = UUID.randomUUID().toString();
         client().post().uri("/api/trust/judges")
                 .header("X-Grassland-Identity", sign(acct, "recommender", null, null))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.accountId").isEqualTo(acct)
                 .jsonPath("$.data.active").isEqualTo(true)
-                .jsonPath("$.data.eligibilityTier").isEqualTo(1);
+                .jsonPath("$.data.eligibilityTier").isEqualTo(5)
+                .jsonPath("$.data.opsAdmitted").isEqualTo(false)
+                .jsonPath("$.data.version").isEqualTo(0);
 
-        // 入池后即可被抽签（这正是此前 503 的根因）
+        // 报名只创建候选人；运营准入前不可被抽签。
         assertThat(activeJudgeCount(acct)).isEqualTo(1);
+        assertThat(admittedJudgeCount(acct)).isZero();
+    }
+
+    @Test
+    void nonEligibleLevelCannotEnroll() {
+        String acct = UUID.randomUUID().toString();
+        when(reputationClient.getLevel(acct)).thenReturn(Mono.just(
+                new MarketplaceReputationClient.LevelResult(acct, "Lv4", 4, false, 3L)));
+
+        client().post().uri("/api/trust/judges")
+                .header("X-Grassland-Identity", sign(acct, "recommender", null, null))
+                .exchange().expectStatus().isForbidden();
+        assertThat(allJudgeCount(acct)).isZero();
+    }
+
+    @Test
+    void reputationFailureFailsClosedWithoutCreatingJudge() {
+        String acct = UUID.randomUUID().toString();
+        when(reputationClient.getLevel(acct)).thenReturn(Mono.error(
+                new MarketplaceReputationClient.ReputationException("upstream detail must not leak")));
+
+        client().post().uri("/api/trust/judges")
+                .header("X-Grassland-Identity", sign(acct, "recommender", null, null))
+                .exchange().expectStatus().isEqualTo(503).expectBody()
+                .jsonPath("$.error").isEqualTo("声誉服务暂时不可用");
+        assertThat(allJudgeCount(acct)).isZero();
+    }
+
+    @Test
+    void realRecommenderAssertionUsesCompleteIdentityMembershipsInsteadOfNullActiveOrg() {
+        String acct = UUID.randomUUID().toString();
+        String firstOrg = UUID.randomUUID().toString();
+        String secondOrg = UUID.randomUUID().toString();
+        when(identityMemberships.organizationIds(acct)).thenReturn(Mono.just(Set.of(firstOrg, secondOrg)));
+
+        client().post().uri("/api/trust/judges")
+                .header("X-Grassland-Identity", sign(acct, "recommender", null, null))
+                .exchange().expectStatus().isOk();
+
+        assertThat(storedOrganizationId(acct)).isNull();
+    }
+
+    @Test
+    void identityUnavailableFailsClosedWithoutCreatingJudge() {
+        String acct = UUID.randomUUID().toString();
+        when(identityMemberships.organizationIds(acct)).thenReturn(Mono.error(
+                new IdentityOrganizationMembershipClient.MembershipException("upstream detail must not leak")));
+
+        client().post().uri("/api/trust/judges")
+                .header("X-Grassland-Identity", sign(acct, "recommender", null, null))
+                .exchange().expectStatus().isEqualTo(503).expectBody()
+                .jsonPath("$.error").isEqualTo("身份服务暂时不可用");
+        assertThat(allJudgeCount(acct)).isZero();
     }
 
     @Test
@@ -77,6 +135,24 @@ class JudgeControllerIT extends TrustItSupport {
     }
 
     @Test
+    void leaveAndReEnrollPreservesOperationsAdmission() {
+        String acct = UUID.randomUUID().toString();
+        enroll(acct);
+        db.sql("UPDATE judge SET ops_admitted=true, ops_admitted_at=now(),"
+                        + " ops_admitted_by=CAST(:admin AS uuid), version=version+1"
+                        + " WHERE account_id=CAST(:acct AS uuid)")
+                .bind("admin", UUID.randomUUID().toString()).bind("acct", acct).then().block();
+
+        client().delete().uri("/api/trust/judges/me")
+                .header("X-Grassland-Identity", sign(acct, "recommender", null, null))
+                .exchange().expectStatus().isOk();
+        enroll(acct);
+
+        assertThat(activeJudgeCount(acct)).isEqualTo(1);
+        assertThat(admittedJudgeCount(acct)).isEqualTo(1);
+    }
+
+    @Test
     void leaveWhenNotEnrolledNotFound() {
         client().delete().uri("/api/trust/judges/me")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender", null, null))
@@ -94,6 +170,26 @@ class JudgeControllerIT extends TrustItSupport {
     private long activeJudgeCount(String accountId) {
         return db.sql("SELECT COUNT(*)::int AS c FROM judge WHERE account_id = CAST(:a AS uuid) AND active = true")
                 .bind("a", accountId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
+    private long admittedJudgeCount(String accountId) {
+        return count("SELECT COUNT(*)::int AS c FROM judge WHERE account_id = CAST(:a AS uuid) AND ops_admitted = true", accountId);
+    }
+
+    private long allJudgeCount(String accountId) {
+        return count("SELECT COUNT(*)::int AS c FROM judge WHERE account_id = CAST(:a AS uuid)", accountId);
+    }
+
+    private String storedOrganizationId(String accountId) {
+        return db.sql("SELECT organization_id::text AS organization_id FROM judge WHERE account_id = CAST(:a AS uuid)")
+                .bind("a", accountId)
+                .map(r -> java.util.Optional.ofNullable(r.get("organization_id", String.class)))
+                .one().blockOptional().flatMap(value -> value).orElse(null);
+    }
+
+    private long count(String sql, String accountId) {
+        return db.sql(sql).bind("a", accountId)
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
     }
 }

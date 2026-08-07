@@ -64,9 +64,9 @@ management:
 marketplace:
   datasource:
     from-database-url: ${MARKETPLACE_DATASOURCE_FROM_DATABASE_URL:false}
-  # 结算窗口（Slice 5A）：商家确认后等待的结算窗口（概念 T+2；dev/test 短默认 5s 便于 e2e）。
+  # 结算窗口：按接受报名时冻结的 T+N 权益计算。生产一天=86400 秒。
   settlement:
-    window-seconds: ${SETTLEMENT_WINDOW_SECONDS:5}
+    day-seconds: ${SETTLEMENT_DAY_SECONDS:86400}
   # 商家确认窗口（D-03）：推荐官提交履约后，商家有 N 秒确认；到期未操作 → 自动确认结算（default-approve）。
   # 概念 3 天（259200）；dev/test 短默认 5s 便于 e2e。prod 置 CONFIRMATION_WINDOW_SECONDS=259200。
   confirmation:
@@ -163,6 +163,11 @@ identity-assertion:
       purpose: service
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_KID:intelligence-service-marketplace-v1}
+      issuer: intelligence
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
 

@@ -1,15 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { NextFunction, Request } from 'express'
 
-const { envMock } = vi.hoisted(() => ({
+const { envMock, queryDbMock } = vi.hoisted(() => ({
   envMock: {
     DATABASE_URL: 'postgres://test' as string | undefined,
     SESSION_SECRET: '12345678901234567890123456789012' as string | undefined, // secret-scan: allow - test fixture
+    LOG_LEVEL: 'info' as string | undefined,
   },
+  queryDbMock: vi.fn(),
 }))
 
 vi.mock('./env.js', () => ({
   env: envMock,
+}))
+
+vi.mock('./db.js', () => ({
+  queryDb: queryDbMock,
 }))
 
 const {
@@ -17,6 +23,7 @@ const {
   getAuthenticatedUser,
   getSessionOrThrow,
   getSessionUser,
+  requireAdmin,
   requireAuthenticatedUser,
 } = await import('./auth.js')
 
@@ -24,6 +31,7 @@ describe('auth helpers', () => {
   beforeEach(() => {
     envMock.DATABASE_URL = 'postgres://test'
     envMock.SESSION_SECRET = '12345678901234567890123456789012' // secret-scan: allow - test fixture
+    queryDbMock.mockReset()
   })
 
   it('returns session user when present', () => {
@@ -158,6 +166,41 @@ describe('auth helpers', () => {
 
     expect(next).toHaveBeenCalledWith(expect.objectContaining({
       statusCode: 503,
+    }))
+  })
+
+  it('rejects an existing admin session after its authoritative role is revoked', async () => {
+    queryDbMock.mockResolvedValue({ rows: [{ allowed: false }] })
+    const req = {
+      session: {
+        user: { id: 'user-1', email: 'admin@example.com', role: 'admin' },
+      },
+    } as Request
+    const next = vi.fn() as NextFunction
+
+    await requireAdmin(req, {} as never, next)
+
+    expect(queryDbMock).toHaveBeenCalledWith(expect.stringContaining('backend_role'), ['user-1'])
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({
+      statusCode: 403,
+      message: '权限不足',
+    }))
+  })
+
+  it('fails closed when authoritative admin role lookup is unavailable', async () => {
+    queryDbMock.mockRejectedValue(new Error('database unavailable'))
+    const req = {
+      session: {
+        user: { id: 'user-1', email: 'admin@example.com', role: 'admin' },
+      },
+    } as Request
+    const next = vi.fn() as NextFunction
+
+    await requireAdmin(req, {} as never, next)
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({
+      statusCode: 503,
+      message: '权限校验暂时不可用',
     }))
   })
 })

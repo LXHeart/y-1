@@ -1,7 +1,12 @@
 package com.grassland.identity.membership;
 
 import com.grassland.identity.IdentityItSupport;
+import com.grassland.identity.assertion.IdentityAssertion;
+import com.grassland.identity.assertion.IdentityAssertionSigner;
+import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
@@ -11,6 +16,38 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  * <p>覆盖：org 创建即种 OWNER 成员（自见）、owner 加 admin、非 owner 403、删成员、last-owner 守卫 409、重复成员 409、无 cookie 401。
  */
 class MembershipControllerIT extends IdentityItSupport {
+
+    @Autowired
+    private IdentityAssertionSigner assertionSigner;
+
+    @Test
+    void trustServiceReadsAllAuthoritativeOrganizationMemberships() {
+        var account = seedAccount("internal-memberships@example.com");
+        String firstOrg = createOrg(account.cookie(), "内部成员关系一");
+        String secondOrg = createOrg(account.cookie(), "内部成员关系二");
+
+        client().get().uri("/internal/identity/accounts/" + account.accountId() + "/organization-memberships")
+                .header("X-Grassland-Identity", serviceAssertion("trust"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.accountId").isEqualTo(account.accountId())
+                .jsonPath("$.data.organizationIds.length()").isEqualTo(2)
+                .jsonPath("$.data.organizationIds").value(ids ->
+                        org.assertj.core.api.Assertions.assertThat(((java.util.List<?>) ids).stream()
+                                        .map(Object::toString).toList())
+                                .containsExactlyInAnyOrder(firstOrg, secondOrg));
+    }
+
+    @Test
+    void internalMembershipsRejectsMissingOrWrongServiceAssertion() {
+        String accountId = UUID.randomUUID().toString();
+
+        client().get().uri("/internal/identity/accounts/" + accountId + "/organization-memberships")
+                .exchange().expectStatus().isUnauthorized();
+        client().get().uri("/internal/identity/accounts/" + accountId + "/organization-memberships")
+                .header("X-Grassland-Identity", serviceAssertion("marketplace"))
+                .exchange().expectStatus().isForbidden();
+    }
 
     @Test
     void ownerSeesSelfAfterOrgCreate() {
@@ -109,5 +146,13 @@ class MembershipControllerIT extends IdentityItSupport {
                 .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
                 .bodyValue("{\"accountId\":\"" + accountId + "\",\"role\":\"" + role + "\"}")
                 .exchange();
+    }
+
+    private String serviceAssertion(String principal) {
+        Instant now = Instant.now();
+        return assertionSigner.sign(new IdentityAssertion(
+                "service:" + principal, null, null, null, null,
+                "service", "internal", null, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
+                "grassland-internal", now, now.plusSeconds(30), "service", principal));
     }
 }

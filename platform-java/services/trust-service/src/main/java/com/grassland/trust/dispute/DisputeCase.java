@@ -34,5 +34,17 @@ public record DisputeCase(
         String finalDecision,
         String finalDecidedBy,
         String evidenceRef,
-        String kind
-) {}
+        String kind,
+        boolean premiumSupport,
+        int supportPriority
+) {
+    public DisputeCase(
+            String id, String engagementRef, String organizationId, String openedByAccountId,
+            String openedByRole, String status, String reason, String decision, Instant decidedAt,
+            Instant createdAt, Instant updatedAt, int round, long version, String appealState,
+            String finalDecision, String finalDecidedBy, String evidenceRef, String kind) {
+        this(id, engagementRef, organizationId, openedByAccountId, openedByRole, status, reason, decision,
+                decidedAt, createdAt, updatedAt, round, version, appealState, finalDecision, finalDecidedBy,
+                evidenceRef, kind, false, 0);
+    }
+}

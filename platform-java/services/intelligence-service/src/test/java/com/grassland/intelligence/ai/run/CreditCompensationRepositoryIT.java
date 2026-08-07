@@ -37,6 +37,63 @@ class CreditCompensationRepositoryIT extends IntelligenceItSupport {
     }
 
     @Test
+    void unknownConsumeWithoutAiRunCanBePersistedAndClaimed() {
+        UUID operationId = UUID.randomUUID();
+        repository.enqueueUnknownConsume(
+                operationId, UUID.randomUUID().toString(), "creation_assistant", "unknown response")
+                .block();
+
+        var claims = repository.claimBatch(
+                        10, UUID.randomUUID(), Duration.ofMinutes(1))
+                .collectList().block();
+
+        assertThat(claims).singleElement().satisfies(claim -> {
+            assertThat(claim.runId()).isNull();
+            assertThat(claim.consumeOperationId()).isEqualTo(operationId);
+        });
+    }
+
+    @Test
+    void standaloneIntentKeepsLegacyWorkerRunIdReadableDuringRollingUpgrade() {
+        UUID operationId = UUID.randomUUID();
+        repository.enqueueUnknownConsume(
+                operationId, UUID.randomUUID().toString(), "creation_assistant", "unknown response")
+                .block();
+
+        String legacyRunId = db.sql("""
+                        SELECT run_id::text
+                        FROM ai_credit_compensation
+                        WHERE consume_operation_id = CAST(:operationId AS uuid)
+                        """)
+                .bind("operationId", operationId.toString())
+                .map(row -> row.get("run_id", String.class)).one().block();
+
+        assertThat(UUID.fromString(legacyRunId)).isEqualTo(operationId);
+    }
+
+    @Test
+    void aiRunAttachesToExistingUnknownConsumeWithoutDuplicatingIntent() {
+        UUID operationId = UUID.randomUUID();
+        String accountId = UUID.randomUUID().toString();
+        repository.enqueueUnknownConsume(
+                operationId, accountId, "ai_run_text", "unknown response").block();
+        UUID runId = insertRun(operationId);
+
+        repository.enqueue(runId, operationId, accountId, "ai_run_text", "run failed").block();
+
+        var persisted = db.sql("""
+                        SELECT count(*) AS total, max(run_id::text) AS run_id
+                        FROM ai_credit_compensation
+                        WHERE consume_operation_id = CAST(:operationId AS uuid)
+                        """)
+                .bind("operationId", operationId.toString())
+                .map((row, metadata) -> java.util.List.of(
+                        row.get("total", Long.class), row.get("run_id", String.class)))
+                .one().block();
+        assertThat(persisted).containsExactly(1L, runId.toString());
+    }
+
+    @Test
     void staleClaimCannotCompleteReclaimedIntent() {
         UUID runId = insertRun();
         repository.enqueue(runId, UUID.randomUUID(), UUID.randomUUID().toString(), "ai_run_text", "failed")
@@ -77,6 +134,10 @@ class CreditCompensationRepositoryIT extends IntelligenceItSupport {
     }
 
     private UUID insertRun() {
+        return insertRun(UUID.randomUUID());
+    }
+
+    private UUID insertRun(UUID operationId) {
         UUID runId = UUID.randomUUID();
         db.sql("""
                 INSERT INTO ai_run(id, account_id, capability, provider, model, run_type,
@@ -86,7 +147,7 @@ class CreditCompensationRepositoryIT extends IntelligenceItSupport {
                 """)
                 .bind("id", runId.toString())
                 .bind("account", UUID.randomUUID().toString())
-                .bind("operationId", UUID.randomUUID().toString())
+                .bind("operationId", operationId.toString())
                 .then().block();
         return runId;
     }

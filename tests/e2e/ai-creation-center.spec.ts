@@ -110,7 +110,7 @@ test('authenticated user can inspect AI runs and personal BYOK metadata', async 
 
   await login(page)
   await page.getByRole('tab', { name: '运行记录' }).click()
-  await expect(page.getByRole('heading', { name: '运行记录' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '运行记录', exact: true })).toBeVisible()
   await expect(page.getByRole('row', { name: /已完成.*qwen-plus.*平台模型.*3 分/ })).toBeVisible()
 
   await page.getByRole('tab', { name: '模型密钥' }).click()

@@ -45,7 +45,8 @@ public class MerchantRejectionFinalizer {
     private Mono<Finalization> promote(DisputeCase finalized, DeferredDisputeRequest request) {
         String successorId = UUID.randomUUID().toString();
         return disputes.createWithId(successorId, request.engagementRef(), request.organizationId(),
-                        request.recommenderAccountId(), "recommender", request.reason(), "standard")
+                        request.recommenderAccountId(), "recommender", request.reason(), "standard",
+                        finalized.premiumSupport())
                 .switchIfEmpty(Mono.error(new IllegalStateException("deferred dispute successor could not be created")))
                 .flatMap(successor -> requests.markPromoted(request.id(), successor.id())
                         .switchIfEmpty(Mono.error(new IllegalStateException("deferred request promotion state changed")))

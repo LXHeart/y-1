@@ -68,7 +68,8 @@ const newOrgName = ref('')
 const creditAmountYuan = ref(1000)
 /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
 const taskForm = ref({
-  title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '',
+  title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
+  applicationDeadline: '', minRecommenderLevel: 1,
 })
 /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
 const editingDraft = ref<{ id: string; version: number } | null>(null)
@@ -312,6 +313,7 @@ async function publishTask(): Promise<void> {
     maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
     applicationDeadline: deadlineIso(),
+    minRecommenderLevel: taskForm.value.minRecommenderLevel,
   })
   if (!created) return
   resetTaskForm()
@@ -337,7 +339,8 @@ function isoToLocalInput(iso: string | null): string {
 }
 
 function resetTaskForm(): void {
-  taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, applicationDeadline: '' }
+  taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
+    applicationDeadline: '', minRecommenderLevel: 1 }
   editingDraft.value = null
   revisingTask.value = null
 }
@@ -358,6 +361,7 @@ async function saveDraft(): Promise<void> {
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
+      minRecommenderLevel: taskForm.value.minRecommenderLevel,
     })
     if (!revised) return
     setNotice(`任务「${revised.title}」已修订出新版本（v${revised.version}）`)
@@ -376,6 +380,7 @@ async function saveDraft(): Promise<void> {
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
+      minRecommenderLevel: taskForm.value.minRecommenderLevel,
     })
     if (!updated) return
     setNotice(`草稿「${updated.title}」已更新（v${updated.version}）`)
@@ -389,6 +394,7 @@ async function saveDraft(): Promise<void> {
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
+      minRecommenderLevel: taskForm.value.minRecommenderLevel,
     })
     if (!created) return
     setNotice(`草稿「${created.title}」已保存`)
@@ -409,6 +415,7 @@ function editDraft(task: Task): void {
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
+    minRecommenderLevel: task.minRecommenderLevel ?? 1,
   }
 }
 
@@ -427,6 +434,7 @@ function editPublished(task: Task): void {
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
+    minRecommenderLevel: task.minRecommenderLevel ?? 1,
   }
 }
 
@@ -847,6 +855,11 @@ function statusLabel(status: string): string {
           <label>名额 <input v-model.number="taskForm.maxSlots" type="number" min="1" /></label>
           <label>赏金 ¥<input v-model.number="taskForm.bountyYuan" type="number" min="0" :disabled="!canPublishBounty" /></label>
           <label>报名截止 <input v-model="taskForm.applicationDeadline" type="datetime-local" /></label>
+          <label>最低等级
+            <select v-model.number="taskForm.minRecommenderLevel">
+              <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}</option>
+            </select>
+          </label>
         </div>
         <div class="gl-row">
           <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || grassland.loading.value" @click="publishTask">提交审核</button>
@@ -866,6 +879,7 @@ function statusLabel(status: string): string {
             </button>
             <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
             <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
+            <span v-if="t.minRecommenderLevel > 1" class="gl-tag">Lv{{ t.minRecommenderLevel }}+</span>
             <!-- 草稿：编辑 / 提交审核 / 取消 -->
             <template v-if="t.status === 'draft'">
               <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>

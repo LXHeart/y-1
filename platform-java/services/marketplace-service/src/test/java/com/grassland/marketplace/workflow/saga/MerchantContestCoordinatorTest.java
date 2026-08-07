@@ -73,6 +73,19 @@ class MerchantContestCoordinatorTest {
     }
 
     @Test
+    void premiumClaimPassesAcceptSnapshotToTrust() {
+        TaskApplication claimed = premiumClaimed();
+        when(trust.openMerchantRejection(orgId, appId, "merchant-1", "不同意", "rec-1", true))
+                .thenReturn(Mono.error(new IllegalStateException("stop after contract assertion")));
+
+        assertThatThrownBy(() -> coordinator.dispatch(claimed, task).block())
+                .hasMessage("stop after contract assertion");
+
+        verify(trust).openMerchantRejection(orgId, appId, "merchant-1", "不同意", "rec-1", true);
+        verify(trust, never()).openMerchantRejection(orgId, appId, "merchant-1", "不同意");
+    }
+
+    @Test
     void completesClaimThenStartsAndMarksWorkflow() {
         TaskApplication claimed = claimed(null, null);
         TaskApplication completed = claimed(disputeId, null);
@@ -133,6 +146,13 @@ class MerchantContestCoordinatorTest {
         return new TaskApplication(appId, taskId, "rec-1", "accepted", null, "merchant-1",
                 null, null, null, existingDisputeId == null ? null : now, 500L, now.plusSeconds(60), null,
                 existingDisputeId == null ? null : now, "不同意", existingDisputeId, now, workflowStartedAt);
+    }
+
+    private TaskApplication premiumClaimed() {
+        Instant now = Instant.now();
+        return new TaskApplication(appId, taskId, "rec-1", "accepted", null, "merchant-1",
+                null, null, null, null, 500L, now.plusSeconds(60), null,
+                null, "不同意", null, now, null, 4, 1L, 2, 500, true);
     }
 
     private EngagementSubmission submission(String status) {

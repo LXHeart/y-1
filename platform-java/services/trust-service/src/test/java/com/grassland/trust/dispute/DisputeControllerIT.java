@@ -2,6 +2,7 @@ package com.grassland.trust.dispute;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -39,6 +40,36 @@ class DisputeControllerIT extends TrustItSupport {
                 .jsonPath("$.data.engagementRef").isEqualTo(eng)
                 .jsonPath("$.data.organizationId").isEqualTo(org);
         assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(1);
+    }
+
+    @Test
+    void openPersistsCanonicalPremiumSupportSnapshotFromMarketplace() {
+        String merchant = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        String eng = UUID.randomUUID().toString();
+        when(authorizer.authorize(eng, merchant, "merchant"))
+                .thenReturn(Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(
+                        eng, org, recommender, true)));
+
+        Map<?, ?> response = client().post().uri("/api/trust/disputes")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng, "reason", "未履约"))
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        Map<?, ?> data = (Map<?, ?>) response.get("data");
+
+        assertThat(data.get("premiumSupport")).isEqualTo(true);
+        assertThat(data.get("supportPriority")).isEqualTo(100);
+        Boolean persistedPremium = db.sql(
+                        "SELECT premium_support FROM dispute_case WHERE id=CAST(:id AS uuid)")
+                .bind("id", data.get("id"))
+                .map((row, metadata) -> row.get("premium_support", Boolean.class)).one().block();
+        Integer persistedPriority = db.sql(
+                        "SELECT support_priority FROM dispute_case WHERE id=CAST(:id AS uuid)")
+                .bind("id", data.get("id"))
+                .map((row, metadata) -> row.get("support_priority", Integer.class)).one().block();
+        assertThat(persistedPremium).isTrue();
+        assertThat(persistedPriority).isEqualTo(100);
     }
 
     @Test
@@ -113,7 +144,8 @@ class DisputeControllerIT extends TrustItSupport {
         // 真正的唯一键冲突路径：预查为空（对手尚未提交）→ create 撞键返回空 → 必须回读。
         String eng2 = UUID.randomUUID().toString();
         doAnswer(inv -> ((Mono<?>) inv.callRealMethod()).then(Mono.empty()))
-                .when(disputeRepo).create(eq(eng2), anyString(), anyString(), anyString(), any(), anyString());
+                .when(disputeRepo).create(eq(eng2), anyString(), anyString(), anyString(), any(), anyString(),
+                        anyBoolean());
         client().post().uri("/api/trust/disputes")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of(
@@ -137,11 +169,15 @@ class DisputeControllerIT extends TrustItSupport {
                         "kind", "merchant_rejection",
                         "openedByAccountId", merchant,
                         "organizationId", org,
+                        "recommenderAccountId", UUID.randomUUID().toString(),
+                        "premiumSupportAtAccept", true,
                         "reason", "系统核实与实际不符"))
                 .exchange().expectStatus().isCreated().expectBody(Map.class)
                 .returnResult().getResponseBody();
         String disputeId = (String) ((Map<?, ?>) resp.get("data")).get("id");
         assertThat(disputeId).isNotBlank();
+        assertThat(((Map<?, ?>) resp.get("data")).get("premiumSupport")).isEqualTo(true);
+        assertThat(((Map<?, ?>) resp.get("data")).get("supportPriority")).isEqualTo(100);
 
         client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
@@ -197,7 +233,8 @@ class DisputeControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of(
                         "engagementRef", eng, "kind", "merchant_rejection",
-                        "openedByAccountId", merchant, "organizationId", org, "reason", "商家异议"))
+                        "openedByAccountId", merchant, "organizationId", org, "reason", "商家异议",
+                        "recommenderAccountId", recommender, "premiumSupportAtAccept", true))
                 .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         String sourceId = (String) ((Map<?, ?>) opened.get("data")).get("id");
         Map<?, ?> deferred = client().post().uri("/api/trust/disputes")
@@ -239,6 +276,9 @@ class DisputeControllerIT extends TrustItSupport {
         assertThat(active).isEqualTo(1);
         assertThat(successorKind).isEqualTo("standard");
         assertThat(successorReason).isEqualTo("保留我的逐字理由");
+        Boolean successorPremium = db.sql("SELECT premium_support FROM dispute_case WHERE id = CAST(:id AS uuid)")
+                .bind("id", successorId).map(r -> r.get("premium_support", Boolean.class)).one().block();
+        assertThat(successorPremium).isTrue();
         assertThat(outboxPayloadField("DisputeFinalized", sourceId, "settlementDeferred")).isEqualTo("true");
         assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(2);
     }

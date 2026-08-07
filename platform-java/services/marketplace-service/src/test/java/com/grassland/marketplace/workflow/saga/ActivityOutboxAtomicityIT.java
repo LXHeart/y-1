@@ -89,7 +89,10 @@ class ActivityOutboxAtomicityIT extends MarketplaceItSupport {
     }
 
     private void setStatus(String appId, String status) {
-        db.sql("UPDATE task_application SET status = :status WHERE id = CAST(:a AS uuid)")
+        db.sql("UPDATE task_application SET status = :status,"
+                        + " reputation_level_at_accept = 1, reputation_policy_version_at_accept = 1,"
+                        + " settlement_delay_days_at_accept = 2, commission_bonus_bps_at_accept = 0,"
+                        + " premium_support_at_accept = false WHERE id = CAST(:a AS uuid)")
                 .bind("status", status).bind("a", appId).then().block();
     }
 
@@ -108,7 +111,17 @@ class ActivityOutboxAtomicityIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        Map<String, Object> task = (Map<String, Object>) resp.get("data");
+        String taskId = (String) task.get("id");
+        int version = ((Number) task.get("version")).intValue();
+        client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
+                .header("X-Grassland-Identity", signWithRole(
+                        UUID.randomUUID().toString(), "platform_admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", version))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("published");
+        return taskId;
     }
 
     @SuppressWarnings("unchecked")

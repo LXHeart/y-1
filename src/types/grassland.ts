@@ -34,6 +34,8 @@ export interface Task {
   maxSlots: number | null
   /** 赏金（分）；null/0 = 非资金型任务（accept 走直连，不经资金 Saga）。 */
   bountyCents: number | null
+  /** Minimum effective recommender level required to see and apply for this task. */
+  minRecommenderLevel: number
   createdAt: string | null
   /** 乐观锁版本号（GL-P1-TASK-001 Stage 1）：draft 编辑 / publish / close / cancel 每次 +1。 */
   version: number
@@ -60,6 +62,7 @@ export interface CreateTaskInput {
   bountyCents?: number
   /** 报名截止时间（ISO）；可空 = 无时间截止。 */
   applicationDeadline?: string
+  minRecommenderLevel?: number
 }
 
 /** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
@@ -75,6 +78,7 @@ export interface UpdateTaskInput {
   maxSlots?: number
   bountyCents?: number
   applicationDeadline?: string
+  minRecommenderLevel?: number
 }
 
 /**
@@ -92,6 +96,7 @@ export interface ReviseTaskInput {
   maxSlots?: number
   bountyCents?: number
   applicationDeadline?: string
+  minRecommenderLevel?: number
 }
 
 /** 任务大厅 feed 查询（GL-P1-TASK-001 Stage 2）。 */
@@ -127,6 +132,15 @@ export interface TaskApplication {
   reviewedByAccountId: string | null
   decidedAt: string | null
   createdAt: string | null
+  reputationLevelAtAccept?: number | null
+  reputationPolicyVersionAtAccept?: number | null
+  settlementDelayDaysAtAccept?: number | null
+  commissionBonusBpsAtAccept?: number | null
+  premiumSupportAtAccept?: boolean | null
+  /** Present in the merchant-ranked application list. */
+  reputationLevel?: number
+  reputationTitle?: string
+  taskPriorityWeight?: number
 }
 
 /** 商家拒绝系统核实通过履约后的客服争议状态。 */
@@ -207,6 +221,17 @@ export interface RecommenderReputation {
   accountId: string
   level: RecommenderLevel
   levelTitle: string
+  calculatedLevel: RecommenderLevel
+  effectiveLevel: RecommenderLevel
+  levelNumber: number
+  judgeEligible: boolean
+  policyVersion: number
+  taskPriorityWeight: number
+  settlementDelayDays: number
+  commissionBonusBps: number
+  aiQuotaMultiplierBps: number
+  premiumSupport: boolean
+  benefits: string[]
   acceptedCount: number
   completedCount: number
   /** 0–1 的小数（完成/已接单）；无接单时为 0。 */
@@ -214,6 +239,65 @@ export interface RecommenderReputation {
   ratingCount: number
   averageScore: number | null
   averageResponseSeconds: number | null
+  lastActiveAt: string | null
+  inactiveDowngraded: boolean
+}
+
+/** 平台管理员维护的单级门槛与结构化权益。比例/倍率均使用服务端原始口径。 */
+export interface ReputationLevelRule {
+  levelNumber: number
+  level: RecommenderLevel
+  title: string
+  minCompleted: number
+  minCompletionRate: number
+  minAverageScore: number | null
+  inviteOnly: boolean
+  judgeEligible: boolean
+  taskPriorityWeight: number
+  settlementDelayDays: number
+  commissionBonusBps: number
+  aiQuotaMultiplierBps: number
+  premiumSupport: boolean
+  benefits: string[]
+}
+
+export interface ReputationPolicy {
+  version: number
+  updatedAt: string | null
+  levels: ReputationLevelRule[]
+}
+
+export interface UpdateReputationPolicyInput {
+  expectedVersion: number
+  levels: ReputationLevelRule[]
+}
+
+/** 管理端声誉快照额外暴露 Lv5 邀请状态和完整终态计数。 */
+export interface AdminReputation extends RecommenderReputation {
+  merchantCancelledCount: number
+  rejectedCount: number
+  withdrawnCount: number
+  terminalCount: number
+  lv5Admitted: boolean
+  admissionVersion: number
+  admissionUpdatedBy: string | null
+  admissionNote: string | null
+  admissionUpdatedAt: string | null
+}
+
+export interface Lv5Admission {
+  accountId: string
+  admitted: boolean
+  version: number
+  updatedBy: string | null
+  note: string | null
+  updatedAt: string | null
+}
+
+export interface UpdateLv5AdmissionInput {
+  admitted: boolean
+  expectedVersion: number
+  note?: string
 }
 
 /** 商家对一次履约的评分（1-5 星）。一次履约只能评一次，重复评价后端 409。 */
@@ -813,10 +897,40 @@ export interface Judge {
   accountId: string
   /** 归属组织；null = 平台级审判官。抽签时排除与争议同组织者。 */
   organizationId: string | null
-  /** 资格等级；声誉模块未建，现固定 1（配置阈值占位）。 */
+  /** 报名时的有效等级快照；抽签和运营授权时仍会实时复验。 */
   eligibilityTier: number
   active: boolean
+  opsAdmitted: boolean
+  version: number
+  opsAdmittedAt: string | null
+  opsAdmittedBy: string | null
   createdAt: string | null
+}
+
+export interface JudgeAdmissionAudit {
+  id: number
+  action: 'granted' | 'revoked'
+  actorAccountId: string
+  reason: string
+  previousVersion: number
+  newVersion: number
+  createdAt: string | null
+}
+
+export interface AdminJudge extends Judge {
+  audit?: JudgeAdmissionAudit[]
+}
+
+export interface AdminJudgePage {
+  items: AdminJudge[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+export interface UpdateJudgeAdmissionInput {
+  admitted: boolean
+  expectedVersion: number
+  reason: string
 }
 
 /** 投票选择。abstain 不计入任一方多数。 */

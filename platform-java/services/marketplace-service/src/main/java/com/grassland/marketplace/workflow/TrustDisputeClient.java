@@ -64,11 +64,22 @@ public class TrustDisputeClient {
      */
     public Mono<String> openMerchantRejection(String orgId, String engagementRef,
                                               String merchantAccountId, String reason) {
+        return openMerchantRejection(orgId, engagementRef, merchantAccountId, reason, null, false);
+    }
+
+    /** premium application 专用：把 accept 时快照传给 trust，后续等级变化不重排进行中案件。 */
+    public Mono<String> openMerchantRejection(String orgId, String engagementRef,
+                                              String merchantAccountId, String reason,
+                                              String recommenderAccountId, boolean premiumSupportAtAccept) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("engagementRef", engagementRef);
         body.put("kind", "merchant_rejection");
         body.put("openedByAccountId", merchantAccountId);
         body.put("organizationId", orgId);
+        if (recommenderAccountId != null && !recommenderAccountId.isBlank()) {
+            body.put("recommenderAccountId", recommenderAccountId);
+            body.put("premiumSupportAtAccept", premiumSupportAtAccept);
+        }
         if (reason != null && !reason.isBlank()) {
             body.put("reason", reason);
         }

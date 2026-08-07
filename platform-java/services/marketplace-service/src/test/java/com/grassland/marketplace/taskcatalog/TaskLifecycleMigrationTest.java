@@ -42,7 +42,7 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
             statement.execute("CREATE TABLE " + schema + ".task_application ("
                     + "id uuid PRIMARY KEY, task_id uuid NOT NULL, recommender_account_id uuid NOT NULL,"
                     + " status varchar(32) NOT NULL DEFAULT 'pending', note text, reviewed_by_account_id uuid,"
-                    + " decided_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),"
+                    + " decided_at timestamptz, confirmed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),"
                     + " updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(task_id, recommender_account_id))");
             statement.execute("CREATE TABLE " + schema + ".marketplace_outbox (id uuid PRIMARY KEY)");
             statement.execute("INSERT INTO " + schema + ".task(id, owner_account_id, organization_id, title, status, bounty_cents) "
@@ -54,6 +54,7 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
 
         Flyway.configure()
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
                 .defaultSchema(schema)
                 .schemas(schema)
                 .table("task_v11_history")

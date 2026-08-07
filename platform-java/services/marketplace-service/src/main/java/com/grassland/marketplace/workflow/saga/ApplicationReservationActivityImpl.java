@@ -93,8 +93,12 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
             // 而这里本来就要读库，多取一个字段是零成本。
             TaskApplication payeeApp = apps.findById(input.applicationId()).block();
             String payee = payeeApp == null ? null : payeeApp.recommenderAccountId();
-            ReserveResult r = finance.reserve(
-                    input.organizationId(), input.applicationId(), input.amountCents(), payee).block();
+            int commissionBonusBps = payeeApp == null || payeeApp.commissionBonusBpsAtAccept() == null
+                    ? 0 : payeeApp.commissionBonusBpsAtAccept();
+            ReserveResult r = commissionBonusBps == 0
+                    ? finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee).block()
+                    : finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee,
+                            commissionBonusBps).block();
             log.info("reserveFunds RESULT {}", r);
             return r;
         } catch (RuntimeException e) {

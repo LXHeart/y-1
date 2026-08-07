@@ -51,7 +51,7 @@ public class DisputeAdjudicationWorkflowImpl implements DisputeAdjudicationWorkf
                 activity.recordDecision(input.disputeId(), tally.winner());
                 return true;
             }
-            // 平票/不足 → 下一轮（assignPanel(round+1) 内会 reopen）
+            // 平票/不足 -> 下一轮（tallyVotes 已原子推进状态，assignPanel(round+1) 完成抽签）
         }
         return false;  // 超 maxRounds 无判决
     }

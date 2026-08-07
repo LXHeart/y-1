@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -25,7 +26,8 @@ public class DisputeCaseRepository {
     private static final String SELECT_COLS =
             "id::text, engagement_ref, organization_id::text, opened_by_account_id::text, opened_by_role,"
                     + " status, reason, decision, decided_at, created_at, updated_at,"
-                    + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref, kind";
+                    + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref, kind,"
+                    + " premium_support, support_priority";
 
     private final DatabaseClient db;
 
@@ -36,14 +38,24 @@ public class DisputeCaseRepository {
     /** 开争议（status=open）。调用方可提供确定性 id，供 deferred promotion 在一个事务内串联 successor/outbox。 */
     public Mono<DisputeCase> createWithId(String id, String engagementRef, String organizationId,
                                           String openedBy, String role, String reason, String kind) {
+        return createWithId(id, engagementRef, organizationId, openedBy, role, reason, kind, false);
+    }
+
+    /** 开案时固化 accept 权益快照；premium 案进入客服队列的 100 优先级。 */
+    public Mono<DisputeCase> createWithId(String id, String engagementRef, String organizationId,
+                                          String openedBy, String role, String reason, String kind,
+                                          boolean premiumSupport) {
         String effectiveKind = (kind == null || kind.isBlank()) ? "standard" : kind;
         var spec = db.sql("""
-                INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role, status, reason, kind)
-                VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, 'open', :reason, :kind)
+                INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role,
+                                         status, reason, kind, premium_support, support_priority)
+                VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, 'open', :reason,
+                        :kind, :premium, :priority)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("ref", engagementRef).bind("org", organizationId)
-                .bind("by", openedBy).bind("role", role).bind("kind", effectiveKind);
+                .bind("by", openedBy).bind("role", role).bind("kind", effectiveKind)
+                .bind("premium", premiumSupport).bind("priority", premiumSupport ? 100 : 0);
         spec = bindNullable(spec, "reason", reason);
         return spec.map(DisputeCaseRepository::map).one()
                 .onErrorResume(DisputeCaseRepository::isDuplicateKey, e -> Mono.empty());
@@ -56,6 +68,12 @@ public class DisputeCaseRepository {
         return createWithId(UUID.randomUUID().toString(), engagementRef, organizationId, openedBy, role, reason, kind);
     }
 
+    public Mono<DisputeCase> create(String engagementRef, String organizationId, String openedBy, String role,
+                                    String reason, String kind, boolean premiumSupport) {
+        return createWithId(UUID.randomUUID().toString(), engagementRef, organizationId, openedBy, role, reason,
+                kind, premiumSupport);
+    }
+
     /** 并发竞态下 partial-unique 违例兜底（常规幂等由 controller 预查 findActive 处理）。按消息判定 duplicate key（robust）。 */
     private static boolean isDuplicateKey(Throwable e) {
         return e != null && e.getMessage() != null && e.getMessage().contains("duplicate key");
@@ -63,6 +81,14 @@ public class DisputeCaseRepository {
 
     public Mono<DisputeCase> findById(String id) {
         return db.sql("SELECT " + SELECT_COLS + " FROM dispute_case WHERE id = CAST(:id AS uuid)")
+                .bind("id", id)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 锁定争议行，供投票写入与轮次关闭在同一事务中串行化。 */
+    public Mono<DisputeCase> findByIdForUpdate(String id) {
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM dispute_case WHERE id = CAST(:id AS uuid) FOR UPDATE")
                 .bind("id", id)
                 .map(DisputeCaseRepository::map).one();
     }
@@ -99,6 +125,23 @@ public class DisputeCaseRepository {
                 + " ORDER BY decided_at DESC NULLS LAST LIMIT 1")
                 .bind("ref", engagementRef)
                 .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 客服活跃争议队列：premium first，同优先级 oldest first，三元组 keyset 避免翻页重复。 */
+    public Flux<DisputeCase> listForSupport(int limit, Integer afterPriority,
+                                            Instant afterCreatedAt, String afterId) {
+        String keyset = afterPriority == null
+                ? ""
+                : " AND (support_priority < :priority"
+                        + " OR (support_priority = :priority AND created_at > :created)"
+                        + " OR (support_priority = :priority AND created_at = :created AND id > CAST(:id AS uuid)))";
+        var spec = db.sql("SELECT " + SELECT_COLS + " FROM dispute_case WHERE status <> 'final'"
+                        + keyset + " ORDER BY support_priority DESC, created_at, id LIMIT :limit")
+                .bind("limit", limit);
+        if (afterPriority != null) {
+            spec = spec.bind("priority", afterPriority).bind("created", afterCreatedAt).bind("id", afterId);
+        }
+        return spec.map(DisputeCaseRepository::map).all();
     }
 
     /** 手动裁决（终局）：open→final，记 decision + decided_at + final_decision + version+1。0 行（非 open）→ empty。 */
@@ -242,8 +285,14 @@ public class DisputeCaseRepository {
                 row.get("final_decision", String.class),
                 row.get("final_decided_by", String.class),
                 row.get("evidence_ref", String.class),
-                row.get("kind", String.class)
+                row.get("kind", String.class),
+                Boolean.TRUE.equals(row.get("premium_support", Boolean.class)),
+                intValue(row.get("support_priority", Integer.class))
         );
+    }
+
+    private static int intValue(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private static Instant toInstant(OffsetDateTime value) {

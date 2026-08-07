@@ -25,13 +25,36 @@ public class CreditCompensationRepository {
                 INSERT INTO ai_credit_compensation(
                     run_id, consume_operation_id, account_id, feature, reason)
                 VALUES (CAST(:runId AS uuid), CAST(:operationId AS uuid), :accountId, :feature, :reason)
-                ON CONFLICT (run_id) DO NOTHING
+                ON CONFLICT (consume_operation_id) DO UPDATE
+                SET run_id = CASE WHEN ai_credit_compensation.standalone
+                                  THEN EXCLUDED.run_id ELSE ai_credit_compensation.run_id END,
+                    actual_run_id = CASE WHEN ai_credit_compensation.standalone
+                                         THEN EXCLUDED.actual_run_id
+                                         ELSE ai_credit_compensation.actual_run_id END,
+                    standalone = false,
+                    updated_at = now()
                 """)
                 .bind("runId", runId.toString())
                 .bind("operationId", consumeOperationId.toString())
                 .bind("accountId", accountId)
                 .bind("feature", feature)
                 .bind("reason", truncate(reason, MAX_REASON_LENGTH, "AI run failed"))
+                .then();
+    }
+
+    public Mono<Void> enqueueUnknownConsume(
+            UUID consumeOperationId, String accountId, String feature, String reason) {
+        return db.sql("""
+                INSERT INTO ai_credit_compensation(
+                    run_id, consume_operation_id, account_id, feature, reason, standalone)
+                VALUES (CAST(:operationId AS uuid), CAST(:operationId AS uuid),
+                        :accountId, :feature, :reason, true)
+                ON CONFLICT (consume_operation_id) DO NOTHING
+                """)
+                .bind("operationId", consumeOperationId.toString())
+                .bind("accountId", accountId)
+                .bind("feature", feature)
+                .bind("reason", truncate(reason, MAX_REASON_LENGTH, "AI credit outcome unknown"))
                 .then();
     }
 
@@ -55,7 +78,8 @@ public class CreditCompensationRepository {
                     updated_at = now()
                 FROM candidates
                 WHERE target.id = candidates.id
-                RETURNING target.id::text, target.run_id::text, target.consume_operation_id::text,
+                RETURNING target.id::text, target.actual_run_id::text AS run_id,
+                          target.consume_operation_id::text,
                           target.account_id, target.feature, target.reason,
                           target.claim_token::text, target.attempt_count
                 """)
@@ -74,11 +98,11 @@ public class CreditCompensationRepository {
                     attempt_count = attempt_count + 1,
                     last_error_code = NULL,
                     updated_at = now()
-                WHERE run_id = CAST(:runId AS uuid)
+                WHERE actual_run_id = CAST(:runId AS uuid)
                   AND status = 'pending'
                   AND next_attempt_at <= now()
                   AND (claimed_until IS NULL OR claimed_until <= now())
-                RETURNING id::text, run_id::text, consume_operation_id::text,
+                RETURNING id::text, actual_run_id::text AS run_id, consume_operation_id::text,
                           account_id, feature, reason, claim_token::text, attempt_count
                 """)
                 .bind("claimToken", claimToken.toString())
@@ -100,6 +124,20 @@ public class CreditCompensationRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("claimToken", claimToken.toString())
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
+    public Mono<Boolean> markCompletedByOperationId(UUID consumeOperationId) {
+        return db.sql("""
+                UPDATE ai_credit_compensation
+                SET status = 'completed', completed_at = now(),
+                    claim_token = NULL, claimed_until = NULL,
+                    last_error_code = NULL, updated_at = now()
+                WHERE consume_operation_id = CAST(:operationId AS uuid)
+                  AND status = 'pending'
+                  AND claim_token IS NULL
+                """)
+                .bind("operationId", consumeOperationId.toString())
                 .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
     }
 
@@ -140,9 +178,10 @@ public class CreditCompensationRepository {
     }
 
     private static CompensationClaim mapClaim(io.r2dbc.spi.Readable row) {
+        String runId = row.get("run_id", String.class);
         return new CompensationClaim(
                 UUID.fromString(row.get("id", String.class)),
-                UUID.fromString(row.get("run_id", String.class)),
+                runId == null ? null : UUID.fromString(runId),
                 UUID.fromString(row.get("consume_operation_id", String.class)),
                 row.get("account_id", String.class),
                 row.get("feature", String.class),

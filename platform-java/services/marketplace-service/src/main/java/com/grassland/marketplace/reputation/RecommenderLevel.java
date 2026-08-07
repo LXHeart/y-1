@@ -23,4 +23,8 @@ public enum RecommenderLevel {
     public String title() {
         return title;
     }
+
+    public int number() {
+        return ordinal() + 1;
+    }
 }

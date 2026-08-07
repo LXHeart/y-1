@@ -1,6 +1,10 @@
 package com.grassland.trust.adjudication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.trust.TrustItSupport;
@@ -16,6 +20,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import reactor.core.publisher.Mono;
 
 /**
  * 审判端到端（草场 Epic 6 Slice 6C Phase B + C-2）。继承 {@link TrustItSupport}。
@@ -77,6 +82,32 @@ class AdjudicationControllerIT extends TrustItSupport {
     }
 
     @Test
+    void adjudicateRepairsIncompletePanelToExactConfiguredSize() {
+        clearJudges();
+        String merchant = UUID.randomUUID().toString();
+        String org = MARKETPLACE_ORG;
+        List<String> candidates = new ArrayList<>();
+        for (int i = 0; i < PANEL_SIZE + 1; i++) {
+            String accountId = UUID.randomUUID().toString();
+            seedJudge(accountId);
+            candidates.add(accountId);
+        }
+        String id = open(merchant, org, UUID.randomUUID().toString());
+        disputes.startAdjudication(id, 1).block();
+        db.sql("INSERT INTO dispute_panel_assignment(dispute_id, round, judge_account_id)"
+                        + " VALUES (CAST(:disputeId AS uuid), 1, CAST(:accountId AS uuid))")
+                .bind("disputeId", id).bind("accountId", candidates.get(0)).then().block();
+
+        client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.panel.size").isEqualTo(PANEL_SIZE);
+
+        assertThat(panelJudges(id, 1)).hasSize(PANEL_SIZE);
+        assertThat(outboxCount("DisputeAssigned", id)).isEqualTo(1);
+    }
+
+    @Test
     void adjudicateRejectsOtherOrg() {
         String merchant = UUID.randomUUID().toString();
         String org = MARKETPLACE_ORG;
@@ -125,6 +156,95 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .exchange().expectStatus().isEqualTo(503);
         // 503 后争议仍 open（可重试，未半提交到 voting）
         assertThat(statusOf(id)).isEqualTo("open");
+    }
+
+    @Test
+    void adjudicateRequiresACompleteSevenJudgePanel() {
+        clearJudges();
+        String merchant = UUID.randomUUID().toString();
+        String id = open(merchant, MARKETPLACE_ORG, UUID.randomUUID().toString());
+        seedJudges(PANEL_SIZE - 1);
+
+        client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(503);
+
+        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(panelJudges(id, 1)).isEmpty();
+    }
+
+    @Test
+    void adjudicateRevalidatesEveryCandidateAndExcludesDowngradedJudge() {
+        clearJudges();
+        String merchant = UUID.randomUUID().toString();
+        String id = open(merchant, MARKETPLACE_ORG, UUID.randomUUID().toString());
+        List<String> candidates = new ArrayList<>();
+        for (int i = 0; i < PANEL_SIZE; i++) {
+            String accountId = UUID.randomUUID().toString();
+            seedJudge(accountId);
+            candidates.add(accountId);
+        }
+        String downgraded = candidates.get(0);
+        when(reputationClient.getLevel(downgraded)).thenReturn(Mono.just(
+                new com.grassland.trust.judge.MarketplaceReputationClient.LevelResult(
+                        downgraded, "Lv4", 4, false, 9L)));
+
+        client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(503);
+
+        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(panelJudges(id, 1)).isEmpty();
+    }
+
+    @Test
+    void adjudicateFailsClosedWhenCandidateRevalidationFails() {
+        clearJudges();
+        String merchant = UUID.randomUUID().toString();
+        String id = open(merchant, MARKETPLACE_ORG, UUID.randomUUID().toString());
+        List<String> candidates = new ArrayList<>();
+        for (int i = 0; i < PANEL_SIZE; i++) {
+            String accountId = UUID.randomUUID().toString();
+            seedJudge(accountId);
+            candidates.add(accountId);
+        }
+        when(reputationClient.getLevel(candidates.get(0)))
+                .thenReturn(Mono.error(new RuntimeException("marketplace unavailable")));
+
+        client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(503);
+
+        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(panelJudges(id, 1)).isEmpty();
+    }
+
+    @Test
+    void adjudicateRollsBackWhenAdmissionIsRevokedAfterRemoteValidation() {
+        clearJudges();
+        String merchant = UUID.randomUUID().toString();
+        String id = open(merchant, MARKETPLACE_ORG, UUID.randomUUID().toString());
+        List<String> candidates = new ArrayList<>();
+        for (int i = 0; i < PANEL_SIZE; i++) {
+            String accountId = UUID.randomUUID().toString();
+            seedJudge(accountId);
+            candidates.add(accountId);
+        }
+        String revoked = candidates.get(0);
+        var eligible = new com.grassland.trust.judge.MarketplaceReputationClient.LevelResult(
+                revoked, "Lv5", 5, true, 12L);
+        when(reputationClient.getLevel(revoked)).thenReturn(
+                db.sql("UPDATE judge SET ops_admitted=false, ops_admitted_at=NULL, ops_admitted_by=NULL,"
+                                + " version=version+1 WHERE account_id=CAST(:a AS uuid)")
+                        .bind("a", revoked).then().thenReturn(eligible));
+
+        client().post().uri("/api/trust/disputes/" + id + "/adjudicate")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isEqualTo(503);
+
+        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(panelJudges(id, 1)).isEmpty();
+        assertThat(outboxCount("DisputeAssigned", id)).isZero();
     }
 
     @Test
@@ -202,6 +322,30 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(judge, "recommender", null, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
                 .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void voteRejectsJudgeWhoseOperationsAdmissionWasRevoked() {
+        Panel panel = startPanel();
+        String judge = panel.judges.get(0);
+        db.sql("UPDATE judge SET ops_admitted=false, ops_admitted_at=NULL, ops_admitted_by=NULL, version=version+1"
+                        + " WHERE account_id=CAST(:a AS uuid)")
+                .bind("a", judge).then().block();
+
+        vote(panel.id, judge, "for_merchant", null).expectStatus().isForbidden();
+    }
+
+    @Test
+    void voteUsesAssignmentSnapshotWhenMarketplaceEligibilityChanges() {
+        Panel panel = startPanel();
+        String judge = panel.judges.get(0);
+        clearInvocations(reputationClient);
+        when(reputationClient.getLevel(judge)).thenReturn(Mono.just(
+                new com.grassland.trust.judge.MarketplaceReputationClient.LevelResult(
+                        judge, "Lv4", 4, false, 11L)));
+
+        vote(panel.id, judge, "for_merchant", null).expectStatus().isCreated();
+        verify(reputationClient, never()).getLevel(judge);
     }
 
     @Test
@@ -554,10 +698,17 @@ class AdjudicationControllerIT extends TrustItSupport {
         }
     }
 
+    private void clearJudges() {
+        db.sql("TRUNCATE judge_conflict").then().block();
+        db.sql("TRUNCATE judge CASCADE").then().block();
+    }
+
     private void seedJudge(String accountId) {
-        db.sql("INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active)"
-                + " VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), NULL, 1, true)")
+        db.sql("INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active,"
+                        + " ops_admitted, ops_admitted_at, ops_admitted_by)"
+                + " VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), NULL, 5, true, true, now(), CAST(:actor AS uuid))")
                 .bind("id", UUID.randomUUID().toString()).bind("acct", accountId)
+                .bind("actor", UUID.randomUUID().toString())
                 .then().block();
     }
 

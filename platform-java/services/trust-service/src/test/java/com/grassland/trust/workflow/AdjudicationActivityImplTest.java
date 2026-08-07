@@ -1,8 +1,10 @@
 package com.grassland.trust.workflow;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -15,12 +17,18 @@ import com.grassland.trust.adjudication.AdjudicationProperties;
 import com.grassland.trust.dispute.DisputeCase;
 import com.grassland.trust.dispute.DisputeCaseRepository;
 import com.grassland.trust.event.OutboxRepository;
+import com.grassland.trust.judge.Judge;
+import com.grassland.trust.judge.JudgeEligibilityService;
 import com.grassland.trust.judge.JudgeRepository;
 import com.grassland.trust.judge.VoteTally;
+import com.grassland.trust.security.TrustException;
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -35,11 +43,12 @@ class AdjudicationActivityImplTest {
 
     private final DisputeCaseRepository disputes = mock(DisputeCaseRepository.class);
     private final JudgeRepository judges = mock(JudgeRepository.class);
+    private final JudgeEligibilityService judgeEligibility = mock(JudgeEligibilityService.class);
     private final OutboxRepository outbox = mock(OutboxRepository.class);
     private final FinanceDecisionClient finance = mock(FinanceDecisionClient.class);
     private final TransactionalOperator transactions = mock(TransactionalOperator.class);
     private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(
-            disputes, judges, outbox,
+            disputes, judges, judgeEligibility, outbox,
             new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0),  // 末参=秒级覆盖，0=用小时值
             finance, transactions);
 
@@ -50,15 +59,47 @@ class AdjudicationActivityImplTest {
     }
 
     @Test
-    void tallyVotesMapsMajorityAndTie() {
+    void tallyVotesAtomicallyRecordsMajorityDecision() {
+        DisputeCase voting = dispute("d1", "voting");
+        DisputeCase decided = dispute("d1", "decided");
+        when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
         when(judges.tallyVotes("d1", 1)).thenReturn(Mono.just(new VoteTally(5, 2, 0, 7)));
+        when(disputes.recordDecision("d1", "for_merchant")).thenReturn(Mono.just(decided));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
         assertThat(activity.tallyVotes("d1", 1)).isEqualTo(
                 TallyResult.decided(5, 2, 0, 7, "for_merchant"));
+        verify(disputes).recordDecision("d1", "for_merchant");
+        verify(outbox).append(any());
+    }
 
-        when(judges.tallyVotes("d1", 2)).thenReturn(Mono.just(new VoteTally(3, 3, 1, 7)));
-        TallyResult tie = activity.tallyVotes("d1", 2);
+    @Test
+    void tallyVotesAtomicallyAdvancesAnUndecidedRound() {
+        DisputeCase voting = dispute("d1", "voting");
+        when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
+        when(judges.tallyVotes("d1", 1)).thenReturn(Mono.just(new VoteTally(3, 3, 1, 7)));
+        when(disputes.reopen("d1", 2)).thenReturn(Mono.just(voting));
+
+        TallyResult tie = activity.tallyVotes("d1", 1);
         assertThat(tie.decided()).isFalse();
         assertThat(tie.winner()).isNull();
+        verify(disputes).reopen("d1", 2);
+    }
+
+    @Test
+    void tallyVotesAtomicallyEscalatesAnUndecidedFinalRound() {
+        DisputeCase voting = dispute("d1", "voting");
+        when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
+        when(judges.tallyVotes("d1", 1)).thenReturn(Mono.just(new VoteTally(3, 3, 1, 7)));
+        when(disputes.markEscalated("d1")).thenReturn(Mono.just(voting));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        TallyResult tie = activity.closeVotingRound("d1", 1, true);
+
+        assertThat(tie.decided()).isFalse();
+        verify(disputes).markEscalated("d1");
+        verify(outbox).append(any());
+        verify(disputes, never()).reopen(anyString(), anyInt());
     }
 
     @Test
@@ -92,6 +133,72 @@ class AdjudicationActivityImplTest {
         verify(judges, never()).drawEligiblePool(anyInt(), anyString(), anyInt());  // 不重新抽签
         verify(judges, never()).assignPanel(anyString(), anyInt(), any());
         verify(outbox, never()).append(any());
+    }
+
+    @Test
+    void assignPanelRejectsPartialConditionalInsert() {
+        DisputeCase open = dispute("d1", "open");
+        DisputeCase voting = dispute("d1", "voting");
+        List<Judge> pool = java.util.stream.IntStream.range(0, 7)
+                .mapToObj(ignored -> judge()).toList();
+        when(disputes.findById("d1")).thenReturn(Mono.just(open), Mono.just(voting));
+        when(judges.countPanel("d1", 1)).thenReturn(Mono.just(0));
+        when(judges.findPanelAccountIds("d1", 1)).thenReturn(Flux.empty());
+        when(judges.lockPanel("d1", 1)).thenReturn(Mono.empty());
+        when(judgeEligibility.drawVerifiedPool(eq(1), anyString(), eq(7), anySet()))
+                .thenReturn(Mono.just(pool));
+        when(judgeEligibility.validateNoOrganizationConflicts(any(), anyString())).thenReturn(Mono.empty());
+        when(disputes.startAdjudication("d1", 1)).thenReturn(Mono.just(voting));
+        when(judges.assignPanel(eq("d1"), eq(1), any())).thenReturn(Mono.just(6));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        assertThatThrownBy(() -> activity.assignPanel("d1", 1))
+                .isInstanceOf(TrustException.class);
+        verify(outbox, never()).append(any());
+    }
+
+    @Test
+    void assignPanelSkipsWhenConcurrentRequestCompletesPanelUnderLock() {
+        DisputeCase open = dispute("d1", "open");
+        List<Judge> pool = java.util.stream.IntStream.range(0, 7)
+                .mapToObj(ignored -> judge()).toList();
+        List<String> completedAccounts = pool.stream().map(Judge::accountId).toList();
+        when(disputes.findById("d1")).thenReturn(Mono.just(open));
+        when(judges.countPanel("d1", 1)).thenReturn(Mono.just(0));
+        when(judges.findPanelAccountIds("d1", 1))
+                .thenReturn(Flux.empty(), Flux.fromIterable(completedAccounts));
+        when(judges.lockPanel("d1", 1)).thenReturn(Mono.empty());
+        when(judgeEligibility.drawVerifiedPool(eq(1), anyString(), eq(7), anySet()))
+                .thenReturn(Mono.just(pool));
+        when(judgeEligibility.validateNoOrganizationConflicts(any(), anyString())).thenReturn(Mono.empty());
+
+        activity.assignPanel("d1", 1);
+
+        verify(disputes, never()).startAdjudication(anyString(), anyInt());
+        verify(judges, never()).assignPanel(anyString(), anyInt(), any());
+        verify(outbox, never()).append(any());
+    }
+
+    @Test
+    void assignPanelRevalidatesIdentityMembershipsImmediatelyBeforeWrite() {
+        DisputeCase open = dispute("d1", "open");
+        List<Judge> pool = java.util.stream.IntStream.range(0, 7)
+                .mapToObj(ignored -> judge()).toList();
+        when(disputes.findById("d1")).thenReturn(Mono.just(open));
+        when(judges.countPanel("d1", 1)).thenReturn(Mono.just(0));
+        when(judges.findPanelAccountIds("d1", 1)).thenReturn(Flux.empty());
+        when(judgeEligibility.drawVerifiedPool(eq(1), eq(open.organizationId()), eq(7), anySet()))
+                .thenReturn(Mono.just(pool));
+        List<String> poolAccounts = pool.stream().map(Judge::accountId).toList();
+        when(judgeEligibility.validateNoOrganizationConflicts(poolAccounts, open.organizationId()))
+                .thenReturn(Mono.error(new TrustException(503, "身份服务暂时不可用")));
+
+        assertThatThrownBy(() -> activity.assignPanel("d1", 1))
+                .isInstanceOf(TrustException.class)
+                .hasMessage("身份服务暂时不可用");
+        verify(disputes, never()).startAdjudication(anyString(), anyInt());
+        verify(judges, never()).assignPanel(anyString(), anyInt(), any());
+        verify(transactions, never()).transactional(any(Mono.class));
     }
 
     @Test
@@ -150,5 +257,10 @@ class AdjudicationActivityImplTest {
     private DisputeCase dispute(String id, String status) {
         return new DisputeCase(id, "eng-" + id, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
                 "merchant", status, "未履约", null, null, null, null, 1, 1L, "none", null, null, null, "standard");
+    }
+
+    private Judge judge() {
+        return new Judge(UUID.randomUUID().toString(), UUID.randomUUID().toString(), null, 5,
+                true, true, 1L, Instant.now(), UUID.randomUUID().toString(), Instant.now());
     }
 }

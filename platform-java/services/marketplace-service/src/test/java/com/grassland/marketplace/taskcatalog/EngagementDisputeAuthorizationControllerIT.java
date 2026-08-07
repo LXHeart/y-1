@@ -36,14 +36,16 @@ class EngagementDisputeAuthorizationControllerIT extends MarketplaceItSupport {
     void trustServiceAuthorizesApplicationRecommender() {
         String org = UUID.randomUUID().toString();
         String recommender = UUID.randomUUID().toString();
-        Seeded eng = seedAcceptedApplication(org, UUID.randomUUID().toString(), recommender);
+        Seeded eng = seedAcceptedApplication(org, UUID.randomUUID().toString(), recommender, true);
 
         client().post().uri(ENDPOINT, eng.applicationId)
                 .header("X-Grassland-Identity", signService("trust"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("actorAccountId", recommender, "actorIdentity", "recommender"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.organizationId").isEqualTo(org);
+                .jsonPath("$.data.organizationId").isEqualTo(org)
+                .jsonPath("$.data.recommenderAccountId").isEqualTo(recommender)
+                .jsonPath("$.data.premiumSupportAtAccept").isEqualTo(true);
     }
 
     @Test
@@ -111,11 +113,20 @@ class EngagementDisputeAuthorizationControllerIT extends MarketplaceItSupport {
 
     /** seed published task + accepted application，返回 applicationId。 */
     private Seeded seedAcceptedApplication(String org, String owner, String recommender) {
+        return seedAcceptedApplication(org, owner, recommender, false);
+    }
+
+    private Seeded seedAcceptedApplication(String org, String owner, String recommender, boolean premiumSupport) {
         String task = seedTask(org, owner);
         String app = UUID.randomUUID().toString();
-        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents)"
-                + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'accepted', 0)")
-                .bind("id", app).bind("task", task).bind("rec", recommender).then().block();
+        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents,"
+                        + " reputation_level_at_accept, reputation_policy_version_at_accept,"
+                        + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept,"
+                        + " premium_support_at_accept)"
+                        + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'accepted', 0,"
+                        + " 1, 1, 2, 0, :premium)")
+                .bind("id", app).bind("task", task).bind("rec", recommender)
+                .bind("premium", premiumSupport).then().block();
         return new Seeded(app, task);
     }
 

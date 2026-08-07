@@ -13,6 +13,7 @@ import com.grassland.finance.wallet.WalletRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -89,27 +90,46 @@ public class EscrowController {
                                                              @RequestBody ReserveRequest body, ServerHttpRequest request) {
         String ref = body.engagementRef();
         long amount = body.amountCents();
+        String payeeAccountId = normalizePayeeAccountId(body.payeeAccountId());
+        int commissionBonusBps = body.commissionBonusBps();
         return callers.authorizeForOrg(request, orgId, FinanceCallerResolver.MARKETPLACE_SERVICE)
                 // D-05 单笔交易上限：仅对终端商家用户断言执行；服务断言（Saga，tier=null）豁免——
                 // 其金额已在 marketplace 发布任务时按同值 maxTxAmountCents 校验，此处按 null→0 会拦死 4F Saga。
                 .filter(caller -> caller.isService()
                         || FinanceTxQuotaPolicy.isWithinLimit(caller.permissionTier(), amount))
                 .switchIfEmpty(fail(409, "交易金额超出本组织单笔上限"))
-                .flatMap(caller -> transactions.transactional(reserveWork(orgId, ref, amount, body.payeeAccountId())))
+                .flatMap(caller -> {
+                    if ((payeeAccountId != null || commissionBonusBps > 0)
+                            && !caller.isServicePrincipal(FinanceCallerResolver.MARKETPLACE_SERVICE)) {
+                        return fail(403, "仅 marketplace 服务可指定收款人或授予平台佣金补贴");
+                    }
+                    return transactions.transactional(reserveWork(
+                            orgId, ref, amount, payeeAccountId, commissionBonusBps));
+                })
                 .map(res -> ResponseEntity.status(res.created() ? HttpStatus.CREATED : HttpStatus.OK)
                         .body(Map.of("success", true, "data", toBody(res.reservation()))));
     }
 
     /** 预留领域写（扣余额 + 建预留）+ outbox append，绑进同一事务（Slice 7C）。幂等：engagementRef 既有→200；并发冲突→既有。 */
-    private Mono<Reserved> reserveWork(String orgId, String ref, long amount, String payeeAccountId) {
+    private Mono<Reserved> reserveWork(String orgId, String ref, long amount, String payeeAccountId,
+                                       int commissionBonusBps) {
+        long commissionBonusCents = CommissionBonusPolicy.calculateCents(amount, commissionBonusBps);
+        CommissionBonusPolicy.validateTotalPayout(amount, commissionBonusCents);
         return reservations.findByEngagementRef(ref)
-                .<Reserved>map(r -> new Reserved(r, false))  // 幂等：既有 → 200
+                .flatMap(r -> existingReservation(
+                        orgId, ref, amount, payeeAccountId, commissionBonusBps, commissionBonusCents, r))
                 .switchIfEmpty(accounts.decrement(orgId, amount)
                         .switchIfEmpty(fail(409, "余额不足"))
-                        .flatMap(acct -> reservations.create(acct.id(), orgId, ref, amount, payeeAccountId)
+                        .flatMap(acct -> reservations.create(acct.id(), orgId, ref, amount, payeeAccountId,
+                                        commissionBonusBps, commissionBonusCents)
                                 .<Reserved>map(r -> new Reserved(r, true))
-                                .switchIfEmpty(reservations.findByEngagementRef(ref)
-                                        .<Reserved>map(r -> new Reserved(r, false)))))  // 并发冲突 → 既有
+                                // 并发唯一键落败：撤销本事务内刚做的余额扣减，再读取胜者。
+                                .switchIfEmpty(accounts.credit(orgId, amount)
+                                        .then(reservations.findByEngagementRef(ref))
+                                        .flatMap(r -> existingReservation(
+                                                orgId, ref, amount, payeeAccountId,
+                                                commissionBonusBps, commissionBonusCents, r))
+                                        .switchIfEmpty(fail(409, "幂等预留冲突")))))
                 .flatMap(res -> (res.created()
                         ? ledger.postReserve(orgId, ref, amount)
                                 .then(outbox.append(reservationEnvelope("FundsReserved", res.reservation())).thenReturn(res))
@@ -154,7 +174,7 @@ public class EscrowController {
      *  仅 trust 服务可调（争议终局钱侧分派）。镜像 release，守卫态为 captured。 */
     @PostMapping("/api/finance/reservations/{engagementRef}/reverse")
     public Mono<ResponseEntity<Map<String, Object>>> reverse(@PathVariable String engagementRef, ServerHttpRequest request) {
-        return callers.resolveMerchantOrService(request, FinanceCallerResolver.TRUST_SERVICE)
+        return callers.requireService(request, FinanceCallerResolver.TRUST_SERVICE)
                 .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
                         .switchIfEmpty(fail(404, "预留不存在"))
                         .flatMap(r -> {
@@ -199,6 +219,8 @@ public class EscrowController {
         payload.put("engagementRef", r.engagementRef());
         payload.put("amountCents", r.amountCents());
         payload.put("status", r.status());
+        payload.put("commissionBonusBps", r.commissionBonusBps());
+        payload.put("commissionBonusCents", r.commissionBonusCents());
         if (r.payeeAccountId() != null) {
             payload.put("payeeAccountId", r.payeeAccountId());
         }
@@ -231,6 +253,16 @@ public class EscrowController {
         m.put("status", r.status());
         m.put("payeeAccountId", r.payeeAccountId());
         m.put("payoutCents", r.payoutCents());   // capture 后 = 实际打给推荐官的净额；null = 未分账
+        m.put("commissionBonusBps", r.commissionBonusBps());
+        m.put("commissionBonusCents", r.commissionBonusCents());
+        if (r.payoutCents() == null) {
+            m.put("basePayoutCents", null);
+            m.put("platformFeeCents", null);
+        } else {
+            long basePayout = r.payoutCents() - r.commissionBonusCents();
+            m.put("basePayoutCents", basePayout);
+            m.put("platformFeeCents", r.amountCents() - basePayout);
+        }
         m.put("createdAt", r.createdAt() == null ? null : r.createdAt().toString());
         return m;
     }
@@ -245,6 +277,29 @@ public class EscrowController {
     }
 
     private record Reserved(FundsReservation reservation, boolean created) {}
+
+    private static Mono<Reserved> existingReservation(
+            String orgId,
+            String engagementRef,
+            long amountCents,
+            String payeeAccountId,
+            int commissionBonusBps,
+            long commissionBonusCents,
+            FundsReservation reservation) {
+        boolean sameScope = orgId.equals(reservation.organizationId())
+                && engagementRef.equals(reservation.engagementRef())
+                && amountCents == reservation.amountCents()
+                && Objects.equals(payeeAccountId, reservation.payeeAccountId())
+                && commissionBonusBps == reservation.commissionBonusBps()
+                && commissionBonusCents == reservation.commissionBonusCents();
+        return sameScope
+                ? Mono.just(new Reserved(reservation, false))
+                : fail(422, "engagementRef 预留范围冲突");
+    }
+
+    private static String normalizePayeeAccountId(String payeeAccountId) {
+        return payeeAccountId == null || payeeAccountId.isBlank() ? null : payeeAccountId;
+    }
 
     private static <T> Mono<T> fail(int status, String message) {
         return Mono.error(new FinanceException(status, message));

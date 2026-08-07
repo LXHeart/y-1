@@ -62,6 +62,14 @@ public class MembershipRepository {
                 .map(MembershipRepository::map).all();
     }
 
+    /** 返回账号当前所属的全部组织 ID；identity 是该关系的唯一权威来源。 */
+    public Flux<String> findOrganizationIdsByAccount(String accountId) {
+        return db.sql("SELECT organization_id::text AS organization_id FROM organization_membership"
+                        + " WHERE account_id = CAST(:acct AS uuid) ORDER BY organization_id")
+                .bind("acct", accountId)
+                .map(row -> row.get("organization_id", String.class)).all();
+    }
+
     /** 鉴权热路径：返回该账号在 org 的 role，不存在返回空 Mono。 */
     public Mono<String> findRole(String organizationId, String accountId) {
         return db.sql("SELECT role FROM organization_membership"

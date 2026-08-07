@@ -37,7 +37,12 @@ public class MarketplaceEngagementAuthorizationClient {
     }
 
     /** 授权结果：成功时携带 marketplace 返回的 canonical organizationId。 */
-    public record Authorization(String engagementRef, String organizationId) {}
+    public record Authorization(String engagementRef, String organizationId,
+                                String recommenderAccountId, boolean premiumSupportAtAccept) {
+        public Authorization(String engagementRef, String organizationId) {
+            this(engagementRef, organizationId, null, false);
+        }
+    }
 
     /**
      * @param actorAccountId  已验签的终端发起方账号（trust 从断言取得，非浏览器输入）
@@ -54,7 +59,7 @@ public class MarketplaceEngagementAuthorizationClient {
                     log.info("dispute-authorization HTTP {} application={} actor={}", code, applicationId, actorAccountId);
                     if (code == 200) {
                         return resp.bodyToMono(AuthorizationResponse.class)
-                                .map(body -> new Authorization(body.data().engagementRef(), body.data().organizationId()));
+                                .map(body -> validate(body, applicationId, actorAccountId, actorIdentity));
                     }
                     if (code == 403 || code == 404 || code == 409 || code == 400) {
                         return Mono.justOrEmpty(Optional.<Authorization>empty());
@@ -62,18 +67,51 @@ public class MarketplaceEngagementAuthorizationClient {
                     return resp.bodyToMono(String.class).defaultIfEmpty("")
                             .flatMap(b -> Mono.<Authorization>error(
                                     new AuthorizationException("authorization failed: HTTP " + code + ": " + b)));
-                });
+                })
+                .onErrorMap(error -> !(error instanceof AuthorizationException),
+                        error -> new AuthorizationException("authorization response invalid", error));
     }
 
-    /** 用于解码 marketplace 信封 {@code {success,data:{engagementRef,organizationId}}}。 */
+    private static Authorization validate(AuthorizationResponse body, String applicationId,
+                                          String actorAccountId, String actorIdentity) {
+        AuthorizationData data = body == null ? null : body.data();
+        if (body == null || !body.success() || data == null
+                || !applicationId.equals(data.engagementRef())
+                || !isUuid(data.engagementRef()) || !isUuid(data.organizationId())
+                || !isUuid(data.recommenderAccountId()) || data.premiumSupportAtAccept() == null
+                || ("recommender".equals(actorIdentity)
+                        && !actorAccountId.equals(data.recommenderAccountId()))) {
+            throw new AuthorizationException("authorization response failed validation");
+        }
+        return new Authorization(data.engagementRef(), data.organizationId(), data.recommenderAccountId(),
+                data.premiumSupportAtAccept());
+    }
+
+    private static boolean isUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            return java.util.UUID.fromString(value).toString().equals(value);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
+    /** 用于解码 marketplace 权威授权信封。 */
     private record AuthorizationResponse(boolean success, AuthorizationData data) {}
 
-    private record AuthorizationData(String engagementRef, String organizationId) {}
+    private record AuthorizationData(String engagementRef, String organizationId,
+                                     String recommenderAccountId, Boolean premiumSupportAtAccept) {}
 
     /** marketplace 调用非授权失败（transport/未知状态）：fail-closed，由全局 handler 转 5xx，不创建争议。 */
     public static final class AuthorizationException extends RuntimeException {
         public AuthorizationException(String message) {
             super(message);
+        }
+
+        public AuthorizationException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 }

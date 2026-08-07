@@ -9,7 +9,7 @@ import io.temporal.activity.ActivityMethod;
  *
  * <ul>
  *   <li>{@code assignPanel} — 抽 panel-size 无冲突审判官 + 置状态（round 1: open→voting；round&gt;1: reopen）+ 写面板 + 发事件。</li>
- *   <li>{@code tallyVotes} — 读 dispute_vote 计票 → {@link TallyResult}（含是否过多数决）。</li>
+ *   <li>{@code tallyVotes} — 在案件行锁下计票，并原子完成判决、推进下一轮或升级客服。</li>
  *   <li>{@code recordDecision} — voting→decided（面板多数判决）+ 发 DisputeDecided。</li>
  *   <li>{@code escalate} — 超 maxRounds 无判决 → 标 escalated（待客服终审）+ 发 AdjudicationEscalated。</li>
  *   <li>{@code isFinal} / {@code hasAppealOrEscalation} — workflow 决策分支用查询。</li>

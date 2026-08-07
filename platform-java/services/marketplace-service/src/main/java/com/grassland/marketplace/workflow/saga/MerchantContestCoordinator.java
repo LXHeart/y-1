@@ -60,7 +60,7 @@ public class MerchantContestCoordinator {
             return Mono.error(new IllegalStateException("contest intent is not claimed"));
         }
         Mono<TaskApplication> completed = claimed.merchantRejectionDisputeId() == null
-                ? trust.openMerchantRejection(task.organizationId(), claimed.id(), task.ownerAccountId(), claimed.rejectionReason())
+                ? openTrustCase(claimed, task)
                         .flatMap(disputeId -> completeLocally(claimed, task, disputeId))
                 : Mono.just(claimed);
         return completed.flatMap(app -> workflows.start(
@@ -68,6 +68,15 @@ public class MerchantContestCoordinator {
                 .then(Mono.defer(() -> apps.markRejectionWorkflowStarted(
                         app.id(), app.merchantRejectionDisputeId())))
                 .then(Mono.defer(() -> apps.findById(app.id()))));
+    }
+
+    private Mono<String> openTrustCase(TaskApplication claimed, Task task) {
+        if (Boolean.TRUE.equals(claimed.premiumSupportAtAccept())) {
+            return trust.openMerchantRejection(task.organizationId(), claimed.id(), task.ownerAccountId(),
+                    claimed.rejectionReason(), claimed.recommenderAccountId(), true);
+        }
+        return trust.openMerchantRejection(task.organizationId(), claimed.id(), task.ownerAccountId(),
+                claimed.rejectionReason());
     }
 
     private Mono<TaskApplication> completeLocally(TaskApplication claimed, Task task, String disputeId) {

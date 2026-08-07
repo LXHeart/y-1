@@ -5,6 +5,8 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.reputation.ReputationService;
+import com.grassland.marketplace.reputation.ReputationSnapshot;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
 import com.grassland.marketplace.workflow.saga.AcceptanceInput;
@@ -13,6 +15,7 @@ import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImp
 import com.grassland.marketplace.workflow.saga.ConfirmationWorkflowStarter;
 import com.grassland.marketplace.workflow.saga.MerchantContestCoordinator;
 import com.grassland.marketplace.workflow.saga.SettlementInput;
+import com.grassland.marketplace.workflow.saga.SettlementWorkflowStarter;
 import com.grassland.marketplace.workflow.saga.SettlementWindowWorkflow;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
@@ -85,7 +88,8 @@ public class ApplicationController {
     private final ConfirmationWorkflowStarter confirmationWorkflows;
     private final MerchantContestCoordinator contests;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
-    private final long settlementWindowSeconds;
+    private final SettlementWorkflowStarter settlementWorkflows;
+    private final ReputationService reputationService;
     private final long confirmationWindowSeconds;
     private final long confirmationReminderLeadSeconds;
     private final int supplementCap;
@@ -104,11 +108,11 @@ public class ApplicationController {
                                  ConfirmationWorkflowStarter confirmationWorkflows,
                                  MerchantContestCoordinator contests,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
-                                 @Value("${marketplace.settlement.window-seconds:5}") long settlementWindowSeconds,
+                                 SettlementWorkflowStarter settlementWorkflows,
                                  @Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
                                  @Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
                                  @Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap,
-                                 TransactionalOperator transactions) {
+                                 TransactionalOperator transactions, ReputationService reputationService) {
         this.callers = callers;
         this.tasks = tasks;
         this.apps = apps;
@@ -124,11 +128,12 @@ public class ApplicationController {
         this.confirmationWorkflows = confirmationWorkflows;
         this.contests = contests;
         this.reconciliations = reconciliations;
-        this.settlementWindowSeconds = settlementWindowSeconds;
+        this.settlementWorkflows = settlementWorkflows;
         this.confirmationWindowSeconds = confirmationWindowSeconds;
         this.confirmationReminderLeadSeconds = Math.max(0, confirmationReminderLeadSeconds);
         this.supplementCap = Math.max(0, supplementCap);
         this.transactions = transactions;
+        this.reputationService = reputationService;
     }
 
     @PostMapping(value = "/api/tasks/{id}/applications")
@@ -149,15 +154,22 @@ public class ApplicationController {
                                     && task.applicationDeadline().isBefore(Instant.now())) {
                                 return fail(409, "报名已截止");
                             }
-                            return slotsFull(task).flatMap(full -> full
-                                    ? Mono.<TaskApplication>error(new MarketplaceException(409, "名额已满"))
-                                    : apps.findByTaskAndRecommender(id, rec.accountId())
-                                            .<TaskApplication>flatMap(existing ->
-                                                    Mono.error(new MarketplaceException(409, "已报名该任务")))
-                                            .switchIfEmpty(transactions.transactional(
-                                                    apps.create(id, rec.accountId(), note, bountyOrZero(task))
-                                                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
-                                                            .flatMap(created -> outbox.append(envelope("ApplicationSubmitted", created, task.ownerAccountId())).thenReturn(created)))));
+                            return reputationService.snapshot(rec.accountId())
+                                    .flatMap(snapshot -> snapshot.evaluation().effectiveLevel().number()
+                                                    < task.minRecommenderLevel()
+                                            ? Mono.<TaskApplication>error(new MarketplaceException(
+                                                    403, "当前等级不满足任务报名要求"))
+                                            : slotsFull(task).flatMap(full -> full
+                                                    ? Mono.<TaskApplication>error(new MarketplaceException(409, "名额已满"))
+                                                    : apps.findByTaskAndRecommender(id, rec.accountId())
+                                                            .<TaskApplication>flatMap(existing -> Mono.error(
+                                                                    new MarketplaceException(409, "已报名该任务")))
+                                                            .switchIfEmpty(transactions.transactional(
+                                                                    apps.create(id, rec.accountId(), note, bountyOrZero(task))
+                                                                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
+                                                                            .flatMap(created -> outbox.append(envelope(
+                                                                                    "ApplicationSubmitted", created,
+                                                                                    task.ownerAccountId())).thenReturn(created))))));
                         })
                         .map(app -> ResponseEntity.status(HttpStatus.CREATED)
                                 .body(Map.of("success", true, "data", toBody(app)))));
@@ -184,10 +196,13 @@ public class ApplicationController {
 
     /** 非资金型任务（bounty null/0）→ 4B 原直连：pending→accepted 同步返回 200。 */
     private Mono<ResponseEntity<Map<String, Object>>> acceptDirectly(Task task, TaskApplication app, Caller merchant) {
-        return transactions.transactional(
-                apps.accept(app.id(), app.taskId(), merchant.accountId(), bountyOrZero(task))
-                        .switchIfEmpty(fail(409, "该报名已处理"))
-                        .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a)))
+        return reputationService.snapshot(app.recommenderAccountId())
+                .map(ApplicationController::entitlementSnapshot)
+                .flatMap(entitlement -> transactions.transactional(
+                        apps.accept(app.id(), app.taskId(), merchant.accountId(), bountyOrZero(task), entitlement)
+                                .switchIfEmpty(fail(409, "该报名已处理"))
+                                .flatMap(a -> outbox.append(envelope(
+                                        "ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a))))
                 .map(a -> ResponseEntity.ok(Map.of("success", true, "data", toBody(a))));
     }
 
@@ -199,7 +214,16 @@ public class ApplicationController {
     /** 资金型任务 → 启资金预留 Saga：202 Accepted + workflowId。双击去重（WorkflowExecutionAlreadyStarted → 复用 id）。 */
     private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
                                                                                Caller merchant) {
-        AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), merchant.accountId(),
+        return reputationService.snapshot(app.recommenderAccountId())
+                .map(ApplicationController::entitlementSnapshot)
+                .flatMap(entitlement -> apps.snapshotPendingEntitlement(app.id(), task.id(), entitlement)
+                        .switchIfEmpty(fail(409, "该报名已处理")))
+                .flatMap(frozen -> startReservationWorkflow(task, frozen, merchant.accountId()));
+    }
+
+    private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
+                                                                                String merchantAccountId) {
+        AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), merchantAccountId,
                 task.organizationId(), bountyOrZero(task));
         String workflowId = "accept-" + app.id();
         return Mono.fromCallable(() -> {
@@ -419,9 +443,9 @@ public class ApplicationController {
                                 // contest claim 一旦落地即不允许普通确认；不必等待 trust 案/merchant_rejected_at 完成。
                                 .flatMap(app -> app.contestRequestedAt() != null
                                         ? fail(409, "已发起争议，无法确认")
-                                        // 已由商家/自动路径确认 → 幂等 200，不再启动第二个 SettlementWindow。
+                                        // 已由商家/自动路径确认 → 用确定性 workflow id 补启/收敛后幂等 200。
                                         : app.confirmedAt() != null
-                                                ? Mono.just(confirmedResponse(app))
+                                                ? resumeConfirmedSettlement(task, app)
                                                 : transactions.transactional(confirmWork(id, appId, task))
                                                 .flatMap(confirmed -> startSettlementWorkflow(task, confirmed))
                                                 // 商家确认与 auto-confirm 竞态：事务内 guarded write 失败会抛标记异常并回滚；
@@ -429,7 +453,7 @@ public class ApplicationController {
                                                 .onErrorResume(ConfirmationConflict.class, conflict -> apps.findById(appId)
                                                         .filter(current -> "accepted".equals(current.status())
                                                                 && current.confirmedAt() != null)
-                                                        .map(this::confirmedResponse)
+                                                        .flatMap(current -> resumeConfirmedSettlement(task, current))
                                                         .switchIfEmpty(fail(409, conflict.getMessage()))))));
     }
 
@@ -460,6 +484,12 @@ public class ApplicationController {
 
     private ResponseEntity<Map<String, Object>> confirmedResponse(TaskApplication app) {
         return ok(Map.of("applicationId", app.id(), "status", "confirmed"));
+    }
+
+    private Mono<ResponseEntity<Map<String, Object>>> resumeConfirmedSettlement(
+            Task task, TaskApplication application) {
+        return settlementWorkflows.start(task, application)
+                .thenReturn(confirmedResponse(application));
     }
 
     /**
@@ -538,25 +568,7 @@ public class ApplicationController {
 
     /** 资金型任务已确认 → 启结算窗口 Saga：202 settling（Timer 后 capture）。双击去重。 */
     private Mono<ResponseEntity<Map<String, Object>>> startSettlementWorkflow(Task task, TaskApplication app) {
-        // capture 金额取 **app 冻结的赏金**（snapshot-pinning），不读可变 task 行——accept 后改 task 赏金不影响本履约结算额。
-        long amount = app.bountyCents();
-        SettlementInput input = new SettlementInput(app.id(), task.id(), app.reviewedByAccountId(),
-                task.organizationId(), amount, settlementWindowSeconds);
-        String workflowId = "settle-" + app.id();
-        return Mono.fromCallable(() -> {
-            SettlementWindowWorkflow stub = workflowClient.newWorkflowStub(
-                    SettlementWindowWorkflow.class,
-                    WorkflowOptions.newBuilder()
-                            .setWorkflowId(workflowId)
-                            .setTaskQueue(ApplicationReservationWorkflowImpl.TASK_QUEUE)
-                            .setWorkflowIdReusePolicy(
-                                    WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
-                            .build());
-            WorkflowClient.start(stub::run, input);
-            return workflowId;
-        })
-        .subscribeOn(Schedulers.boundedElastic())
-        .onErrorResume(WorkflowExecutionAlreadyStarted.class, alreadyStarted -> Mono.just(workflowId))
+        return settlementWorkflows.start(task, app)
         .map(wid -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("success", true, "data",
                 Map.of("workflowId", wid, "applicationId", app.id(), "status", "settling"))));
     }
@@ -720,15 +732,35 @@ public class ApplicationController {
         return callers.resolve(request)
                 .flatMap(caller -> tasks.findById(id)
                         .switchIfEmpty(fail(404, "任务不存在"))
-                        .flatMap(task -> apps.findByTaskId(id).collectList()
-                                .map(list -> {
-                                    boolean isOwner = caller.accountId().equals(task.ownerAccountId());
-                                    var visible = isOwner ? list : list.stream()
-                                            .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
-                                            .toList();
-                                    return ResponseEntity.ok(Map.of("success", true,
-                                            "data", visible.stream().map(this::toBody).toList()));
-                                })));
+                        .flatMap(task -> {
+                            boolean isOwner = caller.accountId().equals(task.ownerAccountId());
+                            if (!isOwner) {
+                                return apps.findByTaskId(id)
+                                        .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
+                                        .map(this::toBody).collectList()
+                                        .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
+                            }
+                            return apps.findByTaskId(id)
+                                    .collectList()
+                                    .flatMap(applications -> reputationService.snapshots(applications.stream()
+                                                    .map(TaskApplication::recommenderAccountId).toList())
+                                            .map(snapshots -> applications.stream()
+                                                    .map(app -> new RankedApplication(app,
+                                                            snapshots.get(app.recommenderAccountId())))
+                                                    .sorted((left, right) -> {
+                                                        int byWeight = Integer.compare(
+                                                                right.snapshot().evaluation().taskPriorityWeight(),
+                                                                left.snapshot().evaluation().taskPriorityWeight());
+                                                        if (byWeight != 0) return byWeight;
+                                                        int byCreatedAt = left.application().createdAt()
+                                                                .compareTo(right.application().createdAt());
+                                                        if (byCreatedAt != 0) return byCreatedAt;
+                                                        return left.application().id()
+                                                                .compareTo(right.application().id());
+                                                    })
+                                                    .map(this::toRankedBody).toList()))
+                                    .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
+                        }));
     }
 
     /** 加载任务并校验 caller 为 owner（资源级自查，HLD 7.4）：不存在→404，非 owner→403。 */
@@ -979,8 +1011,31 @@ public class ApplicationController {
         m.put("reviewedByAccountId", app.reviewedByAccountId());
         m.put("decidedAt", app.decidedAt() == null ? null : app.decidedAt().toString());
         m.put("createdAt", app.createdAt() == null ? null : app.createdAt().toString());
+        m.put("reputationLevelAtAccept", app.reputationLevelAtAccept());
+        m.put("reputationPolicyVersionAtAccept", app.reputationPolicyVersionAtAccept());
+        m.put("settlementDelayDaysAtAccept", app.settlementDelayDaysAtAccept());
+        m.put("commissionBonusBpsAtAccept", app.commissionBonusBpsAtAccept());
+        m.put("premiumSupportAtAccept", app.premiumSupportAtAccept());
         return m;
     }
+
+    private Map<String, Object> toRankedBody(RankedApplication ranked) {
+        Map<String, Object> body = toBody(ranked.application());
+        body.put("reputationLevel", ranked.snapshot().evaluation().effectiveLevel().number());
+        body.put("reputationTitle", ranked.snapshot().policy()
+                .ruleFor(ranked.snapshot().evaluation().effectiveLevel()).title());
+        body.put("taskPriorityWeight", ranked.snapshot().evaluation().taskPriorityWeight());
+        return body;
+    }
+
+    private static ReputationEntitlementSnapshot entitlementSnapshot(ReputationSnapshot snapshot) {
+        var evaluation = snapshot.evaluation();
+        return new ReputationEntitlementSnapshot(
+                evaluation.effectiveLevel().number(), snapshot.policy().version(),
+                evaluation.settlementDelayDays(), evaluation.commissionBonusBps(), evaluation.premiumSupport());
+    }
+
+    private record RankedApplication(TaskApplication application, ReputationSnapshot snapshot) {}
 
     /**
      * 商家触发履约核验（Verification v1）：对交付物跑自动核验（链接可达性；Stage 4 加 AI 视觉）

@@ -9,6 +9,7 @@ import com.grassland.trust.dispute.MerchantRejectionFinalizer;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
 import com.grassland.trust.judge.Judge;
+import com.grassland.trust.judge.JudgeEligibilityService;
 import com.grassland.trust.judge.JudgeRepository;
 import com.grassland.trust.judge.JudgeVote;
 import com.grassland.trust.judge.VoteChoice;
@@ -23,6 +24,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -60,6 +62,7 @@ public class AdjudicationController {
     private final TrustCallerResolver callers;
     private final DisputeCaseRepository disputes;
     private final JudgeRepository judges;
+    private final JudgeEligibilityService judgeEligibility;
     private final OutboxRepository outbox;
     private final AdjudicationProperties props;
     private final AdjudicationWorkflowStarter workflowStarter;
@@ -72,7 +75,8 @@ public class AdjudicationController {
     private final DisputeEvidenceAccessAuditRepository evidenceAccessAudit;
 
     public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
-                                  JudgeRepository judges, OutboxRepository outbox, AdjudicationProperties props,
+                                  JudgeRepository judges, JudgeEligibilityService judgeEligibility,
+                                  OutboxRepository outbox, AdjudicationProperties props,
                                   AdjudicationWorkflowStarter workflowStarter, DisputeAudience audience,
                                   TransactionalOperator transactions,
                                   MerchantRejectionFinalizer merchantRejectionFinalizer,
@@ -82,6 +86,7 @@ public class AdjudicationController {
         this.callers = callers;
         this.disputes = disputes;
         this.judges = judges;
+        this.judgeEligibility = judgeEligibility;
         this.outbox = outbox;
         this.props = props;
         this.workflowStarter = workflowStarter;
@@ -144,29 +149,77 @@ public class AdjudicationController {
     private Mono<DisputeCase> startFreshAdjudication(DisputeCase d) {
         return drawPanelAccounts(d.organizationId(), props.panelSize())
                 .flatMap(accountIds -> transactions.transactional(
-                        disputes.startAdjudication(d.id(), 1)
+                        judges.lockPanel(d.id(), 1)
+                                .then(judges.countPanel(d.id(), 1))
+                                .flatMap(existing -> existing == 0
+                                        ? disputes.startAdjudication(d.id(), 1)
+                                        : fail(503, "审判面板状态已变化，请重试"))
                                 .flatMap(voting -> judges.assignPanel(d.id(), 1, accountIds)
-                                        .then(outbox.append(assignedEnvelope(voting, 1, accountIds.size())))
+                                        .flatMap(inserted -> requireCompletePanel(inserted, accountIds.size()))
+                                        .then(judges.countPanel(d.id(), 1))
+                                        .flatMap(count -> requireCompletePanel(count, props.panelSize()))
+                                        .then(Mono.defer(() -> outbox.append(
+                                                assignedEnvelope(voting, 1, accountIds.size()))))
                                         .thenReturn(voting))));
     }
 
-    /** 抽 panel-size 无冲突审判官账号；空池 → 503。 */
+    /** 抽完整 panel，并向 marketplace 实时复验每个候选的有效 Lv5 资格。 */
     private Mono<List<String>> drawPanelAccounts(String orgId, int size) {
-        return judges.drawEligiblePool(props.judgeEligibilityTier(), orgId, size)
-                .map(Judge::accountId).collectList()
-                .flatMap(list -> list.isEmpty()
-                        ? Mono.error(new TrustException(503, "无可用的合格审判官"))
-                        : Mono.just(list));
+        return drawPanelAccounts(orgId, size, Set.of());
     }
 
-    /** 幂等保证该轮面板已分配：面板已存在 → no-op；否则抽签 + 写 + 发 DisputeAssigned（自愈重试）。 */
+    private Mono<List<String>> drawPanelAccounts(String orgId, int size, Set<String> excludedAccountIds) {
+        return judgeEligibility.drawVerifiedPool(
+                        props.judgeEligibilityTier(), orgId, size, excludedAccountIds)
+                .map(pool -> pool.stream().map(Judge::accountId).toList());
+    }
+
+    /** 幂等保证该轮面板严格达到 panel-size；残缺面板补位，并发请求由事务级 advisory lock 串行化。 */
     private Mono<Void> ensurePanelAndEvent(DisputeCase d, int round) {
-        return judges.countPanel(d.id(), round).flatMap(count -> count > 0
-                ? Mono.<Void>empty()
-                : drawPanelAccounts(d.organizationId(), props.panelSize())
-                        .flatMap(accountIds -> transactions.transactional(
-                                judges.assignPanel(d.id(), round, accountIds)
-                                        .then(outbox.append(assignedEnvelope(d, round, accountIds.size()))))));
+        int panelSize = props.panelSize();
+        return judges.findPanelAccountIds(d.id(), round).collectList()
+                .flatMap(existing -> {
+                    if (existing.size() == panelSize) {
+                        return Mono.empty();
+                    }
+                    if (existing.size() > panelSize) {
+                        return fail(503, "审判面板人数异常，请联系平台处理");
+                    }
+                    int missing = panelSize - existing.size();
+                    return drawPanelAccounts(d.organizationId(), missing, Set.copyOf(existing))
+                            .flatMap(newAccounts -> transactions.transactional(
+                                    judges.lockPanel(d.id(), round)
+                                            .then(judges.findPanelAccountIds(d.id(), round).collectList())
+                                            .flatMap(current -> completePanelUnderLock(
+                                                    d, round, existing, current, newAccounts, panelSize))));
+                });
+    }
+
+    private Mono<Void> completePanelUnderLock(DisputeCase dispute, int round,
+                                              List<String> observedAccounts, List<String> currentAccounts,
+                                              List<String> newAccounts, int panelSize) {
+        if (currentAccounts.size() == panelSize) {
+            return Mono.empty();
+        }
+        if (currentAccounts.size() > panelSize || !sameAccounts(observedAccounts, currentAccounts)) {
+            return fail(503, "审判面板状态已变化，请重试");
+        }
+        return judges.assignPanel(dispute.id(), round, newAccounts)
+                .flatMap(inserted -> requireCompletePanel(inserted, newAccounts.size()))
+                .then(judges.countPanel(dispute.id(), round))
+                .flatMap(count -> requireCompletePanel(count, panelSize))
+                .then(Mono.defer(() -> outbox.append(
+                        assignedEnvelope(dispute, round, panelSize))));
+    }
+
+    private static boolean sameAccounts(List<String> left, List<String> right) {
+        return left.size() == right.size() && Set.copyOf(left).equals(Set.copyOf(right));
+    }
+
+    private Mono<Void> requireCompletePanel(int inserted, int expected) {
+        return inserted == expected
+                ? Mono.empty()
+                : fail(503, "审判官资格已变化，请重试抽签");
     }
 
     @PostMapping("/api/trust/disputes/{id}/votes")
@@ -174,16 +227,15 @@ public class AdjudicationController {
                                                               @RequestBody CastVoteRequest body, ServerHttpRequest request) {
         VoteChoice choice = VoteChoice.fromDb(body.vote());  // 非法 → IllegalArgumentException → 400
         return callers.requireJudge(request)
-                // 门禁第二道：须已入 judge 池且未退池（审判官 = 推荐官 + 入池，见 requireJudge 注释）。
-                // 放在此处而非 resolver：避免 TrustCallerResolver 依赖 JudgeRepository。
+                // 分配时已固化 marketplace 资格快照；投票只复查本地可撤销门禁，避免上游波动阻断在途案件。
                 .filterWhen(caller -> judges.findByAccountId(caller.accountId())
-                        .map(Judge::active)
+                        .map(judge -> judge.active() && judge.opsAdmitted())
                         .defaultIfEmpty(false))
-                .switchIfEmpty(fail(403, "需要先加入审判官池"))
-                .flatMap(judge -> disputes.findById(id)
+                .switchIfEmpty(fail(403, "当前无有效审判官资格"))
+                .flatMap(judge -> transactions.transactional(disputes.findByIdForUpdate(id)
                         .switchIfEmpty(fail(404, "争议不存在"))
                         .flatMap(d -> {
-                            if (!"voting".equals(d.status())) {
+                            if (!"voting".equals(d.status()) || "escalated".equals(d.appealState())) {
                                 return fail(409, "该争议当前不在投票阶段");
                             }
                             int round = d.round();
@@ -193,11 +245,12 @@ public class AdjudicationController {
                                     .then(judges.recordVote(id, round, judge.accountId(), choice.dbValue(), body.rationale())
                                             .<VoteResult>map(v -> new VoteResult(v, true))
                                             .switchIfEmpty(judges.findVote(id, round, judge.accountId())
-                                                    .<VoteResult>map(v -> new VoteResult(v, false))))
+                                                    .<VoteResult>map(v -> new VoteResult(v, false))
+                                                    .switchIfEmpty(fail(403, "当前无有效审判官资格"))))
                                     .flatMap(result -> judges.tallyVotes(id, round)
                                             .map(tally -> ResponseEntity.status(result.inserted() ? HttpStatus.CREATED : HttpStatus.OK)
                                                     .body(Map.of("success", true, "data", voteBody(result.vote(), round, tally)))));
-                        }));
+                        })));
     }
 
     @GetMapping("/api/trust/disputes/{id}/adjudication")

@@ -23,21 +23,27 @@ class TaskControllerIT extends MarketplaceItSupport {
     void merchantPublishesTaskAndEvent() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
-        client().post().uri("/api/tasks")
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = client().post().uri("/api/tasks")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body(org, "爆款任务", "douyin", null))
-                .exchange().expectStatus().isCreated().expectBody()
-                .jsonPath("$.data.ownerAccountId").isEqualTo(merchant)
-                .jsonPath("$.data.organizationId").isEqualTo(org)
-                .jsonPath("$.data.status").isEqualTo("published")
-                .jsonPath("$.data.platform").isEqualTo("douyin");
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> task = (Map<String, Object>) response.get("data");
+        assertThat(task.get("ownerAccountId")).isEqualTo(merchant);
+        assertThat(task.get("organizationId")).isEqualTo(org);
+        assertThat(task.get("status")).isEqualTo("pending_review");
+        assertThat(task.get("platform")).isEqualTo("douyin");
 
-        Long count = db.sql("SELECT COUNT(*)::int AS c FROM marketplace_outbox"
-                        + " WHERE event_type = 'TaskPublished' AND payload->>'organizationId' = :org")
+        Long submitted = db.sql("SELECT COUNT(*)::int AS c FROM marketplace_outbox"
+                        + " WHERE event_type = 'TaskSubmittedForReview' AND payload->>'organizationId' = :org")
                 .bind("org", org)
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
-        assertThat(count).isEqualTo(1);
+        assertThat(submitted).isEqualTo(1);
+
+        approveTask(task);
+        assertThat(outboxType((String) task.get("id"), "TaskPublished")).isEqualTo(1);
     }
 
     @Test
@@ -245,7 +251,7 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .bodyValue(body(org, title, null, maxSlots))
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        return approveTask((Map<String, Object>) resp.get("data"));
     }
 
     private static Map<String, Object> body(String org, String title, String platform, Integer maxSlots) {
@@ -263,9 +269,9 @@ class TaskControllerIT extends MarketplaceItSupport {
 
     // ---------- GL-P1-TASK-001 Stage 1：生命周期 + 可见性 + 乐观锁 ----------
 
-    /** immediate-publish 回归：仍 201 published，且带 version=1、publishedAt、task_version 快照行。 */
+    /** 全审回归：创建后显式审核通过，带 published 状态、publishedAt 和一行 task_version 快照。 */
     @Test
-    void immediatePublishProducesVersionAndSnapshot() {
+    void approvedTaskProducesVersionAndSnapshot() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String id = publish(merchant, org, "basic_publish", "即时发布", null);
@@ -274,7 +280,7 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("published")
-                .jsonPath("$.data.version").isEqualTo(1)
+                .jsonPath("$.data.version").isEqualTo(2)
                 .jsonPath("$.data.publishedAt").isNotEmpty();
 
         Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
@@ -316,7 +322,7 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.title").isEqualTo("改后标题")
                 .jsonPath("$.data.version").isEqualTo(1);
 
-        // 发布后 PUT 应被拒（非 draft → 409）。
+        // 提交审核后 PUT 应被拒（非 draft → 409）。
         client().post().uri("/api/tasks/" + id + "/publish")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
@@ -362,7 +368,7 @@ class TaskControllerIT extends MarketplaceItSupport {
         String toClose = publish(merchant, org, "basic_publish", "关", null);
         client().post().uri("/api/tasks/" + toClose + "/close")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("closed");
         assertThat(outboxType(toClose, "TaskClosed")).isEqualTo(1);
@@ -370,7 +376,7 @@ class TaskControllerIT extends MarketplaceItSupport {
         String toCancel = publish(merchant, org, "basic_publish", "消", null);
         client().post().uri("/api/tasks/" + toCancel + "/cancel")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("cancelled");
         assertThat(outboxType(toCancel, "TaskCancelled")).isEqualTo(1);
@@ -407,8 +413,9 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.length()").value(l -> assertThat((Integer) l).isZero());
     }
 
-    /** 草稿发布后落 task_version 快照（含编辑后的字段）。 */
+    /** 草稿提交审核并通过后落 task_version 快照（含编辑后的字段）。 */
     @Test
+    @SuppressWarnings("unchecked")
     void publishingDraftRecordsImmutableSnapshot() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
@@ -418,10 +425,15 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("expectedVersion", 0, "title", "终标题", "bountyCents", 0))
                 .exchange().expectStatus().isOk();
-        client().post().uri("/api/tasks/" + id + "/publish")
+        Map<String, Object> response = client().post().uri("/api/tasks/" + id + "/publish")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
-                .exchange().expectStatus().isOk();
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> task = (Map<String, Object>) response.get("data");
+        assertThat(task.get("status")).isEqualTo("pending_review");
+        assertThat(task.get("version")).isEqualTo(2);
+        approveTask(task);
 
         String snapTitle = db.sql("SELECT title FROM task_version WHERE task_id = CAST(:id AS uuid) ORDER BY version DESC LIMIT 1")
                 .bind("id", id).map(r -> r.get("title", String.class)).one().block();
@@ -438,26 +450,27 @@ class TaskControllerIT extends MarketplaceItSupport {
         String org = UUID.randomUUID().toString();
         Map<String, Object> bountyBody = body(org, "原标题", null, 3);
         bountyBody.put("bountyCents", 500); // 资金型任务
-        String id = (String) ((Map<String, Object>) client().post().uri("/api/tasks")
+        Map<String, Object> task = (Map<String, Object>) client().post().uri("/api/tasks")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(bountyBody)
                 .exchange().expectStatus().isCreated()
-                .expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id");
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        String id = approveTask(task);
 
         // 全字段修订：改 title + 赏金 500→800（accept/结算读 app 快照，已 accept 履约不受影响）。
         client().post().uri("/api/tasks/" + id + "/revise")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 1, "title", "修订标题", "maxSlots", 5, "bountyCents", 800))
+                .bodyValue(Map.of("expectedVersion", 2, "title", "修订标题", "maxSlots", 5, "bountyCents", 800))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.title").isEqualTo("修订标题")
-                .jsonPath("$.data.version").isEqualTo(2)
+                .jsonPath("$.data.version").isEqualTo(3)
                 .jsonPath("$.data.maxSlots").isEqualTo(5)
                 .jsonPath("$.data.bountyCents").isEqualTo(800); // 赏金可改
 
         Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
                 .bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
-        assertThat(versions).isEqualTo(2); // v1 发布快照 + v2 修订快照
+        assertThat(versions).isEqualTo(2); // v2 审核发布快照 + v3 修订快照
         assertThat(outboxType(id, "TaskRevised")).isEqualTo(1);
     }
 
@@ -469,16 +482,17 @@ class TaskControllerIT extends MarketplaceItSupport {
         Map<String, Object> bountyBody = body(org, "上限测", null, null);
         bountyBody.put("bountyCents", 500);
         @SuppressWarnings("unchecked")
-        String id = (String) ((Map<String, Object>) client().post().uri("/api/tasks")
+        Map<String, Object> task = (Map<String, Object>) client().post().uri("/api/tasks")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(bountyBody)
                 .exchange().expectStatus().isCreated()
-                .expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id");
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        String id = approveTask(task);
 
         client().post().uri("/api/tasks/" + id + "/revise")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 1, "title", "超限", "bountyCents", 20_000_000L))
+                .bodyValue(Map.of("expectedVersion", 2, "title", "超限", "bountyCents", 20_000_000L))
                 .exchange().expectStatus().isEqualTo(409);
     }
 
@@ -492,7 +506,7 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity",
                         sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 1, "title", "篡改"))
+                .bodyValue(Map.of("expectedVersion", 2, "title", "篡改"))
                 .exchange().expectStatus().isForbidden();
     }
 
@@ -511,12 +525,12 @@ class TaskControllerIT extends MarketplaceItSupport {
         String closedId = publish(merchant, org, "basic_publish", "已关", null);
         client().post().uri("/api/tasks/" + closedId + "/close")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2))
                 .exchange().expectStatus().isOk();
         client().post().uri("/api/tasks/" + closedId + "/revise")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 2, "title", "x"))
+                .bodyValue(Map.of("expectedVersion", 3, "title", "x"))
                 .exchange().expectStatus().isEqualTo(409);
     }
 
@@ -607,6 +621,56 @@ class TaskControllerIT extends MarketplaceItSupport {
         assertThat(ids).containsExactly(open).doesNotContain(expired);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void minimumLevelTaskIsHiddenFromIneligibleRecommender() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String lowLevelAccount = UUID.randomUUID().toString();
+        String platform = "level" + UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+        Map<String, Object> request = body(org, "Lv3 专属任务", platform, null);
+        request.put("minRecommenderLevel", 3);
+
+        Map<String, Object> response = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(request)
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> task = (Map<String, Object>) response.get("data");
+        String taskId = approveTask(task);
+
+        client().get().uri("/api/tasks/feed?platform=" + platform)
+                .header("X-Grassland-Identity", sign(lowLevelAccount, "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(0);
+        client().get().uri("/api/tasks/" + taskId)
+                .header("X-Grassland-Identity", sign(lowLevelAccount, "recommender"))
+                .exchange().expectStatus().isNotFound();
+
+        client().get().uri("/api/tasks/" + taskId)
+                .header("X-Grassland-Identity", sign(lowLevelAccount, "merchant"))
+                .exchange().expectStatus().isNotFound();
+        client().get().uri("/api/tasks?organizationId=" + org)
+                .header("X-Grassland-Identity", sign(lowLevelAccount, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(0);
+
+        client().get().uri("/api/tasks/" + taskId)
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.minRecommenderLevel").isEqualTo(3);
+    }
+
+    @Test
+    void minimumLevelOutsideSupportedRangeIsRejected() {
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> request = body(org, "非法等级", null, null);
+        request.put("minRecommenderLevel", 6);
+        client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(request)
+                .exchange().expectStatus().isBadRequest();
+    }
+
     /** 坏游标不报错，按首页返回（避免前端持过期游标硬失败）。 */
     @Test
     void feedIgnoresInvalidCursor() {
@@ -653,7 +717,7 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body(org, title, platform, null))
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        return approveTask((Map<String, Object>) resp.get("data"));
     }
 
     @SuppressWarnings("unchecked")
@@ -665,7 +729,20 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        return approveTask((Map<String, Object>) resp.get("data"));
+    }
+
+    private String approveTask(Map<String, Object> task) {
+        String taskId = (String) task.get("id");
+        int version = ((Number) task.get("version")).intValue();
+        client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
+                .header("X-Grassland-Identity",
+                        signWithRole(UUID.randomUUID().toString(), "platform_admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", version))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("published");
+        return taskId;
     }
 
     @SuppressWarnings("unchecked")

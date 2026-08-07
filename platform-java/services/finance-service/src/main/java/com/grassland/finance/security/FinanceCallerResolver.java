@@ -30,6 +30,12 @@ public class FinanceCallerResolver {
     /** 受信任的争议处置服务 principal（trust ReleaseHoldAndApplyDecisionActivity，Slice 6C Phase D）。 */
     public static final String TRUST_SERVICE = "trust";
 
+    /** AI 积分权益的唯一受信消费方；共享 internal key 本身不得授予免费额度。 */
+    public static final String INTELLIGENCE_SERVICE = "intelligence";
+
+    /** 账号权威服务；唯一可执行人工积分调账的调用方。 */
+    public static final String IDENTITY_SERVICE = "identity";
+
     private final IdentityAssertionSigner signer;
     private final String headerName;
 
@@ -86,6 +92,13 @@ public class FinanceCallerResolver {
                 .filter(c -> orgId.equals(c.organizationId())
                         && c.isServicePrincipal(servicePrincipal))
                 .switchIfEmpty(Mono.error(new FinanceException(403, "无权执行内部资金对账")));
+    }
+
+    /** 仅指定服务 principal；用于无 organization 维度的内部命令。 */
+    public Mono<Caller> requireService(ServerHttpRequest request, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "无权执行内部命令")));
     }
 
     /**

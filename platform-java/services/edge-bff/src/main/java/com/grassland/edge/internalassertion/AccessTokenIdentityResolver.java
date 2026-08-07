@@ -60,12 +60,11 @@ public class AccessTokenIdentityResolver {
     private Mono<ResolvedIdentity> loadIdentity(AccessToken token) {
         String accountId = token.accountId();
         String refreshTokenId = token.sessionToken();
-        return db.sql("SELECT id::text, email, display_name, role, status FROM app_users"
+        return db.sql("SELECT id::text, email, display_name, status FROM app_users"
                         + " WHERE id = CAST(:id AS uuid) AND lower(status) = 'active'")
                 .bind("id", accountId)
                 .map(row -> new AccountRow(
                         row.get("id", String.class),
-                        row.get("role", String.class),
                         row.get("status", String.class)))
                 .one()
                 .flatMap(account -> backendRolesClaim(accountId)
@@ -77,7 +76,7 @@ public class AccessTokenIdentityResolver {
                                             : Mono.just(OrgTier.EMPTY);
                                     return tier.map(o -> new ResolvedIdentity(
                                             account.id(),
-                                            mergeRoleClaim(account.role(), rolesClaim),
+                                            rolesClaim,
                                             account.status(),
                                             session.activeIdentityType(),
                                             refreshTokenId,
@@ -130,16 +129,6 @@ public class AccessTokenIdentityResolver {
                 .one();
     }
 
-    /**
-     * 合并 app_users.role（单值兜底）与 backend_role（多值权威）。与 SessionIdentityResolver 同口径。
-     */
-    private static String mergeRoleClaim(String appUsersRole, String backendRolesClaim) {
-        if (backendRolesClaim != null && !backendRolesClaim.isBlank()) {
-            return backendRolesClaim;
-        }
-        return appUsersRole == null ? "" : appUsersRole;
-    }
-
     /** 从 Authorization 头提取 Bearer token（大小写不敏感前缀匹配）。 */
     private static String extractBearer(ServerHttpRequest request) {
         String auth = request.getHeaders().getFirst("Authorization");
@@ -159,7 +148,7 @@ public class AccessTokenIdentityResolver {
 
     // ---------- 内部 records（镜像 SessionIdentityResolver 的私有 records）----------
 
-    record AccountRow(String id, String role, String status) {}
+    record AccountRow(String id, String status) {}
 
     record SessionState(String activeIdentityType, Instant reauthenticatedAt, String authStrength) {
         static final SessionState EMPTY = new SessionState(null, null, null);

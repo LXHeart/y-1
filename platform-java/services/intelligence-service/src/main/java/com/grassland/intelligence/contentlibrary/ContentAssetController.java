@@ -22,7 +22,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
@@ -44,7 +43,6 @@ import reactor.core.publisher.Mono;
  * 下载端点返回 503，CRUD 照常可用（与 {@code MediaController} 整体条件装配不同——素材业务层不绑死存储后端）。
  */
 @RestController
-@RequestMapping("/api/content-assets")
 public class ContentAssetController {
 
     /** 个人库下载 URL 有效期（秒），与 media 默认 download-url-ttl 对齐。 */
@@ -78,7 +76,7 @@ public class ContentAssetController {
     }
 
     /** 创建素材（个人库任意登录用户 / 商家库 requireMerchant+org）。按 body libraryType 分流。 */
-    @PostMapping
+    @PostMapping("/api/content-assets")
     public Mono<ResponseEntity<Map<String, Object>>> create(
             @RequestBody CreateContentAssetRequest body, ServerWebExchange exchange) {
         LibraryType type = body != null ? LibraryType.fromRequest(body.libraryType()) : null;
@@ -107,7 +105,7 @@ public class ContentAssetController {
      *   <li>{@code merchant} + {@code granted=true} — {@code requireRecommender}，查我被授权的商家素材。</li>
      * </ul>
      */
-    @GetMapping
+    @GetMapping("/api/content-assets")
     public Mono<ResponseEntity<Map<String, Object>>> list(
             @RequestParam(name = "libraryType", required = false) String libraryTypeRaw,
             @RequestParam(name = "category", required = false) String categoryRaw,
@@ -124,7 +122,7 @@ public class ContentAssetController {
             case MERCHANT -> Boolean.TRUE.equals(granted)
                     ? listGrantedMerchant(exchange)
                     : listOwnMerchant(exchange, categoryRaw);
-            case PUBLIC -> listPublic(exchange, categoryRaw);
+            case PUBLIC -> listPublic(categoryRaw);
         };
     }
 
@@ -146,20 +144,18 @@ public class ContentAssetController {
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
-    /** 公共库列表（全员只读，resolveOptional 容忍未登录）。active + 未过期，可按分类筛选。 */
-    private Mono<ResponseEntity<Map<String, Object>>> listPublic(ServerWebExchange exchange, String categoryRaw) {
+    /** 公共库列表（全员只读，不解析身份）。active + 未过期，可按分类筛选。 */
+    private Mono<ResponseEntity<Map<String, Object>>> listPublic(String categoryRaw) {
         AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
         if (categoryRaw != null && category == null) {
             return Mono.error(new IntelligenceException(400, "category 无效"));
         }
-        // 不 resolve 身份：公共库是全员只读，且列表内容与调用者无关。此前用 resolveOptional 再 flatMap，
-        // 未登录时 resolveOptional 返回 Mono.empty() → flatMap 空穿 → 200 但空 body（前端拿不到 items）。
         return assets.listPublic(category).collectList()
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
     /** 素材详情（个人库 owner 校验 / 商家库 org 校验 / 被授权推荐官 grant 校验）。 */
-    @GetMapping("/{id}")
+    @GetMapping("/api/content-assets/{id}")
     public Mono<ResponseEntity<Map<String, Object>>> get(
             @PathVariable String id, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
@@ -168,7 +164,7 @@ public class ContentAssetController {
     }
 
     /** 列素材历史快照（管理权限校验）。PRD §4.8「更新不覆盖历史快照」。 */
-    @GetMapping("/{id}/versions")
+    @GetMapping("/api/content-assets/{id}/versions")
     public Mono<ResponseEntity<Map<String, Object>>> versions(
             @PathVariable String id, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
@@ -178,7 +174,7 @@ public class ContentAssetController {
     }
 
     /** 编辑素材（落新 version 快照 + 乐观锁）。 */
-    @PutMapping("/{id}")
+    @PutMapping("/api/content-assets/{id}")
     public Mono<ResponseEntity<Map<String, Object>>> update(
             @PathVariable String id, @RequestBody UpdateContentAssetRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
@@ -187,7 +183,7 @@ public class ContentAssetController {
     }
 
     /** 软删素材（管理权限校验）。 */
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/api/content-assets/{id}")
     public Mono<ResponseEntity<Map<String, Object>>> delete(
             @PathVariable String id, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
@@ -196,7 +192,7 @@ public class ContentAssetController {
     }
 
     /** 下载签名 URL（可访问性校验 → presigned GET）。URL 短时（默认 5 分钟），不预渲染到 DOM。 */
-    @GetMapping("/{id}/download-url")
+    @GetMapping("/api/content-assets/{id}/download-url")
     public Mono<ResponseEntity<Map<String, Object>>> downloadUrl(
             @PathVariable String id, ServerWebExchange exchange) {
         ObjectStorageAdapter storage = storageProvider.getIfAvailable();
@@ -218,7 +214,7 @@ public class ContentAssetController {
      * 商家授权某素材给推荐官使用（PRD §4.8「商家可以指定哪些素材允许推荐官使用」）。
      * 仅商家库素材、且调用者属该 org（loadManageable 校验）。续约幂等（GREATEST 只前进）。
      */
-    @PostMapping("/{id}/grants")
+    @PostMapping("/api/content-assets/{id}/grants")
     public Mono<ResponseEntity<Map<String, Object>>> grant(
             @PathVariable String id, @RequestBody GrantRequest body, ServerWebExchange exchange) {
         return callers.requireMerchant(exchange.getRequest())
@@ -227,7 +223,7 @@ public class ContentAssetController {
     }
 
     /** 列某素材的全部授权（商家管理用，管理权限校验）。 */
-    @GetMapping("/{id}/grants")
+    @GetMapping("/api/content-assets/{id}/grants")
     public Mono<ResponseEntity<Map<String, Object>>> listGrants(
             @PathVariable String id, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
@@ -237,7 +233,7 @@ public class ContentAssetController {
     }
 
     /** 撤销授权（管理权限校验）。 */
-    @DeleteMapping("/{id}/grants/{granteeAccountId}")
+    @DeleteMapping("/api/content-assets/{id}/grants/{granteeAccountId}")
     public Mono<ResponseEntity<Map<String, Object>>> revokeGrant(
             @PathVariable String id, @PathVariable String granteeAccountId, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
@@ -604,4 +600,5 @@ public class ContentAssetController {
     /** 商家授权推荐官请求。 */
     public record GrantRequest(String granteeAccountId) {}
 
+    /** 公共库审核请求（乐观锁 + 驳回备注）。 */
 }

@@ -5,8 +5,10 @@ import com.grassland.finance.credits.CreditsRepository.CreditsTransaction;
 import com.grassland.finance.credits.CreditsService.MutationResult;
 import com.grassland.finance.credits.CreditsService.CompensationResult;
 import com.grassland.finance.security.FinanceCallerResolver;
+import com.grassland.finance.security.FinanceException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,8 +24,9 @@ import reactor.core.publisher.Mono;
  * accountId 取自 {@link FinanceCallerResolver}（edge-bff 签发的 {@code X-Grassland-Identity}），不接受路径/请求体传入，
  * 故无越权维度。返回 legacy 同构响应：balance 裸对象、history 包 {@code {history:[…]}}。
  *
- * <p><b>内部写（容器直连，共享密钥）</b>：{@code POST /internal/credits/{consume,refund,award}}。
- * 鉴权由 {@link CreditsInternalAuthFilter}（{@code X-Internal-Key} + rejectForwarded）把关；
+ * <p><b>内部写（容器直连，共享密钥 + 服务断言）</b>：{@code POST /internal/credits/{consume,refund,award}}。
+ * {@link CreditsInternalAuthFilter} 先校验 {@code X-Internal-Key} + rejectForwarded；高价值变更再按服务
+ * principal 授权：identity 可人工调账，intelligence 只可做受限 AI 退款。
  * 响应保持 legacy 信封 {@code {success:true, data:{…,deduplicated}}}，402→{@code {success:false,error}}（经全局 advice）。
  * {@code operation_id} 原样透传给 {@link CreditsService}（调用方自行派生 {@code refund:<consumeId>}）。
  */
@@ -34,6 +37,10 @@ public class CreditsController {
     private static final int MAX_FEATURE_LENGTH = 64;
     private static final int MAX_OPERATION_ID_LENGTH = 256;
     private static final int MAX_NOTE_LENGTH = 512;
+    private static final Set<String> AI_QUOTA_FEATURES = Set.of(
+            "video_analysis", "image_analysis", "article_generation", "comedy_generation",
+            "video_production_script", "video_production_video", "ai_run_text",
+            "intelligence_smoke", "creation_assistant");
 
     private final FinanceCallerResolver callers;
     private final CreditsService credits;
@@ -62,32 +69,44 @@ public class CreditsController {
     // ---------------- 内部写 ----------------
 
     @PostMapping("/internal/credits/consume")
-    public Mono<Map<String, Object>> consume(@RequestBody ConsumeRequest body) {
-        return credits.consume(body.accountId(), body.feature(), body.operationId())
-                .map(r -> success(Map.of("consumed", true, "balance", r.balance(),
-                        "deduplicated", r.deduplicated(), "transactionId", r.transactionId())));
+    public Mono<Map<String, Object>> consume(
+            ServerHttpRequest request, @RequestBody ConsumeRequest body) {
+        Mono<Void> authorization = body.hasAiQuotaEntitlement()
+                ? callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE).then()
+                : Mono.empty();
+        return authorization.then(credits.consume(body.accountId(), body.feature(), body.operationId(),
+                        body.aiQuotaMultiplierBps(), body.policyVersion()))
+                .map(result -> success(mutationBody("consumed", result)));
     }
 
     @PostMapping("/internal/credits/refund")
-    public Mono<Map<String, Object>> refund(@RequestBody RefundRequest body) {
+    public Mono<Map<String, Object>> refund(
+            ServerHttpRequest request, @RequestBody RefundRequest body) {
         int amount = body.amount() == null ? 1 : body.amount();
-        return credits.refund(body.accountId(), amount, body.feature(), body.note(), body.operationId())
-                .map(r -> success(Map.of("refunded", true, "balance", r.balance(),
-                        "deduplicated", r.deduplicated(), "transactionId", r.transactionId())));
+        return callers.resolve(request)
+                .filter(caller -> caller.isServicePrincipal(FinanceCallerResolver.IDENTITY_SERVICE)
+                        || isAuthorizedIntelligenceRefund(caller, body, amount))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "无权执行积分退款")))
+                .then(credits.refund(
+                        body.accountId(), amount, body.feature(), body.note(), body.operationId()))
+                .map(result -> success(mutationBody("refunded", result)));
     }
 
     @PostMapping("/internal/credits/consume-compensations")
-    public Mono<Map<String, Object>> compensateConsume(@RequestBody ConsumeCompensationRequest body) {
-        return credits.compensateConsume(
-                        body.accountId(), body.feature(), body.consumeOperationId(), body.note())
+    public Mono<Map<String, Object>> compensateConsume(
+            ServerHttpRequest request, @RequestBody ConsumeCompensationRequest body) {
+        return callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE)
+                .then(credits.compensateConsume(
+                        body.accountId(), body.feature(), body.consumeOperationId(), body.note()))
                 .map(CreditsController::compensationBody);
     }
 
     @PostMapping("/internal/credits/award")
-    public Mono<Map<String, Object>> award(@RequestBody AwardRequest body) {
-        return credits.award(body.accountId(), body.amount(), body.note(), body.operationId())
-                .map(r -> success(Map.of("awarded", true, "balance", r.balance(),
-                        "deduplicated", r.deduplicated(), "transactionId", r.transactionId())));
+    public Mono<Map<String, Object>> award(
+            ServerHttpRequest request, @RequestBody AwardRequest body) {
+        return callers.requireService(request, FinanceCallerResolver.IDENTITY_SERVICE)
+                .then(credits.award(body.accountId(), body.amount(), body.note(), body.operationId()))
+                .map(result -> success(mutationBody("awarded", result)));
     }
 
     // ---------------- 内部读（容器直连，共享密钥）——供 legacy Express 回滚读端代理 ----------------
@@ -149,10 +168,27 @@ public class CreditsController {
     }
 
     private static Map<String, Object> compensationBody(CompensationResult result) {
-        return success(Map.of(
-                "state", result.state(),
-                "action", result.action(),
-                "balance", result.balance()));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("state", result.state());
+        data.put("action", result.action());
+        data.put("balance", result.balance());
+        data.put("source", result.source());
+        data.put("policyVersion", result.policyVersion());
+        data.put("quotaLimit", result.quotaLimit());
+        data.put("transactionId", result.transactionId());
+        return success(data);
+    }
+
+    private static Map<String, Object> mutationBody(String action, MutationResult result) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(action, true);
+        data.put("balance", result.balance());
+        data.put("deduplicated", result.deduplicated());
+        data.put("transactionId", result.transactionId());
+        data.put("source", result.source());
+        data.put("policyVersion", result.policyVersion());
+        data.put("quotaLimit", result.quotaLimit());
+        return data;
     }
 
     private static Map<String, Object> historyItem(CreditsTransaction txn) {
@@ -168,17 +204,43 @@ public class CreditsController {
     }
 
     /** consume 请求体：accountId/feature 必填，operationId 可选（缺失=非幂等一次性扣减）。 */
-    public record ConsumeRequest(String accountId, String feature, String operationId) {
+    public record ConsumeRequest(
+            String accountId, String feature, String operationId,
+            Integer aiQuotaMultiplierBps, Long policyVersion) {
         public ConsumeRequest {
             if (accountId == null || accountId.isBlank()) {
                 throw new IllegalArgumentException("缺少 accountId");
             }
+            requireCanonicalUuid(accountId, "accountId 无效");
             if (feature == null || feature.isBlank()) {
                 throw new IllegalArgumentException("缺少 feature");
             }
+            requireMaxLength(feature, MAX_FEATURE_LENGTH, "feature 过长");
             if (operationId != null && operationId.isBlank()) {
                 throw new IllegalArgumentException("operationId 无效");
             }
+            requireMaxLength(operationId, MAX_OPERATION_ID_LENGTH, "operationId 过长");
+            if ((aiQuotaMultiplierBps == null) != (policyVersion == null)) {
+                throw new IllegalArgumentException("AI 权益快照字段不完整");
+            }
+            if (aiQuotaMultiplierBps != null) {
+                if (!AI_QUOTA_FEATURES.contains(feature)) {
+                    throw new IllegalArgumentException("feature 不支持 AI 免费额度");
+                }
+                if (operationId == null) {
+                    throw new IllegalArgumentException("AI 权益扣减必须提供 operationId");
+                }
+                if (aiQuotaMultiplierBps < 1_000 || aiQuotaMultiplierBps > 100_000) {
+                    throw new IllegalArgumentException("aiQuotaMultiplierBps 超出范围");
+                }
+                if (policyVersion < 1) {
+                    throw new IllegalArgumentException("policyVersion 必须大于等于 1");
+                }
+            }
+        }
+
+        boolean hasAiQuotaEntitlement() {
+            return aiQuotaMultiplierBps != null;
         }
     }
 
@@ -188,13 +250,18 @@ public class CreditsController {
             if (accountId == null || accountId.isBlank()) {
                 throw new IllegalArgumentException("缺少 accountId");
             }
+            requireCanonicalUuid(accountId, "accountId 无效");
             if (feature == null || feature.isBlank()) {
                 throw new IllegalArgumentException("缺少 feature");
             }
+            requireMaxLength(feature, MAX_FEATURE_LENGTH, "feature 过长");
             if (operationId != null && operationId.isBlank()) {
                 throw new IllegalArgumentException("operationId 无效");
             }
+            requireMaxLength(operationId, MAX_OPERATION_ID_LENGTH, "operationId 过长");
+            requireMaxLength(note, MAX_NOTE_LENGTH, "note 过长");
         }
+
     }
 
     /** Consume compensation derives the refund key server-side and never accepts an amount. */
@@ -255,6 +322,16 @@ public class CreditsController {
         if (value != null && value.length() > maxLength) {
             throw new IllegalArgumentException(message);
         }
+    }
+
+    private static boolean isAuthorizedIntelligenceRefund(
+            FinanceCallerResolver.Caller caller, RefundRequest body, int amount) {
+        return caller.isServicePrincipal(FinanceCallerResolver.INTELLIGENCE_SERVICE)
+                && amount == 1
+                && AI_QUOTA_FEATURES.contains(body.feature())
+                && body.operationId() != null
+                && body.operationId().startsWith("refund:")
+                && body.operationId().length() > "refund:".length();
     }
 
 }

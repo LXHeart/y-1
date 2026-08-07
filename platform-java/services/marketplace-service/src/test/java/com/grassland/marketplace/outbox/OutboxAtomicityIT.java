@@ -32,10 +32,35 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
 
-        failOutboxOn("TaskPublished");
+        failOutboxOn("TaskSubmittedForReview");
         publishFailing(merchant, org).expectStatus().is5xxServerError();
 
         assertThat(taskCountByOrg(org)).isZero();   // 任务未建
+    }
+
+    @Test
+    void approveRollsBackPublicationWhenOutboxFails() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> task = submitTask(merchant, org, 4);
+        String taskId = (String) task.get("id");
+        int version = ((Number) task.get("version")).intValue();
+
+        failOutboxOn("TaskPublished");
+        client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
+                .header("X-Grassland-Identity", signWithRole(
+                        UUID.randomUUID().toString(), "platform_admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", version))
+                .exchange().expectStatus().is5xxServerError();
+
+        assertThat(taskStatus(taskId)).isEqualTo("pending_review");
+        assertThat(taskVersion(taskId)).isEqualTo(1);
+        assertThat(taskPublishedAtIsNull(taskId)).isTrue();
+        assertThat(taskMinimumRecommenderLevel(taskId)).isEqualTo(4);
+        assertThat(taskVersionCount(taskId)).isZero();
+        assertThat(taskMinimumLevelSnapshot(taskId)).isNull();
+        assertThat(taskReviewCount(taskId)).isZero();
     }
 
     @Test
@@ -95,7 +120,7 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         String org = UUID.randomUUID().toString();
         String taskId = createDraft(merchant, org);
 
-        failOutboxOn("TaskPublished");
+        failOutboxOn("TaskSubmittedForReview");
         client().post().uri("/api/tasks/" + taskId + "/publish")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 0))
@@ -115,7 +140,7 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         failOutboxOn("TaskClosed");
         client().post().uri("/api/tasks/" + taskId + "/close")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2))
                 .exchange().expectStatus().is5xxServerError();
 
         assertThat(taskStatus(taskId)).isEqualTo("published");   // 未迁移到 closed
@@ -130,7 +155,7 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         failOutboxOn("TaskCancelled");
         client().post().uri("/api/tasks/" + taskId + "/cancel")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2))
                 .exchange().expectStatus().is5xxServerError();
 
         assertThat(taskStatus(taskId)).isEqualTo("published");   // 未迁移到 cancelled
@@ -160,6 +185,37 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         return c == null ? 0L : c;
     }
 
+    private int taskVersion(String taskId) {
+        Integer version = db.sql("SELECT version FROM task WHERE id = CAST(:t AS uuid)")
+                .bind("t", taskId).map(row -> row.get("version", Integer.class)).one().block();
+        return version == null ? -1 : version;
+    }
+
+    private boolean taskPublishedAtIsNull(String taskId) {
+        Boolean publishedAtIsNull = db.sql(
+                        "SELECT published_at IS NULL AS is_null FROM task WHERE id = CAST(:t AS uuid)")
+                .bind("t", taskId)
+                .map(row -> row.get("is_null", Boolean.class)).one().block();
+        return Boolean.TRUE.equals(publishedAtIsNull);
+    }
+
+    private int taskMinimumRecommenderLevel(String taskId) {
+        Integer level = db.sql("SELECT min_recommender_level FROM task WHERE id = CAST(:t AS uuid)")
+                .bind("t", taskId).map(row -> row.get("min_recommender_level", Integer.class)).one().block();
+        return level == null ? -1 : level;
+    }
+
+    private Integer taskMinimumLevelSnapshot(String taskId) {
+        return db.sql("SELECT min_recommender_level FROM task_version WHERE task_id = CAST(:t AS uuid)")
+                .bind("t", taskId).map(row -> row.get("min_recommender_level", Integer.class)).one().block();
+    }
+
+    private long taskReviewCount(String taskId) {
+        Long count = db.sql("SELECT COUNT(*)::bigint AS c FROM task_review WHERE task_id = CAST(:t AS uuid)")
+                .bind("t", taskId).map(row -> row.get("c", Long.class)).one().block();
+        return count == null ? 0L : count;
+    }
+
     private void failOutboxOn(String eventType) {
         doReturn(Mono.<Void>error(new RuntimeException("outbox injected failure")))
                 .when(outbox).append(argThat((EventEnvelope e) -> e != null && eventType.equals(e.eventType())));
@@ -178,15 +234,36 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
 
     @SuppressWarnings("unchecked")
     private String publishTask(String merchant, String org) {
+        Map<String, Object> task = submitTask(merchant, org);
+        String taskId = (String) task.get("id");
+        int version = ((Number) task.get("version")).intValue();
+        client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
+                .header("X-Grassland-Identity", signWithRole(
+                        UUID.randomUUID().toString(), "platform_admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", version))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("published");
+        return taskId;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> submitTask(String merchant, String org) {
+        return submitTask(merchant, org, 1);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> submitTask(String merchant, String org, int minimumRecommenderLevel) {
         Map<String, Object> b = new LinkedHashMap<>();
         b.put("organizationId", org);
         b.put("title", "任务");
+        b.put("minRecommenderLevel", minimumRecommenderLevel);
         Map<String, Object> resp = client().post().uri("/api/tasks")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        return (Map<String, Object>) resp.get("data");
     }
 
     @SuppressWarnings("unchecked")

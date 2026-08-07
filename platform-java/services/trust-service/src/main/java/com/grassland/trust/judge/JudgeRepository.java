@@ -13,8 +13,9 @@ import reactor.core.publisher.Mono;
 /**
  * 审判官池 + 面板分配 + 投票数据访问（草场 Epic 6 Slice 6C / HLD §5.5）。表由 Flyway V3 建。
  *
- * <p>抽面板（{@link #drawEligiblePool}）：active 审判官 × {@code eligibility_tier >= minTier}，排除与争议组织利益冲突者
- * （同 {@code organization_id} 或显式 {@code judge_conflict}），随机排序取 {@code size} 名（公平抽签）。
+ * <p>抽面板（{@link #streamEligibleCandidates}）：流式读取 active + ops_admitted 且
+ * {@code eligibility_tier >= minTier} 的审判官，排除与争议组织利益冲突者
+ * （同 {@code organization_id} 或显式 {@code judge_conflict}），随机排序供上层逐个复验。
  *
  * <p>分配（{@link #assignPanel}）/ 投票（{@link #recordVote}）均 <b>幂等</b>：UNIQUE 约束 + ON CONFLICT DO NOTHING，
  * Phase C workflow activity 重试不会重复写。{@link #tallyVotes} 读 {@code dispute_vote} 按 choice 聚合计票，
@@ -27,7 +28,11 @@ import reactor.core.publisher.Mono;
 public class JudgeRepository {
 
     private static final String JUDGE_COLS =
-            "j.id::text, j.account_id::text, j.organization_id::text, j.eligibility_tier, j.active, j.created_at";
+            "j.id::text, j.account_id::text, j.organization_id::text, j.eligibility_tier, j.active,"
+                    + " j.ops_admitted, j.version, j.ops_admitted_at, j.ops_admitted_by::text, j.created_at";
+    private static final String JUDGE_RETURNING =
+            "id::text, account_id::text, organization_id::text, eligibility_tier, active,"
+                    + " ops_admitted, version, ops_admitted_at, ops_admitted_by::text, created_at";
 
     private final DatabaseClient db;
 
@@ -38,28 +43,33 @@ public class JudgeRepository {
     /**
      * 报名入池（幂等）：{@code UNIQUE(account_id)} 冲突 → 复活并返回既有行（退池后可再报名）。
      * GL-P2-TRUST-001：优先使用 {@link #enrollWithTier} 从 marketplace 获取声誉等级；
-     * 本方法保留为兼容入口，tier 默认 1（无声誉记录视为 Lv1）。
+     * 本方法保留为兼容入口，安全默认 tier=5；HTTP 边界仍须先验证 marketplace 的资格结果。
      */
     public Mono<Judge> enroll(String accountId, String organizationId) {
-        return enrollWithTier(accountId, organizationId, 1);
+        return enrollWithTier(accountId, organizationId, 5);
     }
 
     /**
      * 报名入池（指定声誉等级）：GL-P2-TRUST-001 reputation-based judge eligibility。
      *
-     * <p>从 marketplace 获取推荐官声誉等级（Lv1-Lv5），映射为 eligibility_tier。
-     * Lv5 绑定审判官资格（tier=5），其他等级对应 tier=1-4。
+     * <p>调用方已从 marketplace 验证有效 Lv5。active（用户参选意愿）与 ops_admitted（运营准入）正交：
+     * 重复报名或退池后重报仅恢复 active，不得静默撤销或授予运营准入。
      *
      * <p>幂等：{@code UNIQUE(account_id)} 冲突 → 复活并更新 tier（允许声誉为动态值）。
      */
     public Mono<Judge> enrollWithTier(String accountId, String organizationId, int eligibilityTier) {
+        if (eligibilityTier != 5) {
+            return Mono.error(new IllegalArgumentException("审判官报名仅接受 Lv5 资格"));
+        }
         var spec = db.sql("""
                 INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active)
                 VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), CAST(:org AS uuid), :tier, true)
                 ON CONFLICT (account_id) DO UPDATE
-                    SET active = true, organization_id = EXCLUDED.organization_id, eligibility_tier = :tier
-                RETURNING id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at
-                """)
+                    SET active = true,
+                        organization_id = EXCLUDED.organization_id,
+                        eligibility_tier = :tier
+                RETURNING %s
+                """.formatted(JUDGE_RETURNING))
                 .bind("id", UUID.randomUUID().toString()).bind("acct", accountId).bind("tier", eligibilityTier);
         spec = (organizationId == null || organizationId.isBlank())
                 ? spec.bindNull("org", String.class)
@@ -69,10 +79,50 @@ public class JudgeRepository {
 
     /** 查本人审判官记录（含已退池的 active=false 行）。无 → empty。 */
     public Mono<Judge> findByAccountId(String accountId) {
-        return db.sql("SELECT id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at"
-                + " FROM judge WHERE account_id = CAST(:acct AS uuid)")
+        return db.sql("SELECT " + JUDGE_COLS + " FROM judge j WHERE j.account_id = CAST(:acct AS uuid)")
                 .bind("acct", accountId)
                 .map(JudgeRepository::mapJudge).one();
+    }
+
+    /** 后台列表：精确账号搜索或按 created_at + id 做稳定的 keyset 分页。 */
+    public Flux<Judge> listForAdmin(int limit, Instant beforeCreatedAt, String beforeId,
+                                    String accountId) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(JUDGE_COLS).append(" FROM judge j");
+        if (accountId != null) {
+            sql.append(" WHERE j.account_id = CAST(:accountId AS uuid)");
+        } else if (beforeCreatedAt != null && beforeId != null) {
+            sql.append(" WHERE (j.created_at, j.id) < (:beforeCreatedAt, CAST(:beforeId AS uuid))");
+        }
+        sql.append(" ORDER BY j.created_at DESC, j.id DESC LIMIT :limit");
+        var spec = db.sql(sql.toString()).bind("limit", limit);
+        if (accountId != null) {
+            spec = spec.bind("accountId", accountId);
+        } else if (beforeCreatedAt != null && beforeId != null) {
+            spec = spec.bind("beforeCreatedAt", OffsetDateTime.ofInstant(
+                    beforeCreatedAt, java.time.ZoneOffset.UTC)).bind("beforeId", beforeId);
+        }
+        return spec.map(JudgeRepository::mapJudge).all();
+    }
+
+    /** 乐观锁更新运营准入；版本不匹配或目标状态未变化均返回 empty。 */
+    public Mono<Judge> updateAdmission(String accountId, boolean admitted, long expectedVersion,
+                                       String admittedBy) {
+        var spec = db.sql("""
+                UPDATE judge
+                SET ops_admitted = :admitted,
+                    ops_admitted_at = CASE WHEN :admitted THEN now() ELSE NULL END,
+                    ops_admitted_by = CASE WHEN :admitted THEN CAST(:actor AS uuid) ELSE NULL END,
+                    version = version + 1
+                WHERE account_id = CAST(:acct AS uuid)
+                  AND version = :expected
+                  AND ops_admitted <> :admitted
+                RETURNING %s
+                """.formatted(JUDGE_RETURNING))
+                .bind("admitted", admitted)
+                .bind("acct", accountId)
+                .bind("expected", expectedVersion);
+        spec = admitted ? spec.bind("actor", admittedBy) : spec.bindNull("actor", String.class);
+        return spec.map(JudgeRepository::mapJudge).one();
     }
 
     /** 退池（软删：active=false，保留历史面板/投票的外键完整性）。0 行（未入池）→ empty。 */
@@ -80,37 +130,49 @@ public class JudgeRepository {
         return db.sql("""
                 UPDATE judge SET active = false
                 WHERE account_id = CAST(:acct AS uuid) AND active = true
-                RETURNING id::text, account_id::text, organization_id::text, eligibility_tier, active, created_at
-                """)
+                RETURNING %s
+                """.formatted(JUDGE_RETURNING))
                 .bind("acct", accountId)
                 .map(JudgeRepository::mapJudge).one();
     }
 
-    /** 抽符合资格且与争议组织无冲突的审判官池（随机），取 {@code size} 名。返回顺序即抽签顺序。 */
-    public Flux<Judge> drawEligiblePool(int minTier, String disputeOrgId, int size) {
+    /**
+     * 流式读取本地符合资格且与争议组织无冲突的全部候选（随机顺序）。
+     * 不在 SQL 层预设候选上限，避免前段远端复验失败时遗漏后续有效候选。
+     */
+    public Flux<Judge> streamEligibleCandidates(int minTier, String disputeOrgId) {
         return db.sql("""
                 SELECT %s
                 FROM judge j
                 WHERE j.active = true
+                  AND j.ops_admitted = true
                   AND j.eligibility_tier >= :minTier
                   AND (j.organization_id IS NULL OR j.organization_id <> CAST(:org AS uuid))
                   AND NOT EXISTS (
                       SELECT 1 FROM judge_conflict jc
                       WHERE jc.judge_id = j.id AND jc.organization_id = CAST(:org AS uuid))
                 ORDER BY random()
-                LIMIT :size
                 """.formatted(JUDGE_COLS))
-                .bind("minTier", minTier).bind("org", disputeOrgId).bind("size", size)
+                .bind("minTier", minTier).bind("org", disputeOrgId)
                 .map(JudgeRepository::mapJudge).all();
     }
 
-    /** 分配面板（幂等）：逐官插入，ON CONFLICT 跳过已分配。返回新分配行数（0 = 全部已存在）。 */
+    /** 兼容仓储级抽签调用；业务面板组建使用 {@link #streamEligibleCandidates} 完成远端复验。 */
+    public Flux<Judge> drawEligiblePool(int minTier, String disputeOrgId, int size) {
+        return streamEligibleCandidates(minTier, disputeOrgId).take(size);
+    }
+
+    /**
+     * 条件分配面板：仅插入提交时仍 active、已运营准入且 tier>=5 的审判官。
+     * 调用方必须校验返回行数与目标面板人数完全一致，并在同一事务内回滚状态、分配和 outbox。
+     */
     public Mono<Integer> assignPanel(String disputeId, int round, List<String> judgeAccountIds) {
         if (judgeAccountIds == null || judgeAccountIds.isEmpty()) {
             return Mono.just(0);
         }
         Mono<Integer> total = Mono.just(0);
-        for (String accountId : judgeAccountIds) {
+        List<String> deterministicAccounts = judgeAccountIds.stream().distinct().sorted().toList();
+        for (String accountId : deterministicAccounts) {
             total = total.flatMap(sum -> insertPanelMember(disputeId, round, accountId).map(n -> sum + n));
         }
         return total;
@@ -119,7 +181,19 @@ public class JudgeRepository {
     private Mono<Integer> insertPanelMember(String disputeId, int round, String judgeAccountId) {
         return db.sql("""
                 INSERT INTO dispute_panel_assignment(dispute_id, round, judge_account_id)
-                VALUES (CAST(:d AS uuid), :round, CAST(:j AS uuid))
+                SELECT CAST(:d AS uuid), :round, j.account_id
+                FROM judge j
+                JOIN dispute_case d ON d.id = CAST(:d AS uuid)
+                WHERE j.account_id = CAST(:j AS uuid)
+                  AND j.active = true
+                  AND j.ops_admitted = true
+                  AND j.eligibility_tier >= 5
+                  AND (j.organization_id IS NULL OR j.organization_id <> d.organization_id)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM judge_conflict conflict
+                      WHERE conflict.judge_id = j.id
+                        AND conflict.organization_id = d.organization_id)
                 ON CONFLICT (dispute_id, round, judge_account_id) DO NOTHING
                 """)
                 .bind("d", disputeId).bind("round", round).bind("j", judgeAccountId)
@@ -145,6 +219,25 @@ public class JudgeRepository {
                 .map(r -> r.get("c", Integer.class)).one().defaultIfEmpty(0);
     }
 
+    /**
+     * 事务级面板互斥锁。同一 dispute+round 的计数、补位和最终校验必须持有该锁，防止并发组出超员面板。
+     */
+    public Mono<Void> lockPanel(String disputeId, int round) {
+        String key = disputeId + ":" + round;
+        return db.sql("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0::bigint)) AS locked")
+                .bind("key", key)
+                .map(row -> Boolean.TRUE).one().then();
+    }
+
+    /** 读取某轮已固化的面板账号；不依赖当前 judge 资格，供残缺面板安全补位。 */
+    public Flux<String> findPanelAccountIds(String disputeId, int round) {
+        return db.sql("SELECT judge_account_id::text AS account_id FROM dispute_panel_assignment"
+                        + " WHERE dispute_id = CAST(:id AS uuid) AND round = :round"
+                        + " ORDER BY judge_account_id")
+                .bind("id", disputeId).bind("round", round)
+                .map(row -> row.get("account_id", String.class)).all();
+    }
+
     /** 该审判官是否在该争议该轮面板上（投票前资格自查）。 */
     public Mono<Boolean> isPanelMember(String disputeId, int round, String judgeAccountId) {
         return db.sql("SELECT EXISTS(SELECT 1 FROM dispute_panel_assignment"
@@ -158,7 +251,15 @@ public class JudgeRepository {
     public Mono<JudgeVote> recordVote(String disputeId, int round, String judgeAccountId, String vote, String rationale) {
         var spec = db.sql("""
                 INSERT INTO dispute_vote(dispute_id, round, judge_account_id, vote, rationale)
-                VALUES (CAST(:d AS uuid), :round, CAST(:j AS uuid), :vote, :rationale)
+                SELECT CAST(:d AS uuid), :round, j.account_id, :vote, :rationale
+                FROM judge j
+                JOIN dispute_case d ON d.id = CAST(:d AS uuid)
+                WHERE j.account_id = CAST(:j AS uuid)
+                  AND j.active = true
+                  AND j.ops_admitted = true
+                  AND d.status = 'voting'
+                  AND d.round = :round
+                  AND d.appeal_state <> 'escalated'
                 ON CONFLICT (dispute_id, round, judge_account_id) DO NOTHING
                 RETURNING dispute_id::text, round, judge_account_id::text, vote, rationale, voted_at
                 """)
@@ -177,21 +278,23 @@ public class JudgeRepository {
 
     /** 计票：按 choice 聚合 + 实际面板人数（多数决阈值见 {@link VoteTally}）。无投票 → 全 0。 */
     public Mono<VoteTally> tallyVotes(String disputeId, int round) {
-        Mono<Integer> panelSize = countPanel(disputeId, round);
-        Mono<int[]> counts = db.sql("""
+        return db.sql("""
                 SELECT
                   COUNT(*) FILTER (WHERE vote = 'for_merchant')::int AS fm,
                   COUNT(*) FILTER (WHERE vote = 'for_recommender')::int AS fr,
-                  COUNT(*) FILTER (WHERE vote = 'abstain')::int AS ab
+                  COUNT(*) FILTER (WHERE vote = 'abstain')::int AS ab,
+                  (SELECT COUNT(*)::int FROM dispute_panel_assignment
+                    WHERE dispute_id = CAST(:id AS uuid) AND round = :round) AS panel_size
                 FROM dispute_vote WHERE dispute_id = CAST(:id AS uuid) AND round = :round
                 """)
                 .bind("id", disputeId).bind("round", round)
-                .map(r -> new int[]{
-                        nvl(r.get("fm", Integer.class)), nvl(r.get("fr", Integer.class)), nvl(r.get("ab", Integer.class))})
+                .map(r -> new VoteTally(
+                        nvl(r.get("fm", Integer.class)),
+                        nvl(r.get("fr", Integer.class)),
+                        nvl(r.get("ab", Integer.class)),
+                        nvl(r.get("panel_size", Integer.class))))
                 .one()
-                .defaultIfEmpty(new int[]{0, 0, 0});
-        return Mono.zip(panelSize, counts)
-                .map(t -> new VoteTally(t.getT2()[0], t.getT2()[1], t.getT2()[2], t.getT1()));
+                .defaultIfEmpty(new VoteTally(0, 0, 0, 0));
     }
 
     private static int nvl(Integer v) {
@@ -205,6 +308,10 @@ public class JudgeRepository {
                 row.get("organization_id", String.class),
                 row.get("eligibility_tier", Integer.class),
                 row.get("active", Boolean.class),
+                row.get("ops_admitted", Boolean.class),
+                row.get("version", Long.class),
+                toInstant(row.get("ops_admitted_at", OffsetDateTime.class)),
+                row.get("ops_admitted_by", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)));
     }
 

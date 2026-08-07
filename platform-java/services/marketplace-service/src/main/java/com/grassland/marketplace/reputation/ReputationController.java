@@ -1,10 +1,7 @@
 package com.grassland.marketplace.reputation;
 
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
-import com.grassland.marketplace.security.MarketplaceException;
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,9 +24,9 @@ import reactor.core.publisher.Mono;
 public class ReputationController {
 
     private final MarketplaceCallerResolver callers;
-    private final ReputationRepository reputations;
+    private final ReputationService reputations;
 
-    public ReputationController(MarketplaceCallerResolver callers, ReputationRepository reputations) {
+    public ReputationController(MarketplaceCallerResolver callers, ReputationService reputations) {
         this.callers = callers;
         this.reputations = reputations;
     }
@@ -39,42 +36,13 @@ public class ReputationController {
                                                                   ServerHttpRequest request) {
         return callers.resolve(request)
                 .then(Mono.fromCallable(() -> requireUuid(accountId)))
-                .flatMap(reputations::statsOf)
-                .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", toBody(accountId, stats))));
+                .flatMap(reputations::snapshot)
+                .map(snapshot -> ResponseEntity.ok(Map.of("success", true,
+                        "data", ReputationResponseMapper.reputation(snapshot, false))));
     }
 
     /** 非法 UUID 直接 400——否则 CAST(:acc AS uuid) 在库里炸成 500，错在调用方却报成服务端故障。 */
     private static String requireUuid(String accountId) {
-        try {
-            return UUID.fromString(accountId).toString();
-        } catch (IllegalArgumentException invalid) {
-            throw new MarketplaceException(400, "accountId 不是合法的账号标识");
-        }
-    }
-
-    private static Map<String, Object> toBody(String accountId, ReputationStats stats) {
-        RecommenderLevel level = RecommenderLevelPolicy.levelOf(stats);
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("accountId", accountId);
-        map.put("level", level.code());
-        map.put("levelTitle", level.title());
-        map.put("acceptedCount", stats.acceptedCount());
-        map.put("completedCount", stats.completedCount());
-        map.put("merchantCancelledCount", stats.merchantCancelledCount());
-        map.put("rejectedCount", stats.rejectedCount());
-        map.put("withdrawnCount", stats.withdrawnCount());
-        map.put("terminalCount", stats.terminalCount());
-        map.put("completionRate", round(stats.completionRate(), 4));
-        map.put("ratingCount", stats.ratingCount());
-        // 无评分 → null（不是 0）：「没人评过」与「口碑差」在 UI 上必须是两种说法
-        map.put("averageScore", stats.averageScore() == null ? null : round(stats.averageScore(), 2));
-        map.put("averageResponseSeconds", stats.averageResponseSeconds() == null
-                ? null : Math.round(stats.averageResponseSeconds()));
-        return map;
-    }
-
-    private static double round(double value, int decimals) {
-        double factor = Math.pow(10, decimals);
-        return Math.round(value * factor) / factor;
+        return ReputationAdminController.requireUuid(accountId);
     }
 }

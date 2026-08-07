@@ -90,6 +90,42 @@ function installFetchStub(): void {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('App AI 创作中心集成', () => {
+  test('平台管理入口仅对 platform_admin 可见', async () => {
+    const admin = {
+      id: 'admin-1', email: 'admin@example.com', displayName: '管理员',
+      role: 'admin', roles: ['platform_admin'],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/auth/me') return response({ success: true, data: { user: admin } })
+      if (url === '/api/video-production/capabilities') {
+        return response({ success: true, data: { videoGeneration: { available: false } } })
+      }
+      if (url === '/api/douyin/session') return response({ success: true, data: { status: 'anonymous' } })
+      return response({ success: true, data: [] })
+    }))
+    const auth = useAuth()
+    await auth.loadCurrentUser(true)
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const navigation = wrapper.get('nav[aria-label="功能选择"]')
+    expect(navigation.text()).toContain('管理')
+
+    auth.currentUser.value = {
+      id: 'cs-1', email: 'cs@example.com', role: 'customer_service', roles: ['customer_service'],
+    }
+    await flushPromises()
+    expect(navigation.text()).toContain('运营处置')
+    expect(navigation.text()).not.toContain('管理')
+
+    auth.currentUser.value = { id: 'user-1', email: 'user@example.com', role: 'user', roles: [] }
+    await flushPromises()
+    expect(navigation.text()).not.toContain('运营处置')
+    expect(navigation.text()).not.toContain('管理')
+    auth.currentUser.value = null
+  })
+
   test('默认展示平台优先入口，旧独立工具只在二级菜单中出现', async () => {
     installFetchStub()
     const wrapper = mount(App)

@@ -82,6 +82,36 @@ class CurrentAccountResolverAssertionTest extends IdentityItSupport {
                 .verify();
     }
 
+    @Test
+    void legacyAdminWithoutBackendRolesDoesNotRetainAdminAccess() {
+        Seeded seeded = seedAccount("legacy-admin@grassland.local");
+        db.sql("UPDATE app_users SET role = 'admin' WHERE id = CAST(:id AS uuid)")
+                .bind("id", seeded.accountId()).then().block();
+
+        StepVerifier.create(resolver.requireAdmin(request(null, seeded.cookie())))
+                .expectErrorSatisfies(error -> {
+                    assertThat(error).isInstanceOf(IdentityException.class);
+                    assertThat(((IdentityException) error).status()).isEqualTo(403);
+                })
+                .verify();
+    }
+
+    @Test
+    void backendRolesOverrideStaleLegacyAdminRole() {
+        Seeded seeded = seedAccount("stale-legacy-admin@grassland.local");
+        db.sql("UPDATE app_users SET role = 'admin' WHERE id = CAST(:id AS uuid)")
+                .bind("id", seeded.accountId()).then().block();
+        db.sql("INSERT INTO backend_role(account_id, role) VALUES (CAST(:id AS uuid), 'customer_service')")
+                .bind("id", seeded.accountId()).then().block();
+
+        StepVerifier.create(resolver.requireAdmin(request(null, seeded.cookie())))
+                .expectErrorSatisfies(error -> {
+                    assertThat(error).isInstanceOf(IdentityException.class);
+                    assertThat(((IdentityException) error).status()).isEqualTo(403);
+                })
+                .verify();
+    }
+
     private static void assertInactive(Throwable error) {
         assertThat(error).isInstanceOf(IdentityException.class);
         assertThat(((IdentityException) error).status()).isEqualTo(403);

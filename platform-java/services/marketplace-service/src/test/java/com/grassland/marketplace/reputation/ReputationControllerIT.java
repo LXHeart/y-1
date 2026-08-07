@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.saga.DisputeChecker;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -78,6 +79,8 @@ class ReputationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.completionRate").isEqualTo(1.0)
                 .jsonPath("$.data.ratingCount").isEqualTo(1)
                 .jsonPath("$.data.averageScore").isEqualTo(5.0)
+                .jsonPath("$.data.lastActiveAt").exists()
+                .jsonPath("$.data.inactiveDowngraded").isEqualTo(false)
                 // 接单→首次提交的时长（本地毫秒级 → 0 秒），有样本即非 null
                 .jsonPath("$.data.averageResponseSeconds").exists()
                 // 完成 1 单远不到 Lv2 的 6 单门槛
@@ -101,12 +104,41 @@ class ReputationControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data.terminalCount").isEqualTo(0)
                 .jsonPath("$.data.completionRate").isEqualTo(0.0)
                 .jsonPath("$.data.averageScore").doesNotExist()   // 无评分 → null（不是 0）
+                .jsonPath("$.data.lastActiveAt").doesNotExist()
+                .jsonPath("$.data.inactiveDowngraded").isEqualTo(false)
                 .jsonPath("$.data.level").isEqualTo("Lv1");
     }
 
     @Test
-    @DisplayName("进行中的 engagement 不计入完成率分母（新公式：只计终态）")
-    void inProgressEngagementDoesNotAffectCompletionRate() {
+    @DisplayName("商家或系统动作不能刷新推荐官的 30 天活跃时间")
+    void merchantDecisionDoesNotRefreshRecommenderActivity() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String rec = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org);
+        String app = apply(rec, task);
+        db.sql("""
+                UPDATE task_application
+                SET created_at = now() - interval '40 days',
+                    status = 'accepted', decided_at = now(), updated_at = now(),
+                    reputation_level_at_accept = 1,
+                    reputation_policy_version_at_accept = 1,
+                    settlement_delay_days_at_accept = 2,
+                    commission_bonus_bps_at_accept = 0,
+                    premium_support_at_accept = false
+                WHERE id = CAST(:id AS uuid)
+                """).bind("id", app).fetch().rowsUpdated().block();
+
+        client().get().uri("/api/reputation/" + rec)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.lastActiveAt").value(value -> assertThat(Instant.parse((String) value))
+                        .isBefore(Instant.now().minusSeconds(39L * 24 * 60 * 60)));
+    }
+
+    @Test
+    @DisplayName("进行中的已接单 engagement 计入完成率分母")
+    void inProgressAcceptedEngagementAffectsCompletionRate() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String rec = UUID.randomUUID().toString();
@@ -120,8 +152,8 @@ class ReputationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.acceptedCount").isEqualTo(2)  // 当前 accepted 仍为 2
                 .jsonPath("$.data.completedCount").isEqualTo(1)
-                .jsonPath("$.data.terminalCount").isEqualTo(1)  // 只有 1 个终态
-                .jsonPath("$.data.completionRate").isEqualTo(1.0);  // 1/1 = 100%，进行中不影响
+                .jsonPath("$.data.terminalCount").isEqualTo(1)
+                .jsonPath("$.data.completionRate").isEqualTo(0.5);  // 1 完成 / 2 已接单
     }
 
     @Test
@@ -228,7 +260,7 @@ class ReputationControllerIT extends MarketplaceItSupport {
         client().post().uri("/api/tasks/" + task + "/cancel")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 1))
+                .bodyValue(Map.of("expectedVersion", taskVersion(task)))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.refundedCount").isEqualTo(1);
 
@@ -236,13 +268,13 @@ class ReputationControllerIT extends MarketplaceItSupport {
         client().get().uri("/api/reputation/" + rec)
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.acceptedCount").isEqualTo(0)  // 已不再是 accepted 状态
+                .jsonPath("$.data.acceptedCount").isEqualTo(1)  // 累计接单包含后续被商家取消的单
                 .jsonPath("$.data.completedCount").isEqualTo(0)  // 未完成
                 .jsonPath("$.data.merchantCancelledCount").isEqualTo(1)  // 商家取消计数
                 .jsonPath("$.data.rejectedCount").isEqualTo(0)
                 .jsonPath("$.data.withdrawnCount").isEqualTo(0)
                 .jsonPath("$.data.terminalCount").isEqualTo(1)  // 1 个终态（商家取消）
-                .jsonPath("$.data.completionRate").isEqualTo(0.0);  // 0/1 = 0%，但这是「未完成」不是「有过错」
+                .jsonPath("$.data.completionRate").isEqualTo(0.0);  // 商家取消从责任分母排除
     }
 
     @Test
@@ -263,18 +295,18 @@ class ReputationControllerIT extends MarketplaceItSupport {
         client().post().uri("/api/tasks/" + task2 + "/cancel")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 1))
+                .bodyValue(Map.of("expectedVersion", taskVersion(task2)))
                 .exchange().expectStatus().isOk();
 
         // 验证声誉指标
         client().get().uri("/api/reputation/" + rec)
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.acceptedCount").isEqualTo(1)  // 已完成的第一任务仍是 accepted 状态
+                .jsonPath("$.data.acceptedCount").isEqualTo(2)
                 .jsonPath("$.data.completedCount").isEqualTo(1)
                 .jsonPath("$.data.merchantCancelledCount").isEqualTo(1)
                 .jsonPath("$.data.terminalCount").isEqualTo(2)  // 1 完成 + 1 取消
-                .jsonPath("$.data.completionRate").isEqualTo(0.5);  // 1/2 = 50%
+                .jsonPath("$.data.completionRate").isEqualTo(1.0);  // 商家取消不降低推荐官完成率
     }
 
     @Test
@@ -391,11 +423,24 @@ class ReputationControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (String) ((Map<String, Object>) resp.get("data")).get("id");
+        Map<String, Object> task = (Map<String, Object>) resp.get("data");
+        String id = (String) task.get("id");
+        int version = ((Number) task.get("version")).intValue();
+        client().post().uri("/api/admin/tasks/" + id + "/review/approve")
+                .header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "platform_admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", version))
+                .exchange().expectStatus().isOk();
+        return id;
     }
 
     private long outboxCount(String eventType) {
         return db.sql("SELECT COUNT(*)::int AS c FROM marketplace_outbox WHERE event_type = :et")
                 .bind("et", eventType).map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
+    private int taskVersion(String taskId) {
+        return db.sql("SELECT version FROM task WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId).map(row -> row.get("version", Integer.class)).one().block();
     }
 }

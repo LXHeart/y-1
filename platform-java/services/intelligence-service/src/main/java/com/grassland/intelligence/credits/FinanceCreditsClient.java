@@ -1,15 +1,21 @@
 package com.grassland.intelligence.credits;
 
+import com.grassland.intelligence.ai.run.CreditCompensationRepository;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.security.IntelligenceServiceAssertionIssuer;
+import io.netty.channel.ChannelOption;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 /**
  * 经 finance-service 扣费（GL-P3-AI-001 下属切片，Java 原生积分的默认实现）。
@@ -27,11 +33,17 @@ import reactor.core.publisher.Mono;
 @ConditionalOnProperty(name = "credits.client.impl", havingValue = "finance", matchIfMissing = true)
 public class FinanceCreditsClient implements CreditsClient {
 
+    private static final String FINANCE_AUDIENCE = "grassland-finance";
+
     private final WebClient webClient;
     private final String consumePath;
     private final String refundPath;
     private final String compensationPath;
     private final String internalKey;
+    private final MarketplaceAiEntitlementClient entitlements;
+    private final IntelligenceServiceAssertionIssuer assertionIssuer;
+    private final CreditCompensationRepository compensationRepository;
+    private final Duration responseTimeout;
 
     @Autowired
     public FinanceCreditsClient(@Value("${credits.finance.base-url:http://finance-service:8084}") String baseUrl,
@@ -39,16 +51,45 @@ public class FinanceCreditsClient implements CreditsClient {
                                 @Value("${credits.finance.refund-path:/internal/credits/refund}") String refundPath,
                                 @Value("${credits.finance.compensation-path:/internal/credits/consume-compensations}")
                                 String compensationPath,
-                                @Value("${credits.finance.internal-key:}") String internalKey) {
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+                                @Value("${credits.finance.internal-key:}") String internalKey,
+                                @Value("${credits.finance.connect-timeout-ms:3000}") int connectTimeoutMs,
+                                @Value("${credits.finance.response-timeout-ms:5000}") long responseTimeoutMs,
+                                MarketplaceAiEntitlementClient entitlements,
+                                IntelligenceServiceAssertionIssuer assertionIssuer,
+                                CreditCompensationRepository compensationRepository) {
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.max(1, connectTimeoutMs))
+                .responseTimeout(Duration.ofMillis(Math.max(1, responseTimeoutMs)));
+        this.webClient = WebClient.builder().baseUrl(baseUrl)
+                .clientConnector(new ReactorClientHttpConnector(httpClient)).build();
         this.consumePath = consumePath;
         this.refundPath = refundPath;
         this.compensationPath = compensationPath;
         this.internalKey = internalKey;
+        this.entitlements = entitlements;
+        this.assertionIssuer = assertionIssuer;
+        this.compensationRepository = compensationRepository;
+        this.responseTimeout = Duration.ofMillis(Math.max(1, responseTimeoutMs));
     }
 
-    FinanceCreditsClient(String baseUrl, String consumePath, String refundPath, String internalKey) {
-        this(baseUrl, consumePath, refundPath, "/internal/credits/consume-compensations", internalKey);
+    FinanceCreditsClient(
+            String baseUrl, String consumePath, String refundPath, String internalKey,
+            MarketplaceAiEntitlementClient entitlements,
+            IntelligenceServiceAssertionIssuer assertionIssuer,
+            CreditCompensationRepository compensationRepository) {
+        this(baseUrl, consumePath, refundPath, internalKey, 1_000, 3_000,
+                entitlements, assertionIssuer, compensationRepository);
+    }
+
+    FinanceCreditsClient(
+            String baseUrl, String consumePath, String refundPath, String internalKey,
+            int connectTimeoutMs, long responseTimeoutMs,
+            MarketplaceAiEntitlementClient entitlements,
+            IntelligenceServiceAssertionIssuer assertionIssuer,
+            CreditCompensationRepository compensationRepository) {
+        this(baseUrl, consumePath, refundPath, "/internal/credits/consume-compensations",
+                internalKey, connectTimeoutMs, responseTimeoutMs, entitlements, assertionIssuer,
+                compensationRepository);
     }
 
     @Override
@@ -58,23 +99,34 @@ public class FinanceCreditsClient implements CreditsClient {
 
     @Override
     public Mono<CreditCharge> consume(String accountId, CreditFeature feature, String operationId) {
-        CreditCharge charge = new CreditCharge(accountId, feature, operationId);
-
-        return webClient.post().uri(consumePath)
-                .contentType(MediaType.APPLICATION_JSON)
-                .header("X-Internal-Key", internalKey)
-                .bodyValue(Map.of(
-                        "accountId", accountId,
-                        "feature", feature.key(),
-                        "operationId", charge.operationId()))
-                .retrieve()
-                .onStatus(s -> s.value() == 402, r -> Mono.error(new InsufficientCreditsException()))
-                .onStatus(s -> s.is4xxClientError(),
-                        r -> Mono.error(new IntelligenceException(400, "积分扣减请求无效")))
-                .onStatus(s -> s.is5xxServerError(),
-                        r -> Mono.error(new IntelligenceException(502, "积分服务暂不可用")))
-                .bodyToMono(Void.class)
-                .thenReturn(charge);
+        return entitlements.get(accountId)
+                .flatMap(entitlement -> webClient.post().uri(consumePath)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Internal-Key", internalKey)
+                        .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
+                        .bodyValue(Map.of(
+                                "accountId", accountId,
+                                "feature", feature.key(),
+                                "operationId", operationId,
+                                "aiQuotaMultiplierBps", entitlement.aiQuotaMultiplierBps(),
+                                "policyVersion", entitlement.policyVersion()))
+                        .retrieve()
+                        .onStatus(s -> s.value() == 402,
+                                response -> Mono.error(new InsufficientCreditsException()))
+                        .onStatus(s -> s.is4xxClientError(),
+                                response -> Mono.error(new IntelligenceException(400, "积分扣减请求无效")))
+                        .onStatus(s -> s.is5xxServerError(),
+                                response -> Mono.error(new UnknownConsumeOutcomeException()))
+                        .bodyToMono(ConsumeEnvelope.class)
+                        .timeout(responseTimeout)
+                        .switchIfEmpty(Mono.error(new UnknownConsumeOutcomeException()))
+                        .map(response -> chargeFrom(
+                                accountId, feature, operationId, entitlement, response))
+                        .onErrorResume(error -> isDefinitiveRejection(error)
+                                ? Mono.error(error)
+                                : persistAndCompensateUnknownConsume(
+                                        accountId, feature, operationId,
+                                        "积分扣减结果不确定自动补偿")));
     }
 
     @Override
@@ -82,6 +134,7 @@ public class FinanceCreditsClient implements CreditsClient {
         return webClient.post().uri(refundPath)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("X-Internal-Key", internalKey)
+                .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
                 .bodyValue(Map.of(
                         "accountId", charge.accountId(),
                         "feature", charge.feature().key(),
@@ -97,13 +150,19 @@ public class FinanceCreditsClient implements CreditsClient {
 
     @Override
     public Mono<Void> compensate(CreditCharge charge, String note) {
+        return compensateOperation(charge.accountId(), charge.feature(), charge.operationId(), note);
+    }
+
+    private Mono<Void> compensateOperation(
+            String accountId, CreditFeature feature, String operationId, String note) {
         return webClient.post().uri(compensationPath)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("X-Internal-Key", internalKey)
+                .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
                 .bodyValue(Map.of(
-                        "accountId", charge.accountId(),
-                        "feature", charge.feature().key(),
-                        "consumeOperationId", charge.operationId(),
+                        "accountId", accountId,
+                        "feature", feature.key(),
+                        "consumeOperationId", operationId,
                         "note", note))
                 .retrieve()
                 .onStatus(s -> s.is4xxClientError(),
@@ -111,6 +170,69 @@ public class FinanceCreditsClient implements CreditsClient {
                                 r.statusCode().value(), "积分补偿请求无效")))
                 .onStatus(s -> s.is5xxServerError(),
                         r -> Mono.error(new IntelligenceException(502, "积分服务暂不可用")))
-                .bodyToMono(Void.class);
+                .bodyToMono(Void.class)
+                .timeout(responseTimeout);
     }
+
+    private Mono<CreditCharge> persistAndCompensateUnknownConsume(
+            String accountId, CreditFeature feature, String operationId, String note) {
+        UUID consumeOperationId;
+        try {
+            consumeOperationId = UUID.fromString(operationId);
+        } catch (IllegalArgumentException invalid) {
+            return Mono.error(new IntelligenceException(502, "积分扣减幂等键无效，无法可靠补偿"));
+        }
+        Mono<Void> immediateAttempt = compensateOperation(accountId, feature, operationId, note)
+                .then(Mono.defer(() -> compensationRepository.markCompletedByOperationId(consumeOperationId)))
+                .then()
+                .onErrorResume(error -> Mono.empty());
+        return compensationRepository.enqueueUnknownConsume(
+                        consumeOperationId, accountId, feature.key(), note)
+                .then(immediateAttempt)
+                .then(Mono.error(new IntelligenceException(502, "积分服务响应不确定，已记录补偿")));
+    }
+
+    private static CreditCharge chargeFrom(
+            String accountId, CreditFeature feature, String operationId,
+            MarketplaceAiEntitlementClient.AiEntitlement entitlement,
+            ConsumeEnvelope envelope) {
+        if (envelope == null || !envelope.success() || envelope.data() == null) {
+            throw new UnknownConsumeOutcomeException();
+        }
+        ConsumeData data = envelope.data();
+        CreditCharge.Source source;
+        try {
+            source = CreditCharge.Source.fromWire(data.source());
+        } catch (RuntimeException invalid) {
+            throw new UnknownConsumeOutcomeException();
+        }
+        if (data.policyVersion() == null
+                || data.policyVersion() != entitlement.policyVersion()
+                || data.transactionId() == null
+                || !isCanonicalUuid(data.transactionId())) {
+            throw new UnknownConsumeOutcomeException();
+        }
+        return new CreditCharge(accountId, feature, operationId, source, data.policyVersion());
+    }
+
+    private static boolean isCanonicalUuid(String value) {
+        try {
+            return value != null && UUID.fromString(value).toString().equalsIgnoreCase(value);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
+    private static boolean isDefinitiveRejection(Throwable error) {
+        return error instanceof InsufficientCreditsException
+                || error instanceof IntelligenceException intelligenceError
+                        && intelligenceError.status() >= 400
+                        && intelligenceError.status() < 500;
+    }
+
+    private static final class UnknownConsumeOutcomeException extends RuntimeException {}
+
+    private record ConsumeEnvelope(boolean success, ConsumeData data) {}
+
+    private record ConsumeData(String source, Long policyVersion, String transactionId) {}
 }

@@ -44,6 +44,8 @@ class SessionIdentityResolverIT {
         try (Connection c = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              var s = c.createStatement()) {
             s.execute("CREATE TABLE app_users (id uuid PRIMARY KEY, email text UNIQUE, password_hash text, display_name text, role text, status text)");
+            s.execute("CREATE TABLE backend_role (account_id uuid NOT NULL, role varchar(64) NOT NULL,"
+                    + " granted_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(account_id, role))");
             s.execute("CREATE TABLE session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
             // 与 identity V7 对齐：MFA 重认证证明（reauthenticated_at/auth_strength）也由 BFF 读出签进断言
             s.execute("CREATE TABLE identity_session (session_token text PRIMARY KEY, account_id uuid NOT NULL,"
@@ -70,6 +72,29 @@ class SessionIdentityResolverIT {
                     assertThat(identity.activeIdentityType()).isEqualTo("merchant");
                     assertThat(identity.sessionToken()).isEqualTo(seeded.sid);
                 })
+                .verifyComplete();
+    }
+
+    @Test
+    void doesNotSignLegacyAdminRoleWithoutAuthoritativeBackendRole() {
+        Seeded seeded = seed("legacy-admin@grassland.local", "merchant");
+        db.sql("UPDATE app_users SET role = 'admin' WHERE id = CAST(:id AS uuid)")
+                .bind("id", seeded.accountId).then().block();
+
+        StepVerifier.create(resolver.resolve(requestWithCookie(seeded.cookie)))
+                .assertNext(identity -> assertThat(identity.role()).isEmpty())
+                .verifyComplete();
+    }
+
+    @Test
+    void signsAuthoritativeBackendRoles() {
+        Seeded seeded = seed("backend-admin@grassland.local", "merchant");
+        db.sql("INSERT INTO backend_role(account_id, role)"
+                        + " VALUES (CAST(:id AS uuid), 'platform_admin')")
+                .bind("id", seeded.accountId).then().block();
+
+        StepVerifier.create(resolver.resolve(requestWithCookie(seeded.cookie)))
+                .assertNext(identity -> assertThat(identity.role()).isEqualTo("platform_admin"))
                 .verifyComplete();
     }
 

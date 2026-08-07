@@ -116,15 +116,15 @@ public class EscrowLifecycleService {
     }
 
     private Mono<FundsReservation> captureWork(FundsReservation reservation) {
-        Long payout = reservation.payeeAccountId() == null
-                ? null
-                : fees.payoutFor(reservation.amountCents());
+        Long payout = reservation.payeeAccountId() == null ? null : Math.addExact(
+                fees.payoutFor(reservation.amountCents()), reservation.commissionBonusCents());
         return reservations.capture(reservation.id(), payout)
                 .switchIfEmpty(Mono.error(new FinanceException(409, "该预留已处理")))
                 .flatMap(this::splitToPayee)
                 .flatMap(captured -> ledger.postCapture(
                                 captured.organizationId(), captured.engagementRef(),
-                                captured.amountCents(), captured.payeeAccountId(), captured.payoutCents())
+                                captured.amountCents(), captured.payeeAccountId(), captured.payoutCents(),
+                                captured.commissionBonusCents())
                         .then(outbox.append(reservationEnvelope("FundsCaptured", captured)))
                         .thenReturn(captured));
     }
@@ -137,7 +137,8 @@ public class EscrowLifecycleService {
                                 reservation.organizationId(), reservation.amountCents())
                         .then(ledger.postReverse(
                                 reservation.organizationId(), reservation.engagementRef(),
-                                reservation.amountCents(), reservation.payeeAccountId(), reservation.payoutCents()))
+                                reservation.amountCents(), reservation.payeeAccountId(), reservation.payoutCents(),
+                                reservation.commissionBonusCents()))
                         .then(outbox.append(reservationEnvelope("FundsReversed", refunded)))
                         .thenReturn(refunded));
     }
@@ -149,13 +150,15 @@ public class EscrowLifecycleService {
             return Mono.just(captured);
         }
         long payout = captured.payoutCents();
-        long fee = captured.amountCents() - payout;
+        long basePayout = payout - captured.commissionBonusCents();
+        long fee = captured.amountCents() - basePayout;
         return wallets.credit(captured.payeeAccountId(), payout)
                 .then(wallets.appendEntry(
                         captured.payeeAccountId(),
                         WalletEntryType.TASK_PAYOUT,
                         payout,
                         fee,
+                        captured.commissionBonusCents(),
                         captured.engagementRef(),
                         "任务结算入账"))
                 .then(outbox.append(new EventEnvelope(
@@ -170,8 +173,11 @@ public class EscrowLifecycleService {
                                 "engagementRef", String.valueOf(captured.engagementRef()),
                                 "payeeAccountId", captured.payeeAccountId(),
                                 "grossCents", captured.amountCents(),
+                                "basePayoutCents", basePayout,
                                 "payoutCents", payout,
-                                "platformFeeCents", fee))))
+                                "platformFeeCents", fee,
+                                "commissionBonusBps", captured.commissionBonusBps(),
+                                "commissionBonusCents", captured.commissionBonusCents()))))
                 .thenReturn(captured);
     }
 
@@ -190,6 +196,7 @@ public class EscrowLifecycleService {
                         WalletEntryType.CLAWBACK,
                         -payout,
                         0,
+                        reservation.commissionBonusCents(),
                         reservation.engagementRef(),
                         "争议冲正扣回"))
                 .then();
@@ -205,11 +212,16 @@ public class EscrowLifecycleService {
         payload.put("engagementRef", reservation.engagementRef());
         payload.put("amountCents", reservation.amountCents());
         payload.put("status", reservation.status());
+        payload.put("commissionBonusBps", reservation.commissionBonusBps());
+        payload.put("commissionBonusCents", reservation.commissionBonusCents());
         if (reservation.payeeAccountId() != null) {
             payload.put("payeeAccountId", reservation.payeeAccountId());
         }
         if (reservation.payoutCents() != null) {
             payload.put("payoutCents", reservation.payoutCents());
+            long basePayout = reservation.payoutCents() - reservation.commissionBonusCents();
+            payload.put("basePayoutCents", basePayout);
+            payload.put("platformFeeCents", reservation.amountCents() - basePayout);
         }
         return new EventEnvelope(
                 UUID.randomUUID().toString(),

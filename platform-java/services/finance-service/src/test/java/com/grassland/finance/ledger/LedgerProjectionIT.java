@@ -103,7 +103,7 @@ class LedgerProjectionIT extends FinanceItSupport {
 
     private void reserve(String merchant, String org, String ref, long amount, String payee) {
         client().post().uri("/api/finance/accounts/" + org + "/reservations")
-                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .header(H, signService(org, "marketplace"))
                 .contentType(JSON)
                 .bodyValue(Map.of("engagementRef", ref, "amountCents", amount, "payeeAccountId", payee))
                 .exchange().expectStatus().isCreated();

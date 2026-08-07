@@ -36,17 +36,17 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
     private final TaskRepository tasks;
     private final SubmissionRepository submissions;
     private final OutboxRepository outbox;
-    private final SettlementExecution settlementExecution;
+    private final SettlementWorkflowStarter settlementWorkflows;
     private final TransactionalOperator transactions;
 
     public ConfirmationActivityImpl(TaskApplicationRepository apps, TaskRepository tasks,
                                     SubmissionRepository submissions, OutboxRepository outbox,
-                                    SettlementExecution settlementExecution, TransactionalOperator transactions) {
+                                    SettlementWorkflowStarter settlementWorkflows, TransactionalOperator transactions) {
         this.apps = apps;
         this.tasks = tasks;
         this.submissions = submissions;
         this.outbox = outbox;
-        this.settlementExecution = settlementExecution;
+        this.settlementWorkflows = settlementWorkflows;
         this.transactions = transactions;
     }
 
@@ -88,14 +88,9 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
             app = autoConfirmed;
         }
 
-        // 本 workflow 已取得自动确认权；始终结算（幂等），覆盖 activity confirm 后 crash 的重试。
-        SettlementOutcome settle = settlementExecution.captureOrHold(
-                input.organizationId(), input.applicationId(), app, taskOwnerId);
-        return switch (settle.status()) {
-            case "settled" -> ConfirmationOutcome.autoSettled();
-            case "held" -> ConfirmationOutcome.held(settle.reason());
-            default -> ConfirmationOutcome.aborted();
-        };
+        // Auto-confirm and manual-confirm now share the same entitlement-derived settlement timer.
+        String workflowId = settlementWorkflows.start(app.taskId(), input.organizationId(), app).block();
+        return workflowId == null ? ConfirmationOutcome.aborted() : ConfirmationOutcome.autoSettled();
     }
 
     /**

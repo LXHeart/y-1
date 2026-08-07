@@ -92,6 +92,36 @@ public class OpsCaseRepository {
         return spec.map(OpsCaseRepository::map).all();
     }
 
+    /**
+     * 运营台队列视图。商家履约异议从 application 的 accept 权益快照派生客服优先级；不复制可漂移的声誉配置，
+     * 也不改变已有 case 状态机或 SLA。其他来源保持标准优先级。
+     */
+    public Flux<QueueItem> listQueue(String status, int limit) {
+        String where = status == null || status.isBlank()
+                ? "status IN ('open', 'in_review', 'approved')"
+                : "status = :status";
+        var spec = db.sql("""
+                SELECT queued.*,
+                       CASE WHEN queued.source_kind = 'merchant_rejection'
+                                   AND COALESCE(app.premium_support_at_accept, false)
+                            THEN true ELSE false END AS premium_support,
+                       CASE WHEN queued.source_kind = 'merchant_rejection'
+                                   AND COALESCE(app.premium_support_at_accept, false)
+                            THEN 100 ELSE 0 END AS support_priority
+                FROM (SELECT %s FROM ops_case WHERE %s) queued
+                LEFT JOIN task_application app ON app.id::text = queued.application_id
+                ORDER BY support_priority DESC, queued.created_at, queued.id
+                LIMIT :limit
+                """.formatted(SELECT_COLS, where))
+                .bind("limit", limit);
+        if (status != null && !status.isBlank()) {
+            spec = spec.bind("status", status);
+        }
+        return spec.map((row, metadata) -> new QueueItem(
+                map(row), Boolean.TRUE.equals(row.get("premium_support", Boolean.class)),
+                intValue(row.get("support_priority", Integer.class)))).all();
+    }
+
     /** 提审（open→in_review，记提审人）。非 open 或版本不符 → empty。 */
     public Mono<OpsCase> submit(String id, long expectedVersion, String submittedBy, String note) {
         var spec = db.sql("""
@@ -174,6 +204,10 @@ public class OpsCaseRepository {
         return raw == null ? 1L : raw;
     }
 
+    private static int intValue(Integer raw) {
+        return raw == null ? 0 : raw;
+    }
+
     private static Instant toInstant(OffsetDateTime value) {
         return value == null ? null : value.toInstant();
     }
@@ -181,4 +215,6 @@ public class OpsCaseRepository {
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
         return (value == null || value.isBlank()) ? spec.bindNull(name, String.class) : spec.bind(name, value);
     }
+
+    public record QueueItem(OpsCase opsCase, boolean premiumSupport, int supportPriority) {}
 }

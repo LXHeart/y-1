@@ -2,6 +2,7 @@ package com.grassland.finance.credits;
 
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
@@ -66,20 +67,33 @@ public class CreditsRepository {
     /** Create-or-lock the consume fence. Must be subscribed inside the caller's transaction. */
     public Mono<ConsumeOperation> lockOrCreateConsumeOperation(
             String accountId, String feature, String operationId, String initialState) {
-        return db.sql("""
-                INSERT INTO credits_consume_operation(operation_id, account_id, feature, state)
-                VALUES (:operationId, CAST(:accountId AS uuid), :feature, :initialState)
+        return lockOrCreateConsumeOperation(accountId, feature, operationId, initialState, null, null);
+    }
+
+    public Mono<ConsumeOperation> lockOrCreateConsumeOperation(
+            String accountId, String feature, String operationId, String initialState,
+            Integer aiQuotaMultiplierBps, Long policyVersion) {
+        GenericExecuteSpec insert = db.sql("""
+                INSERT INTO credits_consume_operation(
+                    operation_id, account_id, feature, state,
+                    ai_quota_multiplier_bps, policy_version)
+                VALUES (:operationId, CAST(:accountId AS uuid), :feature, :initialState,
+                        :aiQuotaMultiplierBps, :policyVersion)
                 ON CONFLICT (operation_id) DO NOTHING
                 """)
                 .bind("operationId", operationId)
                 .bind("accountId", accountId)
                 .bind("feature", feature)
-                .bind("initialState", initialState)
-                .fetch().rowsUpdated()
+                .bind("initialState", initialState);
+        insert = bindNullable(insert, "aiQuotaMultiplierBps", aiQuotaMultiplierBps, Integer.class);
+        insert = bindNullable(insert, "policyVersion", policyVersion, Long.class);
+        return insert.fetch().rowsUpdated()
                 .flatMap(inserted -> db.sql("""
                         SELECT operation_id, account_id::text, feature, state,
                                consume_transaction_id::text, refund_transaction_id::text,
-                               consume_balance_after
+                               consume_balance_after, charge_source, quota_day, quota_limit,
+                               policy_version, ai_quota_multiplier_bps,
+                               quota_consume_transaction_id::text, quota_refund_transaction_id::text
                         FROM credits_consume_operation
                         WHERE operation_id = :operationId
                         FOR UPDATE
@@ -93,6 +107,13 @@ public class CreditsRepository {
                                 row.get("consume_transaction_id", String.class),
                                 row.get("refund_transaction_id", String.class),
                                 row.get("consume_balance_after", Integer.class),
+                                row.get("charge_source", String.class),
+                                row.get("quota_day", LocalDate.class),
+                                row.get("quota_limit", Integer.class),
+                                row.get("policy_version", Long.class),
+                                row.get("ai_quota_multiplier_bps", Integer.class),
+                                row.get("quota_consume_transaction_id", String.class),
+                                row.get("quota_refund_transaction_id", String.class),
                                 inserted > 0))
                         .one());
     }
@@ -104,12 +125,39 @@ public class CreditsRepository {
                 SET state = 'consumed',
                     consume_transaction_id = CAST(:transactionId AS uuid),
                     consume_balance_after = :balanceAfter,
+                    charge_source = 'paid',
                     updated_at = now()
-                WHERE operation_id = :operationId AND state = 'open'
+                WHERE operation_id = :operationId
+                  AND (state = 'open' OR (
+                        state = 'consumed'
+                        AND charge_source = 'paid'
+                        AND consume_transaction_id = CAST(:transactionId AS uuid)))
                 """)
                 .bind("operationId", operationId)
                 .bind("transactionId", transactionId)
                 .bind("balanceAfter", balanceAfter)
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
+    public Mono<Boolean> markConsumeOperationQuotaConsumed(
+            String operationId, String quotaTransactionId, int balanceAfter,
+            LocalDate quotaDay, int quotaLimit) {
+        return db.sql("""
+                UPDATE credits_consume_operation
+                SET state = 'consumed',
+                    quota_consume_transaction_id = CAST(:transactionId AS uuid),
+                    consume_balance_after = :balanceAfter,
+                    charge_source = 'quota',
+                    quota_day = :quotaDay,
+                    quota_limit = :quotaLimit,
+                    updated_at = now()
+                WHERE operation_id = :operationId AND state = 'open'
+                """)
+                .bind("operationId", operationId)
+                .bind("transactionId", quotaTransactionId)
+                .bind("balanceAfter", balanceAfter)
+                .bind("quotaDay", quotaDay)
+                .bind("quotaLimit", quotaLimit)
                 .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
     }
 
@@ -134,6 +182,77 @@ public class CreditsRepository {
                 .bind("operationId", operationId)
                 .bind("refundTransactionId", refundTransactionId)
                 .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
+    public Mono<Boolean> markConsumeOperationQuotaRefunded(
+            String operationId, String refundQuotaTransactionId) {
+        return db.sql("""
+                UPDATE credits_consume_operation
+                SET state = 'compensated',
+                    quota_refund_transaction_id = CAST(:transactionId AS uuid),
+                    updated_at = now()
+                WHERE operation_id = :operationId AND state = 'consumed' AND charge_source = 'quota'
+                """)
+                .bind("operationId", operationId)
+                .bind("transactionId", refundQuotaTransactionId)
+                .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
+    /** Atomically consumes one free unit without ever exceeding the caller's snapshotted limit. */
+    public Mono<QuotaUsage> claimQuota(String accountId, LocalDate quotaDay, int quotaLimit) {
+        return db.sql("""
+                INSERT INTO credits_daily_quota_usage(account_id, quota_day, used)
+                SELECT CAST(:accountId AS uuid), :quotaDay, 1
+                WHERE :quotaLimit > 0
+                ON CONFLICT (account_id, quota_day) DO UPDATE
+                SET used = credits_daily_quota_usage.used + 1, updated_at = now()
+                WHERE credits_daily_quota_usage.used < :quotaLimit
+                RETURNING used
+                """)
+                .bind("accountId", accountId)
+                .bind("quotaDay", quotaDay)
+                .bind("quotaLimit", quotaLimit)
+                .map(row -> new QuotaUsage(quotaDay, row.get("used", Integer.class)))
+                .one();
+    }
+
+    public Mono<QuotaUsage> releaseQuota(String accountId, LocalDate quotaDay) {
+        return db.sql("""
+                UPDATE credits_daily_quota_usage
+                SET used = used - 1, updated_at = now()
+                WHERE account_id = CAST(:accountId AS uuid) AND quota_day = :quotaDay AND used > 0
+                RETURNING used
+                """)
+                .bind("accountId", accountId)
+                .bind("quotaDay", quotaDay)
+                .map(row -> new QuotaUsage(quotaDay, row.get("used", Integer.class)))
+                .one();
+    }
+
+    public Mono<String> insertQuotaTransaction(
+            String accountId, LocalDate quotaDay, int deltaUsed, int usedAfter, int quotaLimit,
+            String type, String feature, String operationId, long policyVersion,
+            int aiQuotaMultiplierBps, String note) {
+        GenericExecuteSpec spec = db.sql("""
+                INSERT INTO credits_quota_transaction(
+                    account_id, quota_day, delta_used, used_after, quota_limit, type,
+                    feature, operation_id, policy_version, ai_quota_multiplier_bps, note)
+                VALUES (CAST(:accountId AS uuid), :quotaDay, :deltaUsed, :usedAfter, :quotaLimit,
+                        :type, :feature, :operationId, :policyVersion, :multiplierBps, :note)
+                RETURNING id::text
+                """)
+                .bind("accountId", accountId)
+                .bind("quotaDay", quotaDay)
+                .bind("deltaUsed", deltaUsed)
+                .bind("usedAfter", usedAfter)
+                .bind("quotaLimit", quotaLimit)
+                .bind("type", type)
+                .bind("feature", feature)
+                .bind("operationId", operationId)
+                .bind("policyVersion", policyVersion)
+                .bind("multiplierBps", aiQuotaMultiplierBps);
+        spec = bindNullable(spec, "note", note);
+        return spec.map(row -> row.get("id", String.class)).one();
     }
 
     /** 条件扣 1：余额不足（或账户不存在）→ empty。镜像 legacy {@code consumeCredit} 的 UPDATE。 */
@@ -243,12 +362,19 @@ public class CreditsRepository {
         return (value == null || value.isBlank()) ? spec.bindNull(name, String.class) : spec.bind(name, value);
     }
 
+    private static <T> GenericExecuteSpec bindNullable(
+            GenericExecuteSpec spec, String name, T value, Class<T> type) {
+        return value == null ? spec.bindNull(name, type) : spec.bind(name, value);
+    }
+
     /** 账户余额行。 */
     public record CreditsAccount(String accountId, int balance, int totalEarned, int totalSpent) {}
 
     /** 流水行（history 读端）。 */
     public record CreditsTransaction(String id, int amount, int balanceAfter, String type,
                                      String feature, String note, String operationId, Instant createdAt) {}
+
+    public record QuotaUsage(LocalDate quotaDay, int used) {}
 
     /** 幂等预检命中行。 */
     public record ExistingOperation(
@@ -267,5 +393,22 @@ public class CreditsRepository {
             String consumeTransactionId,
             String refundTransactionId,
             Integer consumeBalanceAfter,
-            boolean created) {}
+            String chargeSource,
+            LocalDate quotaDay,
+            Integer quotaLimit,
+            Long policyVersion,
+            Integer aiQuotaMultiplierBps,
+            String quotaConsumeTransactionId,
+            String quotaRefundTransactionId,
+            boolean created) {
+
+        public ConsumeOperation(
+                String operationId, String accountId, String feature, String state,
+                String consumeTransactionId, String refundTransactionId,
+                Integer consumeBalanceAfter, boolean created) {
+            this(operationId, accountId, feature, state, consumeTransactionId,
+                    refundTransactionId, consumeBalanceAfter, null, null, null,
+                    null, null, null, null, created);
+        }
+    }
 }

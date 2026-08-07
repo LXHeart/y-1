@@ -433,6 +433,7 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
       id: 'task-pub', ownerAccountId: 'acct-1', organizationId: 'org-1',
       title: '原标题', description: '原描述', status: 'published',
       contentForm: null, platform: 'douyin', maxSlots: 3, bountyCents: 500,
+      minRecommenderLevel: 4,
       version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
       cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
     }
@@ -482,5 +483,6 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     // 全字段：载入的平台/赏金原值随修订回传（未改也送）
     expect(body.platform).toBe('douyin')
     expect(body.bountyCents).toBe(500)
+    expect(body.minRecommenderLevel).toBe(4)
   })
 })

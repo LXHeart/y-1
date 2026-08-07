@@ -13,7 +13,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *   <li>{@code voteWindowHours} — 每轮投票窗口（默认 24h；dev/test 经 env 缩短）。</li>
  *   <li>{@code maxRounds} — 平票重开上限（默认 2；超限转客服兜底）。</li>
  *   <li>{@code appealWindowHours} — 判决后上诉窗口（默认 48h；过期平淡 → 终局）。</li>
- *   <li>{@code judgeEligibilityTier} — 审判官资格等级阈值（GL-P2-TRUST-001：基于声誉等级；默认 1 = 全部 active 审判官；可配置 5 限定仅 Lv5）。</li>
+ *   <li>{@code judgeEligibilityTier} — 审判官资格等级阈值（GL-P2-TRUST-001：生产默认 5，仅 Lv5）。</li>
  *   <li>{@code adjudicationWindowHours} — 争议开启后需等待的小时数才可启动审判（GL-P2-TRUST-001；默认 48h）。</li>
  *   <li>{@code disputeCooldownHours} — 争议终局后冷却期，防止恶意重复开争议（GL-P2-TRUST-001；默认 168h=7天）。</li>
  * </ul>
@@ -53,7 +53,7 @@ public record AdjudicationProperties(
             appealWindowHours = 48;
         }
         if (judgeEligibilityTier <= 0) {
-            judgeEligibilityTier = 1;
+            judgeEligibilityTier = 5;
         }
         if (adjudicationWindowHours <= 0) {
             adjudicationWindowHours = 48;  // GL-P2-TRUST-001：争议开启后需等待 48h 才可启动审判

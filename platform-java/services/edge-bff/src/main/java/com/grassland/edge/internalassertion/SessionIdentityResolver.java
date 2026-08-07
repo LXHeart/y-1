@@ -63,12 +63,11 @@ public class SessionIdentityResolver {
     }
 
     private Mono<ResolvedIdentity> loadAccount(String accountId, String sid) {
-        return db.sql("SELECT id::text, email, display_name, role, status FROM app_users"
+        return db.sql("SELECT id::text, email, display_name, status FROM app_users"
                         + " WHERE id = CAST(:id AS uuid) AND lower(status) = 'active'")
                 .bind("id", accountId)
                 .map(row -> new AccountRow(
                         row.get("id", String.class),
-                        row.get("role", String.class),
                         row.get("status", String.class)))
                 .one()
                 .flatMap(account -> sessionState(sid).defaultIfEmpty(SessionState.EMPTY)
@@ -79,13 +78,12 @@ public class SessionIdentityResolver {
                             Mono<OrgTier> tier = "merchant".equalsIgnoreCase(session.activeIdentityType())
                                     ? orgTier(accountId).defaultIfEmpty(OrgTier.EMPTY)
                                     : Mono.just(OrgTier.EMPTY);
-                            // GL-P2-ADMIN-001：role claim 合并 backend_role 多值（逗号分隔），
-                            // app_users.role 单值作兜底（backfill 已把老 admin/customer_service 迁入 backend_role）。
+                            // GL-P2-ADMIN-001：backend_role 是断言授权的唯一权威。
                             return backendRolesClaim(accountId)
                                     .defaultIfEmpty("")
                                     .flatMap(rolesClaim -> tier.map(o -> new ResolvedIdentity(
                                             account.id(),
-                                            mergeRoleClaim(account.role(), rolesClaim),
+                                            rolesClaim,
                                             account.status(),
                                             session.activeIdentityType(),
                                             sid,
@@ -105,19 +103,8 @@ public class SessionIdentityResolver {
                 .collect(java.util.stream.Collectors.joining(","));
     }
 
-    /**
-     * 合并 app_users.role（单值兜底）与 backend_role（多值权威）。backend_role 非空时以其为准
-     * （backfill 后权威源），否则回落 app_users.role（向后兼容无 backend_role 行的老用户）。
-     */
-    private static String mergeRoleClaim(String appUsersRole, String backendRolesClaim) {
-        if (backendRolesClaim != null && !backendRolesClaim.isBlank()) {
-            return backendRolesClaim;
-        }
-        return appUsersRole == null ? "" : appUsersRole;
-    }
-
     /** 在 Row 仍有效期间提前抽取字段（r2dbc Row 生命周期仅限 map 阶段，不可透传到下游 flatMap）。 */
-    private record AccountRow(String id, String role, String status) {}
+    private record AccountRow(String id, String status) {}
 
     private record OrgTier(String orgId, String tier) {
         static final OrgTier EMPTY = new OrgTier(null, null);

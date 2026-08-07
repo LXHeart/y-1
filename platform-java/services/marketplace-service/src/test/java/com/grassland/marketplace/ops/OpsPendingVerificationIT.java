@@ -102,8 +102,12 @@ class OpsPendingVerificationIT extends MarketplaceItSupport {
                 .bind("t", task).bind("o", UUID.randomUUID().toString())
                 .bind("g", UUID.randomUUID().toString()).bind("title", title).then().block();
         db.sql("""
-                INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents)
-                VALUES (CAST(:a AS uuid), CAST(:t AS uuid), CAST(:r AS uuid), 'accepted', 0)
+                INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents,
+                        reputation_level_at_accept, reputation_policy_version_at_accept,
+                        settlement_delay_days_at_accept, commission_bonus_bps_at_accept,
+                        premium_support_at_accept)
+                VALUES (CAST(:a AS uuid), CAST(:t AS uuid), CAST(:r AS uuid), 'accepted', 0,
+                        1, 1, 2, 0, false)
                 """)
                 .bind("a", app).bind("t", task).bind("r", UUID.randomUUID().toString()).then().block();
         db.sql("""

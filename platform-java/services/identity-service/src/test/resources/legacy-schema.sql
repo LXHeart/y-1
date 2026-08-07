@@ -15,3 +15,10 @@ CREATE TABLE session (
   sess   json NOT NULL,
   expire timestamp(6) NOT NULL
 );
+CREATE TABLE backend_role (
+  account_id uuid NOT NULL,
+  role       varchar(32) NOT NULL,
+  granted_at timestamptz NOT NULL DEFAULT now(),
+  granted_by uuid,
+  PRIMARY KEY (account_id, role)
+);

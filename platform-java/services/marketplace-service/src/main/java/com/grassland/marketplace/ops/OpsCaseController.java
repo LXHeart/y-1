@@ -78,7 +78,7 @@ public class OpsCaseController {
             ServerHttpRequest request) {
         int capped = Math.max(1, Math.min(limit, MAX_LIMIT));
         return callers.requireOpsOperator(request)
-                .then(cases.list(status, capped).map(OpsCaseController::toBody).collectList())
+                .then(cases.listQueue(status, capped).map(OpsCaseController::toQueueBody).collectList())
                 .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
     }
 
@@ -340,6 +340,14 @@ public class OpsCaseController {
         body.put("resolution", c.resolution());
         body.put("createdAt", c.createdAt());
         body.put("updatedAt", c.updatedAt());
+        return body;
+    }
+
+    private static Map<String, Object> toQueueBody(OpsCaseRepository.QueueItem item) {
+        Map<String, Object> body = toBody(item.opsCase());
+        body.put("premiumSupport", item.premiumSupport());
+        body.put("supportPriority", item.supportPriority());
+        body.put("supportBadge", item.premiumSupport() ? "premium" : "standard");
         return body;
     }
 

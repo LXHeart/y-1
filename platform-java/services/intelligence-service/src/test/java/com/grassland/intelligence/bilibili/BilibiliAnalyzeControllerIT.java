@@ -3,6 +3,7 @@ package com.grassland.intelligence.bilibili;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
@@ -35,6 +36,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
 
     private static final String SECRET = "test-bilibili-secret-32-chars-min!!";
     private static final String PUBLIC_ORIGIN = "https://public.test";
+    private static final String ACCOUNT = "11111111-1111-1111-1111-111111111111";
     private static final Map<String, String> HEADERS = Map.of();
 
     static final WireMockServer LEGACY = new WireMockServer(0);
@@ -54,6 +56,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
         registry.add("credits.legacy.base-url", LEGACY::baseUrl);
         // 默认 CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
         registry.add("credits.finance.base-url", LEGACY::baseUrl);
+        registry.add("marketplace.service.base-url", LEGACY::baseUrl);
         registry.add("legacy.backend.base-url", LEGACY::baseUrl);
         registry.add("ai.bilibili-analysis.provider", () -> "qwen");
         registry.add("ai.bilibili-analysis.max-single-segment-seconds", () -> "60");
@@ -75,7 +78,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", 30L));
 
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk()
@@ -100,7 +103,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", 20L));
 
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk();
@@ -117,7 +120,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", null));
 
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
                 .expectStatus().isEqualTo(422)
@@ -131,7 +134,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", 601L));
 
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
                 .expectStatus().isEqualTo(422)
@@ -149,7 +152,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://upos-sz-mirrorali.bilivideo.com/a.m4s", HEADERS, "file.mp4", 20L));
 
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .header("Cookie", "y1.sid=s%3Atok.sig")
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
@@ -175,7 +178,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", 90L));
 
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk()
@@ -196,7 +199,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     @DisplayName("缺少 proxyVideoUrl → 400")
     void missingProxyVideoUrlReturns400() {
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of())
                 .exchange()
                 .expectStatus().isBadRequest()
@@ -207,7 +210,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     @DisplayName("非法 proxyVideoUrl（非白名单源）→ 400")
     void invalidProxyVideoUrlReturns400() {
         client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
-                .header("X-Grassland-Identity", sign("acct-1", "merchant"))
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .bodyValue(Map.of("proxyVideoUrl", "https://evil.com/api/bilibili/proxy/x"))
                 .exchange()
                 .expectStatus().isBadRequest()
@@ -231,8 +234,16 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     }
 
     private void stubCreditsOk() {
+        LEGACY.stubFor(get(urlEqualTo(
+                        "/internal/marketplace/reputation/" + ACCOUNT + "/ai-entitlement"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"accountId\":\"" + ACCOUNT
+                                + "\",\"aiQuotaMultiplierBps\":10000,\"policyVersion\":1}}")));
         LEGACY.stubFor(post(urlEqualTo("/internal/credits/consume"))
-                .willReturn(aResponse().withStatus(200).withBody("{}")));
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":true,\"data\":{\"source\":\"quota\","
+                                + "\"policyVersion\":1,\"transactionId\":"
+                                + "\"22222222-2222-2222-2222-222222222222\"}}")));
     }
 
     private void stubLegacyAnalyzeOk(String merged) throws Exception {

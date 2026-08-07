@@ -21,7 +21,8 @@ public class WalletRepository {
 
     private static final String WALLET_COLS = "account_id::text, balance_cents, updated_at";
     private static final String ENTRY_COLS =
-            "id::text, account_id::text, entry_type, amount_cents, fee_cents, engagement_ref, memo, created_at";
+            "id::text, account_id::text, entry_type, amount_cents, fee_cents, commission_bonus_cents,"
+                    + " engagement_ref, memo, created_at";
 
     private final DatabaseClient db;
 
@@ -67,13 +68,22 @@ public class WalletRepository {
     /** 追加流水（append-only，不做更新/删除）。 */
     public Mono<WalletEntry> appendEntry(String accountId, WalletEntryType type, long amountCents,
                                          long feeCents, String engagementRef, String memo) {
+        return appendEntry(accountId, type, amountCents, feeCents, 0L, engagementRef, memo);
+    }
+
+    /** 追加含平台补贴拆分的流水（append-only）。 */
+    public Mono<WalletEntry> appendEntry(String accountId, WalletEntryType type, long amountCents,
+                                         long feeCents, long commissionBonusCents,
+                                         String engagementRef, String memo) {
         var spec = db.sql("""
-                INSERT INTO wallet_ledger(id, account_id, entry_type, amount_cents, fee_cents, engagement_ref, memo)
-                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), :type, :amt, :fee, :ref, :memo)
+                INSERT INTO wallet_ledger(id, account_id, entry_type, amount_cents, fee_cents,
+                                          commission_bonus_cents, engagement_ref, memo)
+                VALUES (CAST(:id AS uuid), CAST(:acct AS uuid), :type, :amt, :fee, :bonus, :ref, :memo)
                 RETURNING %s
                 """.formatted(ENTRY_COLS))
                 .bind("id", UUID.randomUUID().toString()).bind("acct", accountId)
-                .bind("type", type.dbValue()).bind("amt", amountCents).bind("fee", feeCents);
+                .bind("type", type.dbValue()).bind("amt", amountCents).bind("fee", feeCents)
+                .bind("bonus", commissionBonusCents);
         spec = bindNullable(spec, "ref", engagementRef);
         spec = bindNullable(spec, "memo", memo);
         return spec.map(WalletRepository::mapEntry).one();
@@ -101,6 +111,7 @@ public class WalletRepository {
                 row.get("entry_type", String.class),
                 row.get("amount_cents", Long.class),
                 row.get("fee_cents", Long.class),
+                row.get("commission_bonus_cents", Long.class),
                 row.get("engagement_ref", String.class),
                 row.get("memo", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class))

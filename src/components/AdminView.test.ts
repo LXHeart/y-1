@@ -18,7 +18,7 @@ function response(data: unknown, envelope = true): Response {
 }
 
 describe('AdminView KYB 审核', () => {
-  test('第三个管理 tab 懒挂载 AI 模型面板且不显示 KYB 队列', async () => {
+  test('管理 tab 完整显示等级与信任治理入口，AI 模型面板仍懒挂载', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url === '/api/admin/users') return response({ users: [] }, true)
       if (url === '/api/admin/kyb-requests') return response([])
@@ -38,14 +38,14 @@ describe('AdminView KYB 审核', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
-      ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '财务对账', 'AI 模型'])
+      ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账', 'AI 模型'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
-    await tabs[5].trigger('click')
+    await tabs[7].trigger('click')
 
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('待审核申请')
-    expect(tabs[5].attributes('aria-selected')).toBe('true')
+    expect(tabs[7].attributes('aria-selected')).toBe('true')
   })
 
   test('加载待审队列并携带拒绝备注提交，成功后移出队列', async () => {
@@ -159,6 +159,263 @@ describe('AdminView KYB 审核', () => {
     expect(wrapper.text()).toContain('审核材料暂不可用')
     expect(wrapper.find('.btn-confirm').attributes('disabled')).toBeDefined()
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('AdminView 等级权益治理', () => {
+  const policy = {
+    version: 7,
+    updatedAt: '2026-08-07T08:00:00Z',
+    levels: Array.from({ length: 5 }, (_, index) => ({
+      levelNumber: index + 1,
+      level: `Lv${index + 1}`,
+      title: ['新手草友', '活跃草友', '优质草友', '金牌草友', '草场达人'][index],
+      minCompleted: [0, 6, 21, 51, 100][index],
+      minCompletionRate: [0, 0.8, 0.85, 0.9, 0.95][index],
+      minAverageScore: [null, null, 4, 4.5, 4.8][index],
+      inviteOnly: index === 4,
+      judgeEligible: index === 4,
+      taskPriorityWeight: [100, 110, 120, 140, 160][index],
+      settlementDelayDays: index === 4 ? 1 : 2,
+      commissionBonusBps: [0, 0, 300, 500, 1000][index],
+      aiQuotaMultiplierBps: [10000, 10000, 15000, 15000, 15000][index],
+      premiumSupport: index >= 3,
+      benefits: index === 4 ? ['审判官资格', 'T+1 优先结算'] : ['基础任务'],
+    })),
+  }
+
+  test('按服务端版本保存五级策略', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/users') return response({ users: [] })
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url === '/api/admin/reputation-config' && init?.method === 'PUT') return response({ ...policy, version: 8 })
+      if (url === '/api/admin/reputation-config') return response(policy)
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('策略版本 7')
+    expect(wrapper.findAll('.reputation-level-row')).toHaveLength(5)
+
+    await wrapper.find('[data-testid="level-2-min-completed"]').setValue(8)
+    await wrapper.findAll('.reputation-level-row')[1].find('textarea').setValue('更多任务\n优先展示\n')
+    await wrapper.find('[data-testid="save-reputation-policy"]').trigger('click')
+    await flushPromises()
+
+    const saveCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+    const body = JSON.parse((saveCall?.[1] as RequestInit).body as string)
+    expect(body.expectedVersion).toBe(7)
+    expect(body.levels).toHaveLength(5)
+    expect(body.levels[1].minCompleted).toBe(8)
+    expect(body.levels[1].benefits).toEqual(['更多任务', '优先展示'])
+    expect(wrapper.text()).toContain('策略版本 8')
+  })
+
+  test('版本冲突时保留本地编辑内容', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/users') return response({ users: [] })
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url === '/api/admin/reputation-config' && init?.method === 'PUT') {
+        return {
+          ok: false, status: 409, headers: { get: () => 'application/json' },
+          json: async () => ({ success: false, error: '等级策略版本已变化，请刷新后重试' }),
+        } as unknown as Response
+      }
+      if (url === '/api/admin/reputation-config') return response(policy)
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await flushPromises()
+    const input = wrapper.find('[data-testid="level-2-min-completed"]')
+    await input.setValue(9)
+    await wrapper.find('[data-testid="save-reputation-policy"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('等级策略版本已变化')
+    expect((input.element as HTMLInputElement).value).toBe('9')
+  })
+
+  test('查询账号声誉后以 admissionVersion 授予 Lv5', async () => {
+    const accountId = '11111111-1111-4111-8111-111111111111'
+    const reputation = {
+      accountId, level: 'Lv4', levelTitle: '金牌草友', calculatedLevel: 'Lv5', effectiveLevel: 'Lv4',
+      levelNumber: 4, judgeEligible: false, policyVersion: 7, taskPriorityWeight: 140,
+      settlementDelayDays: 2, commissionBonusBps: 500, aiQuotaMultiplierBps: 15000,
+      premiumSupport: true, benefits: ['专属支持'], acceptedCount: 110, completedCount: 105,
+      merchantCancelledCount: 0, rejectedCount: 2, withdrawnCount: 3, terminalCount: 107,
+      completionRate: 0.98, ratingCount: 20, averageScore: 4.9, averageResponseSeconds: 600,
+      lv5Admitted: false, admissionVersion: 2, admissionUpdatedBy: null, admissionNote: null,
+      admissionUpdatedAt: null,
+    }
+    let reputationReads = 0
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/users') return response({ users: [] })
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url === `/api/admin/reputation/${accountId}/lv5-admission` && init?.method === 'PUT') {
+        return response({ accountId, admitted: true, version: 3, note: '签约邀请' })
+      }
+      if (url === `/api/admin/reputation/${accountId}`) {
+        reputationReads += 1
+        return response(reputationReads === 1
+          ? reputation
+          : { ...reputation, lv5Admitted: true, admissionVersion: 3, effectiveLevel: 'Lv5' })
+      }
+      if (url === '/api/admin/reputation-config') return response(policy)
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="reputation-account-id"]').setValue(accountId)
+    await wrapper.find('[data-testid="load-admin-reputation"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('指标已达 Lv5')
+
+    await wrapper.find('[data-testid="lv5-admission-note"]').setValue('签约邀请')
+    await wrapper.find('[data-testid="grant-lv5"]').trigger('click')
+    await flushPromises()
+
+    const grantCall = fetchMock.mock.calls.find(([url]) => url === `/api/admin/reputation/${accountId}/lv5-admission`)
+    expect(JSON.parse((grantCall?.[1] as RequestInit).body as string)).toEqual({
+      admitted: true, expectedVersion: 2, note: '签约邀请',
+    })
+    expect(wrapper.text()).toContain('当前生效 Lv5')
+  })
+
+  test('较慢的旧账号查询不会覆盖较新的查询结果', async () => {
+    const olderAccount = '11111111-1111-4111-8111-111111111111'
+    const newerAccount = '22222222-2222-4222-8222-222222222222'
+    let resolveOlder: ((value: Response) => void) | undefined
+    const olderResponse = new Promise<Response>((resolve) => { resolveOlder = resolve })
+    const reputation = (accountId: string, levelTitle: string) => ({
+      accountId, level: 'Lv4', levelTitle, calculatedLevel: 'Lv4', effectiveLevel: 'Lv4',
+      levelNumber: 4, judgeEligible: false, policyVersion: 7, taskPriorityWeight: 140,
+      settlementDelayDays: 2, commissionBonusBps: 500, aiQuotaMultiplierBps: 15000,
+      premiumSupport: true, benefits: ['专属支持'], acceptedCount: 60, completedCount: 55,
+      merchantCancelledCount: 0, rejectedCount: 2, withdrawnCount: 3, terminalCount: 60,
+      completionRate: 0.92, ratingCount: 20, averageScore: 4.7, averageResponseSeconds: 600,
+      lastActiveAt: '2026-08-07T08:00:00Z', inactiveDowngraded: false,
+      lv5Admitted: false, admissionVersion: 0, admissionUpdatedBy: null, admissionNote: null,
+      admissionUpdatedAt: null,
+    })
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === '/api/admin/users') return response({ users: [] })
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url === '/api/admin/reputation-config') return response(policy)
+      if (url === `/api/admin/reputation/${olderAccount}`) return olderResponse
+      if (url === `/api/admin/reputation/${newerAccount}`) {
+        return response(reputation(newerAccount, '较新账号'))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await flushPromises()
+
+    const accountInput = wrapper.find('[data-testid="reputation-account-id"]')
+    await accountInput.setValue(olderAccount)
+    await wrapper.find('[data-testid="load-admin-reputation"]').trigger('click')
+    await accountInput.setValue(newerAccount)
+    await accountInput.trigger('keyup.enter')
+    await flushPromises()
+    expect(wrapper.text()).toContain(newerAccount)
+    expect(wrapper.text()).toContain('较新账号')
+
+    resolveOlder?.(response(reputation(olderAccount, '较旧账号')))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain(newerAccount)
+    expect(wrapper.text()).not.toContain('较旧账号')
+  })
+})
+
+describe('AdminView 审判官运营准入', () => {
+  test('理由必填且按候选人版本授权', async () => {
+    const accountId = '22222222-2222-4222-8222-222222222222'
+    const judge = {
+      id: 'judge-1', accountId, organizationId: null, eligibilityTier: 5, active: true,
+      opsAdmitted: false, version: 4, opsAdmittedAt: null, opsAdmittedBy: null,
+      createdAt: '2026-08-07T08:00:00Z',
+    }
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/users') return response({ users: [] })
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/trust/judges?') && !init?.method) {
+        return response({ items: [judge], nextCursor: null, hasMore: false })
+      }
+      if (url === `/api/admin/trust/judges/${accountId}/admission` && init?.method === 'PUT') {
+        return response({ ...judge, opsAdmitted: true, version: 5 })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain(accountId)
+    await wrapper.find('[data-testid="judge-admission-toggle"]').trigger('click')
+    expect(wrapper.text()).toContain('请填写准入原因')
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/admission'))).toHaveLength(0)
+
+    await wrapper.find('[data-testid="judge-reason"]').setValue('通过 Lv5 资格复核')
+    await wrapper.find('[data-testid="judge-admission-toggle"]').trigger('click')
+    await flushPromises()
+
+    const updateCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/admission'))
+    expect(JSON.parse((updateCall?.[1] as RequestInit).body as string)).toEqual({
+      admitted: true, expectedVersion: 4, reason: '通过 Lv5 资格复核',
+    })
+    expect(wrapper.text()).toContain('已准入')
+  })
+
+  test('审计详情展示行版本流转与操作原因', async () => {
+    const accountId = '33333333-3333-4333-8333-333333333333'
+    const judge = {
+      id: 'judge-2', accountId, organizationId: null, eligibilityTier: 5, active: true,
+      opsAdmitted: true, version: 3, opsAdmittedAt: '2026-08-07T08:00:00Z',
+      opsAdmittedBy: 'admin-1', createdAt: '2026-08-01T08:00:00Z',
+    }
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === '/api/admin/users') return response({ users: [] })
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/trust/judges?')) {
+        return response({ items: [judge], nextCursor: null, hasMore: false })
+      }
+      if (url === `/api/admin/trust/judges/${accountId}`) {
+        return response({ ...judge, audit: [{
+          id: 9, action: 'granted', actorAccountId: 'admin-1', reason: '初次资格审核',
+          previousVersion: 2, newVersion: 3, createdAt: '2026-08-07T08:00:00Z',
+        }] })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await flushPromises()
+    const recordButton = wrapper.findAll('button').find((button) => button.text() === '记录')
+    await recordButton?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('初次资格审核')
+    expect(wrapper.text()).toContain('v2 → v3')
   })
 })
 

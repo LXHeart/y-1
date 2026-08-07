@@ -371,10 +371,16 @@ class EscrowControllerIT extends FinanceItSupport {
         credit(merchant, org, 1000);
         reserve(merchant, org, ref, 600);
         capture(merchant, org, ref);
+        // 同组织商户也不可绕过争议终局直接冲正 captured 资金。
+        client().post().uri("/api/finance/reservations/" + ref + "/reverse")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isForbidden();
         // marketplace 服务断言不可 reverse（仅 trust）→ 403
         client().post().uri("/api/finance/reservations/" + ref + "/reverse")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isForbidden();
+        assertThat(balanceOf(org)).isEqualTo(400L);
+        assertThat(outboxCount("FundsReversed", org)).isZero();
     }
 
     @Test

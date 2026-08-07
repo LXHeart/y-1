@@ -143,6 +143,76 @@ describe('Edge BFF deployment entrypoint contract', () => {
     }
   })
 
+  it('provisions every Compose identity assertion secret in CI E2E', () => {
+    const compose = readRepositoryFile('docker-compose.yml')
+    const runner = readRepositoryFile('scripts/ci-e2e.sh')
+    const expectedSecrets = new Set(
+      [...compose.matchAll(/\$\{(IDENTITY_ASSERTION_KEY_[A-Z0-9_]+):-\}/g)]
+        .map(([, name]) => name),
+    )
+
+    expect(expectedSecrets.size).toBeGreaterThan(0)
+    for (const name of expectedSecrets) {
+      expect(runner, name).toContain(name)
+    }
+  })
+
+  it('documents Intelligence marketplace assertions and enables the AI quota benefit', () => {
+    const compose = composeConfig()
+    const localTemplate = readRepositoryFile('.env.example')
+    const dockerTemplate = readRepositoryFile('.env.docker.example')
+
+    for (const template of [localTemplate, dockerTemplate]) {
+      expect(template).toContain(
+        'IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_KID=intelligence-service-marketplace-v1',
+      )
+      expect(template).toContain(
+        'IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE=replace-with-at-least-32-characters',
+      )
+      expect(template).toContain('AI_FREE_QUOTA_BASE_DAILY=2')
+      expect(template).toContain('AI_FREE_QUOTA_ZONE_ID=Asia/Shanghai')
+    }
+
+    expect(compose.services['finance-service'].environment?.AI_FREE_QUOTA_BASE_DAILY).toBe('2')
+  })
+
+  it('keeps production settlement days safe and compresses them only in E2E', () => {
+    const compose = composeConfig()
+    const runner = readRepositoryFile('scripts/ci-e2e.sh')
+
+    expect(compose.services['marketplace-service'].environment?.SETTLEMENT_DAY_SECONDS)
+      .toBe('86400')
+    expect(runner).toContain('export SETTLEMENT_DAY_SECONDS="${SETTLEMENT_DAY_SECONDS:-2}"')
+  })
+
+  it('seeds the CI database without overriding its host connection', () => {
+    const runner = readRepositoryFile('scripts/ci-e2e.sh')
+
+    expect(runner).toContain(
+      'DATABASE_URL="$HOST_DATABASE_URL" npx tsx scripts/e2e-seed.ts',
+    )
+    expect(runner).not.toContain('DATABASE_URL="$HOST_DATABASE_URL" npm run e2e:seed\n')
+  })
+
+  it('seeds accepted applications with an immutable reputation entitlement snapshot', () => {
+    const seed = readRepositoryFile('scripts/e2e-seed.ts')
+    const acceptedApplicationInsert = seed.match(
+      /INSERT INTO task_application\(([\s\S]*?)FROM new_tasks/,
+    )?.[0]
+
+    expect(acceptedApplicationInsert).toBeDefined()
+    for (const column of [
+      'reputation_level_at_accept',
+      'reputation_policy_version_at_accept',
+      'settlement_delay_days_at_accept',
+      'commission_bonus_bps_at_accept',
+      'premium_support_at_accept',
+    ]) {
+      expect(acceptedApplicationInsert, column).toContain(column)
+    }
+    expect(acceptedApplicationInsert).toContain("1, 1, 2, 0, false")
+  })
+
   it('does not publish bypass ports beyond the local development host', () => {
     const compose = composeConfig()
 

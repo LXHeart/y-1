@@ -7,7 +7,10 @@ import static org.mockito.Mockito.when;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import com.grassland.trust.dispute.MarketplaceEngagementAuthorizationClient;
+import com.grassland.trust.judge.IdentityOrganizationMembershipClient;
+import com.grassland.trust.judge.MarketplaceReputationClient;
 import java.time.Instant;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -54,11 +57,24 @@ public abstract class TrustItSupport {
     @MockitoBean
     protected MarketplaceEngagementAuthorizationClient authorizer;
 
+    /** 出站 marketplace 声誉客户端：默认返回可报名的 Lv5，资格边界测试可覆盖此桩。 */
+    @MockitoBean
+    protected MarketplaceReputationClient reputationClient;
+
+    /** Identity 权威组织成员关系：默认账号不属于任何组织，资格边界测试可覆盖此桩。 */
+    @MockitoBean
+    protected IdentityOrganizationMembershipClient identityMemberships;
+
     @BeforeEach
     void authorizeByDefault() {
         lenient().when(authorizer.authorize(anyString(), anyString(), anyString()))
                 .thenAnswer(inv -> Mono.just(new MarketplaceEngagementAuthorizationClient.Authorization(
-                        inv.getArgument(0), MARKETPLACE_ORG)));
+                        inv.getArgument(0), MARKETPLACE_ORG, inv.getArgument(1), false)));
+        lenient().when(reputationClient.getLevel(anyString()))
+                .thenAnswer(inv -> Mono.just(new MarketplaceReputationClient.LevelResult(
+                        inv.getArgument(0), "Lv5", 5, true, 0L)));
+        lenient().when(identityMemberships.organizationIds(anyString()))
+                .thenReturn(Mono.just(Set.of()));
     }
 
     /** 用例内显式拒绝授权（非当事方 → trust 403，不创建争议）。 */

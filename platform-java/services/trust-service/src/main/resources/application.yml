@@ -51,7 +51,7 @@ trust:
     claim-lease-ms: ${TRUST_OUTBOX_CLAIM_LEASE_MS:300000}
     initial-backoff-ms: ${TRUST_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${TRUST_OUTBOX_MAX_BACKOFF_MS:60000}
-  # 审判 adjudication（Slice 6C）：7 官面板 / 24h 投票 / 平票重开轮次 / 上诉窗口 / 审判官资格阈值（声誉模块未建，占位）。
+  # 审判 adjudication：7 官面板 / 24h 投票 / 平票重开轮次 / 上诉窗口 / Lv5+运营准入。
   adjudication:
     panel-size: ${TRUST_ADJUDICATION_PANEL_SIZE:7}
     vote-window-hours: ${TRUST_ADJUDICATION_VOTE_WINDOW_HOURS:24}
@@ -73,7 +73,7 @@ trust:
     vote-window-seconds: ${TRUST_ADJUDICATION_VOTE_WINDOW_SECONDS:0}
     appeal-window-seconds: ${TRUST_ADJUDICATION_APPEAL_WINDOW_SECONDS:0}
     adjudication-window-seconds: ${TRUST_ADJUDICATION_WINDOW_SECONDS:0}
-    judge-eligibility-tier: ${TRUST_ADJUDICATION_JUDGE_ELIGIBILITY_TIER:1}
+    judge-eligibility-tier: ${TRUST_ADJUDICATION_JUDGE_ELIGIBILITY_TIER:5}
     dispatcher:
       enabled: ${TRUST_ADJUDICATION_DISPATCHER_ENABLED:true}
       poll-ms: ${TRUST_ADJUDICATION_DISPATCHER_POLL_MS:2000}
@@ -88,10 +88,11 @@ finance:
 marketplace:
   service:
     base-url: ${MARKETPLACE_SERVICE_BASE_URL:http://marketplace-service:8083}
+    reputation-timeout-seconds: ${MARKETPLACE_REPUTATION_TIMEOUT_SECONDS:3}
 
 
 # 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
-# trust 签发服务断言到 finance/marketplace（purpose=service），
+# trust 签发服务断言到 finance/marketplace/identity（purpose=service），
 # 验证 edge-bff 用户断言 + marketplace 服务断言。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
@@ -107,6 +108,10 @@ identity-assertion:
       purpose: service
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY_KID:trust-service-identity-v1}
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY:}
   # trust 验证 edge-bff 用户断言 + marketplace 服务断言
   verify-keys:
     - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST_KID:edge-user-trust-v1}
@@ -121,3 +126,8 @@ identity-assertion:
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+
+identity:
+  service:
+    base-url: ${IDENTITY_SERVICE_BASE_URL:http://identity-service:8082}
+    membership-timeout-seconds: ${IDENTITY_MEMBERSHIP_TIMEOUT_SECONDS:3}

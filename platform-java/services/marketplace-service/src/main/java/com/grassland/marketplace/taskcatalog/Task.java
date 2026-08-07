@@ -34,5 +34,14 @@ public record Task(
         int version,
         Instant applicationDeadline,
         Instant publishedAt,
-        Instant cancelledAt
-) {}
+        Instant cancelledAt,
+        int minRecommenderLevel
+) {
+    public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+                String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
+                Instant publishedAt, Instant cancelledAt) {
+        this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt, 1);
+    }
+}

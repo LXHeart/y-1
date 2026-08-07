@@ -31,6 +31,215 @@ class CreditsControllerIT extends FinanceItSupport {
     @DynamicPropertySource
     static void creditsProps(DynamicPropertyRegistry r) {
         r.add("credits.internal-key", () -> INTERNAL_KEY);
+        r.add("credits.ai-quota.base-daily", () -> "2");
+        r.add("credits.ai-quota.zone-id", () -> "Asia/Shanghai");
+    }
+
+    @Test
+    void aiQuotaUsesEntitlementBeforePaidBalanceAndRecordsSource() {
+        String acct = UUID.randomUUID().toString();
+
+        entitledConsume(acct, "quota-1-" + acct, 10_000, 7).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.source").isEqualTo("quota")
+                .jsonPath("$.data.policyVersion").isEqualTo(7)
+                .jsonPath("$.data.quotaLimit").isEqualTo(2)
+                .jsonPath("$.data.balance").isEqualTo(0);
+        entitledConsume(acct, "quota-2-" + acct, 10_000, 7).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.source").isEqualTo("quota");
+        entitledConsume(acct, "quota-3-" + acct, 10_000, 7).expectStatus().isEqualTo(402);
+
+        assertThat(balanceOf(acct)).isZero();
+        assertThat(quotaUsed(acct)).isEqualTo(2);
+        assertThat(quotaTxnCount(acct)).isEqualTo(2);
+    }
+
+    @Test
+    void aiQuotaRequiresIntelligenceServiceAssertionInAdditionToSharedKey() {
+        String acct = UUID.randomUUID().toString();
+        Map<String, Object> body = Map.of(
+                "accountId", acct,
+                "feature", "ai_run_text",
+                "operationId", "untrusted-quota-" + acct,
+                "aiQuotaMultiplierBps", 100_000,
+                "policyVersion", 99);
+
+        client().post().uri("/internal/credits/consume")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/consume")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+
+        assertThat(quotaUsed(acct)).isZero();
+    }
+
+    @Test
+    void consumeCompensationRequiresIntelligenceServiceAssertion() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "protected-compensation-" + acct;
+        entitledConsume(acct, operationId, 10_000, 32).expectStatus().isOk();
+        Map<String, Object> body = Map.of(
+                "accountId", acct,
+                "feature", "ai_run_text",
+                "consumeOperationId", operationId,
+                "note", "failed");
+
+        client().post().uri("/internal/credits/consume-compensations")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/consume-compensations")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "trust"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+
+        assertThat(quotaUsed(acct)).isEqualTo(1);
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk();
+        assertThat(quotaUsed(acct)).isZero();
+    }
+
+    @Test
+    void aiQuotaRejectsNonAiFeatureEvenFromIntelligence() {
+        String acct = UUID.randomUUID().toString();
+
+        client().post().uri("/internal/credits/consume")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "accountId", acct,
+                        "feature", "admin_adjustment",
+                        "operationId", "non-ai-feature-" + acct,
+                        "aiQuotaMultiplierBps", 10_000,
+                        "policyVersion", 1))
+                .exchange().expectStatus().isBadRequest();
+
+        assertThat(quotaUsed(acct)).isZero();
+    }
+
+    @Test
+    void aiQuotaMultiplierFloorsLimitAndThenFallsBackToPaidBalance() {
+        String acct = UUID.randomUUID().toString();
+        award(acct, 1);
+
+        for (int index = 0; index < 3; index++) {
+            entitledConsume(acct, "boosted-" + index + "-" + acct, 15_000, 9)
+                    .expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.source").isEqualTo("quota")
+                    .jsonPath("$.data.quotaLimit").isEqualTo(3);
+        }
+        entitledConsume(acct, "paid-fallback-" + acct, 15_000, 9)
+                .expectStatus().isOk().expectBody()
+                .jsonPath("$.data.source").isEqualTo("paid")
+                .jsonPath("$.data.balance").isEqualTo(0);
+    }
+
+    @Test
+    void quotaRefundReturnsOriginalDailyQuotaWithoutMintingPaidCredits() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "quota-refund-" + acct;
+        entitledConsume(acct, operationId, 10_000, 11).expectStatus().isOk();
+
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.source").isEqualTo("quota")
+                .jsonPath("$.data.action").isEqualTo("refunded")
+                .jsonPath("$.data.balance").isEqualTo(0);
+
+        assertThat(balanceOf(acct)).isZero();
+        assertThat(quotaUsed(acct)).isZero();
+        assertThat(quotaTxnCount(acct)).isEqualTo(2);
+        entitledConsume(acct, "quota-reused-" + acct, 10_000, 11).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.source").isEqualTo("quota");
+    }
+
+    @Test
+    void quotaCompensationSupportsMaximumLengthConsumeOperationId() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "x".repeat(256);
+
+        entitledConsume(acct, operationId, 10_000, 11).expectStatus().isOk();
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.source").isEqualTo("quota")
+                .jsonPath("$.data.action").isEqualTo("refunded");
+
+        assertThat(quotaUsed(acct)).isZero();
+        String refundOperationId = db.sql("""
+                        SELECT operation_id
+                        FROM credits_quota_transaction
+                        WHERE account_id = CAST(:accountId AS uuid) AND type = 'refund'
+                        """)
+                .bind("accountId", acct)
+                .map(row -> row.get("operation_id", String.class)).one().block();
+        assertThat(refundOperationId).isEqualTo("refund:" + operationId).hasSize(263);
+    }
+
+    @Test
+    void entitledConsumeIsIdempotentAndRejectsPolicyScopeMismatch() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "quota-idempotent-" + acct;
+
+        entitledConsume(acct, operationId, 15_000, 12).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.deduplicated").isEqualTo(false);
+        entitledConsume(acct, operationId, 15_000, 12).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.deduplicated").isEqualTo(true)
+                .jsonPath("$.data.source").isEqualTo("quota");
+        entitledConsume(acct, operationId, 10_000, 13).expectStatus().isEqualTo(409);
+
+        assertThat(quotaUsed(acct)).isEqualTo(1);
+        assertThat(quotaTxnCount(acct)).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentEntitledConsumesCannotOverspendDailyQuota() {
+        String acct = UUID.randomUUID().toString();
+        WebClient webClient = WebClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .defaultHeader("X-Internal-Key", INTERNAL_KEY)
+                .defaultHeader("X-Grassland-Identity", signService(null, "intelligence"))
+                .build();
+
+        java.util.List<Integer> statuses = reactor.core.publisher.Flux.range(0, 3)
+                .flatMap(index -> webClient.post().uri("/internal/credits/consume")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(Map.of(
+                                "accountId", acct,
+                                "feature", "ai_run_text",
+                                "operationId", "quota-race-" + index + "-" + acct,
+                                "aiQuotaMultiplierBps", 10_000,
+                                "policyVersion", 14))
+                        .exchangeToMono(response -> Mono.just(response.statusCode().value())), 3)
+                .collectList().block();
+
+        assertThat(statuses).containsExactlyInAnyOrder(200, 200, 402);
+        assertThat(quotaUsed(acct)).isEqualTo(2);
+        assertThat(quotaTxnCount(acct)).isEqualTo(2);
+        assertThat(balanceOf(acct)).isZero();
+    }
+
+    @Test
+    void entitledConsumeStrictlyValidatesQuotaSnapshot() {
+        String acct = UUID.randomUUID().toString();
+
+        entitledConsume(acct, "bad-low-" + acct, 999, 1).expectStatus().isBadRequest();
+        entitledConsume(acct, "bad-high-" + acct, 100_001, 1).expectStatus().isBadRequest();
+        entitledConsume(acct, "bad-version-" + acct, 10_000, 0).expectStatus().isBadRequest();
+        client().post().uri("/internal/credits/consume")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "accountId", acct,
+                        "feature", "ai_run_text",
+                        "operationId", "missing-version-" + acct,
+                        "aiQuotaMultiplierBps", 10_000))
+                .exchange().expectStatus().isBadRequest();
     }
 
     @Test
@@ -99,6 +308,7 @@ class CreditsControllerIT extends FinanceItSupport {
         // 退款键 = refund:<consumeId>（与 consume 行键区分，否则被 dedup 吞掉）
         client().post().uri("/internal/credits/refund")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "comedy_generation",
                         "operationId", "refund:consume-" + acct, "note", "上游失败自动退回"))
@@ -108,6 +318,7 @@ class CreditsControllerIT extends FinanceItSupport {
         // 重复退款 → deduplicated，余额不再叠加
         client().post().uri("/internal/credits/refund")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "comedy_generation",
                         "operationId", "refund:consume-" + acct, "note", "重试"))
@@ -126,6 +337,7 @@ class CreditsControllerIT extends FinanceItSupport {
         // 误用原始 consume 键作 refund（错误用法）→ 命中 consume 行，dedup，不退款
         client().post().uri("/internal/credits/refund")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "comedy_generation",
                         "operationId", "X-" + acct, "note", "误用"))
@@ -150,6 +362,100 @@ class CreditsControllerIT extends FinanceItSupport {
 
         assertThat(balanceOf(acct)).isEqualTo(2);
         assertThat(txnCount(acct)).isEqualTo(3); // award + consume + one refund
+    }
+
+    @Test
+    void legacyAiRefundRequiresIntelligenceAssertionBeforeCompensation() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "protected-refund-" + acct;
+        award(acct, 2);
+        consume(acct, "ai_run_text", operationId);
+
+        Map<String, Object> body = Map.of(
+                "accountId", acct,
+                "amount", 1,
+                "feature", "ai_run_text",
+                "operationId", "refund:" + operationId,
+                "note", "untrusted legacy caller");
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+
+        assertThat(balanceOf(acct)).isEqualTo(1);
+        assertThat(txnCount(acct)).isEqualTo(2);
+    }
+
+    @Test
+    void refundAuthorizationDoesNotDependOnOperationIdPrefix() {
+        String acct = UUID.randomUUID().toString();
+        award(acct, 2);
+        Map<String, Object> body = Map.of(
+                "accountId", acct,
+                "amount", 1,
+                "feature", "admin_adjust",
+                "operationId", "not-a-refund-prefix-" + acct,
+                "note", "untrusted adjustment");
+
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/internal/credits/refund")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isOk();
+
+        assertThat(balanceOf(acct)).isEqualTo(3);
+    }
+
+    @Test
+    void awardRequiresIdentityServiceAssertion() {
+        String acct = UUID.randomUUID().toString();
+        Map<String, Object> body = Map.of(
+                "accountId", acct, "amount", 3, "note", "admin grant");
+
+        client().post().uri("/internal/credits/award")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/award")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/internal/credits/award")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isOk();
+
+        assertThat(balanceOf(acct)).isEqualTo(3);
     }
 
     @Test
@@ -212,6 +518,7 @@ class CreditsControllerIT extends FinanceItSupport {
         WebClient webClient = WebClient.builder()
                 .baseUrl("http://localhost:" + port)
                 .defaultHeader("X-Internal-Key", INTERNAL_KEY)
+                .defaultHeader("X-Grassland-Identity", signService(null, "intelligence"))
                 .build();
 
         var statuses = reactor.core.publisher.Mono.zip(
@@ -242,6 +549,7 @@ class CreditsControllerIT extends FinanceItSupport {
         consume(acct, "ai_run_text", operationId);
         client().post().uri("/internal/credits/refund")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "ai_run_text",
                         "operationId", "refund:" + operationId, "note", "old client"))
@@ -280,6 +588,22 @@ class CreditsControllerIT extends FinanceItSupport {
 
         assertThat(balanceOf(acct)).isEqualTo(2);
         assertThat(txnCount(acct)).isEqualTo(1);
+    }
+
+    @Test
+    void quotaConsumeFencesSameOperationFromOldFinanceInstance() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = "quota-before-old-finance-" + acct;
+        award(acct, 1);
+        entitledConsume(acct, operationId, 10_000, 31).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.source").isEqualTo("quota");
+
+        assertThatThrownBy(() -> oldFinanceConsume(acct, "ai_run_text", operationId).block())
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(balanceOf(acct)).isEqualTo(1);
+        assertThat(quotaUsed(acct)).isEqualTo(1);
+        assertThat(txnCount(acct)).isEqualTo(1); // award only; no paid consume
     }
 
     @Test
@@ -367,6 +691,7 @@ class CreditsControllerIT extends FinanceItSupport {
     private void award(String acct, int amount) {
         client().post().uri("/internal/credits/award")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", amount, "note", "test grant"))
                 .exchange().expectStatus().isOk();
@@ -379,14 +704,31 @@ class CreditsControllerIT extends FinanceItSupport {
     private WebTestClient.ResponseSpec internalConsume(String acct, String feature, String operationId) {
         return client().post().uri("/internal/credits/consume")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", feature, "operationId", operationId))
+                .exchange();
+    }
+
+    private WebTestClient.ResponseSpec entitledConsume(
+            String acct, String operationId, int multiplierBps, long policyVersion) {
+        return client().post().uri("/internal/credits/consume")
+                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "accountId", acct,
+                        "feature", "ai_run_text",
+                        "operationId", operationId,
+                        "aiQuotaMultiplierBps", multiplierBps,
+                        "policyVersion", policyVersion))
                 .exchange();
     }
 
     private WebTestClient.ResponseSpec internalCompensate(String acct, String feature, String operationId) {
         return client().post().uri("/internal/credits/consume-compensations")
                 .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", feature,
                         "consumeOperationId", operationId, "note", "AI run failed"))
@@ -440,5 +782,27 @@ class CreditsControllerIT extends FinanceItSupport {
         Integer c = db.sql("SELECT COUNT(*)::int AS c FROM credits_transaction WHERE account_id = CAST(:a AS uuid)")
                 .bind("a", acct).map(r -> r.get("c", Integer.class)).one().block();
         return c == null ? 0 : c.longValue();
+    }
+
+    private int quotaUsed(String acct) {
+        Integer value = db.sql("""
+                        SELECT COALESCE(SUM(used), 0)::int AS used
+                        FROM credits_daily_quota_usage
+                        WHERE account_id = CAST(:accountId AS uuid)
+                        """)
+                .bind("accountId", acct)
+                .map(row -> row.get("used", Integer.class)).one().block();
+        return value == null ? 0 : value;
+    }
+
+    private long quotaTxnCount(String acct) {
+        Integer value = db.sql("""
+                        SELECT COUNT(*)::int AS count
+                        FROM credits_quota_transaction
+                        WHERE account_id = CAST(:accountId AS uuid)
+                        """)
+                .bind("accountId", acct)
+                .map(row -> row.get("count", Integer.class)).one().block();
+        return value == null ? 0 : value.longValue();
     }
 }

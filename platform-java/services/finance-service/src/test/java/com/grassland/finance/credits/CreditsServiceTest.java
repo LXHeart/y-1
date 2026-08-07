@@ -109,13 +109,14 @@ class CreditsServiceTest {
     @Test
     void refundMapsBalanceAndCallsCreditAccount() {
         String acct = "acct-5";
-        when(repo.findOperation("refund:c-5")).thenReturn(Mono.empty());
+        String operationId = "admin-refund-c-5";
+        when(repo.findOperation(operationId)).thenReturn(Mono.empty());
         // refund: deltaBalance=+1, deltaEarned=0, deltaSpent=-1
         when(repo.creditAccount(acct, 1, 0, -1)).thenReturn(Mono.just(new CreditsAccount(acct, 5, 5, 0)));
-        when(repo.insertTransaction(eq(acct), eq(1), eq(5), eq("refund"), eq("comedy_generation"), eq("note"), eq("refund:c-5")))
+        when(repo.insertTransaction(eq(acct), eq(1), eq(5), eq("refund"), eq("comedy_generation"), eq("note"), eq(operationId)))
                 .thenReturn(Mono.just("txn-r"));
 
-        MutationResult r = service.refund(acct, 1, "comedy_generation", "note", "refund:c-5").block();
+        MutationResult r = service.refund(acct, 1, "comedy_generation", "note", operationId).block();
         assertThat(r.balance()).isEqualTo(5);
         verify(repo).creditAccount(acct, 1, 0, -1);
     }
