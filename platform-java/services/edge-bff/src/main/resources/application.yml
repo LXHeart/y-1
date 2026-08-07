@@ -122,6 +122,16 @@ edge:
     - path: /api/admin/tasks
       upstream: marketplace
       enabled: ${EDGE_ROUTE_ADMIN_TASKS_MARKETPLACE:true}
+    # 内容素材库（PRD §4.8 / Slice 14）→ intelligence。/api/content-assets 三类库 CRUD + 授权 + 下载；
+    # 物理资产三步上传走既有 /api/media 路由（无需另配）。全新路径，无 legacy 碰撞。
+    - path: /api/content-assets
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CONTENT_ASSETS_INTELLIGENCE:true}
+    # 公共素材审核端点（/api/admin/content-assets/review + .../review/{approve|reject}）→ intelligence。
+    # 精确前缀，不抢其它 /api/admin/*。
+    - path: /api/admin/content-assets
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_CONTENT_ASSETS_INTELLIGENCE:true}
     # 平台 admin 用户管理 + 积分调整（迁自 legacy Express）→ identity。
     # 精确路径，不抢同前缀的 permission-requests/kyb-requests/ai（它们排在前面，更具体优先）。
     # 同一 flag 绑定两者（同属一次迁移，不应分开切流）。
