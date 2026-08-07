@@ -291,4 +291,46 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
                 .expectStatus().is4xxClientError();
         verify(credits, never()).consume(any(), any());
     }
+
+    // ---------------- topic-from-hot（§4.9.5）----------------
+
+    @Test
+    void topicFromHotStructuresTitleIntoAngleThesisAudience() {
+        ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
+        when(credits.consume(any(), featureCaptor.capture())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
+        when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk(
+                "{\"topic\":\"打工人早餐新选择\",\"angle\":\"平价高效\","
+                + "\"thesis\":\"5分钟搞定营养早餐\",\"audience\":\"通勤白领\","
+                + "\"entryPoints\":[\"时间对比\",\"营养搭配\",\"价格真相\"]}")));
+
+        byte[] body = client().post().uri("/api/creation-assistant/topic-from-hot")
+                .header(header(), sign("user-hot", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("hotTitle", "打工人早餐调查", "platform", "xiaohongshu"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .expectBody().returnResult().getResponseBody();
+
+        String sse = new String(body, UTF_8);
+        assertThat(sse).contains("\"type\":\"topic\"");
+        assertThat(sse).contains("打工人早餐新选择");
+        assertThat(sse).contains("通勤白领");
+        // entryPoints 是结构化切入点，而非纯字符串 topic
+        assertThat(sse).contains("时间对比");
+        assertThat(sse).contains("价格真相");
+        assertThat(featureCaptor.getValue()).isEqualTo(CreditFeature.CREATION_ASSISTANT);
+    }
+
+    @Test
+    void topicFromHotRejectsEmptyTitle() {
+        client().post().uri("/api/creation-assistant/topic-from-hot")
+                .header(header(), sign("user-notitle", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("hotTitle", ""))
+                .exchange()
+                .expectStatus().is4xxClientError();
+        verify(credits, never()).consume(any(), any());
+    }
 }

@@ -142,6 +142,38 @@ final class CreationAssistantPrompts {
                         %s""".formatted(taskRequirements, platformHint(platform), content)));
     }
 
+    /**
+     * 热点→选题 prompt（§4.9.5「从热点生成选题」）。把热点标题结构化为可创作的选题，
+     * 含选题角度/立意/目标受众/内容切入点——而非当前前端把热点标题直接当字符串 topic。
+     * 选题确认后由前端级联调既有 titles→outline→content→image-rec 端点（本端点只产选题）。
+     *
+     * @param hotTitle 热点标题（来自 homepage hot-items）
+     * @param platform 目标平台（可空=未定，让 AI 给通用建议）
+     * @param angleHint 用户补充的创作方向/角度提示（可空）
+     */
+    static List<ChatMessage> topicFromHotMessages(String hotTitle, String platform, String angleHint) {
+        String platformPart = platform == null || platform.isBlank()
+                ? "（用户未定平台，请给出通用选题建议）" : platformHint(platform);
+        String anglePart = angleHint == null || angleHint.isBlank()
+                ? "（无补充方向）" : angleHint;
+        return List.of(
+                ChatMessage.system("""
+                        你是一位资深内容策划，擅长把热点话题转化为可落地的创作选题。
+
+                        要求：
+                        - 基于（而非照抄）热点，给出 1 个适合内容创作的选题角度
+                        - 选题要接地气、有创作可行性，不要空泛
+                        - 标注选题的核心立意、目标受众、内容切入点（可展开的结构线索）
+
+                        **必须**只输出一个 JSON 对象，不要 markdown 代码块。格式：
+                        {"topic":"选题标题","angle":"选题角度","thesis":"核心立意","audience":"目标受众","entryPoints":["切入点1","切入点2","切入点3"]}
+                        """),
+                ChatMessage.user("""
+                        热点标题：%s
+                        目标平台：%s
+                        补充方向：%s""".formatted(hotTitle, platformPart, anglePart)));
+    }
+
     /** 平台调性提示（未知平台给通用提示）。 */
     private static String platformHint(String platform) {
         if (platform == null || platform.isBlank()) {

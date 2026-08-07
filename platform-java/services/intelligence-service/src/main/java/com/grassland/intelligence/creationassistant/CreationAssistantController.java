@@ -143,6 +143,31 @@ public class CreationAssistantController {
                 .map(frames -> sseEntity(frames, exchange));
     }
 
+    /**
+     * 热点→选题（§4.9.5「从热点生成选题」）：把热点标题结构化为选题（角度/立意/受众/切入点），
+     * 而非纯字符串。选题确认后由前端级联调既有 titles→outline→content→image-rec。
+     * 聚合 LLM JSON → 发 topic 帧。
+     */
+    @PostMapping("/topic-from-hot")
+    public Mono<ResponseEntity<Flux<DataBuffer>>> topicFromHot(
+            @RequestBody TopicFromHotRequest body, ServerWebExchange exchange) {
+        if (body == null || body.hotTitle() == null || body.hotTitle().isBlank()) {
+            return Mono.error(new IntelligenceException(400, "hotTitle 不能为空"));
+        }
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.CREATION_ASSISTANT))
+                .flatMap(charge -> ai.startTextRun(new TextRunCommand(
+                        CreationAssistantPrompts.topicFromHotMessages(
+                                body.hotTitle(), body.platform(), body.angleHint())))
+                        .map(ChatChunk::content)
+                        .collectList()
+                        .map(chunks -> String.join("", chunks))
+                        .map(raw -> parseTopic(stripCodeFence(raw)))
+                        .onErrorResume(error -> credits.refund(charge, "热点选题失败自动退回")
+                                .then(Mono.error(error))))
+                .map(frames -> sseEntity(frames, exchange));
+    }
+
     // ---- 评分解析 ----
 
     /** 解析 LLM 返回的评分 JSON 为结构化帧。 */
@@ -238,6 +263,34 @@ public class CreationAssistantController {
         return Flux.fromIterable(frames);
     }
 
+    /** 解析热点选题 JSON → 发 topic 帧（角度/立意/受众/切入点）。 */
+    private static Flux<String> parseTopic(String json) {
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(json);
+        } catch (Exception e) {
+            throw new IntelligenceException(502, "热点选题返回了无法解析的内容");
+        }
+        String topic = root.path("topic").asText("");
+        if (topic.isBlank()) {
+            throw new IntelligenceException(502, "热点选题返回了无效数据");
+        }
+        // entryPoints 是数组，序列化为逗号分隔（frame 只收 String 值）
+        java.util.List<String> entryPoints = new java.util.ArrayList<>();
+        JsonNode epNode = root.path("entryPoints");
+        if (epNode.isArray()) {
+            epNode.forEach(n -> entryPoints.add(n.asText()));
+        }
+        Map<String, String> fields = new java.util.LinkedHashMap<>();
+        fields.put("type", "topic");
+        fields.put("topic", topic);
+        fields.put("angle", root.path("angle").asText(""));
+        fields.put("thesis", root.path("thesis").asText(""));
+        fields.put("audience", root.path("audience").asText(""));
+        fields.put("entryPoints", String.join("；", entryPoints));
+        return Flux.just(frame(fields));
+    }
+
     // ---- SSE helpers（镜像 ArticleController，现有惯例各 controller 自持副本）----
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {
@@ -288,6 +341,9 @@ public class CreationAssistantController {
 
     /** 任务覆盖检查请求：内容 + 任务要求（前端从 task 快照传入）+ 平台。 */
     public record TaskCoverageRequest(String content, String taskRequirements, String platform) {}
+
+    /** 热点→选题请求：热点标题 + 目标平台（可空）+ 补充角度提示（可空）。 */
+    public record TopicFromHotRequest(String hotTitle, String platform, String angleHint) {}
 
     /** 评分解析中间结果，累积逐维度 SSE 帧。 */
     private static final class ScoreResult {
