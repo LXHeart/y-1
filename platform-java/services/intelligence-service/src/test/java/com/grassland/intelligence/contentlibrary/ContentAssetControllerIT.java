@@ -218,6 +218,175 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .expectStatus().isUnauthorized();
     }
 
+    // ---------------- Stage 2：商家素材库 + 授权 ----------------
+
+    @Test
+    void merchantCreateRequiresMerchantIdentity() {
+        String mediaId = seedMedia("merchant-a");
+        // 非商家身份（个人/消费者）创建商家库素材 → 403
+        client().post().uri("/api/content-assets")
+                .header(header(), sign("plain-user", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "merchant", "mediaId", mediaId,
+                        "category", "store", "title", "x"))
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void merchantCreatesAndListsByOrg() {
+        String org = "org-merchant";
+        String mediaId = seedMedia("merchant-a");
+        createMerchantAsset("merchant-a", org, mediaId, "门店照");
+        createMerchantAsset("merchant-a", org, seedMedia("merchant-a"), "菜单");
+
+        // 同 org 另一商家成员也能看到全部素材（org 维度）。
+        createMerchantAsset("merchant-b", org, seedMedia("merchant-b"), "产品图");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> items = (List<Map<String, Object>>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets?libraryType=merchant")
+                        .header(header(), signWithOrg("merchant-b", org))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(items).hasSize(3);
+    }
+
+    @Test
+    void merchantListIsolatedByOrg() {
+        // 不同 org 的商家看不到对方素材。
+        String mediaId = seedMedia("merchant-x");
+        createMerchantAsset("merchant-x", "org-1", mediaId, "org1 素材");
+
+        @SuppressWarnings("unchecked")
+        List<?> items = (List<?>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets?libraryType=merchant")
+                        .header(header(), signWithOrg("merchant-y", "org-2"))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(items).isEmpty();
+    }
+
+    @Test
+    void merchantGrantsAssetToRecommenderAndRecommenderCanRead() {
+        String org = "org-grant";
+        String mediaId = seedMedia("merchant-g");
+        String assetId = createMerchantAsset("merchant-g", org, mediaId, "授权素材");
+
+        // 商家授权推荐官
+        client().post().uri("/api/content-assets/" + assetId + "/grants")
+                .header(header(), signWithOrg("merchant-g", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("granteeAccountId", "recommender-1"))
+                .exchange()
+                .expectStatus().isOk();
+
+        // 推荐官能在「我被授权的商家素材」列表看到
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> granted = (List<Map<String, Object>>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets?libraryType=merchant&granted=true")
+                        .header(header(), sign("recommender-1", "recommender"))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(granted).hasSize(1);
+        assertThat(granted.get(0)).containsEntry("title", "授权素材");
+
+        // 推荐官能读详情（跨账号，靠 grant 放行）
+        client().get().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("recommender-1", "recommender"))
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void ungrantedRecommenderCannotReadMerchantAsset() {
+        String org = "org-grant2";
+        String mediaId = seedMedia("merchant-h");
+        String assetId = createMerchantAsset("merchant-h", org, mediaId, "未授权素材");
+
+        // 未被授权的推荐官 → 404（不泄露存在性）
+        client().get().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("recommender-2", "recommender"))
+                .exchange()
+                .expectStatus().isNotFound();
+
+        // 也不在被授权列表里
+        @SuppressWarnings("unchecked")
+        List<?> items = (List<?>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets?libraryType=merchant&granted=true")
+                        .header(header(), sign("recommender-2", "recommender"))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(items).isEmpty();
+    }
+
+    @Test
+    void revokeGrantHidesAssetFromRecommender() {
+        String org = "org-revoke";
+        String mediaId = seedMedia("merchant-r");
+        String assetId = createMerchantAsset("merchant-r", org, mediaId, "将撤销");
+
+        // 授权
+        client().post().uri("/api/content-assets/" + assetId + "/grants")
+                .header(header(), signWithOrg("merchant-r", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("granteeAccountId", "recommender-3"))
+                .exchange()
+                .expectStatus().isOk();
+
+        // 撤销
+        client().delete().uri("/api/content-assets/" + assetId + "/grants/recommender-3")
+                .header(header(), signWithOrg("merchant-r", org))
+                .exchange()
+                .expectStatus().isOk();
+
+        // 撤销后推荐官读不到
+        client().get().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("recommender-3", "recommender"))
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    @Test
+    void merchantGrantIdempotentRenewal() {
+        String org = "org-renew";
+        String mediaId = seedMedia("merchant-n");
+        String assetId = createMerchantAsset("merchant-n", org, mediaId, "续约");
+
+        // 同一推荐官重复授权 → 幂等（GREATEST 续约只前进），两次都 200
+        client().post().uri("/api/content-assets/" + assetId + "/grants")
+                .header(header(), signWithOrg("merchant-n", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("granteeAccountId", "recommender-4"))
+                .exchange()
+                .expectStatus().isOk();
+        client().post().uri("/api/content-assets/" + assetId + "/grants")
+                .header(header(), signWithOrg("merchant-n", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("granteeAccountId", "recommender-4"))
+                .exchange()
+                .expectStatus().isOk();
+
+        // 授权列表只有一条
+        @SuppressWarnings("unchecked")
+        List<?> grants = (List<?>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets/" + assetId + "/grants")
+                        .header(header(), signWithOrg("merchant-n", org))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(grants).hasSize(1);
+    }
+
     // ---- 辅助 ----
 
     private String header() {
@@ -230,6 +399,19 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .header(header(), sign(account, null))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("mediaId", mediaId, "category", "store", "title", title))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return ((Map<String, Object>) response.get("data")).get("id").toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createMerchantAsset(String account, String org, String mediaId, String title) {
+        Map<String, Object> response = client().post().uri("/api/content-assets")
+                .header(header(), signWithOrg(account, org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "merchant", "mediaId", mediaId,
+                        "category", "store", "title", title))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();

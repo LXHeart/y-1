@@ -28,10 +28,27 @@ public class ContentAssetRepository {
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
 
-    private static final String SELECT_COLS = """
+    /** SELECT 列（无表别名，单表查询用）。 */
+    static final String SELECT_COLS = """
             id::text, media_reference_id::text, library_type, category, owner_account_id, organization_id,
             title, tags::text, mime_type, size_bytes, valid_until, status, version, source, license_scope,
             review_note, reviewed_by, reviewed_at, created_at, updated_at, deleted_at
+            """;
+
+    /**
+     * SELECT 列（带 {@code a.} 表别名 + {@code a_} 输出别名，JOIN 场景用，如
+     * {@code ContentAssetGrantRepository.listGrantedAssets}）。列名与 {@link #map(Readable)} 对齐。
+     */
+    static final String SELECT_COLS_PLACEHOLDER = """
+            a.id::text AS a_id, a.media_reference_id::text AS a_media_reference_id,
+            a.library_type AS a_library_type, a.category AS a_category,
+            a.owner_account_id AS a_owner_account_id, a.organization_id AS a_organization_id,
+            a.title AS a_title, a.tags::text AS a_tags, a.mime_type AS a_mime_type,
+            a.size_bytes AS a_size_bytes, a.valid_until AS a_valid_until, a.status AS a_status,
+            a.version AS a_version, a.source AS a_source, a.license_scope AS a_license_scope,
+            a.review_note AS a_review_note, a.reviewed_by AS a_reviewed_by,
+            a.reviewed_at AS a_reviewed_at, a.created_at AS a_created_at,
+            a.updated_at AS a_updated_at, a.deleted_at AS a_deleted_at
             """;
 
     private final DatabaseClient db;
@@ -86,6 +103,33 @@ public class ContentAssetRepository {
                 + " ORDER BY created_at DESC")
                 .bind("ownerAccountId", ownerAccountId)
                 .map(ContentAssetRepository::map).all();
+    }
+
+    /**
+     * 列商家库素材（org 维度，仅 active 未软删）。按创建时间倒序，可按分类筛选。
+     * 商家成员查本 org 全部素材（admin/member 粒度首期不分，断言 org 已经 membership 校验）。
+     */
+    public Flux<ContentAsset> listMerchantByOrg(String organizationId, AssetCategory category) {
+        String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
+                + " WHERE organization_id=:organizationId AND library_type='merchant'"
+                + " AND deleted_at IS NULL AND status='active'"
+                + (category != null ? " AND category=:category" : "")
+                + " ORDER BY created_at DESC";
+        DatabaseClient.GenericExecuteSpec spec = db.sql(sql).bind("organizationId", organizationId);
+        if (category != null) {
+            spec = spec.bind("category", category.db());
+        }
+        return spec.map(ContentAssetRepository::map).all();
+    }
+
+    /** 详情查询带 org 归属校验（商家库用：跨 org 一律 empty，controller 转 404）。 */
+    public Mono<ContentAsset> findByIdInOrg(UUID id, String organizationId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
+                + " WHERE id=CAST(:id AS uuid) AND organization_id=:organizationId"
+                + " AND library_type='merchant' AND deleted_at IS NULL")
+                .bind("id", id.toString())
+                .bind("organizationId", organizationId)
+                .map(ContentAssetRepository::map).one();
     }
 
     /**
@@ -174,7 +218,7 @@ public class ContentAssetRepository {
                 row.get("owner_account_id", String.class),
                 row.get("organization_id", String.class),
                 row.get("title", String.class),
-                parseTags(row.get("tags", String.class)),
+                parseTagsStatic(row.get("tags", String.class)),
                 row.get("mime_type", String.class),
                 row.get("size_bytes", Long.class),
                 toInstant(row.get("valid_until", OffsetDateTime.class)),
@@ -199,7 +243,7 @@ public class ContentAssetRepository {
                 row.get("owner_account_id", String.class),
                 row.get("organization_id", String.class),
                 row.get("title", String.class),
-                parseTags(row.get("tags", String.class)),
+                parseTagsStatic(row.get("tags", String.class)),
                 row.get("mime_type", String.class),
                 row.get("size_bytes", Long.class),
                 toInstant(row.get("valid_until", OffsetDateTime.class)),
@@ -209,7 +253,8 @@ public class ContentAssetRepository {
                 row.get("snapshotted_by", String.class));
     }
 
-    private static List<String> parseTags(String json) {
+    /** 解析 tags jsonb 为 List（跨包复用：ContentAssetGrantRepository JOIN 读 asset 也用）。 */
+    public static List<String> parseTagsStatic(String json) {
         if (json == null || json.isBlank()) {
             return List.of();
         }
