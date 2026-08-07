@@ -164,4 +164,131 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
                 .exchange()
                 .expectStatus().isUnauthorized();
     }
+
+    // ---------------- guide（§4.9.1/§4.9.2）----------------
+
+    @Test
+    void guideAskStreamsQuestionWhenInfoInsufficient() {
+        ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
+        when(credits.consume(any(), featureCaptor.capture())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
+        when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk(
+                "{\"action\":\"ask\",\"question\":\"你想发布到哪个平台？\"}")));
+
+        byte[] body = client().post().uri("/api/creation-assistant/guide")
+                .header(header(), sign("user-guide", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("userInput", "想写一篇探店笔记"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .expectBody().returnResult().getResponseBody();
+
+        String sse = new String(body, UTF_8);
+        assertThat(sse).contains("\"type\":\"ask\"");
+        assertThat(sse).contains("你想发布到哪个平台");
+        assertThat(sse).endsWith("data: [DONE]\n\n");
+        assertThat(featureCaptor.getValue()).isEqualTo(CreditFeature.CREATION_ASSISTANT);
+    }
+
+    @Test
+    void guideBriefMarksInferredFields() {
+        when(credits.consume(any(), any())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
+        when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk(
+                "{\"action\":\"brief\",\"brief\":{\"angle\":\"探店种草\",\"audience\":\"年轻白领\","
+                + "\"structure\":\"开头钩子+菜品+环境+地址\",\"inferredFields\":[\"audience\",\"style\"]}}")));
+
+        byte[] body = client().post().uri("/api/creation-assistant/guide")
+                .header(header(), sign("user-brief", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("userInput", "想写一篇小红书探店笔记", "platform", "xiaohongshu",
+                        "history", "已选小红书，主题探店"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().returnResult().getResponseBody();
+
+        String sse = new String(body, UTF_8);
+        assertThat(sse).contains("\"type\":\"brief\"");
+        assertThat(sse).contains("探店种草");
+        // §4.9.2 推测标记：inferredFields 列出 AI 推测的字段
+        assertThat(sse).contains("inferredFields");
+        assertThat(sse).contains("audience,style");
+    }
+
+    @Test
+    void guideRejectsEmptyInput() {
+        client().post().uri("/api/creation-assistant/guide")
+                .header(header(), sign("user-empty", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("userInput", ""))
+                .exchange()
+                .expectStatus().is4xxClientError();
+        verify(credits, never()).consume(any(), any());
+    }
+
+    // ---------------- task-coverage（§4.9.3）----------------
+
+    @Test
+    void taskCoverageStreamsGapsWhenRequirementsUnmet() {
+        when(credits.consume(any(), any())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
+        when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk(
+                "{\"covered\":false,\"gaps\":["
+                + "{\"requirement\":\"必须提到门店地址\",\"status\":\"missing\",\"hint\":\"结尾加地址\"},"
+                + "{\"requirement\":\"带3张以上配图\",\"status\":\"weak\",\"hint\":\"补图\"}"
+                + "]}")));
+
+        byte[] body = client().post().uri("/api/creation-assistant/task-coverage")
+                .header(header(), sign("user-cov", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "content", "这家店不错，菜品新鲜，推荐大家来试试。",
+                        "taskRequirements", "必须提到门店地址；带3张以上配图；200字以上"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .expectBody().returnResult().getResponseBody();
+
+        String sse = new String(body, UTF_8);
+        assertThat(sse).contains("\"type\":\"gap\"");
+        assertThat(sse).contains("必须提到门店地址");
+        assertThat(sse).contains("带3张以上配图");
+        assertThat(sse).contains("\"type\":\"covered\"");
+        assertThat(sse).contains("\"covered\":false");
+    }
+
+    @Test
+    void taskCoverageReportsAllCovered() {
+        when(credits.consume(any(), any())).thenAnswer(inv ->
+                CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
+        when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk(
+                "{\"covered\":true,\"gaps\":[]}")));
+
+        byte[] body = client().post().uri("/api/creation-assistant/task-coverage")
+                .header(header(), sign("user-covered", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "content", "门店在南京路1号，菜品新鲜环境好，推荐大家来试试。",
+                        "taskRequirements", "提到门店地址"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().returnResult().getResponseBody();
+
+        String sse = new String(body, UTF_8);
+        assertThat(sse).contains("\"covered\":true");
+        // 无 gap 帧
+        assertThat(sse).doesNotContain("\"type\":\"gap\"");
+    }
+
+    @Test
+    void taskCoverageRejectsMissingRequirements() {
+        client().post().uri("/api/creation-assistant/task-coverage")
+                .header(header(), sign("user-noreq", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("content", "这是一段足够长的内容用于测试，至少十个字"))
+                .exchange()
+                .expectStatus().is4xxClientError();
+        verify(credits, never()).consume(any(), any());
+    }
 }

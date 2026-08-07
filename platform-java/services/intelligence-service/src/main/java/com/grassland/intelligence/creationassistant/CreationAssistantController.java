@@ -93,6 +93,56 @@ public class CreationAssistantController {
                 });
     }
 
+    /**
+     * 问答引导（§4.9.1/§4.9.2）：根据用户当前输入，AI 决定问下一个引导问题（ask）还是给出创作 brief。
+     * brief 里推测/补全的字段标 inferred（§4.9.2「明确标记推测内容」）。聚合 LLM JSON → 发帧。
+     */
+    @PostMapping("/guide")
+    public Mono<ResponseEntity<Flux<DataBuffer>>> guide(
+            @RequestBody GuideRequest body, ServerWebExchange exchange) {
+        if (body == null || body.userInput() == null || body.userInput().isBlank()) {
+            return Mono.error(new IntelligenceException(400, "userInput 不能为空"));
+        }
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.CREATION_ASSISTANT))
+                .flatMap(charge -> ai.startTextRun(new TextRunCommand(
+                        CreationAssistantPrompts.guideMessages(body.userInput(), body.platform(), body.history())))
+                        .map(ChatChunk::content)
+                        .collectList()
+                        .map(chunks -> String.join("", chunks))
+                        .map(raw -> parseGuide(stripCodeFence(raw)))
+                        .onErrorResume(error -> credits.refund(charge, "引导失败自动退回")
+                                .then(Mono.error(error))))
+                .map(frames -> sseEntity(frames, exchange));
+    }
+
+    /**
+     * 任务覆盖检查（§4.9.3「任务模式中展示未覆盖的任务要求」）：比对内容与任务要求，逐差距发帧。
+     * task 要求由前端从草场 task 快照传入（intelligence 不跨服务读 marketplace）。
+     */
+    @PostMapping("/task-coverage")
+    public Mono<ResponseEntity<Flux<DataBuffer>>> taskCoverage(
+            @RequestBody TaskCoverageRequest body, ServerWebExchange exchange) {
+        if (body == null || body.content() == null || body.content().trim().length() < MIN_CONTENT_LENGTH) {
+            return Mono.error(new IntelligenceException(400, "内容不能为空（至少 " + MIN_CONTENT_LENGTH + " 字）"));
+        }
+        if (body.taskRequirements() == null || body.taskRequirements().isBlank()) {
+            return Mono.error(new IntelligenceException(400, "taskRequirements 不能为空"));
+        }
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.CREATION_ASSISTANT))
+                .flatMap(charge -> ai.startTextRun(new TextRunCommand(
+                        CreationAssistantPrompts.taskCoverageMessages(
+                                body.content().trim(), body.taskRequirements(), body.platform())))
+                        .map(ChatChunk::content)
+                        .collectList()
+                        .map(chunks -> String.join("", chunks))
+                        .map(raw -> parseCoverage(stripCodeFence(raw)))
+                        .onErrorResume(error -> credits.refund(charge, "任务覆盖检查失败自动退回")
+                                .then(Mono.error(error))))
+                .map(frames -> sseEntity(frames, exchange));
+    }
+
     // ---- 评分解析 ----
 
     /** 解析 LLM 返回的评分 JSON 为结构化帧。 */
@@ -121,6 +171,71 @@ public class CreationAssistantController {
             throw new IntelligenceException(502, "评分返回了无效数据");
         }
         return result;
+    }
+
+    /** 解析引导 JSON → 发 ask 帧（引导问题）或 brief 帧（创作 brief，含 inferredFields 标记推测）。 */
+    private static Flux<String> parseGuide(String json) {
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(json);
+        } catch (Exception e) {
+            throw new IntelligenceException(502, "引导返回了无法解析的内容");
+        }
+        String action = root.path("action").asText("");
+        if ("ask".equals(action)) {
+            String question = root.path("question").asText("");
+            if (question.isBlank()) {
+                throw new IntelligenceException(502, "引导返回了无效数据");
+            }
+            return Flux.just(frame(Map.of("type", "ask", "question", question)));
+        }
+        if ("brief".equals(action)) {
+            JsonNode brief = root.path("brief");
+            if (brief.isMissingNode()) {
+                throw new IntelligenceException(502, "引导返回了无效数据");
+            }
+            // inferredFields 是数组，序列化为逗号分隔字符串（frame 只收 String 值）
+            java.util.List<String> inferred = new java.util.ArrayList<>();
+            JsonNode inferredNode = brief.path("inferredFields");
+            if (inferredNode.isArray()) {
+                inferredNode.forEach(n -> inferred.add(n.asText()));
+            }
+            Map<String, String> fields = new java.util.LinkedHashMap<>();
+            fields.put("type", "brief");
+            fields.put("angle", brief.path("angle").asText(""));
+            fields.put("audience", brief.path("audience").asText(""));
+            fields.put("structure", brief.path("structure").asText(""));
+            fields.put("inferredFields", String.join(",", inferred));
+            return Flux.just(frame(fields));
+        }
+        throw new IntelligenceException(502, "引导返回了无法识别的 action: " + action);
+    }
+
+    /** 解析任务覆盖 JSON → 逐差距发帧 + covered 帧。 */
+    private static Flux<String> parseCoverage(String json) {
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(json);
+        } catch (Exception e) {
+            throw new IntelligenceException(502, "任务覆盖检查返回了无法解析的内容");
+        }
+        boolean covered = root.path("covered").asBoolean(false);
+        JsonNode gaps = root.path("gaps");
+        java.util.List<String> frames = new java.util.ArrayList<>();
+        if (gaps.isArray()) {
+            for (JsonNode gap : gaps) {
+                Map<String, String> fields = new java.util.LinkedHashMap<>();
+                fields.put("type", "gap");
+                fields.put("requirement", gap.path("requirement").asText(""));
+                fields.put("status", gap.path("status").asText("missing"));
+                fields.put("hint", gap.path("hint").asText(""));
+                if (!fields.get("requirement").isBlank()) {
+                    frames.add(frame(fields));
+                }
+            }
+        }
+        frames.add(frame(Map.of("type", "covered", "covered", String.valueOf(covered))));
+        return Flux.fromIterable(frames);
     }
 
     // ---- SSE helpers（镜像 ArticleController，现有惯例各 controller 自持副本）----
@@ -167,6 +282,12 @@ public class CreationAssistantController {
     // ---- DTO ----
 
     public record ScoreRequest(String content, String platform, String title) {}
+
+    /** 引导请求：用户当前输入 + 目标平台（可空）+ 对话历史（可空，首轮）。 */
+    public record GuideRequest(String userInput, String platform, String history) {}
+
+    /** 任务覆盖检查请求：内容 + 任务要求（前端从 task 快照传入）+ 平台。 */
+    public record TaskCoverageRequest(String content, String taskRequirements, String platform) {}
 
     /** 评分解析中间结果，累积逐维度 SSE 帧。 */
     private static final class ScoreResult {

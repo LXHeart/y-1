@@ -75,6 +75,73 @@ final class CreationAssistantPrompts {
                         %s""".formatted(titlePart, platformHint, content)));
     }
 
+    /**
+     * 问答引导 prompt（§4.9.1/§4.9.2）。AI 根据用户当前输入决定下一步：
+     * 若信息不足 → 问一个引导性问题（platform/主题/受众/风格）；若足够 → 给出创作 brief，
+     * 其中推测/补全的字段标 {@code inferred:true}（§4.9.2「明确标记推测内容」）。
+     * 要求 LLM 返回结构化 JSON，controller 解析后发帧。
+     *
+     * @param userInput 用户当前输入（主题/想法/已有片段）
+     * @param platform 目标平台，可空（未定时引导用户选）
+     * @param history 引导对话历史（之前的问答拼接），首轮为空
+     */
+    static List<ChatMessage> guideMessages(String userInput, String platform, String history) {
+        String platformPart = platform == null || platform.isBlank()
+                ? "（用户尚未选定平台，请在引导中询问）" : platform;
+        String historyPart = history == null || history.isBlank()
+                ? "（首轮，无历史）" : history;
+        return List.of(
+                ChatMessage.system("""
+                        你是一位耐心的创作教练，引导没有经验的用户一步步完成内容创作。
+
+                        你的任务：
+                        - 如果用户的信息还不足以开始创作，问**一个**最关键的引导问题（平台/主题/受众/风格/目标）。
+                        - 如果信息已足够，给出一个创作 brief（角度/受众/要点/建议结构）。
+                        - 对你**推测/补全**的字段（非用户明说、你根据上下文推断的），必须标 inferred:true，让用户知道哪些是推测。
+
+                        **必须**只输出一个 JSON 对象，不要 markdown 代码块、不要多余文字。格式：
+                        {"action":"ask","question":"你想吸引哪类读者？"}（还需引导）
+                        或
+                        {"action":"brief","brief":{"angle":"...","audience":"...","points":["..."],"structure":"...","inferredFields":["audience","style"]}}（信息足够，给出 brief；inferredFields 列出哪些是你推测的）
+                        """),
+                ChatMessage.user("""
+                        目标平台：%s
+                        对话历史：%s
+                        用户最新输入：%s""".formatted(platformPart, historyPart, userInput)));
+    }
+
+    /**
+     * 任务覆盖检查 prompt（§4.9.3「任务模式中展示未覆盖的任务要求」）。
+     * 比对用户当前内容与任务要求，列出未覆盖/偏离的要求。
+     *
+     * @param content 用户当前创作内容
+     * @param taskRequirements 任务要求（前端从 task 快照传入：描述/平台/必须包含/禁止内容等）
+     * @param platform 目标平台
+     */
+    static List<ChatMessage> taskCoverageMessages(String content, String taskRequirements, String platform) {
+        return List.of(
+                ChatMessage.system("""
+                        你是一位内容审核助手。比对用户的创作内容与任务要求，找出**未覆盖或偏离**的要求。
+
+                        要求：
+                        - 只列任务明确要求但内容中没有体现的点（不要泛泛而谈）
+                        - 每条含 requirement（原要求）+ status（missing/weak/off-track）+ hint（怎么补）
+                        - 若内容已覆盖全部要求，返回空数组 + covered:true
+
+                        **必须**只输出一个 JSON 对象，不要 markdown 代码块。格式：
+                        {"covered":false,"gaps":[{"requirement":"必须提到门店地址","status":"missing","hint":"在结尾加地址"},...]}
+                        或 {"covered":true,"gaps":[]}
+                        """),
+                ChatMessage.user("""
+                        任务要求：
+                        %s
+
+                        目标平台：%s
+
+                        用户内容：
+                        %s""".formatted(taskRequirements, platformHint(platform), content)));
+    }
+
     /** 平台调性提示（未知平台给通用提示）。 */
     private static String platformHint(String platform) {
         if (platform == null || platform.isBlank()) {
