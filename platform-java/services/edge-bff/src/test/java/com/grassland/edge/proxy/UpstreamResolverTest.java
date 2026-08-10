@@ -201,6 +201,8 @@ class UpstreamResolverTest {
         // identity 的权限审核队列 → identity
         assertThat(resolver.resolve("GET", "/api/admin/permission-requests")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("POST", "/api/admin/permission-requests/req-1")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("POST", "/api/admin/permission-requests/req-1/claim")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/admin/permission-requests/req-1/audit")).isEqualTo(IDENTITY);
         // /api/admin/users、/api/admin/adjust-credits 已迁 identity（见 adminUsersAndAdjustCreditsGoToIdentity）。
     }
 

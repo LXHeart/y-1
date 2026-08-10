@@ -24,5 +24,15 @@ public record MerchantPermissionRequest(
         String originalRequestId,
         String appealNote,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        int version,
+        Instant reviewStartedAt,
+        Instant slaBreachedAt,
+        String autoReviewStatus,
+        String autoReviewResult,
+        String reviewMode,
+        String riskLevel,
+        String attachmentIds,
+        Instant decisionAt,
+        int appealCount
 ) {}

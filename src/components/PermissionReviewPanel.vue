@@ -2,12 +2,12 @@
 import { onMounted, ref } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import { parsePermissionMaterials } from '../types/grassland'
-import type { MaterialType, PermissionRequest, PermissionTier, ReviewDecision } from '../types/grassland'
+import type { MaterialType, PermissionRequest, PermissionRequestAudit, PermissionTier, ReviewDecision } from '../types/grassland'
 
 /**
  * 平台侧商家权限审核队列（HLD D-05 的审核侧，Slice 2H）。
  *
- * 后端门禁是 `app_users.role == 'admin'`（identity 首个 admin guard），非 admin 调用 403。
+ * 后端门禁以 identity `backend_role=platform_admin` 为唯一授权权威，非 admin 调用 403。
  * 本组件由 `GrasslandWorkbench` 按 `useAuth().currentUser.role` 决定是否挂载——
  * 但那只是**不给非 admin 看**，真正的授权在服务端。
  *
@@ -23,6 +23,8 @@ const queue = ref<PermissionRequest[]>([])
 const notice = ref('')
 /** 每条申请的审核备注，key = requestId（不同申请互不串写）。 */
 const notes = ref<Record<string, string>>({})
+const mfaPasswords = ref<Record<string, string>>({})
+const auditRows = ref<Record<string, PermissionRequestAudit[]>>({})
 const loaded = ref(false)
 
 const TIER_LABEL: Record<PermissionTier, string> = {
@@ -46,6 +48,20 @@ const SLA_LABEL: Record<string, string> = {
   completed: '已完成',
 }
 
+const AUTO_LABEL: Record<string, string> = {
+  not_run: '未运行',
+  pending: '核验中',
+  passed: '自动核验通过',
+  failed: '自动核验失败',
+  needs_review: '需人工复核',
+}
+
+const RISK_LABEL: Record<string, string> = {
+  standard: '标准风险',
+  elevated: '较高风险',
+  high: '高风险',
+}
+
 async function refresh(): Promise<void> {
   const list = await grassland.listPendingPermissionRequests()
   if (list) queue.value = list
@@ -56,7 +72,8 @@ onMounted(refresh)
 
 async function review(req: PermissionRequest, decision: ReviewDecision): Promise<void> {
   notice.value = ''
-  const reviewed = await grassland.reviewPermissionRequest(req.id, decision, notes.value[req.id]?.trim() || undefined)
+  const reviewed = await grassland.reviewPermissionRequest(
+    req.id, decision, notes.value[req.id]?.trim() || undefined, req.version)
   if (!reviewed) return
   notice.value = decision === 'approve'
     ? `已批准：组织升级为「${TIER_LABEL[req.requestedTier]}」`
@@ -66,8 +83,36 @@ async function review(req: PermissionRequest, decision: ReviewDecision): Promise
   await refresh()
 }
 
+async function claim(req: PermissionRequest): Promise<void> {
+  const claimed = await grassland.claimPermissionRequest(req.id)
+  if (!claimed) return
+  await refresh()
+}
+
+async function reauthenticate(req: PermissionRequest): Promise<void> {
+  const password = mfaPasswords.value[req.id]?.trim()
+  if (!password) return
+  const result = await grassland.reauthenticate(password)
+  if (!result) return
+  mfaPasswords.value[req.id] = ''
+  notice.value = '重认证已完成，可在 10 分钟内执行高风险批准'
+}
+
+async function toggleAudit(req: PermissionRequest): Promise<void> {
+  if (auditRows.value[req.id]) {
+    delete auditRows.value[req.id]
+    return
+  }
+  const rows = await grassland.listPermissionRequestAudit(req.id)
+  if (rows) auditRows.value[req.id] = rows
+}
+
+function needsReauthentication(req: PermissionRequest): boolean {
+  return req.requestedTier === 'finance_transaction' || req.autoReviewStatus === 'failed'
+}
+
 /**
- * 材料是 {类型: 文本} 的自由文本（当前 slice 未做附件上传，OCR/证照核验留后续）。
+ * 文本材料保留兼容；证照附件通过 attachmentIds 固化，OCR 结果由准入自动复核器持续同步。
  *
  * ⚠️ 必须先 `parsePermissionMaterials`：响应里 materials 是 **JSON 字符串**，
  * 直接 `Object.entries` 会把它逐字符展开（浏览器实测踩到过，审核卡片显示成一列单字）。
@@ -96,6 +141,10 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
       <div class="pr-item-head">
         <span class="pr-target">申请升级至 <strong>{{ TIER_LABEL[req.requestedTier] }}</strong></span>
         <span v-if="req.originalRequestId" class="pr-tag">申诉件</span>
+        <span class="pr-tag">{{ AUTO_LABEL[req.autoReviewStatus] || req.autoReviewStatus }}</span>
+        <span class="pr-tag" :class="{ 'pr-overdue': req.riskLevel === 'high' }">
+          {{ RISK_LABEL[req.riskLevel] || req.riskLevel }}
+        </span>
         <span class="pr-sla" :class="{ 'pr-overdue': req.slaStatus === 'overdue' }">
           {{ SLA_LABEL[req.slaStatus] || req.slaStatus }}
         </span>
@@ -118,9 +167,32 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
       <p v-if="req.appealNote" class="pr-appeal">申诉说明：{{ req.appealNote }}</p>
 
       <div class="pr-actions">
+        <button v-if="req.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="claim(req)">
+          领取审核
+        </button>
+        <button type="button" class="pr-quiet" @click="toggleAudit(req)">
+          {{ auditRows[req.id] ? '收起审计' : '查看审计' }}
+        </button>
+      </div>
+
+      <ol v-if="auditRows[req.id]" class="pr-audit">
+        <li v-for="item in auditRows[req.id]" :key="item.id">
+          <span>{{ item.action }}</span>
+          <time>{{ item.createdAt ? new Date(item.createdAt).toLocaleString() : '—' }}</time>
+        </li>
+      </ol>
+
+      <div v-if="needsReauthentication(req)" class="pr-actions">
+        <input v-model="mfaPasswords[req.id]" type="password" autocomplete="current-password" placeholder="管理员密码" />
+        <button type="button" class="pr-quiet" :disabled="!mfaPasswords[req.id]" @click="reauthenticate(req)">
+          重认证
+        </button>
+      </div>
+
+      <div class="pr-actions">
         <input v-model="notes[req.id]" placeholder="审核备注（驳回时建议写明原因）" />
-        <button type="button" :disabled="grassland.loading.value" @click="review(req, 'approve')">批准</button>
-        <button type="button" class="pr-reject" :disabled="grassland.loading.value" @click="review(req, 'reject')">驳回</button>
+        <button type="button" :disabled="grassland.loading.value || req.autoReviewStatus === 'pending'" @click="review(req, 'approve')">批准</button>
+        <button type="button" class="pr-reject" :disabled="grassland.loading.value || !notes[req.id]?.trim()" @click="review(req, 'reject')">驳回</button>
       </div>
     </section>
   </article>
@@ -149,6 +221,9 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
 .pr-appeal { margin: 0; font-size: 12px; padding: 6px 10px; border-radius: 6px; background: var(--color-surface-strong); }
 .pr-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pr-actions input { flex: 1; min-width: 160px; }
+.pr-audit { margin: 0; padding-left: 20px; font-size: 12px; }
+.pr-audit li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.pr-audit time { opacity: 0.62; }
 .pr-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }

@@ -160,9 +160,15 @@ identity:
       # 超限时最旧设备切回消费者，但不会被登出。
       max-active-per-account: ${IDENTITY_ACTIVE_IDENTITY_MAX_SESSIONS:0}
   permission:
-    # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
+    # 权限审核 SLA：超时只标记、审计和发事件，绝不自动提权。
     sla-hours: ${PERMISSION_SLA_HOURS:72}
     at-risk-hours: ${PERMISSION_AT_RISK_HOURS:12}
+    sla-monitor:
+      enabled: ${IDENTITY_PERMISSION_SLA_MONITOR_ENABLED:true}
+      poll-interval-ms: ${IDENTITY_PERMISSION_SLA_MONITOR_POLL_INTERVAL_MS:60000}
+    auto-review:
+      enabled: ${IDENTITY_PERMISSION_AUTO_REVIEW_ENABLED:true}
+      poll-interval-ms: ${IDENTITY_PERMISSION_AUTO_REVIEW_POLL_INTERVAL_MS:5000}
   notification-consumer:
     # 通知中心（Slice 12）：消费 identity 自有 topic 派生站内通知。默认 false，compose 置 true。
     enabled: ${IDENTITY_NOTIFICATION_CONSUMER_ENABLED:false}

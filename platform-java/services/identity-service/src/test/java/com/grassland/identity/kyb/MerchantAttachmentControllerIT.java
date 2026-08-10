@@ -272,6 +272,37 @@ class MerchantAttachmentControllerIT extends IdentityItSupport {
     }
 
     @Test
+    @DisplayName("主体 KYB 通过后可补传权限证照，但开放权限申请引用期间不可删除")
+    void approvedProfileAllowsPermissionSupplementsWithOpenRequestProtection() {
+        var owner = seedAccount("kyb-att-permission-supplement-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "Permission Supplement Org");
+        db.sql("INSERT INTO merchant_profile(organization_id, status) VALUES (CAST(:org AS uuid), 'approved')")
+                .bind("org", orgId).fetch().rowsUpdated().block();
+
+        String attachmentId = createAttachment(orgId, owner.cookie(), "industry_license", 201);
+        createAttachment(orgId, owner.cookie(), "store_photo", 409);
+
+        String requestId = UUID.randomUUID().toString();
+        db.sql("""
+                INSERT INTO merchant_permission_request(
+                    id, organization_id, requester_account_id, requested_tier, status, industry, attachment_ids)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), CAST(:owner AS uuid),
+                        'basic_publish', 'pending', 'education', CAST(:attachments AS jsonb))
+                """).bind("id", requestId).bind("org", orgId).bind("owner", owner.accountId())
+                .bind("attachments", "[\"" + attachmentId + "\"]").then().block();
+
+        client().delete().uri("/api/organizations/" + orgId + "/merchant-attachments/" + attachmentId)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange().expectStatus().isEqualTo(409);
+
+        db.sql("UPDATE merchant_permission_request SET status = 'rejected' WHERE id = CAST(:id AS uuid)")
+                .bind("id", requestId).then().block();
+        client().delete().uri("/api/organizations/" + orgId + "/merchant-attachments/" + attachmentId)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange().expectStatus().isOk();
+    }
+
+    @Test
     @DisplayName("附件变更与资料提交按同一资料行串行化")
     void attachmentMutationWaitsForConcurrentSubmission() throws Exception {
         var owner = seedAccount("kyb-att-race-" + UUID.randomUUID() + "@example.com");

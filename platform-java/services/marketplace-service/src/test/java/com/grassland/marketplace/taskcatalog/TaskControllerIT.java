@@ -331,7 +331,12 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.organizationId").isEqualTo(org)
                 .jsonPath("$.data.activeTasks").isEqualTo(2)
-                .jsonPath("$.data.monthlyTasks").isEqualTo(2);
+                .jsonPath("$.data.monthlyTasks").isEqualTo(2)
+                .jsonPath("$.data.maxActiveTasks").isEqualTo(5)
+                .jsonPath("$.data.remainingActiveTasks").isEqualTo(3)
+                .jsonPath("$.data.maxMonthlyTasks").isEqualTo(20)
+                .jsonPath("$.data.remainingMonthlyTasks").isEqualTo(18)
+                .jsonPath("$.data.maxTxAmountCents").isEqualTo(0);
     }
 
     /** org 归属自查：不能查别家组织的用量（与发布闸门 1 同口径）。 */

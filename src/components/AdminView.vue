@@ -430,6 +430,8 @@ const attachmentTypeLabels: Record<MerchantAttachmentType, string> = {
   business_license: '营业执照',
   legal_person_id_front: '法人证件正面',
   legal_person_id_back: '法人证件反面',
+  industry_license: '行业许可证',
+  financial_qualification: '财务资质',
   store_photo: '门店照片',
   other: '其他材料',
 }

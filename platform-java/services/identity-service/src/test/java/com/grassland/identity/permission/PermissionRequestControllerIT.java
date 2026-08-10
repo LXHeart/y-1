@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.IdentityItSupport;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 
 /**
@@ -15,6 +17,12 @@ import org.springframework.http.MediaType;
  * Slice 2L：申诉（rejected→201 引用原申请 / 非 rejected→409）、额度查询、slaStatus（within/overdue/completed）、行业快照。
  */
 class PermissionRequestControllerIT extends IdentityItSupport {
+
+    @Autowired
+    PermissionSlaMonitor slaMonitor;
+
+    @Autowired
+    PermissionAutoReviewReconciler autoReviewReconciler;
 
     @Test
     void ownerRequestsUpgradePendingAndEvent() {
@@ -56,6 +64,17 @@ class PermissionRequestControllerIT extends IdentityItSupport {
         client().post().uri("/api/organizations/" + orgId + "/permission-requests")
                 .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
                 .bodyValue("{\"requestedTier\":\"draft\"}") // 同级 draft（tier 检查先于材料校验）
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void duplicateOpenRequestReturns409() {
+        var owner = seedAccount("pr-duplicate-open@example.com");
+        String orgId = createOrg(owner.cookie(), "重复申请主体");
+        submitRequest(orgId, owner.cookie(), "basic_publish");
+        client().post().uri("/api/organizations/" + orgId + "/permission-requests")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue(bodyFor("basic_publish"))
                 .exchange().expectStatus().isEqualTo(409);
     }
 
@@ -225,6 +244,234 @@ class PermissionRequestControllerIT extends IdentityItSupport {
                 .jsonPath("$.data.slaStatus").isEqualTo("overdue");
     }
 
+    @Test
+    void prohibitedIndustryCannotEnterAdmissionFlow() {
+        var owner = seedAccount("pr-prohibited@example.com");
+        String orgId = createOrg(owner.cookie(), "禁止行业主体");
+        client().post().uri("/api/organizations/" + orgId + "/permission-requests")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"requestedTier\":\"basic_publish\",\"industry\":\"gambling\","
+                        + "\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"c\"}}")
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("该行业暂不开放商家准入");
+    }
+
+    @Test
+    void passedBusinessLicenseOcrProducesAutomaticRecommendation() {
+        var owner = seedAccount("pr-auto-review@example.com");
+        String orgId = createOrg(owner.cookie(), "自动核验主体");
+        String attachmentId = UUID.randomUUID().toString();
+        String unrelatedPendingId = UUID.randomUUID().toString();
+        db.sql("""
+                INSERT INTO merchant_attachment(id, organization_id, attachment_type, media_reference_id,
+                                                uploaded_by_account_id, ocr_status)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), 'business_license', gen_random_uuid(),
+                        CAST(:owner AS uuid), 'passed'),
+                       (CAST(:pendingId AS uuid), CAST(:org AS uuid), 'legal_person_id_front', gen_random_uuid(),
+                        CAST(:owner AS uuid), 'pending')
+                """).bind("id", attachmentId).bind("pendingId", unrelatedPendingId)
+                .bind("org", orgId).bind("owner", owner.accountId()).then().block();
+
+        client().post().uri("/api/organizations/" + orgId + "/permission-requests")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"requestedTier\":\"basic_publish\","
+                        + "\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"c\"},"
+                        + "\"attachmentIds\":[\"" + attachmentId + "\",\"" + unrelatedPendingId + "\"]}")
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.autoReviewStatus").isEqualTo("passed")
+                .jsonPath("$.data.reviewMode").isEqualTo("auto_recommendation")
+                .jsonPath("$.data.riskLevel").isEqualTo("standard");
+    }
+
+    @Test
+    void pendingOcrIsReconciledAfterDocumentAnalysisCompletes() {
+        var owner = seedAccount("pr-auto-reconcile@example.com");
+        String orgId = createOrg(owner.cookie(), "异步核验主体");
+        String attachmentId = UUID.randomUUID().toString();
+        db.sql("""
+                INSERT INTO merchant_attachment(id, organization_id, attachment_type, media_reference_id,
+                                                uploaded_by_account_id, ocr_status)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), 'business_license', gen_random_uuid(),
+                        CAST(:owner AS uuid), 'pending')
+                """).bind("id", attachmentId).bind("org", orgId).bind("owner", owner.accountId()).then().block();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = client().post().uri("/api/organizations/" + orgId + "/permission-requests")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"requestedTier\":\"basic_publish\","
+                        + "\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"c\"},"
+                        + "\"attachmentIds\":[\"" + attachmentId + "\"]}")
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String requestId = (String) ((Map<String, Object>) response.get("data")).get("id");
+
+        db.sql("UPDATE merchant_attachment SET ocr_status = 'passed' WHERE id = CAST(:id AS uuid)")
+                .bind("id", attachmentId).then().block();
+        autoReviewReconciler.processBatch(10).then().block();
+
+        var admin = seedAdmin("pr-auto-reconcile-admin@example.com");
+        client().get().uri("/api/admin/permission-requests/" + requestId)
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.autoReviewStatus").isEqualTo("passed")
+                .jsonPath("$.data.reviewMode").isEqualTo("auto_recommendation");
+    }
+
+    @Test
+    void claimUsesUnderReviewStateAndWritesAudit() {
+        var owner = seedAccount("pr-claim@example.com");
+        String orgId = createOrg(owner.cookie(), "领取主体");
+        String requestId = submitRequest(orgId, owner.cookie(), "basic_publish");
+        var admin = seedAdmin("pr-admin-claim@example.com");
+
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/claim")
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("under_review")
+                .jsonPath("$.data.version").isEqualTo(1)
+                .jsonPath("$.data.reviewerAccountId").isEqualTo(admin.accountId());
+
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/claim")
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("under_review")
+                .jsonPath("$.data.version").isEqualTo(1);
+
+        client().get().uri("/api/admin/permission-requests/" + requestId + "/audit")
+                .header("Cookie", "y1.sid=" + admin.cookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].action").isEqualTo("claimed")
+                .jsonPath("$.data[1].action").isEqualTo("submitted");
+    }
+
+    @Test
+    void explicitAutomaticVerificationFailureRequiresRecentReauthentication() {
+        var owner = seedAccount("pr-auto-failed@example.com");
+        String orgId = createOrg(owner.cookie(), "自动核验失败主体");
+        String attachmentId = UUID.randomUUID().toString();
+        db.sql("""
+                INSERT INTO merchant_attachment(id, organization_id, attachment_type, media_reference_id,
+                                                uploaded_by_account_id, ocr_status, ocr_failure_code)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), 'business_license', gen_random_uuid(),
+                        CAST(:owner AS uuid), 'failed', 'PROVIDER_RETRY_EXHAUSTED')
+                """).bind("id", attachmentId).bind("org", orgId).bind("owner", owner.accountId()).then().block();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = client().post().uri("/api/organizations/" + orgId + "/permission-requests")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"requestedTier\":\"basic_publish\","
+                        + "\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"c\"},"
+                        + "\"attachmentIds\":[\"" + attachmentId + "\"]}")
+                .exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> request = (Map<String, Object>) response.get("data");
+        assertThat(request.get("autoReviewStatus")).isEqualTo("failed");
+        String requestId = (String) request.get("id");
+        var admin = seedAdmin("pr-admin-auto-failed@example.com");
+
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"approve\"}")
+                .exchange().expectStatus().isForbidden();
+
+        markReauthenticated(admin.accountId());
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"approve\"}")
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("approved");
+    }
+
+    @Test
+    void financeApprovalRequiresRecentReauthentication() {
+        var owner = seedAccount("pr-fin-mfa@example.com");
+        String orgId = createOrg(owner.cookie(), "资金准入主体");
+        String requestId = submitRequest(orgId, owner.cookie(), "finance_transaction");
+        var admin = seedAdmin("pr-admin-fin-mfa@example.com");
+
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"approve\"}")
+                .exchange().expectStatus().isForbidden();
+
+        markReauthenticated(admin.accountId());
+
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"approve\"}")
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("approved");
+    }
+
+    @Test
+    void staleLowerTierApprovalCompletesWithoutDowngradingOrganization() {
+        var owner = seedAccount("pr-monotonic-owner@example.com");
+        String orgId = createOrg(owner.cookie(), "单调升级主体");
+        String basicRequestId = submitRequest(orgId, owner.cookie(), "basic_publish");
+        String financeRequestId = submitRequest(orgId, owner.cookie(), "finance_transaction");
+        var admin = seedAdmin("pr-monotonic-admin@example.com");
+        markReauthenticated(admin.accountId());
+
+        client().post().uri("/api/admin/permission-requests/" + financeRequestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"approve\"}")
+                .exchange().expectStatus().isOk();
+
+        client().post().uri("/api/admin/permission-requests/" + basicRequestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"approve\"}")
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("approved");
+
+        client().get().uri("/api/organizations/" + orgId).header("Cookie", "y1.sid=" + owner.cookie())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.permissionTier").isEqualTo("finance_transaction");
+
+        Integer grants = db.sql("SELECT COUNT(*)::int AS count FROM outbox"
+                        + " WHERE event_type = 'MerchantPermissionGranted'"
+                        + " AND payload->>'organizationId' = :org")
+                .bind("org", orgId).map(row -> row.get("count", Integer.class)).one().block();
+        assertThat(grants).isEqualTo(1);
+    }
+
+    @Test
+    void slaMonitorMarksOnceAndEmitsAudit() {
+        var owner = seedAccount("pr-sla-monitor@example.com");
+        String orgId = createOrg(owner.cookie(), "SLA 自动处理主体");
+        String requestId = submitRequest(orgId, owner.cookie(), "basic_publish");
+        db.sql("UPDATE merchant_permission_request SET review_deadline = now() - interval '1 minute'"
+                + " WHERE id = CAST(:id AS uuid)").bind("id", requestId).then().block();
+
+        slaMonitor.processBatch(10).then().block();
+        slaMonitor.processBatch(10).then().block();
+
+        Integer audits = db.sql("SELECT COUNT(*)::int AS count FROM merchant_permission_request_audit"
+                        + " WHERE request_id = CAST(:id AS uuid) AND action = 'sla_breached'")
+                .bind("id", requestId).map(row -> row.get("count", Integer.class)).one().block();
+        Integer events = db.sql("SELECT COUNT(*)::int AS count FROM outbox"
+                        + " WHERE aggregate_id = :id AND event_type = 'PermissionReviewSlaBreached'")
+                .bind("id", requestId).map(row -> row.get("count", Integer.class)).one().block();
+        assertThat(audits).isEqualTo(1);
+        assertThat(events).isEqualTo(1);
+    }
+
+    @Test
+    void appealCannotCrossOrganizationBoundary() {
+        var first = seedAccount("pr-cross-a@example.com");
+        String firstOrg = createOrg(first.cookie(), "申诉来源主体");
+        String requestId = submitRequest(firstOrg, first.cookie(), "basic_publish");
+        var admin = seedAdmin("pr-cross-admin@example.com");
+        client().post().uri("/api/admin/permission-requests/" + requestId + "/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+                .bodyValue("{\"decision\":\"reject\",\"note\":\"材料不符\"}")
+                .exchange().expectStatus().isOk();
+
+        var second = seedAccount("pr-cross-b@example.com");
+        String secondOrg = createOrg(second.cookie(), "申诉目标主体");
+        client().post().uri("/api/organizations/" + secondOrg + "/permission-requests/" + requestId + "/appeal")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + second.cookie())
+                .bodyValue("{\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"c\"}}")
+                .exchange().expectStatus().isNotFound();
+    }
+
     /** owner 提交升级申请（带合规 materials），返回 requestId。 */
     @SuppressWarnings("unchecked")
     private String submitRequest(String orgId, String cookie, String tier) {
@@ -245,5 +492,16 @@ class PermissionRequestControllerIT extends IdentityItSupport {
             default -> "\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"c\"}";
         };
         return "{\"requestedTier\":\"" + tier + "\"," + materials + "}";
+    }
+
+    private void markReauthenticated(String accountId) {
+        db.sql("""
+                INSERT INTO identity_session(session_token, account_id, reauthenticated_at, auth_strength,
+                                             issued_at, last_seen_at, expires_at)
+                SELECT sid, CAST(:accountId AS uuid), now(), 'level2', now(), now(), now() + interval '7 days'
+                FROM session WHERE sess->'user'->>'id' = :accountId
+                ON CONFLICT (session_token) DO UPDATE
+                SET reauthenticated_at = now(), auth_strength = 'level2'
+                """).bind("accountId", accountId).then().block();
     }
 }

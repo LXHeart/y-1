@@ -21,7 +21,7 @@ import reactor.core.publisher.Mono;
  *       按归一化小写查 app_users；<b>查不到 → 静默跳过</b>（未注册用户靠邮件，且不得因此报错重试阻塞分区）。</li>
  *   <li>{@code MembershipInvitationAccepted} / {@code Declined}：通知 org 的 owner/admin，排除操作者本人。</li>
  *   <li>{@code MembershipGranted}：直接通知 payload.accountId。</li>
- *   <li>{@code PermissionRequested}：通知 org 的 owner/admin，排除申请人。</li>
+ *   <li>{@code PermissionRequested} / {@code PermissionReviewSlaBreached}：通知平台管理员审核队列。</li>
  *   <li>{@code PermissionReviewed}：payload 只有 orgId+decision → 用 aggregateId（= 权限申请 id）
  *       回查 merchant_permission_request.requester_account_id，通知申请人。</li>
  * </ul>
@@ -52,8 +52,8 @@ public class NotificationRecipientResolver {
                     text(payload, "accountId")
                             .map(java.util.List::of)
                             .defaultIfEmpty(java.util.List.of());
-            case "PermissionRequested" ->
-                    orgManagersExcluding(payload, "requesterAccountId");
+            case "PermissionRequested", "PermissionReviewSlaBreached" ->
+                    findPlatformAdminAccountIds().collectList();
             case "PermissionReviewed" ->
                     findPermissionRequester(envelope.aggregateId())
                             .map(java.util.List::of)
@@ -146,6 +146,15 @@ public class NotificationRecipientResolver {
                         WHERE organization_id = CAST(:org AS uuid) AND role IN ('owner', 'admin')
                         """)
                 .bind("org", organizationId)
+                .map(row -> row.get("account_id", String.class))
+                .all();
+    }
+
+    private Flux<String> findPlatformAdminAccountIds() {
+        return db.sql("""
+                        SELECT account_id::text FROM backend_role
+                        WHERE role = 'platform_admin' ORDER BY granted_at, account_id
+                        """)
                 .map(row -> row.get("account_id", String.class))
                 .all();
     }

@@ -6,7 +6,7 @@ package com.grassland.identity.permission;
  * <p>{@code decision} 仅允许 {@code approve} 或 {@code reject}（大小写不敏感），compact constructor 内校验。
  * {@code note} 可选（审核备注）。
  */
-public record ReviewPermissionRequest(String decision, String note) {
+public record ReviewPermissionRequest(String decision, String note, Integer expectedVersion) {
     public ReviewPermissionRequest {
         if (decision == null || decision.isBlank()) {
             throw new IllegalArgumentException("decision is required");

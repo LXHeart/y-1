@@ -10,12 +10,16 @@ import com.grassland.identity.membership.OrgAuthorization;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.organization.OrganizationRepository;
 import com.grassland.identity.organization.PermissionTier;
+import com.grassland.identity.organization.SessionPrincipal;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -54,6 +58,8 @@ public class PermissionRequestController {
     private final OrganizationRepository organizations;
     private final OutboxRepository outbox;
     private final PermissionSla sla;
+    private final PermissionAutomaticReviewer automaticReviewer;
+    private final PermissionRequestAuditRepository audits;
     private final TransactionalOperator transactions;
     // 本地 ObjectMapper（Spring Boot 4 的 Jackson autoconfig 在独立模块，identity 未引入；与 LegacySessionBridge 同模式）。
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -61,13 +67,16 @@ public class PermissionRequestController {
     public PermissionRequestController(CurrentAccountResolver accounts, OrgAuthorization authz,
                                        MerchantPermissionRequestRepository requests,
                                        OrganizationRepository organizations, OutboxRepository outbox,
-                                       PermissionSla sla, TransactionalOperator transactions) {
+                                       PermissionSla sla, PermissionAutomaticReviewer automaticReviewer,
+                                       PermissionRequestAuditRepository audits, TransactionalOperator transactions) {
         this.accounts = accounts;
         this.authz = authz;
         this.requests = requests;
         this.organizations = organizations;
         this.outbox = outbox;
         this.sla = sla;
+        this.automaticReviewer = automaticReviewer;
+        this.audits = audits;
         this.transactions = transactions;
     }
 
@@ -87,18 +96,24 @@ public class PermissionRequestController {
                             }
                             Industry industry = resolveIndustry(body.industry(), org.industry());
                             String materialsJson = validateAndSerialize(target, industry, body.materials());
+                            String attachmentIdsJson = serialize(body.attachmentIds());
                             Instant deadline = sla.deadlineFor(Instant.now());
-                            return transactions.transactional(
+                            return automaticReviewer.evaluate(orgId, target, industry, body.attachmentIds())
+                                    .flatMap(auto -> transactions.transactional(
                                     requests.create(orgId, owner.id(), target.dbValue(), materialsJson,
-                                            industry.dbValue(), deadline)
-                                            .flatMap(req -> outbox.append(new EventEnvelope(
+                                            industry.dbValue(), deadline, attachmentIdsJson, auto)
+                                            .flatMap(req -> audits.append(req.id(), orgId, owner.id(), "merchant",
+                                                            "submitted", null, req.status(), auto.resultJson())
+                                                    .then(outbox.append(new EventEnvelope(
                                                     UUID.randomUUID().toString(), "PermissionRequested", "MerchantPermissionRequest",
                                                     req.id(), 1, Instant.now(), null,
                                                     Map.of("organizationId", orgId, "requesterAccountId", owner.id(),
-                                                            "requestedTier", req.requestedTier(), "industry", req.industry())))
-                                                    .thenReturn(req)));
+                                                            "requestedTier", req.requestedTier(), "industry", req.industry()))))
+                                                    .thenReturn(req))));
                         })
-                        .map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(req)))));
+                        .map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(req)))))
+                .onErrorMap(DataIntegrityViolationException.class,
+                        error -> new IdentityException(409, "该组织已有相同等级的待审申请"));
     }
 
     /** 申诉被拒申请：新建 pending 申请引用原 rejected 申请，带补充材料 + 申诉说明。 */
@@ -110,24 +125,41 @@ public class PermissionRequestController {
                 .flatMap(owner -> requests.findById(id)
                         .switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在")))
                         .flatMap(original -> {
+                            if (!orgId.equals(original.organizationId())) {
+                                return Mono.<MerchantPermissionRequest>error(new IdentityException(404, "申请不存在"));
+                            }
                             if (PermissionRequestStatus.fromDb(original.status()) != PermissionRequestStatus.REJECTED) {
                                 return Mono.<MerchantPermissionRequest>error(new IdentityException(409, "仅被拒申请可申诉"));
                             }
                             PermissionTier target = PermissionTier.fromDb(original.requestedTier());
                             Industry industry = resolveIndustry(null, original.industry());
                             String materialsJson = validateAndSerialize(target, industry, body.materials());
+                            String attachmentIdsJson = serialize(body.attachmentIds());
                             Instant deadline = sla.deadlineFor(Instant.now());
-                            return transactions.transactional(
+                            String rootId = original.originalRequestId() == null
+                                    ? original.id() : original.originalRequestId();
+                            return requests.countAppeals(rootId).flatMap(count -> {
+                                if (count >= 3) {
+                                    return Mono.error(new IdentityException(409, "申诉次数已达上限"));
+                                }
+                                return automaticReviewer.evaluate(orgId, target, industry, body.attachmentIds())
+                                        .flatMap(auto -> transactions.transactional(
                                     requests.createAppeal(orgId, owner.id(), target.dbValue(), materialsJson,
-                                            industry.dbValue(), deadline, original.id(), body.note())
-                                            .flatMap(req -> outbox.append(new EventEnvelope(
+                                            industry.dbValue(), deadline, rootId, body.note(), count + 1,
+                                            attachmentIdsJson, auto)
+                                            .flatMap(req -> audits.append(req.id(), orgId, owner.id(), "merchant",
+                                                            "appeal_submitted", original.status(), req.status(), auto.resultJson())
+                                                    .then(outbox.append(new EventEnvelope(
                                                     UUID.randomUUID().toString(), "PermissionRequested", "MerchantPermissionRequest",
                                                     req.id(), 1, Instant.now(), null,
                                                     Map.of("organizationId", orgId, "requesterAccountId", owner.id(),
-                                                            "requestedTier", req.requestedTier(), "originalRequestId", id)))
-                                                    .thenReturn(req)));
+                                                            "requestedTier", req.requestedTier(), "originalRequestId", rootId))))
+                                                    .thenReturn(req))));
+                            });
                         })
-                        .map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(req)))));
+                        .map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(req)))))
+                .onErrorMap(DataIntegrityViolationException.class,
+                        error -> new IdentityException(409, "该组织已有相同等级的待审申请"));
     }
 
     @GetMapping("/api/organizations/{orgId}/permission-requests")
@@ -172,12 +204,42 @@ public class PermissionRequestController {
                         .switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在"))));
     }
 
+    @PostMapping("/api/admin/permission-requests/{id}/claim")
+    public Mono<ResponseEntity<Map<String, Object>>> claim(@PathVariable String id, ServerHttpRequest request) {
+        return accounts.requireAdmin(request)
+                .flatMap(admin -> transactions.transactional(
+                        requests.claim(id, admin.id())
+                                .flatMap(claimed -> audits.append(claimed.id(), claimed.organizationId(), admin.id(),
+                                                "admin", "claimed", PermissionRequestStatus.PENDING.dbValue(),
+                                                claimed.status(), null)
+                                        .thenReturn(claimed))
+                                // Same reviewer retrying claim is idempotent and must not duplicate the audit row.
+                                .switchIfEmpty(requests.findById(id).flatMap(existing ->
+                                        PermissionRequestStatus.fromDb(existing.status())
+                                                        == PermissionRequestStatus.UNDER_REVIEW
+                                                && admin.id().equals(existing.reviewerAccountId())
+                                                ? Mono.just(existing)
+                                                : Mono.error(new IdentityException(409,
+                                                        "申请已被领取或不在待审状态"))))))
+                .map(claimed -> ResponseEntity.ok(Map.of("success", true, "data", toBody(claimed))));
+    }
+
+    @GetMapping("/api/admin/permission-requests/{id}/audit")
+    public Mono<ResponseEntity<Map<String, Object>>> audit(@PathVariable String id, ServerHttpRequest request) {
+        return accounts.requireAdmin(request)
+                .flatMap(admin -> requests.findById(id)
+                        .switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在")))
+                        .then(audits.findByRequest(id).collectList()))
+                .map(items -> ResponseEntity.ok(Map.of("success", true,
+                        "data", items.stream().map(this::toAuditBody).toList())));
+    }
+
     @PostMapping(value = "/api/admin/permission-requests/{id}/review", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> review(@PathVariable String id,
                                                             @RequestBody ReviewPermissionRequest body,
                                                             ServerHttpRequest request) {
-        return accounts.requireAdmin(request)
-                .flatMap(admin -> requests.findById(id)
+        return accounts.requireAdminPrincipal(request)
+                .flatMap(adminPrincipal -> requests.findById(id)
                         .switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在")))
                         .flatMap(req -> {
                             if (PermissionRequestStatus.fromDb(req.status()).isTerminal()) {
@@ -185,26 +247,70 @@ public class PermissionRequestController {
                                         new IdentityException(409, "该申请已审核完成"));
                             }
                             boolean approve = "approve".equalsIgnoreCase(body.decision());
+                            if (!approve && (body.note() == null || body.note().isBlank())) {
+                                return Mono.error(new IdentityException(400, "驳回必须填写原因"));
+                            }
+                            if (approve && "pending".equals(req.autoReviewStatus())) {
+                                return Mono.error(new IdentityException(409, "自动核验尚未完成"));
+                            }
+                            // Finance grants and explicit automatic-verification failures are high-risk
+                            // overrides. Advisory `needs_review` remains in the normal manual queue.
+                            boolean highRisk = approve && (PermissionTier.FINANCE_TRANSACTION.dbValue()
+                                    .equals(req.requestedTier()) || "failed".equals(req.autoReviewStatus()));
+                            Mono<SessionPrincipal> authorized =
+                                    highRisk
+                                            ? accounts.requireAdminWithRecentReauthentication(request, Duration.ofMinutes(10))
+                                            : Mono.just(adminPrincipal);
+                            return authorized.flatMap(principal -> reviewAuthorized(req, body, principal.user().id(), approve));
+                        }))
+                .map(updated -> ResponseEntity.ok(Map.of("success", true, "data", toBody(updated))));
+    }
+
+    private Mono<MerchantPermissionRequest> reviewAuthorized(MerchantPermissionRequest req,
+                                                              ReviewPermissionRequest body,
+                                                              String adminId, boolean approve) {
                             String newStatus = approve
                                     ? PermissionRequestStatus.APPROVED.dbValue()
                                     : PermissionRequestStatus.REJECTED.dbValue();
+                            int expectedVersion = body.expectedVersion() == null ? req.version() : body.expectedVersion();
                             Mono<Void> grant = approve
-                                    ? organizations.updatePermissionTier(req.organizationId(), req.requestedTier())
-                                        .flatMap(n -> outbox.append(new EventEnvelope(
-                                                UUID.randomUUID().toString(), "MerchantPermissionGranted", "Organization",
-                                                req.organizationId(), 1, Instant.now(), null,
-                                                Map.of("organizationId", req.organizationId(), "tier", req.requestedTier()))).then())
+                                    ? organizations.findByIdForUpdate(req.organizationId())
+                                        .switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
+                                        .flatMap(org -> {
+                                            PermissionTier current = PermissionTier.fromDb(org.permissionTier());
+                                            PermissionTier target = PermissionTier.fromDb(req.requestedTier());
+                                            if (current.isAtLeast(target)) {
+                                                // A higher-tier request may have won the race. This request is
+                                                // already satisfied, so close it as approved without downgrading
+                                                // the organization or emitting a duplicate grant event.
+                                                return Mono.empty();
+                                            }
+                                            return organizations.updatePermissionTier(
+                                                            req.organizationId(), req.requestedTier())
+                                                    .flatMap(n -> n == 1
+                                                            ? outbox.append(new EventEnvelope(
+                                                                    UUID.randomUUID().toString(),
+                                                                    "MerchantPermissionGranted", "Organization",
+                                                                    req.organizationId(), 1, Instant.now(), null,
+                                                                    Map.of("organizationId", req.organizationId(),
+                                                                            "tier", req.requestedTier()))).then()
+                                                            : Mono.error(new IdentityException(409,
+                                                                    "组织权限已被并发更新，请重试")));
+                                        })
                                     : Mono.empty();
                             return transactions.transactional(
-                                    grant.then(requests.updateStatus(id, newStatus, admin.id(), body.note()))
+                                    requests.review(req.id(), newStatus, adminId, body.note(), expectedVersion)
+                                            .switchIfEmpty(Mono.error(new IdentityException(409, "申请已被其他审核人处理，请刷新后重试")))
+                                            .flatMap(updated -> grant.then(audits.append(req.id(), req.organizationId(), adminId,
+                                                            "admin", approve ? "approved" : "rejected",
+                                                            req.status(), newStatus, req.autoReviewResult()))
+                                                    .thenReturn(updated))
                                             .flatMap(updated -> outbox.append(new EventEnvelope(
                                                     UUID.randomUUID().toString(), "PermissionReviewed", "MerchantPermissionRequest",
-                                                    id, 1, Instant.now(), null,
+                                                    req.id(), 1, Instant.now(), null,
                                                     Map.of("organizationId", req.organizationId(),
                                                             "decision", body.decision().trim().toLowerCase())))
                                                     .thenReturn(updated)));
-                        })
-                        .map(updated -> ResponseEntity.ok(Map.of("success", true, "data", toBody(updated)))));
     }
 
     @ExceptionHandler(IdentityException.class)
@@ -229,14 +335,18 @@ public class PermissionRequestController {
         }
     }
 
-    /** 行业：请求体覆盖优先，否则取 org 行业快照；非法值回落 OTHER（不阻断提交）。 */
+    private String serialize(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value == null ? List.of() : value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("serialize permission data failed", e);
+        }
+    }
+
+    /** 行业：请求体覆盖优先，否则取 org 行业快照；非法值按 400 拒绝，避免限制规则被回落绕过。 */
     private static Industry resolveIndustry(String override, String orgIndustry) {
         String raw = (override != null && !override.isBlank()) ? override : orgIndustry;
-        try {
-            return Industry.fromDb(raw);
-        } catch (IllegalArgumentException ignored) {
-            return Industry.OTHER;
-        }
+        return Industry.fromDb(raw);
     }
 
     private Map<String, Object> toBody(MerchantPermissionRequest req) {
@@ -255,6 +365,29 @@ public class PermissionRequestController {
         m.put("originalRequestId", req.originalRequestId());
         m.put("appealNote", req.appealNote());
         m.put("createdAt", req.createdAt() == null ? null : req.createdAt().toString());
+        m.put("version", req.version());
+        m.put("reviewStartedAt", req.reviewStartedAt() == null ? null : req.reviewStartedAt().toString());
+        m.put("slaBreachedAt", req.slaBreachedAt() == null ? null : req.slaBreachedAt().toString());
+        m.put("autoReviewStatus", req.autoReviewStatus());
+        m.put("autoReviewResult", req.autoReviewResult());
+        m.put("reviewMode", req.reviewMode());
+        m.put("riskLevel", req.riskLevel());
+        m.put("attachmentIds", req.attachmentIds());
+        m.put("decisionAt", req.decisionAt() == null ? null : req.decisionAt().toString());
+        m.put("appealCount", req.appealCount());
         return m;
+    }
+
+    private Map<String, Object> toAuditBody(PermissionRequestAudit audit) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", audit.id());
+        body.put("actorAccountId", audit.actorAccountId());
+        body.put("actorKind", audit.actorKind());
+        body.put("action", audit.action());
+        body.put("fromStatus", audit.fromStatus());
+        body.put("toStatus", audit.toStatus());
+        body.put("details", audit.details());
+        body.put("createdAt", audit.createdAt() == null ? null : audit.createdAt().toString());
+        return body;
     }
 }

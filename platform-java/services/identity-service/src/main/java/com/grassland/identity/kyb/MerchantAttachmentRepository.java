@@ -80,7 +80,8 @@ public class MerchantAttachmentRepository {
         return db.sql("SELECT " + SELECT_COLS + " FROM merchant_attachment"
                         + " WHERE organization_id = CAST(:org AS uuid)"
                         + " AND media_reference_id = CAST(:media AS uuid)"
-                        + " AND attachment_type IN ('business_license','legal_person_id_front','legal_person_id_back')")
+                        + " AND attachment_type IN ('business_license','legal_person_id_front','legal_person_id_back',"
+                        + " 'industry_license','financial_qualification')")
                 .bind("org", organizationId).bind("media", mediaReferenceId)
                 .map(MerchantAttachmentRepository::map).one();
     }
@@ -131,6 +132,23 @@ public class MerchantAttachmentRepository {
                 + " WHERE organization_id = CAST(:org AS uuid) ORDER BY uploaded_at")
                 .bind("org", organizationId)
                 .map(row -> UUID.fromString(row.get("id", String.class))).all();
+    }
+
+    /** 权限补充证照一旦被开放申请快照引用，就不能删除或替换。 */
+    public Mono<Boolean> isReferencedByOpenPermissionRequest(String organizationId, UUID attachmentId) {
+        String attachmentJson = "[\"" + attachmentId + "\"]";
+        return db.sql("""
+                SELECT EXISTS (
+                    SELECT 1 FROM merchant_permission_request
+                    WHERE organization_id = CAST(:org AS uuid)
+                      AND status IN ('pending', 'under_review')
+                      AND attachment_ids @> CAST(:attachmentJson AS jsonb)
+                ) AS referenced
+                """)
+                .bind("org", organizationId)
+                .bind("attachmentJson", attachmentJson)
+                .map(row -> Boolean.TRUE.equals(row.get("referenced", Boolean.class)))
+                .one().defaultIfEmpty(false);
     }
 
     private static MerchantAttachment map(Readable row) {

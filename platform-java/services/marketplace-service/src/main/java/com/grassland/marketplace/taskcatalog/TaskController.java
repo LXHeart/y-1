@@ -476,12 +476,21 @@ public class TaskController {
                         return Mono.<ResponseEntity<Map<String, Object>>>error(
                                 new MarketplaceException(403, "无权查询该组织用量"));
                     }
+                    MerchantTier tier = MerchantTier.fromDb(merchant.permissionTier());
+                    int maxActive = PublishQuotaPolicy.maxActiveTasks(tier);
+                    int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
+                    long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
                     return tasks.countActiveByOrganization(organizationId)
                             .flatMap(active -> tasks.countCreatedThisMonthByOrganization(organizationId)
                                     .map(monthly -> ResponseEntity.ok(Map.of("success", true, "data", Map.of(
                                             "organizationId", organizationId,
                                             "activeTasks", active,
-                                            "monthlyTasks", monthly)))));
+                                            "monthlyTasks", monthly,
+                                            "maxActiveTasks", maxActive,
+                                            "remainingActiveTasks", Math.max(0, maxActive - active),
+                                            "maxMonthlyTasks", maxMonthly,
+                                            "remainingMonthlyTasks", Math.max(0, maxMonthly - monthly),
+                                            "maxTxAmountCents", maxTx)))));
                 });
     }
 

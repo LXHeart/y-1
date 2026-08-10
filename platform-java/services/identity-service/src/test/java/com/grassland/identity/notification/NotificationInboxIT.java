@@ -131,6 +131,27 @@ class NotificationInboxIT extends IdentityItSupport {
     }
 
     @Test
+    void permissionAdmissionEventsNotifyPlatformAdmins() {
+        var requester = seedAccount("inbox-permission-requester@example.com");
+        var orgManager = seedAccount("inbox-permission-org-admin@example.com");
+        var platformAdmin = seedAdmin("inbox-permission-platform-admin@example.com");
+        String orgId = UUID.randomUUID().toString();
+        seedMember(orgId, requester.accountId(), "owner");
+        seedMember(orgId, orgManager.accountId(), "admin");
+
+        processor.process(envelope("evt-permission-requested", "PermissionRequested", UUID.randomUUID().toString(),
+                Map.of("organizationId", orgId, "requesterAccountId", requester.accountId(),
+                        "requestedTier", "basic_publish"))).block();
+        processor.process(envelope("evt-permission-sla", "PermissionReviewSlaBreached", UUID.randomUUID().toString(),
+                Map.of("organizationId", orgId, "requestId", UUID.randomUUID().toString(),
+                        "requestedTier", "basic_publish"))).block();
+
+        assertThat(unreadFor(platformAdmin.accountId())).as("平台管理员收到申请和 SLA 提醒").isEqualTo(2);
+        assertThat(unreadFor(requester.accountId())).as("申请人不收到待审提醒").isZero();
+        assertThat(unreadFor(orgManager.accountId())).as("组织管理员不是平台审核人").isZero();
+    }
+
+    @Test
     void notificationInsertFailureRollsBackInboxRow() {
         // 必须先注册账号，resolver 才会解析出收件人，从而走到被注入失败的 insertIfAbsent
         seedAccount("inbox-rollback@example.com");

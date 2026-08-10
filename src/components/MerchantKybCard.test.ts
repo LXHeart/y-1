@@ -215,6 +215,42 @@ describe('MerchantKybCard 契约展示', () => {
       .toBe(true)
   })
 
+  test('主体 KYB 通过后仍允许维护权限补充证照', async () => {
+    const spy = stubKybFetch()
+    const implementation = spy.getMockImplementation()!
+    spy.mockImplementation(async (...args: Parameters<typeof fetch>) => {
+      const response = await implementation(...args) as Response
+      const body = await response.json() as { success: boolean; data: unknown }
+      if (String(args[0]).endsWith('/merchant-profile') && body.data) {
+        body.data = { ...(body.data as Record<string, unknown>), status: 'approved' }
+      }
+      if (String(args[0]).endsWith('/merchant-attachments')) {
+        body.data = [{
+          id: 'attachment-business', organizationId: 'org-1', attachmentType: 'business_license',
+          mediaReferenceId: 'media-business', mimeType: 'image/jpeg', sizeBytes: 2048, uploadedAt: null,
+        }, {
+          id: 'attachment-industry', organizationId: 'org-1', attachmentType: 'industry_license',
+          mediaReferenceId: 'media-industry', mimeType: 'image/jpeg', sizeBytes: 2048, uploadedAt: null,
+        }]
+      }
+      return { ...response, json: async () => body } as Response
+    })
+
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+
+    const uploadByLabel = new Map(wrapper.findAll('.attachment-upload label').map((label) => [
+      label.text().trim(), label.find('input'),
+    ]))
+    expect(uploadByLabel.get('营业执照')?.attributes('disabled')).not.toBeUndefined()
+    expect(uploadByLabel.get('行业许可证')?.attributes('disabled')).toBeUndefined()
+    expect(uploadByLabel.get('财务资质')?.attributes('disabled')).toBeUndefined()
+
+    const deleteButtons = wrapper.findAll('.attachment-item button')
+    expect(deleteButtons[0].attributes('disabled')).not.toBeUndefined()
+    expect(deleteButtons[1].attributes('disabled')).toBeUndefined()
+  })
+
   test('门店草稿可保存并提交审核', async () => {
     const spy = stubKybFetch()
     const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })

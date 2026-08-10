@@ -43,6 +43,9 @@ public final class PermissionMaterialPolicy {
 
     /** 校验 materials 覆盖全部必填且值非空；缺失/空值抛 {@link IllegalArgumentException}。 */
     public static void validate(PermissionTier tier, Industry industry, Map<String, String> materials) {
+        if (industry != null && industry.isProhibited()) {
+            throw new IllegalArgumentException("该行业暂不开放商家准入");
+        }
         Set<MaterialType> required = requiredMaterialTypes(tier, industry);
         Set<String> missing = new LinkedHashSet<>();
         for (MaterialType type : required) {

@@ -95,6 +95,10 @@ class MailOutboxPublisherGreenMailIT extends IdentityItSupport {
         jms.setHost("127.0.0.1");
         jms.setPort(greenMail.getSmtp().getPort());
         jms.setProtocol("smtp");
+        // macOS 本地反向 DNS 可能长期阻塞 getCanonicalHostName()。EHLO 主机名和
+        // Message-ID 发件域都显式设置，避免测试结果依赖机器 DNS 状态。
+        jms.getJavaMailProperties().put("mail.smtp.localhost", "localhost");
+        jms.getJavaMailProperties().put("mail.from", "from@test");
         return jms;
     }
 

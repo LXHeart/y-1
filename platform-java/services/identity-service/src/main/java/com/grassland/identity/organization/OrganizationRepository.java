@@ -56,9 +56,27 @@ public class OrganizationRepository {
                 .map(OrganizationRepository::map).all();
     }
 
-    /** 升级商家准入权限（Slice 2F）。返回受影响行数；幂等语义由调用方按单调升级校验保证。 */
+    /**
+     * 原子升级商家准入权限（Slice 2F）。只允许从低等级写到高等级；并发或陈旧审核绝不降级。
+     * 返回 0 表示组织不存在，或当前等级已经达到/超过目标等级。
+     */
     public Mono<Long> updatePermissionTier(String id, String tier) {
-        return db.sql("UPDATE organization SET permission_tier = :tier, updated_at = now() WHERE id = CAST(:id AS uuid)")
+        return db.sql("""
+                UPDATE organization SET permission_tier = :tier, updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND CASE permission_tier
+                        WHEN 'draft' THEN 0
+                        WHEN 'basic_publish' THEN 1
+                        WHEN 'finance_transaction' THEN 2
+                        ELSE -1
+                      END
+                      < CASE :tier
+                          WHEN 'draft' THEN 0
+                          WHEN 'basic_publish' THEN 1
+                          WHEN 'finance_transaction' THEN 2
+                          ELSE -1
+                        END
+                """)
                 .bind("tier", tier).bind("id", id)
                 .fetch().rowsUpdated();
     }

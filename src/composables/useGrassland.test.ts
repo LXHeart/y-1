@@ -166,7 +166,7 @@ describe('KYB 请求契约', () => {
     expect((spy.mock.calls[1][1] as RequestInit).method).toBe('POST')
   })
 
-  test('商家附件通过 identity 的组织作用域端点申请 KYB 媒体票据且不提交客户端元数据', async () => {
+  test('商家附件通过 identity 的组织作用域端点申请带类型门禁的 KYB 媒体票据', async () => {
     const ticket = {
       id: 'media-1', objectKey: 'media/merchant_kyb/media-1', uploadUrl: 'http://storage.test/media-1',
       method: 'PUT', headers: { 'Content-Type': 'image/png' }, expiresAt: null,
@@ -190,7 +190,9 @@ describe('KYB 请求契约', () => {
     await uploadMerchantAttachment('org-1', file, 'business_license')
 
     expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/merchant-attachments/upload-ticket')
-    expect(bodyOf(spy, 0)).toEqual({ contentType: 'image/png', sizeBytes: 3 })
+    expect(bodyOf(spy, 0)).toEqual({
+      contentType: 'image/png', sizeBytes: 3, attachmentType: 'business_license',
+    })
     expect(spy.mock.calls[3][0]).toBe('/api/organizations/org-1/merchant-attachments')
     expect(bodyOf(spy, 3)).toEqual({
       attachmentType: 'business_license', mediaReferenceId: 'media-1',
@@ -482,7 +484,9 @@ describe('权限升级审核流 + 额度请求契约', () => {
     await appealPermissionRequest('org-1', 'req-9', { business_license: '补正后的照号' }, '已补材料')
 
     expect(spy.mock.calls[0][0]).toBe('/api/organizations/org-1/permission-requests/req-9/appeal')
-    expect(bodyOf(spy)).toEqual({ materials: { business_license: '补正后的照号' }, note: '已补材料' })
+    expect(bodyOf(spy)).toEqual({
+      materials: { business_license: '补正后的照号' }, attachmentIds: [], note: '已补材料',
+    })
   })
 })
 

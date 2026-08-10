@@ -4,6 +4,7 @@ import { useGrassland } from '../composables/useGrassland'
 import { parsePermissionMaterials } from '../types/grassland'
 import type {
   Industry,
+  MerchantAttachment,
   MaterialType,
   OrganizationQuota,
   PermissionRequest,
@@ -31,6 +32,7 @@ const grassland = useGrassland()
 const quota = ref<OrganizationQuota | null>(null)
 const usage = ref<TaskUsage | null>(null)
 const requests = ref<PermissionRequest[]>([])
+const merchantAttachments = ref<MerchantAttachment[]>([])
 const notice = ref('')
 
 const requestedTier = ref<PermissionTier>('basic_publish')
@@ -39,6 +41,20 @@ const materials = ref<Record<string, string>>({})
 /** 申诉中的申请 id；非空时表单切换为申诉模式。 */
 const appealingId = ref('')
 const appealNote = ref('')
+
+const PERMISSION_DOCUMENT_TYPES = new Set([
+  'business_license',
+  'legal_person_id_front',
+  'legal_person_id_back',
+  'industry_license',
+  'financial_qualification',
+])
+
+function permissionAttachmentIds(): string[] {
+  return merchantAttachments.value
+    .filter((item) => PERMISSION_DOCUMENT_TYPES.has(item.attachmentType))
+    .map((item) => item.id)
+}
 
 const TIER_LABEL: Record<PermissionTier, string> = {
   draft: '草稿（不可发布）',
@@ -52,6 +68,11 @@ const INDUSTRIES: { value: Industry; label: string }[] = [
   { value: 'beauty', label: '美业（受监管）' },
   { value: 'education', label: '教育（受监管）' },
   { value: 'e_commerce', label: '电商' },
+  { value: 'healthcare', label: '医疗健康（受监管）' },
+  { value: 'finance', label: '金融服务（受监管）' },
+  { value: 'real_estate', label: '房地产（受监管）' },
+  { value: 'travel', label: '旅游' },
+  { value: 'children', label: '母婴儿童（受监管）' },
   { value: 'other', label: '其他' },
 ]
 
@@ -64,7 +85,7 @@ const MATERIAL_LABEL: Record<MaterialType, string> = {
 }
 
 /** 受监管行业额外要求行业许可证——与后端 `Industry.requiresIndustryLicense` 同口径。 */
-const REGULATED: string[] = ['beauty', 'education']
+const REGULATED: string[] = ['beauty', 'education', 'healthcare', 'finance', 'real_estate', 'children']
 
 /**
  * 必填材料集合。**镜像后端 `PermissionMaterialPolicy.requiredMaterialTypes`**，
@@ -91,7 +112,7 @@ const upgradableTiers = computed<PermissionTier[]>(() => {
   return order.slice(order.indexOf(props.tier) + 1)
 })
 
-const hasPending = computed(() => requests.value.some((r) => r.status === 'pending'))
+const hasPending = computed(() => requests.value.some((r) => r.status === 'pending' || r.status === 'under_review'))
 
 const SLA_LABEL: Record<string, string> = {
   within: '审核中',
@@ -102,6 +123,7 @@ const SLA_LABEL: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '待审核',
+  under_review: '审核中',
   approved: '已批准',
   rejected: '已驳回',
 }
@@ -121,6 +143,8 @@ async function refresh(): Promise<void> {
   if (!usage.value) grassland.clearError()
   const list = await grassland.listPermissionRequests(props.orgId)
   if (list) requests.value = list
+  const attachments = await grassland.listMerchantAttachments(props.orgId)
+  if (attachments) merchantAttachments.value = attachments
 }
 
 watch(() => props.orgId, refresh, { immediate: true })
@@ -146,7 +170,8 @@ async function submit(): Promise<void> {
 
   if (appealingId.value) {
     const appealed = await grassland.appealPermissionRequest(
-      props.orgId, appealingId.value, { ...materials.value }, appealNote.value.trim() || undefined)
+      props.orgId, appealingId.value, { ...materials.value }, appealNote.value.trim() || undefined,
+      permissionAttachmentIds())
     if (!appealed) return
     notice.value = '申诉已提交，将重新进入审核队列'
   } else {
@@ -154,6 +179,7 @@ async function submit(): Promise<void> {
       requestedTier: requestedTier.value,
       materials: { ...materials.value },
       industry: formIndustry.value || undefined,
+      attachmentIds: permissionAttachmentIds(),
     })
     if (!created) return
     notice.value = `升级申请已提交（目标等级 ${TIER_LABEL[created.requestedTier]}）`
@@ -199,11 +225,11 @@ function cancelAppeal(): void {
       <dl v-if="quota" class="mp-grid">
         <div>
           <dt>活跃任务</dt>
-          <dd>{{ usage ? usage.activeTasks : '—' }} / {{ quota.maxActiveTasks }}</dd>
+          <dd>{{ usage ? `${usage.activeTasks} / ${usage.maxActiveTasks}（余 ${usage.remainingActiveTasks}）` : `— / ${quota.maxActiveTasks}` }}</dd>
         </div>
         <div>
           <dt>本月新建</dt>
-          <dd>{{ usage ? usage.monthlyTasks : '—' }} / {{ quota.maxMonthlyTasks }}</dd>
+          <dd>{{ usage ? `${usage.monthlyTasks} / ${usage.maxMonthlyTasks}（余 ${usage.remainingMonthlyTasks}）` : `— / ${quota.maxMonthlyTasks}` }}</dd>
         </div>
         <div>
           <dt>单笔赏金上限</dt>

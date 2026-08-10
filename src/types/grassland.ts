@@ -446,21 +446,26 @@ export interface OrganizationQuota {
 /**
  * 发布用量（额度的「已用」侧，来自 marketplace）。
  *
- * identity 的 `/quota` 只给上限、不给用量（策略与用量分属两个服务），
+ * identity 的 `/quota` 给策略上限，marketplace `/tasks/usage` 给实时用量，
  * 前端把二者合并展示为「已用 N / 上限 M」。
  */
 export interface TaskUsage {
   organizationId: string
-  /** 活跃任务数（status <> closed）。 */
+  /** 活跃任务数（当前按 published 计入发布限额）。 */
   activeTasks: number
   /** 本月新建任务数（按 DB 时区 date_trunc('month')，跨月自动重置）。 */
   monthlyTasks: number
+  maxActiveTasks: number
+  remainingActiveTasks: number
+  maxMonthlyTasks: number
+  remainingMonthlyTasks: number
+  maxTxAmountCents: number
 }
 
 // ---------- identity：商家权限升级审核流（D-05）----------
 
 /** 申请状态。approved/rejected 为终态；appeal 会新建一条 pending 引用原申请。 */
-export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected'
+export type PermissionRequestStatus = 'pending' | 'under_review' | 'approved' | 'rejected'
 
 /**
  * 审核时效状态（后端按 `review_deadline` 实时计算，仅展示不自动批准）。
@@ -477,7 +482,10 @@ export type MaterialType =
   | 'contact_info'
 
 /** 行业。beauty/education 为受监管行业，额外要求行业许可证。 */
-export type Industry = 'catering' | 'retail' | 'beauty' | 'education' | 'e_commerce' | 'other'
+export type Industry =
+  | 'catering' | 'retail' | 'beauty' | 'education' | 'e_commerce'
+  | 'healthcare' | 'finance' | 'real_estate' | 'travel' | 'children'
+  | 'gambling' | 'adult' | 'other'
 
 /** 商家权限升级申请。materials 为 {材料类型: 文本}。 */
 export interface PermissionRequest {
@@ -506,6 +514,16 @@ export interface PermissionRequest {
   originalRequestId: string | null
   appealNote: string | null
   createdAt: string | null
+  version: number
+  reviewStartedAt: string | null
+  slaBreachedAt: string | null
+  autoReviewStatus: 'not_run' | 'pending' | 'passed' | 'failed' | 'needs_review'
+  autoReviewResult: string | null
+  reviewMode: 'manual' | 'auto_recommendation'
+  riskLevel: 'standard' | 'elevated' | 'high'
+  attachmentIds: string | null
+  decisionAt: string | null
+  appealCount: number
 }
 
 /** 提交升级申请。⚠️ 字段名是 `requestedTier`/`materials`/`industry`（后端 `CreatePermissionRequest`）。 */
@@ -513,6 +531,18 @@ export interface CreatePermissionRequestInput {
   requestedTier: PermissionTier
   materials: Record<string, string>
   industry?: string
+  attachmentIds?: string[]
+}
+
+export interface PermissionRequestAudit {
+  id: string
+  actorAccountId: string | null
+  actorKind: 'merchant' | 'admin' | 'system'
+  action: string
+  fromStatus: PermissionRequestStatus | null
+  toStatus: PermissionRequestStatus | null
+  details: string | null
+  createdAt: string | null
 }
 
 /** 审核决定。仅 approve/reject 两值（后端 compact constructor 校验，其它值 400）。 */
@@ -1160,6 +1190,8 @@ export type MerchantAttachmentType =
   | 'business_license'
   | 'legal_person_id_front'
   | 'legal_person_id_back'
+  | 'industry_license'
+  | 'financial_qualification'
   | 'store_photo'
   | 'other'
 
@@ -1171,6 +1203,9 @@ export interface MerchantAttachment {
   mediaReferenceId: string
   mimeType: string | null
   sizeBytes: number | null
+  ocrStatus?: 'not_applicable' | 'pending' | 'processing' | 'passed' | 'needs_review' | 'failed'
+  ocrAnalyzedAt?: string | null
+  ocrFailureCode?: string | null
   uploadedAt: string | null
 }
 

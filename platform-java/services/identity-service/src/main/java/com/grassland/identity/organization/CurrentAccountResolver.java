@@ -5,6 +5,7 @@ import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.assertion.BackendRoles;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.identityprofile.IdentitySessionRepository;
 import com.grassland.identity.security.CookieSigner;
 import com.grassland.identity.session.LegacySessionBridge;
 import com.grassland.identity.user.AuthUser;
@@ -12,6 +13,7 @@ import com.grassland.identity.user.LegacyUserLookup;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.Duration;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpCookie;
@@ -34,13 +36,15 @@ public class CurrentAccountResolver {
     private final ObjectProvider<IdentityAssertionSigner> signerProvider;
     private final String assertionHeaderName;
     private final BackendRoleRepository backendRoles;
+    private final IdentitySessionRepository identitySessions;
 
     public CurrentAccountResolver(LegacySessionBridge sessionBridge, LegacyUserLookup userLookup,
                                   CookieSigner cookieSigner,
                                   @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName,
                                   ObjectProvider<IdentityAssertionSigner> signerProvider,
                                   @Value("${identity-assertion.header-name:X-Grassland-Identity}") String assertionHeaderName,
-                                  BackendRoleRepository backendRoles) {
+                                  BackendRoleRepository backendRoles,
+                                  IdentitySessionRepository identitySessions) {
         this.sessionBridge = sessionBridge;
         this.userLookup = userLookup;
         this.cookieSigner = cookieSigner;
@@ -48,6 +52,7 @@ public class CurrentAccountResolver {
         this.signerProvider = signerProvider;
         this.assertionHeaderName = assertionHeaderName;
         this.backendRoles = backendRoles;
+        this.identitySessions = identitySessions;
     }
 
     public Mono<AuthUser> resolve(ServerHttpRequest request) {
@@ -104,11 +109,30 @@ public class CurrentAccountResolver {
      * 仅保留为旧 Node 服务的兼容投影，不得在角色被撤销后重新授予权限。
      */
     public Mono<AuthUser> requireAdmin(ServerHttpRequest request) {
-        return resolve(request)
-                .filterWhen(user -> backendRoles.findByAccountId(user.id())
+        return requireAdminPrincipal(request).map(SessionPrincipal::user);
+    }
+
+    public Mono<SessionPrincipal> requireAdminPrincipal(ServerHttpRequest request) {
+        return resolvePrincipal(request)
+                .filterWhen(principal -> backendRoles.findByAccountId(principal.user().id())
                         .map(roles -> roles.contains(BackendRole.PLATFORM_ADMIN))
                         .defaultIfEmpty(false))
                 .switchIfEmpty(Mono.error(new IdentityException(403, "需要平台管理员权限")));
+    }
+
+    /** High-risk admin action: platform role plus recent session-scoped reauthentication. */
+    public Mono<SessionPrincipal> requireAdminWithRecentReauthentication(
+            ServerHttpRequest request, Duration maxAge) {
+        Duration effective = maxAge == null || maxAge.isNegative() || maxAge.isZero()
+                ? Duration.ofMinutes(10) : maxAge;
+        Instant cutoff = Instant.now().minus(effective);
+        return requireAdminPrincipal(request)
+                .filterWhen(principal -> identitySessions.findByToken(principal.sid())
+                        .map(session -> "level2".equals(session.authStrength())
+                                && session.reauthenticatedAt() != null
+                                && !session.reauthenticatedAt().isBefore(cutoff))
+                        .defaultIfEmpty(false))
+                .switchIfEmpty(Mono.error(new IdentityException(403, "该高风险操作需要近期重认证")));
     }
 
     /**

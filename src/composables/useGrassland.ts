@@ -54,6 +54,7 @@ import type {
   OrgInvitation,
   OrganizationQuota,
   PermissionRequest,
+  PermissionRequestAudit,
   PermissionTier,
   ReservationOutcome,
   ReviewDecision,
@@ -257,22 +258,30 @@ export function useGrassland() {
     run(() => request<PermissionRequest[]>(`/api/organizations/${orgId}/permission-requests`))
 
   /** 申诉（须 org OWNER，且原申请为 rejected）→ 新建一条 pending 走同一审核队列。 */
-  const appealPermissionRequest = (orgId: string, id: string, materials: Record<string, string>, note?: string) =>
+  const appealPermissionRequest = (orgId: string, id: string, materials: Record<string, string>, note?: string,
+    attachmentIds: string[] = []) =>
     run(() => request<PermissionRequest>(
       `/api/organizations/${orgId}/permission-requests/${id}/appeal`, {
         method: 'POST',
-        body: JSON.stringify(note ? { materials, note } : { materials }),
+        body: JSON.stringify({ materials, attachmentIds, ...(note ? { note } : {}) }),
       }))
 
   /** 平台 admin：待审队列（`app_users.role=='admin'`，否则 403）。 */
   const listPendingPermissionRequests = () =>
     run(() => request<PermissionRequest[]>('/api/admin/permission-requests'))
 
+  const claimPermissionRequest = (id: string) =>
+    run(() => request<PermissionRequest>(`/api/admin/permission-requests/${id}/claim`, { method: 'POST' }))
+
+  const listPermissionRequestAudit = (id: string) =>
+    run(() => request<PermissionRequestAudit[]>(`/api/admin/permission-requests/${id}/audit`))
+
   /** 平台 admin：审核。approve → 升级 org tier；reject → tier 不变。终态再审 409。 */
-  const reviewPermissionRequest = (id: string, decision: ReviewDecision, note?: string) =>
+  const reviewPermissionRequest = (id: string, decision: ReviewDecision, note?: string, expectedVersion?: number) =>
     run(() => request<PermissionRequest>(`/api/admin/permission-requests/${id}/review`, {
       method: 'POST',
-      body: JSON.stringify(note ? { decision, note } : { decision }),
+      body: JSON.stringify({ decision, ...(note ? { note } : {}),
+        ...(expectedVersion === undefined ? {} : { expectedVersion }) }),
     }))
 
   // ---------- identity：组织成员 / 门店 / 门店成员（Slice 2F/2G/2J）----------
@@ -961,6 +970,7 @@ export function useGrassland() {
         body: JSON.stringify({
           contentType: file.type,
           sizeBytes: file.size,
+          attachmentType,
         }),
       })
       // 第二步：直传到 presigned URL
@@ -1242,6 +1252,8 @@ export function useGrassland() {
     listPermissionRequests,
     appealPermissionRequest,
     listPendingPermissionRequests,
+    claimPermissionRequest,
+    listPermissionRequestAudit,
     reviewPermissionRequest,
     // identity：组织成员 / 门店 / 门店成员
     listMemberships,

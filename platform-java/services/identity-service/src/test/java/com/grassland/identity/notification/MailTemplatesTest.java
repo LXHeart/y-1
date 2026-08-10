@@ -37,6 +37,8 @@ class MailTemplatesTest {
                 payload(Map.of("organizationId", "org-1")))).isNull();
         assertThat(MailTemplates.mailTemplate("PermissionReviewed",
                 payload(Map.of("organizationId", "org-1")))).isNull();
+        assertThat(MailTemplates.mailTemplate("PermissionReviewSlaBreached",
+                payload(Map.of("organizationId", "org-1")))).isNull();
     }
 
     @Test

@@ -43,7 +43,10 @@ public final class NotificationTemplates {
                     "你已被加入一个组织", LINK_INVITATIONS, grantedPayload(payload));
             case "PermissionRequested" -> new Template(
                     NotificationCategory.PERMISSION, "收到商家权限升级申请",
-                    "有成员申请升级商家权限，待你审核", LINK_PERMISSION, orgPayload(payload));
+                    "有商家提交权限升级申请，待平台审核", LINK_PERMISSION, orgPayload(payload));
+            case "PermissionReviewSlaBreached" -> new Template(
+                    NotificationCategory.PERMISSION, "商家权限审核已超时",
+                    "一条商家权限申请已超过审核时限，请尽快处理", LINK_PERMISSION, orgPayload(payload));
             case "PermissionReviewed" -> new Template(
                     NotificationCategory.PERMISSION, "你的权限申请已审核",
                     "你的商家权限升级申请已有审核结果", LINK_PERMISSION, orgPayload(payload));

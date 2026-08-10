@@ -101,6 +101,15 @@ const canEditMerchant = computed(() => merchantProfileLoaded.value && !merchantR
     || merchantProfile.value.status === 'draft'
     || merchantProfile.value.status === 'rejected'))
 
+const canEditPermissionSupplements = computed(() => merchantProfileLoaded.value && !merchantReadError.value
+  && (!merchantProfile.value || !['pending', 'under_review'].includes(merchantProfile.value.status)))
+
+function canEditAttachment(attachmentType: MerchantAttachmentType): boolean {
+  return attachmentType === 'industry_license' || attachmentType === 'financial_qualification'
+    ? canEditPermissionSupplements.value
+    : canEditMerchant.value
+}
+
 const canEditStore = computed(() => storeProfileLoaded.value && !storeReadError.value
   && (!storeProfile.value
     || ['draft', 'rejected', 'inactive'].includes(storeProfile.value.status)))
@@ -528,7 +537,7 @@ watch(() => props.orgId, (orgId) => {
             </span>
             <button
               type="button"
-              :disabled="grassland.loading.value || !canEditMerchant"
+              :disabled="grassland.loading.value || !canEditAttachment(att.attachmentType)"
               @click="deleteAttachment(att.id)"
             >删除</button>
           </div>
@@ -568,6 +577,24 @@ watch(() => props.orgId, (orgId) => {
               accept="image/*,.pdf"
               :disabled="grassland.loading.value || !canEditMerchant"
               @change="(e) => handleFileUpload(e, 'store_photo')"
+            />
+          </label>
+          <label>
+            行业许可证
+            <input
+              type="file"
+              accept="image/*,.pdf"
+              :disabled="grassland.loading.value || !canEditPermissionSupplements"
+              @change="(e) => handleFileUpload(e, 'industry_license')"
+            />
+          </label>
+          <label>
+            财务资质
+            <input
+              type="file"
+              accept="image/*,.pdf"
+              :disabled="grassland.loading.value || !canEditPermissionSupplements"
+              @change="(e) => handleFileUpload(e, 'financial_qualification')"
             />
           </label>
           <label>

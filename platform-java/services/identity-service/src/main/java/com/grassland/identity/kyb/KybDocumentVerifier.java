@@ -66,6 +66,14 @@ public class KybDocumentVerifier {
             copy(safeFields, fields, "issuingAuthority", "validFrom", "validUntil", "side");
             passed &= addCheck(checks, "document_side", "back".equalsIgnoreCase(text(fields, "side")));
             passed &= addCheck(checks, "validity", notExpired(text(fields, "validUntil")));
+        } else if ("industry_license".equals(analysis.documentType())
+                || "financial_qualification".equals(analysis.documentType())) {
+            copy(safeFields, fields, "licenseNumber", "companyName", "licenseType", "validFrom", "validUntil");
+            passed &= addCheck(checks, "license_number_present",
+                    text(fields, "licenseNumber") != null && !text(fields, "licenseNumber").isBlank());
+            passed &= addCheck(checks, "company_name_match",
+                    sameName(text(fields, "companyName"), profile.legalName()));
+            passed &= addCheck(checks, "validity", notExpired(text(fields, "validUntil")));
         } else {
             passed = false;
             addCheck(checks, "document_type", false);

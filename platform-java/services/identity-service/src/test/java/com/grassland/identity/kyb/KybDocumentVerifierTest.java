@@ -65,6 +65,21 @@ class KybDocumentVerifierTest {
         assertThat(result.safeResultJson()).contains("needs_review");
     }
 
+    @Test
+    void matchingIndustryLicenseIsAutomaticallyVerified() throws Exception {
+        KybDocumentAnalysis analysis = new KybDocumentAnalysis(
+                1, "industry_license", 0.96,
+                mapper.readTree("""
+                        {"licenseNumber":"SH-EDU-2026-001","companyName":"草场科技有限公司",
+                         "licenseType":"education","validFrom":"2026-01-01","validUntil":"2030-01-01"}
+                        """), "qwen", "qwen-vl");
+
+        KybVerifiedDocument result = verifier.verify(analysis, profile());
+
+        assertThat(result.status()).isEqualTo("passed");
+        assertThat(result.safeResultJson()).contains("license_number_present", "company_name_match");
+    }
+
     private static MerchantProfile profile() {
         return new MerchantProfile(
                 "org", "草场科技有限公司", "91310000MA1K123456", "limited_company",
@@ -72,4 +87,3 @@ class KybDocumentVerifierTest {
                 "13800000000", "kyb@example.com", "draft", null, null, null, null, null, null);
     }
 }
-

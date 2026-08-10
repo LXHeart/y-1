@@ -7,6 +7,8 @@ public enum MerchantAttachmentType {
     BUSINESS_LICENSE("business_license"),
     LEGAL_PERSON_ID_FRONT("legal_person_id_front"),
     LEGAL_PERSON_ID_BACK("legal_person_id_back"),
+    INDUSTRY_LICENSE("industry_license"),
+    FINANCIAL_QUALIFICATION("financial_qualification"),
     STORE_PHOTO("store_photo"),
     OTHER("other");
 
@@ -22,7 +24,13 @@ public enum MerchantAttachmentType {
 
     /** 是否证件类附件（证件类每种只能有一个）。 */
     public boolean isDocumentType() {
-        return this == BUSINESS_LICENSE || this == LEGAL_PERSON_ID_FRONT || this == LEGAL_PERSON_ID_BACK;
+        return this == BUSINESS_LICENSE || this == LEGAL_PERSON_ID_FRONT || this == LEGAL_PERSON_ID_BACK
+                || this == INDUSTRY_LICENSE || this == FINANCIAL_QUALIFICATION;
+    }
+
+    /** 商家主体 KYB 通过后仍可补传、用于权限升级的证照。 */
+    public boolean isPermissionSupplement() {
+        return this == INDUSTRY_LICENSE || this == FINANCIAL_QUALIFICATION;
     }
 
     /** 从 DB 字符串解析，大小写不敏感；非法值抛 {@link IllegalArgumentException}。 */
@@ -62,6 +70,8 @@ public enum MerchantAttachmentType {
             case BUSINESS_LICENSE -> "营业执照";
             case LEGAL_PERSON_ID_FRONT -> "法人证件正面";
             case LEGAL_PERSON_ID_BACK -> "法人证件反面";
+            case INDUSTRY_LICENSE -> "行业许可证";
+            case FINANCIAL_QUALIFICATION -> "财务资质";
             case STORE_PHOTO -> "门店照片";
             case OTHER -> "其他材料";
         };
