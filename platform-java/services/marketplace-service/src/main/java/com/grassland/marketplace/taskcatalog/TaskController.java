@@ -58,12 +58,14 @@ public class TaskController {
     private final TransactionalOperator transactions;
     private final ReputationService reputationService;
     private final TaskResourceAuthorization taskAuthorization;
+    private final TaskMetricsRepository metrics;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions, ReputationService reputationService,
-                          TaskResourceAuthorization taskAuthorization) {
+                          TaskResourceAuthorization taskAuthorization,
+                          TaskMetricsRepository metrics) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -73,6 +75,7 @@ public class TaskController {
         this.transactions = transactions;
         this.reputationService = reputationService;
         this.taskAuthorization = taskAuthorization;
+        this.metrics = metrics;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -80,37 +83,17 @@ public class TaskController {
         return callers.requireUser(request)
                 .flatMap(caller -> taskAuthorization.requireScope(
                                 caller, body.organizationId(), blankToNull(body.storeId()), "manager")
-                        .flatMap(access -> {
-                    // 闸门 2：tier 须允许发布（DRAFT=0 → 403）。
-                    MerchantTier tier = MerchantTier.fromDb(access.permissionTier());
-                    int maxActive = PublishQuotaPolicy.maxActiveTasks(tier);
-                    if (maxActive == 0) {
-                        return Mono.<Task>error(new MarketplaceException(403, "当前等级不可发布任务"));
-                    }
-                    // 闸门 3（D-05）：资金型任务须有交易权限，且赏金不超单笔上限。
-                    long bounty = body.bountyCents() == null ? 0L : body.bountyCents();
-                    long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
-                    if (bounty > 0 && maxTx == 0) {
-                        return Mono.<Task>error(new MarketplaceException(403, "当前等级不可发布资金型任务"));
-                    }
-                    if (bounty > maxTx) {
-                        return Mono.<Task>error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
-                    }
-                    // 闸门 4+5（D-05）：活跃任务数上限 + 本月新建任务数上限 → 409。
-                    int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
-                    return tasks.countActiveByOrganization(access.organizationId())
-                            .flatMap(active -> active >= maxActive
-                                    ? Mono.<Integer>error(new MarketplaceException(409, "已达本组织发布上限"))
-                                    : tasks.countCreatedThisMonthByOrganization(access.organizationId()))
-                            .flatMap(monthly -> monthly >= maxMonthly
-                                    ? Mono.<Task>error(new MarketplaceException(409, "已达本组织本月发布上限"))
-                                    : transactions.transactional(
-                                            tasks.create(caller.accountId(), access.organizationId(), body.title(),
-                                                    body.description(), body.contentForm(), body.platform(), body.maxSlots(),
-                                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                                    access.storeId())
-                                                    .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))));
-                }))
+                        .flatMap(access -> transactions.transactional(
+                                tasks.acquireOrganizationPublishLock(access.organizationId())
+                                        .then(enforcePublishGates(access.organizationId(),
+                                                access.permissionTier(), body.bountyCents()))
+                                        .then(tasks.create(caller.accountId(), access.organizationId(), body.title(),
+                                                body.description(), body.contentForm(), body.platform(), body.maxSlots(),
+                                                body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
+                                                access.storeId()))
+                                        .flatMap(task -> taskReviews.append(task.id(), "submitted", null, null)
+                                                .then(outbox.append(taskSubmittedEnvelope(task)))
+                                                .thenReturn(task)))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -149,13 +132,15 @@ public class TaskController {
                                                              ServerHttpRequest request) {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "draft")
-                        .flatMap(access -> enforcePublishGates(access.task().organizationId(),
-                                        access.permissionTier(), access.task().bountyCents())
-                                .thenReturn(access.task())
-                                .flatMap(ignored -> transactions.transactional(
-                                        tasks.publish(id, body.expectedVersion())
+                        .flatMap(access -> transactions.transactional(
+                                tasks.acquireOrganizationPublishLock(access.task().organizationId())
+                                        .then(enforcePublishGates(access.task().organizationId(),
+                                                access.permissionTier(), access.task().bountyCents()))
+                                        .then(tasks.publish(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                                .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))))))
+                                                .flatMap(task -> taskReviews.append(task.id(), "submitted", null, null)
+                                                        .then(outbox.append(taskSubmittedEnvelope(task)))
+                                                        .thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -277,8 +262,8 @@ public class TaskController {
                     if (storeId != null && !storeId.isBlank()) {
                         return taskAuthorization.requireScope(caller, organizationId, storeId, "staff")
                                 .then(tasks.findByStore(organizationId, storeId, status).collectList())
-                                .map(list -> ResponseEntity.ok(Map.of("success", true,
-                                        "data", list.stream().map(this::toBody).toList())));
+                                .flatMap(this::enrichTasks)
+                                .map(list -> ResponseEntity.ok(Map.of("success", true, "data", list)));
                     }
                     // 非 published status 仅本 org merchant 可查（防跨组织草稿/取消泄露）。
                     String effectiveStatus = TaskStatus.PUBLISHED.dbValue().equalsIgnoreCase(status) || status.isBlank()
@@ -294,9 +279,24 @@ public class TaskController {
                                             .filter(task -> !TaskStatus.PUBLISHED.dbValue().equals(task.status())
                                                     || task.minRecommenderLevel() <= level)
                                             .collectList());
-                    return visibleTasks.map(list -> ResponseEntity.ok(Map.of("success", true,
-                            "data", list.stream().map(this::toBody).toList())));
+                    return visibleTasks.flatMap(this::enrichTasks)
+                            .map(list -> ResponseEntity.ok(Map.of("success", true, "data", list)));
                 });
+    }
+
+    /** Merchant analytics read model. Exposure/interaction/conversion stay explicitly unavailable until event collection is wired. */
+    @GetMapping("/api/tasks/analytics")
+    public Mono<ResponseEntity<Map<String, Object>>> analytics(
+            @RequestParam String organizationId,
+            @RequestParam(required = false) String storeId,
+            @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to,
+            ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> taskAuthorization.requireScope(
+                                caller, organizationId, blankToNull(storeId), "staff")
+                        .flatMap(access -> metrics.dashboard(access.organizationId(), access.storeId(), from, to)))
+                .map(dashboard -> ResponseEntity.ok(Map.of("success", true, "data", dashboardBody(dashboard))));
     }
 
     // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
@@ -305,11 +305,47 @@ public class TaskController {
     @GetMapping("/api/admin/tasks/review")
     public Mono<ResponseEntity<Map<String, Object>>> listPendingReview(
             @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "50") int limit,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String status,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String organizationId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String platform,
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "false") boolean overdue,
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "0") int offset,
             ServerHttpRequest request) {
         return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
-                .thenMany(tasks.findPendingReview(limit).map(this::toBody))
+                .thenMany(tasks.findReviewQueue(blankToNull(status), blankToNull(organizationId),
+                                blankToNull(platform), overdue, limit, offset).map(this::toBody))
                 .collectList()
-                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+                .flatMap(items -> taskReviews.queueStats()
+                        .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", items,
+                                "meta", Map.of("offset", Math.max(0, offset), "limit", Math.max(1, Math.min(limit, 200)),
+                                        "queue", Map.of("pending", stats.pending(), "overdue", stats.overdue(),
+                                                "approvedLast24Hours", stats.approvedLast24Hours(),
+                                                "rejectedLast24Hours", stats.rejectedLast24Hours()))))));
+    }
+
+    /** Append-only review history for audit drill-down. */
+    @GetMapping("/api/admin/tasks/{id}/review/history")
+    public Mono<ResponseEntity<Map<String, Object>>> reviewHistory(
+            @PathVariable String id,
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "100") int limit,
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "0") int offset,
+            ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
+                .then(tasks.findById(id).switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在"))))
+                .then(taskReviews.findHistory(id, limit, offset).map(TaskController::reviewBody).collectList())
+                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items,
+                        "meta", Map.of("offset", Math.max(0, offset),
+                                "limit", Math.max(1, Math.min(limit, 200))))));
+    }
+
+    @GetMapping("/api/admin/tasks/review/stats")
+    public Mono<ResponseEntity<Map<String, Object>>> reviewStats(ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
+                .then(taskReviews.queueStats())
+                .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", Map.of(
+                        "pending", stats.pending(), "overdue", stats.overdue(),
+                        "approvedLast24Hours", stats.approvedLast24Hours(),
+                        "rejectedLast24Hours", stats.rejectedLast24Hours()))));
     }
 
     /**
@@ -329,11 +365,18 @@ public class TaskController {
                             if (!TaskStatus.PENDING_REVIEW.dbValue().equals(task.status())) {
                                 return Mono.<Task>error(new MarketplaceException(409, "该任务不在待审核状态"));
                             }
-                            return transactions.transactional(
-                                    tasks.reviewApprove(id, body.expectedVersion(), reviewer.accountId())
-                                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                            .flatMap(approved -> taskReviews.append(id, "approved", reviewer.accountId(), null)
-                                                    .then(outbox.append(taskPublishedEnvelope(approved)).thenReturn(approved))));
+                            return taskAuthorization.requireCurrentOwnerManager(task)
+                                    .flatMap(access -> transactions.transactional(
+                                            tasks.acquireOrganizationPublishLock(task.organizationId())
+                                                    .then(enforcePublishGates(task.organizationId(),
+                                                            access.permissionTier(), task.bountyCents()))
+                                                    .then(tasks.reviewApprove(id, body.expectedVersion(), reviewer.accountId())
+                                                            .switchIfEmpty(Mono.error(new MarketplaceException(
+                                                                    409, "任务已变更，请刷新后重试")))
+                                                            .flatMap(approved -> taskReviews.append(
+                                                                            id, "approved", reviewer.accountId(), null)
+                                                                    .then(outbox.append(taskPublishedEnvelope(approved)))
+                                                                    .thenReturn(approved)))));
                         }))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
@@ -634,6 +677,72 @@ public class TaskController {
 
     private static String blankToNull(String value) {
         return (value == null || value.isBlank()) ? null : value;
+    }
+
+    private Mono<List<Map<String, Object>>> enrichTasks(List<Task> rows) {
+        return metrics.findProgressByTaskIds(rows.stream().map(Task::id).toList())
+                .collectMap(TaskProgress::taskId)
+                .map(progress -> rows.stream().map(task -> {
+                    Map<String, Object> body = toBody(task);
+                    TaskProgress facts = progress.getOrDefault(task.id(), TaskProgress.empty(task.id()));
+                    body.put("progress", progressBody(task, facts));
+                    return body;
+                }).toList());
+    }
+
+    private static Map<String, Object> progressBody(Task task, TaskProgress facts) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("totalApplications", facts.totalApplications());
+        body.put("pendingApplications", facts.pendingApplications());
+        body.put("reservingApplications", facts.reservingApplications());
+        body.put("acceptedApplications", facts.acceptedApplications());
+        body.put("rejectedApplications", facts.rejectedApplications());
+        body.put("withdrawnApplications", facts.withdrawnApplications());
+        body.put("refundedApplications", facts.refundedApplications());
+        body.put("occupiedSlots", facts.occupiedSlots());
+        body.put("maxSlots", task.maxSlots());
+        body.put("remainingSlots", task.maxSlots() == null
+                ? null : Math.max(0, task.maxSlots() - facts.occupiedSlots()));
+        body.put("submittedDeliverables", facts.submittedDeliverables());
+        body.put("confirmedDeliverables", facts.confirmedDeliverables());
+        body.put("settledEngagements", facts.settledEngagements());
+        body.put("reservedBountyCents", facts.reservedBountyCents());
+        body.put("settledBountyCents", facts.settledBountyCents());
+        return body;
+    }
+
+    private static Map<String, Object> dashboardBody(MerchantDashboard dashboard) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("organizationId", dashboard.organizationId());
+        body.put("storeId", dashboard.storeId());
+        body.put("taskCount", dashboard.taskCount());
+        body.put("publishedTaskCount", dashboard.publishedTaskCount());
+        body.put("totalApplications", dashboard.totalApplications());
+        body.put("acceptedApplications", dashboard.acceptedApplications());
+        body.put("confirmedDeliverables", dashboard.confirmedDeliverables());
+        body.put("settledEngagements", dashboard.settledEngagements());
+        body.put("reservedBountyCents", dashboard.reservedBountyCents());
+        body.put("settledBountyCents", dashboard.settledBountyCents());
+        body.put("applicationAcceptanceRate", dashboard.applicationAcceptanceRate());
+        body.put("averageRating", dashboard.averageRating());
+        body.put("marketingMetrics", Map.of(
+                "exposureCollected", dashboard.exposureCollected(),
+                "interactionCollected", dashboard.interactionCollected(),
+                "conversionCollected", dashboard.conversionCollected(),
+                "status", dashboard.marketingMetricsStatus(),
+                "roi", "unavailable"));
+        return body;
+    }
+
+    private static Map<String, Object> reviewBody(TaskReviewRepository.TaskReviewEntry entry) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", entry.id());
+        body.put("taskId", entry.taskId());
+        body.put("action", entry.action());
+        body.put("reviewerAccountId", entry.reviewerAccountId());
+        body.put("note", entry.note());
+        body.put("createdAt", entry.createdAt() == null ? null : entry.createdAt().toString());
+        return body;
     }
 
     /**

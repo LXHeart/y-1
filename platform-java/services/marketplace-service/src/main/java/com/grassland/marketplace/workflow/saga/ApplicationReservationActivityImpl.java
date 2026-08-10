@@ -3,7 +3,10 @@ package com.grassland.marketplace.workflow.saga;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.taskcatalog.ApplicationStatus;
+import com.grassland.marketplace.taskcatalog.AcceptanceCommand;
+import com.grassland.marketplace.taskcatalog.AcceptanceCommandRepository;
 import com.grassland.marketplace.taskcatalog.Task;
+import com.grassland.marketplace.taskcatalog.TaskAcceptanceCounterRepository;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
@@ -18,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Mono;
 
 /**
  * 接受报名资金预留 Saga 的活动实现（草场 Epic 4 Slice 4F / HLD 9.2、10.2）。
@@ -37,15 +41,22 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     private static final Logger log = LoggerFactory.getLogger(ApplicationReservationActivityImpl.class);
 
     private final TaskApplicationRepository apps;
+    private final TaskAcceptanceCounterRepository counters;
+    private final AcceptanceCommandRepository commands;
     private final TaskRepository tasks;
     private final OutboxRepository outbox;
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
 
-    public ApplicationReservationActivityImpl(TaskApplicationRepository apps, TaskRepository tasks,
+    public ApplicationReservationActivityImpl(TaskApplicationRepository apps,
+                                              TaskAcceptanceCounterRepository counters,
+                                              AcceptanceCommandRepository commands,
+                                              TaskRepository tasks,
                                               OutboxRepository outbox, FinanceEscrowClient finance,
                                               TransactionalOperator transactions) {
         this.apps = apps;
+        this.counters = counters;
+        this.commands = commands;
         this.tasks = tasks;
         this.outbox = outbox;
         this.finance = finance;
@@ -64,22 +75,24 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
             return false;  // 报名不存在 / 越界
         }
         String status = app.status();
+        if (input.commandId() != null) {
+            AcceptanceCommand command = commands.findById(input.commandId()).block();
+            return command != null
+                    && command.applicationId().equals(input.applicationId())
+                    && ApplicationStatus.RESERVING.dbValue().equals(status)
+                    && ("pending_dispatch".equals(command.status()) || "started".equals(command.status()));
+        }
         if (ApplicationStatus.RESERVING.dbValue().equals(status)) {
             return true;  // 重试幂等：已在 reserving
         }
         if (!ApplicationStatus.PENDING.dbValue().equals(status)) {
             return false;  // 已终态（accepted/rejected/withdrawn）
         }
-        Integer max = task.maxSlots();
-        if (max != null) {
-            Integer accepted = apps.countAcceptedByTask(input.taskId()).block();
-            if (accepted != null && accepted >= max) {
-                return false;  // 名额已满（多 acceptor 竞态兜底）
-            }
-        }
-        // 领域写（pending→reserving）+ outbox 同事务：outbox 失败则回滚状态迁移，重试不会因「已在 reserving」丢事件。
+        // Rolling-upgrade path for workflows serialized before the command ledger existed.
         TaskApplication transitioned = transactions.transactional(
-                apps.beginAcceptance(input.applicationId(), input.taskId(), input.effectiveOperatorAccountId())
+                counters.claim(input.taskId())
+                        .flatMap(ignored -> apps.beginAcceptance(
+                                input.applicationId(), input.taskId(), input.effectiveOperatorAccountId()))
                         .flatMap(t -> outbox.append(envelope("ApplicationAcceptanceStarted", t, null)).thenReturn(t))
         ).block();
         return transitioned != null;  // null = 竞态空结果（empty Mono，无写无事件）
@@ -123,7 +136,9 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         // 此后结算读 app.bountyCents() 而非可变 task 行——accept 后改 task 赏金不再影响本履约。
         TaskApplication activated = transactions.transactional(
                 apps.acceptFromReserving(input.applicationId(), input.taskId(), input.amountCents())
-                        .flatMap(a -> outbox.append(envelope("ApplicationAccepted", a, null)).thenReturn(a))
+                        .flatMap(a -> markCommandAccepted(input)
+                                .then(outbox.append(envelope("ApplicationAccepted", a, null, input.commandId())))
+                                .thenReturn(a))
         ).block();
         if (activated == null) {
             return;  // 竞态：已变迁（empty Mono，无写无事件）
@@ -144,7 +159,13 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         // 领域写（reserving→pending）+ outbox 同事务。
         TaskApplication reverted = transactions.transactional(
                 apps.revertReserving(input.applicationId(), input.taskId())
-                        .flatMap(r -> outbox.append(envelope("ApplicationReservationFailed", r, reason)).thenReturn(r))
+                        .flatMap(r -> counters.release(input.taskId())
+                                .filter(Boolean::booleanValue)
+                                .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
+                                .then(markCommandCompensated(input, reason))
+                                .then(outbox.append(envelope(
+                                        "ApplicationReservationFailed", r, reason, input.commandId())))
+                                .thenReturn(r))
         ).block();
         if (reverted == null) {
             return;  // 竞态：已回退（empty Mono，无写无事件）
@@ -152,6 +173,10 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     }
 
     private EventEnvelope envelope(String eventType, TaskApplication app, String reason) {
+        return envelope(eventType, app, reason, null);
+    }
+
+    private EventEnvelope envelope(String eventType, TaskApplication app, String reason, String commandId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
@@ -162,9 +187,17 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
             payload.put("reason", reason);
         }
         // 确定性 event_id（type-3 UUID from eventType:applicationId）——activity 重试时 ON CONFLICT 去重
-        String eventId = UUID.nameUUIDFromBytes(
-                (eventType + ":" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
+        String eventId = UUID.nameUUIDFromBytes((eventType + ":" + app.id()
+                + (commandId == null ? "" : ":" + commandId)).getBytes(StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(eventId, eventType, "TaskApplication",
                 app.id(), 1, Instant.now(), null, payload);
+    }
+
+    private Mono<Boolean> markCommandAccepted(AcceptanceInput input) {
+        return input.commandId() == null ? Mono.just(true) : commands.markAccepted(input.commandId());
+    }
+
+    private Mono<Boolean> markCommandCompensated(AcceptanceInput input, String reason) {
+        return input.commandId() == null ? Mono.just(true) : commands.markCompensated(input.commandId(), reason);
     }
 }

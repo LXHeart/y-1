@@ -60,7 +60,9 @@ class OutboxAtomicityIT extends MarketplaceItSupport {
         assertThat(taskMinimumRecommenderLevel(taskId)).isEqualTo(4);
         assertThat(taskVersionCount(taskId)).isZero();
         assertThat(taskMinimumLevelSnapshot(taskId)).isNull();
-        assertThat(taskReviewCount(taskId)).isZero();
+        // The submitted audit row belongs to the earlier successful submit transaction;
+        // only the approved row must roll back with TaskPublished.
+        assertThat(taskReviewCount(taskId)).isEqualTo(1);
     }
 
     @Test

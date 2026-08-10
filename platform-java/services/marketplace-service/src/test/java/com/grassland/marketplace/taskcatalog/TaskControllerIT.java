@@ -1,6 +1,8 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
@@ -10,9 +12,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import reactor.core.publisher.Mono;
 
 /**
@@ -23,9 +27,6 @@ import reactor.core.publisher.Mono;
  * ⚠️ 既有 happy path 须用 4 参 sign（带 org + tier=basic_publish），否则 null tier 触发新闸门 403（回归）。
  */
 class TaskControllerIT extends MarketplaceItSupport {
-
-    @MockitoBean
-    IdentityStoreAuthorizationClient storeAuthorization;
 
     @Test
     void storeScopedDraftPersistsAndRequiresStoreAuthorization() {
@@ -399,6 +400,92 @@ class TaskControllerIT extends MarketplaceItSupport {
         Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
                 .bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
         assertThat(versions).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void reviewQueueSupportsFiltersStatsAndAuditHistory() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String platform = "review-" + UUID.randomUUID().toString().substring(0, 8);
+        Map<String, Object> response = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body(org, "审核运营任务", platform, null))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> task = (Map<String, Object>) response.get("data");
+        String taskId = (String) task.get("id");
+        int version = ((Number) task.get("version")).intValue();
+        String reviewerHeader = signWithRole(UUID.randomUUID().toString(), "content_reviewer");
+
+        client().get().uri("/api/admin/tasks/review?status=pending_review&organizationId="
+                        + org + "&platform=" + platform + "&limit=20")
+                .header("X-Grassland-Identity", reviewerHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].id").isEqualTo(taskId)
+                .jsonPath("$.meta.queue.pending").isNumber();
+
+        client().get().uri("/api/admin/tasks/" + taskId + "/review/history")
+                .header("X-Grassland-Identity", reviewerHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].action").isEqualTo("submitted");
+
+        client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
+                .header("X-Grassland-Identity", reviewerHeader)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", version))
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/admin/tasks/" + taskId + "/review/history")
+                .header("X-Grassland-Identity", reviewerHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(2)
+                .jsonPath("$.data[0].action").isEqualTo("approved")
+                .jsonPath("$.data[1].action").isEqualTo("submitted");
+        client().get().uri("/api/admin/tasks/review/stats")
+                .header("X-Grassland-Identity", reviewerHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.approvedLast24Hours").isNumber();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void concurrentReviewApprovalsCannotExceedOrganizationActiveQuota() throws Exception {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(eq(merchant), eq(org), isNull(), eq("manager")))
+                .thenReturn(Mono.just(storeAccess(merchant, org, null, "manager")));
+        for (int index = 0; index < 4; index++) {
+            publish(merchant, org, "basic_publish", "额度占位-" + index, null);
+        }
+        Map<String, Object> first = createPendingTask(merchant, org, "并发审核-A");
+        Map<String, Object> second = createPendingTask(merchant, org, "并发审核-B");
+        String reviewer = signWithRole(UUID.randomUUID().toString(), "platform_admin");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicReference<Integer> firstStatus = new AtomicReference<>();
+        AtomicReference<Integer> secondStatus = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        Thread a = new Thread(() -> runConcurrent(ready, start, failure,
+                () -> firstStatus.set(approveStatus(first, reviewer))));
+        Thread b = new Thread(() -> runConcurrent(ready, start, failure,
+                () -> secondStatus.set(approveStatus(second, reviewer))));
+        a.start();
+        b.start();
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        a.join(10_000);
+        b.join(10_000);
+
+        assertThat(failure.get()).isNull();
+        assertThat(List.of(firstStatus.get(), secondStatus.get())).containsExactlyInAnyOrder(200, 409);
+        Integer active = db.sql("SELECT COUNT(*)::int AS c FROM task"
+                        + " WHERE organization_id = CAST(:org AS uuid) AND status = 'published'")
+                .bind("org", org).map(row -> row.get("c", Integer.class)).one().block();
+        assertThat(active).isEqualTo(5);
     }
 
     /** 草稿 tier 商家可建草稿（不占发布额度、不需资金权限）。 */
@@ -856,6 +943,37 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.status").isEqualTo("published");
         return taskId;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> createPendingTask(String merchant, String org, String title) {
+        Map<String, Object> response = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body(org, title, null, null))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (Map<String, Object>) response.get("data");
+    }
+
+    private int approveStatus(Map<String, Object> task, String reviewerHeader) {
+        return client().post().uri("/api/admin/tasks/" + task.get("id") + "/review/approve")
+                .header("X-Grassland-Identity", reviewerHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", ((Number) task.get("version")).intValue()))
+                .exchange().returnResult(Void.class).getStatus().value();
+    }
+
+    private static void runConcurrent(CountDownLatch ready, CountDownLatch start,
+                                      AtomicReference<Throwable> failure, Runnable action) {
+        try {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent test start timeout");
+            }
+            action.run();
+        } catch (Throwable error) {
+            failure.compareAndSet(null, error);
+        }
     }
 
     @SuppressWarnings("unchecked")

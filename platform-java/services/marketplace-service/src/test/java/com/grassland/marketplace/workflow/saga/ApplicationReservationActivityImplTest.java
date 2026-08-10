@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.taskcatalog.Task;
+import com.grassland.marketplace.taskcatalog.AcceptanceCommandRepository;
+import com.grassland.marketplace.taskcatalog.TaskAcceptanceCounterRepository;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
@@ -43,6 +45,8 @@ class ApplicationReservationActivityImplTest {
     private static final String OPERATOR = "66666666-6666-6666-6666-666666666666";
 
     @Mock private TaskApplicationRepository apps;
+    @Mock private TaskAcceptanceCounterRepository counters;
+    @Mock private AcceptanceCommandRepository commands;
     @Mock private TaskRepository tasks;
     @Mock private OutboxRepository outbox;
     @Mock private FinanceEscrowClient finance;
@@ -55,7 +59,10 @@ class ApplicationReservationActivityImplTest {
     void setUp() {
         // 直通：transactional(mono) 原样返回被包的 Mono（reserveFunds 测试不触发，用 lenient 避免 strict stubbing 报错）。
         lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
-        activity = new ApplicationReservationActivityImpl(apps, tasks, outbox, finance, transactions);
+        lenient().when(counters.claim(TASK_ID)).thenReturn(Mono.just(1));
+        lenient().when(counters.release(TASK_ID)).thenReturn(Mono.just(true));
+        activity = new ApplicationReservationActivityImpl(
+                apps, counters, commands, tasks, outbox, finance, transactions);
         input = new AcceptanceInput(APP_ID, TASK_ID, MERCHANT, ORG, 500L);
     }
 
@@ -115,7 +122,7 @@ class ApplicationReservationActivityImplTest {
     void beginAcceptance_abortsWhenSlotsFull() {
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(1)));
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("pending")));
-        when(apps.countAcceptedByTask(TASK_ID)).thenReturn(Mono.just(1));
+        when(counters.claim(TASK_ID)).thenReturn(Mono.empty());
 
         assertThat(activity.beginAcceptance(input)).isFalse();
         verify(apps, never()).beginAcceptance(anyString(), anyString(), anyString());

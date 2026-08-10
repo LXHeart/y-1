@@ -62,6 +62,12 @@ public class TaskResourceAuthorization {
                                 : Mono.error(error));
     }
 
+    /** Revalidates the task owner's current Identity role and organization tier for reviewer-side publication. */
+    public Mono<ManagedTask> requireCurrentOwnerManager(Task task) {
+        return stores.authorize(task.ownerAccountId(), task.organizationId(), task.storeId(), "manager")
+                .map(decision -> new ManagedTask(task, decision.permissionTier()));
+    }
+
     public record ScopeAccess(
             String organizationId, String storeId, String permissionTier, String scope) {}
 

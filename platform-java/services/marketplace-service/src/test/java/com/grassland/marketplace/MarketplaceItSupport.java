@@ -2,15 +2,22 @@ package com.grassland.marketplace;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import java.time.Instant;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.testcontainers.containers.PostgreSQLContainer;
+import reactor.core.publisher.Mono;
 
 /**
  * marketplace 集成测试公共基座。草场 Epic 4 Slice 4A。
@@ -36,6 +43,20 @@ public abstract class MarketplaceItSupport {
 
     @Autowired
     protected DatabaseClient db;
+
+    @MockitoBean
+    protected IdentityStoreAuthorizationClient storeAuthorization;
+
+    @BeforeEach
+    void authorizeIdentityScopeByDefault() {
+        lenient().when(storeAuthorization.authorize(anyString(), anyString(), any(), anyString()))
+                .thenAnswer(invocation -> {
+                    String storeId = invocation.getArgument(2);
+                    return Mono.just(new IdentityStoreAuthorizationClient.Authorization(
+                            true, invocation.getArgument(0), invocation.getArgument(1), storeId,
+                            "manager", storeId == null ? "organization" : "store", "finance_transaction"));
+                });
+    }
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) {

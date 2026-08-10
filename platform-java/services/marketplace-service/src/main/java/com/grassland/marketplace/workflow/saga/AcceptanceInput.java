@@ -18,12 +18,19 @@ public record AcceptanceInput(
         String merchantAccountId,
         String organizationId,
         long amountCents,
-        String operatorAccountId) {
+        String operatorAccountId,
+        String commandId) {
+
+    /** Backward-compatible constructor for the pre-command-ledger request path. */
+    public AcceptanceInput(String applicationId, String taskId, String merchantAccountId,
+                           String organizationId, long amountCents, String operatorAccountId) {
+        this(applicationId, taskId, merchantAccountId, organizationId, amountCents, operatorAccountId, null);
+    }
 
     /** Backward-compatible constructor for existing tests and serialized workflow callers. */
     public AcceptanceInput(String applicationId, String taskId, String merchantAccountId,
                            String organizationId, long amountCents) {
-        this(applicationId, taskId, merchantAccountId, organizationId, amountCents, merchantAccountId);
+        this(applicationId, taskId, merchantAccountId, organizationId, amountCents, merchantAccountId, null);
     }
 
     public String effectiveOperatorAccountId() {

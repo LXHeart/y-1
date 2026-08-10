@@ -17,7 +17,8 @@ import reactor.core.publisher.Mono;
  * <p>状态变更用条件 UPDATE（{@code status = :from} 守卫，泛化自 4B 的硬编码 {@code 'pending'}）+ {@code RETURNING}：
  * 0 行 → {@link Mono#empty()}（调用方据此判 409「已处理」或幂等跳过）。4F 新增 reserving 流转：
  * {@code beginAcceptance}（pending→reserving）、{@code acceptFromReserving}（reserving→accepted，不重写 reviewer）、
- * {@code revertReserving}（reserving→pending 补偿，清空 reviewer/decided_at 回可重试态）。并发名额计数放 Java 层（见 ApplicationController）。
+ * {@code revertReserving}（reserving→pending 补偿，清空 reviewer/decided_at 回可重试态）。并发名额由
+ * {@link TaskAcceptanceCounterRepository} 在同一事务内控制。
  */
 @Component
 public class TaskApplicationRepository {
@@ -73,6 +74,23 @@ public class TaskApplicationRepository {
                 + " FROM task_application WHERE task_id = CAST(:taskId AS uuid) ORDER BY created_at, id")
                 .bind("taskId", taskId)
                 .map(TaskApplicationRepository::map).all();
+    }
+
+    /** Filtered application list for merchant operations; null filters preserve the legacy query semantics. */
+    public Flux<TaskApplication> findByTaskId(String taskId, String status, Instant createdAfter,
+                                              Instant createdBefore, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(SELECT_COLS)
+                .append(" FROM task_application WHERE task_id = CAST(:taskId AS uuid)");
+        if (status != null && !status.isBlank()) sql.append(" AND status = :status");
+        if (createdAfter != null) sql.append(" AND created_at >= :createdAfter");
+        if (createdBefore != null) sql.append(" AND created_at < :createdBefore");
+        sql.append(" ORDER BY created_at, id LIMIT :limit");
+        var spec = db.sql(sql.toString()).bind("taskId", taskId)
+                .bind("limit", Math.max(1, Math.min(limit, 500)));
+        if (status != null && !status.isBlank()) spec = spec.bind("status", status);
+        if (createdAfter != null) spec = spec.bind("createdAfter", createdAfter.atOffset(java.time.ZoneOffset.UTC));
+        if (createdBefore != null) spec = spec.bind("createdBefore", createdBefore.atOffset(java.time.ZoneOffset.UTC));
+        return spec.map(TaskApplicationRepository::map).all();
     }
 
     /**

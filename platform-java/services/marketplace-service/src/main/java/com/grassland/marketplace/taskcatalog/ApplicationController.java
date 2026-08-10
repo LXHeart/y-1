@@ -9,18 +9,11 @@ import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.marketplace.reputation.ReputationSnapshot;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
-import com.grassland.marketplace.workflow.saga.AcceptanceInput;
-import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflow;
-import com.grassland.marketplace.workflow.saga.ApplicationReservationWorkflowImpl;
+import com.grassland.marketplace.workflow.saga.AcceptanceWorkflowStarter;
 import com.grassland.marketplace.workflow.saga.ConfirmationWorkflowStarter;
 import com.grassland.marketplace.workflow.saga.MerchantContestCoordinator;
-import com.grassland.marketplace.workflow.saga.SettlementInput;
 import com.grassland.marketplace.workflow.saga.SettlementWorkflowStarter;
-import com.grassland.marketplace.workflow.saga.SettlementWindowWorkflow;
-import io.temporal.client.WorkflowClient;
-import io.temporal.client.WorkflowExecutionAlreadyStarted;
-import io.temporal.client.WorkflowOptions;
-import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
+import io.r2dbc.spi.R2dbcDataIntegrityViolationException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -37,16 +30,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 /**
  * application 聚合 HTTP 入口（草场 Epic 4 Slice 4B / HLD 5.3、10.2；4F 资金预留 Saga 接线）。
@@ -54,10 +48,9 @@ import reactor.core.scheduler.Schedulers;
  * <ul>
  *   <li>POST /api/tasks/{id}/applications — 推荐官报名（requireRecommender；任务须 published；名额满 fail-fast 409；
  *       一人一报 409；outbox {@code ApplicationSubmitted}）。</li>
- *   <li>POST /api/tasks/{id}/applications/{appId}/accept — 商家接受（须任务 owner；名额 Java 层校验）。
- *       <b>资金型任务</b>（bounty&gt;0，Slice 4F）：启 {@code ApplicationReservationWorkflow} Saga → <b>202</b> Accepted
- *       + workflowId（异步：pending→reserving→accepted/compensated）；<b>非资金型</b>（bounty null/0）：走 4B 原直连
- *       pending→accepted 同步返回 200。双击去重：{@code WorkflowExecutionAlreadyStarted} → 复用既有 workflowId。</li>
+ *   <li>POST /api/tasks/{id}/applications/{appId}/accept — 商家接受（须任务 owner）。接受命令、原子名额占用、
+ *       状态迁移和 outbox 在同一事务内完成；资金型任务由 durable dispatcher 启动预留 Saga，支持显式
+ *       {@code Idempotency-Key} 重放和冲突检测。</li>
  *   <li>GET /api/tasks/{id}/applications/{appId}/reservation — owner 轮询预留结局（accepted/reserving/compensated+reason）。</li>
  *   <li>POST .../reject — 商家拒绝（须任务 owner；outbox {@code ApplicationRejected}）。</li>
  *   <li>POST .../withdraw — 推荐官撤销本人 pending（outbox {@code ApplicationWithdrawn}）。</li>
@@ -76,6 +69,10 @@ public class ApplicationController {
     private final TaskRepository tasks;
     private final TaskResourceAuthorization taskAuthorization;
     private final TaskApplicationRepository apps;
+    private final TaskMetricsRepository metrics;
+    private final TaskAcceptanceCounterRepository acceptanceCounters;
+    private final AcceptanceCommandRepository acceptanceCommands;
+    private final AcceptanceWorkflowStarter acceptanceWorkflows;
     private final OutboxRepository outbox;
     private final SubmissionRepository submissions;
     private final SubmissionAttachmentRepository attachments;
@@ -85,7 +82,6 @@ public class ApplicationController {
     private final EngagementVerificationRepository verifications;
     private final ObjectMapper mapper = new ObjectMapper();
     private final RatingRepository ratings;
-    private final WorkflowClient workflowClient;
     private final ConfirmationWorkflowStarter confirmationWorkflows;
     private final MerchantContestCoordinator contests;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
@@ -98,7 +94,12 @@ public class ApplicationController {
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
                                  TaskResourceAuthorization taskAuthorization,
-                                 TaskApplicationRepository apps, OutboxRepository outbox,
+                                 TaskApplicationRepository apps,
+                                 TaskMetricsRepository metrics,
+                                 TaskAcceptanceCounterRepository acceptanceCounters,
+                                 AcceptanceCommandRepository acceptanceCommands,
+                                 AcceptanceWorkflowStarter acceptanceWorkflows,
+                                 OutboxRepository outbox,
                                  SubmissionRepository submissions,
                                  SubmissionAttachmentRepository attachments,
                                  IntelligenceMediaClient mediaClient,
@@ -106,7 +107,6 @@ public class ApplicationController {
                                  LinkReachabilityChecker linkChecker,
                                  EngagementVerificationRepository verifications,
                                  RatingRepository ratings,
-                                 WorkflowClient workflowClient,
                                  ConfirmationWorkflowStarter confirmationWorkflows,
                                  MerchantContestCoordinator contests,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
@@ -119,6 +119,10 @@ public class ApplicationController {
         this.tasks = tasks;
         this.taskAuthorization = taskAuthorization;
         this.apps = apps;
+        this.metrics = metrics;
+        this.acceptanceCounters = acceptanceCounters;
+        this.acceptanceCommands = acceptanceCommands;
+        this.acceptanceWorkflows = acceptanceWorkflows;
         this.outbox = outbox;
         this.submissions = submissions;
         this.attachments = attachments;
@@ -127,7 +131,6 @@ public class ApplicationController {
         this.linkChecker = linkChecker;
         this.verifications = verifications;
         this.ratings = ratings;
-        this.workflowClient = workflowClient;
         this.confirmationWorkflows = confirmationWorkflows;
         this.contests = contests;
         this.reconciliations = reconciliations;
@@ -181,15 +184,12 @@ public class ApplicationController {
     @PostMapping("/api/tasks/{id}/applications/{appId}/accept")
     public Mono<ResponseEntity<Map<String, Object>>> accept(@PathVariable String id, @PathVariable String appId,
                                                             ServerHttpRequest request) {
+        String idempotencyKey = acceptanceIdempotencyKey(request);
         return callers.requireUser(request)
                 .flatMap(merchant -> loadManageableTask(id, merchant)
-                        .flatMap(task -> loadPendingApp(id, appId)
-                                .flatMap(app -> slotsFull(task).flatMap(full -> full
-                                        ? Mono.<ResponseEntity<Map<String, Object>>>error(
-                                                new MarketplaceException(409, "名额已满"))
-                                        : isMonetary(task)
-                                                ? startReservationWorkflow(task, app, merchant)
-                                                : acceptDirectly(task, app, merchant)))));
+                        .flatMap(task -> acceptanceCommands.findByActorAndKey(merchant.accountId(), idempotencyKey)
+                                .flatMap(existing -> replayAcceptance(existing, id, appId))
+                                .switchIfEmpty(claimAcceptance(task, appId, merchant, idempotencyKey))));
     }
 
     /** 资金型任务（Slice 4F）：bounty_cents 非 null 且 &gt;0。 */
@@ -197,55 +197,118 @@ public class ApplicationController {
         return task.bountyCents() != null && task.bountyCents() > 0;
     }
 
-    /** 非资金型任务（bounty null/0）→ 4B 原直连：pending→accepted 同步返回 200。 */
-    private Mono<ResponseEntity<Map<String, Object>>> acceptDirectly(Task task, TaskApplication app, Caller merchant) {
-        return reputationService.snapshot(app.recommenderAccountId())
-                .map(ApplicationController::entitlementSnapshot)
-                .flatMap(entitlement -> transactions.transactional(
-                        apps.accept(app.id(), app.taskId(), merchant.accountId(), bountyOrZero(task), entitlement)
-                                .switchIfEmpty(fail(409, "该报名已处理"))
-                                .flatMap(a -> outbox.append(envelope(
-                                        "ApplicationAccepted", a, task.ownerAccountId())).thenReturn(a))))
-                .map(a -> ResponseEntity.ok(Map.of("success", true, "data", toBody(a))));
-    }
-
     /** task.bountyCents 归一为 long（null → 0）。accept/create 冻结赏金快照用。 */
     private static long bountyOrZero(Task task) {
         return task.bountyCents() == null ? 0L : task.bountyCents();
     }
 
-    /** 资金型任务 → 启资金预留 Saga：202 Accepted + workflowId。双击去重（WorkflowExecutionAlreadyStarted → 复用 id）。 */
-    private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
-                                                                               Caller merchant) {
-        return reputationService.snapshot(app.recommenderAccountId())
-                .map(ApplicationController::entitlementSnapshot)
-                .flatMap(entitlement -> apps.snapshotPendingEntitlement(app.id(), task.id(), entitlement)
-                        .switchIfEmpty(fail(409, "该报名已处理")))
-                .flatMap(frozen -> startReservationWorkflow(task, frozen, merchant.accountId()));
+    private Mono<ResponseEntity<Map<String, Object>>> claimAcceptance(
+            Task task, String applicationId, Caller merchant, String idempotencyKey) {
+        return apps.findById(applicationId)
+                .switchIfEmpty(fail(404, "报名不存在"))
+                .filter(app -> app.taskId().equals(task.id()))
+                .switchIfEmpty(fail(404, "报名不存在"))
+                .filter(app -> ApplicationStatus.PENDING.dbValue().equals(app.status()))
+                .switchIfEmpty(fail(409, "该报名已处理"))
+                .flatMap(app -> reputationService.snapshot(app.recommenderAccountId())
+                        .map(ApplicationController::entitlementSnapshot)
+                        .flatMap(entitlement -> claimAcceptance(task, app, merchant, idempotencyKey, entitlement)))
+                .onErrorResume(this::isAcceptanceConstraintConflict,
+                        failure -> acceptanceCommands.findByActorAndKey(merchant.accountId(), idempotencyKey)
+                                .flatMap(existing -> replayAcceptance(existing, task.id(), applicationId))
+                                .switchIfEmpty(fail(409, "该报名正在被其他请求处理")));
     }
 
-    private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
-                                                                                String merchantAccountId) {
-        AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), task.ownerAccountId(),
-                task.organizationId(), bountyOrZero(task), merchantAccountId);
-        String workflowId = "accept-" + app.id();
-        return Mono.fromCallable(() -> {
-            ApplicationReservationWorkflow stub = workflowClient.newWorkflowStub(
-                    ApplicationReservationWorkflow.class,
-                    WorkflowOptions.newBuilder()
-                            .setWorkflowId(workflowId)
-                            .setTaskQueue(ApplicationReservationWorkflowImpl.TASK_QUEUE)
-                            .setWorkflowIdReusePolicy(
-                                    WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
-                            .build());
-            WorkflowClient.start(stub::run, input);
-            return workflowId;
-        })
-        .subscribeOn(Schedulers.boundedElastic())
-        .onErrorResume(WorkflowExecutionAlreadyStarted.class, alreadyStarted -> Mono.just(workflowId))
-        .map(wid -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("success", true, "data",
-                Map.of("workflowId", wid, "applicationId", app.id(), "status", "reserving"))));
+    private Mono<ResponseEntity<Map<String, Object>>> claimAcceptance(
+            Task task, TaskApplication app, Caller merchant, String idempotencyKey,
+            ReputationEntitlementSnapshot entitlement) {
+        boolean monetary = isMonetary(task);
+        String commandId = UUID.randomUUID().toString();
+        String workflowId = monetary ? "accept-" + app.id() + "-" + commandId : null;
+        AcceptanceCommand proposed = new AcceptanceCommand(
+                commandId, merchant.accountId(), idempotencyKey, task.id(), app.id(), workflowId,
+                task.ownerAccountId(), task.organizationId(), bountyOrZero(task),
+                monetary ? "pending_dispatch" : "accepted", null, null, null, null, null);
+
+        Mono<AcceptanceClaim> write = acceptanceCommands.create(proposed)
+                .flatMap(command -> acceptanceCounters.claim(task.id())
+                        .switchIfEmpty(fail(409, "名额已满"))
+                        .then(monetary
+                                ? apps.beginAcceptance(app.id(), task.id(), merchant.accountId(), entitlement)
+                                : apps.accept(app.id(), task.id(), merchant.accountId(),
+                                        bountyOrZero(task), entitlement))
+                        .switchIfEmpty(fail(409, "该报名已处理"))
+                        .flatMap(accepted -> outbox.append(envelope(
+                                        monetary ? "ApplicationAcceptanceStarted" : "ApplicationAccepted",
+                                        accepted, task.ownerAccountId()))
+                                .thenReturn(new AcceptanceClaim(command, accepted))));
+
+        return transactions.transactional(write)
+                .flatMap(claim -> monetary
+                        ? dispatchAcceptance(claim.command())
+                        : Mono.just(ResponseEntity.ok(Map.of(
+                                "success", true, "data", toBody(claim.application())))));
     }
+
+    private Mono<ResponseEntity<Map<String, Object>>> dispatchAcceptance(AcceptanceCommand command) {
+        ResponseEntity<Map<String, Object>> accepted = acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED);
+        return acceptanceWorkflows.start(command)
+                .flatMap(ignored -> acceptanceCommands.markStarted(command.id()).thenReturn(accepted))
+                .onErrorResume(failure -> {
+                    log.warn("acceptance workflow initial dispatch deferred command={} application={}",
+                            command.id(), command.applicationId(), failure);
+                    return Mono.just(accepted);
+                });
+    }
+
+    private Mono<ResponseEntity<Map<String, Object>>> replayAcceptance(
+            AcceptanceCommand command, String taskId, String applicationId) {
+        if (!command.taskId().equals(taskId) || !command.applicationId().equals(applicationId)) {
+            return fail(409, "Idempotency-Key 已用于其他接受请求");
+        }
+        return switch (command.status()) {
+            case "pending_dispatch", "started" -> Mono.just(
+                    acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED));
+            case "accepted" -> apps.findById(applicationId)
+                    .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app))))
+                    .switchIfEmpty(fail(409, "接受请求结果不可用"));
+            case "compensated", "aborted" -> Mono.just(
+                    acceptanceResponse(command, command.status(), HttpStatus.OK));
+            default -> fail(409, "接受请求状态无效");
+        };
+    }
+
+    private ResponseEntity<Map<String, Object>> acceptanceResponse(
+            AcceptanceCommand command, String status, HttpStatus httpStatus) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("commandId", command.id());
+        data.put("workflowId", command.workflowId());
+        data.put("applicationId", command.applicationId());
+        data.put("status", status);
+        if (command.failureReason() != null) {
+            data.put("reason", command.failureReason());
+        }
+        return ResponseEntity.status(httpStatus).body(Map.of("success", true, "data", data));
+    }
+
+    private static String acceptanceIdempotencyKey(ServerHttpRequest request) {
+        String value = request.getHeaders().getFirst("Idempotency-Key");
+        if (value == null || value.isBlank()) {
+            return "auto-" + UUID.randomUUID();
+        }
+        String normalized = value.trim();
+        if (normalized.length() > 128) {
+            throw new MarketplaceException(400, "Idempotency-Key 最长 128 字符");
+        }
+        return normalized;
+    }
+
+    private boolean isAcceptanceConstraintConflict(Throwable failure) {
+        return failure instanceof DataIntegrityViolationException
+                || failure instanceof R2dbcDataIntegrityViolationException;
+    }
+
+    private record AcceptanceClaim(AcceptanceCommand command, TaskApplication application) {}
 
     @GetMapping("/api/tasks/{id}/applications/{appId}/reservation")
     public Mono<ResponseEntity<Map<String, Object>>> reservation(@PathVariable String id, @PathVariable String appId,
@@ -736,19 +799,25 @@ public class ApplicationController {
      * 改成按调用者过滤：不相干的人拿到空列表，不泄露任何信息，也不必再开一个 /api/me/applications。
      */
     @GetMapping("/api/tasks/{id}/applications")
-    public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String id, ServerHttpRequest request) {
+    public Mono<ResponseEntity<Map<String, Object>>> list(
+            @PathVariable String id,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Instant createdAfter,
+            @RequestParam(required = false) Instant createdBefore,
+            @RequestParam(required = false, defaultValue = "200") int limit,
+            ServerHttpRequest request) {
         return callers.resolve(request)
                 .flatMap(caller -> tasks.findById(id)
                         .switchIfEmpty(fail(404, "任务不存在"))
                         .flatMap(task -> {
                             return taskAuthorization.canManage(task, caller).flatMap(canManage -> {
                                 if (!canManage) {
-                                    return apps.findByTaskId(id)
+                                    return apps.findByTaskId(id, status, createdAfter, createdBefore, limit)
                                             .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
                                             .map(this::toBody).collectList()
                                             .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
                                 }
-                                return apps.findByTaskId(id)
+                                return apps.findByTaskId(id, status, createdAfter, createdBefore, limit)
                                         .collectList()
                                         .flatMap(applications -> reputationService.snapshots(applications.stream()
                                                         .map(TaskApplication::recommenderAccountId).toList())
@@ -767,9 +836,46 @@ public class ApplicationController {
                                                                     .compareTo(right.application().id());
                                                         })
                                                         .map(this::toRankedBody).toList()))
-                                        .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
+                                        .flatMap(visible -> taskProgress(id, task)
+                                                .map(stats -> ResponseEntity.ok(Map.of("success", true,
+                                                        "data", visible, "stats", stats))));
                             });
                         }));
+    }
+
+    /** Aggregated list statistics are separate from the filtered rows so pagination does not distort totals. */
+    @GetMapping("/api/tasks/{id}/applications/summary")
+    public Mono<ResponseEntity<Map<String, Object>>> applicationSummary(
+            @PathVariable String id, ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> loadManageableTask(id, caller)
+                        .flatMap(task -> taskProgress(id, task)
+                                .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", stats)))));
+    }
+
+    private Mono<Map<String, Object>> taskProgress(String taskId, Task task) {
+        return metrics.findProgressByTaskIds(List.of(taskId)).next()
+                .defaultIfEmpty(TaskProgress.empty(taskId))
+                .map(facts -> {
+                    Map<String, Object> stats = new LinkedHashMap<>();
+                    stats.put("total", facts.totalApplications());
+                    stats.put("pending", facts.pendingApplications());
+                    stats.put("reserving", facts.reservingApplications());
+                    stats.put("accepted", facts.acceptedApplications());
+                    stats.put("rejected", facts.rejectedApplications());
+                    stats.put("withdrawn", facts.withdrawnApplications());
+                    stats.put("refunded", facts.refundedApplications());
+                    stats.put("occupiedSlots", facts.occupiedSlots());
+                    stats.put("maxSlots", task.maxSlots());
+                    stats.put("remainingSlots", task.maxSlots() == null
+                            ? null : Math.max(0, task.maxSlots() - facts.occupiedSlots()));
+                    stats.put("submittedDeliverables", facts.submittedDeliverables());
+                    stats.put("confirmedDeliverables", facts.confirmedDeliverables());
+                    stats.put("settledEngagements", facts.settledEngagements());
+                    stats.put("reservedBountyCents", facts.reservedBountyCents());
+                    stats.put("settledBountyCents", facts.settledBountyCents());
+                    return stats;
+                });
     }
 
     /** 组织级任务仅 owner；门店任务允许当前 MANAGER，且每次操作实时向 Identity 重验。 */
@@ -788,13 +894,13 @@ public class ApplicationController {
                 .switchIfEmpty(fail(409, "该报名已处理"));
     }
 
-    /** 名额是否已满：max_slots 为空（不限）→ false；否则 accepted 数 >= max。 */
+    /** 名额是否已满：reserving 与 accepted 都通过事务 counter 占位。 */
     private Mono<Boolean> slotsFull(Task task) {
         Integer max = task.maxSlots();
         if (max == null) {
             return Mono.just(false);
         }
-        return apps.countAcceptedByTask(task.id()).map(c -> c >= max);
+        return acceptanceCounters.occupied(task.id()).map(occupied -> occupied >= max);
     }
 
     /** outbox 事件信封。{@code taskOwnerId} 携带任务归属（apply/withdraw/accept/reject 全携带），

@@ -234,6 +234,23 @@ public class TaskRepository {
                 .map(TaskRepository::map).all();
     }
 
+    /** Operational review queue with status, organization, platform, SLA and offset filters. */
+    public reactor.core.publisher.Flux<Task> findReviewQueue(
+            String status, String organizationId, String platform, boolean overdue, int limit, int offset) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(SELECT_COLS).append(" FROM task WHERE 1=1");
+        if (status != null && !status.isBlank()) sql.append(" AND status = :status");
+        if (organizationId != null && !organizationId.isBlank()) sql.append(" AND organization_id = CAST(:org AS uuid)");
+        if (platform != null && !platform.isBlank()) sql.append(" AND platform = :platform");
+        if (overdue) sql.append(" AND status = 'pending_review' AND updated_at < now() - interval '24 hours'");
+        sql.append(" ORDER BY updated_at ASC, id LIMIT :limit OFFSET :offset");
+        var spec = db.sql(sql.toString()).bind("limit", Math.max(1, Math.min(limit, 200)))
+                .bind("offset", Math.max(0, offset));
+        if (status != null && !status.isBlank()) spec = spec.bind("status", status);
+        if (organizationId != null && !organizationId.isBlank()) spec = spec.bind("org", organizationId);
+        if (platform != null && !platform.isBlank()) spec = spec.bind("platform", platform);
+        return spec.map(TaskRepository::map).all();
+    }
+
     public Mono<Task> findById(String id) {
         return db.sql("SELECT " + SELECT_COLS + " FROM task WHERE id = CAST(:id AS uuid)")
                 .bind("id", id)
@@ -322,6 +339,16 @@ public class TaskRepository {
                 + " AND published_at >= date_trunc('month', now())")
                 .bind("org", organizationId)
                 .map(r -> r.get("c", Integer.class)).one();
+    }
+
+    /**
+     * Serializes quota check + publish for one organization inside the caller's transaction.
+     * The UUID text is hashed to a stable PostgreSQL advisory-lock key; the lock is released on commit/rollback.
+     */
+    public Mono<Void> acquireOrganizationPublishLock(String organizationId) {
+        return db.sql("SELECT pg_advisory_xact_lock(hashtextextended(:organizationId, 0))")
+                .bind("organizationId", organizationId)
+                .then();
     }
 
     /** 落一行不可变 task_version 快照（HLD §5.3）。version 取 task 当前 version（publish 后已 +1）。 */

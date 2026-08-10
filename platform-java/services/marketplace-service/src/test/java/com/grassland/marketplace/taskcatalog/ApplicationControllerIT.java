@@ -23,6 +23,7 @@ import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationException;
 import com.grassland.marketplace.workflow.TrustDisputeClient;
 import com.grassland.marketplace.workflow.saga.ReserveResult;
+import com.grassland.marketplace.workflow.saga.AcceptanceWorkflowStarter;
 import java.net.URI;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -57,9 +58,6 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     @MockitoBean
     private FinanceEscrowClient financeClient;
 
-    @MockitoBean
-    private IdentityStoreAuthorizationClient storeAuthorization;
-
     /** 争议检查替身（Slice 6A）：默认 false（无争议→settled）；held 用例桩 true。真实现 HttpDisputeChecker 调 trust。 */
     @MockitoBean
     private com.grassland.marketplace.workflow.saga.DisputeChecker disputeChecker;
@@ -90,6 +88,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
     @MockitoSpyBean
     private com.grassland.marketplace.workflow.saga.SettlementWorkflowStarter settlementStarter;
+
+    @MockitoSpyBean
+    private AcceptanceWorkflowStarter acceptanceStarter;
 
     /** 声誉聚合 spy：列表排序必须批量读取，不能按报名数产生 N+1。 */
     @MockitoSpyBean
@@ -303,6 +304,58 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isEqualTo(409);
     }
 
+    @Test
+    void applicationListSupportsStatusFilterAndReturnsUnfilteredProgress() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, 2);
+        String accepted = apply(UUID.randomUUID().toString(), task);
+        apply(UUID.randomUUID().toString(), task);
+        accept(merchant, task, accepted);
+
+        client().get().uri("/api/tasks/" + task + "/applications?status=accepted&limit=10")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].id").isEqualTo(accepted)
+                .jsonPath("$.stats.total").isEqualTo(2)
+                .jsonPath("$.stats.pending").isEqualTo(1)
+                .jsonPath("$.stats.accepted").isEqualTo(1)
+                .jsonPath("$.stats.occupiedSlots").isEqualTo(1)
+                .jsonPath("$.stats.remainingSlots").isEqualTo(1);
+
+        client().get().uri("/api/tasks/" + task + "/applications/summary")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(2)
+                .jsonPath("$.data.accepted").isEqualTo(1);
+    }
+
+    @Test
+    void merchantAnalyticsUsesMatchingFactsAndMarksMarketingEventsUnavailable() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        String app = apply(UUID.randomUUID().toString(), task);
+        accept(merchant, task, app);
+
+        client().get().uri("/api/tasks/analytics?organizationId=" + org)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.taskCount").isEqualTo(1)
+                .jsonPath("$.data.totalApplications").isEqualTo(1)
+                .jsonPath("$.data.acceptedApplications").isEqualTo(1)
+                .jsonPath("$.data.applicationAcceptanceRate").isEqualTo(1.0)
+                .jsonPath("$.data.marketingMetrics.status").isEqualTo("not_collected")
+                .jsonPath("$.data.marketingMetrics.roi").isEqualTo("unavailable");
+
+        client().get().uri("/api/tasks?organizationId=" + org)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].progress.totalApplications").isEqualTo(1)
+                .jsonPath("$.data[0].progress.occupiedSlots").isEqualTo(1);
+    }
+
     // ---------- accept（资金型：4F 异步 Saga 202 + 轮询） ----------
 
     @Test
@@ -319,7 +372,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isAccepted().expectBody()  // 异步 202
                 .jsonPath("$.data.status").isEqualTo("reserving")
                 .jsonPath("$.data.applicationId").isEqualTo(app)
-                .jsonPath("$.data.workflowId").isEqualTo("accept-" + app);
+                .jsonPath("$.data.workflowId").value(value ->
+                        assertThat((String) value).startsWith("accept-" + app + "-"));
 
         awaitReservation(merchant, task, app, "accepted");
         assertThat(appStatus(app)).isEqualTo("accepted");
@@ -344,6 +398,123 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         assertThat(appStatus(app)).isEqualTo("pending");  // 回退可重试
         assertThat(failureReason(app)).isEqualTo("insufficient_funds");
         assertThat(outboxCount("ApplicationReservationFailed", task)).isEqualTo(1);
+    }
+
+    @Test
+    void directAcceptReplaysSameIdempotencyKey() {
+        String merchant = UUID.randomUUID().toString();
+        String task = publishTask(merchant, UUID.randomUUID().toString(), null);
+        String app = apply(UUID.randomUUID().toString(), task);
+        String key = "accept-" + UUID.randomUUID();
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                    .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                    .header("Idempotency-Key", key)
+                    .exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.status").isEqualTo("accepted");
+        }
+
+        assertThat(outboxCount("ApplicationAccepted", task)).isEqualTo(1);
+        assertThat(commandCount(merchant, key)).isEqualTo(1);
+        assertThat(occupiedSlots(task)).isEqualTo(1);
+    }
+
+    @Test
+    void idempotencyKeyCannotBeReusedForAnotherApplication() {
+        String merchant = UUID.randomUUID().toString();
+        String task = publishTask(merchant, UUID.randomUUID().toString(), null);
+        String first = apply(UUID.randomUUID().toString(), task);
+        String second = apply(UUID.randomUUID().toString(), task);
+        String key = "accept-" + UUID.randomUUID();
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + first + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .header("Idempotency-Key", key)
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/tasks/" + task + "/applications/" + second + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .header("Idempotency-Key", key)
+                .exchange().expectStatus().isEqualTo(409);
+
+        assertThat(appStatus(second)).isEqualTo("pending");
+    }
+
+    @Test
+    void concurrentAcceptsCannotOversellSingleSlot() throws Exception {
+        String merchant = UUID.randomUUID().toString();
+        String task = publishTask(merchant, UUID.randomUUID().toString(), 1);
+        String first = apply(UUID.randomUUID().toString(), task);
+        String second = apply(UUID.randomUUID().toString(), task);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicReference<Integer> firstStatus = new AtomicReference<>();
+        AtomicReference<Integer> secondStatus = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        Thread firstThread = new Thread(() -> runConcurrentUpdate(ready, start, failure,
+                () -> firstStatus.set(acceptStatus(merchant, task, first, "first-" + UUID.randomUUID()))));
+        Thread secondThread = new Thread(() -> runConcurrentUpdate(ready, start, failure,
+                () -> secondStatus.set(acceptStatus(merchant, task, second, "second-" + UUID.randomUUID()))));
+        firstThread.start();
+        secondThread.start();
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        firstThread.join(10_000);
+        secondThread.join(10_000);
+
+        assertThat(failure.get()).isNull();
+        assertThat(List.of(firstStatus.get(), secondStatus.get())).containsExactlyInAnyOrder(200, 409);
+        assertThat(acceptedCount(task)).isEqualTo(1);
+        assertThat(occupiedSlots(task)).isEqualTo(1);
+    }
+
+    @Test
+    void compensatedMonetaryAcceptCanRetryWithNewKey() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, 1, 500L);
+        String app = apply(UUID.randomUUID().toString(), task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.insufficientFunds()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .header("Idempotency-Key", "attempt-one-" + app)
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "compensated");
+        assertThat(occupiedSlots(task)).isZero();
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .header("Idempotency-Key", "attempt-two-" + app)
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        assertThat(occupiedSlots(task)).isEqualTo(1);
+        assertThat(commandCountForApplication(app)).isEqualTo(2);
+    }
+
+    @Test
+    void dispatcherRecoversInitialTemporalStartFailure() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, null, 500L);
+        String app = apply(UUID.randomUUID().toString(), task);
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        doReturn(Mono.error(new RuntimeException("temporal unavailable")))
+                .doCallRealMethod()
+                .when(acceptanceStarter).start(any(AcceptanceCommand.class));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .header("Idempotency-Key", "dispatch-" + app)
+                .exchange().expectStatus().isAccepted();
+
+        awaitReservation(merchant, task, app, "accepted");
+        verify(acceptanceStarter, timeout(8_000).atLeast(2)).start(any(AcceptanceCommand.class));
     }
 
     @Test
@@ -1387,6 +1558,44 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     }
 
     // ---------- helpers ----------
+
+    private int acceptStatus(String merchant, String task, String app, String idempotencyKey) {
+        return client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .header("Idempotency-Key", idempotencyKey)
+                .exchange().returnResult(Void.class).getStatus().value();
+    }
+
+    private int occupiedSlots(String taskId) {
+        Integer occupied = db.sql("""
+                        SELECT occupied_slots FROM task_acceptance_counter
+                        WHERE task_id = CAST(:taskId AS uuid)
+                        """)
+                .bind("taskId", taskId)
+                .map(row -> row.get("occupied_slots", Integer.class))
+                .one().defaultIfEmpty(0).block();
+        return occupied == null ? 0 : occupied;
+    }
+
+    private long commandCount(String actorId, String key) {
+        Long count = db.sql("""
+                        SELECT COUNT(*)::bigint AS count FROM task_acceptance_command
+                        WHERE actor_account_id = CAST(:actorId AS uuid) AND idempotency_key = :key
+                        """)
+                .bind("actorId", actorId).bind("key", key)
+                .map(row -> row.get("count", Long.class)).one().block();
+        return count == null ? 0L : count;
+    }
+
+    private long commandCountForApplication(String applicationId) {
+        Long count = db.sql("""
+                        SELECT COUNT(*)::bigint AS count FROM task_acceptance_command
+                        WHERE application_id = CAST(:applicationId AS uuid)
+                        """)
+                .bind("applicationId", applicationId)
+                .map(row -> row.get("count", Long.class)).one().block();
+        return count == null ? 0L : count;
+    }
 
     private void accept(String merchant, String task, String app) {
         client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
