@@ -44,6 +44,21 @@ public class AccountRepository {
                 .map(AccountRepository::map).one();
     }
 
+    /** 商家分账入账：账户不存在时懒创建，存在时原子累加。 */
+    public Mono<Account> creditOrCreate(String organizationId, long amountCents) {
+        return db.sql("""
+                INSERT INTO finance_account(id, organization_id, balance_cents)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), :amt)
+                ON CONFLICT (organization_id) DO UPDATE
+                  SET balance_cents = finance_account.balance_cents + :amt, updated_at = now()
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", UUID.randomUUID().toString())
+                .bind("org", organizationId)
+                .bind("amt", amountCents)
+                .map(AccountRepository::map).one();
+    }
+
     /**
      * 预留扣减（Slice 4E）：原子条件 `balance = balance - :amt WHERE balance >= :amt`（语句级行锁，并发安全）。
      * 0 行 = 余额不足或 org 不存在 → empty（调用方判 409 余额不足）。

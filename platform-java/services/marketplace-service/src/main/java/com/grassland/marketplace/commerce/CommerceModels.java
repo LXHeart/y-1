@@ -1,0 +1,36 @@
+package com.grassland.marketplace.commerce;
+
+import java.time.Instant;
+
+/** Immutable commerce read models shared inside marketplace-service. */
+public final class CommerceModels {
+    private CommerceModels() {}
+
+    public record Offer(
+            String id, String organizationId, String storeId, String taskId, String ownerAccountId,
+            String status, int currentVersion, Instant createdAt, Instant updatedAt,
+            Instant publishedAt, Instant offSaleAt) {}
+
+    public record OfferVersion(
+            String id, String packageId, int version, String title, String description,
+            long priceCents, int totalStock, Instant fixedRedeemDeadline,
+            Integer validDaysAfterPurchase, int recommenderShareBps, int platformFeeBps,
+            int merchantShareBps, String policyVersion, String createdBy, Instant createdAt) {}
+
+    public record OfferDetail(Offer offer, OfferVersion version, int remainingStock) {}
+
+    public record Order(
+            String id, String consumerAccountId, String organizationId, String storeId, String taskId,
+            String packageId, String packageVersionId, int packageVersion, String packageTitle,
+            String recommenderAccountId, long priceCents, int recommenderShareBps,
+            int platformFeeBps, int merchantShareBps, long recommenderAmountCents,
+            long platformFeeCents, long merchantAmountCents, String policyVersion, String status,
+            String redeemCodeHash, Instant redeemDeadline, String paymentOperationId,
+            String refundOperationId, String splitOperationId, String providerRef, String lastError,
+            int version, Instant createdAt, Instant paidAt, Instant redeemedAt,
+            Instant refundedAt, Instant updatedAt) {}
+
+    public record Review(
+            String id, String orderId, String consumerAccountId, int rating,
+            String comment, Instant createdAt) {}
+}

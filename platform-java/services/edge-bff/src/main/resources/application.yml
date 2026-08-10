@@ -83,6 +83,10 @@ edge:
     - path: /api/tasks
       upstream: marketplace
       enabled: ${EDGE_ROUTE_TASKS_MARKETPLACE:true}
+    # ADR-D07 消费者套餐/订单/核销新契约。finance 私网 /internal 不暴露给 Edge。
+    - path: /api/v2
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_COMMERCE_MARKETPLACE:true}
     # ---- 身份域非 auth 端点（Slice 2E–2L）→ identity-service。legacy Express 无这些前缀，纯增量不抢旧流量。----
     # 组织/门店/成员/权限申请/额度（前缀覆盖全部子路径）。
     - path: /api/organizations
@@ -120,6 +124,9 @@ edge:
     - path: /api/admin/finance
       upstream: finance
       enabled: ${EDGE_ROUTE_ADMIN_FINANCE:true}
+    - path: /api/admin/commerce
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ADMIN_COMMERCE_MARKETPLACE:true}
     # 任务内容审核（GL-P2-ADMIN-003）→ marketplace。精确前缀，不抢 /api/tasks/* 用户侧流量。
     - path: /api/admin/tasks
       upstream: marketplace

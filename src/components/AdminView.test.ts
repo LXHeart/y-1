@@ -38,14 +38,14 @@ describe('AdminView KYB 审核', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
-      ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账', 'AI 模型'])
+      ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账', '订单核销', 'AI 模型'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
-    await tabs[7].trigger('click')
+    await tabs[8].trigger('click')
 
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('待审核申请')
-    expect(tabs[7].attributes('aria-selected')).toBe('true')
+    expect(tabs[8].attributes('aria-selected')).toBe('true')
   })
 
   test('加载待审队列并携带拒绝备注提交，成功后移出队列', async () => {

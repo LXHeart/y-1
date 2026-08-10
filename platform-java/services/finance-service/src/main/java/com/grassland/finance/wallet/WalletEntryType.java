@@ -6,6 +6,8 @@ package com.grassland.finance.wallet;
 public enum WalletEntryType {
     /** 任务结算入账（capture 分账）。 */
     TASK_PAYOUT("task_payout"),
+    /** 到店消费订单核销后的推荐佣金。 */
+    COMMERCE_COMMISSION("commerce_commission"),
     /** 提现出账。 */
     WITHDRAWAL("withdrawal"),
     /** 争议冲正扣回（D-06：已分账后判商家胜诉）。 */

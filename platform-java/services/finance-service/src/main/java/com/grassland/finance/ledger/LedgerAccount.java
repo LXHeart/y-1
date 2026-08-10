@@ -23,6 +23,8 @@ public record LedgerAccount(Type type, String owner, String ref) {
     public enum Type {
         ESCROW,
         RESERVE,
+        /** 消费订单核销前的托管负债；owner=orderRef。 */
+        CONSUMER_ESCROW,
         WALLET,
         FEE,
         /** 平台为等级权益承担的佣金补贴费用。借记增加、冲正时贷记回冲。 */
@@ -44,6 +46,10 @@ public record LedgerAccount(Type type, String owner, String ref) {
 
     public static LedgerAccount reserve(String orgId, String engagementRef) {
         return new LedgerAccount(Type.RESERVE, orgId, engagementRef);
+    }
+
+    public static LedgerAccount consumerEscrow(String orderRef) {
+        return new LedgerAccount(Type.CONSUMER_ESCROW, orderRef, null);
     }
 
     public static LedgerAccount wallet(String accountId) {

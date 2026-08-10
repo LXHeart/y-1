@@ -4,6 +4,7 @@ import AdjudicationPanel from './AdjudicationPanel.vue'
 import EngagementRatingPanel from './EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from './EngagementSubmissionPanel.vue'
 import MerchantKybCard from './MerchantKybCard.vue'
+import MerchantCommerceCard from './MerchantCommerceCard.vue'
 import MerchantPermissionCard from './MerchantPermissionCard.vue'
 import MyInvitationsCard from './MyInvitationsCard.vue'
 import MyRecommenderProfileCard from './MyRecommenderProfileCard.vue'
@@ -938,6 +939,12 @@ function statusLabel(status: string): string {
           <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
         </div>
       </article>
+
+      <MerchantCommerceCard
+        v-if="activeOrgId"
+        :organization-id="activeOrgId"
+        :store-id="selectedStoreId || undefined"
+      />
 
       <article class="gl-card gl-card-wide">
         <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「提交审核」）</span><span v-else class="gl-hint"> · 提交后经平台内容审核，通过后在大厅上架</span></h3>

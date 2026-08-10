@@ -32,6 +32,12 @@ public record JournalEntry(
         REVERSE,
         /** 提现（推荐官出账）。 */
         WITHDRAW,
+        /** 消费者支付入托管。 */
+        CONSUMER_PAYMENT,
+        /** 未核销订单原路退款。 */
+        CONSUMER_REFUND,
+        /** 核销后向推荐官、商家和平台分账。 */
+        CONSUMER_SPLIT,
         /** 迁移期回填存量余额。 */
         OPENING;
 

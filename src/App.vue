@@ -215,6 +215,19 @@
         </button>
         </div>
         <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentView === 'commerce' }"
+          :aria-current="currentView === 'commerce' ? 'page' : undefined"
+          type="button"
+          @click="currentView = 'commerce'"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 5.5h12l-1 8H3l-1-8zM4.5 5.5V4a3.5 3.5 0 017 0v1.5" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <path d="M6 9h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          到店消费
+        </button>
+        <button
           v-if="isAuthenticated"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentView === 'grassland' }"
@@ -317,6 +330,7 @@ const ComedyWritingView = defineAsyncComponent(() => import('./components/Comedy
 const AdminView = defineAsyncComponent(() => import('./components/AdminView.vue'))
 const OpsConsole = defineAsyncComponent(() => import('./components/OpsConsole.vue'))
 const GrasslandWorkbench = defineAsyncComponent(() => import('./components/GrasslandWorkbench.vue'))
+const ConsumerCommerceView = defineAsyncComponent(() => import('./components/ConsumerCommerceView.vue'))
 const HomeView = defineAsyncComponent(() => import('./components/HomeView.vue'))
 const ImageAnalysisView = defineAsyncComponent(() => import('./components/ImageAnalysisView.vue'))
 const ImageGenerationView = defineAsyncComponent(() => import('./components/ImageGenerationView.vue'))
@@ -333,10 +347,12 @@ import type { CreationEntry, CreationHandoff } from './types/ai-creation'
 import type { NotificationLinkTarget } from './types/notification'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from './types/settings'
 
-type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'grassland' | 'ops' | 'admin'
+type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'commerce' | 'grassland' | 'ops' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 
-const currentView = ref<AppView>('ai-center')
+const initialQuery = new URLSearchParams(window.location.search)
+const currentView = ref<AppView>(
+  initialQuery.get('view') === 'commerce' || initialQuery.has('package') ? 'commerce' : 'ai-center')
 const creationContextEpoch = ref(0)
 const showLegacyTools = ref(false)
 const legacyViews: readonly AppView[] = ['home', 'video', 'image', 'article', 'image-gen', 'comedy', 'video-production']
@@ -453,7 +469,9 @@ watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
   if (accountId !== previousAccountId) {
     creationEntry.value = null
     creationHandoff.value = null
-    currentView.value = 'ai-center'
+    if (!(initialQuery.get('view') === 'commerce' || initialQuery.has('package'))) {
+      currentView.value = 'ai-center'
+    }
     creationContextEpoch.value += 1
   }
 })
@@ -482,6 +500,7 @@ const viewComponentMap: Record<AppView, Component> = {
   'image-gen': ImageGenerationView,
   comedy: ComedyWritingView,
   'video-production': VideoProductionView,
+  commerce: ConsumerCommerceView,
   grassland: GrasslandWorkbench,
   ops: OpsConsole,
   admin: AdminView,

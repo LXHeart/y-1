@@ -31,6 +31,9 @@
       <button type="button" role="tab" :aria-selected="activeSection === 'finance'"
         :class="{ active: activeSection === 'finance' }"
         @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'commerce'"
+        :class="{ active: activeSection === 'commerce' }"
+        @click="activeSection = 'commerce'">订单核销</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
         :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
     </div>
@@ -185,6 +188,10 @@
       </div>
     </div>
 
+    <div v-else-if="activeSection === 'commerce'" class="admin-panel" role="tabpanel">
+      <CommerceAdminPanel />
+    </div>
+
     <div v-else class="admin-panel" role="tabpanel">
       <AiPlatformModelsPanel />
     </div>
@@ -295,6 +302,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import AiPlatformModelsPanel from './AiPlatformModelsPanel.vue'
+import CommerceAdminPanel from './CommerceAdminPanel.vue'
 import JudgeAdminPanel from './JudgeAdminPanel.vue'
 import ReputationAdminPanel from './ReputationAdminPanel.vue'
 import { useGrassland } from '../composables/useGrassland'
@@ -322,7 +330,7 @@ interface UserItem {
 
 const users = ref<UserItem[]>([])
 const activeSection = ref<
-  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'ai-models'
+  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'commerce' | 'ai-models'
 >('users')
 const loading = ref(false)
 const loadError = ref('')
@@ -385,6 +393,7 @@ const accountTypeLabels: Record<WithdrawalAccountType, string> = {
 const JOURNAL_TYPE_LABELS: Record<string, string> = {
   DEPOSIT: '充值', RESERVE: '预留', RELEASE: '释放',
   CAPTURE: '结算', REVERSE: '冲正', WITHDRAW: '提现', OPENING: '期初',
+  CONSUMER_PAYMENT: '消费支付', CONSUMER_REFUND: '消费退款', CONSUMER_SPLIT: '核销分账',
 }
 
 async function loadReviewTasks(): Promise<void> {

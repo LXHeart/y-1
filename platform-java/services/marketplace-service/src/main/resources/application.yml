@@ -86,6 +86,13 @@ marketplace:
     dispatcher-enabled: ${MARKETPLACE_CONTEST_DISPATCHER_ENABLED:true}
     dispatcher-poll-ms: ${MARKETPLACE_CONTEST_DISPATCHER_POLL_MS:2000}
     dispatcher-batch-size: ${MARKETPLACE_CONTEST_DISPATCHER_BATCH_SIZE:32}
+  commerce:
+    # HMAC 派生可重复展示的高熵核销码；数据库只保存 SHA-256，不长期保存明文。
+    redeem-code-secret: ${MARKETPLACE_COMMERCE_REDEEM_CODE_SECRET:local-commerce-redeem-secret-change-me}
+    # 支付/退款/分账 durable intent 补偿 + 过期未核销自动退款。
+    dispatcher-enabled: ${MARKETPLACE_COMMERCE_DISPATCHER_ENABLED:true}
+    dispatcher-poll-ms: ${MARKETPLACE_COMMERCE_DISPATCHER_POLL_MS:3000}
+    dispatcher-batch-size: ${MARKETPLACE_COMMERCE_DISPATCHER_BATCH_SIZE:32}
   outbox:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}

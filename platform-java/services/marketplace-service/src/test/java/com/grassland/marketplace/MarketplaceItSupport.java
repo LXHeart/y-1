@@ -77,6 +77,7 @@ public abstract class MarketplaceItSupport {
         // 对账/contest 派发器默认关：避免普通 IT 后台扫描其他用例的 durable 行；专用测试显式调用 seam。
         r.add("marketplace.reconciliation.dispatcher-enabled", () -> "false");
         r.add("marketplace.contest.dispatcher-enabled", () -> "false");
+        r.add("marketplace.commerce.dispatcher-enabled", () -> "false");
         r.add("marketplace.settlement.day-seconds", () -> "1");
         r.add("spring.temporal.test-server.enabled", () -> "true");
     }

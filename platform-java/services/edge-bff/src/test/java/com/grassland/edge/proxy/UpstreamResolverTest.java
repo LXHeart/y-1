@@ -20,7 +20,7 @@ class UpstreamResolverTest {
             "finance", FINANCE, "trust", TRUST, "intelligence", INTELLIGENCE),
         List.of(
             new RouteProperties("GET", "/api/auth/me", "identity", true),
-            new RouteProperties(null, "/api/v2/**", "identity", true),
+            new RouteProperties(null, "/api/v2", "marketplace", true),
             // Slice 4C：/api/tasks** 全方法 → marketplace（无 method；前缀覆盖子路径）
             new RouteProperties(null, "/api/tasks", "marketplace", true),
             // P0-1：身份域非 auth 端点 + finance + trust 全量经 BFF
@@ -40,6 +40,7 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/admin/adjust-credits", "identity", true),
             // GL-P2-ADMIN-006：财务对账台 → finance
             new RouteProperties(null, "/api/admin/finance", "finance", true),
+            new RouteProperties(null, "/api/admin/commerce", "marketplace", true),
             // GL-P2-ADMIN-003：任务内容审核 → marketplace
             new RouteProperties(null, "/api/admin/tasks", "marketplace", true),
             // GL-P2-ADMIN-007 / GL-P2-TRUST-001：等级配置与信任准入后台
@@ -129,8 +130,8 @@ class UpstreamResolverTest {
 
     @Test
     void prefixGlobMatches() {
-        assertThat(resolver.resolve("GET", "/api/v2/anything")).isEqualTo(IDENTITY);
-        assertThat(resolver.resolve("GET", "/api/v2")).isEqualTo(IDENTITY);
+        assertThat(resolver.resolve("GET", "/api/v2/anything")).isEqualTo(MARKETPLACE);
+        assertThat(resolver.resolve("GET", "/api/v2")).isEqualTo(MARKETPLACE);
     }
 
     // ---------- Slice 4C: /api/tasks** → marketplace（内部上游，触发断言签发）----------

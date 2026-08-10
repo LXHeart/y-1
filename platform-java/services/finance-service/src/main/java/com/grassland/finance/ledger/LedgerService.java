@@ -137,6 +137,51 @@ public class LedgerService {
                 .then(post(JournalEntry.Type.WITHDRAW, null, null, null, "withdraw", postings));
     }
 
+    /** 消费者支付：Dr EXTERNAL / Cr CONSUMER_ESCROW(orderRef)。 */
+    public Mono<Void> postConsumerPayment(String orgId, String orderRef, long amount) {
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.external(psp.channel()), amount),
+                Posting.credit(LedgerAccount.consumerEscrow(orderRef), amount));
+        return psp.recordExternalMovement(ExternalMovement.in(amount, CURRENCY, orderRef, "consumer payment"))
+                .then(post(JournalEntry.Type.CONSUMER_PAYMENT, "consumer-payment:" + orderRef,
+                        orgId, orderRef, "consumer payment " + orderRef, postings));
+    }
+
+    /** 未核销退款：Dr CONSUMER_ESCROW / Cr EXTERNAL。 */
+    public Mono<Void> postConsumerRefund(String orgId, String orderRef, long amount) {
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.consumerEscrow(orderRef), amount),
+                Posting.credit(LedgerAccount.external(psp.channel()), amount));
+        return psp.recordExternalMovement(ExternalMovement.out(amount, CURRENCY, orderRef, "consumer refund"))
+                .then(post(JournalEntry.Type.CONSUMER_REFUND, "consumer-refund:" + orderRef,
+                        orgId, orderRef, "consumer refund " + orderRef, postings));
+    }
+
+    /** 核销分账：托管负债清零，三方金额必须精确等于订单金额。 */
+    public Mono<Void> postConsumerSplit(
+            String orgId, String orderRef, long total, String recommenderAccountId,
+            long recommenderAmount, long merchantAmount, long platformFee) {
+        if (total <= 0 || recommenderAmount < 0 || merchantAmount < 0 || platformFee < 0
+                || Math.addExact(Math.addExact(recommenderAmount, merchantAmount), platformFee) != total
+                || (recommenderAmount > 0 && recommenderAccountId == null)) {
+            throw new IllegalArgumentException("invalid consumer split amounts");
+        }
+        List<Posting> postings = new ArrayList<>(4);
+        postings.add(Posting.debit(LedgerAccount.consumerEscrow(orderRef), total));
+        if (recommenderAmount > 0) {
+            postings.add(Posting.credit(LedgerAccount.wallet(recommenderAccountId), recommenderAmount));
+        }
+        if (merchantAmount > 0) {
+            postings.add(Posting.credit(LedgerAccount.escrow(orgId), merchantAmount));
+        }
+        if (platformFee > 0) {
+            postings.add(Posting.credit(LedgerAccount.fee(), platformFee));
+        }
+        assertBalanced(postings);
+        return post(JournalEntry.Type.CONSUMER_SPLIT, "consumer-split:" + orderRef,
+                orgId, orderRef, "consumer split " + orderRef, postings);
+    }
+
     private Mono<Void> post(JournalEntry.Type type, String operationId, String orgId,
                             String engagementRef, String memo, List<Posting> postings) {
         if (operationId == null) {
