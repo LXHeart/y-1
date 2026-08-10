@@ -53,6 +53,29 @@ public class IdentityAuditLogRepository {
                 .map(IdentityAuditLogRepository::map).all();
     }
 
+    /** 本人审计 keyset 分页；occurred_at + id 组成稳定游标，避免 OFFSET 漂移和全量读取。 */
+    public Flux<IdentityAuditLog> findPage(String accountId, String action, IdentityAuditCursor cursor, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(SELECT_COLS)
+                .append(" FROM identity_audit_log WHERE account_id = CAST(:acct AS uuid)");
+        if (action != null) {
+            sql.append(" AND action = :action");
+        }
+        if (cursor != null) {
+            sql.append(" AND (occurred_at < :before OR (occurred_at = :before AND id < CAST(:beforeId AS uuid)))");
+        }
+        sql.append(" ORDER BY occurred_at DESC, id DESC LIMIT :limit");
+
+        GenericExecuteSpec spec = db.sql(sql.toString()).bind("acct", accountId).bind("limit", limit);
+        if (action != null) {
+            spec = spec.bind("action", action);
+        }
+        if (cursor != null) {
+            spec = spec.bind("before", OffsetDateTime.ofInstant(cursor.occurredAt(), java.time.ZoneOffset.UTC))
+                    .bind("beforeId", cursor.id());
+        }
+        return spec.map(IdentityAuditLogRepository::map).all();
+    }
+
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
         return (value == null) ? spec.bindNull(name, String.class) : spec.bind(name, value);
     }

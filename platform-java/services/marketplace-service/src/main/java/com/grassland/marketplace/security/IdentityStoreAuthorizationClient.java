@@ -26,6 +26,11 @@ public class IdentityStoreAuthorizationClient {
     }
 
     public Mono<Void> require(String accountId, String organizationId, String storeId, String minimumRole) {
+        return authorize(accountId, organizationId, storeId, minimumRole).then();
+    }
+
+    public Mono<Authorization> authorize(
+            String accountId, String organizationId, String storeId, String minimumRole) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("accountId", accountId);
         body.put("organizationId", organizationId);
@@ -41,12 +46,22 @@ public class IdentityStoreAuthorizationClient {
                 .exchangeToMono(response -> {
                     int status = response.statusCode().value();
                     if (status == 200) {
-                        return response.releaseBody();
+                        return response.bodyToMono(Envelope.class)
+                                .flatMap(envelope -> envelope.data() == null
+                                        ? Mono.error(new IllegalStateException(
+                                                "identity store authorization response is missing data"))
+                                        : Mono.just(envelope.data()));
                     }
                     return response.bodyToMono(String.class).defaultIfEmpty("")
                             .flatMap(error -> Mono.error(mapError(status, error)));
                 });
     }
+
+    public record Authorization(
+            boolean authorized, String accountId, String organizationId, String storeId,
+            String role, String scope, String permissionTier) {}
+
+    private record Envelope(boolean success, Authorization data) {}
 
     private static RuntimeException mapError(int status, String body) {
         if (status == 400 || status == 403 || status == 404) {

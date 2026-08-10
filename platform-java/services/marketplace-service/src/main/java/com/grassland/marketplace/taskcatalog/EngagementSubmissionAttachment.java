@@ -15,5 +15,17 @@ public record EngagementSubmissionAttachment(
         String mediaReferenceId,
         String mimeType,
         Long sizeBytes,
+        String mediaDomainType,
+        String mediaDomainId,
+        String mediaChecksum,
+        String mediaStatusSnapshot,
+        Integer mediaMetadataVersion,
         Instant createdAt
-) {}
+) {
+    public EngagementSubmissionAttachment(
+            String id, String submissionId, String mediaReferenceId,
+            String mimeType, Long sizeBytes, Instant createdAt) {
+        this(id, submissionId, mediaReferenceId, mimeType, sizeBytes,
+                "application", "legacy", null, "active", 1, createdAt);
+    }
+}

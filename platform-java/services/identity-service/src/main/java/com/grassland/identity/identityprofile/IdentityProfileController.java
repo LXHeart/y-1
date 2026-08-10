@@ -46,17 +46,20 @@ public class IdentityProfileController {
     private final IdentityProfileRepository profiles;
     private final IdentitySessionRepository sessions;
     private final IdentityAuditLogRepository audit;
+    private final IdentitySessionPolicyProperties sessionPolicy;
     private final OrgAuthorization authz;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
     public IdentityProfileController(CurrentAccountResolver accounts, IdentityProfileRepository profiles,
                                      IdentitySessionRepository sessions, IdentityAuditLogRepository audit,
-                                     OrgAuthorization authz, OutboxRepository outbox, TransactionalOperator transactions) {
+                                     IdentitySessionPolicyProperties sessionPolicy, OrgAuthorization authz,
+                                     OutboxRepository outbox, TransactionalOperator transactions) {
         this.accounts = accounts;
         this.profiles = profiles;
         this.sessions = sessions;
         this.audit = audit;
+        this.sessionPolicy = sessionPolicy;
         this.authz = authz;
         this.outbox = outbox;
         this.transactions = transactions;
@@ -153,7 +156,8 @@ public class IdentityProfileController {
     /** 写 per-session 活动身份 + 审计 + outbox（激活/切换共用）。 */
     private Mono<IdentitySession> applyActivate(SessionPrincipal principal, IdentityType type, String fromType, DeviceFingerprint fp) {
         return transactions.transactional(
-                sessions.activate(principal.sid(), principal.user().id(), type.dbValue(),
+                lockForPolicy(principal.user().id())
+                        .then(sessions.activate(principal.sid(), principal.user().id(), type.dbValue(),
                                 fp.deviceId(), fp.deviceLabel(), fp.ipAddress(), fp.userAgent())
                         .flatMap(s -> audit.append(IdentityAuditAction.ACTIVATE, principal.user().id(), fromType, type.dbValue(),
                                         principal.sid(), fp.deviceId(), fp.ipAddress(), fp.userAgent())
@@ -161,8 +165,31 @@ public class IdentityProfileController {
                                         UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
                                         principal.user().id(), 1, Instant.now(), null,
                                         Map.of("accountId", principal.user().id(), "activeIdentityType", type.dbValue(),
-                                                "sessionToken", principal.sid())))
-                                        .thenReturn(s))));
+                                                "sessionToken", principal.sid()))))
+                                .then(enforceSessionPolicy(principal.user().id()))
+                                .thenReturn(s))));
+    }
+
+    private Mono<Void> lockForPolicy(String accountId) {
+        return sessionPolicy.limited() ? sessions.lockAccount(accountId) : Mono.empty();
+    }
+
+    /** 超限设备只切回消费者，不删除登录会话；用户仍可在该设备重新选择身份。 */
+    private Mono<Void> enforceSessionPolicy(String accountId) {
+        if (!sessionPolicy.limited()) {
+            return Mono.empty();
+        }
+        return sessions.findActiveOverflow(accountId, sessionPolicy.getMaxActivePerAccount())
+                .concatMap(target -> sessions.deactivate(target.sessionToken())
+                        .then(audit.append(IdentityAuditAction.POLICY_DEACTIVATE, accountId,
+                                target.activeIdentityType(), null, target.sessionToken(), target.deviceId(),
+                                target.ipAddress(), target.userAgent()))
+                        .then(outbox.append(new EventEnvelope(
+                                UUID.randomUUID().toString(), "ActiveIdentityChanged", "Account",
+                                accountId, 1, Instant.now(), null,
+                                Map.of("accountId", accountId, "activeIdentityType", "consumer",
+                                        "sessionToken", target.sessionToken(), "reason", "session_policy")))))
+                .then();
     }
 
     @ExceptionHandler(IdentityException.class)

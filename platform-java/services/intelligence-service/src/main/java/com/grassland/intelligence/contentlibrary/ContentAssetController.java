@@ -79,7 +79,7 @@ public class ContentAssetController {
         this.storeAuthorization = storeAuthorization;
     }
 
-    /** 创建素材（个人库任意登录用户 / 商家库 requireMerchant+org）。按 body libraryType 分流。 */
+    /** 创建素材（个人库任意登录用户 / 商家库组织管理员或门店 MANAGER）。按 body libraryType 分流。 */
     @PostMapping("/api/content-assets")
     public Mono<ResponseEntity<Map<String, Object>>> create(
             @RequestBody CreateContentAssetRequest body, ServerWebExchange exchange) {
@@ -92,17 +92,27 @@ public class ContentAssetController {
             case PERSONAL -> callers.resolve(exchange.getRequest())
                     .flatMap(caller -> createAsset(caller, body, LibraryType.PERSONAL, null, null))
                     .map(ContentAssetController::success);
-            case MERCHANT -> callers.requireMerchant(exchange.getRequest())
-                    .filter(caller -> caller.organizationId() != null)
-                    .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要商家组织身份")))
+            case MERCHANT -> callers.requireUser(exchange.getRequest())
                     .flatMap(caller -> {
                         String storeId = body == null ? null : blankToNull(body.storeId());
-                        Mono<Void> scopeAuthorization = storeId != null
-                                ? storeAuthorization.require(caller.accountId(), caller.organizationId(),
-                                        storeId, "manager")
-                                : Mono.empty();
-                        return scopeAuthorization.then(createAsset(caller, body, LibraryType.MERCHANT,
-                                caller.organizationId(), storeId));
+                        String requestedOrganizationId = body == null ? null : blankToNull(body.organizationId());
+                        if (storeId == null) {
+                            if (!caller.isMerchant() || caller.organizationId() == null
+                                    || requestedOrganizationId != null
+                                    && !requestedOrganizationId.equals(caller.organizationId())) {
+                                return Mono.error(new IntelligenceException(403, "需要商家组织身份"));
+                            }
+                            return createAsset(caller, body, LibraryType.MERCHANT,
+                                    caller.organizationId(), null);
+                        }
+                        String organizationId = requestedOrganizationId != null
+                                ? requestedOrganizationId : caller.organizationId();
+                        if (organizationId == null) {
+                            return Mono.error(new IntelligenceException(400, "门店素材必须指定 organizationId"));
+                        }
+                        return storeAuthorization.authorize(caller.accountId(), organizationId, storeId, "manager")
+                                .flatMap(access -> createAsset(caller, body, LibraryType.MERCHANT,
+                                        access.organizationId(), access.storeId()));
                     })
                     .map(ContentAssetController::success);
             case PUBLIC -> createPublic(exchange, body);
@@ -122,6 +132,7 @@ public class ContentAssetController {
             @RequestParam(name = "libraryType", required = false) String libraryTypeRaw,
             @RequestParam(name = "category", required = false) String categoryRaw,
             @RequestParam(name = "granted", required = false) Boolean granted,
+            @RequestParam(name = "organizationId", required = false) String organizationId,
             @RequestParam(name = "storeId", required = false) String storeId,
             ServerWebExchange exchange) {
         LibraryType requested = libraryTypeRaw == null ? LibraryType.PERSONAL : LibraryType.fromRequest(libraryTypeRaw);
@@ -134,25 +145,38 @@ public class ContentAssetController {
                     .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
             case MERCHANT -> Boolean.TRUE.equals(granted)
                     ? listGrantedMerchant(exchange)
-                    : listOwnMerchant(exchange, categoryRaw, storeId);
+                    : listOwnMerchant(exchange, categoryRaw, organizationId, storeId);
             case PUBLIC -> listPublic(categoryRaw);
         };
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> listOwnMerchant(
-            ServerWebExchange exchange, String categoryRaw, String storeId) {
+            ServerWebExchange exchange, String categoryRaw, String organizationIdRaw, String storeIdRaw) {
         AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
         if (categoryRaw != null && category == null) {
             return Mono.error(new IntelligenceException(400, "category 无效"));
         }
-        return callers.requireMerchant(exchange.getRequest())
-                .filter(caller -> caller.organizationId() != null)
-                .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要商家组织身份")))
-                .flatMap(caller -> storeId == null || storeId.isBlank()
-                        ? assets.listMerchantByOrg(caller.organizationId(), category).collectList()
-                        : storeAuthorization.require(caller.accountId(), caller.organizationId(), storeId, "staff")
-                                .then(assets.listMerchantByStore(
-                                        caller.organizationId(), storeId, category).collectList()))
+        String organizationId = blankToNull(organizationIdRaw);
+        String storeId = blankToNull(storeIdRaw);
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> {
+                    if (storeId == null) {
+                        if (!caller.isMerchant() || caller.organizationId() == null
+                                || organizationId != null && !organizationId.equals(caller.organizationId())) {
+                            return Mono.error(new IntelligenceException(403, "需要商家组织身份"));
+                        }
+                        return assets.listMerchantByOrg(caller.organizationId(), category).collectList();
+                    }
+                    String requestedOrganizationId = organizationId != null
+                            ? organizationId : caller.organizationId();
+                    if (requestedOrganizationId == null) {
+                        return Mono.error(new IntelligenceException(400, "门店素材必须指定 organizationId"));
+                    }
+                    return storeAuthorization.authorize(
+                                    caller.accountId(), requestedOrganizationId, storeId, "staff")
+                            .flatMap(access -> assets.listMerchantByStore(
+                                    access.organizationId(), access.storeId(), category).collectList());
+                })
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
@@ -235,7 +259,7 @@ public class ContentAssetController {
     @PostMapping("/api/content-assets/{id}/grants")
     public Mono<ResponseEntity<Map<String, Object>>> grant(
             @PathVariable String id, @RequestBody GrantRequest body, ServerWebExchange exchange) {
-        return callers.requireMerchant(exchange.getRequest())
+        return callers.requireUser(exchange.getRequest())
                 .flatMap(caller -> grantAsset(id, caller, body))
                 .map(ContentAssetController::success);
     }
@@ -405,14 +429,14 @@ public class ContentAssetController {
     }
 
     private Mono<ContentAsset> manageableMerchantAsset(ContentAsset asset, Caller caller) {
-        boolean sameOrgMerchant = asset.organizationId() != null
-                && asset.organizationId().equals(caller.organizationId())
-                && caller.isMerchant();
-        if (!sameOrgMerchant) {
-            return Mono.empty();
-        }
         if (asset.storeId() == null) {
-            return Mono.just(asset);
+            boolean sameOrgMerchant = asset.organizationId() != null
+                    && asset.organizationId().equals(caller.organizationId())
+                    && caller.isMerchant();
+            return sameOrgMerchant ? Mono.just(asset) : Mono.empty();
+        }
+        if (caller.isService() || asset.organizationId() == null) {
+            return Mono.empty();
         }
         return storeAuthorization.require(caller.accountId(), asset.organizationId(), asset.storeId(), "manager")
                 .thenReturn(asset);
@@ -446,16 +470,27 @@ public class ContentAssetController {
 
     /** 商家素材读取：组织级沿用同 org；门店级须 STAFF；否则仅显式 recommender grant 放行。 */
     private Mono<ContentAsset> canReadMerchantAsset(ContentAsset asset, Caller caller) {
-        boolean sameOrg = asset.organizationId() != null
-                && asset.organizationId().equals(caller.organizationId())
-                && caller.isMerchant();
-        if (sameOrg) {
-            if (asset.storeId() == null) {
+        if (asset.storeId() == null) {
+            boolean sameOrgMerchant = asset.organizationId() != null
+                    && asset.organizationId().equals(caller.organizationId())
+                    && caller.isMerchant();
+            if (sameOrgMerchant) {
                 return Mono.just(asset);
             }
-            return storeAuthorization.require(caller.accountId(), asset.organizationId(), asset.storeId(), "staff")
-                    .thenReturn(asset);
+            return requireAssetGrant(asset, caller);
         }
+        if (caller.isService() || asset.organizationId() == null) {
+            return requireAssetGrant(asset, caller);
+        }
+        return storeAuthorization.require(caller.accountId(), asset.organizationId(), asset.storeId(), "staff")
+                .thenReturn(asset)
+                .onErrorResume(IntelligenceException.class, error ->
+                        error.status() == 403 || error.status() == 404
+                                ? requireAssetGrant(asset, caller)
+                                : Mono.error(error));
+    }
+
+    private Mono<ContentAsset> requireAssetGrant(ContentAsset asset, Caller caller) {
         return grants.isGranted(asset.id(), caller.accountId())
                 .flatMap(allowed -> allowed
                         ? Mono.just(asset)
@@ -641,11 +676,18 @@ public class ContentAssetController {
 
     public record CreateContentAssetRequest(
             String libraryType, String mediaId, String category, String title,
-            List<String> tags, String validUntil, String source, String licenseScope, String storeId) {
+            List<String> tags, String validUntil, String source, String licenseScope,
+            String organizationId, String storeId) {
         public CreateContentAssetRequest(String libraryType, String mediaId, String category, String title,
                                          List<String> tags, String validUntil, String source,
                                          String licenseScope) {
-            this(libraryType, mediaId, category, title, tags, validUntil, source, licenseScope, null);
+            this(libraryType, mediaId, category, title, tags, validUntil, source, licenseScope, null, null);
+        }
+
+        public CreateContentAssetRequest(String libraryType, String mediaId, String category, String title,
+                                         List<String> tags, String validUntil, String source,
+                                         String licenseScope, String storeId) {
+            this(libraryType, mediaId, category, title, tags, validUntil, source, licenseScope, null, storeId);
         }
     }
 

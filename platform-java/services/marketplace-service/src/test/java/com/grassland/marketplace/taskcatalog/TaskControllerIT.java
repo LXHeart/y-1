@@ -32,7 +32,8 @@ class TaskControllerIT extends MarketplaceItSupport {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String store = UUID.randomUUID().toString();
-        when(storeAuthorization.require(merchant, org, store, "manager")).thenReturn(Mono.empty());
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
 
         Map<String, Object> requestBody = body(org, "门店草稿", null, null);
         requestBody.put("storeId", store);
@@ -48,7 +49,8 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .bind("org", org).map(row -> row.get(0, String.class)).one().block();
         assertThat(persistedStore).isEqualTo(store);
 
-        when(storeAuthorization.require(merchant, org, store, "staff")).thenReturn(Mono.empty());
+        when(storeAuthorization.authorize(merchant, org, store, "staff"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
         client().get().uri("/api/tasks?organizationId=" + org + "&status=draft&storeId=" + store)
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isOk()
@@ -63,17 +65,46 @@ class TaskControllerIT extends MarketplaceItSupport {
     }
 
     @Test
+    void independentStoreManagersCanCreateAndEditTheSameStoreDraft() {
+        String managerA = UUID.randomUUID().toString();
+        String managerB = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(managerA, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(managerA, org, store, "manager")));
+        when(storeAuthorization.authorize(managerB, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(managerB, org, store, "manager")));
+
+        Map<String, Object> requestBody = body(org, "独立店长草稿", null, null);
+        requestBody.put("storeId", store);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> created = client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(managerA, null))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> task = (Map<String, Object>) created.get("data");
+
+        client().put().uri("/api/tasks/" + task.get("id"))
+                .header("X-Grassland-Identity", sign(managerB, null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", task.get("version"), "title", "另一位店长已修改"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.title").isEqualTo("另一位店长已修改");
+    }
+
+    @Test
     void storeStaffCannotCreateTask() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String store = UUID.randomUUID().toString();
-        when(storeAuthorization.require(merchant, org, store, "manager"))
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
                 .thenReturn(Mono.error(new MarketplaceException(403, "门店权限不足")));
         Map<String, Object> requestBody = body(org, "越权草稿", null, null);
         requestBody.put("storeId", store);
 
         client().post().uri("/api/tasks/draft")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .header("X-Grassland-Identity", sign(merchant, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
                 .exchange().expectStatus().isForbidden();
     }
@@ -83,7 +114,8 @@ class TaskControllerIT extends MarketplaceItSupport {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String store = UUID.randomUUID().toString();
-        when(storeAuthorization.require(merchant, org, store, "manager")).thenReturn(Mono.empty());
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
         Map<String, Object> requestBody = body(org, "门店上架任务", null, null);
         requestBody.put("storeId", store);
         @SuppressWarnings("unchecked")
@@ -848,5 +880,11 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .bind("et", eventType).bind("tid", taskId)
                 .map(row -> row.get("c", Long.class)).one().block();
         return c == null ? 0L : c;
+    }
+
+    private IdentityStoreAuthorizationClient.Authorization storeAccess(
+            String accountId, String organizationId, String storeId, String role) {
+        return new IdentityStoreAuthorizationClient.Authorization(
+                true, accountId, organizationId, storeId, role, "store", "basic_publish");
     }
 }

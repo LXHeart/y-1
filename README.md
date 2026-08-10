@@ -144,7 +144,7 @@ npm run start
 cp .env.docker.example .env.docker
 ```
 
-编辑 `.env.docker`，配置 `FRONTEND_ORIGIN`、`PUBLIC_BACKEND_ORIGIN`、`CORS_ORIGIN`、`DATABASE_URL` 等；首次启动还必须填写 `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY` 四个对象存储凭据，Compose 会在缺失时 fail-fast。
+编辑 `.env.docker`，配置 `FRONTEND_ORIGIN`、`PUBLIC_BACKEND_ORIGIN`、`CORS_ORIGIN`、`DATABASE_URL` 等；首次启动还必须填写 `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY` 四个对象存储凭据，Compose 会在缺失时 fail-fast。root 凭据仅由一次性 `minio-init` 建桶和创建受限 service account；`intelligence-service` 只接收 `MINIO_ACCESS_KEY/MINIO_SECRET_KEY`，且关闭运行时建桶权限。
 
 ### 2. 构建并启动
 

@@ -36,6 +36,7 @@ function dataFor(url: string): unknown {
     return [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
   }
   if (url === '/api/organizations') return [ORG]
+  if (url === '/api/me/store-scopes') return []
   if (url.startsWith('/api/tasks/feed')) return { items: [], nextCursor: null, hasMore: false }
   if (url.startsWith('/api/tasks')) return []
   if (url.startsWith('/api/finance/accounts')) return { organizationId: 'org-1', balanceCents: 100000 }
@@ -151,6 +152,38 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(calls.filter(([url]) => url === '/api/me/active-identity')).toHaveLength(0)
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
     expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')
+  })
+
+  test('纯门店 MANAGER 不激活 merchant，只显示获授权门店业务', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = {}
+      if (url === '/api/me/identities' || url === '/api/organizations') data = []
+      else if (url === '/api/me/store-scopes') data = [{
+        storeId: 'store-managed', storeName: '经理负责门店', storeStatus: 'active',
+        organizationId: 'org-managed', organizationName: '授权组织', organizationStatus: 'active',
+        permissionTier: 'basic_publish', role: 'manager',
+      }]
+      else if (url.startsWith('/api/tasks?')) data = []
+      return { ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench)
+    currentUser.value = asUser('acct-manager', 'manager@test.local')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('授权组织')
+    expect(wrapper.text()).toContain('经理负责门店')
+    expect(wrapper.text()).toContain('仅门店经理权限')
+    expect(wrapper.text()).not.toContain('资金账户')
+    expect(wrapper.text()).not.toContain('权限升级')
+    expect(calls.some(([url]) => url === '/api/me/active-identity')).toBe(false)
+    expect(calls.some(([url]) => url.includes('/stores'))).toBe(false)
+    const taskUrls = calls.filter(([url]) => url.startsWith('/api/tasks?')).map(([url]) => url)
+    expect(taskUrls).toHaveLength(5)
+    expect(taskUrls.every((url) => url.includes('storeId=store-managed'))).toBe(true)
   })
 
   test('登出清空组织/余额/任务，不留上一个账号的数据', async () => {

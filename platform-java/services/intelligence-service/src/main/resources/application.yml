@@ -81,18 +81,36 @@ identity-assertion:
       purpose: user
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_PREVIOUS_KID:}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE_KID:marketplace-service-intelligence-v1}
       issuer: marketplace
       purpose: service
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE_PREVIOUS_KID:}
+      issuer: marketplace
+      purpose: service
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_KID:identity-service-intelligence-v1}
       issuer: identity
       purpose: service
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_PREVIOUS_KID:}
+      issuer: identity
+      purpose: service
+      audience: grassland-intelligence
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_PREVIOUS:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+    storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}
+    redis-url: ${IDENTITY_ASSERTION_REPLAY_REDIS_URL:}
+    key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 marketplace:
   service:
@@ -133,6 +151,12 @@ ai:
     provider: ${DOUYIN_ANALYSIS_PROVIDER:qwen}
     timeout-ms: ${DOUYIN_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${DOUYIN_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
+  # KYB OCR uses the same platform multimodal adapter. The returned result is advisory and is
+  # compared/sanitized by identity-service before persistence.
+  kyb-document:
+    provider: ${KYB_DOCUMENT_ANALYSIS_PROVIDER:qwen}
+    model: ${KYB_DOCUMENT_ANALYSIS_MODEL:${QWEN_MODEL:qwen-plus}}
+    timeout-ms: ${KYB_DOCUMENT_ANALYSIS_TIMEOUT_MS:60000}
 
 # 信封加密（platform-crypto，GL-P3-AI-001）：BYOK 密钥加密存储的 KEK（32 字节 Base64）。
 # 未配置时 EnvelopeEncryption 不装配，/api/ai/keys 整体不注册（fail-closed，同视频生成能力 gate）。

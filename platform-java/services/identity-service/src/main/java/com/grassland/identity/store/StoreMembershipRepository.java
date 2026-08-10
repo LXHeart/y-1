@@ -50,6 +50,31 @@ public class StoreMembershipRepository {
                 .map(row -> row.get("role", String.class)).one();
     }
 
+    /** 当前账号显式加入的门店范围；纯门店成员只能发现这些门店，不扩散到同组织其他门店。 */
+    public Flux<StoreAccessScope> findAccessScopesByAccount(String accountId) {
+        return db.sql("""
+                SELECT s.id::text AS store_id, s.name AS store_name, s.status AS store_status,
+                       o.id::text AS organization_id, o.name AS organization_name,
+                       o.status AS organization_status, o.permission_tier, sm.role
+                FROM store_membership sm
+                JOIN store s ON s.id = sm.store_id
+                JOIN organization o ON o.id = s.organization_id
+                WHERE sm.account_id = CAST(:acct AS uuid)
+                ORDER BY o.name, s.name, s.id
+                """)
+                .bind("acct", accountId)
+                .map(row -> new StoreAccessScope(
+                        row.get("store_id", String.class),
+                        row.get("store_name", String.class),
+                        row.get("store_status", String.class),
+                        row.get("organization_id", String.class),
+                        row.get("organization_name", String.class),
+                        row.get("organization_status", String.class),
+                        row.get("permission_tier", String.class),
+                        row.get("role", String.class)))
+                .all();
+    }
+
     public Mono<Long> deleteByStoreAndAccount(String storeId, String accountId) {
         return db.sql("DELETE FROM store_membership"
                 + " WHERE store_id = CAST(:store AS uuid) AND account_id = CAST(:acct AS uuid)")

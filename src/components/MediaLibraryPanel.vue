@@ -9,6 +9,7 @@ import type {
   ContentLibraryType,
   IdentityProfile,
   Store,
+  StoreAccessScope,
 } from '../types/grassland'
 
 /**
@@ -38,6 +39,8 @@ const showUpload = ref(false)
 /** 商家子模式：自己管理（默认）还是看被授权的推荐官视角。 */
 const grantedView = ref(false)
 const stores = ref<Store[]>([])
+const storeScopes = ref<StoreAccessScope[]>([])
+const selectedOrganizationId = ref('')
 /** Empty means organization-level merchant assets; otherwise the selected store scope. */
 const selectedStoreId = ref('')
 
@@ -57,10 +60,33 @@ const merchantIdentity = computed(() =>
 /** 是否为推荐官（有 recommender 身份）。 */
 const isRecommender = computed(() =>
   identities.value.some((i) => i.identityType === 'recommender'))
+const managerStoreScopes = computed(() => storeScopes.value.filter((scope) => scope.role === 'manager'))
+const merchantOrganizations = computed(() => {
+  const options: Array<{ id: string; name: string }> = []
+  if (merchantIdentity.value?.organizationId) {
+    options.push({ id: merchantIdentity.value.organizationId, name: '我的商家组织' })
+  }
+  for (const scope of managerStoreScopes.value) {
+    if (!options.some((option) => option.id === scope.organizationId)) {
+      options.push({ id: scope.organizationId, name: scope.organizationName })
+    }
+  }
+  return options
+})
+const hasOrganizationManagement = computed(() =>
+  merchantIdentity.value?.organizationId === selectedOrganizationId.value)
+const canManageCurrentMerchantScope = computed(() => {
+  if (!selectedOrganizationId.value || grantedView.value) return false
+  if (!selectedStoreId.value) return hasOrganizationManagement.value
+  return hasOrganizationManagement.value || managerStoreScopes.value.some((scope) =>
+    scope.organizationId === selectedOrganizationId.value
+      && scope.storeId === selectedStoreId.value)
+})
 const canReviewPublic = computed(() => auth.hasBackendRole('content_reviewer'))
 
 /** 商家 tab 可见：有商家身份（管理自己的）或有推荐官身份（看被授权的）。 */
-const merchantTabVisible = computed(() => merchantIdentity.value !== null || isRecommender.value)
+const merchantTabVisible = computed(() =>
+  merchantIdentity.value !== null || managerStoreScopes.value.length > 0 || isRecommender.value)
 
 function selectTab(tab: LibraryTab): void {
   if (tab !== 'public' && !props.authenticated) {
@@ -70,21 +96,60 @@ function selectTab(tab: LibraryTab): void {
   activeTab.value = tab
   if (tab === 'merchant') {
     // 商家成员默认管理视角；推荐官默认看被授权的。
-    grantedView.value = merchantIdentity.value === null && isRecommender.value
+    grantedView.value = merchantIdentity.value === null
+      && managerStoreScopes.value.length === 0 && isRecommender.value
   }
   void refresh()
 }
 
 onMounted(async () => {
   if (props.authenticated) {
-    const list = await grassland.listIdentities()
+    const [list, scopes] = await Promise.all([
+      grassland.listIdentities(), grassland.listMyStoreScopes(),
+    ])
     if (list) identities.value = list
-    if (merchantIdentity.value?.organizationId) {
-      stores.value = (await grassland.listStores(merchantIdentity.value.organizationId)) ?? []
-    }
+    if (Array.isArray(scopes)) storeScopes.value = scopes
+    selectedOrganizationId.value = merchantIdentity.value?.organizationId
+      ?? managerStoreScopes.value[0]?.organizationId ?? ''
+    await loadMerchantStores()
   }
   await refresh()
 })
+
+async function loadMerchantStores(): Promise<void> {
+  const organizationId = selectedOrganizationId.value
+  if (!organizationId) {
+    stores.value = []
+    selectedStoreId.value = ''
+    return
+  }
+  const listed = hasOrganizationManagement.value
+    ? (await grassland.listStores(organizationId)) ?? []
+    : []
+  const merged = [...listed]
+  for (const scope of managerStoreScopes.value.filter((item) => item.organizationId === organizationId)) {
+    if (!merged.some((store) => store.id === scope.storeId)) {
+      merged.push({
+        id: scope.storeId,
+        organizationId: scope.organizationId,
+        name: scope.storeName,
+        status: scope.storeStatus,
+        createdAt: null,
+      })
+    }
+  }
+  stores.value = merged
+  if (!hasOrganizationManagement.value
+      && !stores.value.some((store) => store.id === selectedStoreId.value)) {
+    selectedStoreId.value = stores.value[0]?.id ?? ''
+  }
+}
+
+async function changeMerchantOrganization(): Promise<void> {
+  selectedStoreId.value = ''
+  await loadMerchantStores()
+  await refresh()
+}
 
 async function refresh(): Promise<void> {
   notice.value = ''
@@ -100,9 +165,11 @@ async function refresh(): Promise<void> {
       if (result) assets.value = result.items
       return
     }
-    if (merchantIdentity.value) {
+    if (canManageCurrentMerchantScope.value) {
       const result = await grassland.listContentAssets({
-        libraryType: 'merchant', storeId: selectedStoreId.value || undefined,
+        libraryType: 'merchant',
+        organizationId: selectedOrganizationId.value || undefined,
+        storeId: selectedStoreId.value || undefined,
       })
       if (result) assets.value = result.items
     }
@@ -133,6 +200,7 @@ async function handleUploaded(mediaIds: string[]): Promise<void> {
         mediaId,
         category: 'other' as ContentAssetCategory,
         title: '未命名素材',
+        organizationId: selectedOrganizationId.value || undefined,
         storeId: selectedStoreId.value || undefined,
       }
   const created = await grassland.createContentAsset(input)
@@ -195,14 +263,22 @@ function formatSize(bytes: number | null | undefined): string {
     </nav>
 
     <!-- 上传区（个人/商家/审核员，公共需 content_reviewer） -->
-    <div v-if="activeTab !== 'public' || canReviewPublic" class="lib-actions">
+    <div v-if="activeTab === 'personal' || activeTab === 'public' && canReviewPublic
+      || activeTab === 'merchant' && canManageCurrentMerchantScope" class="lib-actions">
       <button v-if="!showUpload" type="button" @click="showUpload = true">添加素材</button>
       <MediaUploader v-else :key="activeTab" @change="handleUploaded" />
     </div>
-    <div v-if="activeTab === 'merchant' && merchantIdentity && !grantedView" class="lib-scope">
+    <div v-if="activeTab === 'merchant' && !grantedView && merchantOrganizations.length > 0" class="lib-scope">
+      <label v-if="merchantOrganizations.length > 1">组织
+        <select v-model="selectedOrganizationId" @change="changeMerchantOrganization">
+          <option v-for="organization in merchantOrganizations" :key="organization.id" :value="organization.id">
+            {{ organization.name }}
+          </option>
+        </select>
+      </label>
       <label>资源范围
         <select v-model="selectedStoreId" @change="refresh">
-          <option value="">组织级素材</option>
+          <option v-if="hasOrganizationManagement" value="">组织级素材</option>
           <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
         </select>
       </label>
@@ -224,7 +300,7 @@ function formatSize(bytes: number | null | undefined): string {
         </p>
         <div class="lib-card-actions">
           <button type="button" :disabled="grassland.loading.value" @click="download(asset)">下载</button>
-          <template v-if="activeTab === 'merchant' && merchantIdentity">
+          <template v-if="activeTab === 'merchant' && canManageCurrentMerchantScope">
             <button type="button" :disabled="grassland.loading.value" @click="grant(asset)">授权推荐官</button>
             <button type="button" :disabled="grassland.loading.value" @click="remove(asset)">删除</button>
           </template>

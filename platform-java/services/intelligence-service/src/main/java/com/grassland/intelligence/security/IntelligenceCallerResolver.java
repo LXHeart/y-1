@@ -49,7 +49,7 @@ public class IntelligenceCallerResolver {
         if (header == null || header.isBlank()) {
             return Mono.error(new IntelligenceException(401, "未登录"));
         }
-        return Mono.justOrEmpty(signer.verify(header, Instant.now()))
+        return signer.verifyReactive(header, Instant.now())
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.sessionToken(),
                         a.organizationId(), a.permissionTier(), a.callerKind(), a.principal(), a.role()))
                 .switchIfEmpty(Mono.error(new IntelligenceException(401, "未登录")));
@@ -67,6 +67,13 @@ public class IntelligenceCallerResolver {
         return resolve(request)
                 .filter(Caller::isMerchant)
                 .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要商家身份")));
+    }
+
+    /** Any signed-in human account. Store-scoped authorization is resolved separately by Identity. */
+    public Mono<Caller> requireUser(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(caller -> !caller.isService() && caller.accountId() != null)
+                .switchIfEmpty(Mono.error(new IntelligenceException(403, "需要用户身份")));
     }
 
     public Mono<Caller> requireRecommender(ServerHttpRequest request) {

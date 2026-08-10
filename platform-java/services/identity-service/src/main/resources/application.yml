@@ -74,6 +74,15 @@ identity:
   kyb:
     # 审核 SLA，写入 kyb_verification_request.review_deadline。默认 3 天（与 D-03 确认窗口同量级）。
     review-sla-seconds: ${IDENTITY_KYB_REVIEW_SLA_SECONDS:259200}
+    document-analysis:
+      enabled: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_ENABLED:false}
+      poll-interval-ms: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_POLL_INTERVAL_MS:2000}
+      batch-size: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_BATCH_SIZE:20}
+      max-concurrency: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_MAX_CONCURRENCY:4}
+      claim-lease: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_CLAIM_LEASE:2m}
+      max-attempts: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_MAX_ATTEMPTS:5}
+      initial-backoff: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_INITIAL_BACKOFF:2s}
+      max-backoff: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_MAX_BACKOFF:2m}
     retention:
       # 安全默认开启；测试环境显式关闭。否则有限租约到期后仍在使用的 KYB 证据可能被 GC。
       enabled: ${IDENTITY_KYB_RETENTION_ENABLED:true}
@@ -110,6 +119,23 @@ identity:
     initial-backoff-ms: ${IDENTITY_MAIL_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${IDENTITY_MAIL_OUTBOX_MAX_BACKOFF_MS:30000}
     send-timeout-ms: ${IDENTITY_MAIL_OUTBOX_SEND_TIMEOUT_MS:30000}
+  external-delivery:
+    enabled: ${IDENTITY_EXTERNAL_DELIVERY_ENABLED:false}
+    poll-interval-ms: ${IDENTITY_EXTERNAL_DELIVERY_POLL_INTERVAL_MS:2000}
+    batch-size: ${IDENTITY_EXTERNAL_DELIVERY_BATCH_SIZE:50}
+    max-concurrency: ${IDENTITY_EXTERNAL_DELIVERY_MAX_CONCURRENCY:8}
+    claim-lease: ${IDENTITY_EXTERNAL_DELIVERY_CLAIM_LEASE:1m}
+    max-attempts: ${IDENTITY_EXTERNAL_DELIVERY_MAX_ATTEMPTS:5}
+    initial-backoff: ${IDENTITY_EXTERNAL_DELIVERY_INITIAL_BACKOFF:1s}
+    max-backoff: ${IDENTITY_EXTERNAL_DELIVERY_MAX_BACKOFF:1m}
+    send-timeout: ${IDENTITY_EXTERNAL_DELIVERY_SEND_TIMEOUT:15s}
+    challenge-secret: ${IDENTITY_SMS_CHALLENGE_SECRET:}
+    push:
+      endpoint: ${PUSH_GATEWAY_ENDPOINT:}
+      token: ${PUSH_GATEWAY_TOKEN:}
+    sms:
+      endpoint: ${SMS_GATEWAY_ENDPOINT:}
+      token: ${SMS_GATEWAY_TOKEN:}
   # 移动端 token 认证（GL-P3-IDENTITY-001）。secret 未配置 → 移动端登录/刷新/撤销一律 503（fail-closed），
   # Web cookie 路径不受影响。secret 必须与 edge-bff 的 EDGE_ACCESS_TOKEN_SECRET 同值（edge 验签、identity 签发）。
   mobile:
@@ -128,6 +154,11 @@ identity:
         enabled: ${IDENTITY_REFRESH_TOKEN_CLEANUP_ENABLED:false}
         interval-ms: ${IDENTITY_REFRESH_TOKEN_CLEANUP_INTERVAL_MS:3600000}
         retention-days: ${IDENTITY_REFRESH_TOKEN_CLEANUP_RETENTION_DAYS:7}
+  active-identity:
+    session-policy:
+      # 0 = 不限制（默认兼容多设备并存）；正数 = 同账号最多同时激活身份的设备数。
+      # 超限时最旧设备切回消费者，但不会被登出。
+      max-active-per-account: ${IDENTITY_ACTIVE_IDENTITY_MAX_SESSIONS:0}
   permission:
     # 权限审核 SLA（HLD D-05）：仅跟踪+展示，不做超时自动批准。
     sla-hours: ${PERMISSION_SLA_HOURS:72}
@@ -172,23 +203,46 @@ identity-assertion:
       purpose: user
       audience: grassland-identity
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY_PREVIOUS_KID:}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY_KID:trust-service-identity-v1}
       issuer: trust
       purpose: service
       audience: grassland-identity
       secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY:}
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY_PREVIOUS_KID:}
+      issuer: trust
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_IDENTITY_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_IDENTITY_KID:marketplace-service-identity-v1}
       issuer: marketplace
       purpose: service
       audience: grassland-identity
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_IDENTITY:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_IDENTITY_PREVIOUS_KID:}
+      issuer: marketplace
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_IDENTITY_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_IDENTITY_KID:intelligence-service-identity-v1}
       issuer: intelligence
       purpose: service
       audience: grassland-identity
       secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_IDENTITY:}
+    - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_IDENTITY_PREVIOUS_KID:}
+      issuer: intelligence
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_IDENTITY_PREVIOUS:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+    storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}
+    redis-url: ${IDENTITY_ASSERTION_REPLAY_REDIS_URL:}
+    key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 # KYB 附件元数据只经容器网络直连 intelligence，并使用 identity 服务断言鉴权。
 intelligence:

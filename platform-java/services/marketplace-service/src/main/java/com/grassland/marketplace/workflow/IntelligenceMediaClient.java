@@ -50,9 +50,12 @@ public class IntelligenceMediaClient {
     }
 
     /** 取附件元数据：200→元数据，404（不可用）→empty，其余→异常。orgId 用于现签服务断言。 */
-    public Mono<MediaMetadata> metadata(String orgId, UUID mediaId) {
+    public Mono<MediaMetadata> metadata(
+            String orgId, UUID mediaId, String domainType, String domainId) {
         return webClient.get()
-                .uri("/api/media/{id}/metadata", mediaId)
+                .uri(builder -> builder.path("/api/media/{id}/metadata")
+                        .queryParam("domainType", domainType).queryParam("domainId", domainId)
+                        .build(mediaId))
                 .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
@@ -68,9 +71,12 @@ public class IntelligenceMediaClient {
     }
 
     /** 取附件短时下载 URL：200→URL，404（不可用）→empty，其余→异常。orgId 用于现签服务断言。 */
-    public Mono<MediaDownload> downloadUrl(String orgId, UUID mediaId) {
+    public Mono<MediaDownload> downloadUrl(
+            String orgId, UUID mediaId, String domainType, String domainId) {
         return webClient.get()
-                .uri("/api/media/{id}/download-url", mediaId)
+                .uri(builder -> builder.path("/api/media/{id}/download-url")
+                        .queryParam("domainType", domainType).queryParam("domainId", domainId)
+                        .build(mediaId))
                 .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
@@ -91,8 +97,14 @@ public class IntelligenceMediaClient {
     }
 
     /** intelligence media service-only metadata 视图（与 intelligence MediaServiceMetadataResponse 字段对齐）。 */
-    public record MediaMetadata(UUID id, String ownerAccountId, String purpose, String status,
-                                String mimeType, long sizeBytes, Instant expiresAt) {}
+    public record MediaMetadata(
+            UUID id, String ownerAccountId, String purpose, String domainType, String domainId,
+            String status, String checksum, String mimeType, long sizeBytes, Instant expiresAt) {
+        public MediaMetadata(UUID id, String ownerAccountId, String purpose, String status,
+                             String mimeType, long sizeBytes, Instant expiresAt) {
+            this(id, ownerAccountId, purpose, null, null, status, null, mimeType, sizeBytes, expiresAt);
+        }
+    }
 
     /** intelligence media service-only download-url 视图；expiresAt 为媒体资产 TTL（非 URL 过期）。 */
     public record MediaDownload(URI downloadUrl, Instant expiresAt) {}

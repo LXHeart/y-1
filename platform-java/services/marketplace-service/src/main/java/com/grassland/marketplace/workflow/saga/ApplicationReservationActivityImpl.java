@@ -79,7 +79,7 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         }
         // 领域写（pending→reserving）+ outbox 同事务：outbox 失败则回滚状态迁移，重试不会因「已在 reserving」丢事件。
         TaskApplication transitioned = transactions.transactional(
-                apps.beginAcceptance(input.applicationId(), input.taskId(), input.merchantAccountId())
+                apps.beginAcceptance(input.applicationId(), input.taskId(), input.effectiveOperatorAccountId())
                         .flatMap(t -> outbox.append(envelope("ApplicationAcceptanceStarted", t, null)).thenReturn(t))
         ).block();
         return transitioned != null;  // null = 竞态空结果（empty Mono，无写无事件）

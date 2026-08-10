@@ -51,6 +51,7 @@ public class InternalStoreAuthorizationController {
                     }
                     data.put("role", decision.role().dbValue());
                     data.put("scope", decision.scope());
+                    data.put("permissionTier", decision.permissionTier());
                     return ResponseEntity.ok(Map.<String, Object>of("success", true, "data", data));
                 });
     }

@@ -22,6 +22,7 @@ import type {
   RecommenderProfile,
   RecommenderReputation,
   Store,
+  StoreAccessScope,
   Task,
   TaskApplication,
 } from '../types/grassland'
@@ -50,6 +51,9 @@ type Side = 'merchant' | 'recommender'
 const side = ref<Side>('merchant')
 const orgs = ref<Organization[]>([])
 const stores = ref<Store[]>([])
+const storeScopes = ref<StoreAccessScope[]>([])
+const organizationAccessIds = ref<Set<string>>(new Set())
+const hasMerchantIdentity = ref(false)
 const activeOrgId = ref('')
 /** Empty means legacy organization-level task scope; otherwise the selected store. */
 const selectedStoreId = ref('')
@@ -111,6 +115,8 @@ const confirmedAppIds = ref<Set<string>>(new Set())
 const LEVEL_ORDER: Record<string, number> = { Lv1: 1, Lv2: 2, Lv3: 3, Lv4: 4, Lv5: 5 }
 
 const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.value) || null)
+const managerStoreScopes = computed(() => storeScopes.value.filter((scope) => scope.role === 'manager'))
+const activeOrgHasOrganizationAccess = computed(() => organizationAccessIds.value.has(activeOrgId.value))
 const canPublishBounty = computed(() => activeOrg.value?.permissionTier === 'finance_transaction')
 const balanceYuan = computed(() =>
   account.value ? (account.value.balanceCents / 100).toFixed(2) : '—')
@@ -165,21 +171,67 @@ function openAcceptedTaskCreation(application: TaskApplication): void {
 
 // ---------- 初始化 ----------
 
-async function loadOrganizations(): Promise<void> {
-  const list = await grassland.listOrganizations()
-  if (!list) return
-  orgs.value = list
-  if (!activeOrgId.value && list.length > 0) {
-    activeOrgId.value = list[0].id
+async function loadOrganizations(
+  knownOrganizations?: Organization[], knownStoreScopes?: StoreAccessScope[],
+): Promise<void> {
+  const [organizationResult, scopeResult] = await Promise.all([
+    knownOrganizations ?? grassland.listOrganizations(),
+    knownStoreScopes ?? grassland.listMyStoreScopes(),
+  ])
+  if (organizationResult === null && scopeResult === null) return
+
+  const organizationList = Array.isArray(organizationResult) ? organizationResult : []
+  storeScopes.value = Array.isArray(scopeResult) ? scopeResult : []
+  organizationAccessIds.value = new Set(organizationList.map((organization) => organization.id))
+
+  const merged = [...organizationList]
+  for (const scope of storeScopes.value.filter((item) => item.role === 'manager')) {
+    if (merged.some((organization) => organization.id === scope.organizationId)) continue
+    merged.push({
+      id: scope.organizationId,
+      name: scope.organizationName,
+      ownerAccountId: '',
+      permissionTier: scope.permissionTier,
+      industry: null,
+      createdAt: null,
+    })
+  }
+  orgs.value = merged
+  if (!merged.some((organization) => organization.id === activeOrgId.value)) {
+    activeOrgId.value = merged[0]?.id ?? ''
   }
   // 无条件刷新：此前只在「首次选中组织」时拉数据，导致重新进入草场标签页时
   // 列表仍是旧的（App.vue 用 <component :is> 复用组件，onMounted 不必然重跑，
   // 且期间可能有新任务）。浏览器实测发现：后端 3 个任务、UI 只显示 2 个。
   if (activeOrgId.value) {
-    const storeList = await grassland.listStores(activeOrgId.value)
-    stores.value = storeList ?? []
+    await loadActiveOrganizationStores()
     await refreshAccount()
     await refreshTasks()
+  }
+}
+
+async function loadActiveOrganizationStores(): Promise<void> {
+  if (!activeOrgId.value) {
+    stores.value = []
+    selectedStoreId.value = ''
+    return
+  }
+  if (activeOrgHasOrganizationAccess.value) {
+    stores.value = (await grassland.listStores(activeOrgId.value)) ?? []
+  } else {
+    stores.value = managerStoreScopes.value
+      .filter((scope) => scope.organizationId === activeOrgId.value)
+      .map((scope) => ({
+        id: scope.storeId,
+        organizationId: scope.organizationId,
+        name: scope.storeName,
+        status: scope.storeStatus,
+        createdAt: null,
+      }))
+  }
+  if (!activeOrgHasOrganizationAccess.value
+      && !stores.value.some((store) => store.id === selectedStoreId.value)) {
+    selectedStoreId.value = stores.value[0]?.id ?? ''
   }
 }
 
@@ -192,20 +244,33 @@ async function loadOrganizations(): Promise<void> {
 async function initForAccount(): Promise<void> {
   // 只激活已开通的身份：推荐官-only 账号不应因默认 merchant 视图收到可预期的 409。
   // merchant 优先保留双身份账号的既有工作台入口；无身份则留在 merchant onboarding，但不暗中开户/激活。
-  const identities = await grassland.listIdentities()
+  const [identities, organizations, scopes] = await Promise.all([
+    grassland.listIdentities(),
+    grassland.listOrganizations(),
+    grassland.listMyStoreScopes(),
+  ])
   if (identities === null) return
 
-  const initialIdentity = identities.some((identity) => identity.identityType === 'merchant')
+  hasMerchantIdentity.value = identities.some((identity) => identity.identityType === 'merchant')
+  storeScopes.value = Array.isArray(scopes) ? scopes : []
+  const hasManagerScope = storeScopes.value.some((scope) => scope.role === 'manager')
+  const initialIdentity = hasMerchantIdentity.value
     ? 'merchant'
-    : identities.some((identity) => identity.identityType === 'recommender')
-      ? 'recommender'
-      : null
+    : hasManagerScope
+      ? null
+      : identities.some((identity) => identity.identityType === 'recommender')
+        ? 'recommender'
+        : null
+  if (hasManagerScope && !hasMerchantIdentity.value) side.value = 'merchant'
   if (initialIdentity) {
     side.value = initialIdentity
     await grassland.activateIdentity(initialIdentity)
     grassland.clearError()  // 已知身份的激活失败由后续具体操作给出更明确的错误
   }
-  await loadOrganizations()
+  await loadOrganizations(
+    Array.isArray(organizations) ? organizations : [],
+    Array.isArray(scopes) ? scopes : [],
+  )
 }
 
 /** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
@@ -214,6 +279,9 @@ function resetAccountState(): void {
   deferredDisputeRequestId.value = ''
   orgs.value = []
   stores.value = []
+  storeScopes.value = []
+  organizationAccessIds.value = new Set()
+  hasMerchantIdentity.value = false
   activeOrgId.value = ''
   selectedStoreId.value = ''
   account.value = null
@@ -266,7 +334,10 @@ async function createOrg(): Promise<void> {
 }
 
 async function refreshAccount(): Promise<void> {
-  if (!activeOrgId.value) return
+  if (!activeOrgId.value || !activeOrgHasOrganizationAccess.value) {
+    account.value = null
+    return
+  }
   // 账户可能尚未开通（404）→ 静默，由「开通账户」按钮处理
   const existing = await grassland.getAccount(activeOrgId.value)
   account.value = existing
@@ -275,9 +346,7 @@ async function refreshAccount(): Promise<void> {
 
 async function changeOrganization(): Promise<void> {
   selectedStoreId.value = ''
-  stores.value = activeOrgId.value
-    ? (await grassland.listStores(activeOrgId.value)) ?? []
-    : []
+  await loadActiveOrganizationStores()
   await refreshAccount()
   await refreshTasks()
 }
@@ -708,6 +777,12 @@ async function switchSide(next: Side): Promise<void> {
   const previous = side.value
   side.value = next
 
+  if (next === 'merchant' && !hasMerchantIdentity.value && managerStoreScopes.value.length > 0) {
+    grassland.clearError()
+    await refreshTasks()
+    return
+  }
+
   let activated = await grassland.activateIdentity(next)
   if (activated === null) {
     // 多半是「未开通该身份」——推荐官不需要 org，可就地开通后重试
@@ -802,7 +877,7 @@ function statusLabel(status: string): string {
 
     <!-- 我的邀请 / 登录设备：都是账号级能力，与商家/推荐官视角无关，故在切换之外 -->
     <article id="gl-invitations" class="gl-card gl-card-wide">
-      <MyInvitationsCard @joined="loadOrganizations" />
+      <MyInvitationsCard @joined="() => loadOrganizations()" />
     </article>
 
     <article class="gl-card gl-card-wide">
@@ -819,18 +894,19 @@ function statusLabel(status: string): string {
             <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
           </select>
         </div>
-        <div class="gl-row">
+        <div v-if="organizationAccessIds.size > 0 || managerStoreScopes.length === 0" class="gl-row">
           <input v-model="newOrgName" placeholder="新组织名称" @keyup.enter="createOrg" />
           <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
         </div>
         <p v-if="activeOrg" class="gl-hint">
           当前等级 <code>{{ activeOrg.permissionTier }}</code>
+          <span v-if="!activeOrgHasOrganizationAccess">（仅门店经理权限）</span>
           <span v-if="!canPublishBounty">（非 finance_transaction 等级不可发布赏金任务）</span>
         </p>
       </article>
 
       <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
-      <article v-if="activeOrg" class="gl-card gl-card-wide">
+      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
         <MerchantPermissionCard
           :org-id="activeOrg.id"
           :tier="activeOrg.permissionTier"
@@ -840,17 +916,18 @@ function statusLabel(status: string): string {
       </article>
 
       <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
-      <article v-if="activeOrg" class="gl-card gl-card-wide">
+      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
         <OrgTeamCard :org-id="activeOrg.id" />
       </article>
 
       <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
-      <article v-if="activeOrg" class="gl-card gl-card-wide">
-        <MerchantKybCard :org-id="activeOrg.id" @changed="loadOrganizations" />
+      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
+        <MerchantKybCard :org-id="activeOrg.id" @changed="() => loadOrganizations()" />
       </article>
 
       <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
-      <article id="gl-wallet" class="gl-card">
+      <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
+        id="gl-wallet" class="gl-card">
         <h3>2. 资金账户</h3>
         <p class="gl-balance">余额 <strong>¥{{ balanceYuan }}</strong></p>
         <div class="gl-row">
@@ -867,7 +944,7 @@ function statusLabel(status: string): string {
         <div class="gl-row">
           <label>资源范围
             <select v-model="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="refreshTasks">
-              <option value="">组织级任务</option>
+              <option v-if="activeOrgHasOrganizationAccess" value="">组织级任务</option>
               <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
             </select>
           </label>

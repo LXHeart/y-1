@@ -72,6 +72,8 @@ public abstract class IdentityItSupport {
         r.add("management.server.port", () -> "0");
         r.add("identity.outbox.enabled", () -> "false");
         r.add("identity.kyb.retention.enabled", () -> "false");
+        r.add("identity.external-delivery.challenge-secret",
+                () -> "test-sms-challenge-secret-at-least-32-characters");
         r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
         // Slice 2K：启用内部身份断言消费（signer bean 注入）。仅在请求带断言头时触发，其余走 cookie 路径。
         r.add("identity-assertion.enabled", () -> "true");

@@ -1,6 +1,7 @@
 package com.grassland.intelligence.media;
 
 import com.grassland.storage.ObjectStorageAdapter;
+import com.grassland.intelligence.event.OutboxRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -10,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -29,16 +31,22 @@ public class MediaCleanup {
 
     private final MediaReferenceRepository mediaRefs;
     private final ObjectStorageAdapter storage;
+    private final OutboxRepository outbox;
+    private final TransactionalOperator transactions;
     private final Duration pendingGrace;
     private final AtomicBoolean running = new AtomicBoolean();
 
     public MediaCleanup(
             MediaReferenceRepository mediaRefs,
             ObjectStorageAdapter storage,
+            OutboxRepository outbox,
+            TransactionalOperator transactions,
             @Value("${media.pending-grace-seconds:3600}") long pendingGraceSeconds,
             @Value("${media.upload-url-ttl-seconds:900}") long uploadUrlTtlSeconds) {
         this.mediaRefs = mediaRefs;
         this.storage = storage;
+        this.outbox = outbox;
+        this.transactions = transactions;
         this.pendingGrace = Duration.ofSeconds(Math.max(
                 Math.max(pendingGraceSeconds, 1L), Math.max(uploadUrlTtlSeconds, 1L) + 60L));
     }
@@ -76,7 +84,11 @@ public class MediaCleanup {
         return mediaRefs.releaseQuota(ref.id())
                 .then(deleteObject(ref.objectKey()))
                 .then(deleteObjectIfPresent(ref.uploadKey()))
-                .then(Mono.defer(() -> mediaRefs.completeDelete(ref.id())))
+                .then(Mono.defer(() -> transactions.transactional(mediaRefs.completeDelete(ref.id())
+                        .flatMap(completed -> completed
+                                ? outbox.append(MediaLifecycleEvents.deleted(ref, "expired_or_abandoned"))
+                                        .thenReturn(true)
+                                : Mono.just(false)))))
                 .flatMap(completed -> completed
                         ? Mono.<Void>empty()
                         : Mono.error(new IllegalStateException("media delete claim was lost")));

@@ -41,7 +41,7 @@ public class InternalServiceCallerResolver {
         if (token == null || token.isBlank()) {
             return Mono.error(new IdentityException(401, "缺少服务身份"));
         }
-        return Mono.justOrEmpty(signer.verify(token, Instant.now()))
+        return signer.verifyReactive(token, Instant.now())
                 .switchIfEmpty(Mono.error(new IdentityException(401, "服务身份无效")))
                 .filter(assertion -> assertion.isService()
                         && expectedPrincipals.stream()

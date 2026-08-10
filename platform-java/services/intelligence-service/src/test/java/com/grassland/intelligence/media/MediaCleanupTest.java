@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.storage.ObjectStorageAdapter;
+import com.grassland.intelligence.event.OutboxRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -30,12 +32,16 @@ class MediaCleanupTest {
 
     @Mock
     private ObjectStorageAdapter storage;
+    @Mock private OutboxRepository outbox;
+    @Mock private TransactionalOperator transactions;
 
     private MediaCleanup cleanup;
 
     @BeforeEach
     void setUp() {
-        cleanup = new MediaCleanup(mediaRefs, storage, 3600, 900);
+        cleanup = new MediaCleanup(mediaRefs, storage, outbox, transactions, 3600, 900);
+        lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(outbox.append(any())).thenReturn(Mono.empty());
         lenient().when(storage.listObjects("media-pending/")).thenReturn(List.of());
         lenient().when(mediaRefs.releaseQuota(any())).thenReturn(Mono.empty());
     }

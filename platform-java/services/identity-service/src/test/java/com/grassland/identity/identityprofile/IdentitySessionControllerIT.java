@@ -178,6 +178,64 @@ class IdentitySessionControllerIT extends IdentityItSupport {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void auditQueryIsAccountScopedFilteredAndCursorPaged() {
+        var acc = seedAccount("is-audit-query@example.com");
+        var other = seedAccount("is-audit-query-other@example.com");
+        openIdentity(acc.cookie(), "recommender");
+        openIdentity(other.cookie(), "recommender");
+
+        activate(acc.cookie());
+        client().delete().uri("/api/me/active-identity")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk();
+        activate(acc.cookie());
+        activate(other.cookie());
+
+        Map<String, Object> firstBody = client().get().uri(builder -> builder
+                        .path("/api/me/identity-audit").queryParam("limit", 2).build())
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> firstData = (Map<String, Object>) firstBody.get("data");
+        List<Map<String, Object>> firstItems = (List<Map<String, Object>>) firstData.get("items");
+        assertThat(firstItems).hasSize(2);
+        assertThat(firstItems).extracting(item -> item.get("action"))
+                .containsExactly("activate", "deactivate");
+        assertThat(firstItems).allSatisfy(item -> {
+            assertThat(item.get("sessionFingerprint")).asString().hasSize(12);
+            assertThat(item).doesNotContainKey("sessionToken");
+        });
+
+        String cursor = (String) firstData.get("nextCursor");
+        Map<String, Object> secondBody = client().get().uri(builder -> builder
+                        .path("/api/me/identity-audit").queryParam("limit", 2)
+                        .queryParam("cursor", cursor).build())
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> secondItems = (List<Map<String, Object>>)
+                ((Map<String, Object>) secondBody.get("data")).get("items");
+        assertThat(secondItems).hasSize(1);
+        assertThat(secondItems.getFirst().get("action")).isEqualTo("activate");
+
+        client().get().uri(builder -> builder.path("/api/me/identity-audit")
+                        .queryParam("action", "deactivate").build())
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].action").isEqualTo("deactivate");
+    }
+
+    @Test
+    void auditQueryRejectsInvalidInputsAndAnonymousRequests() {
+        var acc = seedAccount("is-audit-invalid@example.com");
+        client().get().uri("/api/me/identity-audit?action=unknown")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isBadRequest();
+        client().get().uri("/api/me/identity-audit?cursor=not-base64")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isBadRequest();
+        client().get().uri("/api/me/identity-audit?limit=101")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isBadRequest();
+        client().get().uri("/api/me/identity-audit").exchange().expectStatus().isUnauthorized();
+    }
+
+    @Test
     void rejectsRequestsWithoutSessionCookie() {
         client().get().uri("/api/me/sessions").exchange().expectStatus().isUnauthorized();
     }

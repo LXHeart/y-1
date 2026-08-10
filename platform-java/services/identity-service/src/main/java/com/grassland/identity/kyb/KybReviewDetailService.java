@@ -235,6 +235,13 @@ public class KybReviewDetailService {
         body.put("mimeType", attachment.mimeType());
         body.put("sizeBytes", attachment.sizeBytes());
         body.put("uploadedAt", attachment.uploadedAt() == null ? null : attachment.uploadedAt().toString());
+        body.put("ocrStatus", attachment.ocrStatus());
+        body.put("ocrResult", attachment.ocrResult());
+        body.put("ocrProvider", attachment.ocrProvider());
+        body.put("ocrModel", attachment.ocrModel());
+        body.put("ocrAnalyzedAt", attachment.ocrAnalyzedAt() == null
+                ? null : attachment.ocrAnalyzedAt().toString());
+        body.put("ocrFailureCode", attachment.ocrFailureCode());
         return body;
     }
 
@@ -264,7 +271,8 @@ public class KybReviewDetailService {
 
         MerchantAttachment toAttachment(String organizationId) {
             return new MerchantAttachment(id, organizationId, attachmentType, mediaReferenceId,
-                    mimeType, sizeBytes, null, uploadedAt, uploadedByAccountId);
+                    mimeType, sizeBytes, null, "pending", null, null, null, null, null,
+                    uploadedAt, uploadedByAccountId);
         }
     }
 }

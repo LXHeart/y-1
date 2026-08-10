@@ -74,6 +74,7 @@ public class ApplicationController {
 
     private final MarketplaceCallerResolver callers;
     private final TaskRepository tasks;
+    private final TaskResourceAuthorization taskAuthorization;
     private final TaskApplicationRepository apps;
     private final OutboxRepository outbox;
     private final SubmissionRepository submissions;
@@ -96,6 +97,7 @@ public class ApplicationController {
     private final TransactionalOperator transactions;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
+                                 TaskResourceAuthorization taskAuthorization,
                                  TaskApplicationRepository apps, OutboxRepository outbox,
                                  SubmissionRepository submissions,
                                  SubmissionAttachmentRepository attachments,
@@ -115,6 +117,7 @@ public class ApplicationController {
                                  TransactionalOperator transactions, ReputationService reputationService) {
         this.callers = callers;
         this.tasks = tasks;
+        this.taskAuthorization = taskAuthorization;
         this.apps = apps;
         this.outbox = outbox;
         this.submissions = submissions;
@@ -178,8 +181,8 @@ public class ApplicationController {
     @PostMapping("/api/tasks/{id}/applications/{appId}/accept")
     public Mono<ResponseEntity<Map<String, Object>>> accept(@PathVariable String id, @PathVariable String appId,
                                                             ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadPendingApp(id, appId)
                                 .flatMap(app -> slotsFull(task).flatMap(full -> full
                                         ? Mono.<ResponseEntity<Map<String, Object>>>error(
@@ -223,8 +226,8 @@ public class ApplicationController {
 
     private Mono<ResponseEntity<Map<String, Object>>> startReservationWorkflow(Task task, TaskApplication app,
                                                                                 String merchantAccountId) {
-        AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), merchantAccountId,
-                task.organizationId(), bountyOrZero(task));
+        AcceptanceInput input = new AcceptanceInput(app.id(), task.id(), task.ownerAccountId(),
+                task.organizationId(), bountyOrZero(task), merchantAccountId);
         String workflowId = "accept-" + app.id();
         return Mono.fromCallable(() -> {
             ApplicationReservationWorkflow stub = workflowClient.newWorkflowStub(
@@ -248,7 +251,7 @@ public class ApplicationController {
     public Mono<ResponseEntity<Map<String, Object>>> reservation(@PathVariable String id, @PathVariable String appId,
                                                                  ServerHttpRequest request) {
         return callers.resolve(request)
-                .flatMap(caller -> loadOwnedTask(id, caller.accountId())  // 仅 owner 可轮询预留状态
+                .flatMap(caller -> loadManageableTask(id, caller)
                         .flatMap(task -> apps.findById(appId)
                                 .switchIfEmpty(fail(404, "报名不存在"))
                                 .flatMap(app -> {
@@ -293,7 +296,7 @@ public class ApplicationController {
                                 .switchIfEmpty(fail(409, "任务已取消，不能提交履约"))
                                 // 校验在事务外：逐个 mediaId 经 intelligence 取 metadata，过滤 owner==提交人（IDOR 守卫）。
                                 .flatMap(task -> validateAttachments(task.organizationId(),
-                                                caller.accountId(), body.mediaIds())
+                                                caller.accountId(), appId, body.mediaIds())
                                         .flatMap(atts -> workSubmitDeliverable(app, appId, caller,
                                                         body.contentUrl(), body.note(), atts, task.ownerAccountId())
                                                 .flatMap(created -> startConfirmationWorkflow(task, app, created)
@@ -348,7 +351,8 @@ public class ApplicationController {
                 .flatMap(caller -> loadSubmissionScoped(id, appId, caller)
                         .flatMap(task -> attachments.findOne(appId, submissionId, mediaId.toString())
                                 .switchIfEmpty(fail(404, "附件未挂接到该交付物"))
-                                .flatMap(att -> mediaClient.downloadUrl(task.organizationId(), mediaId)
+                                .flatMap(att -> mediaClient.downloadUrl(
+                                                task.organizationId(), mediaId, "application", appId)
                                         .switchIfEmpty(fail(404, "附件已不可用"))
                                         .map(dl -> ok(downloadBody(dl))))));
     }
@@ -361,8 +365,8 @@ public class ApplicationController {
             @PathVariable String id, @PathVariable String appId, @PathVariable String submissionId,
             @RequestBody(required = false) ReviewSubmissionRequest body, ServerHttpRequest request) {
         String note = body == null ? null : body.note();
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadAcceptedApp(id, appId)
                                 // 先校验 submissionId 存在且属于本 application，再判补证上限：
                                 // 顺序反了会对「不存在/不属于本履约」的 id 回 409「补证次数已达上限」，
@@ -390,8 +394,8 @@ public class ApplicationController {
     public Mono<ResponseEntity<Map<String, Object>>> contest(
             @PathVariable String id, @PathVariable String appId,
             @RequestBody ContestEngagementRequest body, ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadAcceptedApp(id, appId)
                                 .flatMap(app -> {
                                     if (app.contestRequestedAt() != null) {
@@ -437,8 +441,8 @@ public class ApplicationController {
     @PostMapping("/api/tasks/{id}/applications/{appId}/confirm")
     public Mono<ResponseEntity<Map<String, Object>>> confirm(@PathVariable String id, @PathVariable String appId,
                                                              ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadAcceptedApp(id, appId)
                                 // contest claim 一旦落地即不允许普通确认；不必等待 trust 案/merchant_rejected_at 完成。
                                 .flatMap(app -> app.contestRequestedAt() != null
@@ -507,8 +511,8 @@ public class ApplicationController {
     public Mono<ResponseEntity<Map<String, Object>>> rate(@PathVariable String id, @PathVariable String appId,
                                                           @RequestBody RateEngagementRequest body,
                                                           ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadConfirmedApp(id, appId)
                                 .flatMap(app -> ratings.create(app.id(), task.id(), app.recommenderAccountId(),
                                                 merchant.accountId(), body.score(), body.comment())
@@ -532,15 +536,19 @@ public class ApplicationController {
                         .flatMap(app -> tasks.findById(id)
                                 .switchIfEmpty(fail(404, "任务不存在"))
                                 .flatMap(task -> {
-                                    boolean isOwner = caller.accountId().equals(task.ownerAccountId());
                                     boolean isRecommender = caller.accountId().equals(app.recommenderAccountId());
-                                    if (!isOwner && !isRecommender) {
-                                        return fail(403, "无权查看该履约的评分");
-                                    }
-                                    return ratings.findByApplication(appId)
-                                            .map(rating -> ResponseEntity.ok(Map.<String, Object>of(
-                                                    "success", true, "data", toBody(rating))))
-                                            .defaultIfEmpty(ResponseEntity.ok(nullData()));
+                                    Mono<Boolean> canView = isRecommender
+                                            ? Mono.just(true)
+                                            : taskAuthorization.canManage(task, caller);
+                                    return canView.flatMap(allowed -> {
+                                        if (!allowed) {
+                                            return fail(403, "无权查看该履约的评分");
+                                        }
+                                        return ratings.findByApplication(appId)
+                                                .map(rating -> ResponseEntity.ok(Map.<String, Object>of(
+                                                        "success", true, "data", toBody(rating))))
+                                                .defaultIfEmpty(ResponseEntity.ok(nullData()));
+                                    });
                                 })));
     }
 
@@ -555,7 +563,7 @@ public class ApplicationController {
     public Mono<ResponseEntity<Map<String, Object>>> settlement(@PathVariable String id, @PathVariable String appId,
                                                                 ServerHttpRequest request) {
         return callers.resolve(request)
-                .flatMap(caller -> loadOwnedTask(id, caller.accountId())  // 仅 owner 可轮询结算状态
+                .flatMap(caller -> loadManageableTask(id, caller)
                         .flatMap(task -> apps.findById(appId)
                                 .switchIfEmpty(fail(404, "报名不存在"))
                                 .flatMap(app -> {
@@ -601,7 +609,7 @@ public class ApplicationController {
                                                                   @PathVariable String appId,
                                                                   ServerHttpRequest request) {
         return callers.resolve(request)
-                .flatMap(caller -> loadOwnedTask(id, caller.accountId())
+                .flatMap(caller -> loadManageableTask(id, caller)
                         .flatMap(task -> apps.findById(appId)
                                 .switchIfEmpty(fail(404, "报名不存在"))
                                 .filter(app -> app.taskId().equals(id))
@@ -683,8 +691,8 @@ public class ApplicationController {
     @PostMapping("/api/tasks/{id}/applications/{appId}/reject")
     public Mono<ResponseEntity<Map<String, Object>>> reject(@PathVariable String id, @PathVariable String appId,
                                                             ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadPendingApp(id, appId)
                                 .flatMap(app -> apps.reject(appId, id, merchant.accountId())
                                         .switchIfEmpty(fail(409, "该报名已处理")))
@@ -733,42 +741,41 @@ public class ApplicationController {
                 .flatMap(caller -> tasks.findById(id)
                         .switchIfEmpty(fail(404, "任务不存在"))
                         .flatMap(task -> {
-                            boolean isOwner = caller.accountId().equals(task.ownerAccountId());
-                            if (!isOwner) {
+                            return taskAuthorization.canManage(task, caller).flatMap(canManage -> {
+                                if (!canManage) {
+                                    return apps.findByTaskId(id)
+                                            .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
+                                            .map(this::toBody).collectList()
+                                            .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
+                                }
                                 return apps.findByTaskId(id)
-                                        .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
-                                        .map(this::toBody).collectList()
+                                        .collectList()
+                                        .flatMap(applications -> reputationService.snapshots(applications.stream()
+                                                        .map(TaskApplication::recommenderAccountId).toList())
+                                                .map(snapshots -> applications.stream()
+                                                        .map(app -> new RankedApplication(app,
+                                                                snapshots.get(app.recommenderAccountId())))
+                                                        .sorted((left, right) -> {
+                                                            int byWeight = Integer.compare(
+                                                                    right.snapshot().evaluation().taskPriorityWeight(),
+                                                                    left.snapshot().evaluation().taskPriorityWeight());
+                                                            if (byWeight != 0) return byWeight;
+                                                            int byCreatedAt = left.application().createdAt()
+                                                                    .compareTo(right.application().createdAt());
+                                                            if (byCreatedAt != 0) return byCreatedAt;
+                                                            return left.application().id()
+                                                                    .compareTo(right.application().id());
+                                                        })
+                                                        .map(this::toRankedBody).toList()))
                                         .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
-                            }
-                            return apps.findByTaskId(id)
-                                    .collectList()
-                                    .flatMap(applications -> reputationService.snapshots(applications.stream()
-                                                    .map(TaskApplication::recommenderAccountId).toList())
-                                            .map(snapshots -> applications.stream()
-                                                    .map(app -> new RankedApplication(app,
-                                                            snapshots.get(app.recommenderAccountId())))
-                                                    .sorted((left, right) -> {
-                                                        int byWeight = Integer.compare(
-                                                                right.snapshot().evaluation().taskPriorityWeight(),
-                                                                left.snapshot().evaluation().taskPriorityWeight());
-                                                        if (byWeight != 0) return byWeight;
-                                                        int byCreatedAt = left.application().createdAt()
-                                                                .compareTo(right.application().createdAt());
-                                                        if (byCreatedAt != 0) return byCreatedAt;
-                                                        return left.application().id()
-                                                                .compareTo(right.application().id());
-                                                    })
-                                                    .map(this::toRankedBody).toList()))
-                                    .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
+                            });
                         }));
     }
 
-    /** 加载任务并校验 caller 为 owner（资源级自查，HLD 7.4）：不存在→404，非 owner→403。 */
-    private Mono<Task> loadOwnedTask(String taskId, String callerAccountId) {
-        return tasks.findById(taskId)
-                .switchIfEmpty(fail(404, "任务不存在"))
-                .filter(t -> callerAccountId.equals(t.ownerAccountId()))
-                .switchIfEmpty(fail(403, "无权操作该任务"));
+    /** 组织级任务仅 owner；门店任务允许当前 MANAGER，且每次操作实时向 Identity 重验。 */
+    private Mono<Task> loadManageableTask(String taskId, Caller caller) {
+        return taskAuthorization.requireManager(taskId, caller)
+                .map(TaskResourceAuthorization.ManagedTask::task);
     }
 
     /** 加载报名并校验属该 task + pending：不存在/越界→404，非 pending→409。 */
@@ -868,9 +875,17 @@ public class ApplicationController {
                 .switchIfEmpty(fail(404, "报名不存在"))
                 .flatMap(app -> tasks.findById(taskId)
                         .switchIfEmpty(fail(404, "任务不存在"))
-                        .filter(task -> caller.accountId().equals(task.ownerAccountId())
-                                || caller.accountId().equals(app.recommenderAccountId()))
-                        .switchIfEmpty(fail(403, "无权查看该履约的交付物")));
+                        .flatMap(task -> {
+                            if (caller.accountId().equals(app.recommenderAccountId())) {
+                                return Mono.just(task);
+                            }
+                            return taskAuthorization.requireManager(task, caller)
+                                    .map(TaskResourceAuthorization.ManagedTask::task)
+                                    .onErrorMap(MarketplaceException.class, error ->
+                                            error.status() == 403 || error.status() == 404
+                                                    ? new MarketplaceException(403, "无权查看该履约的交付物")
+                                                    : error);
+                        }));
     }
 
     /**
@@ -878,16 +893,23 @@ public class ApplicationController {
      * purpose=engagement_attachment && active && 未过期（不符→404→empty）；这里再做 IDOR 守卫——
      * owner 必须是提交人本人，否则 403。media 不可用→404。无附件→空列表。
      */
-    private Mono<List<AttachmentInput>> validateAttachments(String orgId, String ownerAccountId, List<UUID> mediaIds) {
+    private Mono<List<AttachmentInput>> validateAttachments(
+            String orgId, String ownerAccountId, String applicationId, List<UUID> mediaIds) {
         if (mediaIds.isEmpty()) {
             return Mono.just(List.of());
         }
         return Flux.fromIterable(mediaIds)
-                .concatMap(mediaId -> mediaClient.metadata(orgId, mediaId)
+                .concatMap(mediaId -> mediaClient.metadata(
+                                orgId, mediaId, "application", applicationId)
                         .switchIfEmpty(fail(404, "附件不存在或已不可用"))
                         .filter(m -> ownerAccountId.equals(m.ownerAccountId()))
                         .switchIfEmpty(fail(403, "不能挂接他人的附件"))
-                        .map(m -> new AttachmentInput(mediaId, m.mimeType(), m.sizeBytes())))
+                        .filter(m -> "application".equals(m.domainType())
+                                && applicationId.equals(m.domainId()))
+                        .switchIfEmpty(fail(404, "附件不属于当前报名"))
+                        .map(m -> new AttachmentInput(
+                                mediaId, m.mimeType(), m.sizeBytes(), m.domainType(), m.domainId(),
+                                m.checksum(), m.status(), 1)))
                 .collectList();
     }
 
@@ -943,6 +965,10 @@ public class ApplicationController {
         m.put("mediaId", a.mediaId());
         m.put("mimeType", a.mimeType());
         m.put("sizeBytes", a.sizeBytes());
+        m.put("domainType", a.domainType());
+        m.put("domainId", a.domainId());
+        m.put("checksum", a.checksum());
+        m.put("mediaStatus", a.status());
         return m;
     }
 
@@ -951,6 +977,10 @@ public class ApplicationController {
         m.put("mediaId", a.mediaReferenceId());
         m.put("mimeType", a.mimeType());
         m.put("sizeBytes", a.sizeBytes());
+        m.put("domainType", a.mediaDomainType());
+        m.put("domainId", a.mediaDomainId());
+        m.put("checksum", a.mediaChecksum());
+        m.put("mediaStatus", a.mediaStatusSnapshot());
         return m;
     }
 
@@ -1045,8 +1075,8 @@ public class ApplicationController {
     public Mono<ResponseEntity<Map<String, Object>>> runVerificationChecks(
             @PathVariable String id, @PathVariable String appId, @PathVariable String submissionId,
             ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId())
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadAcceptedApp(id, appId)
                                 .flatMap(app -> submissions.findByApplication(appId)
                                         .filter(s -> s.id().equals(submissionId))

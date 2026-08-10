@@ -58,6 +58,11 @@ class MerchantAttachmentControllerIT extends IdentityItSupport {
         String orgId = createOrg(owner.cookie(), "Attachment Dup Org");
 
         createAttachment(orgId, owner.cookie(), "business_license", 201);
+        Long jobs = db.sql("SELECT count(*) FROM kyb_document_analysis_job job "
+                        + "JOIN merchant_attachment attachment ON attachment.id = job.attachment_id "
+                        + "WHERE attachment.organization_id = CAST(:org AS uuid)")
+                .bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
+        assertThat(jobs).isEqualTo(1L);
         createAttachment(orgId, owner.cookie(), "business_license", 409);
         // 非证件类（门店照片）允许多张。
         createAttachment(orgId, owner.cookie(), "store_photo", 201);

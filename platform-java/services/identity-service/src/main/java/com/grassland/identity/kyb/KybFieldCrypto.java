@@ -4,6 +4,9 @@ import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.identity.auth.IdentityException;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Locale;
 
 /**
  * KYB 敏感字段加密与掩码。GL-P3-MERCHANT-001。
@@ -69,5 +72,27 @@ public class KybFieldCrypto {
         } catch (RuntimeException e) {
             return "****";
         }
+    }
+
+    /** 解密后做常量时间规范化比对；完整证件号不会离开本方法或进入 OCR 落库结果。 */
+    public boolean matches(String ciphertext, String candidate) {
+        if (ciphertext == null || ciphertext.isBlank() || candidate == null || candidate.isBlank()) {
+            return false;
+        }
+        EnvelopeEncryption crypto = envelope.getIfAvailable();
+        if (crypto == null) {
+            return false;
+        }
+        try {
+            byte[] expected = normalize(crypto.decrypt(ciphertext)).getBytes(StandardCharsets.UTF_8);
+            byte[] actual = normalize(candidate).getBytes(StandardCharsets.UTF_8);
+            return MessageDigest.isEqual(expected, actual);
+        } catch (RuntimeException error) {
+            return false;
+        }
+    }
+
+    private static String normalize(String value) {
+        return value == null ? "" : value.replaceAll("[^0-9A-Za-z]", "").toUpperCase(Locale.ROOT);
     }
 }

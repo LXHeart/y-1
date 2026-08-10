@@ -1,10 +1,21 @@
 package com.grassland.identity.assertion;
 
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.time.Duration;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.connection.RedisPassword;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 
 /**
  * 断言自动配置（GL-P0-ASSERT-001 keyring 模式）。
@@ -26,6 +37,37 @@ import org.springframework.context.annotation.Bean;
 @EnableConfigurationProperties(IdentityAssertionProperties.class)
 public class IdentityAssertionAutoConfiguration {
 
+    @Bean(name = "identityAssertionReplayConnectionFactory", destroyMethod = "destroy")
+    @ConditionalOnExpression("${identity-assertion.replay-protection.enabled:false}"
+            + " && '${identity-assertion.replay-protection.storage:redis}' == 'redis'")
+    LettuceConnectionFactory identityAssertionReplayConnectionFactory(IdentityAssertionProperties props) {
+        URI uri = URI.create(props.replayProtection().redisUrl());
+        if (!"redis".equalsIgnoreCase(uri.getScheme()) && !"rediss".equalsIgnoreCase(uri.getScheme())) {
+            throw new IllegalArgumentException("replay redis-url must use redis:// or rediss://");
+        }
+        RedisStandaloneConfiguration server = new RedisStandaloneConfiguration(
+                uri.getHost(), uri.getPort() > 0 ? uri.getPort() : 6379);
+        String path = uri.getPath();
+        if (path != null && path.length() > 1) {
+            server.setDatabase(Integer.parseInt(path.substring(1)));
+        }
+        if (uri.getUserInfo() != null) {
+            String[] credentials = uri.getUserInfo().split(":", 2);
+            if (!credentials[0].isBlank()) {
+                server.setUsername(URLDecoder.decode(credentials[0], StandardCharsets.UTF_8));
+            }
+            if (credentials.length == 2 && !credentials[1].isBlank()) {
+                server.setPassword(RedisPassword.of(URLDecoder.decode(credentials[1], StandardCharsets.UTF_8)));
+            }
+        }
+        LettuceClientConfiguration.LettuceClientConfigurationBuilder client = LettuceClientConfiguration.builder()
+                .commandTimeout(Duration.ofSeconds(2));
+        if ("rediss".equalsIgnoreCase(uri.getScheme())) {
+            client.useSsl();
+        }
+        return new LettuceConnectionFactory(server, client.build());
+    }
+
     /**
      * 装配 keyring Bean。
      *
@@ -44,8 +86,19 @@ public class IdentityAssertionAutoConfiguration {
      * {@link InMemoryAssertionReplayGuard}；否则装配 {@link AssertionReplayGuard#NO_OP}。
      */
     @Bean
-    AssertionReplayGuard identityAssertionReplayGuard(IdentityAssertionProperties props) {
-        if (!props.isLegacyMode() && props.replayProtection().enabled()) {
+    AssertionReplayGuard identityAssertionReplayGuard(
+            IdentityAssertionProperties props,
+            @Qualifier("identityAssertionReplayConnectionFactory")
+            ObjectProvider<LettuceConnectionFactory> replayConnectionFactory) {
+        if (!props.isLegacyMode() && props.replayProtection().usesRedis()) {
+            LettuceConnectionFactory factory = replayConnectionFactory.getIfAvailable();
+            if (factory == null) {
+                throw new IllegalStateException("Redis replay protection enabled without connection factory");
+            }
+            return new RedisAssertionReplayGuard(
+                    new ReactiveStringRedisTemplate(factory), props.replayProtection().keyPrefix());
+        }
+        if (!props.isLegacyMode() && props.replayProtection().usesMemory()) {
             return new InMemoryAssertionReplayGuard(true);
         }
         return AssertionReplayGuard.NO_OP;

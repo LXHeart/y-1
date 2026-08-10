@@ -5,7 +5,6 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
-import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
@@ -58,13 +57,13 @@ public class TaskController {
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
     private final ReputationService reputationService;
-    private final IdentityStoreAuthorizationClient storeAuthorization;
+    private final TaskResourceAuthorization taskAuthorization;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions, ReputationService reputationService,
-                          IdentityStoreAuthorizationClient storeAuthorization) {
+                          TaskResourceAuthorization taskAuthorization) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -73,19 +72,17 @@ public class TaskController {
         this.finance = finance;
         this.transactions = transactions;
         this.reputationService = reputationService;
-        this.storeAuthorization = storeAuthorization;
+        this.taskAuthorization = taskAuthorization;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> create(@RequestBody CreateTaskRequest body, ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> {
-                    // 闸门 1：org 归属自查——发布 org 须等于 caller 断言的 org（HLD 7.4，不只信 body 声明）。
-                    if (!body.organizationId().equals(merchant.organizationId())) {
-                        return Mono.<Task>error(new MarketplaceException(403, "无权为该组织发布任务"));
-                    }
+        return callers.requireUser(request)
+                .flatMap(caller -> taskAuthorization.requireScope(
+                                caller, body.organizationId(), blankToNull(body.storeId()), "manager")
+                        .flatMap(access -> {
                     // 闸门 2：tier 须允许发布（DRAFT=0 → 403）。
-                    MerchantTier tier = MerchantTier.fromDb(merchant.permissionTier());
+                    MerchantTier tier = MerchantTier.fromDb(access.permissionTier());
                     int maxActive = PublishQuotaPolicy.maxActiveTasks(tier);
                     if (maxActive == 0) {
                         return Mono.<Task>error(new MarketplaceException(403, "当前等级不可发布任务"));
@@ -101,46 +98,33 @@ public class TaskController {
                     }
                     // 闸门 4+5（D-05）：活跃任务数上限 + 本月新建任务数上限 → 409。
                     int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
-                    String storeId = blankToNull(body.storeId());
-                    Mono<Void> scopeAuthorization = storeId == null
-                            ? Mono.empty()
-                            : storeAuthorization.require(merchant.accountId(), merchant.organizationId(),
-                                    storeId, "manager");
-                    return scopeAuthorization.then(tasks.countActiveByOrganization(merchant.organizationId()))
+                    return tasks.countActiveByOrganization(access.organizationId())
                             .flatMap(active -> active >= maxActive
                                     ? Mono.<Integer>error(new MarketplaceException(409, "已达本组织发布上限"))
-                                    : tasks.countCreatedThisMonthByOrganization(merchant.organizationId()))
+                                    : tasks.countCreatedThisMonthByOrganization(access.organizationId()))
                             .flatMap(monthly -> monthly >= maxMonthly
                                     ? Mono.<Task>error(new MarketplaceException(409, "已达本组织本月发布上限"))
                                     : transactions.transactional(
-                                            tasks.create(merchant.accountId(), body.organizationId(), body.title(),
+                                            tasks.create(caller.accountId(), access.organizationId(), body.title(),
                                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                     body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                                    storeId)
+                                                    access.storeId())
                                                     .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))));
-                })
+                }))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
     /** 创建草稿。draft 创建不占发布额度、不需资金权限（草稿 tier 也可建）。 */
     @PostMapping(value = "/api/tasks/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> createDraft(@RequestBody CreateDraftRequest body, ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> {
-                    if (!body.organizationId().equals(merchant.organizationId())) {
-                        return Mono.<Task>error(new MarketplaceException(403, "无权为该组织创建任务"));
-                    }
-                    String storeId = blankToNull(body.storeId());
-                    Mono<Void> scopeAuthorization = storeId == null
-                            ? Mono.empty()
-                            : storeAuthorization.require(merchant.accountId(), merchant.organizationId(),
-                                    storeId, "manager");
-                    return scopeAuthorization.then(transactions.transactional(
-                            tasks.createDraft(merchant.accountId(), body.organizationId(), body.title(),
+        return callers.requireUser(request)
+                .flatMap(caller -> taskAuthorization.requireScope(
+                                caller, body.organizationId(), blankToNull(body.storeId()), "manager")
+                        .flatMap(access -> transactions.transactional(
+                            tasks.createDraft(caller.accountId(), access.organizationId(), body.title(),
                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                     body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                    storeId)));
-                })
+                                    access.storeId()))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -148,8 +132,8 @@ public class TaskController {
     @PutMapping(value = "/api/tasks/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> update(@PathVariable String id, @RequestBody UpdateTaskRequest body,
                                                             ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadManageableTask(id, merchant, "draft")
+        return callers.requireUser(request)
+                .flatMap(caller -> loadManageableTask(id, caller, "draft")
                         .flatMap(ignored -> transactions.transactional(
                                 tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
@@ -163,10 +147,11 @@ public class TaskController {
     @PostMapping(value = "/api/tasks/{id}/publish", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> publish(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                              ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadManageableTask(id, merchant, "draft")
-                        .flatMap(draft -> enforcePublishGates(merchant, draft.bountyCents())
-                                .thenReturn(draft)
+        return callers.requireUser(request)
+                .flatMap(caller -> loadManageableTaskAccess(id, caller, "draft")
+                        .flatMap(access -> enforcePublishGates(access.task().organizationId(),
+                                        access.permissionTier(), access.task().bountyCents())
+                                .thenReturn(access.task())
                                 .flatMap(ignored -> transactions.transactional(
                                         tasks.publish(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
@@ -178,8 +163,8 @@ public class TaskController {
     @PostMapping("/api/tasks/{id}/close")
     public Mono<ResponseEntity<Map<String, Object>>> close(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                            ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadManageableTask(id, merchant, "published")
+        return callers.requireUser(request)
+                .flatMap(caller -> loadManageableTask(id, caller, "published")
                         .flatMap(ignored -> transactions.transactional(
                                 tasks.close(id, body.expectedVersion())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
@@ -198,8 +183,8 @@ public class TaskController {
     @PostMapping("/api/tasks/{id}/cancel")
     public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                             ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadManageableTask(id, merchant, null)
+        return callers.requireUser(request)
+                .flatMap(caller -> loadManageableTask(id, caller, null)
                         .flatMap(owned -> {
                             String status = owned.status();
                             if (TaskStatus.CANCELLED.dbValue().equals(status)) {
@@ -252,14 +237,14 @@ public class TaskController {
     @PostMapping(value = "/api/tasks/{id}/revise", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> revise(@PathVariable String id, @RequestBody ReviseTaskRequest body,
                                                             ServerHttpRequest request) {
-        return callers.requireMerchant(request)
-                .flatMap(merchant -> loadManageableTask(id, merchant, "published")
-                        .flatMap(ignored -> enforceBountyTierGate(merchant, body.bountyCents())
-                                .thenReturn(ignored)
+        return callers.requireUser(request)
+                .flatMap(caller -> loadManageableTaskAccess(id, caller, "published")
+                        .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents())
+                                .thenReturn(access.task())
                                 .flatMap(v -> transactions.transactional(
                                         tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
                                                 body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-                                                body.applicationDeadline(), body.minRecommenderLevel(), merchant.accountId())
+                                                body.applicationDeadline(), body.minRecommenderLevel(), caller.accountId())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                                 .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -269,8 +254,8 @@ public class TaskController {
      * 修订赏金的 tier 闸门：资金型（bounty&gt;0）须有交易权限；赏金 ≤ 本组织单笔上限。与发布同口径，
      * 但<b>不算 active/monthly 额度</b>——修订不是新发布，任务已在额度内。防止商家借修订把赏金抬到 tier 之上。
      */
-    private Mono<Void> enforceBountyTierGate(Caller merchant, Long bountyCents) {
-        MerchantTier tier = MerchantTier.fromDb(merchant.permissionTier());
+    private Mono<Void> enforceBountyTierGate(String permissionTier, Long bountyCents) {
+        MerchantTier tier = MerchantTier.fromDb(permissionTier);
         long bounty = bountyCents == null ? 0L : bountyCents;
         long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
         if (bounty > 0 && maxTx == 0) {
@@ -290,10 +275,7 @@ public class TaskController {
         return callers.resolve(request)
                 .flatMap(caller -> {
                     if (storeId != null && !storeId.isBlank()) {
-                        if (!caller.isMerchant() || !organizationId.equals(caller.organizationId())) {
-                            return Mono.error(new MarketplaceException(403, "无权访问该门店任务"));
-                        }
-                        return storeAuthorization.require(caller.accountId(), organizationId, storeId, "staff")
+                        return taskAuthorization.requireScope(caller, organizationId, storeId, "staff")
                                 .then(tasks.findByStore(organizationId, storeId, status).collectList())
                                 .map(list -> ResponseEntity.ok(Map.of("success", true,
                                         "data", list.stream().map(this::toBody).toList())));
@@ -469,9 +451,8 @@ public class TaskController {
                             // published 对任意 caller 可见；其余状态仅 owner 可见（不泄露 draft/closed/cancelled 存在）。
                             boolean publicVisible = TaskStatus.PUBLISHED.dbValue().equals(task.status());
                             boolean owner = caller.accountId().equals(task.ownerAccountId());
-                            if (!publicVisible && task.storeId() != null && caller.isMerchant()
-                                    && task.organizationId().equals(caller.organizationId())) {
-                                return storeAuthorization.require(caller.accountId(), task.organizationId(),
+                            if (!publicVisible && task.storeId() != null) {
+                                return taskAuthorization.requireScope(caller, task.organizationId(),
                                                 task.storeId(), "staff")
                                         .thenReturn(ResponseEntity.ok(Map.of(
                                                 "success", true, "data", toBody(task))));
@@ -498,8 +479,8 @@ public class TaskController {
      * 发布闸门 2-5（tier / 资金权限 / 单笔上限 / 活跃额度 / 月度额度）。immediate-create 内联同款；draft→publish 复用。
      * 闸门 1（org 归属）由 {@link #loadOwnedTask} 隐含（owner 必属该 org）。
      */
-    private Mono<Void> enforcePublishGates(Caller merchant, Long bountyCents) {
-        MerchantTier tier = MerchantTier.fromDb(merchant.permissionTier());
+    private Mono<Void> enforcePublishGates(String organizationId, String permissionTier, Long bountyCents) {
+        MerchantTier tier = MerchantTier.fromDb(permissionTier);
         int maxActive = PublishQuotaPolicy.maxActiveTasks(tier);
         if (maxActive == 0) {
             return Mono.error(new MarketplaceException(403, "当前等级不可发布任务"));
@@ -513,10 +494,10 @@ public class TaskController {
             return Mono.error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
         }
         int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
-        return tasks.countActiveByOrganization(merchant.organizationId())
+        return tasks.countActiveByOrganization(organizationId)
                 .flatMap(active -> active >= maxActive
                         ? Mono.<Integer>error(new MarketplaceException(409, "已达本组织发布上限"))
-                        : tasks.countCreatedThisMonthByOrganization(merchant.organizationId()))
+                        : tasks.countCreatedThisMonthByOrganization(organizationId))
                 .flatMap(monthly -> monthly >= maxMonthly
                         ? Mono.<Void>error(new MarketplaceException(409, "已达本组织本月发布上限"))
                         : Mono.empty());
@@ -524,22 +505,14 @@ public class TaskController {
 
     /** 组织级任务沿用 owner 管理；门店任务允许该店 MANAGER 管理。 */
     private Mono<Task> loadManageableTask(String taskId, Caller caller, String requiredStatus) {
-        return tasks.findById(taskId)
-                .switchIfEmpty(fail(404, "任务不存在"))
-                .flatMap(task -> {
-                    if (!task.organizationId().equals(caller.organizationId())) {
-                        return fail(403, "无权操作该任务");
-                    }
-                    if (task.storeId() == null) {
-                        return caller.accountId().equals(task.ownerAccountId())
-                                ? Mono.just(task)
-                                : fail(403, "无权操作该任务");
-                    }
-                    return storeAuthorization.require(caller.accountId(), task.organizationId(),
-                                    task.storeId(), "manager")
-                            .thenReturn(task);
-                })
-                .filter(t -> requiredStatus == null || requiredStatus.equals(t.status()))
+        return loadManageableTaskAccess(taskId, caller, requiredStatus)
+                .map(TaskResourceAuthorization.ManagedTask::task);
+    }
+
+    private Mono<TaskResourceAuthorization.ManagedTask> loadManageableTaskAccess(
+            String taskId, Caller caller, String requiredStatus) {
+        return taskAuthorization.requireManager(taskId, caller)
+                .filter(access -> requiredStatus == null || requiredStatus.equals(access.task().status()))
                 .switchIfEmpty(fail(409, "任务当前状态不允许该操作"));
     }
 

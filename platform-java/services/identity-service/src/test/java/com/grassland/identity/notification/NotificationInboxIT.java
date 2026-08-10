@@ -148,6 +148,8 @@ class NotificationInboxIT extends IdentityItSupport {
                 spy,
                 new com.grassland.identity.notify.mail.MailOutboxEnqueuer(
                         new com.grassland.identity.notify.mail.MailOutboxRepository(db), db),
+                new com.grassland.identity.notify.external.ExternalDeliveryEnqueuer(
+                        new com.grassland.identity.notify.external.ExternalDeliveryRepository(db)),
                 transactions, "identity-notification-consumer");
 
         assertThatThrownBy(() -> failingProcessor.process(record).block())

@@ -58,6 +58,7 @@ import type {
   ReservationOutcome,
   ReviewDecision,
   Store,
+  StoreAccessScope,
   StoreMembership,
   StoreRole,
   TaskUsage,
@@ -183,6 +184,9 @@ export function useGrassland() {
   const listIdentities = () => run(() => request<IdentityProfile[]>('/api/me/identities'))
 
   const listOrganizations = () => run(() => request<Organization[]>('/api/organizations'))
+
+  /** 仅列当前账号显式加入的门店，不扩散为同组织的其他门店权限。 */
+  const listMyStoreScopes = () => run(() => request<StoreAccessScope[]>('/api/me/store-scopes'))
 
   const createOrganization = (name: string, industry?: string) =>
     run(() => request<Organization>('/api/organizations', {
@@ -1007,11 +1011,13 @@ export function useGrassland() {
     libraryType: ContentLibraryType
     category?: ContentAssetCategory
     granted?: boolean
+    organizationId?: string
     storeId?: string
   }) => {
     const qs = new URLSearchParams({ libraryType: params.libraryType })
     if (params.category) qs.set('category', params.category)
     if (params.granted) qs.set('granted', 'true')
+    if (params.organizationId) qs.set('organizationId', params.organizationId)
     if (params.storeId) qs.set('storeId', params.storeId)
     return run(() => request<{ items: ContentAsset[] }>(`/api/content-assets?${qs}`))
   }
@@ -1224,6 +1230,7 @@ export function useGrassland() {
     // identity
     listIdentities,
     listOrganizations,
+    listMyStoreScopes,
     createOrganization,
     openIdentity,
     activateIdentity,

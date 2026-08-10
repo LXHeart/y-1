@@ -31,6 +31,7 @@ class IntelligenceMediaClientTest {
     private static final String SECRET = "test-secret-32-chars-min!!!";
     private static final String AUDIENCE = "grassland-internal";
     private static final String ORG = "11111111-1111-1111-1111-111111111111";
+    private static final String APP = "22222222-2222-2222-2222-222222222222";
 
     private WireMockServer wireMock;
     private IntelligenceMediaClient client;
@@ -55,7 +56,7 @@ class IntelligenceMediaClientTest {
     void metadataSuccess() {
         UUID mediaId = UUID.randomUUID();
         UUID owner = UUID.randomUUID();
-        wireMock.stubFor(get(urlEqualTo("/api/media/" + mediaId + "/metadata"))
+        wireMock.stubFor(get(urlEqualTo(metadataPath(mediaId)))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"success\":true,\"data\":{"
@@ -67,7 +68,7 @@ class IntelligenceMediaClientTest {
                                 + "\"sizeBytes\":1234,"
                                 + "\"expiresAt\":\"2026-12-31T00:00:00Z\"}}")));
 
-        StepVerifier.create(client.metadata(ORG, mediaId))
+        StepVerifier.create(client.metadata(ORG, mediaId, "application", APP))
                 .assertNext(m -> {
                     assertThat(m.id()).isEqualTo(mediaId);
                     assertThat(m.ownerAccountId()).isEqualTo(owner.toString());
@@ -78,7 +79,7 @@ class IntelligenceMediaClientTest {
                 })
                 .verifyComplete();
 
-        wireMock.verify(getRequestedFor(urlEqualTo("/api/media/" + mediaId + "/metadata"))
+        wireMock.verify(getRequestedFor(urlEqualTo(metadataPath(mediaId)))
                 .withHeader("X-Grassland-Identity", matching(".+")));
     }
 
@@ -86,20 +87,20 @@ class IntelligenceMediaClientTest {
     @DisplayName("metadata 404 → Mono.empty()（media 不可用，调用方据此返回 404）")
     void metadataNotFoundIsEmpty() {
         UUID mediaId = UUID.randomUUID();
-        wireMock.stubFor(get(urlEqualTo("/api/media/" + mediaId + "/metadata"))
+        wireMock.stubFor(get(urlEqualTo(metadataPath(mediaId)))
                 .willReturn(aResponse().withStatus(404)));
 
-        StepVerifier.create(client.metadata(ORG, mediaId)).verifyComplete();
+        StepVerifier.create(client.metadata(ORG, mediaId, "application", APP)).verifyComplete();
     }
 
     @Test
     @DisplayName("metadata 5xx → IntelligenceMediaException（非 404，由 controller 映射 5xx）")
     void metadataServerErrorThrows() {
         UUID mediaId = UUID.randomUUID();
-        wireMock.stubFor(get(urlEqualTo("/api/media/" + mediaId + "/metadata"))
+        wireMock.stubFor(get(urlEqualTo(metadataPath(mediaId)))
                 .willReturn(aResponse().withStatus(503).withBody("down")));
 
-        StepVerifier.create(client.metadata(ORG, mediaId))
+        StepVerifier.create(client.metadata(ORG, mediaId, "application", APP))
                 .verifyError(IntelligenceMediaException.class);
     }
 
@@ -107,14 +108,14 @@ class IntelligenceMediaClientTest {
     @DisplayName("download-url 200 → MediaDownload（downloadUrl/expiresAt）")
     void downloadUrlSuccess() {
         UUID mediaId = UUID.randomUUID();
-        wireMock.stubFor(get(urlEqualTo("/api/media/" + mediaId + "/download-url"))
+        wireMock.stubFor(get(urlEqualTo(downloadPath(mediaId)))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"success\":true,\"data\":{"
                                 + "\"downloadUrl\":\"https://minio.local/media/x?signature=abc\","
                                 + "\"expiresAt\":\"2026-12-31T00:00:00Z\"}}")));
 
-        StepVerifier.create(client.downloadUrl(ORG, mediaId))
+        StepVerifier.create(client.downloadUrl(ORG, mediaId, "application", APP))
                 .assertNext(dl -> assertThat(dl.downloadUrl().toString())
                         .isEqualTo("https://minio.local/media/x?signature=abc"))
                 .verifyComplete();
@@ -124,9 +125,17 @@ class IntelligenceMediaClientTest {
     @DisplayName("download-url 404 → Mono.empty()（media 不可用）")
     void downloadUrlNotFoundIsEmpty() {
         UUID mediaId = UUID.randomUUID();
-        wireMock.stubFor(get(urlEqualTo("/api/media/" + mediaId + "/download-url"))
+        wireMock.stubFor(get(urlEqualTo(downloadPath(mediaId)))
                 .willReturn(aResponse().withStatus(404)));
 
-        StepVerifier.create(client.downloadUrl(ORG, mediaId)).verifyComplete();
+        StepVerifier.create(client.downloadUrl(ORG, mediaId, "application", APP)).verifyComplete();
+    }
+
+    private static String metadataPath(UUID id) {
+        return "/api/media/" + id + "/metadata?domainType=application&domainId=" + APP;
+    }
+
+    private static String downloadPath(UUID id) {
+        return "/api/media/" + id + "/download-url?domainType=application&domainId=" + APP;
     }
 }

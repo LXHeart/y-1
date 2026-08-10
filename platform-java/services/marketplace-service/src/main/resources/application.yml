@@ -162,18 +162,36 @@ identity-assertion:
       purpose: user
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE_PREVIOUS_KID:}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE_KID:trust-service-marketplace-v1}
       issuer: trust
       purpose: service
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE_PREVIOUS_KID:}
+      issuer: trust
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_TRUST_SERVICE_MARKETPLACE_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_KID:intelligence-service-marketplace-v1}
       issuer: intelligence
       purpose: service
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_PREVIOUS_KID:}
+      issuer: intelligence
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_PREVIOUS:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+    storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}
+    redis-url: ${IDENTITY_ASSERTION_REPLAY_REDIS_URL:}
+    key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 # 跨服务调 finance（Slice 4F Saga ReserveFunds/ReleaseFunds 出站 base url）。
 finance:

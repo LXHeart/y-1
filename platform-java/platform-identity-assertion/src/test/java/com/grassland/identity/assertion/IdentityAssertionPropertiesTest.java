@@ -54,4 +54,24 @@ class IdentityAssertionPropertiesTest {
         var props = new IdentityAssertionProperties(true, "s", 60, null, null, 5, List.of("X-Custom-1", "X-Custom-2"), null, null, null, null);
         assertThat(props.internalHeaderDenylist()).containsExactly("X-Custom-1", "X-Custom-2");
     }
+
+    @Test
+    void redisReplayRequiresUrlWhenEnabledInKeyringMode() {
+        var key = new IdentityAssertionProperties.KeyEntry(
+                "edge-user-identity-v1", null, "user", "grassland-identity", "secret");
+
+        assertThatThrownBy(() -> new IdentityAssertionProperties(
+                true, null, 60, null, null, 5, null, "edge-bff", List.of(key), List.of(),
+                new IdentityAssertionProperties.ReplayProtectionConfig(true, "redis", "", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("redis-url");
+    }
+
+    @Test
+    void replayStorageRejectsUnknownValue() {
+        assertThatThrownBy(() -> new IdentityAssertionProperties.ReplayProtectionConfig(
+                true, "filesystem", "", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("redis or memory");
+    }
 }

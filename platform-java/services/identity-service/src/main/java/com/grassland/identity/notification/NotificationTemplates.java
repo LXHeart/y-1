@@ -219,7 +219,7 @@ public final class NotificationTemplates {
     }
 
     /** 静态文案模板（不含收件人——收件人由 resolver 异步解析后与模板合成 {@link NotificationSpec}）。 */
-    record Template(
+    public record Template(
             NotificationCategory category,
             String title,
             String body,

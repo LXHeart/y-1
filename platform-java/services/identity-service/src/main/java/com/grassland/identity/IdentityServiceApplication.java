@@ -2,7 +2,10 @@ package com.grassland.identity;
 
 import com.grassland.identity.event.OutboxProperties;
 import com.grassland.identity.kyb.KybMediaRetentionProperties;
+import com.grassland.identity.kyb.KybDocumentAnalysisProperties;
+import com.grassland.identity.identityprofile.IdentitySessionPolicyProperties;
 import com.grassland.identity.notify.mail.MailOutboxProperties;
+import com.grassland.identity.notify.external.ExternalDeliveryProperties;
 import io.r2dbc.spi.ConnectionFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -18,7 +21,10 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 @EnableConfigurationProperties({
         OutboxProperties.class,
         MailOutboxProperties.class,
-        KybMediaRetentionProperties.class
+        ExternalDeliveryProperties.class,
+        KybMediaRetentionProperties.class,
+        KybDocumentAnalysisProperties.class,
+        IdentitySessionPolicyProperties.class
 })
 public class IdentityServiceApplication {
     public static void main(String[] args) {

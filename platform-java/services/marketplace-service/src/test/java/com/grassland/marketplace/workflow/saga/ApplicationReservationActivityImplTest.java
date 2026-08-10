@@ -40,6 +40,7 @@ class ApplicationReservationActivityImplTest {
     private static final String MERCHANT = "33333333-3333-3333-3333-333333333333";
     private static final String ORG = "44444444-4444-4444-4444-444444444444";
     private static final String RECOMMENDER = "55555555-5555-5555-5555-555555555555";
+    private static final String OPERATOR = "66666666-6666-6666-6666-666666666666";
 
     @Mock private TaskApplicationRepository apps;
     @Mock private TaskRepository tasks;
@@ -67,6 +68,19 @@ class ApplicationReservationActivityImplTest {
 
         assertThat(activity.beginAcceptance(input)).isTrue();
         verify(apps).beginAcceptance(APP_ID, TASK_ID, MERCHANT);
+    }
+
+    @Test
+    void beginAcceptance_recordsIndependentStoreManagerAsOperator() {
+        AcceptanceInput managerInput = new AcceptanceInput(
+                APP_ID, TASK_ID, MERCHANT, ORG, 500L, OPERATOR);
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(null)));
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("pending")));
+        when(apps.beginAcceptance(APP_ID, TASK_ID, OPERATOR)).thenReturn(Mono.just(app("reserving")));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        assertThat(activity.beginAcceptance(managerInput)).isTrue();
+        verify(apps).beginAcceptance(APP_ID, TASK_ID, OPERATOR);
     }
 
     @Test

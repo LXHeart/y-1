@@ -50,7 +50,7 @@ public class FinanceCallerResolver {
         if (header == null || header.isBlank()) {
             return Mono.error(new FinanceException(401, "未登录"));
         }
-        return Mono.justOrEmpty(signer.verify(header, Instant.now()))
+        return signer.verifyReactive(header, Instant.now())
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(),
                         a.permissionTier(), a.callerKind(), a.principal(), a.role()))
                 .switchIfEmpty(Mono.error(new FinanceException(401, "未登录")));

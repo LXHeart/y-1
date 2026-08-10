@@ -240,8 +240,11 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
         String manager = "merchant-store-manager";
         String storeA = UUID.randomUUID().toString();
         String storeB = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(manager, org, storeA, "manager"))
+                .thenReturn(Mono.just(storeAccess(manager, org, storeA, "manager")));
+        when(storeAuthorization.authorize(manager, org, storeB, "manager"))
+                .thenReturn(Mono.just(storeAccess(manager, org, storeB, "manager")));
         when(storeAuthorization.require(manager, org, storeA, "manager")).thenReturn(Mono.empty());
-        when(storeAuthorization.require(manager, org, storeB, "manager")).thenReturn(Mono.empty());
 
         String assetA = createStoreAsset(manager, org, storeA, seedMedia(manager), "A店素材");
         createStoreAsset(manager, org, storeB, seedMedia(manager), "B店素材");
@@ -258,8 +261,9 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .bind("id", assetA).map(row -> row.get(0, String.class)).one().block();
         assertThat(snapshotStore).isEqualTo(storeA);
 
-        when(storeAuthorization.require(manager, org, storeA, "staff")).thenReturn(Mono.empty());
-        client().get().uri("/api/content-assets?libraryType=merchant&storeId=" + storeA)
+        when(storeAuthorization.authorize(manager, org, storeA, "staff"))
+                .thenReturn(Mono.just(storeAccess(manager, org, storeA, "manager")));
+        client().get().uri("/api/content-assets?libraryType=merchant&organizationId=" + org + "&storeId=" + storeA)
                 .header(header(), signWithOrg(manager, org))
                 .exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.items.length()").isEqualTo(1)
@@ -292,6 +296,33 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                         "category", "store", "title", "x"))
                 .exchange()
                 .expectStatus().isForbidden();
+    }
+
+    @Test
+    void independentStoreManagerCanCreateManageAndListStoreAssets() {
+        String manager = "independent-store-manager";
+        String org = "independent-store-org";
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(manager, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(manager, org, store, "manager")));
+        when(storeAuthorization.authorize(manager, org, store, "staff"))
+                .thenReturn(Mono.just(storeAccess(manager, org, store, "manager")));
+        when(storeAuthorization.require(manager, org, store, "manager")).thenReturn(Mono.empty());
+
+        String assetId = createStoreAsset(manager, org, store, seedMedia(manager), "独立店长素材", false);
+
+        client().put().uri("/api/content-assets/" + assetId)
+                .header(header(), sign(manager, null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "category", "store", "title", "店长已更新"))
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/content-assets?libraryType=merchant&organizationId="
+                        + org + "&storeId=" + store)
+                .header(header(), sign(manager, null))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].title").isEqualTo("店长已更新");
     }
 
     @Test
@@ -598,11 +629,18 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
 
     @SuppressWarnings("unchecked")
     private String createStoreAsset(String account, String org, String storeId, String mediaId, String title) {
+        return createStoreAsset(account, org, storeId, mediaId, title, true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createStoreAsset(
+            String account, String org, String storeId, String mediaId, String title, boolean merchantIdentity) {
         Map<String, Object> response = client().post().uri("/api/content-assets")
-                .header(header(), signWithOrg(account, org))
+                .header(header(), merchantIdentity ? signWithOrg(account, org) : sign(account, null))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("libraryType", "merchant", "mediaId", mediaId,
-                        "category", "store", "title", title, "storeId", storeId))
+                        "category", "store", "title", title,
+                        "organizationId", org, "storeId", storeId))
                 .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return ((Map<String, Object>) response.get("data")).get("id").toString();
@@ -651,5 +689,11 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return (Map<String, Object>) response.get("data");
+    }
+
+    private IdentityStoreAuthorizationClient.Authorization storeAccess(
+            String accountId, String organizationId, String storeId, String role) {
+        return new IdentityStoreAuthorizationClient.Authorization(
+                true, accountId, organizationId, storeId, role, "store", "basic_publish");
     }
 }

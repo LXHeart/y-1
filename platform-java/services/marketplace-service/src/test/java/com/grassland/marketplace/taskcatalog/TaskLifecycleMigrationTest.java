@@ -13,8 +13,9 @@ import org.junit.jupiter.api.Test;
  * 和一行 {@code task_version} 快照；V14 既有 task_application 须从 task 回填 {@code bounty_cents} 并 NOT NULL。
  * 迁移绝不伪造 outbox 事件。
  *
- * <p>镜像 identity {@code RecommenderIdentityBackfillMigrationTest} 的隔离 schema 模式：手动建 post-V10 的 task +
- * task_application + marketplace_outbox，baseline=10，跑 V11+（含 V14）。V14 ALTER task_application，故须预先建该表。
+ * <p>镜像 identity {@code RecommenderIdentityBackfillMigrationTest} 的隔离 schema 模式：手动建 post-V10 的 task、
+ * task_application、submission attachment 与 marketplace_outbox，baseline=10，跑 V11+。后续 migration 会 ALTER
+ * 这些 V10 前已存在的表，故夹具必须完整，避免 PostgreSQL search_path 意外回退到 public schema。
  */
 class TaskLifecycleMigrationTest extends MarketplaceItSupport {
 
@@ -45,6 +46,16 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                     + " decided_at timestamptz, confirmed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),"
                     + " updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(task_id, recommender_account_id))");
             statement.execute("CREATE TABLE " + schema + ".marketplace_outbox (id uuid PRIMARY KEY)");
+            statement.execute("CREATE TABLE " + schema + ".engagement_submission ("
+                    + "id uuid PRIMARY KEY, application_id uuid NOT NULL REFERENCES " + schema
+                    + ".task_application(id), recommender_account_id uuid NOT NULL, content_url text NOT NULL,"
+                    + " note text, status varchar(32) NOT NULL DEFAULT 'submitted', review_note text,"
+                    + " reviewed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),"
+                    + " updated_at timestamptz NOT NULL DEFAULT now())");
+            statement.execute("CREATE TABLE " + schema + ".engagement_submission_attachment ("
+                    + "id uuid PRIMARY KEY, submission_id uuid NOT NULL REFERENCES " + schema
+                    + ".engagement_submission(id), media_reference_id uuid NOT NULL, mime_type text,"
+                    + " size_bytes bigint, created_at timestamptz NOT NULL DEFAULT now())");
             statement.execute("INSERT INTO " + schema + ".task(id, owner_account_id, organization_id, title, status, bounty_cents) "
                     + "VALUES ('" + publishedTask + "', '" + owner + "', '" + org + "', '历史任务', 'published', 500)");
             statement.execute("INSERT INTO " + schema

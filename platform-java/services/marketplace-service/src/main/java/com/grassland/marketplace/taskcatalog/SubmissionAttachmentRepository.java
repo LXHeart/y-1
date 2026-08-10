@@ -28,7 +28,9 @@ import reactor.core.publisher.Mono;
 public class SubmissionAttachmentRepository {
 
     private static final String SELECT_COLS =
-            "id::text, submission_id::text, media_reference_id::text, mime_type, size_bytes, created_at";
+            "id::text, submission_id::text, media_reference_id::text, mime_type, size_bytes,"
+                    + " media_domain_type, media_domain_id, media_checksum, media_status_snapshot,"
+                    + " media_metadata_version, created_at";
 
     private final DatabaseClient db;
 
@@ -45,7 +47,8 @@ public class SubmissionAttachmentRepository {
             return Mono.just(List.of());
         }
         StringBuilder sql = new StringBuilder("""
-                INSERT INTO engagement_submission_attachment(id, submission_id, media_reference_id, mime_type, size_bytes)
+                INSERT INTO engagement_submission_attachment(id, submission_id, media_reference_id, mime_type, size_bytes,
+                        media_domain_type, media_domain_id, media_checksum, media_status_snapshot, media_metadata_version)
                 VALUES
                 """);
         for (int i = 0; i < inputs.size(); i++) {
@@ -53,7 +56,10 @@ public class SubmissionAttachmentRepository {
                 sql.append(",\n");
             }
             sql.append(" (CAST(:id").append(i).append(" AS uuid), CAST(:sub AS uuid), CAST(:mid")
-                    .append(i).append(" AS uuid), :mime").append(i).append(", :size").append(i).append(")");
+                    .append(i).append(" AS uuid), :mime").append(i).append(", :size").append(i)
+                    .append(", :domainType").append(i).append(", :domainId").append(i)
+                    .append(", :checksum").append(i).append(", :status").append(i)
+                    .append(", :metadataVersion").append(i).append(")");
         }
         sql.append("\n RETURNING ").append(SELECT_COLS);
 
@@ -64,6 +70,11 @@ public class SubmissionAttachmentRepository {
                     .bind("mid" + i, in.mediaId().toString());
             spec = bindNullable(spec, "mime" + i, in.mimeType());
             spec = bindNullableLong(spec, "size" + i, in.sizeBytes());
+            spec = spec.bind("domainType" + i, in.domainType())
+                    .bind("domainId" + i, in.domainId())
+                    .bind("status" + i, in.status())
+                    .bind("metadataVersion" + i, in.metadataVersion());
+            spec = bindNullable(spec, "checksum" + i, in.checksum());
         }
         return spec.map(SubmissionAttachmentRepository::map).all().collectList()
                 .onErrorResume(DataIntegrityViolationException.class, e -> Mono.empty());
@@ -98,7 +109,8 @@ public class SubmissionAttachmentRepository {
     public Mono<EngagementSubmissionAttachment> findOne(String appId, String submissionId, String mediaReferenceId) {
         return db.sql("""
                 SELECT a.id::text, a.submission_id::text, a.media_reference_id::text,
-                       a.mime_type, a.size_bytes, a.created_at
+                       a.mime_type, a.size_bytes, a.media_domain_type, a.media_domain_id,
+                       a.media_checksum, a.media_status_snapshot, a.media_metadata_version, a.created_at
                 FROM engagement_submission_attachment a
                 JOIN engagement_submission s ON a.submission_id = s.id
                 WHERE a.submission_id = CAST(:sid AS uuid)
@@ -118,6 +130,11 @@ public class SubmissionAttachmentRepository {
                 row.get("media_reference_id", String.class),
                 row.get("mime_type", String.class),
                 row.get("size_bytes", Long.class),
+                row.get("media_domain_type", String.class),
+                row.get("media_domain_id", String.class),
+                row.get("media_checksum", String.class),
+                row.get("media_status_snapshot", String.class),
+                row.get("media_metadata_version", Integer.class),
                 toInstant(row.get("created_at", OffsetDateTime.class))
         );
     }

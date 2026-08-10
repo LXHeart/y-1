@@ -10,4 +10,17 @@ import java.util.UUID;
  * <p>{@code mimeType} 可空（media 记录允许）；{@code sizeBytes} 沿用 intelligence 端 long，这里用 {@code Long}
  * 以便与 DB 的 bigint（可空列）一致。
  */
-public record AttachmentInput(UUID mediaId, String mimeType, Long sizeBytes) {}
+public record AttachmentInput(
+        UUID mediaId,
+        String mimeType,
+        Long sizeBytes,
+        String domainType,
+        String domainId,
+        String checksum,
+        String status,
+        int metadataVersion) {
+
+    public AttachmentInput(UUID mediaId, String mimeType, Long sizeBytes) {
+        this(mediaId, mimeType, sizeBytes, "application", "legacy", null, "active", 1);
+    }
+}

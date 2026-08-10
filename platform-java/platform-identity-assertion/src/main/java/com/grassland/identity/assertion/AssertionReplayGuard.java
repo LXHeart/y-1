@@ -1,6 +1,7 @@
 package com.grassland.identity.assertion;
 
 import java.time.Instant;
+import reactor.core.publisher.Mono;
 
 /**
  * 断言重放防护（GL-P0-ASSERT-001，可选）。生产扩副本前必须替换为共享存储（Redis/DB），
@@ -19,6 +20,11 @@ public interface AssertionReplayGuard {
      * @return true=首次消费（通过），false=已消费（拒绝重放）
      */
     boolean consumeOnce(String jti, Instant expiresAt);
+
+    /** Reactive 消费入口。内存实现复用同步逻辑，Redis 实现覆盖为非阻塞命令。 */
+    default Mono<Boolean> consumeOnceReactive(String jti, Instant expiresAt) {
+        return Mono.fromSupplier(() -> consumeOnce(jti, expiresAt));
+    }
 
     /** 无操作实现（默认）。 */
     AssertionReplayGuard NO_OP = (jti, expiresAt) -> true;

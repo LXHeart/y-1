@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** 验签铁律：任何失败一律 empty（不抛），调用方据此降级匿名。 */
@@ -85,6 +86,30 @@ class AccessTokenSignerTest {
         String signedByOther = other.sign(token(NOW, NOW.plusSeconds(900)));
 
         assertThat(signer.verify(signedByOther, NOW)).isEmpty();
+    }
+
+    @Test
+    void previousVerificationKeyAcceptedDuringRotationWindow() {
+        AccessTokenSigner oldSigner = new AccessTokenSigner(SECRET, "access-token-v1", Duration.ofSeconds(5));
+        byte[] nextSecret = "next-mobile-access-token-secret-32ch".getBytes();
+        AccessTokenSigner rotatingVerifier = new AccessTokenSigner(nextSecret, "access-token-v2",
+                Map.of("access-token-v1", SECRET), Duration.ofSeconds(5));
+
+        String oldToken = oldSigner.sign(token(NOW, NOW.plusSeconds(900)));
+
+        assertThat(rotatingVerifier.verify(oldToken, NOW)).isPresent();
+        assertThat(rotatingVerifier.sign(token(NOW, NOW.plusSeconds(900))))
+                .satisfies(signed -> assertThat(rotatingVerifier.verify(signed, NOW)).isPresent());
+    }
+
+    @Test
+    void removedPreviousKeyRejectsOldToken() {
+        String oldToken = signer.sign(token(NOW, NOW.plusSeconds(900)));
+        AccessTokenSigner afterWindow = new AccessTokenSigner(
+                "next-mobile-access-token-secret-32ch".getBytes(), "access-token-v2", Map.of(),
+                Duration.ofSeconds(5));
+
+        assertThat(afterWindow.verify(oldToken, NOW)).isEmpty();
     }
 
     @Test

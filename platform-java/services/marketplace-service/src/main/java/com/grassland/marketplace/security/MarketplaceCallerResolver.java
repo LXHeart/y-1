@@ -31,7 +31,7 @@ public class MarketplaceCallerResolver {
         if (header == null || header.isBlank()) {
             return Mono.error(new MarketplaceException(401, "未登录"));
         }
-        return Mono.justOrEmpty(signer.verify(header, Instant.now()))
+        return signer.verifyReactive(header, Instant.now())
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.sessionToken(),
                         a.organizationId(), a.permissionTier(), a.callerKind(), a.principal(), a.role()))
                 .switchIfEmpty(Mono.error(new MarketplaceException(401, "未登录")));
@@ -51,6 +51,13 @@ public class MarketplaceCallerResolver {
         return resolve(request)
                 .filter(Caller::isMerchant)
                 .switchIfEmpty(Mono.error(new MarketplaceException(403, "需要商家身份")));
+    }
+
+    /** Any signed-in human account. Store-scoped authorization is resolved separately by Identity. */
+    public Mono<Caller> requireUser(ServerHttpRequest request) {
+        return resolve(request)
+                .filter(caller -> !caller.isService() && caller.accountId() != null)
+                .switchIfEmpty(Mono.error(new MarketplaceException(403, "需要用户身份")));
     }
 
     /** 推荐官报名等动作要求 activeIdentityType=recommender，否则 403。草场 Epic 4 Slice 4B。 */

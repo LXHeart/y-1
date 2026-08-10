@@ -9,6 +9,8 @@ public enum IdentityAuditAction {
     ACTIVATE("activate"),
     DEACTIVATE("deactivate"),
     REVOKE_SESSION("revoke_session"),
+    /** 并发活动身份超限后，系统将最旧设备切回消费者；登录会话仍保留。 */
+    POLICY_DEACTIVATE("policy_deactivate"),
     /** 移动端 refresh token 撤销（/api/auth/revoke，GL-P3-IDENTITY-001）。 */
     TOKEN_REVOKE("token_revoke"),
     /** 移动端设备撤销（DELETE /api/me/devices/{id}，GL-P3-IDENTITY-001）。 */

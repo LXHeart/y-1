@@ -83,4 +83,32 @@ describe('MediaLibraryPanel', () => {
     expect(wrapper.text()).toContain('我的文案模板')
     expect(wrapper.text()).toContain('文案')
   })
+
+  test('纯门店 MANAGER 可进入商家素材管理并限定到获授权门店', async () => {
+    const fetchMock = mockFetch({
+      '/api/me/identities': [],
+      '/api/me/store-scopes': [{
+        storeId: 'store-1', storeName: '一号门店', storeStatus: 'active',
+        organizationId: 'org-1', organizationName: '示例组织', organizationStatus: 'active',
+        permissionTier: 'basic_publish', role: 'manager',
+      }],
+      'libraryType=merchant': { items: [] },
+      'libraryType=personal': { items: [] },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+    const merchantTab = wrapper.findAll('button[role="tab"]').find((button) => button.text().includes('商家素材'))!
+    await merchantTab.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('一号门店')
+    expect(wrapper.text()).toContain('添加素材')
+    const merchantRequest = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .find((url) => url.includes('libraryType=merchant'))
+    expect(merchantRequest).toContain('organizationId=org-1')
+    expect(merchantRequest).toContain('storeId=store-1')
+  })
 })

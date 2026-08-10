@@ -35,7 +35,7 @@ public class TrustCallerResolver {
         if (header == null || header.isBlank()) {
             return Mono.error(new TrustException(401, "未登录"));
         }
-        return Mono.justOrEmpty(signer.verify(header, Instant.now()))
+        return signer.verifyReactive(header, Instant.now())
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.organizationId(),
                         a.callerKind(), a.principal(), a.reauthenticatedAt(), a.role()))
                 .switchIfEmpty(Mono.error(new TrustException(401, "未登录")));

@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import reactor.core.publisher.Mono;
 
 /**
  * 内部身份断言的 HMAC-SHA256 签发/验签（GL-P0-ASSERT-001 keyring 模式）。
@@ -167,6 +168,38 @@ public final class IdentityAssertionSigner {
      * @return 验签通过的断言；失败/过期/绑定不符/重放 → {@link Optional#empty()}
      */
     public Optional<IdentityAssertion> verify(String token, Instant now) {
+        Optional<IdentityAssertion> verified = verifyWithoutReplay(token, now);
+        if (verified.isEmpty() || keyring == null || replayGuard == null) {
+            return verified;
+        }
+        IdentityAssertion assertion = verified.get();
+        String jti = assertion.jti();
+        if (jti != null && !jti.isBlank()
+                && !replayGuard.consumeOnce(jti, assertion.expiresAt().plus(leeway))) {
+            return Optional.empty();
+        }
+        return verified;
+    }
+
+    /**
+     * Reactive 验签入口。生产 WebFlux 请求链应使用本方法，使 Redis replay 消费保持非阻塞。
+     * 密码学与 claim 校验在内存中同步完成，只有 replay guard 访问共享存储。
+     */
+    public Mono<IdentityAssertion> verifyReactive(String token, Instant now) {
+        Optional<IdentityAssertion> verified = verifyWithoutReplay(token, now);
+        if (verified.isEmpty()) {
+            return Mono.empty();
+        }
+        IdentityAssertion assertion = verified.get();
+        if (keyring == null || replayGuard == null || assertion.jti() == null || assertion.jti().isBlank()) {
+            return Mono.just(assertion);
+        }
+        return replayGuard.consumeOnceReactive(assertion.jti(), assertion.expiresAt().plus(leeway))
+                .filter(Boolean.TRUE::equals)
+                .map(ignored -> assertion);
+    }
+
+    private Optional<IdentityAssertion> verifyWithoutReplay(String token, Instant now) {
         if (token == null || token.isBlank()) {
             return Optional.empty();
         }
@@ -254,16 +287,6 @@ public final class IdentityAssertionSigner {
         if (when.isBefore(assertion.issuedAt().minus(leeway))
                 || when.isAfter(assertion.expiresAt().plus(leeway))) {
             return Optional.empty();
-        }
-
-        // replay guard 消费 jti
-        if (keyring != null && replayGuard != null) {
-            String jti = assertion.jti();
-            if (jti != null && !jti.isBlank()) {
-                if (!replayGuard.consumeOnce(jti, assertion.expiresAt())) {
-                    return Optional.empty(); // jti 已消费
-                }
-            }
         }
 
         return Optional.of(assertion);

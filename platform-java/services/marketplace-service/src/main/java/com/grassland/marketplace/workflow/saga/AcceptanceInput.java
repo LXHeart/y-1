@@ -6,7 +6,8 @@ package com.grassland.marketplace.workflow.saga;
  * <p>字段语义：
  * <ul>
  *   <li>{@code applicationId} = 报名 id；同时作 finance 的 {@code engagement_ref}（决策④：复用报名 id 作履约引用）。</li>
- *   <li>{@code merchantAccountId} = 任务 owner（接受操作的商家，断言 caller）——activity 重验 owner 自查用。</li>
+ *   <li>{@code merchantAccountId} = 任务 owner——activity 重验资源归属用。</li>
+ *   <li>{@code operatorAccountId} = 实际执行接受操作的账号；门店任务可为另一位当前 MANAGER。</li>
  *   <li>{@code organizationId} = 任务所属 org——现签服务断言带 org 上下文，finance org 级授权用。</li>
  *   <li>{@code amountCents} = {@code task.bounty_cents}——reserve 金额。</li>
  * </ul>
@@ -16,5 +17,16 @@ public record AcceptanceInput(
         String taskId,
         String merchantAccountId,
         String organizationId,
-        long amountCents) {
+        long amountCents,
+        String operatorAccountId) {
+
+    /** Backward-compatible constructor for existing tests and serialized workflow callers. */
+    public AcceptanceInput(String applicationId, String taskId, String merchantAccountId,
+                           String organizationId, long amountCents) {
+        this(applicationId, taskId, merchantAccountId, organizationId, amountCents, merchantAccountId);
+    }
+
+    public String effectiveOperatorAccountId() {
+        return operatorAccountId == null || operatorAccountId.isBlank() ? merchantAccountId : operatorAccountId;
+    }
 }

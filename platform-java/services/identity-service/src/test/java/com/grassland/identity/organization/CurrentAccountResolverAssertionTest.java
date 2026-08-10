@@ -15,7 +15,7 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import reactor.test.StepVerifier;
 
 /**
- * CurrentAccountResolver 断言消费（Slice 2K / HLD 7.4）：有效断言解析（无需 cookie）、失效断言回退 cookie、断言优先于 cookie。
+ * CurrentAccountResolver 断言消费（Slice 2K / HLD 7.4）：有效断言解析（无需 cookie）、失效断言 fail-closed、断言优先于 cookie。
  * 继承 {@link IdentityItSupport}（已注入 signer bean + seedAccount）。
  */
 class CurrentAccountResolverAssertionTest extends IdentityItSupport {
@@ -40,13 +40,16 @@ class CurrentAccountResolverAssertionTest extends IdentityItSupport {
     }
 
     @Test
-    void invalidAssertion_fallsBackToCookie() {
+    void invalidAssertionDoesNotFallBackToCookie() {
         Seeded seeded = seedAccount("assert-fallback@grassland.local");
 
-        // 垃圾断言 + 有效 cookie → 回退 cookie 路径解析成功。
+        // 内部断言头存在却无效，不能靠同时携带的 cookie 绕过 replay/验签失败。
         StepVerifier.create(resolver.resolvePrincipal(request("garbage.token", seeded.cookie())))
-                .assertNext(p -> assertThat(p.user().id()).isEqualTo(seeded.accountId()))
-                .verifyComplete();
+                .expectErrorSatisfies(error -> {
+                    assertThat(error).isInstanceOf(IdentityException.class);
+                    assertThat(((IdentityException) error).status()).isEqualTo(401);
+                })
+                .verify();
     }
 
     @Test

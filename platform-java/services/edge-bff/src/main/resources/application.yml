@@ -31,6 +31,8 @@ edge:
   access-token:
     secret: ${EDGE_ACCESS_TOKEN_SECRET:}
     kid: ${EDGE_ACCESS_TOKEN_KID:access-token-v1}
+    # 轮换窗口内保留旧验签密钥，格式 kid=secret,kid2=secret2。
+    previous-keys: ${EDGE_ACCESS_TOKEN_PREVIOUS_KEYS:}
     leeway-seconds: ${EDGE_ACCESS_TOKEN_LEEWAY_SECONDS:5}
   upstreams:
     legacy: ${LEGACY_EXPRESS_BASE_URL:http://localhost:3000}
@@ -86,7 +88,7 @@ edge:
     - path: /api/organizations
       upstream: identity
       enabled: ${EDGE_ROUTE_ORGANIZATIONS_IDENTITY:true}
-    # 活动身份 + 多设备 session（/api/me/identities、/api/me/active-identity、/api/me/sessions）。
+    # 活动身份 + 多设备 session + 本人身份审计（/api/me/identity-audit）。
     - path: /api/me
       upstream: identity
       enabled: ${EDGE_ROUTE_ME_IDENTITY:true}
@@ -434,9 +436,12 @@ identity-assertion:
       purpose: user
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE:}
-  # replay 防护（默认关闭，单实例部署时关闭；扩副本前须切换共享存储）
+  # replay 防护：生产 Compose 使用 Redis 跨副本原子消费；memory 仅限单实例测试。
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+    storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}
+    redis-url: ${IDENTITY_ASSERTION_REPLAY_REDIS_URL:}
+    key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 identity:
   legacy:

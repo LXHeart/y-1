@@ -308,6 +308,46 @@ class IdentityAssertionKeyringTest {
     }
 
     @Test
+    void verifyReactiveRejectsDuplicateWithoutBlockingCaller() {
+        InMemoryAssertionReplayGuard guard = new InMemoryAssertionReplayGuard(true);
+        IdentityAssertionSigner signer = new IdentityAssertionSigner(
+                testKeyring(), "edge-bff", guard, Duration.ofSeconds(5));
+        IdentityAssertion base = new IdentityAssertion(
+                "a1", "merchant", "sid", null, null,
+                "cookie", "level1", null, "r", "t",
+                "unused", NOW, NOW.plusSeconds(60), null, null, null, null, null, null);
+        String token = signer.sign(base, "grassland-identity");
+
+        assertThat(signer.verifyReactive(token, NOW).blockOptional()).isPresent();
+        assertThat(signer.verifyReactive(token, NOW).blockOptional()).isEmpty();
+    }
+
+    @Test
+    void verifierAcceptsCurrentAndPreviousKidDuringRotationThenRejectsRetiredKid() {
+        String oldSecret = "old-assertion-secret-at-least-32!!";
+        String newSecret = "new-assertion-secret-at-least-32!!";
+        IdentityAssertionSigner oldIssuer = signerWithSigningKey("edge-user-identity-v1", oldSecret);
+        IdentityAssertionSigner newIssuer = signerWithSigningKey("edge-user-identity-v2", newSecret);
+        IdentityAssertion base = new IdentityAssertion(
+                "a1", "merchant", "sid", null, null,
+                "cookie", "level1", null, "r", "t",
+                "unused", NOW, NOW.plusSeconds(60), null, null, null, null, null, null);
+        String oldToken = oldIssuer.sign(base, "grassland-identity");
+        String newToken = newIssuer.sign(base, "grassland-identity");
+
+        IdentityAssertionSigner rotatingVerifier = verifierWithKeys(List.of(
+                verifyEntry("edge-user-identity-v2", newSecret),
+                verifyEntry("edge-user-identity-v1", oldSecret)));
+        assertThat(rotatingVerifier.verify(oldToken, NOW)).isPresent();
+        assertThat(rotatingVerifier.verify(newToken, NOW)).isPresent();
+
+        IdentityAssertionSigner afterRetirement = verifierWithKeys(List.of(
+                verifyEntry("edge-user-identity-v2", newSecret)));
+        assertThat(afterRetirement.verify(oldToken, NOW)).isEmpty();
+        assertThat(afterRetirement.verify(newToken, NOW)).isPresent();
+    }
+
+    @Test
     void replayGuard_disabledAcceptsDuplicate() {
         InMemoryAssertionReplayGuard guard = new InMemoryAssertionReplayGuard(false);
         IdentityAssertionKeyring keyring = testKeyring();
@@ -323,6 +363,29 @@ class IdentityAssertionKeyringTest {
         // 两次验证都通过
         assertThat(signer.verify(token, NOW)).isPresent();
         assertThat(signer.verify(token, NOW)).isPresent();
+    }
+
+    private IdentityAssertionSigner signerWithSigningKey(String kid, String secret) {
+        var props = new IdentityAssertionProperties(
+                true, null, 60, null, null, 5, List.of(), "edge-bff",
+                List.of(new IdentityAssertionProperties.KeyEntry(
+                        kid, null, "user", "grassland-identity", secret)),
+                List.of(), new IdentityAssertionProperties.ReplayProtectionConfig(false));
+        return new IdentityAssertionSigner(PropertiesKeyring.from(props), "edge-bff",
+                AssertionReplayGuard.NO_OP, Duration.ZERO);
+    }
+
+    private IdentityAssertionSigner verifierWithKeys(List<IdentityAssertionProperties.KeyEntry> keys) {
+        var props = new IdentityAssertionProperties(
+                true, null, 60, null, null, 5, List.of(), "identity",
+                List.of(), keys, new IdentityAssertionProperties.ReplayProtectionConfig(false));
+        return new IdentityAssertionSigner(PropertiesKeyring.from(props), "identity",
+                AssertionReplayGuard.NO_OP, Duration.ZERO);
+    }
+
+    private IdentityAssertionProperties.KeyEntry verifyEntry(String kid, String secret) {
+        return new IdentityAssertionProperties.KeyEntry(
+                kid, "edge-bff", "user", "grassland-identity", secret);
     }
 
     @Test

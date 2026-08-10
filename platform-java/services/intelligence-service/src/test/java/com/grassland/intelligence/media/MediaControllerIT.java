@@ -191,6 +191,14 @@ class MediaControllerIT {
                         """)
                 .bind("id", mediaId.toString()).map(row -> row.get("c", Long.class)).one().block();
         assertThat(deletedRows).isEqualTo(1L);
+        List<String> mediaEvents = db.sql("""
+                        SELECT event_type FROM intelligence_outbox
+                        WHERE aggregate_type = 'media_reference' AND aggregate_id = :id
+                        ORDER BY created_at, id
+                        """)
+                .bind("id", mediaId.toString())
+                .map(row -> row.get("event_type", String.class)).all().collectList().block();
+        assertThat(mediaEvents).containsExactly("MediaUploadReserved", "MediaActivated", "MediaDeleted");
         client.get().uri("/api/media/{id}", mediaId)
                 .header("X-Grassland-Identity", sign(owner, org))
                 .exchange().expectStatus().isNotFound();
@@ -391,7 +399,7 @@ class MediaControllerIT {
         UUID mediaId = createActiveAttachment(owner, org, PNG.length);
         WebTestClient client = client();
 
-        Map<String, Object> envelope = client.get().uri("/api/media/{id}/metadata", mediaId)
+        Map<String, Object> envelope = client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
@@ -404,6 +412,18 @@ class MediaControllerIT {
         assertThat(data.get("mimeType")).isEqualTo("image/png");
         assertThat(data.get("sizeBytes")).isEqualTo(PNG.length);
         assertThat(data.get("expiresAt")).isNotNull();
+    }
+
+    @Test
+    void serviceMetadataRejectsAttachmentFromDifferentApplicationDomain() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = "org-" + UUID.randomUUID();
+        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+
+        client().get().uri(URI.create("/api/media/" + mediaId
+                        + "/metadata?domainType=application&domainId=other-app"))
+                .header("X-Grassland-Identity", signService(org))
+                .exchange().expectStatus().isNotFound();
     }
 
     @Test
@@ -623,17 +643,17 @@ class MediaControllerIT {
         WebTestClient client = client();
 
         // 终端用户断言（callerKind=null）→ 403：服务间断点不对浏览器/终端用户开放
-        client.get().uri("/api/media/{id}/metadata", mediaId)
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
                 .header("X-Grassland-Identity", sign(owner, org))
                 .exchange().expectStatus().isEqualTo(403);
 
         // 服务断言但 principal 不是 marketplace → 403
-        client.get().uri("/api/media/{id}/metadata", mediaId)
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
                 .header("X-Grassland-Identity", signService(org, "trust"))
                 .exchange().expectStatus().isEqualTo(403);
 
         // 缺断言 → 401
-        client.get().uri("/api/media/{id}/metadata", mediaId)
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
                 .exchange().expectStatus().isUnauthorized();
     }
 
@@ -645,26 +665,26 @@ class MediaControllerIT {
         // 非 engagement_attachment 用途（user_upload pending）→ 404
         UUID userUploadId = UUID.fromString(
                 (String) createTicket("acct-a-" + UUID.randomUUID(), PNG.length).get("id"));
-        client.get().uri("/api/media/{id}/metadata", userUploadId)
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", userUploadId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isNotFound();
 
         // engagement_attachment 但 pending（未 confirm）→ 404
         UUID pendingId = UUID.fromString((String) createAttachmentTicket(
                 "acct-b-" + UUID.randomUUID(), org, PNG.length).get("id"));
-        client.get().uri("/api/media/{id}/metadata", pendingId)
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", pendingId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isNotFound();
 
         // engagement_attachment active 但已过期 → 404
         UUID expiredId = insertMedia("acct-c-" + UUID.randomUUID(), org,
                 "engagement_attachment", MediaStatus.ACTIVE, Instant.now().minusSeconds(60));
-        client.get().uri("/api/media/{id}/metadata", expiredId)
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", expiredId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isNotFound();
 
         // 不存在的 id → 404（存在性不可探测）
-        client.get().uri("/api/media/{id}/metadata", UUID.randomUUID())
+        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", UUID.randomUUID())
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isNotFound();
     }
@@ -677,7 +697,7 @@ class MediaControllerIT {
         UUID mediaId = createActiveAttachment(owner, org, PNG.length);
         WebTestClient client = client();
 
-        Map<String, Object> envelope = client.get().uri("/api/media/{id}/download-url", mediaId)
+        Map<String, Object> envelope = client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", mediaId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
@@ -702,7 +722,7 @@ class MediaControllerIT {
         // 已过期 active → 404（download-url 在 presign 前就被 serviceAttachment 过滤掉）
         UUID expiredId = insertMedia("acct-a-" + UUID.randomUUID(), org,
                 "engagement_attachment", MediaStatus.ACTIVE, Instant.now().minusSeconds(60));
-        client.get().uri("/api/media/{id}/download-url", expiredId)
+        client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", expiredId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isNotFound();
 
@@ -712,14 +732,14 @@ class MediaControllerIT {
         client.delete().uri("/api/media/{id}", liveId)
                 .header("X-Grassland-Identity", sign(ownerB, org))
                 .exchange().expectStatus().isOk();
-        client.get().uri("/api/media/{id}/download-url", liveId)
+        client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", liveId)
                 .header("X-Grassland-Identity", signService(org))
                 .exchange().expectStatus().isNotFound();
 
         // 用户断言 → 403（download-url 同 metadata 的 service gate）
         String ownerC = "acct-c-" + UUID.randomUUID();
         UUID liveId2 = createActiveAttachment(ownerC, org, PNG.length);
-        client.get().uri("/api/media/{id}/download-url", liveId2)
+        client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", liveId2)
                 .header("X-Grassland-Identity", sign(ownerC, org))
                 .exchange().expectStatus().isEqualTo(403);
     }

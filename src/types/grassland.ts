@@ -572,6 +572,18 @@ export interface Store {
   createdAt: string | null
 }
 
+/** 当前账号被显式授予的门店范围；不代表其拥有组织成员身份。 */
+export interface StoreAccessScope {
+  storeId: string
+  storeName: string
+  storeStatus: string
+  organizationId: string
+  organizationName: string
+  organizationStatus: string
+  permissionTier: PermissionTier
+  role: StoreRole
+}
+
 // ---------- marketplace：履约交付物 ----------
 
 /** 交付物状态。submitted=待商家核验；accepted=商家确认履约时置；rejected=被退回，可修改重交。 */
@@ -774,6 +786,8 @@ export interface CreateContentAssetInput {
   validUntil?: string
   source?: string
   licenseScope?: string
+  /** 门店经理不持有 merchant identity 时必须显式携带。 */
+  organizationId?: string
   storeId?: string
 }
 

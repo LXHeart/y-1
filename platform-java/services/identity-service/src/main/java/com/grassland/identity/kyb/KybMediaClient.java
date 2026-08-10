@@ -26,6 +26,8 @@ public class KybMediaClient {
             new ParameterizedTypeReference<>() {};
     private static final ParameterizedTypeReference<Envelope<KybMediaRetentionReceipt>> RETENTION_RESPONSE_TYPE =
             new ParameterizedTypeReference<>() {};
+    private static final ParameterizedTypeReference<Envelope<KybDocumentAnalysis>> ANALYSIS_RESPONSE_TYPE =
+            new ParameterizedTypeReference<>() {};
 
     private final WebClient webClient;
     private final IdentityServiceAssertionIssuer issuer;
@@ -80,6 +82,19 @@ public class KybMediaClient {
                 .timeout(timeout)
                 .onErrorMap(error -> !(error instanceof IdentityException),
                         error -> new IdentityException(503, "媒体校验服务暂不可用"));
+    }
+
+    public Mono<KybDocumentAnalysis> analyzeDocument(
+            UUID mediaId, String organizationId, String attachmentType) {
+        return webClient.post()
+                .uri("/api/media/{id}/kyb-document-analysis", mediaId)
+                .header(headerName, issuer.issueForOrganization(organizationId, INTELLIGENCE_AUDIENCE))
+                .bodyValue(Map.of("attachmentType", attachmentType))
+                .exchangeToMono(response -> readResponse(
+                        response, ANALYSIS_RESPONSE_TYPE, "KYB 证照识别失败"))
+                .timeout(Duration.ofSeconds(70))
+                .onErrorMap(error -> !(error instanceof IdentityException),
+                        error -> new IdentityException(503, "KYB 证照识别服务暂不可用"));
     }
 
     public Mono<Void> retain(UUID mediaId, String organizationId, UUID referenceId) {

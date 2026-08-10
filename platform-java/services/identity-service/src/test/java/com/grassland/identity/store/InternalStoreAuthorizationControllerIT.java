@@ -33,7 +33,8 @@ class InternalStoreAuthorizationControllerIT extends IdentityItSupport {
         check("intelligence", staff.accountId(), orgId, storeId, "manager")
                 .expectStatus().isForbidden();
         check("marketplace", manager.accountId(), orgId, storeId, "manager")
-                .expectStatus().isOk();
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.data.permissionTier").isEqualTo("draft");
 
         // Org OWNER is not required to have a store_membership row and is still an implicit manager.
         check("intelligence", owner.accountId(), orgId, storeId, "manager")
@@ -45,6 +46,16 @@ class InternalStoreAuthorizationControllerIT extends IdentityItSupport {
                 .expectBody().jsonPath("$.data.scope").isEqualTo("organization");
         check("marketplace", staff.accountId(), orgId, null, "staff")
                 .expectStatus().isForbidden();
+
+        client().get().uri("/api/me/store-scopes")
+                .header("Cookie", "y1.sid=" + manager.cookie())
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].storeId").isEqualTo(storeId)
+                .jsonPath("$.data[0].organizationId").isEqualTo(orgId)
+                .jsonPath("$.data[0].role").isEqualTo("manager")
+                .jsonPath("$.data[0].permissionTier").isEqualTo("draft");
     }
 
     @Test

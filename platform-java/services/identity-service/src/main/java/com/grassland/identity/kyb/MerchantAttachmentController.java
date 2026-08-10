@@ -47,6 +47,7 @@ public class MerchantAttachmentController {
     private final KybMediaValidator mediaValidator;
     private final KybMediaRetentionCommandRepository retentionCommands;
     private final KybMediaRetentionProperties retentionProperties;
+    private final KybDocumentAnalysisJobRepository documentAnalysisJobs;
     private final TransactionalOperator transactions;
 
     public MerchantAttachmentController(
@@ -58,6 +59,7 @@ public class MerchantAttachmentController {
             KybMediaValidator mediaValidator,
             KybMediaRetentionCommandRepository retentionCommands,
             KybMediaRetentionProperties retentionProperties,
+            KybDocumentAnalysisJobRepository documentAnalysisJobs,
             TransactionalOperator transactions) {
         this.authz = authz;
         this.organizations = organizations;
@@ -67,6 +69,7 @@ public class MerchantAttachmentController {
         this.mediaValidator = mediaValidator;
         this.retentionCommands = retentionCommands;
         this.retentionProperties = retentionProperties;
+        this.documentAnalysisJobs = documentAnalysisJobs;
         this.transactions = transactions;
     }
 
@@ -138,6 +141,9 @@ public class MerchantAttachmentController {
                                                 mediaRefId, attachmentId, orgId, "attachment",
                                                 receipt.leaseUntil())
                                         .thenReturn(attachment))
+                                .flatMap(attachment -> type.isDocumentType()
+                                        ? documentAnalysisJobs.enqueue(attachment.id()).thenReturn(attachment)
+                                        : Mono.just(attachment))
                                 // 外部租约成功而本地事务失败时立即释放；进程崩溃则由有限租约自动收敛。
                                 .onErrorResume(error -> mediaClient.release(mediaRefId, orgId, attachmentId)
                                         .onErrorResume(releaseError -> Mono.empty())
@@ -227,6 +233,10 @@ public class MerchantAttachmentController {
         m.put("mimeType", attachment.mimeType());
         m.put("sizeBytes", attachment.sizeBytes());
         m.put("uploadedAt", attachment.uploadedAt() == null ? null : attachment.uploadedAt().toString());
+        m.put("ocrStatus", attachment.ocrStatus());
+        m.put("ocrAnalyzedAt", attachment.ocrAnalyzedAt() == null
+                ? null : attachment.ocrAnalyzedAt().toString());
+        m.put("ocrFailureCode", attachment.ocrFailureCode());
         return m;
     }
 

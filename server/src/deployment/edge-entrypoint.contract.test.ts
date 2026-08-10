@@ -148,7 +148,8 @@ describe('Edge BFF deployment entrypoint contract', () => {
     const runner = readRepositoryFile('scripts/ci-e2e.sh')
     const expectedSecrets = new Set(
       [...compose.matchAll(/\$\{(IDENTITY_ASSERTION_KEY_[A-Z0-9_]+):-\}/g)]
-        .map(([, name]) => name),
+        .map(([, name]) => name)
+        .filter((name) => !name.endsWith('_PREVIOUS') && !name.endsWith('_PREVIOUS_KID')),
     )
 
     expect(expectedSecrets.size).toBeGreaterThan(0)

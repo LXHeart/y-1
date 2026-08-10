@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.reputation.ReputationService;
+import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.IntelligenceVerificationClient;
@@ -55,6 +56,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
     /** finance 出站边界替身（Slice 4F）：真 Saga 跑通，仅 finance HTTP 被 mock，按用例桩 reserve 结果。 */
     @MockitoBean
     private FinanceEscrowClient financeClient;
+
+    @MockitoBean
+    private IdentityStoreAuthorizationClient storeAuthorization;
 
     /** 争议检查替身（Slice 6A）：默认 false（无争议→settled）；held 用例桩 true。真实现 HttpDisputeChecker 调 trust。 */
     @MockitoBean
@@ -218,6 +222,27 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
         assertThat(outboxCount("ApplicationAccepted", task)).isEqualTo(1);
         assertThat(acceptedCount(task)).isEqualTo(1);
+    }
+
+    @Test
+    void independentStoreManagerCanAcceptApplicationForAnotherManagersTask() {
+        String creator = UUID.randomUUID().toString();
+        String operator = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(creator, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(creator, org, store)));
+        when(storeAuthorization.authorize(operator, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(operator, org, store)));
+
+        String task = publishStoreTask(creator, org, store);
+        String app = apply(UUID.randomUUID().toString(), task);
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(operator, null))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("accepted")
+                .jsonPath("$.data.reviewedByAccountId").isEqualTo(operator);
     }
 
     @Test
@@ -758,9 +783,10 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         return new String[]{merchant, org, task, app};
     }
 
-    private IntelligenceMediaClient.MediaMetadata mediaMeta(UUID id, String owner) {
+    private IntelligenceMediaClient.MediaMetadata mediaMeta(UUID id, String owner, String applicationId) {
         return new IntelligenceMediaClient.MediaMetadata(
-                id, owner, "engagement_attachment", "active", "image/png", 1234L,
+                id, owner, "engagement_attachment", "application", applicationId, "active",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "image/png", 1234L,
                 Instant.parse("2026-12-31T00:00:00Z"));
     }
 
@@ -771,8 +797,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
         UUID m2 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
-        when(mediaClient.metadata(org, m2)).thenReturn(Mono.just(mediaMeta(m2, rec)));
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
+        when(mediaClient.metadata(org, m2, "application", app)).thenReturn(Mono.just(mediaMeta(m2, rec, app)));
 
         Map<String, Object> data = submitWithMedia(rec, task, app, List.of(m1.toString(), m2.toString()));
         String submissionId = (String) data.get("id");
@@ -792,7 +818,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
         // metadata 放行（purpose/active 合法）但 owner 是别人 → IDOR 守卫 403
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, UUID.randomUUID().toString())));
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(
+                mediaMeta(m1, UUID.randomUUID().toString(), app)));
 
         submitWithMediaRaw(rec, task, app, List.of(m1.toString())).expectStatus().isForbidden();
 
@@ -807,7 +834,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.empty());  // intelligence 404
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.empty());  // intelligence 404
 
         submitWithMediaRaw(rec, task, app, List.of(m1.toString())).expectStatus().isNotFound();
         assertThat(submissionCount(app)).isZero();
@@ -840,7 +867,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
         String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
 
         client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
@@ -858,8 +885,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String merchant = s[0], org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
-        when(mediaClient.downloadUrl(org, m1)).thenReturn(Mono.just(new IntelligenceMediaClient.MediaDownload(
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
+        when(mediaClient.downloadUrl(org, m1, "application", app)).thenReturn(Mono.just(new IntelligenceMediaClient.MediaDownload(
                 URI.create("https://minio.local/media/x?sig=abc"), Instant.parse("2026-12-31T00:00:00Z"))));
         String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
         String uri = "/api/tasks/" + task + "/applications/" + app + "/submissions/" + submissionId
@@ -898,8 +925,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
-        when(mediaClient.downloadUrl(org, m1)).thenReturn(Mono.empty());  // media 被删
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
+        when(mediaClient.downloadUrl(org, m1, "application", app)).thenReturn(Mono.empty());  // media 被删
         String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
 
         client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + submissionId
@@ -915,7 +942,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
         doReturn(Mono.empty()).when(attachmentRepo).attach(anyString(), anyList());  // 模拟冲突
 
         submitWithMediaRaw(rec, task, app, List.of(m1.toString())).expectStatus().isEqualTo(409);
@@ -1252,7 +1279,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String merchant = s[0], org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
         String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
 
         when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
@@ -1290,7 +1317,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String[] s = acceptedNonMonetary(rec);
         String merchant = s[0], org = s[1], task = s[2], app = s[3];
         UUID m1 = UUID.randomUUID();
-        when(mediaClient.metadata(org, m1)).thenReturn(Mono.just(mediaMeta(m1, rec)));
+        when(mediaClient.metadata(org, m1, "application", app)).thenReturn(Mono.just(mediaMeta(m1, rec, app)));
         String submissionId = (String) submitWithMedia(rec, task, app, List.of(m1.toString())).get("id");
 
         when(linkChecker.check(anyString())).thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
@@ -1544,6 +1571,29 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
         markPublished(taskId);
         return taskId;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String publishStoreTask(String manager, String org, String store) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("organizationId", org);
+        body.put("storeId", store);
+        body.put("title", "门店任务");
+        Map<String, Object> response = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(manager, null))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        String taskId = (String) ((Map<String, Object>) response.get("data")).get("id");
+        markPublished(taskId);
+        return taskId;
+    }
+
+    private IdentityStoreAuthorizationClient.Authorization storeAccess(
+            String accountId, String organizationId, String storeId) {
+        return new IdentityStoreAuthorizationClient.Authorization(
+                true, accountId, organizationId, storeId,
+                "manager", "store", "basic_publish");
     }
 
     @SuppressWarnings("unchecked")

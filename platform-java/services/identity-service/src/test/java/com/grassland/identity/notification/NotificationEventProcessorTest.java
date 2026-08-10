@@ -13,6 +13,7 @@ import com.grassland.identity.event.EventContractException;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.event.InboxRepository;
 import com.grassland.identity.notify.mail.MailOutboxEnqueuer;
+import com.grassland.identity.notify.external.ExternalDeliveryEnqueuer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,7 @@ class NotificationEventProcessorTest {
     @Mock private NotificationRecipientResolver resolver;
     @Mock private NotificationRepository notifications;
     @Mock private MailOutboxEnqueuer mailOutbox;
+    @Mock private ExternalDeliveryEnqueuer externalDelivery;
     @Mock private TransactionalOperator transactions;
 
     private NotificationEventProcessor processor;
@@ -53,7 +55,8 @@ class NotificationEventProcessorTest {
                 .thenAnswer(inv -> inv.getArgument(0));
         // GL-P1-NOTIFY-001：emit 末尾入队邮件（mock 空 Mono；真实入队/原子性由 NotificationInboxIT 验证）。
         org.mockito.Mockito.lenient().when(mailOutbox.enqueue(any(), any())).thenReturn(Mono.empty());
-        processor = new NotificationEventProcessor(inbox, resolver, notifications, mailOutbox, transactions,
+        org.mockito.Mockito.lenient().when(externalDelivery.enqueue(any(), any(), any())).thenReturn(Mono.empty());
+        processor = new NotificationEventProcessor(inbox, resolver, notifications, mailOutbox, externalDelivery, transactions,
                 "identity-notification-consumer");
     }
 

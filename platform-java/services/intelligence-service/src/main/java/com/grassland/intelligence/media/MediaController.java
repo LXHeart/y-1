@@ -2,6 +2,7 @@ package com.grassland.intelligence.media;
 
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.event.OutboxRepository;
 import com.grassland.storage.ObjectStorageAdapter;
 import com.grassland.storage.PresignRequest;
 import com.grassland.storage.StoredObject;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -77,6 +79,7 @@ public class MediaController {
     private final IntelligenceCallerResolver callers;
     private final MediaReferenceRepository mediaRefs;
     private final KybMediaRetentionRepository kybRetentions;
+    private final OutboxRepository outbox;
     private final ObjectStorageAdapter storage;
     private final TransactionalOperator transactions;
     private final long uploadUrlTtlSeconds;
@@ -89,6 +92,7 @@ public class MediaController {
             IntelligenceCallerResolver callers,
             MediaReferenceRepository mediaRefs,
             KybMediaRetentionRepository kybRetentions,
+            OutboxRepository outbox,
             ObjectStorageAdapter storage,
             TransactionalOperator transactions,
             @Value("${media.upload-url-ttl-seconds:900}") long uploadUrlTtlSeconds,
@@ -99,6 +103,7 @@ public class MediaController {
         this.callers = callers;
         this.mediaRefs = mediaRefs;
         this.kybRetentions = kybRetentions;
+        this.outbox = outbox;
         this.storage = storage;
         this.transactions = transactions;
         this.uploadUrlTtlSeconds = Math.max(uploadUrlTtlSeconds, 1L);
@@ -213,10 +218,14 @@ public class MediaController {
      * 不符/不存在统一 404。ownerAccountId 供 marketplace 挂接时做 IDOR 守卫（owner==提交人）。
      */
     @GetMapping("/{id}/metadata")
-    public Mono<Map<String, Object>> serviceMetadata(@PathVariable String id, ServerWebExchange exchange) {
+    public Mono<Map<String, Object>> serviceMetadata(
+            @PathVariable String id,
+            @RequestParam String domainType,
+            @RequestParam String domainId,
+            ServerWebExchange exchange) {
         UUID mediaId = parseId(id);
         return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.MARKETPLACE_SERVICE)
-                .flatMap(caller -> serviceAttachment(mediaId))
+                .flatMap(caller -> serviceAttachment(mediaId, domainType, domainId))
                 .map(MediaController::toServiceMetadata)
                 .map(MediaController::success);
     }
@@ -251,10 +260,14 @@ public class MediaController {
      * 超时由调用方重新请求本端点。
      */
     @GetMapping("/{id}/download-url")
-    public Mono<Map<String, Object>> serviceDownloadUrl(@PathVariable String id, ServerWebExchange exchange) {
+    public Mono<Map<String, Object>> serviceDownloadUrl(
+            @PathVariable String id,
+            @RequestParam String domainType,
+            @RequestParam String domainId,
+            ServerWebExchange exchange) {
         UUID mediaId = parseId(id);
         return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.MARKETPLACE_SERVICE)
-                .flatMap(caller -> serviceAttachment(mediaId))
+                .flatMap(caller -> serviceAttachment(mediaId, domainType, domainId))
                 .map(ref -> new MediaServiceDownloadResponse(
                         storage.presignDownload(
                                 ref.objectKey(), downloadTtl(ref, Instant.now()), downloadDisposition(ref)),
@@ -277,7 +290,8 @@ public class MediaController {
         Mono<MediaReference> reserve = mediaRefs.insertIfQuotaAllowed(
                         pending, maxObjectsPerOwner, maxTotalBytesPerOwner)
                 .switchIfEmpty(Mono.error(new IntelligenceException(429, "媒体配额已达上限，请先删除不再使用的媒体")));
-        return transactions.transactional(reserve)
+        return transactions.transactional(reserve.flatMap(saved ->
+                        outbox.append(MediaLifecycleEvents.reserved(saved)).thenReturn(saved)))
                 .map(saved -> new UploadTicketResponse(
                         saved.id(), ticket.objectKey(), ticket.uploadUrl(), ticket.method(),
                         ticket.headers(), ticket.expiresAt()));
@@ -336,8 +350,10 @@ public class MediaController {
                 .then(getObject(claimed.uploadKey()))
                 .flatMap(bytes -> validateDownloadedBytes(claimed, bytes))
                 .flatMap(bytes -> putObject(claimed.objectKey(), bytes, claimed.mimeType())
-                        .then(Mono.defer(() -> mediaRefs.completeFinalize(
-                                claimed.id(), claimed.mimeType(), bytes.length, MediaChecksums.sha256(bytes))))
+                        .then(Mono.defer(() -> transactions.transactional(mediaRefs.completeFinalize(
+                                        claimed.id(), claimed.mimeType(), bytes.length, MediaChecksums.sha256(bytes))
+                                .flatMap(active -> outbox.append(MediaLifecycleEvents.activated(active))
+                                        .thenReturn(active)))))
                         .switchIfEmpty(Mono.error(new IntelligenceException(409, "媒体状态已变化，请刷新后重试"))))
                 .flatMap(active -> deleteObject(claimed.uploadKey())
                         .onErrorResume(error -> {
@@ -390,7 +406,10 @@ public class MediaController {
         return mediaRefs.releaseQuota(ref.id())
                 .then(deleteObject(ref.objectKey()))
                 .then(deleteObjectIfPresent(ref.uploadKey()))
-                .then(Mono.defer(() -> mediaRefs.completeDelete(ref.id())))
+                .then(Mono.defer(() -> transactions.transactional(mediaRefs.completeDelete(ref.id())
+                        .flatMap(completed -> completed
+                                ? outbox.append(MediaLifecycleEvents.deleted(ref, "deleted")).thenReturn(true)
+                                : Mono.just(false)))))
                 .flatMap(completed -> completed
                         ? Mono.<Void>empty()
                         : Mono.error(new IntelligenceException(409, "媒体状态已变化，请刷新后重试")))
@@ -420,9 +439,14 @@ public class MediaController {
      * 服务间断点的附件过滤：仅 purpose=engagement_attachment + active + 未过期；不符/不存在统一 404。
      * 不校验 owner（principal 受信）；owner 级 IDOR 守卫在 marketplace 挂接时完成。
      */
-    private Mono<MediaReference> serviceAttachment(UUID id) {
+    private Mono<MediaReference> serviceAttachment(UUID id, String domainType, String domainId) {
+        if (!"application".equals(domainType) || domainId == null || domainId.isBlank()) {
+            return notFound();
+        }
         return mediaRefs.findById(id)
                 .filter(ref -> SERVICE_ATTACHMENT_PURPOSE.equals(ref.purpose()))
+                .filter(ref -> domainType.equals(ref.domainType()))
+                .filter(ref -> domainId.equals(ref.domainId()))
                 .filter(ref -> ref.status() == MediaStatus.ACTIVE)
                 .filter(ref -> !isExpired(ref, Instant.now()))
                 .switchIfEmpty(notFound());
@@ -622,7 +646,8 @@ public class MediaController {
     /** 服务间断点（Slice 11 Stage 1）的附件元数据视图：仅暴露中转读所需字段，含 ownerAccountId 供 IDOR 守卫。 */
     private static MediaServiceMetadataResponse toServiceMetadata(MediaReference ref) {
         return new MediaServiceMetadataResponse(
-                ref.id(), ref.ownerAccountId(), ref.purpose(), ref.status().db(),
+                ref.id(), ref.ownerAccountId(), ref.purpose(), ref.domainType(), ref.domainId(),
+                ref.status().db(), ref.checksum(),
                 ref.mimeType(), ref.sizeBytes(), ref.expiresAt());
     }
 
@@ -662,8 +687,8 @@ public class MediaController {
 
     /** 服务间断点（Slice 11 Stage 1）附件元数据响应。 */
     public record MediaServiceMetadataResponse(
-            UUID id, String ownerAccountId, String purpose, String status,
-            String mimeType, long sizeBytes, Instant expiresAt) {}
+            UUID id, String ownerAccountId, String purpose, String domainType, String domainId,
+            String status, String checksum, String mimeType, long sizeBytes, Instant expiresAt) {}
 
     /** identity 校验 KYB 附件所需的最小权威元数据视图。 */
     public record MediaKybMetadataResponse(

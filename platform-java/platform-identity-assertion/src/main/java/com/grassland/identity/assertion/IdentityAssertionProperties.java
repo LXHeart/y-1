@@ -105,6 +105,11 @@ public record IdentityAssertionProperties(
                     "identity-assertion.secret (legacy) or signing-keys/verify-keys (keyring) "
                             + "must be set when identity-assertion.enabled=true");
         }
+        if (enabled && hasKeyringKeys && replayProtection.enabled()
+                && replayProtection.usesRedis() && replayProtection.redisUrl().isBlank()) {
+            throw new IllegalArgumentException(
+                    "identity-assertion.replay-protection.redis-url must be set for redis storage");
+        }
 
         // keyring 模式校验（仅对有效条目）
         if (enabled && hasKeyringKeys) {
@@ -201,9 +206,35 @@ public record IdentityAssertionProperties(
     }
 
     /** replay 防护配置。 */
-    public record ReplayProtectionConfig(boolean enabled) {
+    public record ReplayProtectionConfig(
+            boolean enabled,
+            String storage,
+            String redisUrl,
+            String keyPrefix) {
+
+        /** 旧测试构造器兼容：显式 boolean 使用进程内 guard。生产 YAML 默认 redis。 */
+        public ReplayProtectionConfig(boolean enabled) {
+            this(enabled, "memory", "", "grassland:identity-assertion:replay:");
+        }
+
         public ReplayProtectionConfig {
-            // 默认 false
+            storage = (storage == null || storage.isBlank()) ? "redis" : storage.trim().toLowerCase();
+            redisUrl = redisUrl == null ? "" : redisUrl.trim();
+            keyPrefix = (keyPrefix == null || keyPrefix.isBlank())
+                    ? "grassland:identity-assertion:replay:"
+                    : keyPrefix;
+            if (!storage.equals("redis") && !storage.equals("memory")) {
+                throw new IllegalArgumentException(
+                        "identity-assertion.replay-protection.storage must be redis or memory");
+            }
+        }
+
+        public boolean usesRedis() {
+            return enabled && storage.equals("redis");
+        }
+
+        public boolean usesMemory() {
+            return enabled && storage.equals("memory");
         }
     }
 }

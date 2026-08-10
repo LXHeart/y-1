@@ -6,6 +6,7 @@ import com.grassland.identity.event.EventContractException;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.event.InboxRepository;
 import com.grassland.identity.notify.mail.MailOutboxEnqueuer;
+import com.grassland.identity.notify.external.ExternalDeliveryEnqueuer;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Map;
@@ -37,6 +38,7 @@ public class NotificationEventProcessor {
     private final NotificationRecipientResolver resolver;
     private final NotificationRepository notifications;
     private final MailOutboxEnqueuer mailOutbox;
+    private final ExternalDeliveryEnqueuer externalDelivery;
     private final TransactionalOperator transactions;
     private final ObjectMapper mapper = new ObjectMapper();
     private final String consumerName;
@@ -46,12 +48,14 @@ public class NotificationEventProcessor {
             NotificationRecipientResolver resolver,
             NotificationRepository notifications,
             MailOutboxEnqueuer mailOutbox,
+            ExternalDeliveryEnqueuer externalDelivery,
             TransactionalOperator transactions,
             @Value("${identity.notification-consumer.group-id:identity-notification-consumer}") String consumerName) {
         this.inbox = inbox;
         this.resolver = resolver;
         this.notifications = notifications;
         this.mailOutbox = mailOutbox;
+        this.externalDelivery = externalDelivery;
         this.transactions = transactions;
         this.consumerName = consumerName;
     }
@@ -101,6 +105,7 @@ public class NotificationEventProcessor {
                         .thenReturn(1L));
             }
             return chain.then(mailOutbox.enqueue(envelope, recipients))
+                    .then(externalDelivery.enqueue(envelope, template, recipients))
                     .thenReturn((long) recipients.size());
         });
     }

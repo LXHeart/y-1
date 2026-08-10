@@ -16,6 +16,12 @@ public record MerchantAttachment(
         String mimeType,                      // 快照：media 删除后仍可展示类型
         Long sizeBytes,                      // 快照：字节大小
         String ocrResult,                    // OCR 识别结果（JSONB）
+        String ocrStatus,
+        String ocrProvider,
+        String ocrModel,
+        Integer ocrResultVersion,
+        Instant ocrAnalyzedAt,
+        String ocrFailureCode,
         Instant uploadedAt,
         String uploadedByAccountId
 ) {}

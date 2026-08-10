@@ -4,6 +4,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -11,9 +13,8 @@ import javax.crypto.spec.SecretKeySpec;
 /**
  * 移动端 access token 的 HMAC-SHA256 签发/验签（GL-P3-IDENTITY-001）。
  *
- * <p>与 {@link com.grassland.identity.assertion.IdentityAssertionSigner} 同构但<b>单密钥</b>：
- * access token 只有一对签发/验签方（identity-service 签、edge-bff 验），不需要多受众 keyring。
- * {@code kid} 作为 payload claim 保留，供未来密钥轮换（双 kid 并存）扩展。
+ * <p>签发只用当前密钥，验签按 payload {@code kid} 从 keyring 精确选钥。轮换时 identity-service
+ * 切到新 signing kid，edge-bff 同时保留新旧 verify key，旧 key 至少保留 token TTL + leeway。
  *
  * <h3>Token 格式</h3>
  * {@code <payloadB64url>.<macB64url>}，MAC = base64url(HMAC-SHA256(secret, payloadB64url))。
@@ -31,8 +32,9 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class AccessTokenSigner {
 
-    private final byte[] secret;
-    private final String kid;
+    private final byte[] signingSecret;
+    private final String signingKid;
+    private final Map<String, byte[]> verificationKeys;
     private final Duration leeway;
 
     /**
@@ -41,21 +43,43 @@ public final class AccessTokenSigner {
      * @param leeway 时钟偏差容忍（null → 5s）
      */
     public AccessTokenSigner(byte[] secret, String kid, Duration leeway) {
-        this.secret = secret == null ? new byte[0] : secret.clone();
+        this(secret, kid, Map.of(), leeway);
+    }
+
+    /**
+     * @param verificationKeys 额外验签密钥（通常是 previous kid）；当前 signing key 会自动加入并优先。
+     */
+    public AccessTokenSigner(byte[] secret, String kid, Map<String, byte[]> verificationKeys, Duration leeway) {
+        this.signingSecret = secret == null ? new byte[0] : secret.clone();
         if (kid == null || kid.isBlank()) {
             throw new IllegalArgumentException("kid must be non-blank");
         }
-        this.kid = kid;
+        this.signingKid = kid;
+        Map<String, byte[]> keys = new LinkedHashMap<>();
+        if (verificationKeys != null) {
+            verificationKeys.forEach((keyId, keySecret) -> {
+                if (keyId == null || keyId.isBlank()) {
+                    throw new IllegalArgumentException("verification key kid must be non-blank");
+                }
+                if (keySecret != null && keySecret.length > 0) {
+                    keys.put(keyId, keySecret.clone());
+                }
+            });
+        }
+        if (signingSecret.length > 0) {
+            keys.put(signingKid, signingSecret.clone());
+        }
+        this.verificationKeys = Map.copyOf(keys);
         this.leeway = leeway != null ? leeway : Duration.ofSeconds(5);
     }
 
     /** secret 是否已配置（空 secret = 未配置，签发应 gate、验签降级）。 */
     public boolean isConfigured() {
-        return secret.length > 0;
+        return signingSecret.length > 0;
     }
 
     public String kid() {
-        return kid;
+        return signingKid;
     }
 
     /**
@@ -70,11 +94,11 @@ public final class AccessTokenSigner {
         if (!isConfigured()) {
             throw new IllegalStateException("access token signer secret not configured");
         }
-        AccessToken enveloped = kid.equals(token.kid()) ? token
+        AccessToken enveloped = signingKid.equals(token.kid()) ? token
                 : new AccessToken(token.accountId(), token.email(), token.role(), token.deviceId(),
-                        token.sessionToken(), kid, token.iat(), token.exp());
+                        token.sessionToken(), signingKid, token.iat(), token.exp());
         String payload = AccessTokenCodec.encodePayload(enveloped);
-        return payload + "." + mac(payload);
+        return payload + "." + mac(signingSecret, payload);
     }
 
     /**
@@ -85,7 +109,7 @@ public final class AccessTokenSigner {
      * @return 验签通过的 claims；任何失败 → {@link Optional#empty()}
      */
     public Optional<AccessToken> verify(String token, Instant now) {
-        if (!isConfigured() || token == null || token.isBlank()) {
+        if (verificationKeys.isEmpty() || token == null || token.isBlank()) {
             return Optional.empty();
         }
         int dot = token.indexOf('.');
@@ -102,16 +126,19 @@ public final class AccessTokenSigner {
             return Optional.empty();
         }
 
-        // MAC 常量时间比较（防时序侧信道）
-        String expectedMac = mac(payload);
-        if (!MessageDigest.isEqual(
-                expectedMac.getBytes(StandardCharsets.UTF_8),
-                providedMac.getBytes(StandardCharsets.UTF_8))) {
+        if (claims.kid() == null) {
+            return Optional.empty();
+        }
+        byte[] verificationSecret = verificationKeys.get(claims.kid());
+        if (verificationSecret == null) {
             return Optional.empty();
         }
 
-        // kid 精确匹配（防拿旧密钥签的 token 蒙混）
-        if (claims.kid() == null || !claims.kid().equals(kid)) {
+        // 按 kid 精确选钥后做 MAC 常量时间比较（防时序侧信道）
+        String expectedMac = mac(verificationSecret, payload);
+        if (!MessageDigest.isEqual(
+                expectedMac.getBytes(StandardCharsets.UTF_8),
+                providedMac.getBytes(StandardCharsets.UTF_8))) {
             return Optional.empty();
         }
 
@@ -125,7 +152,7 @@ public final class AccessTokenSigner {
         return Optional.of(claims);
     }
 
-    private String mac(String payload) {
+    private String mac(byte[] secret, String payload) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret, "HmacSHA256"));

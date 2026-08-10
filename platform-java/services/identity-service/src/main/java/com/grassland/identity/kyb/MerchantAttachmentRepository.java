@@ -20,7 +20,8 @@ public class MerchantAttachmentRepository {
 
     private static final String SELECT_COLS =
             "id::text, organization_id::text, attachment_type, media_reference_id::text, mime_type, size_bytes,"
-                    + " ocr_result::text, uploaded_at, uploaded_by_account_id::text";
+                    + " ocr_result::text, ocr_status, ocr_provider, ocr_model, ocr_result_version,"
+                    + " ocr_analyzed_at, ocr_failure_code, uploaded_at, uploaded_by_account_id::text";
 
     private final DatabaseClient db;
 
@@ -47,14 +48,16 @@ public class MerchantAttachmentRepository {
                                            String uploadedByAccountId) {
         return db.sql("""
                 INSERT INTO merchant_attachment(id, organization_id, attachment_type, media_reference_id,
-                        mime_type, size_bytes, uploaded_by_account_id)
+                        mime_type, size_bytes, uploaded_by_account_id, ocr_status)
                 VALUES (CAST(:id AS uuid), CAST(:org AS uuid), :type, CAST(:mediaRef AS uuid),
-                        :mime, :size, CAST(:uploadedBy AS uuid))
+                        :mime, :size, CAST(:uploadedBy AS uuid), :ocrStatus)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("org", organizationId).bind("type", attachmentType)
                 .bind("mediaRef", mediaReferenceId).bind("mime", mimeType)
                 .bind("size", sizeBytes != null ? sizeBytes : 0L).bind("uploadedBy", uploadedByAccountId)
+                .bind("ocrStatus", MerchantAttachmentType.fromDb(attachmentType).isDocumentType()
+                        ? "pending" : "not_applicable")
                 .map(MerchantAttachmentRepository::map).one();
     }
 
@@ -139,6 +142,12 @@ public class MerchantAttachmentRepository {
                 row.get("mime_type", String.class),
                 row.get("size_bytes", Long.class),
                 row.get("ocr_result", String.class),
+                row.get("ocr_status", String.class),
+                row.get("ocr_provider", String.class),
+                row.get("ocr_model", String.class),
+                row.get("ocr_result_version", Integer.class),
+                toInstant(row.get("ocr_analyzed_at", OffsetDateTime.class)),
+                row.get("ocr_failure_code", String.class),
                 toInstant(row.get("uploaded_at", OffsetDateTime.class)),
                 row.get("uploaded_by_account_id", String.class)
         );

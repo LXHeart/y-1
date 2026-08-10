@@ -3,7 +3,6 @@ package com.grassland.identity.organization;
 import com.grassland.identity.admin.BackendRoleRepository;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.assertion.BackendRoles;
-import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.security.CookieSigner;
@@ -13,9 +12,6 @@ import com.grassland.identity.user.LegacyUserLookup;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.Optional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpCookie;
@@ -30,8 +26,6 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class CurrentAccountResolver {
-
-    private static final Logger log = LoggerFactory.getLogger(CurrentAccountResolver.class);
 
     private final LegacySessionBridge sessionBridge;
     private final LegacyUserLookup userLookup;
@@ -73,14 +67,12 @@ public class CurrentAccountResolver {
         IdentityAssertionSigner signer = signerProvider.getIfAvailable();
         String assertionHeader = signer == null ? null : request.getHeaders().getFirst(assertionHeaderName);
         if (signer != null && assertionHeader != null && !assertionHeader.isBlank()) {
-            Optional<IdentityAssertion> verified = signer.verify(assertionHeader, Instant.now());
-            if (verified.isPresent()) {
-                IdentityAssertion assertion = verified.get();
-                return userLookup.findById(assertion.accountId())
+            return signer.verifyReactive(assertionHeader, Instant.now())
+                    .flatMap(assertion -> userLookup.findById(assertion.accountId())
                         .switchIfEmpty(Mono.error(new IdentityException(401, "用户不存在")))
-                        .flatMap(user -> activePrincipal(user, assertion.sessionToken()));
-            }
-            log.warn("identity assertion present but failed verification; falling back to cookie");
+                        .flatMap(user -> activePrincipal(user, assertion.sessionToken())))
+                    // 内部断言头由 Edge 剥离客户端输入后重签；一旦出现却无效，必须 fail-closed。
+                    .switchIfEmpty(Mono.error(new IdentityException(401, "内部身份断言无效")));
         }
         return resolveViaCookie(request);
     }

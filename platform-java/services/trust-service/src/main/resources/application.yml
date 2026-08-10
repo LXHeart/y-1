@@ -119,13 +119,26 @@ identity-assertion:
       purpose: user
       audience: grassland-trust
       secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST:}
+    - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST_PREVIOUS_KID:}
+      issuer: edge-bff
+      purpose: user
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_EDGE_USER_TRUST_PREVIOUS:}
     - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST_KID:marketplace-service-trust-v1}
       issuer: marketplace
       purpose: service
       audience: grassland-trust
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST_PREVIOUS_KID:}
+      issuer: marketplace
+      purpose: service
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST_PREVIOUS:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
+    storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}
+    redis-url: ${IDENTITY_ASSERTION_REPLAY_REDIS_URL:}
+    key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 identity:
   service:

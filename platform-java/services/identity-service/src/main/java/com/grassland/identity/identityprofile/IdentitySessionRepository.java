@@ -44,6 +44,30 @@ public class IdentitySessionRepository {
     }
 
     /**
+     * 串行化同一账号的活动身份切换，避免两台设备并发激活时同时绕过并发上限。
+     * PostgreSQL advisory transaction lock 会随外层事务自动释放。
+     */
+    public Mono<Void> lockAccount(String accountId) {
+        return db.sql("SELECT pg_advisory_xact_lock(hashtextextended(:acct, 0))")
+                .bind("acct", accountId)
+                .then();
+    }
+
+    /** 按最近活跃倒序保留前 maxActive 条，返回需要被策略切回消费者的旧 session。 */
+    public Flux<IdentitySession> findActiveOverflow(String accountId, int maxActive) {
+        if (maxActive <= 0) {
+            return Flux.empty();
+        }
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM identity_session"
+                        + " WHERE account_id = CAST(:acct AS uuid) AND active_identity_type IS NOT NULL"
+                        + " ORDER BY last_seen_at DESC, session_token DESC OFFSET :keep")
+                .bind("acct", accountId)
+                .bind("keep", maxActive)
+                .map(IdentitySessionRepository::map).all();
+    }
+
+    /**
      * 列该账号**所有未过期的登录会话**（设备清单的真正来源），左连 identity_session 取活动身份与设备信息。
      *
      * <p>为什么不用 {@link #findByAccount}：{@code identity_session} 行是**首次激活身份时才懒创建**的，
