@@ -1,14 +1,19 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
+import com.grassland.marketplace.security.MarketplaceException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Mono;
 
 /**
  * task-catalog 端到端（草场 Epic 4 Slice 4A + 4B 发布限额/org 归属）。继承 {@link MarketplaceItSupport}。
@@ -18,6 +23,82 @@ import org.springframework.http.MediaType;
  * ⚠️ 既有 happy path 须用 4 参 sign（带 org + tier=basic_publish），否则 null tier 触发新闸门 403（回归）。
  */
 class TaskControllerIT extends MarketplaceItSupport {
+
+    @MockitoBean
+    IdentityStoreAuthorizationClient storeAuthorization;
+
+    @Test
+    void storeScopedDraftPersistsAndRequiresStoreAuthorization() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.require(merchant, org, store, "manager")).thenReturn(Mono.empty());
+
+        Map<String, Object> requestBody = body(org, "门店草稿", null, null);
+        requestBody.put("storeId", store);
+        client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody()
+                .jsonPath("$.data.storeId").isEqualTo(store);
+
+        String persistedStore = db.sql("SELECT store_id::text FROM task WHERE organization_id=CAST(:org AS uuid)")
+                .bind("org", org).map(row -> row.get(0, String.class)).one().block();
+        assertThat(persistedStore).isEqualTo(store);
+
+        when(storeAuthorization.require(merchant, org, store, "staff")).thenReturn(Mono.empty());
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft&storeId=" + store)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].storeId").isEqualTo(store);
+
+        // Legacy organization-level listing cannot leak store-scoped drafts.
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.length()").isEqualTo(0);
+    }
+
+    @Test
+    void storeStaffCannotCreateTask() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.require(merchant, org, store, "manager"))
+                .thenReturn(Mono.error(new MarketplaceException(403, "门店权限不足")));
+        Map<String, Object> requestBody = body(org, "越权草稿", null, null);
+        requestBody.put("storeId", store);
+
+        client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void storeIdIsCopiedIntoPublishedTaskVersion() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.require(merchant, org, store, "manager")).thenReturn(Mono.empty());
+        Map<String, Object> requestBody = body(org, "门店上架任务", null, null);
+        requestBody.put("storeId", store);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> task = (Map<String, Object>) response.get("data");
+        approveTask(task);
+
+        String snapshotStore = db.sql("SELECT store_id::text FROM task_version WHERE task_id=CAST(:id AS uuid)")
+                .bind("id", task.get("id")).map(row -> row.get(0, String.class)).one().block();
+        assertThat(snapshotStore).isEqualTo(store);
+    }
 
     @Test
     void merchantPublishesTaskAndEvent() {

@@ -567,9 +567,11 @@ export function useGrassland() {
 
   // ---------- marketplace：任务 + 报名 ----------
 
-  const listTasks = (organizationId: string, status = 'published') =>
-    run(() => request<Task[]>(
-      `/api/tasks?organizationId=${encodeURIComponent(organizationId)}&status=${encodeURIComponent(status)}`))
+  const listTasks = (organizationId: string, status = 'published', storeId?: string) => {
+    const params = new URLSearchParams({ organizationId, status })
+    if (storeId) params.set('storeId', storeId)
+    return run(() => request<Task[]>(`/api/tasks?${params}`))
+  }
 
   const createTask = (input: CreateTaskInput) =>
     run(() => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }))
@@ -1005,10 +1007,12 @@ export function useGrassland() {
     libraryType: ContentLibraryType
     category?: ContentAssetCategory
     granted?: boolean
+    storeId?: string
   }) => {
     const qs = new URLSearchParams({ libraryType: params.libraryType })
     if (params.category) qs.set('category', params.category)
     if (params.granted) qs.set('granted', 'true')
+    if (params.storeId) qs.set('storeId', params.storeId)
     return run(() => request<{ items: ContentAsset[] }>(`/api/content-assets?${qs}`))
   }
 

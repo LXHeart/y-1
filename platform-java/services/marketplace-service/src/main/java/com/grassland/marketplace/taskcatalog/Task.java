@@ -35,13 +35,23 @@ public record Task(
         Instant applicationDeadline,
         Instant publishedAt,
         Instant cancelledAt,
-        int minRecommenderLevel
+        int minRecommenderLevel,
+        String storeId
 ) {
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
                 String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
                 Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
                 Instant publishedAt, Instant cancelledAt) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
-                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt, 1);
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt, 1, null);
+    }
+
+    public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+                String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
+                Instant publishedAt, Instant cancelledAt, int minRecommenderLevel) {
+        this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+                minRecommenderLevel, null);
     }
 }

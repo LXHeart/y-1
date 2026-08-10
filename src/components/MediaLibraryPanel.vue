@@ -8,6 +8,7 @@ import type {
   ContentAssetCategory,
   ContentLibraryType,
   IdentityProfile,
+  Store,
 } from '../types/grassland'
 
 /**
@@ -36,6 +37,9 @@ const notice = ref('')
 const showUpload = ref(false)
 /** 商家子模式：自己管理（默认）还是看被授权的推荐官视角。 */
 const grantedView = ref(false)
+const stores = ref<Store[]>([])
+/** Empty means organization-level merchant assets; otherwise the selected store scope. */
+const selectedStoreId = ref('')
 
 const CATEGORIES: ReadonlyArray<{ id: ContentAssetCategory; label: string }> = [
   { id: 'store', label: '门店' },
@@ -75,6 +79,9 @@ onMounted(async () => {
   if (props.authenticated) {
     const list = await grassland.listIdentities()
     if (list) identities.value = list
+    if (merchantIdentity.value?.organizationId) {
+      stores.value = (await grassland.listStores(merchantIdentity.value.organizationId)) ?? []
+    }
   }
   await refresh()
 })
@@ -94,7 +101,9 @@ async function refresh(): Promise<void> {
       return
     }
     if (merchantIdentity.value) {
-      const result = await grassland.listContentAssets({ libraryType: 'merchant' })
+      const result = await grassland.listContentAssets({
+        libraryType: 'merchant', storeId: selectedStoreId.value || undefined,
+      })
       if (result) assets.value = result.items
     }
     return
@@ -119,11 +128,12 @@ async function handleUploaded(mediaIds: string[]): Promise<void> {
         licenseScope: '公开授权',
         validUntil: '2027-12-31T23:59:59Z',
       }
-    : {
+      : {
         libraryType,
         mediaId,
         category: 'other' as ContentAssetCategory,
         title: '未命名素材',
+        storeId: selectedStoreId.value || undefined,
       }
   const created = await grassland.createContentAsset(input)
   if (created) {
@@ -189,6 +199,14 @@ function formatSize(bytes: number | null | undefined): string {
       <button v-if="!showUpload" type="button" @click="showUpload = true">添加素材</button>
       <MediaUploader v-else :key="activeTab" @change="handleUploaded" />
     </div>
+    <div v-if="activeTab === 'merchant' && merchantIdentity && !grantedView" class="lib-scope">
+      <label>资源范围
+        <select v-model="selectedStoreId" @change="refresh">
+          <option value="">组织级素材</option>
+          <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
+        </select>
+      </label>
+    </div>
 
     <ul v-if="assets.length > 0" class="lib-grid">
       <li v-for="asset in assets" :key="asset.id" class="lib-card">
@@ -201,6 +219,9 @@ function formatSize(bytes: number | null | undefined): string {
         </p>
         <p v-if="asset.tags.length > 0" class="lib-tags">{{ asset.tags.join('、') }}</p>
         <p v-if="asset.source" class="lib-source">来源：{{ asset.source }}</p>
+        <p v-if="asset.storeId" class="lib-source">
+          范围：{{ stores.find((store) => store.id === asset.storeId)?.name || '门店素材' }}
+        </p>
         <div class="lib-card-actions">
           <button type="button" :disabled="grassland.loading.value" @click="download(asset)">下载</button>
           <template v-if="activeTab === 'merchant' && merchantIdentity">
@@ -228,6 +249,8 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-tabs button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
 .lib-tabs button.active { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .lib-actions { display: flex; gap: 8px; }
+.lib-scope { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.lib-scope select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text); }
 .lib-actions button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
 .lib-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .lib-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }

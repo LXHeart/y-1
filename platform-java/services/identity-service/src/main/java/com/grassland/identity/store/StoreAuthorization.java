@@ -51,6 +51,26 @@ public class StoreAuthorization {
                 .flatMap(account -> ensureStoreInOrg(orgId, storeId).then(roleOf(account.id(), orgId, storeId)));
     }
 
+    /**
+     * Trusted domain services use this account-explicit variant for resource authorization.
+     * A null storeId means organization-wide resource access and therefore requires org ADMIN/OWNER.
+     */
+    public Mono<Decision> authorizeAccount(
+            String accountId, String orgId, String storeId, StoreRole minimumRole) {
+        if (storeId == null) {
+            return orgAuthz.roleOfAccount(accountId, orgId)
+                    .filter(role -> role.isAtLeast(MembershipRole.ADMIN))
+                    .map(ignored -> new Decision(StoreRole.MANAGER, "organization"))
+                    .switchIfEmpty(Mono.error(new IdentityException(403, "无权管理该组织资源")));
+        }
+        return ensureStoreInOrg(orgId, storeId)
+                .then(roleOf(accountId, orgId, storeId))
+                .switchIfEmpty(Mono.error(new IdentityException(403, "无权访问该门店")))
+                .flatMap(role -> role.isAtLeast(minimumRole)
+                        ? Mono.just(new Decision(role, "store"))
+                        : Mono.error(new IdentityException(403, "权限不足")));
+    }
+
     /** 校验 store 属于该 org，否则 404（跨 org 隔离）。 */
     public Mono<Void> ensureStoreInOrg(String orgId, String storeId) {
         return stores.findByOrganizationAndId(orgId, storeId)
@@ -70,4 +90,6 @@ public class StoreAuthorization {
                 .filter(role -> role.isAtLeast(MembershipRole.ADMIN))
                 .map(role -> StoreRole.MANAGER);
     }
+
+    public record Decision(StoreRole role, String scope) {}
 }

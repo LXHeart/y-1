@@ -21,8 +21,16 @@ public record CreateTaskRequest(
         Integer maxSlots,
         Long bountyCents,
         Instant applicationDeadline,
-        Integer minRecommenderLevel
+        Integer minRecommenderLevel,
+        String storeId
 ) {
+    public CreateTaskRequest(String organizationId, String title, String description, String contentForm,
+                             String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+                             Integer minRecommenderLevel) {
+        this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents,
+                applicationDeadline, minRecommenderLevel, null);
+    }
+
     public CreateTaskRequest {
         if (organizationId == null || organizationId.isBlank()) {
             throw new IllegalArgumentException("organizationId is required");

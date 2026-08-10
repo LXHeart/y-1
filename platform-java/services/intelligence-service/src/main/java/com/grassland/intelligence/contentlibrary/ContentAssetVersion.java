@@ -41,5 +41,14 @@ public record ContentAssetVersion(
         String source,
         String licenseScope,
         Instant snapshottedAt,
-        String snapshottedBy) {
+        String snapshottedBy,
+        String storeId) {
+
+    public ContentAssetVersion(UUID assetId, int version, LibraryType libraryType, AssetCategory category,
+                               String ownerAccountId, String organizationId, String title, List<String> tags,
+                               String mimeType, Long sizeBytes, Instant validUntil, String source,
+                               String licenseScope, Instant snapshottedAt, String snapshottedBy) {
+        this(assetId, version, libraryType, category, ownerAccountId, organizationId, title, tags,
+                mimeType, sizeBytes, validUntil, source, licenseScope, snapshottedAt, snapshottedBy, null);
+    }
 }

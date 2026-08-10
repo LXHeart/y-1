@@ -169,7 +169,8 @@ public class ContentAssetGrantRepository {
                 toInstant(row.get("a_reviewed_at", OffsetDateTime.class)),
                 toInstant(row.get("a_created_at", OffsetDateTime.class)),
                 toInstant(row.get("a_updated_at", OffsetDateTime.class)),
-                toInstant(row.get("a_deleted_at", OffsetDateTime.class)));
+                toInstant(row.get("a_deleted_at", OffsetDateTime.class)),
+                row.get("a_store_id", String.class));
     }
 
     private static Instant toInstant(OffsetDateTime value) {

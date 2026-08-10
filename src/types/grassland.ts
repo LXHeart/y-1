@@ -25,6 +25,8 @@ export interface Task {
   id: string
   ownerAccountId: string
   organizationId: string
+  /** Optional store scope; null/undefined means legacy organization-level task. */
+  storeId?: string | null
   title: string
   description: string | null
   status: TaskStatus
@@ -54,6 +56,7 @@ export interface Task {
 
 export interface CreateTaskInput {
   organizationId: string
+  storeId?: string
   title: string
   description?: string
   contentForm?: string
@@ -729,6 +732,7 @@ export interface ContentAsset {
   sizeBytes?: number | null
   validUntil?: string | null
   organizationId?: string | null
+  storeId?: string | null
   source?: string | null
   licenseScope?: string | null
   createdAt: string | null
@@ -746,6 +750,7 @@ export interface ContentAssetVersion {
   validUntil?: string | null
   snapshottedAt: string | null
   snapshottedBy: string | null
+  storeId?: string | null
 }
 
 /** 素材授权（content_asset_grant，商家指定推荐官可用）。 */
@@ -769,6 +774,7 @@ export interface CreateContentAssetInput {
   validUntil?: string
   source?: string
   licenseScope?: string
+  storeId?: string
 }
 
 /** 编辑素材请求（PUT /api/content-assets/{id}，乐观锁）。 */

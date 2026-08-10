@@ -1,14 +1,19 @@
 package com.grassland.intelligence.contentlibrary;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.security.IdentityStoreAuthorizationClient;
+import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Mono;
 
 /**
  * 内容素材库个人库集成测试（草场 PRD §4.8 / Slice 14 Stage 1）。复用 {@link IntelligenceItSupport}
@@ -21,6 +26,9 @@ import org.springframework.http.MediaType;
  * 乐观锁 409）、删除（软删后不可见/不可下钻）、下载（storage 未启 503）。
  */
 class ContentAssetControllerIT extends IntelligenceItSupport {
+
+    @MockitoBean
+    IdentityStoreAuthorizationClient storeAuthorization;
 
     @BeforeEach
     void cleanContentAssets() {
@@ -225,6 +233,53 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     }
 
     // ---------------- Stage 2：商家素材库 + 授权 ----------------
+
+    @Test
+    void storeScopedMerchantAssetsArePersistedAndIsolated() {
+        String org = "org-store-assets";
+        String manager = "merchant-store-manager";
+        String storeA = UUID.randomUUID().toString();
+        String storeB = UUID.randomUUID().toString();
+        when(storeAuthorization.require(manager, org, storeA, "manager")).thenReturn(Mono.empty());
+        when(storeAuthorization.require(manager, org, storeB, "manager")).thenReturn(Mono.empty());
+
+        String assetA = createStoreAsset(manager, org, storeA, seedMedia(manager), "A店素材");
+        createStoreAsset(manager, org, storeB, seedMedia(manager), "B店素材");
+        String persistedStore = db.sql("SELECT store_id::text FROM content_asset WHERE id=CAST(:id AS uuid)")
+                .bind("id", assetA).map(row -> row.get(0, String.class)).one().block();
+        assertThat(persistedStore).isEqualTo(storeA);
+
+        client().put().uri("/api/content-assets/" + assetA)
+                .header(header(), signWithOrg(manager, org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "category", "store", "title", "A店素材-新版本"))
+                .exchange().expectStatus().isOk();
+        String snapshotStore = db.sql("SELECT store_id::text FROM content_asset_version WHERE asset_id=CAST(:id AS uuid)")
+                .bind("id", assetA).map(row -> row.get(0, String.class)).one().block();
+        assertThat(snapshotStore).isEqualTo(storeA);
+
+        when(storeAuthorization.require(manager, org, storeA, "staff")).thenReturn(Mono.empty());
+        client().get().uri("/api/content-assets?libraryType=merchant&storeId=" + storeA)
+                .header(header(), signWithOrg(manager, org))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].storeId").isEqualTo(storeA)
+                .jsonPath("$.data.items[0].title").isEqualTo("A店素材-新版本");
+
+        // Organization-level merchant listing excludes store-scoped assets.
+        client().get().uri("/api/content-assets?libraryType=merchant")
+                .header(header(), signWithOrg(manager, org))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.items.length()").isEqualTo(0);
+
+        when(storeAuthorization.require("merchant-store-staff", org, storeA, "manager"))
+                .thenReturn(Mono.error(new IntelligenceException(403, "门店权限不足")));
+        client().put().uri("/api/content-assets/" + assetA)
+                .header(header(), signWithOrg("merchant-store-staff", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "category", "store", "title", "越权修改"))
+                .exchange().expectStatus().isForbidden();
+    }
 
     @Test
     void merchantCreateRequiresMerchantIdentity() {
@@ -537,6 +592,18 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                         "category", "store", "title", title))
                 .exchange()
                 .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return ((Map<String, Object>) response.get("data")).get("id").toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createStoreAsset(String account, String org, String storeId, String mediaId, String title) {
+        Map<String, Object> response = client().post().uri("/api/content-assets")
+                .header(header(), signWithOrg(account, org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "merchant", "mediaId", mediaId,
+                        "category", "store", "title", title, "storeId", storeId))
+                .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return ((Map<String, Object>) response.get("data")).get("id").toString();
     }

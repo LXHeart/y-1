@@ -70,6 +70,10 @@ identity-assertion:
       purpose: service
       audience: grassland-finance
       secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_FINANCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_IDENTITY_KID:intelligence-service-identity-v1}
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_IDENTITY:}
   # intelligence 验证 edge-bff 用户断言 + marketplace 服务断言
   verify-keys:
     - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_INTELLIGENCE_KID:edge-user-intelligence-v1}
@@ -93,6 +97,10 @@ identity-assertion:
 marketplace:
   service:
     base-url: ${MARKETPLACE_SERVICE_BASE_URL:http://marketplace-service:8083}
+
+identity:
+  service:
+    base-url: ${IDENTITY_SERVICE_BASE_URL:http://identity-service:8082}
     ai-entitlement-timeout-seconds: ${MARKETPLACE_AI_ENTITLEMENT_TIMEOUT_SECONDS:3}
 
 # 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。

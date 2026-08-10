@@ -30,7 +30,7 @@ public class ContentAssetRepository {
 
     /** SELECT 列（无表别名，单表查询用）。 */
     static final String SELECT_COLS = """
-            id::text, media_reference_id::text, library_type, category, owner_account_id, organization_id,
+            id::text, media_reference_id::text, library_type, category, owner_account_id, organization_id, store_id::text,
             title, tags::text, mime_type, size_bytes, valid_until, status, version, source, license_scope,
             review_note, reviewed_by, reviewed_at, created_at, updated_at, deleted_at
             """;
@@ -43,6 +43,7 @@ public class ContentAssetRepository {
             a.id::text AS a_id, a.media_reference_id::text AS a_media_reference_id,
             a.library_type AS a_library_type, a.category AS a_category,
             a.owner_account_id AS a_owner_account_id, a.organization_id AS a_organization_id,
+            a.store_id::text AS a_store_id,
             a.title AS a_title, a.tags::text AS a_tags, a.mime_type AS a_mime_type,
             a.size_bytes AS a_size_bytes, a.valid_until AS a_valid_until, a.status AS a_status,
             a.version AS a_version, a.source AS a_source, a.license_scope AS a_license_scope,
@@ -62,11 +63,11 @@ public class ContentAssetRepository {
     public Mono<ContentAsset> create(ContentAsset asset) {
         DatabaseClient.GenericExecuteSpec spec = db.sql("""
                 INSERT INTO content_asset (
-                    id, media_reference_id, library_type, category, owner_account_id, organization_id,
+                    id, media_reference_id, library_type, category, owner_account_id, organization_id, store_id,
                     title, tags, mime_type, size_bytes, valid_until, status, version, source, license_scope)
                 VALUES (
                     CAST(:id AS uuid), CAST(:mediaReferenceId AS uuid), :libraryType, :category,
-                    :ownerAccountId, :organizationId, :title, CAST(:tags AS jsonb),
+                    :ownerAccountId, :organizationId, CAST(:storeId AS uuid), :title, CAST(:tags AS jsonb),
                     :mimeType, :sizeBytes, :validUntil, :status, 1, :source, :licenseScope)
                 """)
                 .bind("id", asset.id().toString())
@@ -77,6 +78,7 @@ public class ContentAssetRepository {
                 .bind("title", asset.title())
                 .bind("status", asset.status().db());
         spec = bindNullableString(spec, "organizationId", asset.organizationId());
+        spec = bindNullableString(spec, "storeId", asset.storeId());
         spec = bindNullableString(spec, "mimeType", asset.mimeType());
         spec = bindNullableLong(spec, "sizeBytes", asset.sizeBytes());
         spec = bindNullableOffsetDateTime(spec, "validUntil", asset.validUntil());
@@ -106,16 +108,33 @@ public class ContentAssetRepository {
     }
 
     /**
-     * 列商家库素材（org 维度，仅 active 未软删）。按创建时间倒序，可按分类筛选。
-     * 商家成员查本 org 全部素材（admin/member 粒度首期不分，断言 org 已经 membership 校验）。
+     * 列组织级商家素材（不含 store-scoped 行）。按创建时间倒序，可按分类筛选。
      */
     public Flux<ContentAsset> listMerchantByOrg(String organizationId, AssetCategory category) {
         String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
                 + " WHERE organization_id=:organizationId AND library_type='merchant'"
+                + " AND store_id IS NULL"
                 + " AND deleted_at IS NULL AND status='active'"
                 + (category != null ? " AND category=:category" : "")
                 + " ORDER BY created_at DESC";
         DatabaseClient.GenericExecuteSpec spec = db.sql(sql).bind("organizationId", organizationId);
+        if (category != null) {
+            spec = spec.bind("category", category.db());
+        }
+        return spec.map(ContentAssetRepository::map).all();
+    }
+
+    /** 列某门店素材；调用方必须先完成 Identity 门店 STAFF 授权。 */
+    public Flux<ContentAsset> listMerchantByStore(
+            String organizationId, String storeId, AssetCategory category) {
+        String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
+                + " WHERE organization_id=:organizationId AND store_id=CAST(:storeId AS uuid)"
+                + " AND library_type='merchant' AND deleted_at IS NULL AND status='active'"
+                + (category != null ? " AND category=:category" : "")
+                + " ORDER BY created_at DESC";
+        DatabaseClient.GenericExecuteSpec spec = db.sql(sql)
+                .bind("organizationId", organizationId)
+                .bind("storeId", storeId);
         if (category != null) {
             spec = spec.bind("category", category.db());
         }
@@ -246,10 +265,11 @@ public class ContentAssetRepository {
     public Mono<Void> appendVersion(ContentAsset asset, String editedBy) {
         DatabaseClient.GenericExecuteSpec spec = db.sql("""
                 INSERT INTO content_asset_version (
-                    asset_id, version, library_type, category, owner_account_id, organization_id,
+                    asset_id, version, library_type, category, owner_account_id, organization_id, store_id,
                     title, tags, mime_type, size_bytes, valid_until, source, license_scope, snapshotted_by)
                 VALUES (
                     CAST(:assetId AS uuid), :version, :libraryType, :category, :ownerAccountId, :organizationId,
+                    CAST(:storeId AS uuid),
                     :title, CAST(:tags AS jsonb), :mimeType, :sizeBytes, :validUntil, :source, :licenseScope, :snapshottedBy)
                 """)
                 .bind("assetId", asset.id().toString())
@@ -260,6 +280,7 @@ public class ContentAssetRepository {
                 .bind("title", asset.title())
                 .bind("snapshottedBy", editedBy);
         spec = bindNullableString(spec, "organizationId", asset.organizationId());
+        spec = bindNullableString(spec, "storeId", asset.storeId());
         spec = bindNullableString(spec, "mimeType", asset.mimeType());
         spec = bindNullableLong(spec, "sizeBytes", asset.sizeBytes());
         spec = bindNullableOffsetDateTime(spec, "validUntil", asset.validUntil());
@@ -272,7 +293,7 @@ public class ContentAssetRepository {
     /** 列某素材的全部历史快照（按版本正序）。 */
     public Flux<ContentAssetVersion> listVersions(UUID assetId) {
         return db.sql("""
-                SELECT asset_id::text, version, library_type, category, owner_account_id, organization_id,
+                SELECT asset_id::text, version, library_type, category, owner_account_id, organization_id, store_id::text,
                        title, tags::text, mime_type, size_bytes, valid_until, source, license_scope,
                        snapshotted_at, snapshotted_by
                 FROM content_asset_version
@@ -305,7 +326,8 @@ public class ContentAssetRepository {
                 toInstant(row.get("reviewed_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
-                toInstant(row.get("deleted_at", OffsetDateTime.class)));
+                toInstant(row.get("deleted_at", OffsetDateTime.class)),
+                row.get("store_id", String.class));
     }
 
     private static ContentAssetVersion mapVersion(Readable row) {
@@ -324,7 +346,8 @@ public class ContentAssetRepository {
                 row.get("source", String.class),
                 row.get("license_scope", String.class),
                 toInstant(row.get("snapshotted_at", OffsetDateTime.class)),
-                row.get("snapshotted_by", String.class));
+                row.get("snapshotted_by", String.class),
+                row.get("store_id", String.class));
     }
 
     /** 解析 tags jsonb 为 List（跨包复用：ContentAssetGrantRepository JOIN 读 asset 也用）。 */

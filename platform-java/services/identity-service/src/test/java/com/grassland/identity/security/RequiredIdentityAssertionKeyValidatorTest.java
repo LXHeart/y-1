@@ -20,9 +20,11 @@ class RequiredIdentityAssertionKeyValidatorTest {
     }
 
     @Test
-    void acceptsTrustToIdentityVerificationKeyAndLegacyTestMode() {
+    void acceptsAllTrustedServiceKeysAndLegacyTestMode() {
         assertThatCode(() -> new RequiredIdentityAssertionKeyValidator(properties(List.of(
-                key("trust", "trust", "service", "grassland-identity")))))
+                key("trust", "trust", "service", "grassland-identity"),
+                key("marketplace", "marketplace", "service", "grassland-identity"),
+                key("intelligence", "intelligence", "service", "grassland-identity")))))
                 .doesNotThrowAnyException();
         assertThatCode(() -> new RequiredIdentityAssertionKeyValidator(new IdentityAssertionProperties(
                 true, "legacy-test-secret", 60, null, null, 5, null,

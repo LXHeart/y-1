@@ -5,6 +5,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
@@ -57,11 +58,13 @@ public class TaskController {
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
     private final ReputationService reputationService;
+    private final IdentityStoreAuthorizationClient storeAuthorization;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
-                          TransactionalOperator transactions, ReputationService reputationService) {
+                          TransactionalOperator transactions, ReputationService reputationService,
+                          IdentityStoreAuthorizationClient storeAuthorization) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -70,6 +73,7 @@ public class TaskController {
         this.finance = finance;
         this.transactions = transactions;
         this.reputationService = reputationService;
+        this.storeAuthorization = storeAuthorization;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -97,7 +101,12 @@ public class TaskController {
                     }
                     // 闸门 4+5（D-05）：活跃任务数上限 + 本月新建任务数上限 → 409。
                     int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
-                    return tasks.countActiveByOrganization(merchant.organizationId())
+                    String storeId = blankToNull(body.storeId());
+                    Mono<Void> scopeAuthorization = storeId == null
+                            ? Mono.empty()
+                            : storeAuthorization.require(merchant.accountId(), merchant.organizationId(),
+                                    storeId, "manager");
+                    return scopeAuthorization.then(tasks.countActiveByOrganization(merchant.organizationId()))
                             .flatMap(active -> active >= maxActive
                                     ? Mono.<Integer>error(new MarketplaceException(409, "已达本组织发布上限"))
                                     : tasks.countCreatedThisMonthByOrganization(merchant.organizationId()))
@@ -106,7 +115,8 @@ public class TaskController {
                                     : transactions.transactional(
                                             tasks.create(merchant.accountId(), body.organizationId(), body.title(),
                                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
-                                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel())
+                                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
+                                                    storeId)
                                                     .flatMap(task -> outbox.append(taskSubmittedEnvelope(task)).thenReturn(task))));
                 })
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
@@ -120,10 +130,16 @@ public class TaskController {
                     if (!body.organizationId().equals(merchant.organizationId())) {
                         return Mono.<Task>error(new MarketplaceException(403, "无权为该组织创建任务"));
                     }
-                    return transactions.transactional(
+                    String storeId = blankToNull(body.storeId());
+                    Mono<Void> scopeAuthorization = storeId == null
+                            ? Mono.empty()
+                            : storeAuthorization.require(merchant.accountId(), merchant.organizationId(),
+                                    storeId, "manager");
+                    return scopeAuthorization.then(transactions.transactional(
                             tasks.createDraft(merchant.accountId(), body.organizationId(), body.title(),
                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
-                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel()));
+                                    body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
+                                    storeId)));
                 })
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
@@ -133,7 +149,7 @@ public class TaskController {
     public Mono<ResponseEntity<Map<String, Object>>> update(@PathVariable String id, @RequestBody UpdateTaskRequest body,
                                                             ServerHttpRequest request) {
         return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), "draft")
+                .flatMap(merchant -> loadManageableTask(id, merchant, "draft")
                         .flatMap(ignored -> transactions.transactional(
                                 tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
@@ -148,7 +164,7 @@ public class TaskController {
     public Mono<ResponseEntity<Map<String, Object>>> publish(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                              ServerHttpRequest request) {
         return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), "draft")
+                .flatMap(merchant -> loadManageableTask(id, merchant, "draft")
                         .flatMap(draft -> enforcePublishGates(merchant, draft.bountyCents())
                                 .thenReturn(draft)
                                 .flatMap(ignored -> transactions.transactional(
@@ -163,7 +179,7 @@ public class TaskController {
     public Mono<ResponseEntity<Map<String, Object>>> close(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                            ServerHttpRequest request) {
         return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), "published")
+                .flatMap(merchant -> loadManageableTask(id, merchant, "published")
                         .flatMap(ignored -> transactions.transactional(
                                 tasks.close(id, body.expectedVersion())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
@@ -183,7 +199,7 @@ public class TaskController {
     public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                             ServerHttpRequest request) {
         return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), null)
+                .flatMap(merchant -> loadManageableTask(id, merchant, null)
                         .flatMap(owned -> {
                             String status = owned.status();
                             if (TaskStatus.CANCELLED.dbValue().equals(status)) {
@@ -237,7 +253,7 @@ public class TaskController {
     public Mono<ResponseEntity<Map<String, Object>>> revise(@PathVariable String id, @RequestBody ReviseTaskRequest body,
                                                             ServerHttpRequest request) {
         return callers.requireMerchant(request)
-                .flatMap(merchant -> loadOwnedTask(id, merchant.accountId(), "published")
+                .flatMap(merchant -> loadManageableTask(id, merchant, "published")
                         .flatMap(ignored -> enforceBountyTierGate(merchant, body.bountyCents())
                                 .thenReturn(ignored)
                                 .flatMap(v -> transactions.transactional(
@@ -269,9 +285,19 @@ public class TaskController {
     @GetMapping("/api/tasks")
     public Mono<ResponseEntity<Map<String, Object>>> list(@RequestParam String organizationId,
                                                           @RequestParam(required = false, defaultValue = "published") String status,
+                                                          @RequestParam(required = false) String storeId,
                                                           ServerHttpRequest request) {
         return callers.resolve(request)
                 .flatMap(caller -> {
+                    if (storeId != null && !storeId.isBlank()) {
+                        if (!caller.isMerchant() || !organizationId.equals(caller.organizationId())) {
+                            return Mono.error(new MarketplaceException(403, "无权访问该门店任务"));
+                        }
+                        return storeAuthorization.require(caller.accountId(), organizationId, storeId, "staff")
+                                .then(tasks.findByStore(organizationId, storeId, status).collectList())
+                                .map(list -> ResponseEntity.ok(Map.of("success", true,
+                                        "data", list.stream().map(this::toBody).toList())));
+                    }
                     // 非 published status 仅本 org merchant 可查（防跨组织草稿/取消泄露）。
                     String effectiveStatus = TaskStatus.PUBLISHED.dbValue().equalsIgnoreCase(status) || status.isBlank()
                             ? TaskStatus.PUBLISHED.dbValue()
@@ -443,7 +469,14 @@ public class TaskController {
                             // published 对任意 caller 可见；其余状态仅 owner 可见（不泄露 draft/closed/cancelled 存在）。
                             boolean publicVisible = TaskStatus.PUBLISHED.dbValue().equals(task.status());
                             boolean owner = caller.accountId().equals(task.ownerAccountId());
-                            if (owner) {
+                            if (!publicVisible && task.storeId() != null && caller.isMerchant()
+                                    && task.organizationId().equals(caller.organizationId())) {
+                                return storeAuthorization.require(caller.accountId(), task.organizationId(),
+                                                task.storeId(), "staff")
+                                        .thenReturn(ResponseEntity.ok(Map.of(
+                                                "success", true, "data", toBody(task))));
+                            }
+                            if (owner && task.storeId() == null) {
                                 return Mono.just(ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
                             }
                             if (!publicVisible) {
@@ -489,12 +522,23 @@ public class TaskController {
                         : Mono.empty());
     }
 
-    /** 加载 owner 的任务；{@code requiredStatus} 非 null 时额外校验状态（否则 409）。不存在→404，非 owner→403。 */
-    private Mono<Task> loadOwnedTask(String taskId, String callerAccountId, String requiredStatus) {
+    /** 组织级任务沿用 owner 管理；门店任务允许该店 MANAGER 管理。 */
+    private Mono<Task> loadManageableTask(String taskId, Caller caller, String requiredStatus) {
         return tasks.findById(taskId)
                 .switchIfEmpty(fail(404, "任务不存在"))
-                .filter(t -> callerAccountId.equals(t.ownerAccountId()))
-                .switchIfEmpty(fail(403, "无权操作该任务"))
+                .flatMap(task -> {
+                    if (!task.organizationId().equals(caller.organizationId())) {
+                        return fail(403, "无权操作该任务");
+                    }
+                    if (task.storeId() == null) {
+                        return caller.accountId().equals(task.ownerAccountId())
+                                ? Mono.just(task)
+                                : fail(403, "无权操作该任务");
+                    }
+                    return storeAuthorization.require(caller.accountId(), task.organizationId(),
+                                    task.storeId(), "manager")
+                            .thenReturn(task);
+                })
                 .filter(t -> requiredStatus == null || requiredStatus.equals(t.status()))
                 .switchIfEmpty(fail(409, "任务当前状态不允许该操作"));
     }
@@ -506,6 +550,9 @@ public class TaskController {
         payload.put("ownerAccountId", task.ownerAccountId());
         payload.put("title", task.title());
         payload.put("version", task.version());
+        if (task.storeId() != null) {
+            payload.put("storeId", task.storeId());
+        }
         if (task.applicationDeadline() != null) {
             payload.put("applicationDeadline", task.applicationDeadline().toString());
         }
@@ -516,31 +563,25 @@ public class TaskController {
     /** GL-P2-ADMIN-003 全审政策：提交审核事件（与 TaskPublished 同构，区分审核态）。 */
     private EventEnvelope taskSubmittedEnvelope(Task task) {
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskSubmittedForReview", "Task",
-                task.id(), task.version(), Instant.now(), null,
-                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                        "ownerAccountId", task.ownerAccountId(), "title", task.title(),
-                        "version", task.version()));
+                task.id(), task.version(), Instant.now(), null, taskEventPayload(task, true));
     }
 
     private EventEnvelope taskDraftUpdatedEnvelope(Task task) {
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskDraftUpdated", "Task",
                 task.id(), task.version(), Instant.now(), null,
-                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                        "ownerAccountId", task.ownerAccountId(), "version", task.version()));
+                taskEventPayload(task, false));
     }
 
     private EventEnvelope taskClosedEnvelope(Task task) {
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskClosed", "Task",
                 task.id(), task.version(), Instant.now(), null,
-                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                        "ownerAccountId", task.ownerAccountId(), "version", task.version()));
+                taskEventPayload(task, false));
     }
 
     private EventEnvelope taskCancelledEnvelope(Task task) {
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskCancelled", "Task",
                 task.id(), task.version(), Instant.now(), null,
-                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                        "ownerAccountId", task.ownerAccountId(), "version", task.version()));
+                taskEventPayload(task, false));
     }
 
     /**
@@ -572,8 +613,22 @@ public class TaskController {
     private EventEnvelope taskRevisedEnvelope(Task task) {
         return new EventEnvelope(UUID.randomUUID().toString(), "TaskRevised", "Task",
                 task.id(), task.version(), Instant.now(), null,
-                Map.of("taskId", task.id(), "organizationId", task.organizationId(),
-                        "ownerAccountId", task.ownerAccountId(), "version", task.version()));
+                taskEventPayload(task, false));
+    }
+
+    private static Map<String, Object> taskEventPayload(Task task, boolean includeTitle) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", task.id());
+        payload.put("organizationId", task.organizationId());
+        payload.put("ownerAccountId", task.ownerAccountId());
+        payload.put("version", task.version());
+        if (task.storeId() != null) {
+            payload.put("storeId", task.storeId());
+        }
+        if (includeTitle) {
+            payload.put("title", task.title());
+        }
+        return payload;
     }
 
     private Map<String, Object> toBody(Task task) {
@@ -581,6 +636,9 @@ public class TaskController {
         m.put("id", task.id());
         m.put("ownerAccountId", task.ownerAccountId());
         m.put("organizationId", task.organizationId());
+        if (task.storeId() != null) {
+            m.put("storeId", task.storeId());
+        }
         m.put("title", task.title());
         m.put("description", task.description());
         m.put("status", task.status());

@@ -21,6 +21,7 @@ import type {
   Organization,
   RecommenderProfile,
   RecommenderReputation,
+  Store,
   Task,
   TaskApplication,
 } from '../types/grassland'
@@ -48,7 +49,10 @@ type Side = 'merchant' | 'recommender'
 
 const side = ref<Side>('merchant')
 const orgs = ref<Organization[]>([])
+const stores = ref<Store[]>([])
 const activeOrgId = ref('')
+/** Empty means legacy organization-level task scope; otherwise the selected store. */
+const selectedStoreId = ref('')
 const account = ref<FinanceAccount | null>(null)
 const tasks = ref<Task[]>([])
 const applications = ref<TaskApplication[]>([])
@@ -172,6 +176,8 @@ async function loadOrganizations(): Promise<void> {
   // 列表仍是旧的（App.vue 用 <component :is> 复用组件，onMounted 不必然重跑，
   // 且期间可能有新任务）。浏览器实测发现：后端 3 个任务、UI 只显示 2 个。
   if (activeOrgId.value) {
+    const storeList = await grassland.listStores(activeOrgId.value)
+    stores.value = storeList ?? []
     await refreshAccount()
     await refreshTasks()
   }
@@ -207,7 +213,9 @@ function resetAccountState(): void {
   clearDeferredPoll()
   deferredDisputeRequestId.value = ''
   orgs.value = []
+  stores.value = []
   activeOrgId.value = ''
+  selectedStoreId.value = ''
   account.value = null
   tasks.value = []
   applications.value = []
@@ -265,6 +273,15 @@ async function refreshAccount(): Promise<void> {
   if (existing) grassland.clearError()
 }
 
+async function changeOrganization(): Promise<void> {
+  selectedStoreId.value = ''
+  stores.value = activeOrgId.value
+    ? (await grassland.listStores(activeOrgId.value)) ?? []
+    : []
+  await refreshAccount()
+  await refreshTasks()
+}
+
 async function provision(): Promise<void> {
   const created = await grassland.provisionAccount()
   if (!created) return
@@ -297,7 +314,7 @@ async function refreshTasks(): Promise<void> {
   if (!activeOrgId.value) return
   const orgId = activeOrgId.value
   const groups = await Promise.all(
-    MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status)))
+    MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status, selectedStoreId.value || undefined)))
   if (groups.some((g) => g)) tasks.value = groups.flatMap((g) => g ?? [])
 }
 
@@ -306,6 +323,7 @@ async function publishTask(): Promise<void> {
   const bountyCents = yuanToCents(taskForm.value.bountyYuan)
   const created = await grassland.createTask({
     organizationId: activeOrgId.value,
+    storeId: selectedStoreId.value || undefined,
     title: taskForm.value.title.trim(),
     description: taskForm.value.description.trim() || undefined,
     platform: taskForm.value.platform.trim() || undefined,
@@ -387,6 +405,7 @@ async function saveDraft(): Promise<void> {
   } else {
     const created = await grassland.createDraft({
       organizationId: activeOrgId.value,
+      storeId: selectedStoreId.value || undefined,
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
       platform: taskForm.value.platform.trim() || undefined,
@@ -407,6 +426,7 @@ async function saveDraft(): Promise<void> {
 function editDraft(task: Task): void {
   editingDraft.value = { id: task.id, version: task.version }
   revisingTask.value = null
+  selectedStoreId.value = task.storeId || ''
   taskForm.value = {
     title: task.title,
     description: task.description || '',
@@ -426,6 +446,7 @@ function editDraft(task: Task): void {
 function editPublished(task: Task): void {
   revisingTask.value = { id: task.id, version: task.version }
   editingDraft.value = null
+  selectedStoreId.value = task.storeId || ''
   taskForm.value = {
     title: task.title,
     description: task.description || '',
@@ -793,7 +814,7 @@ function statusLabel(status: string): string {
       <article id="gl-organizations" class="gl-card">
         <h3>1. 我的组织</h3>
         <div class="gl-row">
-          <select v-model="activeOrgId" @change="refreshAccount(); refreshTasks()">
+          <select v-model="activeOrgId" @change="changeOrganization">
             <option value="" disabled>选择组织</option>
             <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
           </select>
@@ -844,6 +865,12 @@ function statusLabel(status: string): string {
       <article class="gl-card gl-card-wide">
         <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在下方「提交审核」）</span><span v-else class="gl-hint"> · 提交后经平台内容审核，通过后在大厅上架</span></h3>
         <div class="gl-row">
+          <label>资源范围
+            <select v-model="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="refreshTasks">
+              <option value="">组织级任务</option>
+              <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
+            </select>
+          </label>
           <input v-model="taskForm.title" placeholder="任务标题" />
           <input v-model="taskForm.platform" placeholder="平台（可选）" />
           <input v-model="taskForm.contentForm" placeholder="内容形式（可选）" />
@@ -880,6 +907,7 @@ function statusLabel(status: string): string {
             <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
             <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
             <span v-if="t.minRecommenderLevel > 1" class="gl-tag">Lv{{ t.minRecommenderLevel }}+</span>
+            <span v-if="t.storeId" class="gl-tag">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>
             <!-- 草稿：编辑 / 提交审核 / 取消 -->
             <template v-if="t.status === 'draft'">
               <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>

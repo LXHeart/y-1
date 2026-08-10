@@ -17,8 +17,16 @@ public record CreateDraftRequest(
         Integer maxSlots,
         Long bountyCents,
         Instant applicationDeadline,
-        Integer minRecommenderLevel
+        Integer minRecommenderLevel,
+        String storeId
 ) {
+    public CreateDraftRequest(String organizationId, String title, String description, String contentForm,
+                              String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+                              Integer minRecommenderLevel) {
+        this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents,
+                applicationDeadline, minRecommenderLevel, null);
+    }
+
     public CreateDraftRequest {
         if (organizationId == null || organizationId.isBlank()) {
             throw new IllegalArgumentException("organizationId is required");

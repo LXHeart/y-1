@@ -28,7 +28,7 @@ import reactor.core.publisher.Mono;
 public class TaskRepository {
 
     private static final String SELECT_COLS =
-            "id::text, owner_account_id::text, organization_id::text, title, description, status,"
+            "id::text, owner_account_id::text, organization_id::text, store_id::text, title, description, status,"
                     + " content_form, platform, max_slots, bounty_cents, created_at, updated_at,"
                     + " version, application_deadline, published_at, cancelled_at, min_recommender_level";
 
@@ -48,12 +48,20 @@ public class TaskRepository {
     public Mono<Task> create(String ownerAccountId, String organizationId, String title,
                              String description, String contentForm, String platform, Integer maxSlots,
                              Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel) {
+        return create(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+                bountyCents, applicationDeadline, minRecommenderLevel, null);
+    }
+
+    public Mono<Task> create(String ownerAccountId, String organizationId, String title,
+                             String description, String contentForm, String platform, Integer maxSlots,
+                             Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
+                             String storeId) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO task(id, owner_account_id, organization_id, title, description, status,
+                INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
                                  content_form, platform, max_slots, bounty_cents, application_deadline,
                                  min_recommender_level)
-                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), :title,
+                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
                         :desc, 'pending_review', :contentForm, :platform, :maxSlots, :bountyCents,
                         :deadline, :minLevel)
                 RETURNING %s
@@ -65,6 +73,7 @@ public class TaskRepository {
         spec = bindNullableInt(spec, "maxSlots", maxSlots);
         spec = bindNullableLong(spec, "bountyCents", bountyCents);
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
+        spec = bindNullable(spec, "store", storeId);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
         return spec.map(TaskRepository::map).one();
     }
@@ -73,12 +82,20 @@ public class TaskRepository {
     public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title,
                                   String description, String contentForm, String platform, Integer maxSlots,
                                   Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel) {
+        return createDraft(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+                bountyCents, applicationDeadline, minRecommenderLevel, null);
+    }
+
+    public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title,
+                                  String description, String contentForm, String platform, Integer maxSlots,
+                                  Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
+                                  String storeId) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO task(id, owner_account_id, organization_id, title, description, status,
+                INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
                                  content_form, platform, max_slots, bounty_cents, version, application_deadline,
                                  min_recommender_level)
-                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), :title,
+                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
                         :desc, 'draft', :contentForm, :platform, :maxSlots, :bountyCents, 0, :deadline, :minLevel)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
@@ -89,6 +106,7 @@ public class TaskRepository {
         spec = bindNullableInt(spec, "maxSlots", maxSlots);
         spec = bindNullableLong(spec, "bountyCents", bountyCents);
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
+        spec = bindNullable(spec, "store", storeId);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
         return spec.map(TaskRepository::map).one();
     }
@@ -259,18 +277,33 @@ public class TaskRepository {
         return spec.map(TaskRepository::map).all();
     }
 
-    /** 列某 org 的任务；status 为空则不限（大厅默认查 published 由调用方传入）。 */
+    /** 列某 org 的组织级任务（不含 store-scoped 行）；status 为空则不限。 */
     public Flux<Task> findByOrganization(String organizationId, String status) {
         if (status == null || status.isBlank()) {
             return db.sql("SELECT " + SELECT_COLS
-                    + " FROM task WHERE organization_id = CAST(:org AS uuid) ORDER BY created_at DESC")
+                    + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL ORDER BY created_at DESC")
                     .bind("org", organizationId)
                     .map(TaskRepository::map).all();
         }
         return db.sql("SELECT " + SELECT_COLS
-                + " FROM task WHERE organization_id = CAST(:org AS uuid) AND status = :status ORDER BY created_at DESC")
+                + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL"
+                + " AND status = :status ORDER BY created_at DESC")
                 .bind("org", organizationId).bind("status", status)
                 .map(TaskRepository::map).all();
+    }
+
+    /** 列某一门店的任务；调用方必须先完成 Identity 门店授权。 */
+    public Flux<Task> findByStore(String organizationId, String storeId, String status) {
+        String statusPredicate = status == null || status.isBlank() ? "" : " AND status = :status";
+        var spec = db.sql("SELECT " + SELECT_COLS + " FROM task"
+                        + " WHERE organization_id = CAST(:org AS uuid) AND store_id = CAST(:store AS uuid)"
+                        + statusPredicate + " ORDER BY created_at DESC")
+                .bind("org", organizationId)
+                .bind("store", storeId);
+        if (!statusPredicate.isEmpty()) {
+            spec = spec.bind("status", status);
+        }
+        return spec.map(TaskRepository::map).all();
     }
 
     /** 某 org 当前 published 的任务数——发布限额执行用（Stage 1：只 published 算活跃，draft/cancelled 不占）。 */
@@ -294,15 +327,16 @@ public class TaskRepository {
     /** 落一行不可变 task_version 快照（HLD §5.3）。version 取 task 当前 version（publish 后已 +1）。 */
     private Mono<Void> appendVersion(Task task, String publishedBy) {
         var spec = db.sql("""
-                INSERT INTO task_version(task_id, version, title, description, content_form, platform,
+                INSERT INTO task_version(task_id, version, store_id, title, description, content_form, platform,
                                          max_slots, bounty_cents, application_deadline, published_at, published_by,
                                          min_recommender_level)
-                VALUES (CAST(:taskId AS uuid), :version, :title, :desc, :contentForm, :platform,
+                VALUES (CAST(:taskId AS uuid), :version, CAST(:store AS uuid), :title, :desc, :contentForm, :platform,
                         :maxSlots, :bountyCents, :deadline, COALESCE(:publishedAt, now()), CAST(:publishedBy AS uuid),
                         :minLevel)
                 """)
                 .bind("taskId", task.id()).bind("version", task.version()).bind("title", task.title());
         spec = spec.bind("minLevel", task.minRecommenderLevel());
+        spec = bindNullable(spec, "store", task.storeId());
         spec = bindNullable(spec, "publishedBy", publishedBy);
         spec = bindNullable(spec, "desc", task.description());
         spec = bindNullable(spec, "contentForm", task.contentForm());
@@ -343,7 +377,8 @@ public class TaskRepository {
                 toInstant(row.get("application_deadline", OffsetDateTime.class)),
                 toInstant(row.get("published_at", OffsetDateTime.class)),
                 toInstant(row.get("cancelled_at", OffsetDateTime.class)),
-                value(row.get("min_recommender_level", Integer.class), 1)
+                value(row.get("min_recommender_level", Integer.class), 1),
+                row.get("store_id", String.class)
         );
     }
 

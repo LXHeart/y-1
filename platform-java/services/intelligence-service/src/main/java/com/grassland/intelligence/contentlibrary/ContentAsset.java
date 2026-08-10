@@ -54,5 +54,16 @@ public record ContentAsset(
         Instant reviewedAt,
         Instant createdAt,
         Instant updatedAt,
-        Instant deletedAt) {
+        Instant deletedAt,
+        String storeId) {
+
+    public ContentAsset(UUID id, UUID mediaReferenceId, LibraryType libraryType, AssetCategory category,
+                        String ownerAccountId, String organizationId, String title, List<String> tags,
+                        String mimeType, Long sizeBytes, Instant validUntil, AssetStatus status, int version,
+                        String source, String licenseScope, String reviewNote, String reviewedBy,
+                        Instant reviewedAt, Instant createdAt, Instant updatedAt, Instant deletedAt) {
+        this(id, mediaReferenceId, libraryType, category, ownerAccountId, organizationId, title, tags,
+                mimeType, sizeBytes, validUntil, status, version, source, licenseScope, reviewNote,
+                reviewedBy, reviewedAt, createdAt, updatedAt, deletedAt, null);
+    }
 }

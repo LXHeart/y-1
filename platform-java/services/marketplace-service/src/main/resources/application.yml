@@ -131,7 +131,7 @@ marketplace:
     start-failure-backoff-seconds: ${MARKETPLACE_RECONCILIATION_START_FAILURE_BACKOFF_SECONDS:10}
 
 # 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
-# marketplace 签发服务断言到 finance/trust/intelligence（purpose=service），
+# marketplace 签发服务断言到 finance/trust/intelligence/identity（purpose=service），
 # 验证 edge-bff 签发的用户断言（purpose=user）。
 identity-assertion:
   enabled: ${IDENTITY_ASSERTION_ENABLED:false}
@@ -151,6 +151,10 @@ identity-assertion:
       purpose: service
       audience: grassland-intelligence
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_INTELLIGENCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_IDENTITY_KID:marketplace-service-identity-v1}
+      purpose: service
+      audience: grassland-identity
+      secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_IDENTITY:}
   # marketplace 验证 edge-bff 用户断言 + trust 服务断言（内部争议参与方授权）
   verify-keys:
     - kid: ${IDENTITY_ASSERTION_KEY_EDGE_USER_MARKETPLACE_KID:edge-user-marketplace-v1}
@@ -175,6 +179,10 @@ identity-assertion:
 finance:
   service:
     base-url: ${FINANCE_SERVICE_BASE_URL:http://finance-service:8084}
+
+identity:
+  service:
+    base-url: ${IDENTITY_SERVICE_BASE_URL:http://identity-service:8082}
 
 # 跨服务调 trust（Slice 6A 结算窗口查开放争议出站 base url）。
 trust:
