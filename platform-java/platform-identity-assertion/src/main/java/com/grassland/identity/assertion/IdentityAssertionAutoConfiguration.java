@@ -43,7 +43,8 @@ public class IdentityAssertionAutoConfiguration {
     LettuceConnectionFactory identityAssertionReplayConnectionFactory(IdentityAssertionProperties props) {
         URI uri = URI.create(props.replayProtection().redisUrl());
         if (!"redis".equalsIgnoreCase(uri.getScheme()) && !"rediss".equalsIgnoreCase(uri.getScheme())) {
-            throw new IllegalArgumentException("replay redis-url must use redis:// or rediss://");
+            throw new IllegalArgumentException("replay redis-url must use redis:// or rediss:// (scheme="
+                    + uri.getScheme() + ")");
         }
         RedisStandaloneConfiguration server = new RedisStandaloneConfiguration(
                 uri.getHost(), uri.getPort() > 0 ? uri.getPort() : 6379);

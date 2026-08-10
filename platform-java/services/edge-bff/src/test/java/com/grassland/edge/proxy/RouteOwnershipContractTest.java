@@ -53,6 +53,9 @@ class RouteOwnershipContractTest {
         }
         registry.add("edge.default-upstream", () -> "legacy");
         registry.add("management.server.port", () -> "0");
+        registry.add("PUBLIC_BACKEND_ORIGIN", () -> "http://localhost:" + upstream.port());
+        registry.add("BILIBILI_PROXY_TOKEN_SECRET", () -> "x".repeat(32));
+        registry.add("DOUYIN_PROXY_TOKEN_SECRET", () -> "x".repeat(32));
     }
 
     @ParameterizedTest(name = "{0} {1} -> {2}")
@@ -81,6 +84,9 @@ class RouteOwnershipContractTest {
                 Arguments.of(HttpMethod.GET, "/api/media/media", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/api/settings/analysis", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/api/homepage/hot-items", "intelligence"),
+                Arguments.of(HttpMethod.GET, "/api/bilibili/analysis-media/id", "intelligence"),
+                Arguments.of(HttpMethod.GET, "/api/douyin/audio/token", "intelligence"),
+                Arguments.of(HttpMethod.GET, "/api/douyin/session", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/api/admin/users", "identity"),
                 Arguments.of(HttpMethod.GET, "/api/admin/reputation-config", "marketplace"),
                 Arguments.of(HttpMethod.GET, "/api/admin/trust/judges", "trust"),

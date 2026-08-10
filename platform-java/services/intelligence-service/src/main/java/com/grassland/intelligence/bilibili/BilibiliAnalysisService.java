@@ -6,6 +6,8 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisPrompts;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
+import com.grassland.intelligence.mediaplatform.PlatformMediaService;
+import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.net.URI;
 import java.time.Duration;
@@ -20,18 +22,14 @@ import reactor.core.publisher.Mono;
  * Bilibili 视频分析编排（草场 Slice 13 Stage 5）。移植 legacy {@code bilibili-video-analysis.service.ts} 的
  * {@code analyzeBilibiliVideoByProxyUrl}（content 提取）与 {@code analyzeBilibiliVideoForRecreation}（复刻场景，无路由）。
  *
- * <p><b>路由决策</b>（Java vs 回落 legacy）——在扣积分之前判定，避免双扣：
+ * <p><b>Java 分析路径</b>：
  * <ul>
- *   <li>Java 路径 ⟺ {@code kind=progressive && durationSeconds ≤ maxSingleSegmentSeconds(默认 60) && provider=qwen
- *       && PUBLIC_BACKEND_ORIGIN 已配置}。直接发 {@code video_url}（公开代理地址）给平台 Qwen，扣积分（CreditsClient），
- *       归一返回。</li>
- *   <li>其余（DASH / 超阈值需 FFmpeg 切片 / 非 qwen provider）→ {@link BilibiliAnalysisOutcome.Fallback}，
- *       由 controller 整体转发 legacy（legacy 扣积分 + FFmpeg/Coze）。Cookie 经 edge-bff→intelligence→legacy 透传，
- *       legacy session 中间件解析同 {@code COOKIE_SECRET}+{@code y1.sid} → {@code getSessionUser}+{@code requireCredit} 闭环。</li>
+ *   <li>不超过单段阈值的视频通过公开 Java 代理地址直接提交 Qwen。</li>
+ *   <li>DASH 或长视频由 Java 下载/合流并以 30 秒片段提交 Qwen，结果按时间顺序合并。</li>
+ *   <li>仅在完整分析开始前扣一次积分；任一上游步骤失败会自动退款。</li>
  * </ul>
  *
- * <p>FFmpeg 切片 / 分段合并（legacy ~350 行 overlap trim）不移植；超阈值一律回落 legacy。
- * 平台级 Qwen 配置（{@code ai.bilibili-analysis.provider} 默认 qwen），不读用户 BYOK 设置（与 Slice 10 同前提）。
+ * <p>平台级 Qwen 配置（{@code ai.bilibili-analysis.provider} 默认 qwen），不读用户 BYOK 设置（与 Slice 10 同前提）。
  */
 @Service
 public class BilibiliAnalysisService {
@@ -49,9 +47,12 @@ public class BilibiliAnalysisService {
     private final Duration timeout;
     private final int maxSingleSegmentSeconds;
     private final String publicBackendOrigin;
+    private final PlatformMediaService media;
+    private final VideoSegmentAnalysisService segmented;
 
     public BilibiliAnalysisService(AiCapabilityAdapter ai, BilibiliProxyToken tokenCodec, CreditsClient credits,
-                                   Environment environment) {
+                                   Environment environment, PlatformMediaService media,
+                                   VideoSegmentAnalysisService segmented) {
         this.ai = ai;
         this.tokenCodec = tokenCodec;
         this.credits = credits;
@@ -61,6 +62,8 @@ public class BilibiliAnalysisService {
         this.maxSingleSegmentSeconds = environment.getProperty("ai.bilibili-analysis.max-single-segment-seconds",
                 Integer.class, 60);
         this.publicBackendOrigin = environment.getProperty("app.public-backend-origin", "");
+        this.media = media;
+        this.segmented = segmented;
     }
 
     /** content 提取（live 端点 {@code POST /api/bilibili/analyze-video}）。 */
@@ -69,15 +72,9 @@ public class BilibiliAnalysisService {
         BilibiliMediaTarget target = tokenCodec.parse(token);
         long duration = assertAnalysisDuration(target.durationSeconds());
 
-        if (!isJavaEligible(target, duration)) {
-            return Mono.just(new BilibiliAnalysisOutcome.Fallback());
-        }
-        String publicProxyUrl = buildPublicProxyUrl(token);
-        List<ContentPart> parts = List.of(ContentPart.video(publicProxyUrl), ContentPart.text(VideoAnalysisPrompts.analysis()));
+        assertJavaConfigured();
         return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
-                .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
-                        .map(meta -> (BilibiliAnalysisOutcome) new BilibiliAnalysisOutcome.Java(
-                                VideoAnalysisResultNormalizer.normalize(meta.content(), meta.runId())))
+                .flatMap(charge -> analyzeTarget(token, target, duration)
                         // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "Bilibili 视频分析失败自动退回")
                                 .then(Mono.error(error))));
@@ -92,25 +89,40 @@ public class BilibiliAnalysisService {
         BilibiliMediaTarget target = tokenCodec.parse(token);
         long duration = assertAnalysisDuration(target.durationSeconds());
 
-        if (!isJavaEligible(target, duration)) {
-            return Mono.just(new BilibiliAnalysisOutcome.Fallback());
+        assertJavaConfigured();
+        if (!(target instanceof BilibiliMediaTarget.Progressive) || duration > maxSingleSegmentSeconds) {
+            throw new IntelligenceException(422, "复刻分析暂不支持分段视频");
         }
         String publicProxyUrl = buildPublicProxyUrl(token);
         List<ContentPart> parts = List.of(ContentPart.video(publicProxyUrl), ContentPart.text(VideoAnalysisPrompts.recreation()));
         return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
                 .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
-                        .map(meta -> (BilibiliAnalysisOutcome) new BilibiliAnalysisOutcome.Java(
+                        .map(meta -> new BilibiliAnalysisOutcome(
                                 BilibiliRecreationResultNormalizer.normalize(meta.content(), meta.runId())))
                         // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "Bilibili 复刻分析失败自动退回")
                                 .then(Mono.error(error))));
     }
 
-    private boolean isJavaEligible(BilibiliMediaTarget target, long duration) {
-        return target instanceof BilibiliMediaTarget.Progressive
-                && duration <= maxSingleSegmentSeconds
-                && "qwen".equalsIgnoreCase(provider)
-                && !publicBackendOrigin.isBlank();
+    private void assertJavaConfigured() {
+        if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
+            throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+        }
+    }
+
+    private Mono<BilibiliAnalysisOutcome> analyzeTarget(String token, BilibiliMediaTarget target, long duration) {
+        if (target instanceof BilibiliMediaTarget.Progressive && duration <= maxSingleSegmentSeconds) {
+            List<ContentPart> parts = List.of(ContentPart.video(buildPublicProxyUrl(token)),
+                    ContentPart.text(VideoAnalysisPrompts.analysis()));
+            return ai.completeMultimodalMeta(parts, timeout).map(meta -> (BilibiliAnalysisOutcome)
+                    new BilibiliAnalysisOutcome(VideoAnalysisResultNormalizer.normalize(meta.content(), meta.runId())));
+        }
+        return media.prepareBilibili(target).flatMap(sourceId ->
+                (duration > maxSingleSegmentSeconds ? media.createClips(sourceId, duration, 30) : Mono.just(List.of(sourceId)))
+                        .flatMap(ids -> segmented.analyze("bilibili", ids, timeout)
+                                .map(BilibiliAnalysisOutcome::new)
+                                .doFinally(signal -> ids.forEach(media::remove)))
+                        .doFinally(signal -> media.remove(sourceId)));
     }
 
     private long assertAnalysisDuration(Long durationSeconds) {
@@ -166,7 +178,7 @@ public class BilibiliAnalysisService {
     }
 
     private String buildPublicProxyUrl(String token) {
-        // publicBackendOrigin 非空已由 isJavaEligible 保证；token URL 安全，直接拼接。
+        // publicBackendOrigin 非空已由 assertJavaConfigured 保证；token URL 安全，直接拼接。
         String base = publicBackendOrigin.endsWith("/") ? publicBackendOrigin.substring(0, publicBackendOrigin.length() - 1) : publicBackendOrigin;
         return base + "/api/bilibili/proxy/" + token;
     }

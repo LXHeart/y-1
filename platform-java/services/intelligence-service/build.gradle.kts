@@ -22,6 +22,12 @@ dependencies {
     implementation(libs.r2dbc.postgresql)
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("org.jsoup:jsoup:1.21.1")
+    implementation("com.microsoft.playwright:playwright:1.55.0") {
+        exclude(group = "com.microsoft.playwright", module = "driver-bundle")
+        exclude(group = "org.junit.jupiter")
+        exclude(group = "org.opentest4j")
+        exclude(group = "org.slf4j", module = "slf4j-simple")
+    }
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.postgresql:postgresql")
@@ -42,6 +48,11 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.
+configurations.testRuntimeClasspath {
+    exclude(group = "com.microsoft.playwright", module = "driver-bundle")
 }
 
 tasks.jar {

@@ -5,7 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
 /** compact-constructor 校验与默认值（仿 ObjectStoragePropertiesTest）。 */
 class IdentityAssertionPropertiesTest {
@@ -73,5 +77,23 @@ class IdentityAssertionPropertiesTest {
                 true, "filesystem", "", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("redis or memory");
+    }
+
+    @Test
+    void binderUsesCanonicalReplayProtectionConstructor() {
+        var source = new MapConfigurationPropertySource(Map.of(
+                "identity-assertion.replay-protection.enabled", "true",
+                "identity-assertion.replay-protection.storage", "redis",
+                "identity-assertion.replay-protection.redis-url", "redis://redis:6379",
+                "identity-assertion.replay-protection.key-prefix", "test:replay:"));
+
+        var props = new Binder(source)
+                .bind("identity-assertion", Bindable.of(IdentityAssertionProperties.class))
+                .orElseThrow(() -> new AssertionError("identity assertion properties were not bound"));
+
+        assertThat(props.replayProtection().enabled()).isTrue();
+        assertThat(props.replayProtection().storage()).isEqualTo("redis");
+        assertThat(props.replayProtection().redisUrl()).isEqualTo("redis://redis:6379");
+        assertThat(props.replayProtection().keyPrefix()).isEqualTo("test:replay:");
     }
 }

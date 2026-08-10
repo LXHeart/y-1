@@ -5,9 +5,8 @@ import java.util.Map;
 /**
  * 抖音解析结果（移植 legacy {@code douyin-resolve.service.ts} 的 {@code DouyinSourceMaterial} 必要子集）。
  *
- * <p>Java 侧只做 HTTP 阶段（desktop_http / mobile_http），不含 Playwright browser 阶段与登录态
- * （{@code usedSession} 恒 false、{@code fetchStage} 恒 {@code page_json}）；解析不出可播放地址时
- * {@code playableVideoUrl=null}，由 controller 整体回落 legacy（session/浏览器增强）。
+ * <p>HTTP 解析结果和 Java Playwright 浏览器增强结果共用此结构；浏览器路径可设置
+ * {@code usedSession=true} 并记录实际 {@code fetchStage}。
  */
 public record DouyinSourceMaterial(
         String sourceUrl,

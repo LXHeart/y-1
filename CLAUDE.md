@@ -6,7 +6,7 @@
 
 技术栈：Vue 3 + Vite 前端，Express + TypeScript 后端，PostgreSQL 数据库。
 
-> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前是 Java 草场领域与 Express legacy/worker 并存的混合架构：identity、marketplace、finance、trust、intelligence 已有 Java 服务；Express 仍承载部分 legacy API、FFmpeg/Playwright worker 与迁移 fallback。生产默认入口为 Nginx → `edge-bff`，RouteManifest/feature flag 是启动期逐路由切流控制，未迁移路由由 Edge 透明转发 legacy。当前未完成开发与生产门禁见 `docs/草场开发进度与续接指南.md` 当前 backlog 及 memory `grassland-prioritized-backlog.md`。
+> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前是 Java 草场领域与 Express legacy 并存的混合架构：identity、marketplace、finance、trust、intelligence 已有 Java 服务；Express 仍承载未迁移 API 和显式回滚实现。Bilibili/Douyin 媒体链路（含 FFmpeg 与 Playwright）默认已由 intelligence 承载。生产默认入口为 Nginx → `edge-bff`，RouteManifest/feature flag 是启动期逐路由切流控制，未迁移或显式回切的路由由 Edge 透明转发 legacy。当前未完成开发与生产门禁见 `docs/草场开发进度与续接指南.md` 当前 backlog 及 memory `grassland-prioritized-backlog.md`。
 
 ## Java 平台（草场 Epic 0/1）
 

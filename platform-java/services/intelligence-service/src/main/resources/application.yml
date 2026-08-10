@@ -137,16 +137,14 @@ ai:
     model: ${IMAGE_GENERATION_MODEL:}
     connect-timeout-ms: ${IMAGE_GENERATION_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${IMAGE_GENERATION_READ_TIMEOUT_MS:300000}
-  # Bilibili 视频分析（草场 Slice 13 Stage 5）：仅平台级 Qwen，不读用户 BYOK（与 video-recreation 同前提）。
-  # provider 非 qwen → intelligence 不处理，analyze 整体回落 legacy。max-single-segment-seconds：超过则回落 legacy 切片
-  # （legacy 用 30s 切片边界；此处默认 60s，即 progressive+≤60s+qwen 单段直发 video_url，>60s 回落 legacy 切片合并）。
+  # Bilibili 视频分析：仅平台级 Qwen，不读用户 BYOK。短视频直接提交公开代理 URL；
+  # DASH/长视频由 Java FFmpeg 合流或切成 30 秒片段后顺序分析。
   bilibili-analysis:
     provider: ${BILIBILI_ANALYSIS_PROVIDER:qwen}
     timeout-ms: ${BILIBILI_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
-  # Douyin 视频分析（草场 GL-P3-MEDIA-001）：与 bilibili-analysis 同口径——仅平台级 Qwen，不读用户 BYOK。
-  # provider 非 qwen → intelligence 不处理，analyze 整体回落 legacy。max-single-segment-seconds：超过则回落
-  # legacy FFmpeg 切片（legacy 切片边界 30s；此处与 Bilibili 同默认 60s 单段直发 video_url）。
+  # Douyin 视频分析：与 bilibili-analysis 同口径，仅平台级 Qwen，不读用户 BYOK；
+  # 长视频由 Java FFmpeg 切成 30 秒片段后顺序分析。
   douyin-analysis:
     provider: ${DOUYIN_ANALYSIS_PROVIDER:qwen}
     timeout-ms: ${DOUYIN_ANALYSIS_TIMEOUT_MS:180000}
@@ -181,6 +179,12 @@ object-storage:
 # media-reference（草场 Slice 8 第二步）：鉴权三步上传、签名读、TTL/删除审计。
 # 对象 key 不是授权凭据；bucket 非公开，读必须先过 owner 校验再签短时 GET URL。
 media:
+  platform:
+    ffmpeg-path: ${MEDIA_FFMPEG_PATH:ffmpeg}
+    process-timeout-ms: ${MEDIA_PROCESS_TIMEOUT_MS:180000}
+    temp-dir: ${MEDIA_TEMP_DIR:/tmp/grassland-media}
+    artifact-ttl-seconds: ${MEDIA_ARTIFACT_TTL_SECONDS:900}
+    cleanup-interval-ms: ${MEDIA_PLATFORM_CLEANUP_INTERVAL_MS:60000}
   upload-url-ttl-seconds: ${MEDIA_UPLOAD_URL_TTL_SECONDS:900}
   download-url-ttl-seconds: ${MEDIA_DOWNLOAD_URL_TTL_SECONDS:300}
   max-object-bytes: ${MEDIA_MAX_OBJECT_BYTES:20971520}
@@ -201,9 +205,9 @@ article-images:
 
 # 抖音（草场 Slice 13 Stage 1 热点 + GL-P3-MEDIA-001 媒体链路）。
 # hot：公开端点 GET /api/douyin/hot-items，无 auth/credits；上游默认 60s API。
-# proxy/fetch：extract/proxy/download/analyze 迁入项；token-secret 与 legacy 共享（同 DOUYIN_PROXY_TOKEN_SECRET），
-# 缺失/过短时 create/parse 抛错。fetch UA/超时对齐 legacy lib/env.ts 默认；extract 路由开关默认 false
-# （EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE），HTTP 阶段解析失败整体回落 legacy（Playwright/session 仍 Node）。
+# proxy/fetch/browser：extract/proxy/download/audio/analyze/analysis-media/session 均由 Java 提供；
+# token-secret 沿用 DOUYIN_PROXY_TOKEN_SECRET，缺失或过短时 create/parse 抛错。
+# HTTP 提取失败时使用 Java Playwright 增强，浏览器 storage state 保存在共享媒体卷。
 douyin:
   hot:
     api-base-url: ${DOUYIN_HOT_API_BASE_URL:https://60s.viki.moe/v2/douyin}
@@ -216,15 +220,15 @@ douyin:
     user-agent: ${DOUYIN_USER_AGENT:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36}
     cookie-user-agent: ${DOUYIN_COOKIE_USER_AGENT:}
     timeout-ms: ${DOUYIN_FETCH_TIMEOUT_MS:15000}
-
-# legacy Express 后端（草场 Slice 13 Stage 2）：Bilibili DASH 等 FFmpeg 路径回落 legacy 逃生。
-legacy:
-  backend:
-    base-url: ${LEGACY_BACKEND_BASE_URL:http://backend:3000}
+  browser:
+    executable-path: ${DOUYIN_BROWSER_EXECUTABLE_PATH:/usr/bin/chromium}
+    storage-state-path: ${DOUYIN_BROWSER_STORAGE_STATE_PATH:/var/lib/grassland-media/session/douyin-storage-state.json}
+    login-url: ${DOUYIN_BROWSER_LOGIN_URL:https://www.douyin.com/}
+    login-timeout-ms: ${DOUYIN_BROWSER_LOGIN_TIMEOUT_MS:180000}
 
 # Bilibili 代理 token + 抓取配置（草场 Slice 13 Stage 3/4）。token-secret 与 legacy 共享（同 BILIBILI_PROXY_TOKEN_SECRET），
 # 缺失/过短时 create/parse 抛错。fetch 抓分享页 HTML 与 WBI playurl（UA/超时对齐 legacy lib/env.ts 默认）。
-# extract/proxy/download 路由开关默认 false（EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE）。
+# extract/proxy/download/analyze/analysis-media 均由 Java 提供；Edge 媒体路由默认开启。
 bilibili:
   proxy:
     token-secret: ${BILIBILI_PROXY_TOKEN_SECRET:}

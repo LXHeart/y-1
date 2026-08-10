@@ -26,8 +26,8 @@ import reactor.netty.http.client.HttpClient;
  *
  * <p>流程：分享文本抽取入口 URL → 桌面 HTTP 抓取（手动重定向、每跳 page host 守卫）→ 解析页面
  * （meta/标题/JSON 片段/挑战页检测/时长/可播放地址）→ 未解析出可播放地址时依次尝试规范化桌面视频页与
- * 移动分享页。<b>不含 Playwright browser 阶段与登录态</b>——HTTP 阶段解析不出可播放地址时返回
- * {@code playableVideoUrl=null} 的素材，由 controller 整体回落 legacy（browser/session 增强仍留 Node worker）。
+ * 移动分享页。本服务负责非浏览器 HTTP 阶段；解析不出可播放地址时返回
+ * {@code playableVideoUrl=null}，由 controller 调用 Java Playwright 浏览器增强。
  *
  * <p>SSRF 边界：page host 与 video host 均经 {@link DouyinHosts} 静态白名单校验。
  * 超时→504，重定向到不受信目标/其余上游错误→502（错误文案逐字对齐 legacy {@code lib/http.ts}）。

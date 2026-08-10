@@ -1,16 +1,9 @@
 package com.grassland.intelligence.douyin;
 
-import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
-import static com.github.tomakehurst.wiremock.client.WireMock.containing;
-import static com.github.tomakehurst.wiremock.client.WireMock.post;
-import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
-import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.Map;
@@ -30,7 +23,7 @@ import reactor.core.publisher.Mono;
  * <p>resolve 的 HTTP 抓取/重定向守卫由 {@link DouyinResolveServiceTest}（解析逻辑）覆盖；这里 mock
  * {@link DouyinResolveService} 聚焦 controller 层：input 校验（400，文案对齐 legacy schema）、
  * legacy {@code ExtractedDouyinVideoPayload} 契约（含前端强校验的 downloadAudioUrl/usedSession/fetchStage）、
- * token 签发往返（真 tokenCodec，带 UA+Referer 受信头）、HTTP 阶段不可解析时**整体回落 legacy**。
+ * token 签发往返（真 tokenCodec，带 UA+Referer 受信头）、HTTP 阶段不可解析时调用 Java 浏览器增强。
  */
 @DisplayName("Douyin extract POST /api/douyin/extract-video（草场 GL-P3-MEDIA-001）")
 class DouyinExtractControllerIT extends IntelligenceItSupport {
@@ -38,30 +31,23 @@ class DouyinExtractControllerIT extends IntelligenceItSupport {
     private static final String SECRET = "test-douyin-secret-32-chars-min!!";
     private static final String PAGE_URL = "https://www.douyin.com/video/7123456789";
 
-    static final WireMockServer LEGACY = new WireMockServer(0);
-
-    static {
-        LEGACY.start();
-    }
-
     @MockitoBean
     private DouyinResolveService resolveService;
+
+    @MockitoBean
+    private DouyinBrowserService browserService;
 
     @Autowired
     private DouyinProxyToken tokenCodec;
 
-    private final ObjectMapper mapper = new ObjectMapper();
-
     @DynamicPropertySource
     static void douyinProps(DynamicPropertyRegistry registry) {
         registry.add("douyin.proxy.token-secret", () -> SECRET);
-        registry.add("legacy.backend.base-url", LEGACY::baseUrl);
     }
 
     @BeforeEach
     void resetAll() {
-        reset(resolveService);
-        LEGACY.resetAll();
+        reset(resolveService, browserService);
     }
 
     @Test
@@ -120,16 +106,14 @@ class DouyinExtractControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("HTTP 阶段解析不出可播放地址（挑战页）→ 整体回落 legacy，透传信封")
-    void unresolvableMaterialFallsBackToLegacy() throws Exception {
+    @DisplayName("HTTP 阶段不可解析 → Java Playwright/session 增强")
+    void unresolvableMaterialUsesJavaBrowser() {
         when(resolveService.resolve(anyString())).thenReturn(Mono.just(material(null, null)));
-
-        String legacyEnvelope = mapper.writeValueAsString(Map.of(
-                "success", true,
-                "data", Map.of("platform", "douyin", "usedSession", true, "fetchStage", "browser_network")));
-        LEGACY.stubFor(post(urlEqualTo("/api/douyin/extract-video"))
-                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
-                        .withBody(legacyEnvelope)));
+        DouyinSourceMaterial enhanced = material("https://v3-web.douyinvod.com/play.mp4", 30L);
+        enhanced = new DouyinSourceMaterial(enhanced.sourceUrl(), enhanced.resolvedUrl(), enhanced.videoId(),
+                enhanced.author(), enhanced.title(), enhanced.coverUrl(), enhanced.durationSeconds(), enhanced.playableVideoUrl(),
+                enhanced.requestHeaders(), true, "session_browser", false);
+        when(browserService.enhance(anyString())).thenReturn(enhanced);
 
         client().post().uri("/api/douyin/extract-video").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("input", PAGE_URL)).exchange()
@@ -137,27 +121,19 @@ class DouyinExtractControllerIT extends IntelligenceItSupport {
                 .expectBody()
                 .jsonPath("$.success").isEqualTo(true)
                 .jsonPath("$.data.usedSession").isEqualTo(true)
-                .jsonPath("$.data.fetchStage").isEqualTo("browser_network");
-
-        // 原请求体转发给 legacy（legacy 走 Playwright/session 增强阶段）。
-        LEGACY.verify(postRequestedFor(urlEqualTo("/api/douyin/extract-video"))
-                .withRequestBody(containing(PAGE_URL)));
+                .jsonPath("$.data.fetchStage").isEqualTo("session_browser");
     }
 
     @Test
-    @DisplayName("回落时 legacy 错误信封透传（状态码 + error 文案）")
-    void legacyFallbackErrorPropagates() throws Exception {
+    @DisplayName("Java 浏览器增强失败 → 502")
+    void browserEnhancementErrorPropagates() {
         when(resolveService.resolve(anyString())).thenReturn(Mono.just(material(null, null)));
-
-        LEGACY.stubFor(post(urlEqualTo("/api/douyin/extract-video"))
-                .willReturn(aResponse().withStatus(502).withHeader("Content-Type", "application/json")
-                        .withBody("{\"success\":false,\"error\":\"未能从抖音页面或浏览器响应中解析到可下载视频地址\"}")));
+        when(browserService.enhance(anyString())).thenReturn(material(null, null));
 
         client().post().uri("/api/douyin/extract-video").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("input", PAGE_URL)).exchange()
                 .expectStatus().isEqualTo(502)
-                .expectBody().jsonPath("$.error")
-                .isEqualTo("未能从抖音页面或浏览器响应中解析到可下载视频地址");
+                .expectBody().jsonPath("$.error").isEqualTo("抖音未能解析出可播放媒体地址，请稍后重试");
     }
 
     @Test

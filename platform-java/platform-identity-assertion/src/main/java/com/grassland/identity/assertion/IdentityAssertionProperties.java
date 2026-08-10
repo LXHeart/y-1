@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 /**
  * 内部身份断言配置（GL-P0-ASSERT-001 keyring 模式）。
@@ -217,6 +218,7 @@ public record IdentityAssertionProperties(
             this(enabled, "memory", "", "grassland:identity-assertion:replay:");
         }
 
+        @ConstructorBinding
         public ReplayProtectionConfig {
             storage = (storage == null || storage.isBlank()) ? "redis" : storage.trim().toLowerCase();
             redisUrl = redisUrl == null ? "" : redisUrl.trim();

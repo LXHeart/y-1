@@ -6,6 +6,8 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisPrompts;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
+import com.grassland.intelligence.mediaplatform.PlatformMediaService;
+import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.net.URI;
 import java.time.Duration;
@@ -20,20 +22,16 @@ import reactor.core.publisher.Mono;
  * Douyin 视频分析编排（草场 GL-P3-MEDIA-001）。移植 legacy {@code douyin-video-analysis.service.ts} 的
  * {@code analyzeDouyinVideoByProxyUrl} 短视频分支。
  *
- * <p><b>路由决策</b>（Java vs 回落 legacy）——在扣积分之前判定，避免双扣：
+ * <p><b>Java 分析路径</b>：
  * <ul>
- *   <li>Java 路径 ⟺ {@code progressive && durationSeconds ≤ maxSingleSegmentSeconds(默认 60) && provider=qwen
- *       && PUBLIC_BACKEND_ORIGIN 已配置}。直接发 {@code video_url}（公开代理地址）给平台 Qwen，扣积分
- *       （CreditsClient），归一返回。legacy 的 {@code segmentedAnalysisClipDurationSeconds=30}：≤30s 单段直发、
- *       >30s FFmpeg 切片合并；此处与 Bilibili Java 路径同口径放宽到 60s 单段直发（>60s 回落 legacy 切片）。</li>
- *   <li>其余（超阈值需 FFmpeg 切片 / 非 qwen provider / 未配公开源）→ {@link DouyinAnalysisOutcome.Fallback}，
- *       由 controller 整体转发 legacy（legacy 扣积分 + FFmpeg 切片 + analysis-media 临时会话）。
- *       FFmpeg/切片/analysis-media 是 Node worker 能力，不迁 WebFlux（worker 边界）。</li>
+ *   <li>不超过单段阈值的视频通过公开 Java 代理地址直接提交 Qwen。</li>
+ *   <li>长视频由 Java 下载并以 30 秒片段提交 Qwen，结果按时间顺序合并。</li>
+ *   <li>仅在完整分析开始前扣一次积分；任一上游步骤失败会自动退款。</li>
  * </ul>
  *
  * <p>提示词与归一和 Bilibili Java 路径共用 {@link VideoAnalysisPrompts}/{@link VideoAnalysisResultNormalizer}
- * （legacy 侧 douyin/bilibili 本就都走 {@code analyzeVideoContent}，同 prompt 同归一）。
- * 平台级 Qwen 配置（{@code ai.douyin-analysis.provider} 默认 qwen），不读用户 BYOK 设置。
+ * （douyin/bilibili 使用同一 prompt 和归一规则）。平台级 Qwen 配置
+ * （{@code ai.douyin-analysis.provider} 默认 qwen），不读用户 BYOK 设置。
  */
 @Service
 public class DouyinAnalysisService {
@@ -51,9 +49,12 @@ public class DouyinAnalysisService {
     private final Duration timeout;
     private final int maxSingleSegmentSeconds;
     private final String publicBackendOrigin;
+    private final PlatformMediaService media;
+    private final VideoSegmentAnalysisService segmented;
 
     public DouyinAnalysisService(AiCapabilityAdapter ai, DouyinProxyToken tokenCodec, CreditsClient credits,
-                                 Environment environment) {
+                                 Environment environment, PlatformMediaService media,
+                                 VideoSegmentAnalysisService segmented) {
         this.ai = ai;
         this.tokenCodec = tokenCodec;
         this.credits = credits;
@@ -63,6 +64,8 @@ public class DouyinAnalysisService {
         this.maxSingleSegmentSeconds = environment.getProperty("ai.douyin-analysis.max-single-segment-seconds",
                 Integer.class, 60);
         this.publicBackendOrigin = environment.getProperty("app.public-backend-origin", "");
+        this.media = media;
+        this.segmented = segmented;
     }
 
     /** content 提取（live 端点 {@code POST /api/douyin/analyze-video}）。 */
@@ -71,25 +74,28 @@ public class DouyinAnalysisService {
         DouyinMediaTarget target = tokenCodec.parse(token);
         long duration = assertAnalysisDuration(target.durationSeconds());
 
-        if (!isJavaEligible(target, duration)) {
-            return Mono.just(new DouyinAnalysisOutcome.Fallback());
+        if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
+            throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
         }
-        String publicProxyUrl = buildPublicProxyUrl(token);
-        List<ContentPart> parts = List.of(ContentPart.video(publicProxyUrl), ContentPart.text(VideoAnalysisPrompts.analysis()));
         return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
-                .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
-                        .map(meta -> (DouyinAnalysisOutcome) new DouyinAnalysisOutcome.Java(
-                                VideoAnalysisResultNormalizer.normalize(meta.content(), meta.runId())))
+                .flatMap(charge -> analyzeTarget(token, target, duration)
                         // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "抖音视频分析失败自动退回")
                                 .then(Mono.error(error))));
     }
 
-    private boolean isJavaEligible(DouyinMediaTarget target, long duration) {
-        return "progressive".equals(target.kind())
-                && duration <= maxSingleSegmentSeconds
-                && "qwen".equalsIgnoreCase(provider)
-                && !publicBackendOrigin.isBlank();
+    private Mono<DouyinAnalysisOutcome> analyzeTarget(String token, DouyinMediaTarget target, long duration) {
+        if (duration <= maxSingleSegmentSeconds) {
+            List<ContentPart> parts = List.of(ContentPart.video(buildPublicProxyUrl(token)),
+                    ContentPart.text(VideoAnalysisPrompts.analysis()));
+            return ai.completeMultimodalMeta(parts, timeout).map(meta -> (DouyinAnalysisOutcome)
+                    new DouyinAnalysisOutcome(VideoAnalysisResultNormalizer.normalize(meta.content(), meta.runId())));
+        }
+        return media.prepareDouyinVideo(target).flatMap(sourceId -> media.createClips(sourceId, duration, 30)
+                .flatMap(ids -> segmented.analyze("douyin", ids, timeout)
+                        .map(DouyinAnalysisOutcome::new)
+                        .doFinally(signal -> ids.forEach(media::remove)))
+                .doFinally(signal -> media.remove(sourceId)));
     }
 
     private long assertAnalysisDuration(Long durationSeconds) {
@@ -145,7 +151,7 @@ public class DouyinAnalysisService {
     }
 
     private String buildPublicProxyUrl(String token) {
-        // publicBackendOrigin 非空已由 isJavaEligible 保证；token URL 安全，直接拼接。
+        // publicBackendOrigin 非空已在 analyze 开始时验证；token URL 安全，直接拼接。
         String base = publicBackendOrigin.endsWith("/") ? publicBackendOrigin.substring(0, publicBackendOrigin.length() - 1) : publicBackendOrigin;
         return base + "/api/douyin/proxy/" + token;
     }

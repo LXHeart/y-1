@@ -17,7 +17,7 @@ import reactor.core.publisher.Mono;
  * videoId,author,title,coverUrl,durationSeconds,proxyVideoUrl,downloadVideoUrl,playbackMode}}}。
  *
  * <p>无 auth/credits（公开提取）。{@code proxyVideoUrl}/{@code downloadVideoUrl} 沿用 legacy 相对路径契约；
- * edge-bff 路由开关 {@code EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE} 默认 false（与 proxy/download 同 flag 同开同关）。
+ * edge-bff 路由开关 {@code EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE} 默认开启（与 proxy/download 同开同关）。
  */
 @RestController
 public class BilibiliExtractController {

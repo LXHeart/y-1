@@ -350,59 +350,69 @@ edge:
       exact: true
       enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE:true}
     # ---- 抖音热点（草场 Slice 13 Stage 1）→ intelligence-service。公开端点，无 auth/credits；
-    # exact 精确切，不抢 /api/douyin 其余子路径（extract/analyze/proxy/download 见下方 GL-P3-MEDIA-001 路由，
-    # audio/analysis-media/session 始终 legacy）。默认 false：关闭时回落 legacy Express（回滚安全）。
+    # exact 精确切，不抢 /api/douyin 媒体子路径（完整媒体路由见下方）。
     - method: GET
       path: /api/douyin/hot-items
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:false}
-    # ---- Bilibili extract（草场 Slice 13 Stage 3）→ intelligence-service。exact 切，不抢其余子路径。
-    # analyze-video（Stage 5）→ intelligence：progressive+≤60s+qwen 走 Java，否则回落 legacy（透传 cookie）。
-    # analysis-media 不路由（始终 legacy）：Java 路径用公开 proxy URL，回落路径的 analysis-media 经公开 origin 指向 legacy。
-    # 默认 false：关闭则全部回落 legacy。
+    # ---- Bilibili 完整媒体链路 → intelligence-service。DASH mux、Range、分段分析均由 Java 承载。
+    # 同一开关整族切流；显式 false 时由 edge 回切 legacy。
     - method: POST
       path: /api/bilibili/extract-video
       upstream: intelligence
       exact: true
-      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:true}
     - method: POST
       path: /api/bilibili/analyze-video
       upstream: intelligence
       exact: true
-      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:true}
     # ---- Bilibili 视频 proxy/download（草场 Slice 13 Stage 4）→ intelligence-service。GET 前缀路由
-    # 覆盖 /api/bilibili/{proxy|download}/{token}；progressive 走 Java Range，DASH 回落 legacy（共享 secret）。
+    # 覆盖 /api/bilibili/{proxy|download}/{token}；progressive 直连 Range，DASH 先 mux 后本地 Range。
     - method: GET
       path: /api/bilibili/proxy
       upstream: intelligence
-      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:true}
     - method: GET
       path: /api/bilibili/download
       upstream: intelligence
-      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:false}
-    # ---- Douyin media（草场 GL-P3-MEDIA-001）→ intelligence-service。extract/proxy/download/analyze 迁移 Java：
-    # extract HTTP 阶段解析失败整体回落 legacy（Playwright/session 仍 Node）；analyze progressive+≤60s+qwen 走 Java，
-    # 超阈值需 FFmpeg 切片/非 qwen 整体回落 legacy（透传 Cookie）。audio/analysis-media/session 不路由（始终 legacy）。
-    # 默认 false：关闭时回落 legacy Express（回滚安全）。
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:true}
+    - method: GET
+      path: /api/bilibili/analysis-media
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:true}
+    # ---- Douyin 完整媒体链路 → intelligence-service。含 Playwright session、音频、分段分析和 Range。
+    # 同一开关整族切流；显式 false 时由 edge 回切 legacy。
     - method: POST
       path: /api/douyin/extract-video
       upstream: intelligence
       exact: true
-      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
     - method: POST
       path: /api/douyin/analyze-video
       upstream: intelligence
       exact: true
-      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
     - method: GET
       path: /api/douyin/proxy
       upstream: intelligence
-      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
     - method: GET
       path: /api/douyin/download
       upstream: intelligence
-      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
+    - method: GET
+      path: /api/douyin/audio
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
+    - method: GET
+      path: /api/douyin/analysis-media
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
+    - path: /api/douyin/session
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:true}
 
 # 内部身份断言（HLD 7.4 + GL-P0-ASSERT-001 keyring 模式）：
 # edge-bff 按 target upstream 选对应签名钥签发用户断言（purpose=user）。

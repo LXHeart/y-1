@@ -31,6 +31,9 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("BILIBILI_PROXY_TOKEN_SECRET", "test-bilibili-proxy-secret-32-chars")
+    systemProperty("DOUYIN_PROXY_TOKEN_SECRET", "test-douyin-proxy-secret-32-chars!!")
+    systemProperty("PUBLIC_BACKEND_ORIGIN", "https://media.test.example")
 }
 
 tasks.jar {

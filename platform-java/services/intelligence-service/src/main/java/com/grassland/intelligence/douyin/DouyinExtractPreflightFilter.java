@@ -20,7 +20,7 @@ import reactor.core.publisher.Mono;
  * <p>逐字延续 legacy {@code app.ts} 的 {@code douyin-extract} 成本闸：固定窗口 <b>20 次 / 60 秒</b>，
  * 超过返回 {@code 429 {success:false,error:"提取请求过于频繁，请稍后再试。"}}，每次请求带
  * {@code RateLimit-Limit/Remaining/Reset}。置于 resolve 抓取之前——提取会触发最多 3 次抖音页面抓取
- * （失败时再回落 legacy 的浏览器阶段），是无鉴权端点里成本最高的入口。
+ * （HTTP 解析失败时进入 Java Playwright 浏览器阶段），是无鉴权端点里成本最高的入口。
  *
  * <p>提取是公开端点（无登录），与 legacy {@code getRateLimitKey} 匿名分支一致按 <b>IP</b> 限流：
  * 取 {@code X-Forwarded-For} 最右一跳（避免左侧伪造绕过，同 {@code MediaUploadTicketPreflightFilter}）。

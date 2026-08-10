@@ -7,10 +7,17 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.mediaplatform.PlatformMediaService;
+import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,14 +27,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Mono;
 
 /**
  * {@link DouyinAnalyzeController} 集成测试（草场 GL-P3-MEDIA-001）。
  *
  * <p>覆盖 Java 路径（progressive+≤60s+qwen → Qwen video_url + 扣积分 + 归一，提示词/归一与 Bilibili
- * 共用平台级实现）、回落路径（>60s 需 FFmpeg 切片 → 透传 cookie 转发 legacy）、422 时长校验、
+ * 共用平台级实现）、长视频 Java FFmpeg 分段路径、422 时长校验、
  * 401 未登录、400 非法地址。平台 Qwen 走基座 {@link IntelligenceItSupport#QWEN} WireMock；
- * legacy 积分扣减 + analyze 回落同走一个 legacy WireMock（生产同在 backend:3000）。
+ * 积分扣减使用 WireMock，媒体准备与分段分析使用 mock bean 精确验证编排。
  */
 @DisplayName("Douyin analyze POST /api/douyin/analyze-video（草场 GL-P3-MEDIA-001）")
 class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
@@ -44,6 +53,8 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
 
     @Autowired
     private DouyinProxyToken tokenCodec;
+    @MockitoBean private PlatformMediaService media;
+    @MockitoBean private VideoSegmentAnalysisService segmented;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -55,7 +66,6 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
         // 默认 CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
         registry.add("credits.finance.base-url", LEGACY::baseUrl);
         registry.add("marketplace.service.base-url", LEGACY::baseUrl);
-        registry.add("legacy.backend.base-url", LEGACY::baseUrl);
         registry.add("ai.douyin-analysis.provider", () -> "qwen");
         registry.add("ai.douyin-analysis.max-single-segment-seconds", () -> "60");
     }
@@ -64,6 +74,7 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
     void resetStubs() {
         LEGACY.resetAll();
         QWEN.resetAll();
+        reset(media, segmented);
     }
 
     @Test
@@ -141,9 +152,13 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("progressive+>60s → 回落 legacy（需 FFmpeg 切片；透传响应信封，不调 Qwen/积分）")
-    void overThresholdProgressiveFallsBackToLegacy() throws Exception {
-        stubLegacyAnalyzeOk("segmented-legacy-result");
+    @DisplayName("progressive+>60s → Java FFmpeg 分段分析")
+    void overThresholdProgressiveUsesJavaSegments() throws Exception {
+        stubCreditsOk();
+        when(media.prepareDouyinVideo(any())).thenReturn(Mono.just("source"));
+        when(media.createClips(eq("source"), anyLong(), eq(30))).thenReturn(Mono.just(java.util.List.of("c1", "c2", "c3")));
+        when(segmented.analyze(eq("douyin"), eq(java.util.List.of("c1", "c2", "c3")), any()))
+                .thenReturn(Mono.just(Map.of("merged", "segmented-java-result")));
 
         String token = tokenCodec.create(DouyinMediaTarget.progressive(
                 "https://v3-web.douyinvod.com/play.mp4", Map.of(), "file.mp4", 90L));
@@ -156,13 +171,10 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.success").isEqualTo(true)
-                .jsonPath("$.data.merged").isEqualTo("segmented-legacy-result");
+                .jsonPath("$.data.merged").isEqualTo("segmented-java-result");
 
-        // 回落：intelligence 不调 Qwen，不扣积分（legacy 自行扣）；legacy analyze 收到转发 cookie。
         QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
-        LEGACY.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
-        LEGACY.verify(postRequestedFor(urlEqualTo("/api/douyin/analyze-video"))
-                .withHeader("Cookie", equalTo("y1.sid=s%3Atok.sig")));
+        LEGACY.verify(postRequestedFor(urlEqualTo("/internal/credits/consume")));
     }
 
     @Test

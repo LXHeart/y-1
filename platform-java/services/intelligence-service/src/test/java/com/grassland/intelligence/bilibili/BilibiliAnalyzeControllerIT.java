@@ -7,10 +7,17 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.mediaplatform.PlatformMediaService;
+import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,13 +27,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import reactor.core.publisher.Mono;
 
 /**
  * {@link BilibiliAnalyzeController} 集成测试（草场 Slice 13 Stage 5）。
  *
- * <p>覆盖 Java 路径（progressive+≤60s+qwen → Qwen video_url + 扣积分 + 归一）、回落路径（DASH / >60s → 透传 cookie
- * 转发 legacy）、422 时长校验、401 未登录、400 非法地址。平台 Qwen 走基座 {@link IntelligenceItSupport#QWEN} WireMock；
- * legacy 积分扣减 + analyze 回落同走一个 legacy WireMock（生产同在 backend:3000）。
+ * <p>覆盖 Java 路径（progressive+≤60s+qwen → Qwen video_url + 扣积分 + 归一）、DASH/长视频 Java FFmpeg
+ * 分段路径、422 时长校验、401 未登录、400 非法地址。平台 Qwen 走基座
+ * {@link IntelligenceItSupport#QWEN} WireMock；积分扣减使用独立 WireMock。
  *
  * <p>归一细节（snake/camel 双态、人物/道具线索回填、video_script 数组→多行）由
  * {@code VideoAnalysisResultNormalizerTest} 单测覆盖；此处只断言端到端壳与路由分流。
@@ -46,6 +55,8 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
 
     @Autowired
     private BilibiliProxyToken tokenCodec;
+    @MockitoBean private PlatformMediaService media;
+    @MockitoBean private VideoSegmentAnalysisService segmented;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -57,7 +68,6 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
         // 默认 CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
         registry.add("credits.finance.base-url", LEGACY::baseUrl);
         registry.add("marketplace.service.base-url", LEGACY::baseUrl);
-        registry.add("legacy.backend.base-url", LEGACY::baseUrl);
         registry.add("ai.bilibili-analysis.provider", () -> "qwen");
         registry.add("ai.bilibili-analysis.max-single-segment-seconds", () -> "60");
     }
@@ -66,6 +76,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     void resetStubs() {
         LEGACY.resetAll();
         QWEN.resetAll();
+        reset(media, segmented);
     }
 
     @Test
@@ -143,9 +154,12 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("DASH+≤60s → 回落 legacy（透传响应信封，不调 Qwen/积分）")
-    void dashFallsBackToLegacy() throws Exception {
-        stubLegacyAnalyzeOk("dash-legacy-result");
+    @DisplayName("DASH+≤60s → Java mux 制品分析")
+    void dashUsesJavaMuxAnalysis() throws Exception {
+        stubCreditsOk();
+        when(media.prepareBilibili(any())).thenReturn(Mono.just("source"));
+        when(segmented.analyze(eq("bilibili"), eq(java.util.List.of("source")), any()))
+                .thenReturn(Mono.just(Map.of("merged", "dash-java-result")));
 
         String token = tokenCodec.create(new BilibiliMediaTarget.Dash(
                 "https://upos-sz-mirrorali.bilivideo.com/v.m4s",
@@ -159,20 +173,20 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.success").isEqualTo(true)
-                .jsonPath("$.data.merged").isEqualTo("dash-legacy-result");
+                .jsonPath("$.data.merged").isEqualTo("dash-java-result");
 
-        // 回落：intelligence 不调 Qwen，不扣积分（legacy 自行扣）。
         QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
-        LEGACY.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
-        // legacy analyze 收到转发 cookie。
-        LEGACY.verify(postRequestedFor(urlEqualTo("/api/bilibili/analyze-video"))
-                .withHeader("Cookie", equalTo("y1.sid=s%3Atok.sig")));
+        LEGACY.verify(postRequestedFor(urlEqualTo("/internal/credits/consume")));
     }
 
     @Test
-    @DisplayName("progressive+>60s → 回落 legacy（需切片）")
-    void overThresholdProgressiveFallsBackToLegacy() throws Exception {
-        stubLegacyAnalyzeOk("segmented-legacy-result");
+    @DisplayName("progressive+>60s → Java FFmpeg 分段分析")
+    void overThresholdProgressiveUsesJavaSegments() throws Exception {
+        stubCreditsOk();
+        when(media.prepareBilibili(any())).thenReturn(Mono.just("source"));
+        when(media.createClips(eq("source"), anyLong(), eq(30))).thenReturn(Mono.just(java.util.List.of("c1", "c2", "c3")));
+        when(segmented.analyze(eq("bilibili"), eq(java.util.List.of("c1", "c2", "c3")), any()))
+                .thenReturn(Mono.just(Map.of("merged", "segmented-java-result")));
 
         String token = tokenCodec.create(new BilibiliMediaTarget.Progressive(
                 "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", 90L));
@@ -182,7 +196,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token))
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.merged").isEqualTo("segmented-legacy-result");
+                .expectBody().jsonPath("$.data.merged").isEqualTo("segmented-java-result");
     }
 
     @Test

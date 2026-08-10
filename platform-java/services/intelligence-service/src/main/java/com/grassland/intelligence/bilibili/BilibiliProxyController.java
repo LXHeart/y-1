@@ -1,6 +1,7 @@
 package com.grassland.intelligence.bilibili;
 
-import com.grassland.intelligence.mediaplatform.LegacyMediaProxyClient;
+import com.grassland.intelligence.mediaplatform.LocalMediaStreamer;
+import com.grassland.intelligence.mediaplatform.PlatformMediaService;
 import com.grassland.intelligence.mediaplatform.VideoRangeProxy;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -16,8 +17,8 @@ import reactor.core.publisher.Mono;
 /**
  * Bilibili 视频代理/下载（草场 Slice 13 Stage 4）。{@code GET /api/bilibili/{proxy|download}/{token}}。
  *
- * <p>解 token 得 {@link BilibiliMediaTarget}：progressive→{@link VideoRangeProxy}（Java Range/206，download 附加
- * {@code Content-Disposition}）；dash→{@link LegacyMediaProxyClient}（回落 legacy FFmpeg mux，共享 secret 验签）。
+ * <p>解 token 得 {@link BilibiliMediaTarget}：progressive→{@link VideoRangeProxy}；DASH→Java 下载双轨、
+ * FFmpeg mux 后由本地制品层提供 Range/206。download 均附加 {@code Content-Disposition}。
  * token 凭证错误（400/403/410）经全局 handler 转 {@code {success:false,error}}。公开/token-gated，无 auth。
  */
 @RestController
@@ -29,15 +30,18 @@ public class BilibiliProxyController {
 
     private final BilibiliProxyToken tokenCodec;
     private final VideoRangeProxy videoRangeProxy;
-    private final LegacyMediaProxyClient legacyMediaProxyClient;
+    private final PlatformMediaService platformMediaService;
+    private final LocalMediaStreamer localMediaStreamer;
 
     public BilibiliProxyController(
             BilibiliProxyToken tokenCodec,
             VideoRangeProxy videoRangeProxy,
-            LegacyMediaProxyClient legacyMediaProxyClient) {
+            PlatformMediaService platformMediaService,
+            LocalMediaStreamer localMediaStreamer) {
         this.tokenCodec = tokenCodec;
         this.videoRangeProxy = videoRangeProxy;
-        this.legacyMediaProxyClient = legacyMediaProxyClient;
+        this.platformMediaService = platformMediaService;
+        this.localMediaStreamer = localMediaStreamer;
     }
 
     @GetMapping("/api/bilibili/proxy/{token}")
@@ -59,9 +63,10 @@ public class BilibiliProxyController {
                             download ? buildContentDisposition(p.filename()) : null,
                             VIDEO_URL_GUARD, "Bilibili"),
                     exchange.getResponse());
-            case BilibiliMediaTarget.Dash d -> legacyMediaProxyClient.proxy(
-                    "/api/bilibili/" + (download ? "download" : "proxy") + "/" + token,
-                    range, exchange.getResponse());
+            case BilibiliMediaTarget.Dash d -> platformMediaService.prepareBilibili(d).flatMap(id ->
+                    localMediaStreamer.stream(platformMediaService.artifact(id), range,
+                            download ? buildContentDisposition(d.filename()) : null, exchange.getResponse())
+                            .doFinally(ignored -> platformMediaService.remove(id)));
         };
     }
 
