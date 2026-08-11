@@ -24,7 +24,8 @@ import reactor.core.publisher.Mono;
 public class EngagementVerificationRepository {
 
     private static final String SELECT_COLS =
-            "id::text, submission_id::text, status, checks::text, last_checked_at, created_at, updated_at";
+            "id::text, submission_id::text, status, checks::text, latest_run_id::text, engine_version, "
+            + "task_context_snapshot::text, evidence_snapshot::text, last_checked_at, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -50,6 +51,48 @@ public class EngagementVerificationRepository {
                 .bind("status", status)
                 .bind("checks", checksJson)
                 .map(EngagementVerificationRepository::map).one();
+    }
+
+    /** Verification v2: append an immutable run, then fold it into the backwards-compatible latest row. */
+    public Mono<EngagementVerification> appendRun(
+            String submissionId, String status, String checksJson,
+            String taskContextJson, String evidenceJson, String triggeredBy) {
+        String runId = UUID.randomUUID().toString();
+        return db.sql("SELECT pg_advisory_xact_lock(hashtextextended(:sub, 0))")
+                .bind("sub", submissionId).then()
+                .then(db.sql("""
+                        INSERT INTO engagement_verification_run(
+                            id, submission_id, run_number, engine_version, status,
+                            task_context_snapshot, evidence_snapshot, checks, triggered_by)
+                        SELECT CAST(:runId AS uuid), CAST(:sub AS uuid),
+                               COALESCE(MAX(run_number), 0) + 1, 'v2', :status,
+                               CAST(:context AS jsonb), CAST(:evidence AS jsonb), CAST(:checks AS jsonb),
+                               CAST(:actor AS uuid)
+                          FROM engagement_verification_run
+                         WHERE submission_id = CAST(:sub AS uuid)
+                        RETURNING id::text
+                        """)
+                        .bind("runId", runId).bind("sub", submissionId).bind("status", status)
+                        .bind("context", taskContextJson).bind("evidence", evidenceJson)
+                        .bind("checks", checksJson)
+                        .bind("actor", org.springframework.r2dbc.core.Parameter.fromOrEmpty(triggeredBy, String.class))
+                        .map(row -> row.get("id", String.class)).one())
+                .flatMap(savedRunId -> db.sql("""
+                        INSERT INTO engagement_verification(
+                            id, submission_id, status, checks, latest_run_id, engine_version,
+                            task_context_snapshot, evidence_snapshot)
+                        VALUES(CAST(:id AS uuid), CAST(:sub AS uuid), :status, CAST(:checks AS jsonb),
+                               CAST(:runId AS uuid), 'v2', CAST(:context AS jsonb), CAST(:evidence AS jsonb))
+                        ON CONFLICT (submission_id) DO UPDATE SET
+                            status=:status, checks=CAST(:checks AS jsonb), latest_run_id=CAST(:runId AS uuid),
+                            engine_version='v2', task_context_snapshot=CAST(:context AS jsonb),
+                            evidence_snapshot=CAST(:evidence AS jsonb), last_checked_at=now(), updated_at=now()
+                        RETURNING %s
+                        """.formatted(SELECT_COLS))
+                        .bind("id", UUID.randomUUID().toString()).bind("sub", submissionId)
+                        .bind("status", status).bind("checks", checksJson).bind("runId", savedRunId)
+                        .bind("context", taskContextJson).bind("evidence", evidenceJson)
+                        .map(EngagementVerificationRepository::map).one());
     }
 
     /** 取一份交付物的核验记录（confirm 前置闸门、capture 安全网闸门、详情用）。无 → empty。 */
@@ -104,12 +147,35 @@ public class EngagementVerificationRepository {
         return spec.map(EngagementVerificationRepository::map).all();
     }
 
+    public Flux<EngagementVerificationRun> findRuns(String submissionId, int limit) {
+        return db.sql("""
+                SELECT id::text, submission_id::text, run_number, engine_version, status,
+                       task_context_snapshot::text, evidence_snapshot::text, checks::text,
+                       triggered_by::text, created_at
+                  FROM engagement_verification_run
+                 WHERE submission_id=CAST(:sub AS uuid)
+                 ORDER BY run_number DESC LIMIT :limit
+                """).bind("sub", submissionId).bind("limit", Math.max(1, Math.min(limit, 100)))
+                .map(row -> new EngagementVerificationRun(
+                        row.get("id", String.class), row.get("submission_id", String.class),
+                        row.get("run_number", Integer.class), row.get("engine_version", String.class),
+                        row.get("status", String.class), row.get("task_context_snapshot", String.class),
+                        row.get("evidence_snapshot", String.class), row.get("checks", String.class),
+                        row.get("triggered_by", String.class),
+                        toInstant(row.get("created_at", OffsetDateTime.class))))
+                .all();
+    }
+
     private static EngagementVerification map(Readable row) {
         return new EngagementVerification(
                 row.get("id", String.class),
                 row.get("submission_id", String.class),
                 row.get("status", String.class),
                 row.get("checks", String.class),
+                row.get("latest_run_id", String.class),
+                row.get("engine_version", String.class),
+                row.get("task_context_snapshot", String.class),
+                row.get("evidence_snapshot", String.class),
                 toInstant(row.get("last_checked_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))

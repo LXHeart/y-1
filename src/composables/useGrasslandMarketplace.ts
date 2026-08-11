@@ -4,7 +4,7 @@
 import type { RunFn } from './grassland-http'
 import { request, readError, sleep, putToPresignedUrl, POLL_MAX_ATTEMPTS, POLL_INTERVAL_MS } from './grassland-http'
 import type {
-  EngagementSubmission, EngagementVerification, EngagementRating,
+  EngagementSubmission, EngagementVerification, EngagementVerificationRun, EngagementRating, TaskContextSnapshot,
   MediaUploadTicket, MediaMetadata, CreateMediaUploadTicketInput, AttachmentDownload,
   RecommenderProfile, UpdateRecommenderProfileInput, RecommenderReputation,
   ReputationPolicy, UpdateReputationPolicyInput, AdminReputation,
@@ -67,6 +67,17 @@ export function useGrasslandMarketplace(run: RunFn) {
     run(() => request<EngagementVerification>(
       `/api/tasks/${taskId}/applications/${applicationId}/submissions/${submissionId}/verification/checks`,
       { method: 'POST' }))
+
+  const getTaskContext = (taskId: string, applicationId: string) =>
+    run(() => request<TaskContextSnapshot>(
+      `/api/tasks/${taskId}/applications/${applicationId}/task-context`))
+
+  const listVerificationRuns = async (taskId: string, applicationId: string, submissionId: string) =>
+    run(async () => {
+      const data = await request<{ runs: EngagementVerificationRun[] }>(
+        `/api/tasks/${taskId}/applications/${applicationId}/submissions/${submissionId}/verification/runs`)
+      return data.runs
+    })
 
   // ---------- intelligence：media 直传（三步上传）----------
 
@@ -379,6 +390,7 @@ export function useGrasslandMarketplace(run: RunFn) {
 
   return {
     submitDeliverable, listDeliverables, rejectDeliverable, runVerificationChecks,
+    getTaskContext, listVerificationRuns,
     createMediaUploadTicket, confirmMediaUpload, uploadEngagementAttachment, getAttachmentDownloadUrl,
     getMyRecommenderProfile, updateMyRecommenderProfile, getRecommenderProfile, getReputation,
     getReputationPolicy, updateReputationPolicy, getAdminReputation, updateLv5Admission,

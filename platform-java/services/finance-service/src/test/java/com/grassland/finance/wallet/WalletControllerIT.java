@@ -80,6 +80,14 @@ class WalletControllerIT extends FinanceItSupport {
                 .jsonPath("$.data.balanceCents").isEqualTo(300);
         assertThat(walletBalance(recommender)).isEqualTo(300L);
         assertThat(ledgerCount(recommender, "withdrawal")).isEqualTo(1);
+
+        String operationId = "withdraw:" + UUID.randomUUID();
+        withdraw(recommender, 100, operationId).expectStatus().isOk();
+        withdraw(recommender, 100, operationId).expectStatus().isOk();
+        assertThat(walletBalance(recommender)).isEqualTo(200L);
+        assertThat(providerOperationCount(operationId)).isEqualTo(1);
+        withdraw(recommender, 99, operationId).expectStatus().isEqualTo(409);
+        assertThat(walletBalance(recommender)).isEqualTo(200L);
     }
 
     /** 钱包是账号级私有资源：accountId 只取自断言，任何人拿到的都只是自己的钱包。 */
@@ -202,6 +210,21 @@ class WalletControllerIT extends FinanceItSupport {
                 .header("X-Grassland-Identity", sign(recommender, "recommender", null, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("amountCents", amount))
                 .exchange();
+    }
+
+    private WebTestClient.ResponseSpec withdraw(String recommender, long amount, String operationId) {
+        return client().post().uri("/api/finance/wallets/me/withdrawals")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("amountCents", amount, "operationId", operationId))
+                .exchange();
+    }
+
+    private long providerOperationCount(String operationId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM finance_provider_operation"
+                        + " WHERE operation_id = :operationId AND operation_type = 'payout'")
+                .bind("operationId", operationId)
+                .map(row -> row.get("c", Integer.class)).one().block().longValue();
     }
 
     private long walletBalance(String accountId) {

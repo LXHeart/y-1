@@ -69,6 +69,8 @@ const VERIFICATION_LABEL: Record<VerificationStatus, string> = {
 /** 单项核验明细的可读名（兜底原 type，避免后端新增 check 类型时前端裸露 key）。 */
 const CHECK_TYPE_LABEL: Record<string, string> = {
   link_reachability: '链接可达',
+  platform_identity: '发布平台',
+  evidence_completeness: '凭证完整性',
   ai_visual: 'AI 视觉',
 }
 

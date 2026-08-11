@@ -63,6 +63,25 @@ public record AiRun(
         Integer platformModelVersion,
         boolean fallbackAuthorized
     ) {
+        return forCreate(organizationId, accountId, capability, provider, model, runType,
+                budgetCents, operationId, priceTableVersion == 1 ? "v1" : "v" + priceTableVersion,
+                platformModelVersion, fallbackAuthorized);
+    }
+
+    /** 创建使用显式冻结价目版本的 Run，供异步媒体任务使用。 */
+    public static AiRun forCreate(
+        String organizationId,
+        String accountId,
+        String capability,
+        String provider,
+        String model,
+        String runType,
+        int budgetCents,
+        UUID operationId,
+        String priceTableVersion,
+        Integer platformModelVersion,
+        boolean fallbackAuthorized
+    ) {
         return new AiRun(
             null,  // id 由数据库生成
             organizationId,
@@ -81,7 +100,7 @@ public record AiRun(
             null,  // failureReason
             Instant.now(),
             null,  // completedAt
-            priceTableVersion == 1 ? "v1" : "v" + priceTableVersion,
+            priceTableVersion,
             operationId,
             null,  // refundOperationId
             null,  // createdAt 由数据库默认

@@ -56,6 +56,12 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                     + "id uuid PRIMARY KEY, submission_id uuid NOT NULL REFERENCES " + schema
                     + ".engagement_submission(id), media_reference_id uuid NOT NULL, mime_type text,"
                     + " size_bytes bigint, created_at timestamptz NOT NULL DEFAULT now())");
+            // V10 table must live in the isolated schema; otherwise later ALTER may fall through to public.
+            statement.execute("CREATE TABLE " + schema + ".engagement_verification ("
+                    + "id uuid PRIMARY KEY, submission_id uuid NOT NULL REFERENCES " + schema
+                    + ".engagement_submission(id), status varchar(32) NOT NULL, checks jsonb NOT NULL DEFAULT '[]',"
+                    + " last_checked_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now(),"
+                    + " updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(submission_id))");
             statement.execute("INSERT INTO " + schema + ".task(id, owner_account_id, organization_id, title, status, bounty_cents) "
                     + "VALUES ('" + publishedTask + "', '" + owner + "', '" + org + "', '历史任务', 'published', 500)");
             statement.execute("INSERT INTO " + schema

@@ -60,6 +60,12 @@ public class TaskApplicationRepository {
                 .map(TaskApplicationRepository::map).one();
     }
 
+    /** Frozen task contract captured by the database on pending/reserving -> accepted. */
+    public Mono<String> findTaskContextSnapshot(String id) {
+        return db.sql("SELECT task_context_snapshot::text AS snapshot FROM task_application WHERE id=CAST(:id AS uuid)")
+                .bind("id", id).map(row -> row.get("snapshot", String.class)).one();
+    }
+
     /** 某 recommender 在某 task 的现存报名（去重预查；UNIQUE 保证至多一行）。 */
     public Mono<TaskApplication> findByTaskAndRecommender(String taskId, String recommenderAccountId) {
         return db.sql("SELECT " + SELECT_COLS

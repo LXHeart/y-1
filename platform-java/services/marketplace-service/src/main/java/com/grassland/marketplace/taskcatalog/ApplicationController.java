@@ -369,6 +369,14 @@ public class ApplicationController {
                                                                     created.id(), app.id(), failure);
                                                             return Mono.empty();
                                                         })
+                                                        .then(Mono.defer(() -> runAndRecordVerification(
+                                                                        task, app, created, caller.accountId()))
+                                                                .doOnError(failure -> log.warn(
+                                                                        "automatic verification failed submission={}",
+                                                                        created.id(), failure))
+                                                                // Submission is already committed. Verification remains retryable
+                                                                // through the explicit checks endpoint and must not turn it into 5xx.
+                                                                .onErrorResume(failure -> Mono.empty()))
                                                         .thenReturn(created))
                                                 .map(created -> ResponseEntity.status(HttpStatus.CREATED)
                                                         .body(Map.of("success", true,
@@ -1188,52 +1196,135 @@ public class ApplicationController {
                                         .filter(s -> s.id().equals(submissionId))
                                         .next()
                                         .switchIfEmpty(fail(404, "交付物不存在"))
-                                        .flatMap(submission -> runAndRecordVerification(task, app, submission)
+                                        .flatMap(submission -> runAndRecordVerification(
+                                                        task, app, submission, merchant.accountId())
                                                 .map(v -> ok(verificationBody(v)))))));
+    }
+
+    /** Immutable task context for task-mode creation and verification replay. */
+    @GetMapping("/api/tasks/{id}/applications/{appId}/task-context")
+    public Mono<ResponseEntity<Map<String, Object>>> taskContext(
+            @PathVariable String id, @PathVariable String appId, ServerHttpRequest request) {
+        return callers.requireUser(request).flatMap(caller -> loadAcceptedApp(id, appId)
+                .flatMap(app -> {
+                    Mono<Void> authorized = app.recommenderAccountId().equals(caller.accountId())
+                            ? Mono.empty()
+                            : loadManageableTask(id, caller).then();
+                    return authorized.then(apps.findTaskContextSnapshot(appId))
+                            .switchIfEmpty(fail(409, "任务上下文快照尚未生成"))
+                            .map(json -> ok(parseContext(json)));
+                }));
+    }
+
+    @GetMapping("/api/tasks/{id}/applications/{appId}/submissions/{submissionId}/verification/runs")
+    public Mono<ResponseEntity<Map<String, Object>>> verificationRuns(
+            @PathVariable String id, @PathVariable String appId, @PathVariable String submissionId,
+            ServerHttpRequest request) {
+        return callers.requireUser(request).flatMap(caller -> loadAcceptedApp(id, appId)
+                .flatMap(app -> {
+                    Mono<Void> authorized = app.recommenderAccountId().equals(caller.accountId())
+                            ? Mono.empty() : loadManageableTask(id, caller).then();
+                    return authorized.then(submissions.findByApplication(appId)
+                                    .filter(s -> s.id().equals(submissionId)).hasElements())
+                            .flatMap(exists -> exists ? verifications.findRuns(submissionId, 50).map(this::runBody)
+                                    .collectList().map(runs -> ok(Map.of("runs", runs)))
+                                    : fail(404, "交付物不存在"));
+                }));
+    }
+
+    private Map<String, Object> runBody(EngagementVerificationRun run) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", run.id()); body.put("runNumber", run.runNumber());
+        body.put("engineVersion", run.engineVersion()); body.put("status", run.status());
+        body.put("taskContext", parseChecks(run.taskContextJson()));
+        body.put("evidenceSnapshot", parseChecks(run.evidenceJson()));
+        body.put("checks", parseChecks(run.checksJson())); body.put("triggeredBy", run.triggeredBy());
+        body.put("createdAt", run.createdAt() == null ? null : run.createdAt().toString());
+        return body;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseContext(String json) {
+        try { return mapper.readValue(json, Map.class); }
+        catch (JsonProcessingException e) { throw new IllegalStateException("任务上下文快照损坏", e); }
     }
 
     /** 跑自动核验并原子落记录（7C 事务：upsert + outbox，outbox 挂 upsert 之后；任一失败零残留）。 */
     private Mono<EngagementVerification> runAndRecordVerification(Task task, TaskApplication app,
-                                                                  EngagementSubmission submission) {
-        return runVerificationChecks(task, submission)
+                                                                  EngagementSubmission submission,
+                                                                  String triggeredBy) {
+        return attachments.findBySubmissionIds(List.of(submission.id())).collectList()
+                .flatMap(evidence -> runVerificationChecks(task, submission, evidence)
                 .flatMap(outcomes -> transactions.transactional(
-                        verifications.upsert(submission.id(), aggregateVerificationStatus(outcomes), checksToJson(outcomes))
+                        verifications.appendRun(
+                                        submission.id(), aggregateVerificationStatus(outcomes), checksToJson(outcomes),
+                                        toJson(VerificationTaskContext.capture(task, app, submission)),
+                                        toJson(Map.of("mediaIds", evidence.stream()
+                                                .map(EngagementSubmissionAttachment::mediaReferenceId).toList())),
+                                        triggeredBy)
                                 .flatMap(v -> outbox.append(verificationEnvelope(app, submission, v, outcomes, task.ownerAccountId()))
-                                        .thenReturn(v))));
+                                        .thenReturn(v)))));
     }
 
     /**
      * 跑自动核验：链接可达性 + AI 视觉核验（附件截图）。链接结论独立给出；AI 检查失败
      * （intelligence 不可用 / 4xx / 5xx）降级为单项 {@code inconclusive}，不拖垮整次核验。无附件 → 跳过 AI，仅 link。
      */
-    private Mono<List<CheckOutcome>> runVerificationChecks(Task task, EngagementSubmission submission) {
+    private Mono<List<CheckOutcome>> runVerificationChecks(
+            Task task, EngagementSubmission submission, List<EngagementSubmissionAttachment> evidence) {
         Mono<CheckOutcome> link = linkChecker.check(submission.contentUrl())
                 .map(r -> new CheckOutcome("link_reachability", r.status(), r.detail(), Instant.now()));
-        return link.flatMap(linkOutcome -> aiVisualCheck(task, submission)
-                .map(aiOutcomes -> Stream.concat(Stream.of(linkOutcome), aiOutcomes.stream()).toList()));
+        CheckOutcome platform = platformIdentityCheck(task.platform(), submission.contentUrl());
+        CheckOutcome completeness = new CheckOutcome("evidence_completeness", "passed",
+                evidence.isEmpty() ? "已提交发布链接" : "发布链接 + " + evidence.size() + " 个附件", Instant.now());
+        return link.flatMap(linkOutcome -> aiVisualCheck(task, evidence)
+                .map(aiOutcomes -> Stream.concat(Stream.of(linkOutcome, platform, completeness), aiOutcomes.stream())
+                        .filter(java.util.Objects::nonNull).toList()));
     }
 
     /**
      * AI 视觉核验：取该 submission 已证挂接的附件 mediaIds（已限定本 submission，IDOR 安全）→ intelligence 视觉判断。
      * 无附件 → 空（跳过 AI，仅 link）；intelligence 不可用 / 非 200 → 单项 {@code inconclusive}，不 fail 整次核验。
      */
-    private Mono<List<CheckOutcome>> aiVisualCheck(Task task, EngagementSubmission submission) {
-        return attachments.findBySubmissionIds(List.of(submission.id())).collectList()
-                .flatMap(rows -> {
-                    if (rows.isEmpty()) {
-                        return Mono.just(List.<CheckOutcome>of());
-                    }
-                    List<UUID> mediaIds = rows.stream()
+    private Mono<List<CheckOutcome>> aiVisualCheck(Task task, List<EngagementSubmissionAttachment> rows) {
+        if (rows.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        List<UUID> mediaIds = rows.stream()
                             .map(r -> UUID.fromString(r.mediaReferenceId()))
                             .distinct()
                             .toList();
-                    return verificationClient.analyze(task.organizationId(), mediaIds,
+        return verificationClient.analyze(task.organizationId(), mediaIds,
                                     task.title(), task.description(), task.platform())
                             .map(a -> List.of(new CheckOutcome("ai_visual", a.status(),
                                     aiVisualDetail(a), Instant.now())))
                             .onErrorResume(e -> Mono.just(List.of(new CheckOutcome("ai_visual",
                                     "inconclusive", "AI 视觉核验暂不可用", Instant.now()))));
-                });
+    }
+
+    private static CheckOutcome platformIdentityCheck(String platform, String contentUrl) {
+        if (platform == null || platform.isBlank()) return null;
+        String host;
+        try { host = java.net.URI.create(contentUrl).getHost(); }
+        catch (Exception ignored) { host = null; }
+        List<String> domains = switch (platform.toLowerCase()) {
+            case "douyin" -> List.of("douyin.com", "iesdouyin.com");
+            case "xiaohongshu", "xhs" -> List.of("xiaohongshu.com", "xhslink.com");
+            case "bilibili" -> List.of("bilibili.com", "b23.tv");
+            default -> List.of();
+        };
+        if (domains.isEmpty()) return null;
+        String resolvedHost = host;
+        boolean recognizedPlatformHost = resolvedHost != null && List.of(
+                        "douyin.com", "iesdouyin.com", "xiaohongshu.com", "xhslink.com",
+                        "bilibili.com", "b23.tv")
+                .stream().anyMatch(d -> resolvedHost.equals(d) || resolvedHost.endsWith("." + d));
+        // A generic/public URL remains governed by reachability until an official platform adapter is configured.
+        if (!recognizedPlatformHost) return null;
+        boolean matches = resolvedHost != null && domains.stream()
+                .anyMatch(d -> resolvedHost.equals(d) || resolvedHost.endsWith("." + d));
+        return new CheckOutcome("platform_identity", matches ? "passed" : "failed",
+                matches ? "发布链接与任务平台一致" : "发布链接域名与任务平台不一致", Instant.now());
     }
 
     /** 汇总 per-media 明细为单项 ai_visual 的 detail（供商家面板展示）；无明细 → null。 */
@@ -1280,6 +1371,11 @@ public class ApplicationController {
         }
     }
 
+    private String toJson(Object value) {
+        try { return mapper.writeValueAsString(value); }
+        catch (JsonProcessingException e) { throw new IllegalStateException("核验上下文序列化失败", e); }
+    }
+
     /** 核验事件：确定性 event_id（type-3 UUID），保 outbox 重试 exactly-once（镜像 SettlementActivityImpl）。 */
     private EventEnvelope verificationEnvelope(TaskApplication app, EngagementSubmission submission,
                                                EngagementVerification v, List<CheckOutcome> outcomes, String taskOwnerId) {
@@ -1304,6 +1400,10 @@ public class ApplicationController {
         m.put("submissionId", v.submissionId());
         m.put("status", v.status());
         m.put("checks", parseChecks(v.checksJson()));
+        m.put("runId", v.latestRunId());
+        m.put("engineVersion", v.engineVersion());
+        m.put("taskContext", v.taskContextSnapshotJson() == null ? null : parseChecks(v.taskContextSnapshotJson()));
+        m.put("evidenceSnapshot", v.evidenceSnapshotJson() == null ? null : parseChecks(v.evidenceSnapshotJson()));
         m.put("lastCheckedAt", v.lastCheckedAt() == null ? null : v.lastCheckedAt().toString());
         return m;
     }

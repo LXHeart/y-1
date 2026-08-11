@@ -5,6 +5,7 @@ import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
 import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.payment.PaymentProviderAdapter;
+import com.grassland.finance.provider.ProviderOperationRepository;
 import com.grassland.finance.security.FinanceException;
 import com.grassland.finance.wallet.WalletEntryType;
 import com.grassland.finance.wallet.WalletRepository;
@@ -25,18 +26,21 @@ public class ConsumerPaymentService {
     private final WalletRepository wallets;
     private final LedgerService ledger;
     private final PaymentProviderAdapter provider;
+    private final ProviderOperationRepository providerOperations;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
     public ConsumerPaymentService(
             ConsumerPaymentRepository payments, AccountRepository accounts, WalletRepository wallets,
-            LedgerService ledger, PaymentProviderAdapter provider, OutboxRepository outbox,
+            LedgerService ledger, PaymentProviderAdapter provider,
+            ProviderOperationRepository providerOperations, OutboxRepository outbox,
             TransactionalOperator transactions) {
         this.payments = payments;
         this.accounts = accounts;
         this.wallets = wallets;
         this.ledger = ledger;
         this.provider = provider;
+        this.providerOperations = providerOperations;
         this.outbox = outbox;
         this.transactions = transactions;
     }
@@ -49,6 +53,9 @@ public class ConsumerPaymentService {
                         command.amountCents(), provider.channel(), providerRef, command.operationId())
                 .flatMap(payment -> ledger.postConsumerPayment(
                                 payment.organizationId(), payment.orderRef(), payment.amountCents())
+                        .then(providerOperations.register(
+                                payment.channel(), payment.operationId(), "payment", payment.orderRef(),
+                                payment.amountCents(), payment.currency(), payment.providerRef()))
                         .then(outbox.append(event("ConsumerPaymentSucceeded", payment.orderRef(), Map.of(
                                 "orderRef", payment.orderRef(),
                                 "consumerAccountId", payment.consumerAccountId(),
@@ -87,6 +94,9 @@ public class ConsumerPaymentService {
                                         command.operationId(), providerRef)
                                 .flatMap(refund -> ledger.postConsumerRefund(
                                                 payment.organizationId(), orderRef, refund.amountCents())
+                                        .then(providerOperations.register(
+                                                payment.channel(), refund.operationId(), "refund", orderRef,
+                                                refund.amountCents(), payment.currency(), refund.providerRef()))
                                         .then(payments.markPaymentRefunded(orderRef))
                                         .then(outbox.append(event("ConsumerPaymentRefunded", orderRef, Map.of(
                                                 "orderRef", orderRef,
@@ -120,7 +130,11 @@ public class ConsumerPaymentService {
                                             split.recommenderAccountId(), split.recommenderAmountCents(),
                                             split.merchantAmountCents(), split.platformFeeCents()))
                                     .then(payments.completeSplit(orderRef))
-                                    .flatMap(completed -> outbox.append(splitEvent(payment, completed))
+                                    .flatMap(completed -> providerOperations.register(
+                                                    payment.channel(), completed.operationId(), "split", orderRef,
+                                                    payment.amountCents(), payment.currency(),
+                                                    provider.channel() + ":split:" + orderRef)
+                                            .then(outbox.append(splitEvent(payment, completed)))
                                             .thenReturn(completed)))
                             .switchIfEmpty(payments.findSplit(orderRef).map(existing -> {
                                 requireSplitMatch(existing, command);

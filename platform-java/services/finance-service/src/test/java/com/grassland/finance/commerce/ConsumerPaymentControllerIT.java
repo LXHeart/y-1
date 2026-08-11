@@ -52,6 +52,8 @@ class ConsumerPaymentControllerIT extends FinanceItSupport {
         assertThat(ledger.sumBalance(LedgerAccount.Type.CONSUMER_ESCROW, order).block()).isZero();
         assertThat(ledger.sumBalance(LedgerAccount.Type.WALLET, recommender).block()).isEqualTo(1_000L);
         assertThat(ledger.sumBalance(LedgerAccount.Type.ESCROW, org).block()).isEqualTo(8_500L);
+        assertThat(providerOperationCount("commerce-payment:" + order, "payment")).isEqualTo(1);
+        assertThat(providerOperationCount("commerce-split:" + order, "split")).isEqualTo(1);
     }
 
     @Test
@@ -81,5 +83,13 @@ class ConsumerPaymentControllerIT extends FinanceItSupport {
                     .expectBody().jsonPath("$.data.status").isEqualTo("succeeded");
         }
         assertThat(ledger.sumBalance(LedgerAccount.Type.CONSUMER_ESCROW, order).block()).isZero();
+        assertThat(providerOperationCount("commerce-refund:" + order, "refund")).isEqualTo(1);
+    }
+
+    private long providerOperationCount(String operationId, String operationType) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM finance_provider_operation"
+                        + " WHERE operation_id = :operationId AND operation_type = :operationType")
+                .bind("operationId", operationId).bind("operationType", operationType)
+                .map(row -> row.get("c", Integer.class)).one().block().longValue();
     }
 }

@@ -124,6 +124,26 @@ identity:
 # 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
 # intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。
 ai:
+  video-generation:
+    mode: ${VIDEO_GENERATION_MODE:sandbox}
+    base-url: ${VIDEO_GENERATION_BASE_URL:}
+    api-key: ${VIDEO_GENERATION_API_KEY:}
+    model: ${VIDEO_GENERATION_MODEL:sandbox-video-v1}
+    create-path: ${VIDEO_GENERATION_CREATE_PATH:}
+    poll-path: ${VIDEO_GENERATION_POLL_PATH:}
+    retrieve-path: ${VIDEO_GENERATION_RETRIEVE_PATH:/v1/files/retrieve}
+    default-duration-seconds: ${VIDEO_GENERATION_DEFAULT_DURATION_SECONDS:5}
+    max-duration-seconds: ${VIDEO_GENERATION_MAX_DURATION_SECONDS:10}
+    unit-price-cents: ${VIDEO_GENERATION_UNIT_PRICE_CENTS:1}
+    pricing-version: ${VIDEO_GENERATION_PRICING_VERSION:video-config-v1}
+    platform-model-version: ${VIDEO_GENERATION_PLATFORM_MODEL_VERSION:1}
+    request-timeout: ${VIDEO_GENERATION_REQUEST_TIMEOUT:30s}
+    poll-interval: ${VIDEO_GENERATION_POLL_INTERVAL:3s}
+    claim-lease: ${VIDEO_GENERATION_CLAIM_LEASE:1m}
+    batch-size: ${VIDEO_GENERATION_BATCH_SIZE:8}
+    max-concurrency: ${VIDEO_GENERATION_MAX_CONCURRENCY:4}
+    max-attempts: ${VIDEO_GENERATION_MAX_ATTEMPTS:60}
+    worker-enabled: ${VIDEO_GENERATION_WORKER_ENABLED:true}
   qwen:
     base-url: ${QWEN_BASE_URL:}
     api-key: ${QWEN_API_KEY:}

@@ -16,16 +16,19 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import java.util.UUID;
+import java.util.LinkedHashMap;
 
 /**
  * 视频制作脚本生成（草场 intelligence Slice 4）——首个多模态业务模块。
- * 路径沿用 legacy {@code POST /api/video-production/generate-script}，前端零改动；
- * {@code generate-video} 仍留 legacy stub，edge-bff 仅精确切本端点。
+ * 脚本 SSE 与 provider-neutral 异步视频任务入口。
  */
 @RestController
 public class VideoProductionController {
@@ -37,15 +40,50 @@ public class VideoProductionController {
     private final IntelligenceCallerResolver callers;
     private final AiCapabilityAdapter ai;
     private final CreditsClient credits;
+    private final VideoGenerationService video;
+    private final VideoGenerationProperties videoProperties;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public VideoProductionController(
             IntelligenceCallerResolver callers,
             AiCapabilityAdapter ai,
-            CreditsClient credits) {
+            CreditsClient credits, VideoGenerationService video, VideoGenerationProperties videoProperties) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
+        this.video = video;
+        this.videoProperties = videoProperties;
+    }
+
+    @PostMapping("/api/video-production/generate-video")
+    public Mono<ResponseEntity<Map<String,Object>>> generateVideo(@RequestBody VideoGenerationService.VideoRequest body, ServerWebExchange exchange) {
+        return callers.resolve(exchange.getRequest()).flatMap(c -> video.create(c.accountId(), c.organizationId(), body))
+                .map(job -> ResponseEntity.accepted().body(envelope(job)));
+    }
+
+    @GetMapping("/api/video-production/jobs/{id}")
+    public Mono<ResponseEntity<Map<String,Object>>> getVideo(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.resolve(exchange.getRequest()).flatMap(c -> video.get(id, c.accountId()))
+                .map(job -> ResponseEntity.ok(envelope(job))).defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/api/video-production/jobs")
+    public Mono<ResponseEntity<List<Map<String,Object>>>> listVideo(ServerWebExchange exchange) {
+        return callers.resolve(exchange.getRequest()).flatMapMany(c -> video.list(c.accountId()).map(VideoProductionController::snapshot)).collectList().map(ResponseEntity::ok);
+    }
+
+    @PostMapping("/api/video-production/jobs/{id}/cancel")
+    public Mono<ResponseEntity<Map<String,Object>>> cancelVideo(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.resolve(exchange.getRequest()).flatMap(c -> video.cancel(id, c.accountId())).map(ok -> ok ? ResponseEntity.ok(Map.of("success", true)) : ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/api/video-production/capabilities")
+    public ResponseEntity<Map<String,Object>> capabilities() {
+        return ResponseEntity.ok(Map.of("provider", videoProperties.getMode(), "model", videoProperties.getModel(), "available", videoProperties.available(), "reason", videoProperties.unavailableReason() == null ? "" : videoProperties.unavailableReason()));
+    }
+    private static Map<String,Object> envelope(VideoGenerationJob j) { return Map.of("success", true, "data", snapshot(j)); }
+    private static Map<String,Object> snapshot(VideoGenerationJob j) {
+        Map<String,Object> m = new LinkedHashMap<>(); m.put("id", j.id()); m.put("status", j.status()); m.put("progress", j.progress()); m.put("provider", j.provider()); m.put("model", j.model()); m.put("resultUrl", j.resultUrl()); m.put("actualDurationSeconds", j.actualDurationSeconds()); m.put("actualCostCents", j.actualCostCents()); m.put("errorMessage", j.errorMessage()); return m;
     }
 
     @PostMapping("/api/video-production/generate-script")

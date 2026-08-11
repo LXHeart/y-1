@@ -72,7 +72,41 @@ export interface EngagementVerification {
   submissionId: string
   status: VerificationStatus
   checks: VerificationCheck[]
+  /** Verification v2 immutable decision run and frozen business context. */
+  runId?: string | null
+  engineVersion?: string
+  taskContext?: Record<string, unknown> | null
+  evidenceSnapshot?: { mediaIds?: string[] } | null
   lastCheckedAt: string | null
+}
+
+/** Frozen at application acceptance; safe to pass into task-mode AI creation. */
+export interface TaskContextSnapshot {
+  taskId: string
+  taskVersion: number
+  title: string
+  description: string | null
+  contentForm: string | null
+  platform: string | null
+  storeId: string | null
+  applicationId: string
+  recommenderAccountId: string
+  bountyCents: number
+  acceptedAt: string | null
+  requirements: Record<string, unknown>
+  backfilled?: boolean
+}
+
+export interface EngagementVerificationRun {
+  id: string
+  runNumber: number
+  engineVersion: string
+  status: VerificationStatus
+  taskContext: Record<string, unknown>
+  evidenceSnapshot: { mediaIds?: string[] }
+  checks: VerificationCheck[]
+  triggeredBy: string | null
+  createdAt: string | null
 }
 
 // ---------- 商家对一次履约的评分 ----------

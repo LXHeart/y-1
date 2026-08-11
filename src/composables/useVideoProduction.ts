@@ -16,6 +16,10 @@ interface CapabilitiesResponse {
       reason?: string | null
     }
   }
+  provider?: string
+  model?: string
+  available?: boolean
+  reason?: string
 }
 
 export function useVideoProduction() {
@@ -145,9 +149,7 @@ export function useVideoProduction() {
       if (!response.ok) return
 
       const body = await response.json() as CapabilitiesResponse
-      const capability = body.data?.videoGeneration
-      if (!capability) return
-
+      const capability = body.data?.videoGeneration ?? body
       videoGenerationAvailable.value = capability.available === true
       videoGenerationReason.value = capability.reason || VIDEO_GENERATION_FALLBACK_REASON
     } catch {
@@ -177,20 +179,16 @@ export function useVideoProduction() {
     videoProgress.value = 0
     stage.value = 'generate'
 
-    const progressInterval = simulateProgress()
-
     try {
-      const imageBase64List = images.value.map((img) => {
-        const base64 = img.dataUrl.split(',')[1]
-        return base64 || img.dataUrl
-      })
+      const imageDataUrls = images.value.map((img) => img.dataUrl)
 
       const response = await fetch('/api/video-production/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script: script.value.trim(),
-          images: imageBase64List,
+          images: imageDataUrls,
+          operationId: crypto.randomUUID(),
           videoStyle: form.value.videoStyle,
           shopName: form.value.shopName.trim(),
           shopAddress: form.value.shopAddress.trim() || undefined,
@@ -198,19 +196,28 @@ export function useVideoProduction() {
         signal: controller.signal,
       })
 
-      const body = await response.json() as { success?: boolean; data?: { videoUrl: string }; error?: string }
+      const body = await response.json() as { success?: boolean; data?: { id: string }; error?: string }
 
       if (!response.ok || !body.success) {
         throw new Error(body.error || '视频生成失败')
       }
 
-      videoUrl.value = body.data?.videoUrl ?? ''
-      videoProgress.value = 100
+      const id = body.data?.id
+      if (!id) throw new Error('视频任务创建失败')
+      while (!controller.signal.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        const statusResponse = await fetch(`/api/video-production/jobs/${id}`, { signal: controller.signal })
+        const statusBody = await statusResponse.json() as { data?: { status: string; progress: number; resultUrl?: string; errorMessage?: string } }
+        const job = statusBody.data
+        if (!job) throw new Error('视频任务状态读取失败')
+        videoProgress.value = job.progress ?? 0
+        if (job.status === 'succeeded') { videoUrl.value = job.resultUrl ?? ''; break }
+        if (job.status === 'failed' || job.status === 'cancelled') throw new Error(job.errorMessage || '视频生成失败')
+      }
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       error.value = err instanceof Error ? err.message : '视频生成失败，请稍后重试'
     } finally {
-      clearInterval(progressInterval)
       videoLoading.value = false
       if (videoController === controller) videoController = null
     }
@@ -298,14 +305,6 @@ export function useVideoProduction() {
         }
       }
     }
-  }
-
-  function simulateProgress(): ReturnType<typeof setInterval> {
-    let progress = 0
-    return setInterval(() => {
-      progress = Math.min(progress + Math.random() * 8, 90)
-      videoProgress.value = Math.round(progress)
-    }, 500)
   }
 
   return {

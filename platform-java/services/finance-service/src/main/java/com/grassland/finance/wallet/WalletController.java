@@ -3,6 +3,9 @@ package com.grassland.finance.wallet;
 import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
 import com.grassland.finance.ledger.LedgerService;
+import com.grassland.finance.payment.PaymentProviderAdapter;
+import com.grassland.finance.provider.ProviderOperation;
+import com.grassland.finance.provider.ProviderOperationRepository;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
 import java.time.Instant;
@@ -41,14 +44,19 @@ public class WalletController {
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final LedgerService ledger;
+    private final PaymentProviderAdapter provider;
+    private final ProviderOperationRepository providerOperations;
 
     public WalletController(FinanceCallerResolver callers, WalletRepository wallets, OutboxRepository outbox,
-                            TransactionalOperator transactions, LedgerService ledger) {
+                            TransactionalOperator transactions, LedgerService ledger,
+                            PaymentProviderAdapter provider, ProviderOperationRepository providerOperations) {
         this.callers = callers;
         this.wallets = wallets;
         this.outbox = outbox;
         this.transactions = transactions;
         this.ledger = ledger;
+        this.provider = provider;
+        this.providerOperations = providerOperations;
     }
 
     @GetMapping("/api/finance/wallets/me")
@@ -66,21 +74,48 @@ public class WalletController {
     public Mono<ResponseEntity<Map<String, Object>>> withdraw(@RequestBody WithdrawRequest body,
                                                               ServerHttpRequest request) {
         long amount = body.amountCents();
+        String operationId = body.operationId() == null || body.operationId().isBlank()
+                ? "withdraw:" + UUID.randomUUID()
+                : body.operationId().trim();
+        String providerRef = provider.channel() + ":payout:" + operationId;
         return requireUser(request)
                 .flatMap(accountId -> transactions.transactional(
-                        wallets.debit(accountId, amount)
-                                .switchIfEmpty(Mono.error(new FinanceException(409, "余额不足")))
-                                .flatMap(wallet -> wallets
-                                        .appendEntry(accountId, WalletEntryType.WITHDRAWAL, -amount, 0, null, "sandbox 提现")
-                                        .then(ledger.postWithdraw(accountId, amount))
-                                        .then(outbox.append(new EventEnvelope(
-                                                UUID.randomUUID().toString(), "WithdrawalCompleted", "Wallet",
-                                                accountId, 1, Instant.now(), null,
-                                                Map.of("accountId", accountId, "amountCents", amount))))
-                                        .thenReturn(wallet)))
+                        providerOperations.registerIfAbsent(
+                                        provider.channel(), operationId, "payout", accountId,
+                                        amount, "CNY", providerRef)
+                                .flatMap(operation -> completeWithdrawal(
+                                        accountId, amount, operationId, providerRef))
+                                .switchIfEmpty(providerOperations.findByOperationId(operationId)
+                                        .flatMap(existing -> requirePayoutMatch(
+                                                existing, accountId, amount, providerRef))
+                                        .then(wallets.findByAccount(accountId))))
                         .flatMap(wallet -> wallets.findEntries(accountId, RECENT_ENTRIES).collectList()
                                 .map(entries -> ResponseEntity.ok(Map.of("success", true,
                                         "data", toBody(wallet, entries))))));
+    }
+
+    private Mono<Wallet> completeWithdrawal(
+            String accountId, long amount, String operationId, String providerRef) {
+        return wallets.debit(accountId, amount)
+                .switchIfEmpty(Mono.error(new FinanceException(409, "余额不足")))
+                .flatMap(wallet -> wallets.appendEntry(
+                                accountId, WalletEntryType.WITHDRAWAL, -amount, 0,
+                                operationId, "sandbox 提现")
+                        .then(ledger.postWithdraw(accountId, amount))
+                        .then(outbox.append(new EventEnvelope(
+                                UUID.randomUUID().toString(), "WithdrawalCompleted", "Wallet",
+                                accountId, 1, Instant.now(), operationId,
+                                Map.of("accountId", accountId, "amountCents", amount,
+                                        "operationId", operationId, "providerRef", providerRef))))
+                        .thenReturn(wallet));
+    }
+
+    private Mono<ProviderOperation> requirePayoutMatch(
+            ProviderOperation existing, String accountId, long amount, String providerRef) {
+        return ProviderOperationRepository.matches(
+                        existing, provider.channel(), "payout", accountId, amount, "CNY", providerRef)
+                ? Mono.just(existing)
+                : Mono.error(new FinanceException(409, "提现幂等参数冲突"));
     }
 
     /** 钱包是账号级私有资源：必须是终端用户断言（服务断言不得动钱包）。 */

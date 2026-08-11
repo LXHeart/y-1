@@ -17,8 +17,17 @@ public record EngagementVerification(
         String submissionId,
         String status,
         String checksJson,
+        String latestRunId,
+        String engineVersion,
+        String taskContextSnapshotJson,
+        String evidenceSnapshotJson,
         Instant lastCheckedAt,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public EngagementVerification(String id, String submissionId, String status, String checksJson,
+                                  Instant lastCheckedAt, Instant createdAt, Instant updatedAt) {
+        this(id, submissionId, status, checksJson, null, "v1", null, null,
+                lastCheckedAt, createdAt, updatedAt);
+    }
 }

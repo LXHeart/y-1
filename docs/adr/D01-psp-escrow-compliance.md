@@ -2,22 +2,25 @@
 
 | 状态 | 日期 | 决策编号 | 阻塞范围 | 依赖 |
 |------|------|----------|----------|------|
-| 部分采纳 | 2026-08-02 草案 / 2026-08-02 部分采纳 | D-01（HLD §19、§12.1） | 真实支付、退款、结算、核销分账（根决策） | 无 |
+| 部分采纳 | 2026-08-02 草案 / 2026-08-11 Sandbox 边界完成 | D-01（HLD §19、§12.1） | 真实支付、退款、结算、核销分账（根决策） | 无 |
 
 ## 决策记录（部分采纳，2026-08-02）
 
 **决策者拍板**：资金对接哪个平台尚未确定，但当前系统必须先记录资金流转，**预留与其他平台对接的口子**先开发；选定平台后再开发对接接口。
 
-**采纳范围（已落地，commit 级未 push）**：
+**采纳范围（Sandbox 已落地）**：
 - 采纳本 ADR「保留 `reserve/release/capture/reverse/reconcile` 状态机、底层升级为双录账本」的核心架构——**Approach B（双写投影）**：余额行保留为缓存投影 + 并发守卫，同事务追加不可变 `journal`/`posting`（HLD §6.4 双录：每 journal ≥ 2 posting、借贷合计为零、Finalized 不可改、错误经 Reversal Journal、余额可由 Posting 重建）。OPENING 回填存量余额使投影自迁移起可重建。
 - 落地 **`PaymentProviderAdapter` seam**（HLD §12.2 命名）：首期 `SandboxPaymentProviderAdapter`（`@ConditionalOnProperty finance.psp.mode=sandbox`，只写内部账本、不真发外部调用）；真实 PSP impl 替换该 bean 即生效，无需改调用点。供应商 DTO 停留 adapter 层，不进领域模型。
 - 接线 6 处资金操作同事务双写账本（credit/reserve/release/capture/reverse/withdraw），**HTTP/outbox 事件/身份契约零变**。
-- 验证：finance-service **82 tests**（新增 17：LedgerService 单测 10 + LedgerRepositoryIT 3 + LedgerProjectionIT 2 + LedgerAtomicityIT 2）+ bootJar 全绿；既有 EscrowControllerIT/WalletControllerIT/ReservationReconciliationIT 0 改动通过（契约不变实证）。
+- 到店支付、退款、核销分账和钱包提现统一登记 `finance_provider_operation`；记录稳定的内部 `operation_id`、通道引用、金额、币种与通道状态。提现请求新增可选 `operationId`，旧请求兼容，显式传入时重复请求不重复扣款。
+- V12 增加 Webhook Inbox 与外部对账单行：`finance_provider_webhook_event` 以 `(provider,event_id)` 幂等，未知引用只记 `ignored`、不改账本；`finance_provider_reconciliation` 给出 `matched/mismatch/unmatched`，匹配后将 operation 标为 `reconciled`。
+- 财务角色可通过 `/api/admin/finance/sandbox/webhooks` 和 `/sandbox/reconciliation` 完整模拟回调与对账，并通过 provider operations/webhooks/reconciliation 三个只读端点检查结果。Sandbox 模拟端点不接受非 `sandbox` provider。
+- 新增集成测试覆盖 Webhook 重投、未知操作、对账匹配/差异/未匹配、支付/退款/分账/提现 operation 登记及提现幂等。
 
 **仍延后（待真实 PSP 接入，不阻塞账本）**——下方「待你拍板」6 项全部降级为「PSP 接入时再答」：
-1. 资金存管合作方 / 2. 合规主体 / 3. 二清合规结论 / 4. PSP 首期范围 / 6. 对账口径——这五项在「不动真钱」阶段不实质化（二清风险只在真实归集第三方资金时触发）。
+1. 资金存管合作方 / 2. 合规主体 / 3. 二清合规结论 / 4. PSP 首期范围 / 6. 外部对账事实源——这五项在「不动真钱」阶段不实质化（二清风险只在真实归集第三方资金时触发）。
 - 第 5 项「退款资金来源」随真实退款通道落地。
-- 真实 PSP 实现（createPaymentIntent/refund/payout/对账文件）、Payment/PaymentIntent/Refund/Payout 实体（属 D-07 到店核销，依赖商品/订单）一并延后。
+- 真实 PSP adapter（支付会话、退款、原生分账、付款）、Webhook 签名验真、外部对账文件拉取、KYC/KYB/MFA 和 Payment Recovery 一并延后；真实 adapter 必须复用现有 operation/inbox/reconciliation 契约，不得把供应商 DTO 泄漏进领域模型。
 
 > 即：**资金主干的内部记录已可上线，真实收钱/出钱仍卡在平台选定**。采纳本部分不等于解锁真实资金生产——真实 PSP 接入前，finance 仍是「内部账本真相源 + sandbox 余额」，不触碰真实第三方资金。
 
@@ -37,14 +40,15 @@ PRD §8.5 要求支持微信支付、支付宝、银行卡、信用卡，「具�
 
 ## 当前代码现状
 
-finance-service 目前是 **Sandbox「账本简化」模型**，不接任何 PSP：
+finance-service 目前是 **Sandbox「内部账本 + 通道生命周期」模型**，不接任何 PSP：
 
-- 表（migration V1–V4）：`account`（余额）、`reservation`（资金预留/冻结）、`recommender_wallet`（推荐官钱包）、`outbox`。
+- 余额投影、reservation、推荐官钱包、不可变 Journal/Posting 双录账本和 outbox 已落地。
 - 原语（`EscrowLifecycleService`）：`reserve` / `release` / `capture` / `reverse` / `reconcile`，**全部作用于内部余额行**，不是真实 PSP 资金。
-- 无 `Journal`/`Posting` 双录账本、无 `Payment`/`Refund`/`Payout` 实体、无 PSP Adapter、无对账文件导入。
+- 到店 `Payment/Refund/Split`、钱包提现、provider operation、Webhook Inbox 和对账单行已落地；`SandboxPaymentProviderAdapter` 不发外部请求。
+- Sandbox 可完整测试支付、退款、分账、提现、回调和对账，但没有真实支付会话、回调验签、外部清算或实际到账。
 - trust 的争议 hold 经 `SettlementHeld` 事件让 marketplace 的 `settlement_reconciliation` 落 `blocked`，再由 finance `reconcile` 处理——**资金实际未移动**，因为 Sandbox 余额不对应真实账户。
 
-> 即：现有 `reserve/release/capture/reverse/reconcile` 的**语义和状态机要保留**，但底层要从「改内部余额行」升级为「写双录账本 + 调 PSP」。本决策不推翻状态机，只定底层资金结构。
+> 即：内部账本与通道生命周期契约已经固定。选定渠道后新增真实 adapter、签名验证器和对账文件解析器；现有领域事实、幂等键和资金状态机不因供应商 DTO 改写。
 
 ## 方案与取舍
 
@@ -119,4 +123,4 @@ finance-service 目前是 **Sandbox「账本简化」模型**，不接任何 PSP
 - 具体 PSP/存管 API 的 LLD（采纳后由 `GL-P2-FIN-002` 承接）。
 - KYC/KYB 流程与商家三级权限材料（D-05）。
 - 跨境/多币种（PRD 范围为人民币境内，HLD §13 部署为境内 K8s）。
-- 提现（Payout）的到账时效与手续费策略——归 `GL-P2-FIN-002` LLD。
+- 真实提现（Payout）的到账时效、手续费、失败恢复和人工处置策略——归 `GL-P2-FIN-002` LLD；Sandbox 提现记录与幂等已在范围内。

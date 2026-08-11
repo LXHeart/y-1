@@ -72,4 +72,13 @@ public abstract class FinanceItSupport {
                 "grassland-internal", now, now.plusSeconds(30),
                 "service", principal));
     }
+
+    /** 签一个平台后台角色断言，用于财务管理端点。 */
+    protected String signRole(String accountId, String role) {
+        Instant now = Instant.now();
+        return signer.sign(new IdentityAssertion(
+                accountId, null, "sid-" + accountId, null, null,
+                "cookie-session", "level2", now, "r", "t",
+                "grassland-internal", now, now.plusSeconds(60), null, null, role));
+    }
 }

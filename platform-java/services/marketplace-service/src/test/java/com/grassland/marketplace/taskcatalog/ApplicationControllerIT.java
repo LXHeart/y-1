@@ -1460,8 +1460,30 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
         runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("passed")
-                .jsonPath("$.data.checks.length()").isEqualTo(2);
+                .jsonPath("$.data.checks.length()").isEqualTo(3)
+                .jsonPath("$.data.engineVersion").isEqualTo("v2")
+                .jsonPath("$.data.runId").isNotEmpty()
+                .jsonPath("$.data.taskContext.taskId").isEqualTo(task)
+                .jsonPath("$.data.taskContext.submissionId").isEqualTo(submissionId)
+                .jsonPath("$.data.evidenceSnapshot.mediaIds[0]").isEqualTo(m1.toString());
         verify(verificationClient).analyze(eq(org), eq(List.of(m1)), any(), any(), any());
+    }
+
+    @Test
+    void submissionAutomaticallyCreatesVerificationRun() {
+        String rec = UUID.randomUUID().toString();
+        String[] s = acceptedNonMonetary(rec);
+        String merchant = s[0], org = s[1], task = s[2], app = s[3];
+        when(linkChecker.check(anyString())).thenReturn(Mono.just(
+                new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
+
+        String submissionId = submit(rec, task, app);
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.submissions[0].verification.engineVersion").isEqualTo("v2")
+                .jsonPath("$.data.submissions[0].verification.taskContext.submissionId")
+                .isEqualTo(submissionId);
     }
 
     /** 无附件 → 仅 link_reachability，AI check 跳过（verificationClient 从不被调）。 */
@@ -1476,9 +1498,45 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
         runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("passed")
-                .jsonPath("$.data.checks.length()").isEqualTo(1)
-                .jsonPath("$.data.checks[0].type").isEqualTo("link_reachability");
+                .jsonPath("$.data.checks.length()").isEqualTo(2)
+                .jsonPath("$.data.checks[0].type").isEqualTo("link_reachability")
+                .jsonPath("$.data.checks[1].type").isEqualTo("evidence_completeness");
         verify(verificationClient, never()).analyze(any(), any(), any(), any(), any());
+
+        runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk();
+        Long runs = db.sql("SELECT COUNT(*)::bigint c FROM engagement_verification_run WHERE submission_id=CAST(:id AS uuid)")
+                .bind("id", submissionId).map(row -> row.get("c", Long.class)).one().block();
+        assertThat(runs).isEqualTo(2L);
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/"
+                        + submissionId + "/verification/runs")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.runs.length()").isEqualTo(2)
+                .jsonPath("$.data.runs[0].runNumber").isEqualTo(2)
+                .jsonPath("$.data.runs[0].taskContext.taskId").isEqualTo(task);
+    }
+
+    @Test
+    void acceptedApplicationExposesFrozenTaskContextOnlyToParticipants() {
+        String rec = UUID.randomUUID().toString();
+        String[] accepted = acceptedNonMonetary(rec);
+        String merchant = accepted[0], org = accepted[1], task = accepted[2], app = accepted[3];
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/task-context")
+                .header("X-Grassland-Identity", sign(rec, "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.taskId").isEqualTo(task)
+                .jsonPath("$.data.applicationId").isEqualTo(app)
+                .jsonPath("$.data.recommenderAccountId").isEqualTo(rec)
+                .jsonPath("$.data.taskVersion").isNumber();
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/task-context")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/tasks/" + task + "/applications/" + app + "/task-context")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isForbidden();
     }
 
     /** intelligence 不可用 → ai_visual 降级 inconclusive，拖累整体 inconclusive，但不 fail 也不 5xx。 */
@@ -1497,9 +1555,9 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
         runChecksRaw(merchant, org, task, app, submissionId).expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("inconclusive")
-                .jsonPath("$.data.checks.length()").isEqualTo(2)
-                .jsonPath("$.data.checks[1].type").isEqualTo("ai_visual")
-                .jsonPath("$.data.checks[1].status").isEqualTo("inconclusive");
+                .jsonPath("$.data.checks.length()").isEqualTo(3)
+                .jsonPath("$.data.checks[2].type").isEqualTo("ai_visual")
+                .jsonPath("$.data.checks[2].status").isEqualTo("inconclusive");
     }
 
     /** 非任务 owner 的商家触发核验 → 403。 */

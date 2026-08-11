@@ -45,7 +45,6 @@ import reactor.core.publisher.Mono;
 public class AiExecutionService {
 
     private static final Logger logger = LoggerFactory.getLogger(AiExecutionService.class);
-    private static final int PRICE_TABLE_VERSION_V1 = 1;
 
     private final ModelBudgetService budgetService;
     private final ByokRoutingService routingService;
@@ -115,9 +114,25 @@ public class AiExecutionService {
                                         provider, orgId, accountId, capability, feature,
                                         allowFallback, budgetOpId, decryptedKey,
                                         estimatedInputTokens, estimatedOutputTokens,
-                                        estimatedTokens, estimatedCents);
+                                        estimatedTokens, estimatedCents, "sync", "v1");
                             });
                 })
+                .onErrorResume(InsufficientCreditsException.class,
+                        e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
+    }
+
+    /** 平台异步媒体任务入口：provider 与冻结价格由专用 adapter 配置提供。 */
+    public Mono<ExecutionResult> preparePlatformAsyncExecution(
+            String accountId, String organizationId, String capability, CreditFeature feature,
+            ProviderResolution provider, UUID operationId, int estimatedCents,
+            String priceTableVersion) {
+        if (!provider.isPlatform() || estimatedCents < 0) {
+            return Mono.error(new IllegalArgumentException("异步媒体任务必须使用合法的平台 provider"));
+        }
+        return reserveCreateAndCharge(
+                        provider, organizationId, accountId, capability, feature,
+                        true, operationId, null, 0, 0, 0, estimatedCents,
+                        "async", priceTableVersion)
                 .onErrorResume(InsufficientCreditsException.class,
                         e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
     }
@@ -127,11 +142,12 @@ public class AiExecutionService {
             String orgId, String accountId, String capability, CreditFeature feature,
             boolean allowFallback, UUID budgetOpId, String decryptedKey,
             int estimatedInputTokens, int estimatedOutputTokens,
-            int estimatedTokens, int estimatedCents) {
+            int estimatedTokens, int estimatedCents, String runType,
+            String priceTableVersion) {
 
         Mono<RunPreparation> preparation = reserveAndCreateRun(
                 provider, orgId, accountId, capability, allowFallback, budgetOpId,
-                estimatedTokens, estimatedCents);
+                estimatedTokens, estimatedCents, runType, priceTableVersion);
         return transactions.execute(ignored -> preparation)
                 .single()
                 .flatMap(prepared -> prepared.allowed()
@@ -147,7 +163,8 @@ public class AiExecutionService {
             ProviderResolution provider,
             String orgId, String accountId, String capability,
             boolean allowFallback, UUID budgetOpId,
-            int estimatedTokens, int estimatedCents) {
+            int estimatedTokens, int estimatedCents, String runType,
+            String priceTableVersion) {
 
         return budgetService.checkAndReserve(
                         orgId, capability,
@@ -156,7 +173,7 @@ public class AiExecutionService {
                 .flatMap(budget -> budget.allowed()
                         ? createRunRecord(
                                 budget, provider, orgId, accountId, capability,
-                                allowFallback, budgetOpId)
+                                allowFallback, budgetOpId, runType, priceTableVersion)
                         : Mono.just(RunPreparation.denied(budget.denialReason())));
     }
 
@@ -164,11 +181,12 @@ public class AiExecutionService {
             ModelBudgetService.BudgetCheckResult budget,
             ProviderResolution provider,
             String orgId, String accountId, String capability,
-            boolean allowFallback, UUID budgetOpId) {
+            boolean allowFallback, UUID budgetOpId, String runType,
+            String priceTableVersion) {
 
         AiRun run = AiRun.forCreate(orgId, accountId, capability,
-                provider.provider(), provider.model(), "sync",
-                budget.reservedCents(), budgetOpId, PRICE_TABLE_VERSION_V1,
+                provider.provider(), provider.model(), runType,
+                budget.reservedCents(), budgetOpId, priceTableVersion,
                 provider.platformModelVersion() > 0 ? provider.platformModelVersion() : null,
                 allowFallback);
         return budgetService.createRun(run)
@@ -244,6 +262,17 @@ public class AiExecutionService {
                 ? safeCost(ctx.provider().model(), inputTokens, outputTokens, imagesGenerated, videoSeconds)
                 : 0;
 
+        return settleSuccessWithCost(
+                ctx, actualCents, inputTokens, outputTokens, imagesGenerated, videoSeconds);
+    }
+
+    /** 使用任务创建时冻结的成本结算异步媒体 Run。 */
+    public Mono<Boolean> settleSuccessWithCost(
+            ExecutionContext ctx, int actualCents, Integer inputTokens, Integer outputTokens,
+            int imagesGenerated, int videoSeconds) {
+        if (actualCents < 0 || imagesGenerated < 0 || videoSeconds < 0) {
+            return Mono.error(new IllegalArgumentException("AI 用量或成本不能为负数"));
+        }
         Mono<Boolean> chain = budgetService.completeRun(ctx.runId(), actualCents, inputTokens, outputTokens,
                 imagesGenerated, videoSeconds)
                 .flatMap(ok -> {
