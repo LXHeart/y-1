@@ -39,7 +39,7 @@ describe('AdminView KYB 审核', () => {
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
       ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
-        '风险调查', '经营分析', '订单核销', 'AI 模型'])
+        '风险调查', '经营分析', '订单核销', 'AI 模型', '统一审计'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
     await tabs[10].trigger('click')

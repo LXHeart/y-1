@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { useGrasslandIdentity } from './useGrasslandIdentity'
 import { useGrasslandMarketplace } from './useGrasslandMarketplace'
 import { useGrasslandGovernance } from './useGrasslandGovernance'
+import { useGrasslandAudit } from './useGrasslandAudit'
 
 /**
  * 草场 Java 域请求封装（经 edge-bff）。
@@ -42,6 +43,7 @@ export function useGrassland() {
   const identity = useGrasslandIdentity(run)
   const marketplace = useGrasslandMarketplace(run)
   const governance = useGrasslandGovernance(run)
+  const audit = useGrasslandAudit(run)
 
   return {
     loading,
@@ -50,5 +52,6 @@ export function useGrassland() {
     ...identity,
     ...marketplace,
     ...governance,
+    ...audit,
   }
 }

@@ -115,6 +115,55 @@ class DisputeEvidenceIT extends TrustItSupport {
         assertThat(auditCount).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("证据访问审计查询：客服可组合筛选，普通用户越权，参数有界")
+    void evidenceAccessAuditCanBeQueriedByAuthorizedOperators() {
+        String merchant = UUID.randomUUID().toString();
+        String disputeId = openWithEvidence(merchant, MARKETPLACE_ORG, UUID.randomUUID().toString(),
+                List.of(Map.of("kind", "text", "contentRef", "访问审计查询样本")));
+        String viewer = UUID.randomUUID().toString();
+
+        client().get().uri("/api/trust/disputes/" + disputeId + "/adjudication")
+                .header("X-Grassland-Identity", signCs(viewer, Instant.now()))
+                .exchange().expectStatus().isOk();
+
+        String evidenceId = db.sql("SELECT evidence_id::text FROM dispute_evidence_access_audit"
+                        + " WHERE dispute_id = CAST(:id AS uuid) AND viewer_account_id = CAST(:viewer AS uuid)")
+                .bind("id", disputeId).bind("viewer", viewer)
+                .map(row -> row.get(0, String.class)).one().block();
+
+        client().get().uri(builder -> builder.path("/api/admin/trust/evidence-access-audits")
+                        .queryParam("disputeId", disputeId)
+                        .queryParam("evidenceId", evidenceId)
+                        .queryParam("viewerAccountId", viewer)
+                        .queryParam("viewerRole", "customer_service")
+                        .queryParam("from", "2020-01-01T00:00:00Z")
+                        .queryParam("to", "2099-01-01T00:00:00Z")
+                        .queryParam("limit", "20").build())
+                .header("X-Grassland-Identity", signCs(viewer, Instant.now()))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].disputeId").isEqualTo(disputeId)
+                .jsonPath("$.data[0].evidenceId").isEqualTo(evidenceId)
+                .jsonPath("$.data[0].viewerAccountId").isEqualTo(viewer)
+                .jsonPath("$.data[0].purpose").isEqualTo("adjudication")
+                .jsonPath("$.meta.limit").isEqualTo(20);
+
+        client().get().uri("/api/admin/trust/evidence-access-audits?disputeId=" + disputeId)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isForbidden();
+        client().get().uri("/api/admin/trust/evidence-access-audits?disputeId=bad-id")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isForbidden();
+        client().get().uri("/api/admin/trust/evidence-access-audits?limit=201")
+                .header("X-Grassland-Identity", signCs(viewer, Instant.now()))
+                .exchange().expectStatus().isBadRequest();
+        client().get().uri("/api/admin/trust/evidence-access-audits?disputeId=bad-id")
+                .header("X-Grassland-Identity", signCs(viewer, Instant.now()))
+                .exchange().expectStatus().isBadRequest();
+    }
+
     // ---------- helpers ----------
 
     @SuppressWarnings("unchecked")

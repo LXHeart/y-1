@@ -268,6 +268,7 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("PUT", "/api/admin/reputation/" + ACCOUNT_ID + "/lv5-admission"))
                 .isEqualTo(MARKETPLACE);
         assertThat(resolver.resolve("GET", "/api/admin/trust/judges")).isEqualTo(TRUST);
+        assertThat(resolver.resolve("GET", "/api/admin/trust/evidence-access-audits")).isEqualTo(TRUST);
         assertThat(resolver.resolve("PUT", "/api/admin/trust/judges/" + ACCOUNT_ID + "/admission"))
                 .isEqualTo(TRUST);
 
@@ -278,6 +279,7 @@ class UpstreamResolverTest {
 
         assertThat(resolver.isInternalUpstream("GET", "/api/admin/reputation-config")).isTrue();
         assertThat(resolver.isInternalUpstream("GET", "/api/admin/trust/judges")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/trust/evidence-access-audits")).isTrue();
     }
 
     @Test

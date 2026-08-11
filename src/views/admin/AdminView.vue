@@ -40,6 +40,8 @@
         @click="activeSection = 'commerce'">订单核销</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
         :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'audit'"
+        :class="{ active: activeSection === 'audit' }" @click="activeSection = 'audit'">统一审计</button>
     </div>
 
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
@@ -204,8 +206,12 @@
       <CommerceAdminPanel />
     </div>
 
-    <div v-else class="admin-panel" role="tabpanel">
+    <div v-else-if="activeSection === 'ai-models'" class="admin-panel" role="tabpanel">
       <AiPlatformModelsPanel />
+    </div>
+
+    <div v-else class="admin-panel" role="tabpanel">
+      <UnifiedAuditPanel />
     </div>
 
     <Teleport to="body">
@@ -297,6 +303,7 @@ import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
 import RiskAdminPanel from '../../components/RiskAdminPanel.vue'
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
+import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import type {
@@ -323,7 +330,7 @@ interface UserItem {
 
 const users = ref<UserItem[]>([])
 const activeSection = ref<
-  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'analytics' | 'commerce' | 'ai-models'
+  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'analytics' | 'commerce' | 'ai-models' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')
