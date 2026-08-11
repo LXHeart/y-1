@@ -812,6 +812,53 @@ class TaskControllerIT extends MarketplaceItSupport {
         assertThat(ids).contains(douyinId).doesNotContain(xhsId);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void feedFiltersNearbyStoresBeforePagingAndReturnsDistance() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String nearbyStore = UUID.randomUUID().toString();
+        String distantStore = UUID.randomUUID().toString();
+        String platform = "near" + UUID.randomUUID().toString().replace("-", "").substring(0, 7);
+        when(storeAuthorization.authorize(merchant, org, nearbyStore, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, nearbyStore, "manager")));
+        when(storeAuthorization.authorize(merchant, org, distantStore, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, distantStore, "manager")));
+
+        Map<String, Object> nearBody = body(org, "附近任务", platform, null);
+        nearBody.put("storeId", nearbyStore);
+        Map<String, Object> farBody = body(org, "远处任务", platform, null);
+        farBody.put("storeId", distantStore);
+        Map<String, Object> nearTask = (Map<String, Object>) client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(nearBody).exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        Map<String, Object> farTask = (Map<String, Object>) client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(farBody).exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        approveTask(nearTask);
+        approveTask(farTask);
+        when(storeAuthorization.nearby(31.23d, 121.47d, 5d)).thenReturn(Mono.just(List.of(
+                new IdentityStoreAuthorizationClient.NearbyStore(nearbyStore, 31.231d, 121.471d, 1.24d))));
+
+        Map<String, Object> response = client().get().uri("/api/tasks/feed?platform=" + platform
+                        + "&latitude=31.23&longitude=121.47&maxDistanceKm=5&limit=1")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> items = itemsOf(response);
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0)).containsEntry("id", nearTask.get("id")).containsEntry("distanceKm", 1.2);
+        assertThat(dataOf(response).get("hasMore")).isEqualTo(false);
+    }
+
+    @Test
+    void feedRejectsPartialDistanceQuery() {
+        client().get().uri("/api/tasks/feed?latitude=31.23&maxDistanceKm=5")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isBadRequest();
+    }
+
     /** 过期 deadline 被排除；未来 deadline 仍可见（用唯一 platform 隔离累积数据）。 */
     @Test
     void feedExcludesExpiredDeadlineTasks() {

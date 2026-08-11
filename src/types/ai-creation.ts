@@ -1,3 +1,5 @@
+import type { TaskContextSnapshot } from './grassland/engagement'
+
 export type AiPlatformId =
   | 'xiaohongshu'
   | 'douyin'
@@ -39,6 +41,8 @@ export interface CreationEntry {
   contentFormId: AiContentFormId | null
   source: CreationSource
   prefill?: CreationDraftPrefill
+  /** Accepted-at snapshot returned by marketplace; authoritative for task-mode creation. */
+  taskContext?: TaskContextSnapshot
 }
 
 /** 创作中心完成合法性解析后交给现有工作流的 handoff。 */

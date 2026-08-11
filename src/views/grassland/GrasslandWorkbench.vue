@@ -10,6 +10,7 @@ import MyInvitationsCard from '../../components/MyInvitationsCard.vue'
 import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.vue'
 import MySessionsCard from '../../components/MySessionsCard.vue'
 import MyWalletCard from '../../components/MyWalletCard.vue'
+import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import OrgTeamCard from '../../components/OrgTeamCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
@@ -74,6 +75,7 @@ const DEFERRED_POLL_MS = 3000
 
 /** 每个 application 的异步结局（accept 预留 / confirm 结算），key = applicationId。 */
 const outcomes = ref<Record<string, string>>({})
+const taskContextLoadingAppId = ref('')
 
 const newOrgName = ref('')
 const creditAmountYuan = ref(1000)
@@ -99,7 +101,11 @@ const feedItems = ref<Task[]>([])
 const feedCursor = ref('')
 const feedHasMore = ref(false)
 const feedLoading = ref(false)
-const feedFilters = ref({ platform: '', contentForm: '', minBountyYuan: 0 })
+const feedFilters = ref({
+  platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
+  latitude: null as number | null, longitude: null as number | null,
+})
+const locating = ref(false)
 
 // ---------- 商家筛选报名者（PRD 五等级 + 完成率）----------
 //
@@ -152,23 +158,32 @@ function setNotice(message: string): void {
   notice.value = message
 }
 
-function openAcceptedTaskCreation(application: TaskApplication): void {
+async function openAcceptedTaskCreation(application: TaskApplication): Promise<void> {
   const task = selectedTask.value
-  if (!task || application.status !== 'accepted' || application.taskId !== task.id) return
-  const selection = normalizeTaskCreationSelection(task.platform, task.contentForm)
+  if (!task || application.status !== 'accepted' || application.taskId !== task.id
+      || taskContextLoadingAppId.value) return
+  taskContextLoadingAppId.value = application.id
+  const snapshot = await grassland.getTaskContext(task.id, application.id)
+  taskContextLoadingAppId.value = ''
+  if (!snapshot) {
+    setNotice(grassland.error.value || '任务上下文加载失败，请稍后重试')
+    return
+  }
+  const selection = normalizeTaskCreationSelection(snapshot.platform, snapshot.contentForm)
   emit('open-creation', {
     revision: Date.now(),
     ...selection,
     source: {
       type: 'task',
-      taskId: task.id,
-      applicationId: application.id,
-      taskVersion: task.version,
+      taskId: snapshot.taskId,
+      applicationId: snapshot.applicationId,
+      taskVersion: snapshot.taskVersion,
     },
     prefill: {
-      topic: task.title,
-      instructions: task.description || undefined,
+      topic: snapshot.title,
+      instructions: snapshot.description || undefined,
     },
+    taskContext: snapshot,
   })
 }
 
@@ -694,11 +709,19 @@ async function apply(taskId: string): Promise<void> {
 /** 加载全局大厅 feed（reset=true 重新查首页；否则按游标加载更多）。 */
 async function loadFeed(reset = false): Promise<void> {
   if (feedLoading.value) return
+  if (feedFilters.value.maxDistanceKm > 0
+      && (feedFilters.value.latitude == null || feedFilters.value.longitude == null)) {
+    setNotice('请先允许获取当前位置，再使用距离筛选')
+    return
+  }
   feedLoading.value = true
   const page = await grassland.listTaskFeed({
     platform: feedFilters.value.platform.trim() || undefined,
     contentForm: feedFilters.value.contentForm.trim() || undefined,
     minBountyCents: feedFilters.value.minBountyYuan > 0 ? yuanToCents(feedFilters.value.minBountyYuan) : undefined,
+    latitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.latitude! : undefined,
+    longitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.longitude! : undefined,
+    maxDistanceKm: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.maxDistanceKm : undefined,
     cursor: reset ? undefined : (feedCursor.value || undefined),
     limit: 20,
   })
@@ -708,6 +731,26 @@ async function loadFeed(reset = false): Promise<void> {
   feedCursor.value = page.nextCursor || ''
   feedHasMore.value = page.hasMore
   grassland.clearError()
+}
+
+function useCurrentLocation(): void {
+  if (!navigator.geolocation || locating.value) {
+    if (!navigator.geolocation) setNotice('当前浏览器不支持定位')
+    return
+  }
+  locating.value = true
+  navigator.geolocation.getCurrentPosition((position) => {
+    feedFilters.value.latitude = position.coords.latitude
+    feedFilters.value.longitude = position.coords.longitude
+    if (feedFilters.value.maxDistanceKm <= 0) feedFilters.value.maxDistanceKm = 5
+    locating.value = false
+    setNotice('已获取当前位置，可按距离查询任务')
+  }, (positionError) => {
+    locating.value = false
+    setNotice(positionError.code === positionError.PERMISSION_DENIED
+      ? '定位权限被拒绝，请在浏览器设置中允许定位'
+      : '暂时无法获取位置，请稍后重试')
+  }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 })
 }
 
 /** 推荐官撤销本人 pending 报名（GL-P1-TASK-001：前端原缺入口）。 */
@@ -961,6 +1004,10 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         :store-id="selectedStoreId || undefined"
       />
 
+      <article v-if="activeOrgId" class="gl-card gl-card-wide">
+        <BusinessAnalyticsPanel :organization-id="activeOrgId" :store-id="selectedStoreId" />
+      </article>
+
       <MerchantTaskForm
         :form="taskForm"
         :editing-draft="editingDraft"
@@ -1048,7 +1095,9 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
                     <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
                     <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
                     <template v-if="a.status === 'accepted'">
-                      <button type="button" @click="openAcceptedTaskCreation(a)">围绕任务创作</button>
+                      <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
+                        {{ taskContextLoadingAppId === a.id ? '加载上下文...' : '围绕任务创作' }}
+                      </button>
                       <button type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
                       <input
                         v-model="contestReasons[a.id]"
@@ -1106,11 +1155,13 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         :apply-note="applyNote"
         :selected-task-id="selectedTaskId"
         :loading="grassland.loading.value"
+        :locating="locating"
         @update:feed-filter="handleFeedFilterUpdate"
         @load-feed="loadFeed"
         @update:apply-note="applyNote = $event"
         @select-task="selectTask"
         @apply="apply"
+        @use-location="useCurrentLocation"
       />
 
       <article id="gl-engagements" class="gl-card gl-card-wide">
@@ -1125,7 +1176,9 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
               <td>{{ statusLabel(a.status) }}</td>
               <td>
                 <template v-if="a.status === 'accepted'">
-                  <button type="button" @click="openAcceptedTaskCreation(a)">开始创作</button>
+                  <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
+                    {{ taskContextLoadingAppId === a.id ? '加载上下文...' : '开始创作' }}
+                  </button>
                   <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
                 </template>
                 <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="withdrawApp(a)">

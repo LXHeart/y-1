@@ -242,6 +242,12 @@ describe('GrasslandWorkbench 商家 contest', () => {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
       } else if (url === '/api/tasks/task-1/applications') {
         data = [application]
+      } else if (url === '/api/tasks/task-1/applications/app-accepted/task-context') {
+        data = {
+          taskId: 'task-1', taskVersion: 1, title: '待核验任务', description: '突出门店招牌',
+          contentForm: '图文', platform: '小红书', storeId: null, applicationId: 'app-accepted',
+          recommenderAccountId: 'acct-rec', bountyCents: 100, acceptedAt: null, requirements: {},
+        }
       } else if (url.endsWith('/contest')) {
         data = { applicationId: 'app-accepted', status: 'contested', reason: '  画面与要求不符  ', disputeId: 'dispute-1' }
       } else if (url.startsWith('/api/finance/accounts')) {
@@ -264,6 +270,7 @@ describe('GrasslandWorkbench 商家 contest', () => {
 
     const createButton = wrapper.findAll('button').find((item) => item.text() === '围绕任务创作')!
     await createButton.trigger('click')
+    await flushPromises()
     expect(wrapper.emitted('open-creation')?.[0]?.[0]).toMatchObject({
       platformId: 'xiaohongshu',
       contentFormId: 'graphic',

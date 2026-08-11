@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.List;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.stereotype.Component;
@@ -39,7 +40,8 @@ public class TaskRepository {
     }
 
     /** 任务大厅筛选条件（GL-P1-TASK-001 Stage 2）。字段均可空（null=不过滤该维度）。 */
-    public record FeedFilter(String platform, String contentForm, Long minBountyCents, int recommenderLevel) {}
+    public record FeedFilter(String platform, String contentForm, Long minBountyCents,
+                             int recommenderLevel, List<String> nearbyStoreIds) {}
 
     /**
      * 创建即提交审核（GL-P2-ADMIN-003 全审政策）：status=pending_review，不设 published_at（审核通过时才设），
@@ -273,6 +275,7 @@ public class TaskRepository {
                 + (filter.platform() != null ? " AND platform = :platform" : "")
                 + (filter.contentForm() != null ? " AND content_form = :contentForm" : "")
                 + (filter.minBountyCents() != null ? " AND bounty_cents IS NOT NULL AND bounty_cents >= :minBountyCents" : "")
+                + (filter.nearbyStoreIds() != null ? " AND store_id::text IN (:nearbyStoreIds)" : "")
                 + (firstPage ? "" : " AND (created_at, id) < (CAST(:cursorTs AS timestamptz), CAST(:cursorId AS uuid))");
         String sql = "SELECT " + SELECT_COLS + " FROM task WHERE " + predicate
                 + " ORDER BY created_at DESC, id DESC LIMIT :limit";
@@ -287,6 +290,9 @@ public class TaskRepository {
         }
         if (filter.minBountyCents() != null) {
             spec = spec.bind("minBountyCents", filter.minBountyCents());
+        }
+        if (filter.nearbyStoreIds() != null) {
+            spec = spec.bind("nearbyStoreIds", filter.nearbyStoreIds());
         }
         if (!firstPage) {
             spec = spec.bind("cursorTs", cursorTs.atOffset(ZoneOffset.UTC)).bind("cursorId", cursorId);

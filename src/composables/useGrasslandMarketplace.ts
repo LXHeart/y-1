@@ -14,9 +14,17 @@ import type {
   TaskApplication, TaskFeedPage, TaskFeedQuery,
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
   FinanceAccount,
+  AnalyticsQuery, MerchantAnalyticsDashboard,
 } from '../types/grassland'
 
 export function useGrasslandMarketplace(run: RunFn) {
+  const getMerchantAnalytics = (input: AnalyticsQuery) => {
+    const qs = new URLSearchParams({ organizationId: input.organizationId })
+    if (input.storeId) qs.set('storeId', input.storeId)
+    if (input.from) qs.set('from', input.from)
+    if (input.to) qs.set('to', input.to)
+    return run(() => request<MerchantAnalyticsDashboard>(`/api/tasks/analytics?${qs}`))
+  }
   // ---------- marketplace：履约交付物 ----------
 
   /**
@@ -233,6 +241,9 @@ export function useGrasslandMarketplace(run: RunFn) {
     if (query.platform) params.set('platform', query.platform)
     if (query.contentForm) params.set('contentForm', query.contentForm)
     if (query.minBountyCents != null) params.set('minBountyCents', String(query.minBountyCents))
+    if (query.latitude != null) params.set('latitude', String(query.latitude))
+    if (query.longitude != null) params.set('longitude', String(query.longitude))
+    if (query.maxDistanceKm != null) params.set('maxDistanceKm', String(query.maxDistanceKm))
     if (query.cursor) params.set('cursor', query.cursor)
     if (query.limit != null) params.set('limit', String(query.limit))
     const qs = params.toString()
@@ -389,6 +400,7 @@ export function useGrasslandMarketplace(run: RunFn) {
     }))
 
   return {
+    getMerchantAnalytics,
     submitDeliverable, listDeliverables, rejectDeliverable, runVerificationChecks,
     getTaskContext, listVerificationRuns,
     createMediaUploadTicket, confirmMediaUpload, uploadEngagementAttachment, getAttachmentDownloadUrl,

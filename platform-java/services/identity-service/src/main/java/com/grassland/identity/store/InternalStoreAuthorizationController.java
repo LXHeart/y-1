@@ -9,8 +9,10 @@ import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -22,11 +24,28 @@ public class InternalStoreAuthorizationController {
 
     private final InternalServiceCallerResolver callers;
     private final StoreAuthorization authorization;
+    private final StoreProfileRepository profiles;
 
     public InternalStoreAuthorizationController(
-            InternalServiceCallerResolver callers, StoreAuthorization authorization) {
+            InternalServiceCallerResolver callers, StoreAuthorization authorization,
+            StoreProfileRepository profiles) {
         this.callers = callers;
         this.authorization = authorization;
+        this.profiles = profiles;
+    }
+
+    @GetMapping("/internal/identity/stores/nearby")
+    public Mono<ResponseEntity<Map<String, Object>>> nearby(
+            @RequestParam double latitude, @RequestParam double longitude,
+            @RequestParam double radiusKm, ServerHttpRequest request) {
+        return callers.requireServicePrincipal(request, "marketplace")
+                .then(Mono.fromRunnable(() -> validateCoordinates(latitude, longitude, radiusKm)))
+                .thenMany(profiles.findNearby(latitude, longitude, radiusKm))
+                .map(item -> Map.<String, Object>of(
+                        "storeId", item.storeId(), "latitude", item.latitude(),
+                        "longitude", item.longitude(), "distanceKm", item.distanceKm()))
+                .collectList()
+                .map(items -> ResponseEntity.ok(Map.<String, Object>of("success", true, "data", items)));
     }
 
     @PostMapping("/internal/identity/store-authorizations/check")
@@ -83,6 +102,16 @@ public class InternalStoreAuthorizationController {
 
     private static String optionalUuid(String value, String label) {
         return value == null || value.isBlank() ? null : requireUuid(value, label);
+    }
+
+    private static void validateCoordinates(double latitude, double longitude, double radiusKm) {
+        if (!Double.isFinite(latitude) || latitude < -90 || latitude > 90
+                || !Double.isFinite(longitude) || longitude < -180 || longitude > 180) {
+            throw new IdentityException(400, "经纬度无效");
+        }
+        if (!Double.isFinite(radiusKm) || radiusKm < 0.1 || radiusKm > 200) {
+            throw new IdentityException(400, "距离范围须在 0.1 至 200 公里之间");
+        }
     }
 
     public record CheckRequest(

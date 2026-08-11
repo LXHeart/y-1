@@ -2,6 +2,7 @@ package com.grassland.marketplace.security;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -57,11 +58,31 @@ public class IdentityStoreAuthorizationClient {
                 });
     }
 
+    public Mono<List<NearbyStore>> nearby(double latitude, double longitude, double radiusKm) {
+        return webClient.get()
+                .uri(builder -> builder.path("/internal/identity/stores/nearby")
+                        .queryParam("latitude", latitude).queryParam("longitude", longitude)
+                        .queryParam("radiusKm", radiusKm).build())
+                .header(headerName, issuer.issueForOrg(null, "grassland-identity"))
+                .exchangeToMono(response -> {
+                    int status = response.statusCode().value();
+                    if (status == 200) {
+                        return response.bodyToMono(NearbyEnvelope.class)
+                                .map(envelope -> envelope.data() == null ? List.of() : envelope.data());
+                    }
+                    return response.bodyToMono(String.class).defaultIfEmpty("")
+                            .flatMap(error -> Mono.error(mapError(status, error)));
+                });
+    }
+
     public record Authorization(
             boolean authorized, String accountId, String organizationId, String storeId,
             String role, String scope, String permissionTier) {}
 
+    public record NearbyStore(String storeId, double latitude, double longitude, double distanceKm) {}
+
     private record Envelope(boolean success, Authorization data) {}
+    private record NearbyEnvelope(boolean success, List<NearbyStore> data) {}
 
     private static RuntimeException mapError(int status, String body) {
         if (status == 400 || status == 403 || status == 404) {

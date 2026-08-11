@@ -222,6 +222,30 @@ describe('AI 内容创作中心', () => {
     expect(handoff.revision).toBeGreaterThan(entry.revision)
   })
 
+  test('展示接受时任务快照并原样传给工作流', async () => {
+    const entry: CreationEntry = {
+      revision: 71,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'task', taskId: 'task-71', applicationId: 'app-71', taskVersion: 4 },
+      prefill: { topic: '不会覆盖的标题', instructions: '旧描述' },
+      taskContext: {
+        taskId: 'task-71', taskVersion: 4, title: '接受时标题', description: '突出午市套餐',
+        contentForm: 'graphic', platform: 'xiaohongshu', storeId: 'store-71',
+        applicationId: 'app-71', recommenderAccountId: 'rec-71', bountyCents: 8800,
+        acceptedAt: '2026-08-11T04:00:00Z', requirements: { mustInclude: ['招牌菜', '门店地址'] },
+      },
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('接受时快照 · v4')
+    expect(wrapper.text()).toContain('¥88.00')
+    expect(wrapper.text()).toContain('招牌菜、门店地址')
+    await button(wrapper, '开始创作').trigger('click')
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({ taskContext: entry.taskContext })
+  })
+
   test('创作助手收到完整任务来源和主题上下文', async () => {
     const entry: CreationEntry = {
       revision: 70,

@@ -153,7 +153,27 @@
         <textarea v-model="instructions" rows="3" maxlength="1000" placeholder="可选：语气、重点、必须包含或避免的内容" />
       </label>
 
-      <div v-if="entry?.prefill && taskSourceLocked" class="context-summary">
+      <div v-if="entry?.taskContext && taskSourceLocked" class="task-context-summary">
+        <div class="task-context-head">
+          <strong>{{ entry.taskContext.title }}</strong>
+          <span>接受时快照 · v{{ entry.taskContext.taskVersion }}</span>
+        </div>
+        <dl>
+          <div><dt>发布平台</dt><dd>{{ entry.taskContext.platform || '未指定' }}</dd></div>
+          <div><dt>内容形式</dt><dd>{{ entry.taskContext.contentForm || '未指定' }}</dd></div>
+          <div><dt>任务赏金</dt><dd>¥{{ (entry.taskContext.bountyCents / 100).toFixed(2) }}</dd></div>
+          <div><dt>接受时间</dt><dd>{{ formatTaskDate(entry.taskContext.acceptedAt) }}</dd></div>
+          <div v-if="entry.taskContext.storeId"><dt>门店范围</dt><dd>{{ entry.taskContext.storeId }}</dd></div>
+        </dl>
+        <p v-if="entry.taskContext.description">{{ entry.taskContext.description }}</p>
+        <div v-if="taskRequirementEntries.length" class="task-requirements">
+          <strong>任务要求</strong>
+          <div v-for="item in taskRequirementEntries" :key="item[0]">
+            <span>{{ item[0] }}</span><p>{{ formatRequirement(item[1]) }}</p>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="entry?.prefill && taskSourceLocked" class="context-summary">
         <strong>{{ entry.prefill.topic || '任务创作' }}</strong>
         <span v-if="entry.source.type === 'task' && entry.source.taskVersion">任务版本 {{ entry.source.taskVersion }}</span>
         <p v-if="entry.prefill.instructions">{{ entry.prefill.instructions }}</p>
@@ -278,10 +298,17 @@ const taskSourceLocked = computed(() => props.entry?.source.type === 'task')
  */
 const taskRequirements = computed(() => {
   if (props.entry?.source.type !== 'task') return undefined
+  if (props.entry.taskContext) {
+    const context = props.entry.taskContext
+    const requirements = Object.entries(context.requirements || {})
+      .map(([key, value]) => `${key}: ${formatRequirement(value)}`)
+    return [context.title, context.description, ...requirements].filter(Boolean).join('\n')
+  }
   const parts = [props.entry.prefill?.topic, props.entry.prefill?.instructions]
     .map((part) => part?.trim()).filter(Boolean)
   return parts.length ? parts.join('\n') : undefined
 })
+const taskRequirementEntries = computed(() => Object.entries(props.entry?.taskContext?.requirements || {}))
 const assistantSource = computed<CreationSource | undefined>(() => sourceForHandoff() ?? undefined)
 const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.platformId))
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))
@@ -642,7 +669,20 @@ function startWorkflow(): void {
     workflowId: workflow.value.workflowId,
     targetView: workflow.value.targetView,
     prefill: prefillForHandoff(),
+    taskContext: props.entry?.taskContext,
   })
+}
+
+function formatRequirement(value: unknown): string {
+  if (value == null) return '未填写'
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(formatRequirement).join('、')
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function formatTaskDate(value: string | null): string {
+  return value ? new Date(value).toLocaleString() : '未记录'
 }
 
 function nextWorkflowRevision(): number {
@@ -683,6 +723,17 @@ textarea { resize: vertical; min-height: 76px; }
 .inline-state p, .context-summary p { margin: 0; color: var(--color-text-secondary); }
 .context-summary { display: grid; justify-content: start; }
 .context-summary span { color: var(--color-text-muted); font-size: 0.78rem; }
+.task-context-summary { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface-muted); }
+.task-context-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.task-context-head span { color: var(--color-text-muted); font-size: 0.78rem; }
+.task-context-summary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.task-context-summary dl > div { min-width: 0; }
+.task-context-summary dt { color: var(--color-text-muted); font-size: 0.72rem; }
+.task-context-summary dd { margin: 3px 0 0; color: var(--color-text); overflow-wrap: anywhere; }
+.task-context-summary > p, .task-requirements p { margin: 0; color: var(--color-text-secondary); }
+.task-requirements { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.task-requirements > div { display: grid; grid-template-columns: minmax(100px, 0.35fr) 1fr; gap: 10px; }
+.task-requirements span { color: var(--color-text-muted); font-size: 0.78rem; overflow-wrap: anywhere; }
 .start-bar { position: sticky; bottom: 12px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: color-mix(in srgb, var(--color-surface) 94%, transparent); backdrop-filter: blur(12px); }
 .start-bar > div { display: flex; align-items: center; gap: 12px; }
 .primary-command, .secondary-command { padding: 9px 15px; border-radius: 6px; cursor: pointer; }
@@ -699,6 +750,7 @@ textarea { resize: vertical; min-height: 76px; }
   .platform-option:last-child { border-bottom: 0; }
   .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .store-fields { grid-template-columns: 1fr; }
+  .task-context-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .start-bar { align-items: flex-start; flex-direction: column; }
   .start-bar > div { width: 100%; justify-content: space-between; }
 }

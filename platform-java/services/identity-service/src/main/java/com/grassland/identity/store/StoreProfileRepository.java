@@ -156,6 +156,42 @@ public class StoreProfileRepository {
                 .map(StoreProfileRepository::map).all();
     }
 
+    /** Returns stores with valid profile coordinates inside the requested radius. */
+    public Flux<NearbyStore> findNearby(double latitude, double longitude, double radiusKm) {
+        return db.sql("""
+                WITH coordinates AS (
+                    SELECT store_id::text,
+                           (address->>'latitude')::double precision AS latitude,
+                           (address->>'longitude')::double precision AS longitude
+                    FROM store_profile
+                    WHERE jsonb_typeof(address) = 'object'
+                      AND address->>'latitude' ~ '^-?[0-9]+([.][0-9]+)?$'
+                      AND address->>'longitude' ~ '^-?[0-9]+([.][0-9]+)?$'
+                      AND (address->>'latitude')::double precision BETWEEN -90 AND 90
+                      AND (address->>'longitude')::double precision BETWEEN -180 AND 180
+                ), distances AS (
+                    SELECT store_id, latitude, longitude,
+                           6371.0088 * acos(least(1.0, greatest(-1.0,
+                               sin(radians(:latitude)) * sin(radians(latitude))
+                               + cos(radians(:latitude)) * cos(radians(latitude))
+                               * cos(radians(longitude) - radians(:longitude))))) AS distance_km
+                    FROM coordinates
+                )
+                SELECT store_id, latitude, longitude, distance_km
+                FROM distances WHERE distance_km <= :radiusKm
+                ORDER BY distance_km, store_id
+                """)
+                .bind("latitude", latitude)
+                .bind("longitude", longitude)
+                .bind("radiusKm", radiusKm)
+                .map(row -> new NearbyStore(
+                        row.get("store_id", String.class),
+                        value(row.get("latitude", Double.class)),
+                        value(row.get("longitude", Double.class)),
+                        value(row.get("distance_km", Double.class))))
+                .all();
+    }
+
     private static StoreProfile map(Readable row) {
         return new StoreProfile(
                 row.get("store_id", String.class),
@@ -176,6 +212,12 @@ public class StoreProfileRepository {
     private static Instant toInstant(OffsetDateTime value) {
         return value == null ? null : value.toInstant();
     }
+
+    private static double value(Double value) {
+        return value == null ? 0d : value;
+    }
+
+    public record NearbyStore(String storeId, double latitude, double longitude, double distanceKm) {}
 
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
         return (value == null) ? spec.bindNull(name, String.class) : spec.bind(name, value);

@@ -7,6 +7,7 @@ import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
@@ -17,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -62,13 +64,15 @@ public class TaskController {
     private final TaskResourceAuthorization taskAuthorization;
     private final TaskMetricsRepository metrics;
     private final AnalyticsRepository analytics;
+    private final IdentityStoreAuthorizationClient identityStores;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions, ReputationService reputationService,
                           TaskResourceAuthorization taskAuthorization,
-                          TaskMetricsRepository metrics, AnalyticsRepository analytics) {
+                          TaskMetricsRepository metrics, AnalyticsRepository analytics,
+                          IdentityStoreAuthorizationClient identityStores) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -80,6 +84,7 @@ public class TaskController {
         this.taskAuthorization = taskAuthorization;
         this.metrics = metrics;
         this.analytics = analytics;
+        this.identityStores = identityStores;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -417,7 +422,8 @@ public class TaskController {
      * 全局任务大厅（GL-P1-TASK-001 Stage 2）：跨组织 feed，仅 published 且未截止。
      *
      * <p>任意已登录 caller 可查（推荐官浏览大厅）。keyset 游标分页（{@code created_at DESC, id DESC}），
-     * 筛选 platform/contentForm/minBountyCents。距离筛选未做（task 无地理位置字段，避免发明）。
+     * 筛选 platform/contentForm/minBountyCents；距离筛选通过 Identity 的权威门店坐标先解析门店集合，
+     * 再进入本服务 keyset 查询，避免客户端逐页过滤造成漏项。
      * 响应 {@code {items, nextCursor, hasMore}}，与按 org 的 {@code GET /api/tasks} 裸数组形状区分。
      * 路由字面量 {@code feed} 在 PathPattern 优先于 {@code {id}}，命中既有 {@code /api/tasks**} BFF flag。
      */
@@ -426,6 +432,9 @@ public class TaskController {
             @RequestParam(required = false) String platform,
             @RequestParam(required = false) String contentForm,
             @RequestParam(required = false) Long minBountyCents,
+            @RequestParam(required = false) Double latitude,
+            @RequestParam(required = false) Double longitude,
+            @RequestParam(required = false) Double maxDistanceKm,
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false, defaultValue = "20") int limit,
             ServerHttpRequest request) {
@@ -433,31 +442,62 @@ public class TaskController {
                 .flatMap(caller -> {
                     int safeLimit = Math.max(1, Math.min(limit, 50));
                     FeedCursor decoded = FeedCursor.decode(cursor);
-                    return visibleRecommenderLevel(caller).flatMap(level -> {
+                    boolean anyDistance = latitude != null || longitude != null || maxDistanceKm != null;
+                    if (anyDistance && !validDistanceQuery(latitude, longitude, maxDistanceKm)) {
+                        return Mono.error(new MarketplaceException(400,
+                                "距离筛选需提供有效经纬度，范围须在 0.1 至 200 公里之间"));
+                    }
+                    Mono<List<IdentityStoreAuthorizationClient.NearbyStore>> nearby = anyDistance
+                            ? identityStores.nearby(latitude, longitude, maxDistanceKm)
+                            : Mono.just(List.of());
+                    return Mono.zip(visibleRecommenderLevel(caller), nearby).flatMap(tuple -> {
+                        List<IdentityStoreAuthorizationClient.NearbyStore> nearbyStores = tuple.getT2();
+                        if (anyDistance && nearbyStores.isEmpty()) {
+                            return Mono.just(feedBody(List.of(), safeLimit, Map.of()));
+                        }
+                        List<String> storeIds = anyDistance
+                                ? nearbyStores.stream().map(IdentityStoreAuthorizationClient.NearbyStore::storeId).toList()
+                                : null;
+                        Map<String, Double> distances = nearbyStores.stream().collect(Collectors.toMap(
+                                IdentityStoreAuthorizationClient.NearbyStore::storeId,
+                                IdentityStoreAuthorizationClient.NearbyStore::distanceKm,
+                                Math::min));
                         TaskRepository.FeedFilter filter = new TaskRepository.FeedFilter(
                                 blankToNull(platform), blankToNull(contentForm),
                                 (minBountyCents == null || minBountyCents < 0) ? null : minBountyCents,
-                                level);
+                                tuple.getT1(), storeIds);
                         return tasks.findFeed(filter,
                                         decoded == null ? null : decoded.ts(),
-                                        decoded == null ? null : decoded.id(),
-                                        safeLimit + 1)
-                                .collectList()
-                                .map(rows -> feedBody(rows, safeLimit));
+                                        decoded == null ? null : decoded.id(), safeLimit + 1)
+                                .collectList().map(rows -> feedBody(rows, safeLimit, distances));
                     });
                 });
     }
 
     /** 组装 feed 分页体：取 limit+1 判 hasMore，nextCursor 为本页最后一行的 (created_at, id)。 */
-    private ResponseEntity<Map<String, Object>> feedBody(List<Task> rows, int limit) {
+    private ResponseEntity<Map<String, Object>> feedBody(
+            List<Task> rows, int limit, Map<String, Double> distances) {
         boolean hasMore = rows.size() > limit;
         List<Task> page = hasMore ? rows.subList(0, limit) : rows;
         String nextCursor = hasMore && !page.isEmpty() ? FeedCursor.encode(page.get(page.size() - 1)) : null;
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("items", page.stream().map(this::toBody).toList());
+        data.put("items", page.stream().map(task -> {
+            Map<String, Object> body = toBody(task);
+            if (task.storeId() != null && distances.containsKey(task.storeId())) {
+                body.put("distanceKm", Math.round(distances.get(task.storeId()) * 10d) / 10d);
+            }
+            return body;
+        }).toList());
         data.put("nextCursor", nextCursor);
         data.put("hasMore", hasMore);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    private static boolean validDistanceQuery(Double latitude, Double longitude, Double radiusKm) {
+        return latitude != null && longitude != null && radiusKm != null
+                && Double.isFinite(latitude) && latitude >= -90 && latitude <= 90
+                && Double.isFinite(longitude) && longitude >= -180 && longitude <= 180
+                && Double.isFinite(radiusKm) && radiusKm >= 0.1 && radiusKm <= 200;
     }
 
     /**

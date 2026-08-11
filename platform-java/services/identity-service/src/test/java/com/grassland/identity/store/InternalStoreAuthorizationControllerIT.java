@@ -9,12 +9,44 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import java.util.List;
 
 /** End-to-end coverage for the service-only store resource authorization boundary. */
 class InternalStoreAuthorizationControllerIT extends IdentityItSupport {
 
     @Autowired
     IdentityAssertionSigner assertionSigner;
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void nearbyReturnsOnlyStoresInsideRadius() {
+        var owner = seedAccount("nearby-store-owner@example.com");
+        String orgId = createOrg(owner.cookie(), "附近门店主体");
+        String nearbyStore = createStore(orgId, owner.cookie(), "人民广场店");
+        String distantStore = createStore(orgId, owner.cookie(), "北京店");
+        String prefix = "/api/organizations/" + orgId + "/stores/";
+
+        client().post().uri(prefix + nearbyStore + "/profile")
+                .header("Cookie", "y1.sid=" + owner.cookie()).contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"人民广场\\\",\\\"latitude\\\":31.2304,\\\"longitude\\\":121.4737}\"}")
+                .exchange().expectStatus().isOk();
+        client().post().uri(prefix + distantStore + "/profile")
+                .header("Cookie", "y1.sid=" + owner.cookie()).contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"北京\\\",\\\"latitude\\\":39.9042,\\\"longitude\\\":116.4074}\"}")
+                .exchange().expectStatus().isOk();
+
+        Map<String, Object> response = client().get().uri(
+                        "/internal/identity/stores/nearby?latitude=31.231&longitude=121.474&radiusKm=5")
+                .header("X-Grassland-Identity", serviceAssertion("marketplace"))
+                .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> items = (List<Map<String, Object>>) response.get("data");
+        assert items != null;
+        org.assertj.core.api.Assertions.assertThat(items).extracting(item -> item.get("storeId"))
+                .contains(nearbyStore).doesNotContain(distantStore);
+        Map<String, Object> matched = items.stream()
+                .filter(item -> nearbyStore.equals(item.get("storeId"))).findFirst().orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(((Number) matched.get("distanceKm")).doubleValue()).isLessThan(1d);
+    }
 
     @Test
     void resolvesStaffManagerAndImplicitOrgAdminRoles() {

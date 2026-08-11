@@ -16,9 +16,56 @@ import type {
   StoreProfile, CreateStoreProfileInput,
   KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
   RecommenderVerificationRequest, Task,
+  RiskCase, RiskCaseAction, RiskCaseDetail, RiskCaseQuery, RiskSignal, RiskSignalQuery,
+  AnalyticsQuery, BusinessAnalyticsReport, RecommenderAnalyticsReport,
 } from '../types/grassland'
 
 export function useGrasslandGovernance(run: RunFn) {
+  const listRiskCases = (input: RiskCaseQuery = {}) => {
+    const qs = new URLSearchParams()
+    if (input.status) qs.set('status', input.status)
+    if (input.severity) qs.set('severity', input.severity)
+    if (input.subjectKind) qs.set('subjectKind', input.subjectKind)
+    if (input.subjectRef) qs.set('subjectRef', input.subjectRef)
+    qs.set('limit', String(input.limit ?? 100))
+    return run(() => request<RiskCase[]>(`/api/trust/risk/cases?${qs}`))
+  }
+
+  const getRiskCase = (id: string) =>
+    run(() => request<RiskCaseDetail>(`/api/trust/risk/cases/${encodeURIComponent(id)}`))
+
+  const actOnRiskCase = (id: string, action: RiskCaseAction, note?: string) =>
+    run(() => request<RiskCase>(`/api/trust/risk/cases/${encodeURIComponent(id)}/actions`, {
+      method: 'POST', body: JSON.stringify({ action, note: note || '' }),
+    }))
+
+  const listRiskSignals = (input: RiskSignalQuery = {}) => {
+    const qs = new URLSearchParams()
+    if (input.status) qs.set('status', input.status)
+    if (input.subjectKind) qs.set('subjectKind', input.subjectKind)
+    if (input.subjectRef) qs.set('subjectRef', input.subjectRef)
+    qs.set('limit', String(input.limit ?? 100))
+    return run(() => request<RiskSignal[]>(`/api/trust/risk/signals?${qs}`))
+  }
+
+  const getAdminBusinessAnalytics = (input: AnalyticsQuery) => {
+    const qs = analyticsParams(input)
+    return run(() => request<BusinessAnalyticsReport>(`/api/admin/analytics/business?${qs}`))
+  }
+
+  const getAdminRecommenderAnalytics = (input: AnalyticsQuery) => {
+    const qs = analyticsParams(input)
+    return run(() => request<RecommenderAnalyticsReport[]>(`/api/admin/analytics/recommenders?${qs}`))
+  }
+
+  function analyticsParams(input: AnalyticsQuery): URLSearchParams {
+    const qs = new URLSearchParams({ organizationId: input.organizationId })
+    if (input.storeId) qs.set('storeId', input.storeId)
+    if (input.from) qs.set('from', input.from)
+    if (input.to) qs.set('to', input.to)
+    return qs
+  }
+
   // ---------- trust：争议 + 审判 ----------
 
   /**
@@ -466,6 +513,8 @@ export function useGrasslandGovernance(run: RunFn) {
     run(() => request<Record<string, unknown>>(`/api/admin/finance/reconcile/wallet/${encodeURIComponent(accountId)}`))
 
   return {
+    listRiskCases, getRiskCase, actOnRiskCase, listRiskSignals,
+    getAdminBusinessAnalytics, getAdminRecommenderAnalytics,
     openDispute, getDisputeRequest, startAdjudication, getAdjudication, appealDispute,
     enrollAsJudge, getMyJudgeStatus, leaveJudgePool,
     listAdminJudges, getAdminJudge, updateJudgeAdmission, castVote, finalDecision,

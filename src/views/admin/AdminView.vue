@@ -31,6 +31,10 @@
       <button type="button" role="tab" :aria-selected="activeSection === 'finance'"
         :class="{ active: activeSection === 'finance' }"
         @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'risk'"
+        :class="{ active: activeSection === 'risk' }" @click="activeSection = 'risk'">风险调查</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'analytics'"
+        :class="{ active: activeSection === 'analytics' }" @click="activeSection = 'analytics'">经营分析</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'commerce'"
         :class="{ active: activeSection === 'commerce' }"
         @click="activeSection = 'commerce'">订单核销</button>
@@ -188,6 +192,14 @@
       </div>
     </div>
 
+    <div v-else-if="activeSection === 'risk'" class="admin-panel" role="tabpanel">
+      <RiskAdminPanel />
+    </div>
+
+    <div v-else-if="activeSection === 'analytics'" class="admin-panel" role="tabpanel">
+      <BusinessAnalyticsPanel admin />
+    </div>
+
     <div v-else-if="activeSection === 'commerce'" class="admin-panel" role="tabpanel">
       <CommerceAdminPanel />
     </div>
@@ -283,6 +295,8 @@ import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
+import RiskAdminPanel from '../../components/RiskAdminPanel.vue'
+import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import type {
@@ -309,7 +323,7 @@ interface UserItem {
 
 const users = ref<UserItem[]>([])
 const activeSection = ref<
-  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'commerce' | 'ai-models'
+  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'analytics' | 'commerce' | 'ai-models'
 >('users')
 const loading = ref(false)
 const loadError = ref('')
@@ -653,9 +667,11 @@ function formatBytes(value: number | null): string {
   display: flex;
   gap: 4px;
   border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
 }
 
 .admin-tabs button {
+  flex: 0 0 auto;
   min-height: 40px;
   padding: 0 14px;
   border: 0;

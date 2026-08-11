@@ -35,6 +35,8 @@ export interface Task {
    * （`cancelBody` = task body + refundedCount），list/get 不返回，故可选。
    */
   refundedCount?: number
+  /** Present only in a feed response when distance filtering is active. */
+  distanceKm?: number
 }
 
 export interface CreateTaskInput {
@@ -90,6 +92,9 @@ export interface TaskFeedQuery {
   platform?: string
   contentForm?: string
   minBountyCents?: number
+  latitude?: number
+  longitude?: number
+  maxDistanceKm?: number
   cursor?: string
   limit?: number
 }
