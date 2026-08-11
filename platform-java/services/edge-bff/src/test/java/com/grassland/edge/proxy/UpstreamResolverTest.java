@@ -81,7 +81,7 @@ class UpstreamResolverTest {
             new RouteProperties("POST", "/api/video-recreation/generate-all-asset-images", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-scene-image", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-all-scene-images", "intelligence", true, true),
-            // intelligence Slice 10：adapt-content 精确切换（独立回滚开关；默认 false，测试构造时置 true 模拟开启）
+            // intelligence Slice 10：adapt-content 默认精确切换，独立回滚开关可显式关闭。
             new RouteProperties("POST", "/api/video-recreation/adapt-content", "intelligence", true, true),
             // intelligence Slice 6：图片评价文案 9 端点精确切换（分三域回滚开关；前缀 /api/image-analysis 未整体路由）
             new RouteProperties("POST", "/api/image-analysis/analyze", "intelligence", true, true),
@@ -493,6 +493,16 @@ class UpstreamResolverTest {
         // extract-video 是精确叶子；相近旧路径和热点子路径不被媒体族误吞。
         assertThat(douyinResolver.resolve("POST", "/api/douyin/extract")).isEqualTo(LEGACY);
         assertThat(douyinResolver.resolve("GET", "/api/douyin/hot-items/extra")).isEqualTo(LEGACY);
+    }
+
+    @Test
+    void douyinHotItemsFallsBackToLegacyWhenFlagDisabled() {
+        EdgeRoutingProperties disabled = new EdgeRoutingProperties(
+            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            List.of(new RouteProperties("GET", "/api/douyin/hot-items", "intelligence", false, true)),
+            "legacy");
+        UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/hot-items")).isEqualTo(LEGACY);
     }
 
     @Test

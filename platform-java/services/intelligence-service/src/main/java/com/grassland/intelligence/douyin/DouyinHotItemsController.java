@@ -10,7 +10,7 @@ import reactor.core.publisher.Mono;
  * 抖音热点（草场 Slice 13 Stage 1）：{@code GET /api/douyin/hot-items}。路径沿用 legacy，前端零改动。
  *
  * <p>公开端点，无 auth/credits；edge-bff exact 路由 {@code EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE}
- * 默认 false，关闭时回落 legacy Express（回滚安全）。
+ * 默认 true，显式关闭时回落 legacy Express。
  */
 @RestController
 public class DouyinHotItemsController {

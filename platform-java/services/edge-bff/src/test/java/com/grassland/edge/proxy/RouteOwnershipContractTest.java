@@ -87,10 +87,11 @@ class RouteOwnershipContractTest {
                 Arguments.of(HttpMethod.GET, "/api/bilibili/analysis-media/id", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/api/douyin/audio/token", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/api/douyin/session", "intelligence"),
+                Arguments.of(HttpMethod.POST, "/api/video-recreation/adapt-content", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/api/admin/users", "identity"),
                 Arguments.of(HttpMethod.GET, "/api/admin/reputation-config", "marketplace"),
                 Arguments.of(HttpMethod.GET, "/api/admin/trust/judges", "trust"),
-                Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "legacy"),
+                Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "intelligence"),
                 Arguments.of(HttpMethod.GET, "/health", "legacy"));
     }
 }

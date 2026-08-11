@@ -300,13 +300,13 @@ edge:
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:true}
     # ---- 视频改编内容（草场 intelligence Slice 10）→ intelligence-service。adapt-content 携带
-    # multipart（4×5MB + 嵌套 JSON），独立回滚开关，默认关闭仍走 legacy。家族限流由 BFF
+    # multipart（4×5MB + 嵌套 JSON），默认由 Java 承载，显式 false 回切 legacy。家族限流由 BFF
     # VideoRecreationRateLimitFilter 在分流前对整个 /api/video-recreation 共享 10/min，不另开桶。
     - method: POST
       path: /api/video-recreation/adapt-content
       upstream: intelligence
       exact: true
-      enabled: ${EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE:true}
     # ---- 图片评价文案（草场 intelligence Slice 6）→ intelligence-service。⚠️ 前缀 /api/image-analysis
     # 当前未整体路由（回落 legacy），故按 leaf method+path 精确切到 intelligence，分三域回滚开关：
     # 生成（analyze + step/*）、风格数据（style-preferences* + save-style-memory）、飞书导出（export-feishu）。
@@ -362,7 +362,7 @@ edge:
       path: /api/douyin/hot-items
       upstream: intelligence
       exact: true
-      enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:false}
+      enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:true}
     # ---- Bilibili 完整媒体链路 → intelligence-service。DASH mux、Range、分段分析均由 Java 承载。
     # 同一开关整族切流；显式 false 时由 edge 回切 legacy。
     - method: POST
