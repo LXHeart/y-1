@@ -229,118 +229,32 @@
           </section>
 
           <section v-show="settingsTab === 'image'" class="settings-panel" role="tabpanel">
-            <div class="settings-section-head">
-              <div>
-                <p class="settings-section-kicker">图片评价</p>
-                <h3 class="settings-section-title">配置图片理解模型</h3>
-              </div>
-              <p class="settings-section-note">图片评价默认使用 Qwen 兼容接口。</p>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head">
-                <h4 class="settings-group-title">连接配置</h4>
-                <p class="settings-group-copy">设置图片评价接口地址与访问密钥。</p>
-              </div>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="image-base-url">服务地址</label>
-                <input
-                  id="image-base-url"
-                  v-model="imageBaseUrl"
-                  class="settings-input"
-                  type="url"
-                  inputmode="url"
-                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-
-                <label class="settings-label" for="image-api-key">API Key</label>
-                <p v-if="props.settings.features.image.apiKey" class="settings-secret-hint">
-                  已保存，留空保持不变；输入空格后保存可清空。
-                </p>
-                <div class="token-row">
-                  <input
-                    id="image-api-key"
-                    v-model="imageApiKey"
-                    class="settings-input"
-                    :type="showImageApiKey ? 'text' : 'password'"
-                    placeholder="留空则保持现有 Key"
-                    autocomplete="off"
-                    spellcheck="false"
-                  >
-                  <button class="btn-secondary btn-sm" type="button" @click="showImageApiKey = !showImageApiKey">
-                    {{ showImageApiKey ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head settings-group-head-inline">
-                <div>
-                  <h4 class="settings-group-title">模型配置</h4>
-                  <p class="settings-group-copy">如果已有模型列表，可直接选择后测试连通性。</p>
-                </div>
-                <button
-                  class="btn-fetch-models"
-                  type="button"
-                  :disabled="imageState.loading || !canFetchImageModels"
-                  @click="handleFetchModels('image')"
-                >
-                  <svg v-if="imageState.loading" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>
-                  </svg>
-                  {{ imageState.loading ? '获取中…' : '刷新列表' }}
-                </button>
-              </div>
-
-              <p v-if="imageState.error" class="settings-error settings-inline-status">{{ imageState.error }}</p>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="image-model">模型</label>
-
-                <div v-if="imageState.availableModels.length && !useCustomImageModel" class="model-row">
-                  <select id="image-model" v-model="imageModel" class="settings-input model-select">
-                    <option value="" disabled>请选择模型</option>
-                    <option v-for="m in imageState.availableModels" :key="m.id" :value="m.id">{{ m.id }}</option>
-                    <option value="__custom__">自定义输入…</option>
-                  </select>
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="imageState.verifying || !imageModel.trim()"
-                    @click="handleVerifyModel('image')"
-                  >
-                    {{ imageState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-                <div v-else class="model-row">
-                  <input
-                    id="image-model"
-                    v-model="imageModel"
-                    class="settings-input"
-                    type="text"
-                    placeholder="qwen-vl-max"
-                    autocomplete="off"
-                    spellcheck="false"
-                    @focus="useCustomImageModel = true"
-                  >
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="imageState.verifying || !imageModel.trim()"
-                    @click="handleVerifyModel('image')"
-                  >
-                    {{ imageState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="imageState.verifyResult === 'success'" class="verify-success settings-inline-status">模型可用</p>
-              <p v-if="imageState.verifyResult === 'error'" class="settings-error settings-inline-status">{{ imageState.verifyError }}</p>
-            </div>
+            <FeatureProviderPanel
+              field-prefix="image"
+              kicker="图片评价"
+              section-title="配置图片理解模型"
+              section-note="图片评价默认使用 Qwen 兼容接口。"
+              connection-note="设置图片评价接口地址与访问密钥。"
+              :base-url="imageBaseUrl"
+              :api-key="imageApiKey"
+              :model="imageModel"
+              base-url-placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+              model-placeholder="qwen-vl-max"
+              secret-label="API Key"
+              secret-placeholder="留空则保持现有 Key"
+              :show-secret="showImageApiKey"
+              :has-saved-secret="!!props.settings.features.image.apiKey"
+              :model-state="imageState"
+              :can-fetch-models="canFetchImageModels"
+              :use-custom-model="useCustomImageModel"
+              @update:base-url="imageBaseUrl = $event"
+              @update:api-key="imageApiKey = $event"
+              @update:model="imageModel = $event"
+              @toggle:show-secret="showImageApiKey = !showImageApiKey"
+              @toggle:use-custom-model="useCustomImageModel = true"
+              @fetch-models="handleFetchModels('image')"
+              @verify-model="handleVerifyModel('image')"
+            />
 
             <div class="settings-group">
               <div class="settings-group-head">
@@ -394,348 +308,92 @@
           </section>
 
           <section v-show="settingsTab === 'article'" class="settings-panel" role="tabpanel">
-            <div class="settings-section-head">
-              <div>
-                <p class="settings-section-kicker">爆款文章</p>
-                <h3 class="settings-section-title">配置文章生成模型</h3>
-              </div>
-              <p class="settings-section-note">文章流程当前仅支持 Qwen 大模型。</p>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head">
-                <h4 class="settings-group-title">连接配置</h4>
-                <p class="settings-group-copy">文章标题、大纲和正文会共用这一组接口配置。</p>
-              </div>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="article-base-url">服务地址</label>
-                <input
-                  id="article-base-url"
-                  v-model="articleBaseUrl"
-                  class="settings-input"
-                  type="url"
-                  inputmode="url"
-                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-
-                <label class="settings-label" for="article-api-key">API Key</label>
-                <p v-if="props.settings.features.article.apiKey" class="settings-secret-hint">
-                  已保存，留空保持不变；输入空格后保存可清空。
-                </p>
-                <div class="token-row">
-                  <input
-                    id="article-api-key"
-                    v-model="articleApiKey"
-                    class="settings-input"
-                    :type="showArticleApiKey ? 'text' : 'password'"
-                    placeholder="留空则保持现有 Key"
-                    autocomplete="off"
-                    spellcheck="false"
-                  >
-                  <button class="btn-secondary btn-sm" type="button" @click="showArticleApiKey = !showArticleApiKey">
-                    {{ showArticleApiKey ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head settings-group-head-inline">
-                <div>
-                  <h4 class="settings-group-title">模型配置</h4>
-                  <p class="settings-group-copy">支持拉取可用模型列表，也支持手动录入模型名。</p>
-                </div>
-                <button
-                  class="btn-fetch-models"
-                  type="button"
-                  :disabled="articleState.loading || !canFetchArticleModels"
-                  @click="handleFetchModels('article')"
-                >
-                  <svg v-if="articleState.loading" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>
-                  </svg>
-                  {{ articleState.loading ? '获取中…' : '刷新列表' }}
-                </button>
-              </div>
-
-              <p v-if="articleState.error" class="settings-error settings-inline-status">{{ articleState.error }}</p>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="article-model">模型</label>
-
-                <div v-if="articleState.availableModels.length && !useCustomArticleModel" class="model-row">
-                  <select id="article-model" v-model="articleModel" class="settings-input model-select">
-                    <option value="" disabled>请选择模型</option>
-                    <option v-for="m in articleState.availableModels" :key="m.id" :value="m.id">{{ m.id }}</option>
-                    <option value="__custom__">自定义输入…</option>
-                  </select>
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="articleState.verifying || !articleModel.trim()"
-                    @click="handleVerifyModel('article')"
-                  >
-                    {{ articleState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-                <div v-else class="model-row">
-                  <input
-                    id="article-model"
-                    v-model="articleModel"
-                    class="settings-input"
-                    type="text"
-                    placeholder="qwen-plus"
-                    autocomplete="off"
-                    spellcheck="false"
-                    @focus="useCustomArticleModel = true"
-                  >
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="articleState.verifying || !articleModel.trim()"
-                    @click="handleVerifyModel('article')"
-                  >
-                    {{ articleState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="articleState.verifyResult === 'success'" class="verify-success settings-inline-status">模型可用</p>
-              <p v-if="articleState.verifyResult === 'error'" class="settings-error settings-inline-status">{{ articleState.verifyError }}</p>
-            </div>
+            <FeatureProviderPanel
+              field-prefix="article"
+              kicker="爆款文章"
+              section-title="配置文章生成模型"
+              section-note="文章流程当前仅支持 Qwen 大模型。"
+              connection-note="文章标题、大纲和正文会共用这一组接口配置。"
+              model-note="支持拉取可用模型列表，也支持手动录入模型名。"
+              :base-url="articleBaseUrl"
+              :api-key="articleApiKey"
+              :model="articleModel"
+              base-url-placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+              model-placeholder="qwen-plus"
+              secret-label="API Key"
+              secret-placeholder="留空则保持现有 Key"
+              :show-secret="showArticleApiKey"
+              :has-saved-secret="!!props.settings.features.article.apiKey"
+              :model-state="articleState"
+              :can-fetch-models="canFetchArticleModels"
+              :use-custom-model="useCustomArticleModel"
+              @update:base-url="articleBaseUrl = $event"
+              @update:api-key="articleApiKey = $event"
+              @update:model="articleModel = $event"
+              @toggle:show-secret="showArticleApiKey = !showArticleApiKey"
+              @toggle:use-custom-model="useCustomArticleModel = true"
+              @fetch-models="handleFetchModels('article')"
+              @verify-model="handleVerifyModel('article')"
+            />
           </section>
 
           <section v-show="settingsTab === 'imageGeneration'" class="settings-panel" role="tabpanel">
-            <div class="settings-section-head">
-              <div>
-                <p class="settings-section-kicker">图片生成</p>
-                <h3 class="settings-section-title">配置配图生成模型</h3>
-              </div>
-              <p class="settings-section-note">爆款文章配图会使用这一组独立的图片生成接口配置。</p>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head">
-                <h4 class="settings-group-title">连接配置</h4>
-                <p class="settings-group-copy">用于 AI 生图和后续图片能力扩展，不会复用文章正文的模型设置。</p>
-              </div>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="image-generation-base-url">服务地址</label>
-                <input
-                  id="image-generation-base-url"
-                  v-model="imageGenerationBaseUrl"
-                  class="settings-input"
-                  type="url"
-                  inputmode="url"
-                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-
-                <label class="settings-label" for="image-generation-api-key">API Key</label>
-                <p v-if="props.settings.features.imageGeneration.apiKey" class="settings-secret-hint">
-                  已保存，留空保持不变；输入空格后保存可清空。
-                </p>
-                <div class="token-row">
-                  <input
-                    id="image-generation-api-key"
-                    v-model="imageGenerationApiKey"
-                    class="settings-input"
-                    :type="showImageGenerationApiKey ? 'text' : 'password'"
-                    placeholder="留空则保持现有 Key"
-                    autocomplete="off"
-                    spellcheck="false"
-                  >
-                  <button class="btn-secondary btn-sm" type="button" @click="showImageGenerationApiKey = !showImageGenerationApiKey">
-                    {{ showImageGenerationApiKey ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head settings-group-head-inline">
-                <div>
-                  <h4 class="settings-group-title">模型配置</h4>
-                  <p class="settings-group-copy">可拉取模型列表，也可直接手动填写图片生成模型名。</p>
-                </div>
-                <button
-                  class="btn-fetch-models"
-                  type="button"
-                  :disabled="imageGenerationState.loading || !canFetchImageGenerationModels"
-                  @click="handleFetchModels('imageGeneration')"
-                >
-                  <svg v-if="imageGenerationState.loading" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>
-                  </svg>
-                  {{ imageGenerationState.loading ? '获取中…' : '刷新列表' }}
-                </button>
-              </div>
-
-              <p v-if="imageGenerationState.error" class="settings-error settings-inline-status">{{ imageGenerationState.error }}</p>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="image-generation-model">模型</label>
-
-                <div v-if="imageGenerationState.availableModels.length && !useCustomImageGenerationModel" class="model-row">
-                  <select id="image-generation-model" v-model="imageGenerationModel" class="settings-input model-select">
-                    <option value="" disabled>请选择模型</option>
-                    <option v-for="m in imageGenerationState.availableModels" :key="m.id" :value="m.id">{{ m.id }}</option>
-                    <option value="__custom__">自定义输入…</option>
-                  </select>
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="imageGenerationState.verifying || !imageGenerationModel.trim()"
-                    @click="handleVerifyModel('imageGeneration')"
-                  >
-                    {{ imageGenerationState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-                <div v-else class="model-row">
-                  <input
-                    id="image-generation-model"
-                    v-model="imageGenerationModel"
-                    class="settings-input"
-                    type="text"
-                    placeholder="wanx2.1-t2i-turbo"
-                    autocomplete="off"
-                    spellcheck="false"
-                    @focus="useCustomImageGenerationModel = true"
-                  >
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="imageGenerationState.verifying || !imageGenerationModel.trim()"
-                    @click="handleVerifyModel('imageGeneration')"
-                  >
-                    {{ imageGenerationState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="imageGenerationState.verifyResult === 'success'" class="verify-success settings-inline-status">模型可用</p>
-              <p v-if="imageGenerationState.verifyResult === 'error'" class="settings-error settings-inline-status">{{ imageGenerationState.verifyError }}</p>
-            </div>
+            <FeatureProviderPanel
+              field-prefix="image-generation"
+              kicker="图片生成"
+              section-title="配置配图生成模型"
+              section-note="爆款文章配图会使用这一组独立的图片生成接口配置。"
+              connection-note="用于 AI 生图和后续图片能力扩展，不会复用文章正文的模型设置。"
+              model-note="可拉取模型列表，也可直接手动填写图片生成模型名。"
+              :base-url="imageGenerationBaseUrl"
+              :api-key="imageGenerationApiKey"
+              :model="imageGenerationModel"
+              base-url-placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+              model-placeholder="wanx2.1-t2i-turbo"
+              secret-label="API Key"
+              secret-placeholder="留空则保持现有 Key"
+              :show-secret="showImageGenerationApiKey"
+              :has-saved-secret="!!props.settings.features.imageGeneration.apiKey"
+              :model-state="imageGenerationState"
+              :can-fetch-models="canFetchImageGenerationModels"
+              :use-custom-model="useCustomImageGenerationModel"
+              @update:base-url="imageGenerationBaseUrl = $event"
+              @update:api-key="imageGenerationApiKey = $event"
+              @update:model="imageGenerationModel = $event"
+              @toggle:show-secret="showImageGenerationApiKey = !showImageGenerationApiKey"
+              @toggle:use-custom-model="useCustomImageGenerationModel = true"
+              @fetch-models="handleFetchModels('imageGeneration')"
+              @verify-model="handleVerifyModel('imageGeneration')"
+            />
           </section>
 
           <section v-show="settingsTab === 'videoProduction'" class="settings-panel" role="tabpanel">
-            <div class="settings-section-head">
-              <div>
-                <p class="settings-section-kicker">视频制作</p>
-                <h3 class="settings-section-title">配置脚本生成模型</h3>
-              </div>
-              <p class="settings-section-note">视频制作脚本使用大模型兼容接口生成推广视频脚本。</p>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head">
-                <h4 class="settings-group-title">连接配置</h4>
-                <p class="settings-group-copy">设置脚本生成接口地址与访问密钥。</p>
-              </div>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="vp-base-url">服务地址</label>
-                <input
-                  id="vp-base-url"
-                  v-model="videoProductionBaseUrl"
-                  class="settings-input"
-                  type="url"
-                  inputmode="url"
-                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-
-                <label class="settings-label" for="vp-api-key">API Key</label>
-                <p v-if="props.settings.features.videoProduction?.apiKey" class="settings-secret-hint">
-                  已保存，留空保持不变；输入空格后保存可清空。
-                </p>
-                <div class="token-row">
-                  <input
-                    id="vp-api-key"
-                    v-model="videoProductionApiKey"
-                    class="settings-input"
-                    :type="showVideoProductionApiKey ? 'text' : 'password'"
-                    placeholder="留空则保持现有 Key"
-                    autocomplete="off"
-                    spellcheck="false"
-                  >
-                  <button class="btn-secondary btn-sm" type="button" @click="showVideoProductionApiKey = !showVideoProductionApiKey">
-                    {{ showVideoProductionApiKey ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-group-head settings-group-head-inline">
-                <div>
-                  <h4 class="settings-group-title">模型配置</h4>
-                  <p class="settings-group-copy">如果已有模型列表，可直接选择后测试连通性。</p>
-                </div>
-                <button
-                  class="btn-fetch-models"
-                  type="button"
-                  :disabled="videoProductionState.loading || !canFetchVideoProductionModels"
-                  @click="handleFetchModels('videoProduction')"
-                >
-                  <svg v-if="videoProductionState.loading" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>
-                  </svg>
-                  {{ videoProductionState.loading ? '获取中…' : '刷新列表' }}
-                </button>
-              </div>
-
-              <p v-if="videoProductionState.error" class="settings-error settings-inline-status">{{ videoProductionState.error }}</p>
-
-              <div class="settings-fields">
-                <label class="settings-label" for="vp-model">模型</label>
-
-                <div v-if="videoProductionState.availableModels.length && !useCustomVideoProductionModel" class="model-row">
-                  <select id="vp-model" v-model="videoProductionModel" class="settings-input model-select">
-                    <option value="" disabled>请选择模型</option>
-                    <option v-for="m in videoProductionState.availableModels" :key="m.id" :value="m.id">{{ m.id }}</option>
-                    <option value="__custom__">自定义输入…</option>
-                  </select>
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="videoProductionState.verifying || !videoProductionModel.trim()"
-                    @click="handleVerifyModel('videoProduction')"
-                  >
-                    {{ videoProductionState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-                <div v-else class="model-row">
-                  <input
-                    id="vp-model"
-                    v-model="videoProductionModel"
-                    class="settings-input"
-                    type="text"
-                    placeholder="doubao-1.5-pro-256k-250115"
-                    autocomplete="off"
-                    spellcheck="false"
-                    @focus="useCustomVideoProductionModel = true"
-                  >
-                  <button
-                    class="btn-secondary btn-sm"
-                    type="button"
-                    :disabled="videoProductionState.verifying || !videoProductionModel.trim()"
-                    @click="handleVerifyModel('videoProduction')"
-                  >
-                    {{ videoProductionState.verifying ? '验证中' : '测试' }}
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="videoProductionState.verifyResult === 'success'" class="verify-success settings-inline-status">模型可用</p>
-              <p v-if="videoProductionState.verifyResult === 'error'" class="settings-error settings-inline-status">{{ videoProductionState.verifyError }}</p>
-            </div>
+            <FeatureProviderPanel
+              field-prefix="vp"
+              kicker="视频制作"
+              section-title="配置脚本生成模型"
+              section-note="视频制作脚本使用大模型兼容接口生成推广视频脚本。"
+              connection-note="设置脚本生成接口地址与访问密钥。"
+              :base-url="videoProductionBaseUrl"
+              :api-key="videoProductionApiKey"
+              :model="videoProductionModel"
+              base-url-placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+              model-placeholder="doubao-1.5-pro-256k-250115"
+              secret-label="API Key"
+              secret-placeholder="留空则保持现有 Key"
+              :show-secret="showVideoProductionApiKey"
+              :has-saved-secret="!!props.settings.features.videoProduction?.apiKey"
+              :model-state="videoProductionState"
+              :can-fetch-models="canFetchVideoProductionModels"
+              :use-custom-model="useCustomVideoProductionModel"
+              @update:base-url="videoProductionBaseUrl = $event"
+              @update:api-key="videoProductionApiKey = $event"
+              @update:model="videoProductionModel = $event"
+              @toggle:show-secret="showVideoProductionApiKey = !showVideoProductionApiKey"
+              @toggle:use-custom-model="useCustomVideoProductionModel = true"
+              @fetch-models="handleFetchModels('videoProduction')"
+              @verify-model="handleVerifyModel('videoProduction')"
+            />
           </section>
 
           <section v-show="settingsTab === 'homepage'" class="settings-panel" role="tabpanel">
@@ -821,6 +479,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, FeatureModelStateMap, HomepageSettings, HotItemsProvider } from '../types/settings'
+import FeatureProviderPanel from './settings/FeatureProviderPanel.vue'
 
 type SettingsTab = 'video' | 'image' | 'article' | 'imageGeneration' | 'homepage' | 'videoProduction'
 

@@ -2,7 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
-import ArticleCreationView from './ArticleCreationView.vue'
+import ArticleCreationView from '../views/article/ArticleCreationView.vue'
 import type { CreationHandoff } from '../types/ai-creation'
 
 /**

@@ -2,7 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
-import GrasslandWorkbench from './GrasslandWorkbench.vue'
+import GrasslandWorkbench from '../views/grassland/GrasslandWorkbench.vue'
 import { useAuth } from '../composables/useAuth'
 import type { AuthUser } from '../types/auth'
 

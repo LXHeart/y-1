@@ -2,9 +2,9 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
-import ArticleCreationView from './ArticleCreationView.vue'
-import VideoAnalysisView from './VideoAnalysisView.vue'
-import VideoProductionView from './VideoProductionView.vue'
+import ArticleCreationView from '../views/article/ArticleCreationView.vue'
+import VideoAnalysisView from '../views/video/VideoAnalysisView.vue'
+import VideoProductionView from '../views/video-production/VideoProductionView.vue'
 import type { CreationHandoff } from '../types/ai-creation'
 
 vi.mock('../composables/useArticleCreation', async () => {

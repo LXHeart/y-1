@@ -2,7 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
-import ComedyWritingView from './ComedyWritingView.vue'
+import ComedyWritingView from '../views/comedy/ComedyWritingView.vue'
 import { STYLE_TEMPLATES } from '../config/style-templates'
 
 /**

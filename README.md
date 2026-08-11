@@ -20,7 +20,7 @@
 
 ## 技术栈
 
-- 前端：Vue 3 + Vite + TypeScript
+- 前端：Vue 3.5 + Vite + TypeScript + vue-router + Pinia
 - 后端：Express 5 + TypeScript
 - 数据库：PostgreSQL（session、用户数据、积分、热点缓存）
 - 页面抓取：Playwright | HTML 提取：Cheerio | 音频处理：ffmpeg
@@ -237,22 +237,62 @@ Node 全源覆盖率本次实测约为 statements/lines 47.7%、branches 75.1%�
 
 ```text
 .
-├── src/                     # Vue 前端
-│   ├── components/          # 页面组件
-│   ├── composables/         # 请求与状态逻辑
-│   └── types/               # 类型定义
-├── server/src/              # Express 后端
-│   ├── controllers/         # HTTP handler
-│   ├── routes/              # 路由定义
-│   ├── services/            # 业务逻辑
-│   ├── services/providers/  # AI 分析提供者（Coze、Qwen）
-│   ├── lib/                 # 基础能力
-│   └── schemas/             # 请求验证 schema
-├── server/sql/              # 数据库 migration
+├── src/                          # Vue 前端
+│   ├── router/                   # vue-router 路由配置
+│   ├── stores/                   # Pinia 全局状态
+│   ├── layouts/                  # 布局组件（DefaultLayout + NavigationBar）
+│   ├── views/                    # 页面级组件（每个对应一个路由）
+│   │   ├── ai-center/            # AI 内容创作中心
+│   │   ├── image/                # 图片评价
+│   │   ├── article/              # 文章创作
+│   │   ├── video/                # 视频分析
+│   │   ├── image-gen/            # 图片生成
+│   │   ├── video-production/     # 视频制作
+│   │   ├── comedy/               # 脱口秀脚本
+│   │   ├── commerce/             # 消费者商城
+│   │   ├── grassland/            # 草场工作台
+│   │   ├── ops/                  # 运营处置台
+│   │   ├── admin/                # 管理后台
+│   │   └── home/                 # 首页
+│   ├── components/
+│   │   ├── ui/                   # 基础 UI 组件（AppButton, AppModal, AppTabs 等）
+│   │   ├── shared/               # 业务共享组件（LoginModal, LoadingState 等）
+│   │   └── *.vue                 # 跨页面共享组件
+│   ├── composables/              # 请求与状态逻辑（按功能域拆分）
+│   ├── config/                   # 平台配置
+│   ├── types/                    # 类型定义
+│   │   └── grassland/            # 草场类型（按功能域拆分：task, recommender, dispute 等）
+│   └── lib/                      # 工具库
+├── server/src/                   # Express 后端
+│   ├── controllers/              # HTTP handler
+│   ├── routes/                   # 路由定义
+│   ├── services/                 # 业务逻辑
+│   ├── services/providers/       # AI 分析提供者（Coze、Qwen）
+│   ├── lib/                      # 基础能力
+│   └── schemas/                  # 请求验证 schema
+├── server/sql/                   # 数据库 migration
 ├── package.json
 ├── vite.config.ts
 └── vitest.config.ts
 ```
+
+## 路由表
+
+| 路径 | 名称 | 页面 | 说明 |
+|------|------|------|------|
+| `/` | — | → `/ai-center` | 默认重定向到 AI 创作中心 |
+| `/ai-center` | ai-center | AiCreationCenter | AI 内容创作中心（九平台一级入口） |
+| `/home` | home | HomeView | 首页 |
+| `/video` | video | VideoAnalysisView | 视频参考提取 |
+| `/image` | image | ImageAnalysisView | 图片评价文案 |
+| `/article` | article | ArticleCreationView | 爆款文章创作 |
+| `/image-gen` | image-gen | ImageGenerationView | 图片生成 |
+| `/comedy` | comedy | ComedyWritingView | 脱口秀/风格化脚本 |
+| `/video-production` | video-production | VideoProductionView | 视频内容改编 |
+| `/commerce` | commerce | ConsumerCommerceView | 消费者商城 |
+| `/grassland` | grassland | GrasslandWorkbench | 草场工作台（需登录） |
+| `/ops` | ops | OpsConsole | 运营处置台（客服角色） |
+| `/admin` | admin | AdminView | 管理后台（管理员角色） |
 
 ## 常见问题
 

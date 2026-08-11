@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import OpsConsole from './OpsConsole.vue'
+import OpsConsole from '../views/ops/OpsConsole.vue'
 
 /**
  * 运营处置台。重点锁的是「错了会让运营做出错误资金决策」的几处：

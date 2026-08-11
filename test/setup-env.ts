@@ -1,3 +1,7 @@
+import { createPinia, setActivePinia } from 'pinia'
+
+setActivePinia(createPinia())
+
 process.env.NODE_ENV = 'test'
 process.env.PORT = '3000'
 process.env.CORS_ORIGIN = 'http://localhost:5173'
