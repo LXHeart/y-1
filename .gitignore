@@ -17,6 +17,9 @@ server/.data
 playwright-report
 test-artifacts
 
+# Production release metadata is generated locally and may contain image references.
+.release-state/
+
 # Claude Code session worktrees + plans (local only)
 .claude/worktrees/
 .claude/plans/

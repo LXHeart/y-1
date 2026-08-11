@@ -1,5 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
+import com.grassland.marketplace.analytics.AnalyticsModels.BusinessReport;
+import com.grassland.marketplace.analytics.AnalyticsRepository;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
@@ -59,13 +61,14 @@ public class TaskController {
     private final ReputationService reputationService;
     private final TaskResourceAuthorization taskAuthorization;
     private final TaskMetricsRepository metrics;
+    private final AnalyticsRepository analytics;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions, ReputationService reputationService,
                           TaskResourceAuthorization taskAuthorization,
-                          TaskMetricsRepository metrics) {
+                          TaskMetricsRepository metrics, AnalyticsRepository analytics) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -76,6 +79,7 @@ public class TaskController {
         this.reputationService = reputationService;
         this.taskAuthorization = taskAuthorization;
         this.metrics = metrics;
+        this.analytics = analytics;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -284,7 +288,7 @@ public class TaskController {
                 });
     }
 
-    /** Merchant analytics read model. Exposure/interaction/conversion stay explicitly unavailable until event collection is wired. */
+    /** Merchant analytics read model. Marketing fields stay truthful when only Sandbox events are present. */
     @GetMapping("/api/tasks/analytics")
     public Mono<ResponseEntity<Map<String, Object>>> analytics(
             @RequestParam String organizationId,
@@ -295,8 +299,11 @@ public class TaskController {
         return callers.requireUser(request)
                 .flatMap(caller -> taskAuthorization.requireScope(
                                 caller, organizationId, blankToNull(storeId), "staff")
-                        .flatMap(access -> metrics.dashboard(access.organizationId(), access.storeId(), from, to)))
-                .map(dashboard -> ResponseEntity.ok(Map.of("success", true, "data", dashboardBody(dashboard))));
+                                .flatMap(access -> Mono.zip(
+                                        metrics.dashboard(access.organizationId(), access.storeId(), from, to),
+                                        analytics.report(access.organizationId(), access.storeId(), from, to))))
+                .map(tuple -> ResponseEntity.ok(Map.of("success", true,
+                        "data", dashboardBody(tuple.getT1(), tuple.getT2()))));
     }
 
     // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
@@ -720,7 +727,7 @@ public class TaskController {
         return body;
     }
 
-    private static Map<String, Object> dashboardBody(MerchantDashboard dashboard) {
+    private static Map<String, Object> dashboardBody(MerchantDashboard dashboard, BusinessReport report) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("organizationId", dashboard.organizationId());
         body.put("storeId", dashboard.storeId());
@@ -734,12 +741,27 @@ public class TaskController {
         body.put("settledBountyCents", dashboard.settledBountyCents());
         body.put("applicationAcceptanceRate", dashboard.applicationAcceptanceRate());
         body.put("averageRating", dashboard.averageRating());
-        body.put("marketingMetrics", Map.of(
-                "exposureCollected", dashboard.exposureCollected(),
-                "interactionCollected", dashboard.interactionCollected(),
-                "conversionCollected", dashboard.conversionCollected(),
-                "status", dashboard.marketingMetricsStatus(),
-                "roi", "unavailable"));
+        var attribution = report.attribution();
+        Map<String, Object> marketing = new LinkedHashMap<>();
+        marketing.put("exposureCollected", attribution.exposures() > 0);
+        marketing.put("interactionCollected", attribution.interactions() > 0);
+        marketing.put("conversionCollected", attribution.conversions() > 0);
+        marketing.put("exposures", attribution.exposures());
+        marketing.put("interactions", attribution.interactions());
+        marketing.put("conversions", attribution.conversions());
+        marketing.put("attributedRevenueCents", attribution.attributedRevenueCents());
+        marketing.put("attributedRefundCents", attribution.attributedRefundCents());
+        marketing.put("dataQuality", attribution.dataQuality());
+        marketing.put("status", attribution.status());
+        marketing.put("roi", attribution.roi() == null ? "unavailable" : attribution.roi());
+        marketing.put("roiFormula", "(attributedRevenue-attributedRefund-settledBounty)/settledBounty");
+        body.put("marketingMetrics", marketing);
+        body.put("businessMetrics", Map.of(
+                "orders", report.orders(), "paidOrders", report.paidOrders(),
+                "redeemedOrders", report.redeemedOrders(), "refundedOrders", report.refundedOrders(),
+                "grossGmvCents", report.grossGmvCents(), "refundedGmvCents", report.refundedGmvCents(),
+                "netGmvCents", report.netGmvCents(), "merchantRevenueCents", report.merchantRevenueCents(),
+                "platformFeeCents", report.platformFeeCents(), "recommenderRevenueCents", report.recommenderRevenueCents()));
         return body;
     }
 

@@ -1,0 +1,52 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Service Availability",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "targets": [{"expr": "up{job=~\"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service\"}", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP Request Rate",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 8},
+      "targets": [{"expr": "sum by (job) (rate(http_server_requests_seconds_count[5m]))", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP 5xx Ratio",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 8},
+      "targets": [{"expr": "sum by (job) (rate(http_server_requests_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum by (job) (rate(http_server_requests_seconds_count[5m])), 0.01)", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM Heap Usage",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 17},
+      "targets": [{"expr": "sum by (job) (jvm_memory_used_bytes{area=\"heap\"}) / clamp_min(sum by (job) (jvm_memory_max_bytes{area=\"heap\"}), 1)", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Process CPU",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 17},
+      "targets": [{"expr": "process_cpu_usage", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["grassland", "platform"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Grassland Platform Overview",
+  "uid": "grassland-platform-overview",
+  "version": 1
+}

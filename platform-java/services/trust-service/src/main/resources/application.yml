@@ -32,10 +32,12 @@ spring:
 server:
   port: ${SERVER_PORT:8085}
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9082}
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 # DB 地基（Epic 6 Slice 6A）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 trust_flyway_schema。
 trust:

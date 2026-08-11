@@ -159,7 +159,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # GL-P3-PLATFORM-001：私网 Prometheus，抓 identity 邮件死信 + marketplace 运营死信指标，加载告警规则。
+  # GL-P3-PLATFORM-001：私网 Prometheus，抓六个 Java 服务与领域积压指标，加载告警规则。
   # 不发布宿主端口、不经 Nginx；告警推送至下方 Alertmanager（接收端凭据属部署侧）。
   prometheus:
     profiles: ["observability"]
@@ -172,14 +172,21 @@ services:
       - ./platform-java/deploy/observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     depends_on:
+      edge-bff:
+        condition: service_started
       identity-service:
         condition: service_started
       marketplace-service:
         condition: service_started
+      finance-service:
+        condition: service_started
+      trust-service:
+        condition: service_started
+      intelligence-service:
+        condition: service_started
     restart: unless-stopped
 
-  # GL-P3-PLATFORM-001：私网 Alertmanager，承接 Prometheus 告警。UI 在内网 alertmanager:9093。
-  # 真接收端（Slack/SMTP/PagerDuty）属部署侧凭据，alertmanager.yml 用占位 webhook，接入时改 receivers。
+  # GL-P3-PLATFORM-001：私网 Alertmanager。receiver URL 只从挂载 secret 文件读取。
   alertmanager:
     profiles: ["observability"]
     image: prom/alertmanager:v0.27.0
@@ -188,7 +195,26 @@ services:
       - --storage.path=/alertmanager
     volumes:
       - ./platform-java/deploy/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${ALERTMANAGER_WEBHOOK_URL_FILE:-./platform-java/deploy/observability/alertmanager/webhook-url.example}:/run/secrets/alertmanager_webhook_url:ro
       - alertmanager_data:/alertmanager
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ${GRAFANA_ADMIN_PASSWORD_FILE:-./platform-java/deploy/observability/grafana/admin-password.example}:/run/secrets/grafana_admin_password:ro
+      - ./platform-java/deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./platform-java/deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
     restart: unless-stopped
 
   # 统一 Java Edge BFF 入口。Nginx 的 /api 与 /health 默认只指向本服务；
@@ -711,3 +737,4 @@ volumes:
   postgres_local_data:
   prometheus_data:
   alertmanager_data:
+  grafana_data:

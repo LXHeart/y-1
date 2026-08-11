@@ -17,10 +17,12 @@ spring:
 server:
   port: ${SERVER_PORT:8084}
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9082}
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 # DB 地基（Epic 4 Slice 4D）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 finance_flyway_schema。
 finance:

@@ -35,10 +35,12 @@ server:
     enabled: false
   max-http-request-header-size: 16KB
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9082}
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 # DB 地基：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 intelligence_flyway_schema。
 intelligence:

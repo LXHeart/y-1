@@ -1,25 +1,19 @@
 # Alertmanager 路由配置（GL-P3-PLATFORM-001）。
 #
-# 当前只把 Prometheus 告警「接出去到 Alertmanager」——Alertmanager 有 UI（compose 内网 alertmanager:9093）
-# 可看 firing 状态，比「只形成 Prometheus rule 状态」进了一步。但 <b>真正的接收端（Slack webhook / SMTP /
-# PagerDuty）属部署侧凭据</b>，这里用占位 webhook receiver：Alertmanager 会尝试 POST 到占位地址并失败重试，
-# 不影响规则求值与 UI。接入真 receiver 时改下方 receivers 的 url（或换 email_configs/slack_configs 等）。
-#
-# 接入的真 receiver 走部署侧凭据（见 CLAUDE.md：凭据不入库），不要把 Slack/SMTP 凭据写进本文件。
+# Webhook URL 从挂载的 secret 文件读取，生产文件不得入库。
 
 global:
   resolve_timeout: 5m
 
 route:
-  receiver: null-hook
+  receiver: operations-webhook
   group_by: ['service', 'alertname']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
 
 receivers:
-  - name: null-hook
+  - name: operations-webhook
     webhook_configs:
-      # 占位：接入真 receiver 时替换为 Slack/自定义告警入口，或改用 email_configs / slack_configs / pagerduty_configs。
-      - url: http://placeholder-receiver:9999/grassland-alerts
+      - url_file: /run/secrets/alertmanager_webhook_url
         send_resolved: true

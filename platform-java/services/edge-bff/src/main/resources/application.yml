@@ -15,7 +15,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 edge:
   default-upstream: legacy
@@ -83,6 +83,9 @@ edge:
     - path: /api/tasks
       upstream: marketplace
       enabled: ${EDGE_ROUTE_TASKS_MARKETPLACE:true}
+    - path: /api/analytics
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ANALYTICS_MARKETPLACE:true}
     # ADR-D07 消费者套餐/订单/核销新契约。finance 私网 /internal 不暴露给 Edge。
     - path: /api/v2
       upstream: marketplace
@@ -127,6 +130,9 @@ edge:
     - path: /api/admin/commerce
       upstream: marketplace
       enabled: ${EDGE_ROUTE_ADMIN_COMMERCE_MARKETPLACE:true}
+    - path: /api/admin/analytics
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ADMIN_ANALYTICS_MARKETPLACE:true}
     # 任务内容审核（GL-P2-ADMIN-003）→ marketplace。精确前缀，不抢 /api/tasks/* 用户侧流量。
     - path: /api/admin/tasks
       upstream: marketplace

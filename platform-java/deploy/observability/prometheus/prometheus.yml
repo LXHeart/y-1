@@ -22,3 +22,23 @@ scrape_configs:
     static_configs:
       - targets:
           - marketplace-service:9082
+  - job_name: edge-bff
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - edge-bff:9080
+  - job_name: finance-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - finance-service:9082
+  - job_name: trust-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - trust-service:9082
+  - job_name: intelligence-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - intelligence-service:9082

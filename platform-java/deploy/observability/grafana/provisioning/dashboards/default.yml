@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: Grassland
+    orgId: 1
+    folder: Grassland
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,50 @@
+groups:
+  - name: grassland-platform-services
+    rules:
+      - alert: GrasslandServiceDown
+        expr: up{job=~"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Grassland service is unavailable"
+          description: "Prometheus cannot scrape {{ $labels.job }} for more than two minutes."
+
+      - alert: GrasslandHighHttp5xxRate
+        expr: |
+          sum by (job) (rate(http_server_requests_seconds_count{job=~"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service",status=~"5.."}[5m]))
+          /
+          clamp_min(sum by (job) (rate(http_server_requests_seconds_count{job=~"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service"}[5m])), 0.01)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "HTTP 5xx ratio exceeds 5%"
+          description: "{{ $labels.job }} has sustained an HTTP 5xx ratio above 5% for ten minutes."
+
+      - alert: GrasslandJvmHeapPressure
+        expr: |
+          sum by (job) (jvm_memory_used_bytes{area="heap",job=~"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service"})
+          /
+          clamp_min(sum by (job) (jvm_memory_max_bytes{area="heap",job=~"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service"}), 1)
+          > 0.85
+        for: 15m
+        labels:
+          severity: warning
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "JVM heap pressure exceeds 85%"
+          description: "{{ $labels.job }} has sustained JVM heap usage above 85% for fifteen minutes."
+
+      - alert: GrasslandProcessCpuPressure
+        expr: process_cpu_usage{job=~"edge-bff|identity-service|marketplace-service|finance-service|trust-service|intelligence-service"} > 0.90
+        for: 15m
+        labels:
+          severity: warning
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Process CPU usage exceeds 90%"
+          description: "{{ $labels.job }} has sustained process CPU usage above 90% for fifteen minutes."
