@@ -66,8 +66,20 @@ public class FinanceCreditsAdminClient {
 
     /** award 正数积分（注册赠送 / admin 正向调整）。 */
     public Mono<Void> award(String accountId, int amount, String note) {
+        return award(accountId, amount, note, null);
+    }
+
+    /** 带幂等键的 award（注册赠送等可重试系统动作）。 */
+    public Mono<Void> award(String accountId, int amount, String note, String operationId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("accountId", accountId);
+        body.put("amount", amount);
+        body.put("note", note);
+        if (operationId != null) {
+            body.put("operationId", operationId);
+        }
         return postVoid("/internal/credits/award",
-                Map.of("accountId", accountId, "amount", amount, "note", note));
+                body);
     }
 
     /** refund 积分（admin 负向调整；feature 固定 admin_adjust，对齐 legacy）。 */

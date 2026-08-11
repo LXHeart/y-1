@@ -43,4 +43,5 @@ export interface RegisterFormValues {
   password: string
   confirmPassword: string
   verificationCode: string
+  initialIdentity: 'merchant' | 'recommender'
 }

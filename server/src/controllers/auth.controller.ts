@@ -95,6 +95,7 @@ export async function registerHandler(req: Request, res: Response, next: NextFun
       email: parsed.data.email,
       password: parsed.data.password,
       displayName: parsed.data.displayName,
+      initialIdentity: parsed.data.initialIdentity,
     })
 
     await persistAuthenticatedSession(req, user)

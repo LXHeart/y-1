@@ -1,5 +1,6 @@
 package com.grassland.identity;
 
+import com.grassland.identity.admin.FinanceCreditsAdminClient;
 import com.grassland.identity.security.CookieSigner;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +16,8 @@ import java.time.Instant;
 import reactor.core.publisher.Mono;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -44,6 +47,9 @@ public abstract class IdentityItSupport {
 
     @MockitoBean
     protected KybMediaClient kybMediaClient;
+
+    @MockitoBean
+    protected FinanceCreditsAdminClient financeCreditsAdminClient;
 
     /** 共享单例容器：类加载即启动一次，全程不重启 → 端口稳定。 */
     public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -99,6 +105,8 @@ public abstract class IdentityItSupport {
 
     @BeforeEach
     void stubKybMediaValidation() {
+        when(financeCreditsAdminClient.award(anyString(), anyInt(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
         when(kybMediaClient.retain(any(), any(), any())).thenReturn(Mono.empty());
         when(kybMediaClient.release(any(), any(), any())).thenReturn(Mono.empty());
         when(kybMediaClient.acquireLease(any(), any(), any(), any(), any(Long.class)))

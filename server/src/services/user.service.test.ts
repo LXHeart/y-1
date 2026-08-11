@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '../lib/errors.js'
 
-const { queryDbMock, hashPasswordMock, verifyPasswordMock } = vi.hoisted(() => ({
+const { queryDbMock, withDbTransactionMock, hashPasswordMock, verifyPasswordMock } = vi.hoisted(() => ({
   queryDbMock: vi.fn(),
+  withDbTransactionMock: vi.fn(),
   hashPasswordMock: vi.fn(),
   verifyPasswordMock: vi.fn(),
 }))
 
 vi.mock('../lib/db.js', () => ({
   queryDb: queryDbMock,
+  withDbTransaction: withDbTransactionMock,
 }))
 
 vi.mock('../lib/password.js', () => ({
@@ -28,6 +30,8 @@ const {
 describe('user.service', () => {
   beforeEach(() => {
     queryDbMock.mockReset()
+    withDbTransactionMock.mockReset()
+    withDbTransactionMock.mockImplementation(async (handler) => handler({ query: queryDbMock }))
     hashPasswordMock.mockReset()
     verifyPasswordMock.mockReset()
   })
@@ -90,14 +94,19 @@ describe('user.service', () => {
     const user = await registerUser({
       email: 'new@example.com',
       password: 'password123',
+      initialIdentity: 'recommender',
     })
 
-    expect(queryDbMock).toHaveBeenCalledWith(expect.any(String), [
+    expect(queryDbMock).toHaveBeenNthCalledWith(1, expect.stringContaining('insert into app_users'), [
       expect.any(String),
       'new@example.com',
       'hashed-password',
       null,
-      'user',
+    ])
+    expect(queryDbMock).toHaveBeenNthCalledWith(2, expect.stringContaining('insert into identity_profile'), [
+      expect.any(String),
+      'user-2',
+      'recommender',
     ])
     expect(user.role).toBe('user')
   })

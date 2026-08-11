@@ -89,6 +89,8 @@ class FinanceCreditsAdminClientTest {
         server.createContext("/internal/credits/award", exchange -> {
             assertThat(exchange.getRequestHeaders().getFirst("X-Grassland-Identity"))
                     .isEqualTo("identity-finance-assertion");
+            String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(request).contains("\"operationId\":\"registration:" + acct + "\"");
             byte[] body = "{\"success\":true,\"data\":{\"awarded\":true,\"balance\":5}}".getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
@@ -97,7 +99,7 @@ class FinanceCreditsAdminClientTest {
         });
         server.start();
 
-        client().award(acct, 5, "test grant").block();
+        client().award(acct, 5, "test grant", "registration:" + acct).block();
         // 完成 = 无异常即通过
     }
 

@@ -7,6 +7,9 @@ function normalizeEmail(value: string): string {
 const emailSchema = z.string().trim().email('请输入有效邮箱地址').transform(normalizeEmail)
 const passwordSchema = z.string().min(8, '密码至少需要 8 个字符').max(200, '密码长度不能超过 200 个字符')
 const displayNameSchema = z.string().trim().min(1, '请输入显示名称').max(100, '显示名称不能超过 100 个字符')
+const initialIdentitySchema = z.enum(['merchant', 'recommender'], {
+  message: '初始身份仅支持商家或推荐官',
+})
 
 export const loginRequestSchema = z.object({
   email: emailSchema,
@@ -19,6 +22,7 @@ export const registerRequestSchema = z.object({
   confirmPassword: passwordSchema,
   displayName: displayNameSchema,
   verificationCode: z.string().trim().length(6, '验证码为 6 位数字'),
+  initialIdentity: initialIdentitySchema,
 }).refine((value) => value.password === value.confirmPassword, {
   message: '两次输入的密码不一致',
   path: ['confirmPassword'],

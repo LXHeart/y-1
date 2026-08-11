@@ -204,13 +204,7 @@ const emit = defineEmits<{
 }>()
 
 const mode = ref<AuthMode>('login')
-// 初始身份选择（商家/推荐官）。
-// 【后端契约缺口 · 情况 B】server/src/schemas/auth.ts 的 registerRequestSchema 目前只接受
-// email/password/confirmPassword/displayName/verificationCode，没有身份字段。
-// 因此该选择**不随注册请求发送**，仅在本地写入 localStorage（grassland-preferred-identity）
-// 作为偏好预埋，等后端扩展注册契约后再接入。UI 上不提示“已保存”，避免误导性承诺。
 type InitialIdentity = 'recommender' | 'merchant'
-const IDENTITY_STORAGE_KEY = 'grassland-preferred-identity'
 const initialIdentity = ref<InitialIdentity>('recommender')
 const email = ref('')
 const displayName = ref('')
@@ -309,18 +303,13 @@ function handleSubmit(): void {
   }
 
   if (mode.value === 'register') {
-    // 后端契约缺口（情况 B）：身份选择不进入注册请求体，只写入 localStorage 作为偏好预埋。
-    try {
-      localStorage.setItem(IDENTITY_STORAGE_KEY, initialIdentity.value)
-    } catch {
-      // localStorage 不可用（如隐私模式）时静默跳过，不阻塞注册。
-    }
     emit('register', {
       email: email.value,
       displayName: displayName.value,
       password: password.value,
       confirmPassword: confirmPassword.value,
       verificationCode: verificationCode.value,
+      initialIdentity: initialIdentity.value,
     })
     return
   }

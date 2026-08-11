@@ -73,7 +73,8 @@ class PasswordUpgradeIT extends IdentityItSupport {
         boolean created = client().post().uri("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"email\":\"" + email + "\",\"password\":\"correct-pass\","
-                        + "\"displayName\":\"Argon2 User\",\"verificationCode\":\"" + code + "\"}")
+                        + "\"confirmPassword\":\"correct-pass\",\"displayName\":\"Argon2 User\","
+                        + "\"verificationCode\":\"" + code + "\",\"initialIdentity\":\"recommender\"}")
                 .exchange().returnResult(String.class).getStatus().value() == 201;
         if (created) {
             String hash = db.sql("SELECT password_hash FROM app_users WHERE email = :email")

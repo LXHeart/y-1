@@ -319,7 +319,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, provide, ref, watch, type Component } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, provide, ref, watch, type Component } from 'vue'
 import AiCreationCenter from './components/AiCreationCenter.vue'
 import NotificationBell from './components/NotificationBell.vue'
 
@@ -636,7 +636,13 @@ async function handleRegister(values: RegisterFormValues): Promise<void> {
   }
 
   closeLoginModal()
-  authBannerMessage.value = '注册成功，现在可以打开设置管理你的专属配置。'
+  // currentUser 变更会触发账号级缓存清理并重置到 AI 首页；先等该 watcher 完成，
+  // 再进入初始身份工作台，避免首次资料完善落点被异步覆盖。
+  await nextTick()
+  currentView.value = 'grassland'
+  authBannerMessage.value = values.initialIdentity === 'merchant'
+    ? '注册成功，请先创建商家主体并完善入驻资料。'
+    : '注册成功，请先完善推荐官主页资料。'
 }
 
 async function handleSendCode(email: string, captchaCode: string): Promise<void> {

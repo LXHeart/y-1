@@ -11,7 +11,9 @@ vi.mock('./components/AnalysisSettingsModal.vue', () => ({ __esModule: true, def
 vi.mock('./components/ComedyWritingView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./components/AdminView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./components/OpsConsole.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
-vi.mock('./components/GrasslandWorkbench.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./components/GrasslandWorkbench.vue', () => ({ __esModule: true,
+  default: { template: '<div data-testid="grassland-workbench" />' },
+}))
 vi.mock('./components/HomeView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./components/ImageAnalysisView.vue', () => ({ __esModule: true,
   default: {
@@ -38,7 +40,16 @@ vi.mock('./components/VideoAnalysisView.vue', () => ({ __esModule: true,
   },
 }))
 vi.mock('./components/LoginModal.vue', () => ({ __esModule: true,
-  default: { props: ['visible'], template: '<div v-if="visible" role="dialog" />' },
+  default: {
+    props: ['visible'],
+    emits: ['register'],
+    template: `<div v-if="visible" role="dialog">
+      <button data-testid="complete-registration" @click="$emit('register', {
+        email: 'new@example.com', displayName: '新用户', password: 'password123',
+        confirmPassword: 'password123', verificationCode: '123456', initialIdentity: 'recommender'
+      })">完成注册</button>
+    </div>`,
+  },
 }))
 vi.mock('./components/ArticleCreationView.vue', () => ({ __esModule: true,
   default: {
@@ -138,6 +149,39 @@ describe('App AI 创作中心集成', () => {
 
     await wrapper.get('button[aria-expanded="false"]').trigger('click')
     expect(wrapper.get('.legacy-tools-menu').text()).toContain('爆款文章')
+  })
+
+  test('注册成功后携带初始身份并进入首次资料完善工作台', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/auth/register') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ initialIdentity: 'recommender' })
+        return response({
+          success: true,
+          data: { user: { id: 'new-user', email: 'new@example.com', displayName: '新用户', role: 'user' } },
+        }, 201)
+      }
+      if (url === '/api/auth/me') return response({ success: false, error: '未登录' }, 401)
+      if (url === '/api/video-production/capabilities') {
+        return response({ success: true, data: { videoGeneration: { available: false } } })
+      }
+      if (url === '/api/douyin/session') return response({ success: true, data: { status: 'anonymous' } })
+      if (url === '/api/credits/balance') return response({ success: true, data: { balance: 3 } })
+      return response({ success: true, data: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    useAuth().currentUser.value = null
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.get('.auth-trigger-primary').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="complete-registration"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="grassland-workbench"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('请先完善推荐官主页资料')
+    useAuth().currentUser.value = null
   })
 
   test('登录账号变化时重建 KeepAlive 缓存，清除上一账号的创作页面状态', async () => {

@@ -97,6 +97,8 @@ describe('auth controller', () => {
         displayName: '新用户',
         password: 'password123',
         confirmPassword: 'password123',
+        verificationCode: '123456',
+        initialIdentity: 'recommender',
       },
     })
     authenticateUserMock.mockResolvedValue({
@@ -255,6 +257,7 @@ describe('auth controller', () => {
       email: 'new@example.com',
       displayName: '新用户',
       password: 'password123',
+      initialIdentity: 'recommender',
     })
     expect(session.regenerate).toHaveBeenCalled()
     expect(session.user).toEqual({

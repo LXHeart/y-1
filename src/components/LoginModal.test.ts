@@ -7,12 +7,9 @@ import type { RegisterFormValues } from '../types/auth'
 /**
  * 登录/注册弹窗。锁住注册流程新增的“初始身份选择”：
  * - 仅注册模式渲染，默认推荐官，可切换商家；
- * - 后端契约缺口（情况 B）：注册请求 payload 不带身份字段，
- *   选择结果只写入 localStorage（grassland-preferred-identity）作为偏好预埋。
+ * - 选择结果作为 initialIdentity 进入注册请求，由服务端创建对应身份档案。
  * 同时锁定既有注册流程（验证码/邮箱验证码字段）不被破坏。
  */
-
-const IDENTITY_STORAGE_KEY = 'grassland-preferred-identity'
 
 function stubFetch(): void {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
@@ -50,11 +47,9 @@ enableAutoUnmount(afterEach)
 
 beforeEach(() => {
   stubFetch()
-  localStorage.clear()
 })
 
 afterEach(() => {
-  localStorage.clear()
   vi.unstubAllGlobals()
 })
 
@@ -96,8 +91,8 @@ describe('初始身份选择渲染', () => {
   })
 })
 
-describe('注册提交与身份偏好预埋（情况 B）', () => {
-  test('默认推荐官提交：payload 不含身份字段，localStorage 写入 recommender', async () => {
+describe('注册提交与初始身份契约', () => {
+  test('默认推荐官提交：payload 携带 initialIdentity=recommender', async () => {
     const wrapper = mountModal()
     await switchToRegister(wrapper)
     await fillRegisterForm(wrapper)
@@ -113,15 +108,11 @@ describe('注册提交与身份偏好预埋（情况 B）', () => {
       password: 'password123',
       confirmPassword: 'password123',
       verificationCode: '123456',
+      initialIdentity: 'recommender',
     })
-    // 情况 B：注册 payload 必须不带任何身份字段
-    expect(Object.keys(values)).not.toContain('identity')
-    expect(Object.keys(values)).not.toContain('initialIdentity')
-    expect(Object.keys(values)).not.toContain('role')
-    expect(localStorage.getItem(IDENTITY_STORAGE_KEY)).toBe('recommender')
   })
 
-  test('切换商家后提交：payload 仍不含身份字段，localStorage 写入 merchant', async () => {
+  test('切换商家后提交：payload 携带 initialIdentity=merchant', async () => {
     const wrapper = mountModal()
     await switchToRegister(wrapper)
     await fillRegisterForm(wrapper)
@@ -132,11 +123,10 @@ describe('注册提交与身份偏好预埋（情况 B）', () => {
     const emitted = wrapper.emitted('register')
     expect(emitted).toBeTruthy()
     const values = emitted![0][0] as RegisterFormValues
-    expect(Object.keys(values)).toEqual(['email', 'displayName', 'password', 'confirmPassword', 'verificationCode'])
-    expect(localStorage.getItem(IDENTITY_STORAGE_KEY)).toBe('merchant')
+    expect(values.initialIdentity).toBe('merchant')
   })
 
-  test('表单未填完时提交不触发注册，也不写 localStorage', async () => {
+  test('表单未填完时提交不触发注册', async () => {
     const wrapper = mountModal()
     await switchToRegister(wrapper)
     await wrapper.find('#login-email').setValue('grass@test.local')
@@ -144,6 +134,5 @@ describe('注册提交与身份偏好预埋（情况 B）', () => {
     await wrapper.find('form').trigger('submit')
 
     expect(wrapper.emitted('register')).toBeUndefined()
-    expect(localStorage.getItem(IDENTITY_STORAGE_KEY)).toBeNull()
   })
 })

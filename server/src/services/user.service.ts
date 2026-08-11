@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AppError } from '../lib/errors.js'
-import { queryDb } from '../lib/db.js'
+import { queryDb, withDbTransaction } from '../lib/db.js'
 import { hashPassword, verifyPassword } from '../lib/password.js'
 import { ensureCreditAccount, awardFreeCredits } from './credit.service.js'
 import { env } from '../lib/env.js'
@@ -39,6 +39,7 @@ interface RegisterUserInput {
   email: string
   password: string
   displayName?: string
+  initialIdentity: 'merchant' | 'recommender'
 }
 
 interface UserWithPassword extends AuthUserProfile {
@@ -79,6 +80,17 @@ function toAuthUserProfile(user: UserWithPassword): AuthUserProfile {
     status: user.status,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
+  }
+}
+
+async function setupRegistrationCredits(userId: string): Promise<void> {
+  try {
+    await ensureCreditAccount(userId)
+    if (env.FREE_CREDITS_ON_REGISTER > 0) {
+      await awardFreeCredits(userId, env.FREE_CREDITS_ON_REGISTER, '新用户注册赠送')
+    }
+  } catch {
+    // Credits setup failure should not block registration
   }
 }
 
@@ -132,25 +144,36 @@ export async function createUser(input: CreateUserInput): Promise<AuthUserProfil
 
   const profile = toAuthUserProfile(mapUserRow(row))
 
-  try {
-    await ensureCreditAccount(profile.id)
-    if (env.FREE_CREDITS_ON_REGISTER > 0) {
-      await awardFreeCredits(profile.id, env.FREE_CREDITS_ON_REGISTER, '新用户注册赠送')
-    }
-  } catch {
-    // Credits setup failure should not block registration
-  }
+  await setupRegistrationCredits(profile.id)
 
   return profile
 }
 
 export async function registerUser(input: RegisterUserInput): Promise<AuthUserProfile> {
-  return createUser({
-    email: input.email,
-    password: input.password,
-    displayName: input.displayName,
-    role: 'user',
+  const passwordHash = await hashPassword(input.password)
+  const profile = await withDbTransaction(async (tx) => {
+    const result = await tx.query<UserRow>(
+      `insert into app_users (id, email, password_hash, display_name, role, status)
+       values ($1, $2, $3, $4, 'user', 'active')
+       on conflict (email) do nothing
+       returning id, email, password_hash, display_name, role, status, created_at, last_login_at`,
+      [randomUUID(), normalizeEmail(input.email), passwordHash, input.displayName ?? null],
+    )
+    const row = result.rows[0]
+    if (!row) {
+      throw new AppError('该邮箱已存在', 409)
+    }
+
+    await tx.query(
+      `insert into identity_profile (id, account_id, identity_type, organization_id, status)
+       values ($1, $2, $3, null, 'active')`,
+      [randomUUID(), row.id, input.initialIdentity],
+    )
+    return toAuthUserProfile(mapUserRow(row))
   })
+
+  await setupRegistrationCredits(profile.id)
+  return profile
 }
 
 export async function recordUserLogin(userId: string): Promise<void> {
