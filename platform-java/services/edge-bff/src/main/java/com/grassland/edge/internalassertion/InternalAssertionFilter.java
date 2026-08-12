@@ -45,16 +45,12 @@ public class InternalAssertionFilter implements WebFilter {
     private final IdentityAssertionSigner signer;
     private final IdentityAssertionProperties properties;
     private final UpstreamResolver upstreamResolver;
-    private final org.springframework.beans.factory.ObjectProvider<AccessTokenIdentityResolver> accessTokenResolverProvider;
-
     public InternalAssertionFilter(SessionIdentityResolver resolver, IdentityAssertionSigner signer,
-                                   IdentityAssertionProperties properties, UpstreamResolver upstreamResolver,
-                                   org.springframework.beans.factory.ObjectProvider<AccessTokenIdentityResolver> accessTokenResolverProvider) {
+                                   IdentityAssertionProperties properties, UpstreamResolver upstreamResolver) {
         this.resolver = resolver;
         this.signer = signer;
         this.properties = properties;
         this.upstreamResolver = upstreamResolver;
-        this.accessTokenResolverProvider = accessTokenResolverProvider;
     }
 
     @Override
@@ -68,8 +64,10 @@ public class InternalAssertionFilter implements WebFilter {
         if (!upstreamResolver.isInternalUpstream(method, path)) {
             requestMono = Mono.just(stripInternalHeaders(request));
         } else {
-            requestMono = resolveIdentity(request)
-                    .map(identity -> stripAndSign(request, identity, method, path))
+            boolean accessTokenAuthenticated =
+                    exchange.getAttribute(AccessTokenFilter.RESOLVED_IDENTITY_ATTRIBUTE) != null;
+            requestMono = resolveIdentity(exchange)
+                    .map(identity -> stripAndSign(request, identity, method, path, accessTokenAuthenticated))
                     .defaultIfEmpty(stripInternalHeaders(request));
         }
         return requestMono.flatMap(mutated -> chain.filter(exchange.mutate().request(mutated).build()));
@@ -82,20 +80,13 @@ public class InternalAssertionFilter implements WebFilter {
      * <p>refresh/revoke 端点跳过 Bearer（它们用 refresh_token 作 Bearer，格式不同于 access token，
      * identity 侧自鉴权）。
      */
-    private Mono<ResolvedIdentity> resolveIdentity(ServerHttpRequest request) {
-        String path = request.getURI().getPath();
-        AccessTokenIdentityResolver accessTokenResolver = accessTokenResolverProvider.getIfAvailable();
-        if (accessTokenResolver != null
-                && request.getHeaders().getFirst("Authorization") != null
-                && !isAuthEndpoint(path)) {
-            return accessTokenResolver.resolve(request)
-                    .switchIfEmpty(Mono.defer(() -> resolver.resolve(request)));
+    private Mono<ResolvedIdentity> resolveIdentity(ServerWebExchange exchange) {
+        ResolvedIdentity accessTokenIdentity =
+                exchange.getAttribute(AccessTokenFilter.RESOLVED_IDENTITY_ATTRIBUTE);
+        if (accessTokenIdentity != null) {
+            return Mono.just(accessTokenIdentity);
         }
-        return resolver.resolve(request);
-    }
-
-    private static boolean isAuthEndpoint(String path) {
-        return "/api/auth/refresh".equals(path) || "/api/auth/revoke".equals(path);
+        return resolver.resolve(exchange.getRequest());
     }
 
     /** 剥离 denylist 头（防御纵深：清掉客户端伪造的内部身份头）。 */
@@ -107,14 +98,14 @@ public class InternalAssertionFilter implements WebFilter {
 
     /** 剥离 denylist 头后附加签发的断言头（按目标上游选钥）。 */
     private ServerHttpRequest stripAndSign(ServerHttpRequest request, ResolvedIdentity identity,
-                                           String method, String path) {
+                                           String method, String path, boolean accessTokenAuthenticated) {
         String targetAudience = resolveTargetAudience(method, path);
         if (targetAudience == null) {
             log.warn("Unable to resolve target audience for method={} path={}; not attaching assertion", method, path);
             return stripInternalHeaders(request);
         }
 
-        IdentityAssertion base = buildBaseAssertion(identity, request);
+        IdentityAssertion base = buildBaseAssertion(identity, request, accessTokenAuthenticated);
         String token;
         try {
             if (signer.isLegacy()) {
@@ -154,12 +145,11 @@ public class InternalAssertionFilter implements WebFilter {
     /**
      * 构造断言基础字段（不含 envelope claims：issuer/keyId/jti 由 signer 填充，audience 由 targetAudience 决定）。
      */
-    private IdentityAssertion buildBaseAssertion(ResolvedIdentity identity, ServerHttpRequest request) {
+    private IdentityAssertion buildBaseAssertion(ResolvedIdentity identity, ServerHttpRequest request,
+                                                  boolean accessTokenAuthenticated) {
         Instant now = Instant.now();
         // authMethod：移动端 Bearer → access-token；Web cookie → cookie-session
-        String authMethod = request.getHeaders().getFirst("Authorization") != null
-                && !isAuthEndpoint(request.getURI().getPath())
-                ? "access-token" : "cookie-session";
+        String authMethod = accessTokenAuthenticated ? "access-token" : "cookie-session";
         return new IdentityAssertion(
                 identity.accountId(),
                 identity.activeIdentityType(),

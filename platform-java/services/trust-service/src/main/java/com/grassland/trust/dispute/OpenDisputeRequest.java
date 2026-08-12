@@ -75,6 +75,16 @@ public record OpenDisputeRequest(String engagementRef, String reason, String kin
             if (contentRef == null || contentRef.isBlank()) {
                 throw new IllegalArgumentException("evidence.contentRef is required");
             }
+            String normalized = kind.toLowerCase(java.util.Locale.ROOT);
+            if (!java.util.Set.of("text", "screenshot", "link").contains(normalized)) {
+                throw new IllegalArgumentException("evidence.kind must be text, screenshot, or link");
+            }
+            if (contentRef.length() > 10_000) {
+                throw new IllegalArgumentException("evidence.contentRef is too long");
+            }
+            if (caption != null && caption.length() > 500) {
+                throw new IllegalArgumentException("evidence.caption is too long");
+            }
         }
     }
 }

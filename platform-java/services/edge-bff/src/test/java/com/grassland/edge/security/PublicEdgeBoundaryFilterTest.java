@@ -39,12 +39,12 @@ class PublicEdgeBoundaryFilterTest {
     }
 
     @Test
-    void stripsAuthorizationExceptOnRefreshEndpoint() {
+    void preservesAuthorizationForTheDedicatedAccessTokenFilter() {
         client().get().uri("/api/tasks")
                 .header("Authorization", "Bearer access-token")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.Authorization").doesNotExist();
+                .expectBody().jsonPath("$.Authorization").isEqualTo("Bearer access-token");
 
         client().post().uri("/api/auth/refresh")
                 .header("Authorization", "Bearer refresh-token")

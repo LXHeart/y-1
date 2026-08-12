@@ -1,6 +1,7 @@
 package com.grassland.trust.dispute;
 
 import com.grassland.identity.assertion.BackendRole;
+import com.grassland.trust.adjudication.CaseEvidenceRedactor;
 import com.grassland.trust.security.TrustCallerResolver;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -25,10 +26,13 @@ public class DisputeAdminController {
 
     private final TrustCallerResolver callers;
     private final DisputeCaseRepository disputes;
+    private final CaseEvidenceRedactor redactor;
 
-    public DisputeAdminController(TrustCallerResolver callers, DisputeCaseRepository disputes) {
+    public DisputeAdminController(TrustCallerResolver callers, DisputeCaseRepository disputes,
+                                  CaseEvidenceRedactor redactor) {
         this.callers = callers;
         this.disputes = disputes;
+        this.redactor = redactor;
     }
 
     @GetMapping("/api/admin/trust/disputes")
@@ -69,11 +73,11 @@ public class DisputeAdminController {
         }
     }
 
-    private static Map<String, Object> page(List<DisputeCase> rows, int limit) {
+    private Map<String, Object> page(List<DisputeCase> rows, int limit) {
         boolean hasMore = rows.size() > limit;
         List<DisputeCase> items = hasMore ? List.copyOf(rows.subList(0, limit)) : List.copyOf(rows);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", items.stream().map(DisputeAdminController::toBody).toList());
+        body.put("items", items.stream().map(this::toBody).toList());
         body.put("hasMore", hasMore);
         body.put("nextCursor", hasMore && !items.isEmpty() ? encode(items.getLast()) : null);
         return body;
@@ -84,16 +88,16 @@ public class DisputeAdminController {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static Map<String, Object> toBody(DisputeCase dispute) {
+    private Map<String, Object> toBody(DisputeCase dispute) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", dispute.id());
         body.put("engagementRef", dispute.engagementRef());
         body.put("organizationId", dispute.organizationId());
-        body.put("openedByAccountId", dispute.openedByAccountId());
+        body.put("openedByAlias", redactor.pseudonym(dispute.id(), dispute.openedByAccountId()));
         body.put("openedByRole", dispute.openedByRole());
         body.put("status", dispute.status());
         body.put("kind", dispute.kind());
-        body.put("reason", dispute.reason());
+        body.put("reason", redactor.maskText(dispute.reason()));
         body.put("appealState", dispute.appealState());
         body.put("premiumSupport", dispute.premiumSupport());
         body.put("supportPriority", dispute.supportPriority());

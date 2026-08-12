@@ -3,6 +3,13 @@ spring:
     name: trust-service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
+      sasl.jaas.config: org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_USERNAME:}" password="${KAFKA_PASSWORD:}";
+      ssl.truststore.location: ${KAFKA_SSL_TRUSTSTORE_LOCATION:}
+      ssl.truststore.password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:}
+      ssl.truststore.type: ${KAFKA_SSL_TRUSTSTORE_TYPE:PKCS12}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -18,6 +25,13 @@ spring:
     # 连接：容器内 service name（temporal:7233），本地 bootRun 注 localhost:7233。
     connection:
       target: ${TEMPORAL_TARGET:temporal:7233}
+      enable-https: ${TEMPORAL_ENABLE_HTTPS:false}
+      mtls:
+        cert-chain-file: ${TEMPORAL_MTLS_CERT_CHAIN_FILE:}
+        key-file: ${TEMPORAL_MTLS_KEY_FILE:}
+        server-name: ${TEMPORAL_MTLS_SERVER_NAME:}
+        insecure-trust-manager: false
+    namespace: ${TEMPORAL_NAMESPACE:default}
     # 显式 worker：trust-adjudication 承载审判 workflow 与其 activity。
     workers:
       - name: trust-adjudication
@@ -53,6 +67,9 @@ trust:
     claim-lease-ms: ${TRUST_OUTBOX_CLAIM_LEASE_MS:300000}
     initial-backoff-ms: ${TRUST_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${TRUST_OUTBOX_MAX_BACKOFF_MS:60000}
+  evidence:
+    retention-days: ${TRUST_EVIDENCE_RETENTION_DAYS:365}
+    pseudonym-secret: ${TRUST_EVIDENCE_PSEUDONYM_SECRET:}
   # 审判 adjudication：7 官面板 / 24h 投票 / 平票重开轮次 / 上诉窗口 / Lv5+运营准入。
   adjudication:
     panel-size: ${TRUST_ADJUDICATION_PANEL_SIZE:7}

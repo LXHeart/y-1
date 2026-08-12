@@ -64,6 +64,23 @@ fi
 [[ "${IDENTITY_ASSERTION_REPLAY_STORAGE:-redis}" == "redis" ]] || fail "identity assertion replay storage must be redis"
 [[ "${CONFIRMATION_WINDOW_SECONDS:-0}" -ge 259200 ]] || fail "CONFIRMATION_WINDOW_SECONDS must be at least 259200 in production"
 
+[[ "${KAFKA_SECURITY_PROTOCOL:-}" == "SASL_SSL" ]] || fail "KAFKA_SECURITY_PROTOCOL must be SASL_SSL"
+[[ "${KAFKA_SASL_MECHANISM:-}" == "SCRAM-SHA-512" ]] || fail "KAFKA_SASL_MECHANISM must be SCRAM-SHA-512"
+[[ -n "${KAFKA_BOOTSTRAP_SERVERS:-}" ]] || fail "KAFKA_BOOTSTRAP_SERVERS is required"
+[[ "${KAFKA_BOOTSTRAP_SERVERS:-}" != *"kafka:9092"* && "${KAFKA_BOOTSTRAP_SERVERS:-}" != *"localhost"* ]] \
+  || fail "KAFKA_BOOTSTRAP_SERVERS must point to an external production cluster"
+[[ -r "${KAFKA_SSL_TRUSTSTORE_FILE:-}" ]] || fail "KAFKA_SSL_TRUSTSTORE_FILE must be readable"
+
+[[ -n "${TEMPORAL_TARGET:-}" ]] || fail "TEMPORAL_TARGET is required"
+[[ "${TEMPORAL_TARGET:-}" != "temporal:7233" && "${TEMPORAL_TARGET:-}" != *"localhost"* ]] \
+  || fail "TEMPORAL_TARGET must point to an external production cluster"
+[[ -n "${TEMPORAL_NAMESPACE:-}" && "${TEMPORAL_NAMESPACE:-}" != "default" ]] \
+  || fail "TEMPORAL_NAMESPACE must be a dedicated non-default namespace"
+[[ "${TEMPORAL_ENABLE_HTTPS:-}" == "true" ]] || fail "TEMPORAL_ENABLE_HTTPS must be true"
+[[ -n "${TEMPORAL_MTLS_SERVER_NAME:-}" ]] || fail "TEMPORAL_MTLS_SERVER_NAME is required"
+[[ -r "${TEMPORAL_MTLS_CERT_CHAIN_FILE:-}" ]] || fail "TEMPORAL_MTLS_CERT_CHAIN_FILE must be readable"
+[[ -r "${TEMPORAL_MTLS_KEY_FILE:-}" ]] || fail "TEMPORAL_MTLS_KEY_FILE must be readable"
+
 for url_name in FRONTEND_ORIGIN PUBLIC_BACKEND_ORIGIN CORS_ORIGIN; do
   url_value="${!url_name:-}"
   [[ "$url_value" == https://* ]] || fail "$url_name must be an https URL"
@@ -90,6 +107,12 @@ check_secret_file() {
   mode="$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null || true)"
   [[ -z "$mode" || $((8#$mode & 077)) -eq 0 ]] || fail "$name file must not be group/world accessible (mode $mode)"
 }
+
+if [[ -r "${TEMPORAL_MTLS_KEY_FILE:-}" ]]; then
+  temporal_key_mode="$(stat -f '%Lp' "$TEMPORAL_MTLS_KEY_FILE" 2>/dev/null || stat -c '%a' "$TEMPORAL_MTLS_KEY_FILE" 2>/dev/null || true)"
+  [[ -z "$temporal_key_mode" || $((8#$temporal_key_mode & 077)) -eq 0 ]] \
+    || fail "TEMPORAL_MTLS_KEY_FILE must not be group/world accessible (mode $temporal_key_mode)"
+fi
 
 alert_example="$ROOT_DIR/platform-java/deploy/observability/alertmanager/webhook-url.example"
 grafana_example="$ROOT_DIR/platform-java/deploy/observability/grafana/admin-password.example"

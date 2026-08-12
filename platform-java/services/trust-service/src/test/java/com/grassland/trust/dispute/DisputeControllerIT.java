@@ -183,7 +183,9 @@ class DisputeControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.kind").isEqualTo("merchant_rejection")
-                .jsonPath("$.data.openedByAccountId").isEqualTo(merchant);
+                .jsonPath("$.data.openedByAccountId").doesNotExist()
+                .jsonPath("$.data.openedByAlias").value(value ->
+                        assertThat((String) value).startsWith("participant-"));
 
         client().post().uri("/api/trust/internal/disputes/" + disputeId + "/auto-finalize")
                 .header("X-Grassland-Identity", signService(org, "marketplace"))

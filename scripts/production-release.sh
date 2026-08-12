@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_ROOT="$ROOT_DIR/.release-state"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+PRODUCTION_COMPOSE_FILE="$ROOT_DIR/docker-compose.production.yml"
 ENV_FILE=""
 EXECUTE=false
 RELEASE_ID=""
@@ -31,7 +32,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 log() { printf '[release] %s\n' "$*"; }
 
 compose() {
-  local args=(--project-directory "$ROOT_DIR" -f "$COMPOSE_FILE")
+  local args=(--project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" -f "$PRODUCTION_COMPOSE_FILE")
   [[ -n "$ENV_FILE" ]] && args+=(--env-file "$ENV_FILE")
   docker compose "${args[@]}" "$@"
 }
@@ -114,7 +115,7 @@ render_override() {
 compose_config() {
   local override="${1:-}"
   if [[ -n "$override" ]]; then
-    local args=(--project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" -f "$override")
+    local args=(--project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" -f "$PRODUCTION_COMPOSE_FILE" -f "$override")
     [[ -n "$ENV_FILE" ]] && args+=(--env-file "$ENV_FILE")
     docker compose "${args[@]}" config >/dev/null
   else

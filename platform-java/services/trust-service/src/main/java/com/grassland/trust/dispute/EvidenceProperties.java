@@ -5,14 +5,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * 争议证据配置（GL-P2-TRUST-001 T1）。
  *
- * <p>{@code retentionDays}：D-10 证据保留期，<b>provisional</b> 默认 365 天（证据保留 6–12 月，取上界）。
- * <b>TODO 法务/财务定稿</b>后按 D-10 终审值覆盖；过期清理任务（脱敏/删除）另项，本轮只建模 retention_until。
+ * <p>{@code pseudonymSecret} 用于按案件生成确定性当事人伪名。生产必须使用独立随机密钥，
+ * 避免跨环境关联；空值仅允许本地/测试以固定开发值启动。
  */
 @ConfigurationProperties(prefix = "trust.evidence")
-public record EvidenceProperties(int retentionDays) {
+public record EvidenceProperties(int retentionDays, String pseudonymSecret) {
     public EvidenceProperties {
         if (retentionDays <= 0) {
             retentionDays = 365;
+        }
+        if (pseudonymSecret == null || pseudonymSecret.isBlank()) {
+            pseudonymSecret = "development-only-evidence-pseudonym-secret";
         }
     }
 }

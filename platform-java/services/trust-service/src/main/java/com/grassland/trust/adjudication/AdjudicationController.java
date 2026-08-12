@@ -379,6 +379,8 @@ public class AdjudicationController {
     private Mono<Map<String, Object>> snapshot(DisputeCase d) {
         Map<String, Object> base = new LinkedHashMap<>();
         base.put("id", d.id());
+        base.put("reason", evidenceRedactor.maskText(d.reason()));
+        base.put("openedByAlias", evidenceRedactor.pseudonym(d.id(), d.openedByAccountId()));
         base.put("status", d.status());
         base.put("round", d.round());
         base.put("decision", d.decision());
@@ -410,6 +412,7 @@ public class AdjudicationController {
                                                      TrustCallerResolver.Caller caller) {
         return evidenceRepo.listByDispute(d.id()).collectList().flatMap(evidence -> {
             snap.put("evidence", evidenceRedactor.redact(evidence));
+            snap.put("evidenceSummary", evidenceRedactor.summary(evidence));
             if (evidence.isEmpty()) {
                 return Mono.just(snap);
             }

@@ -1,5 +1,6 @@
 package com.grassland.trust.dispute;
 
+import com.grassland.trust.adjudication.CaseEvidenceRedactor;
 import com.grassland.trust.audit.DisputeAuditRepository;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
@@ -33,16 +34,19 @@ public class DisputeEvidenceService {
     private final OutboxRepository outbox;
     private final DisputeAuditRepository audit;
     private final EvidenceProperties evidenceProps;
+    private final CaseEvidenceRedactor redactor;
     private final TransactionalOperator transactions;
 
     public DisputeEvidenceService(DisputeEvidenceRepository evidenceRepo, DisputeCaseRepository disputes,
                                   OutboxRepository outbox, DisputeAuditRepository audit,
-                                  EvidenceProperties evidenceProps, TransactionalOperator transactions) {
+                                  EvidenceProperties evidenceProps, CaseEvidenceRedactor redactor,
+                                  TransactionalOperator transactions) {
         this.evidenceRepo = evidenceRepo;
         this.disputes = disputes;
         this.outbox = outbox;
         this.audit = audit;
         this.evidenceProps = evidenceProps;
+        this.redactor = redactor;
         this.transactions = transactions;
     }
 
@@ -60,7 +64,8 @@ public class DisputeEvidenceService {
                 Flux.fromIterable(items)
                         .concatMap(item -> evidenceRepo.append(new DisputeEvidence(
                                 UUID.randomUUID().toString(), disputeId, submitterAccountId, submitterRole,
-                                item.kind(), item.contentRef(), null, item.caption(), null, retentionUntil)))
+                                item.kind(), item.contentRef(), redactor.redactForStorage(item.kind(), item.contentRef()),
+                                item.caption(), null, retentionUntil)))
                         .collectList()
                         .flatMap(saved -> disputes.updateEvidenceRef(disputeId, "set:" + disputeId)
                                 .then(audit.append(disputeId, "evidence_submitted", submitterAccountId, submitterRole,

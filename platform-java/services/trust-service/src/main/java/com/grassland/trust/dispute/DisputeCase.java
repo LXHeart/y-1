@@ -11,7 +11,7 @@ import java.time.Instant;
  * <p>状态机（{@link DisputeCaseStatus}，5 态）：{@code open→voting→decided→(appealed→)final}，平票按 {@code round} 重开。
  * 非 {@code final} 状态均占用该 engagement 的活跃争议槽（阻塞结算）。{@code decision}=面板/手动裁决文本；
  * {@code finalDecision}=终局裁决（含客服覆盖）；{@code version}=聚合版本（替代 outbox 硬编码 1）；
- * {@code round}=审判轮次；{@code appealState}=none/pending/filed/withdrawn；{@code evidenceRef}=脱敏证据句柄（D-10 占位）。
+ * {@code round}=审判轮次；{@code appealState}=none/pending/filed/withdrawn；{@code evidenceRef}=脱敏证据集合句柄。
  *
  * <p>{@code kind}（D-03 slice 2）：{@code standard}（普通用户争议，走 7 官面板）/ {@code merchant_rejection}
  * （商家对核实通过履约的拒绝，直送客服终审，不走面板）。

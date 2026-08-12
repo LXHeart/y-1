@@ -3,6 +3,13 @@ spring:
     name: marketplace-service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
+      sasl.jaas.config: org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_USERNAME:}" password="${KAFKA_PASSWORD:}";
+      ssl.truststore.location: ${KAFKA_SSL_TRUSTSTORE_LOCATION:}
+      ssl.truststore.password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:}
+      ssl.truststore.type: ${KAFKA_SSL_TRUSTSTORE_TYPE:PKCS12}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -29,6 +36,13 @@ spring:
     # 连接：容器内用 service name（temporal:7233），本地 bootRun 注 localhost:7233。
     connection:
       target: ${TEMPORAL_TARGET:temporal:7233}
+      enable-https: ${TEMPORAL_ENABLE_HTTPS:false}
+      mtls:
+        cert-chain-file: ${TEMPORAL_MTLS_CERT_CHAIN_FILE:}
+        key-file: ${TEMPORAL_MTLS_KEY_FILE:}
+        server-name: ${TEMPORAL_MTLS_SERVER_NAME:}
+        insecure-trust-manager: false
+    namespace: ${TEMPORAL_NAMESPACE:default}
     # 显式定义 worker：@ActivityImpl(workers) 按 name 引用，@WorkflowImpl(taskQueues) 按 task-queue 注册。
     # grassland-demo：3C demo；marketplace-saga：4F 接受报名资金预留 Saga（workflow 与其 activity 落同 worker）。
     workers:

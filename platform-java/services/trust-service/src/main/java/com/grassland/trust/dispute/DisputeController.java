@@ -1,6 +1,7 @@
 package com.grassland.trust.dispute;
 
 import com.grassland.trust.adjudication.AdjudicationProperties;
+import com.grassland.trust.adjudication.CaseEvidenceRedactor;
 import com.grassland.trust.event.EventEnvelope;
 import com.grassland.trust.event.OutboxRepository;
 import com.grassland.trust.security.TrustCallerResolver;
@@ -47,6 +48,7 @@ public class DisputeController {
     private final MerchantRejectionFinalizer merchantRejectionFinalizer;
     private final AdjudicationProperties adjudicationProps;
     private final DisputeEvidenceService evidenceService;
+    private final CaseEvidenceRedactor evidenceRedactor;
 
     public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
                              TransactionalOperator transactions,
@@ -54,7 +56,8 @@ public class DisputeController {
                              DeferredDisputeRequestRepository deferredRequests,
                              MerchantRejectionFinalizer merchantRejectionFinalizer,
                              AdjudicationProperties adjudicationProps,
-                             DisputeEvidenceService evidenceService) {
+                             DisputeEvidenceService evidenceService,
+                             CaseEvidenceRedactor evidenceRedactor) {
         this.callers = callers;
         this.disputes = disputes;
         this.outbox = outbox;
@@ -64,6 +67,7 @@ public class DisputeController {
         this.merchantRejectionFinalizer = merchantRejectionFinalizer;
         this.adjudicationProps = adjudicationProps;
         this.evidenceService = evidenceService;
+        this.evidenceRedactor = evidenceRedactor;
     }
 
     @PostMapping("/api/trust/disputes")
@@ -171,7 +175,7 @@ public class DisputeController {
         m.put("status", request.status());
         m.put("requestId", request.id());
         m.put("engagementRef", request.engagementRef());
-        m.put("reason", request.reason() == null ? "" : request.reason());
+        m.put("reason", evidenceRedactor.maskText(request.reason()));
         m.put("disputeId", request.promotedDisputeId() == null ? "" : request.promotedDisputeId());
         m.put("workflowId", request.adjudicationWorkflowId() == null ? "" : request.adjudicationWorkflowId());
         return m;
@@ -274,11 +278,11 @@ public class DisputeController {
         m.put("id", d.id());
         m.put("engagementRef", d.engagementRef());
         m.put("organizationId", d.organizationId());
-        m.put("openedByAccountId", d.openedByAccountId());
+        m.put("openedByAlias", evidenceRedactor.pseudonym(d.id(), d.openedByAccountId()));
         m.put("openedByRole", d.openedByRole());
         m.put("status", d.status());
         m.put("kind", d.kind());
-        m.put("reason", d.reason());
+        m.put("reason", evidenceRedactor.maskText(d.reason()));
         m.put("decision", d.decision());
         m.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());
         m.put("round", d.round());

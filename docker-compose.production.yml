@@ -1,0 +1,95 @@
+# Production application overlay. Kafka and Temporal are external HA services; this file deliberately
+# removes local development dependencies and mounts only client credentials into application containers.
+x-kafka-production: &kafka-production
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?external Kafka bootstrap servers are required}
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  KAFKA_SASL_MECHANISM: SCRAM-SHA-512
+  KAFKA_USERNAME: ${KAFKA_USERNAME:?Kafka username is required}
+  KAFKA_PASSWORD: ${KAFKA_PASSWORD:?Kafka password is required}
+  KAFKA_SSL_TRUSTSTORE_LOCATION: /run/secrets/grassland/kafka-truststore.p12
+  KAFKA_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:?Kafka truststore password is required}
+  KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+
+x-kafka-volume: &kafka-volume
+  type: bind
+  source: ${KAFKA_SSL_TRUSTSTORE_FILE:?Kafka truststore file is required}
+  target: /run/secrets/grassland/kafka-truststore.p12
+  read_only: true
+
+x-temporal-production: &temporal-production
+  TEMPORAL_TARGET: ${TEMPORAL_TARGET:?external Temporal frontend is required}
+  TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:?Temporal namespace is required}
+  TEMPORAL_ENABLE_HTTPS: "true"
+  TEMPORAL_MTLS_CERT_CHAIN_FILE: /run/secrets/grassland/temporal-client.crt
+  TEMPORAL_MTLS_KEY_FILE: /run/secrets/grassland/temporal-client.key
+  TEMPORAL_MTLS_SERVER_NAME: ${TEMPORAL_MTLS_SERVER_NAME:?Temporal TLS server name is required}
+
+services:
+  kafka:
+    profiles: [development]
+
+  temporal:
+    profiles: [development]
+
+  identity-service:
+    environment:
+      <<: *kafka-production
+    volumes:
+      - *kafka-volume
+    depends_on: !override
+      backend:
+        condition: service_started
+
+  marketplace-service:
+    environment:
+      <<: [*kafka-production, *temporal-production]
+    volumes:
+      - *kafka-volume
+      - type: bind
+        source: ${TEMPORAL_MTLS_CERT_CHAIN_FILE:?Temporal client certificate is required}
+        target: /run/secrets/grassland/temporal-client.crt
+        read_only: true
+      - type: bind
+        source: ${TEMPORAL_MTLS_KEY_FILE:?Temporal client key is required}
+        target: /run/secrets/grassland/temporal-client.key
+        read_only: true
+    depends_on: !override
+      backend:
+        condition: service_started
+
+  finance-service:
+    environment:
+      <<: *kafka-production
+    volumes:
+      - *kafka-volume
+    depends_on: !override
+      backend:
+        condition: service_started
+
+  trust-service:
+    environment:
+      <<: [*kafka-production, *temporal-production]
+    volumes:
+      - *kafka-volume
+      - type: bind
+        source: ${TEMPORAL_MTLS_CERT_CHAIN_FILE:?Temporal client certificate is required}
+        target: /run/secrets/grassland/temporal-client.crt
+        read_only: true
+      - type: bind
+        source: ${TEMPORAL_MTLS_KEY_FILE:?Temporal client key is required}
+        target: /run/secrets/grassland/temporal-client.key
+        read_only: true
+    depends_on: !override
+      backend:
+        condition: service_started
+
+  intelligence-service:
+    environment:
+      <<: *kafka-production
+    volumes:
+      - *kafka-volume
+    depends_on: !override
+      backend:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully

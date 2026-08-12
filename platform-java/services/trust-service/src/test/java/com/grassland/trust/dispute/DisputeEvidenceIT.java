@@ -41,6 +41,11 @@ class DisputeEvidenceIT extends TrustItSupport {
         long count = evidenceCount(disputeId);
         assertThat(count).isEqualTo(2);
 
+        String redactedSnapshot = db.sql("SELECT redacted_ref FROM dispute_evidence"
+                        + " WHERE dispute_id = CAST(:id AS uuid) AND kind = 'text'")
+                .bind("id", disputeId).map(row -> row.get("redacted_ref", String.class)).one().block();
+        assertThat(redactedSnapshot).contains("138****5678").doesNotContain("13812345678");
+
         // 两条 DisputeEvidenceSubmitted 事件（每条证据一个，确定性 eventId 幂等）
         assertThat(outboxCount("DisputeEvidenceSubmitted", disputeId)).isEqualTo(2);
     }
@@ -88,7 +93,8 @@ class DisputeEvidenceIT extends TrustItSupport {
 
         assertThat(body).contains("138****5678");          // 手机号掩码
         assertThat(body).doesNotContain("13812345678");    // raw 手机号不出现
-        assertThat(body).contains("media:media-raw-bytes-id");  // 截图只回句柄
+        assertThat(body).contains("media:");
+        assertThat(body).doesNotContain("media-raw-bytes-id"); // 截图句柄不可反推出原 media id
     }
 
     @Test

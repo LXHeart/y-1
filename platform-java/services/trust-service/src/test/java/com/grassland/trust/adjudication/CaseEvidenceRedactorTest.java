@@ -3,17 +3,18 @@ package com.grassland.trust.adjudication;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.trust.dispute.DisputeEvidence;
+import com.grassland.trust.dispute.EvidenceProperties;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 /**
  * {@link CaseEvidenceRedactor} 脱敏单测（GL-P2-TRUST-001 T2）。锁住 PII 掩码与截图句柄规则。
  *
- * <p>Provisional D-10：当前只做手机/身份证/邮箱掩码；完整规则待法审定稿后替换实现，届时更新本测试。
  */
 class CaseEvidenceRedactorTest {
 
-    private final CaseEvidenceRedactor redactor = new CaseEvidenceRedactor();
+    private final CaseEvidenceRedactor redactor =
+            new CaseEvidenceRedactor(new EvidenceProperties(365, "test-pseudonym-secret-32-characters"));
     private final Instant retention = Instant.now().plusSeconds(60);
 
     @Test
@@ -27,6 +28,7 @@ class CaseEvidenceRedactorTest {
         assertThat(r.content()).doesNotContain("110101199001011234");
         assertThat(r.content()).contains("f***@bar.com");
         assertThat(r.kind()).isEqualTo("text");
+        assertThat(r.submittedByAlias()).startsWith("participant-");
     }
 
     @Test
@@ -34,7 +36,7 @@ class CaseEvidenceRedactorTest {
         var e = evidence("screenshot", "media-abc-123", "履约截图");
         RedactedEvidence r = redactor.redact(e);
 
-        assertThat(r.content()).isEqualTo("media:media-abc-123");
+        assertThat(r.content()).startsWith("media:").doesNotContain("media-abc-123");
         assertThat(r.caption()).isEqualTo("履约截图");
     }
 
@@ -46,6 +48,27 @@ class CaseEvidenceRedactorTest {
         RedactedEvidence r = redactor.redact(e);
 
         assertThat(r.content()).isEqualTo("已脱敏文本");
+    }
+
+    @Test
+    void masksBankCardUuidLabeledNameAddressAndLinkSecrets() {
+        String text = "姓名：张三 地址：上海市浦东新区世纪大道100号 卡号6222021234567890123 "
+                + "账号11111111-1111-1111-1111-111111111111";
+        assertThat(redactor.maskText(text))
+                .doesNotContain("张三", "世纪大道100号", "6222021234567890123",
+                        "11111111-1111-1111-1111-111111111111")
+                .contains("**** **** **** 0123", "[账号已脱敏]");
+
+        String link = redactor.redactForStorage("link",
+                "https://Example.com/path/13812345678?token=secret#fragment");
+        assertThat(link).isEqualTo("https://example.com/path/138****5678");
+    }
+
+    @Test
+    void pseudonymIsStableWithinCaseAndUnlinkableAcrossCases() {
+        assertThat(redactor.pseudonym("case-1", "account-1"))
+                .isEqualTo(redactor.pseudonym("case-1", "account-1"))
+                .isNotEqualTo(redactor.pseudonym("case-2", "account-1"));
     }
 
     @Test

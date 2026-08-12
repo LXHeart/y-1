@@ -5,8 +5,6 @@ import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
@@ -48,12 +46,7 @@ public final class PublicEdgeBoundaryFilter implements WebFilter {
             return exchange.getResponse().setComplete();
         }
         ServerHttpRequest sanitized = exchange.getRequest().mutate()
-                .headers(headers -> {
-                    internalHeaders.forEach(headers::remove);
-                    if (!isRefreshRequest(exchange)) {
-                        headers.remove(HttpHeaders.AUTHORIZATION);
-                    }
-                })
+                .headers(headers -> internalHeaders.forEach(headers::remove))
                 .build();
         return chain.filter(exchange.mutate().request(sanitized).build());
     }
@@ -61,10 +54,5 @@ public final class PublicEdgeBoundaryFilter implements WebFilter {
     private static boolean isInternalPath(String path) {
         return "/internal".equals(path) || path.startsWith("/internal/")
                 || "/api/internal".equals(path) || path.startsWith("/api/internal/");
-    }
-
-    private static boolean isRefreshRequest(ServerWebExchange exchange) {
-        return HttpMethod.POST.equals(exchange.getRequest().getMethod())
-                && "/api/auth/refresh".equals(exchange.getRequest().getPath().value());
     }
 }

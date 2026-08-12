@@ -55,7 +55,7 @@ class InternalAssertionFilterTest {
     void internalUpstream_attachesVerifiableAssertion() {
         SessionIdentityResolver resolver = resolverReturning(identity());
         UpstreamResolver upstream = upstreamInternal("/internal");
-        var filter = new InternalAssertionFilter(resolver, signer, props, upstream, mockObjectProvider());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstream);
 
         String body = client(filter)
                 .get().uri("/internal/me")
@@ -76,7 +76,7 @@ class InternalAssertionFilterTest {
         // 导致 trust 客服终审的 MFA 近期性校验恒失败（403）。现须从 identity_session 透传。
         java.time.Instant reauthAt = java.time.Instant.now().minusSeconds(30);
         SessionIdentityResolver resolver = resolverReturning(reauthenticatedIdentity(reauthAt));
-        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"), mockObjectProvider());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"));
 
         String token = readToken(client(filter)
                 .get().uri("/internal/me").cookie("y1.sid", "anything")
@@ -91,7 +91,7 @@ class InternalAssertionFilterTest {
     @Test
     void plainLoginSession_hasNoMfaProof() {
         SessionIdentityResolver resolver = resolverReturning(identity());
-        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"), mockObjectProvider());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"));
 
         String token = readToken(client(filter)
                 .get().uri("/internal/me").cookie("y1.sid", "anything")
@@ -107,7 +107,7 @@ class InternalAssertionFilterTest {
     void clientForgedHeader_isStrippedAndReplaced() {
         SessionIdentityResolver resolver = resolverReturning(identity());
         UpstreamResolver upstream = upstreamInternal("/internal");
-        var filter = new InternalAssertionFilter(resolver, signer, props, upstream, mockObjectProvider());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstream);
 
         String token = readToken(client(filter)
                 .get().uri("/internal/me")
@@ -126,7 +126,7 @@ class InternalAssertionFilterTest {
         SessionIdentityResolver resolver = resolverReturning(identity());
         UpstreamResolver upstream = mock(UpstreamResolver.class);
         when(upstream.isInternalUpstream(anyString(), anyString())).thenReturn(false);
-        var filter = new InternalAssertionFilter(resolver, signer, props, upstream, mockObjectProvider());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstream);
 
         String token = readToken(client(filter)
                 .get().uri("/legacy/anything")
@@ -143,7 +143,7 @@ class InternalAssertionFilterTest {
         SessionIdentityResolver resolver = mock(SessionIdentityResolver.class);
         when(resolver.resolve(any())).thenReturn(Mono.empty());
         UpstreamResolver upstream = upstreamInternal("/internal");
-        var filter = new InternalAssertionFilter(resolver, signer, props, upstream, mockObjectProvider());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstream);
 
         String token = readToken(client(filter)
                 .get().uri("/internal/me")
@@ -205,10 +205,4 @@ class InternalAssertionFilterTest {
         return end < 0 ? body : body.substring(start, end);
     }
 
-    @SuppressWarnings("unchecked")
-    private static org.springframework.beans.factory.ObjectProvider<AccessTokenIdentityResolver> mockObjectProvider() {
-        org.springframework.beans.factory.ObjectProvider<AccessTokenIdentityResolver> provider = mock(org.springframework.beans.factory.ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(null);
-        return provider;
-    }
 }

@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * 移动端 access token 身份解析（GL-P3-IDENTITY-001 最后一个硬阻塞：AccessTokenFilter）。
+ * 移动端 access token 身份解析（由 {@link AccessTokenFilter} 在公网边界消费）。
  *
  * <p>从 {@code Authorization: Bearer <access_token>} 头验签 → 复查 refresh_token 行存活 →
  * 查 app_users/identity_session/backend_role 组装 {@link ResolvedIdentity}。
@@ -24,7 +24,8 @@ import reactor.core.publisher.Mono;
  * 撤销不能等到 token 自然过期）。
  *
  * <p>装配条件：edge.identity.from-database-url=true（R2DBC 可用）+ AccessTokenSigner bean 存在（secret 配了）。
- * 未配 secret → bean 不装 → InternalAssertionFilter 的 bearer 分支自动跳过（Web cookie 路径不受影响）。
+ * 未配 secret → bean 不装；携带 Bearer 的内部 Java 路由由 {@link AccessTokenFilter} fail-closed 返回 401，
+ * 不携带 Bearer 的 Web cookie 路径不受影响。
  */
 @Component
 @ConditionalOnProperty(name = "edge.identity.from-database-url", havingValue = "true")

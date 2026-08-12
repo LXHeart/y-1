@@ -1,8 +1,8 @@
 # 移动端刷新 Token 认证方案设计
 
 > **任务**: GL-P3-IDENTITY-001
-> **状态**: DRAFT
-> **版本**: v0.1
+> **状态**: 已实施（生产端侧集成与监控待部署）
+> **版本**: v0.2
 
 ## 一、背景
 
@@ -242,9 +242,10 @@ Authorization: Bearer <refresh_token>
 4. `AccessTokenCodec`：编码/解码 Access Token
 
 ### Phase 2：刷新端点 + edge-bff 验证
-1. `RefreshTokenController`：`/api/auth/refresh`
-2. edge-bff `AccessTokenFilter`：验证 Bearer token 并签发断言
-3. 测试：刷新流程完整链路
+1. ✅ `RefreshTokenController`：`/api/auth/refresh`
+2. ✅ edge-bff `AccessTokenFilter`：在公网边界验证 Bearer token，复查撤销状态，并由 `InternalAssertionFilter` 签发目标服务断言
+3. ✅ 安全边界：原始 access token 不向 Java/legacy 上游扩散；refresh/revoke 原样透传；非法、撤销或非 Bearer 凭据直接 401，不回退 Cookie
+4. ✅ 测试：有效 token、撤销 token、Cookie 混用、legacy 路由和 refresh/revoke 透传均有回归覆盖
 
 ### Phase 3：设备管理 + 撤销
 1. `DeviceManagementController`：列出/撤销设备
@@ -267,13 +268,11 @@ Authorization: Bearer <refresh_token>
 
 **关键**：下游服务（marketplace/finance/trust）无需改动，继续从 `X-Grassland-Identity` 获取用户信息。
 
-## 六、未决问题（DECISION REQUIRED）
+## 六、生产侧剩余项
 
-1. **Refresh Token 轮换**：每次刷新时是否颁发新的 Refresh Token？（增加安全性但增加复杂度）
-2. **并发限制**：同一用户允许多少个活跃 Refresh Token？（建议 5-10 个）
-3. **设备指纹算法**：使用哪些字段生成？（建议 User-Agent + 持久化设备 ID）
-4. **Refresh Token 有效期**：默认 30 天还是 90 天？（建议 30 天）
-5. **Access Token 有效期**：15 分钟还是 60 分钟？（建议 15 分钟）
+1. APP/小程序安全存储、退出登录与多设备撤销的端侧 E2E。
+2. 异常刷新频率、撤销失败和 access-token 401 比例的生产告警。
+3. 在真实 Secret Manager 中执行 access-token 双钥轮换与回退演练。
 
 ## 七、参考
 

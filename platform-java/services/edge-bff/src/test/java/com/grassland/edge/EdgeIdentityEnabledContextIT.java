@@ -3,6 +3,7 @@ package com.grassland.edge;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.edge.internalassertion.InternalAssertionFilter;
+import com.grassland.edge.internalassertion.AccessTokenFilter;
 import com.grassland.edge.internalassertion.SessionIdentityResolver;
 import com.grassland.edge.internalassertion.VideoRecreationRateLimitFilter;
 import org.junit.jupiter.api.Test;
@@ -56,10 +57,14 @@ class EdgeIdentityEnabledContextIT {
     @Autowired(required = false)
     private InternalAssertionFilter internalAssertionFilter;
 
+    @Autowired(required = false)
+    private AccessTokenFilter accessTokenFilter;
+
     @Test
     void wiresSessionBackedIdentityBeans() {
         assertThat(sessionIdentityResolver).isNotNull();
         assertThat(videoRecreationRateLimitFilter).isNotNull();
         assertThat(internalAssertionFilter).isNotNull();
+        assertThat(accessTokenFilter).isNotNull();
     }
 }
