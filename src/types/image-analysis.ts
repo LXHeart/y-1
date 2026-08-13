@@ -71,6 +71,8 @@ export interface StepReviewRequest {
   reviewLength: number
   feelings?: string
   platform?: ReviewPlatform
+  taskMode?: true
+  contextSnapshotId?: string
 }
 
 export interface UpdateStylePreferencesResponse {

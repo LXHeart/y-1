@@ -1,6 +1,9 @@
 package com.grassland.intelligence.media;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
@@ -58,11 +61,10 @@ class MediaControllerIT {
         r.add("DATABASE_URL", () -> dbUrl);
         r.add("management.server.port", () -> "0");
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "intelligence");
         r.add("intelligence.outbox.enabled", () -> "false");
         r.add("ai.qwen.base-url", () -> "https://example.com");
-        r.add("ai.qwen.api-key", () -> "sk-test");
+        r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
         r.add("object-storage.enabled", () -> "true");
         r.add("object-storage.endpoint", () -> minioUrl);
         r.add("object-storage.public-base-url", () -> minioUrl);
@@ -647,9 +649,9 @@ class MediaControllerIT {
                 .header("X-Grassland-Identity", sign(owner, org))
                 .exchange().expectStatus().isEqualTo(403);
 
-        // 服务断言但 principal 不是 marketplace → 403
+        // 已受信服务断言但 principal 不是 marketplace → 403
         client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
-                .header("X-Grassland-Identity", signService(org, "trust"))
+                .header("X-Grassland-Identity", signService(org, "identity"))
                 .exchange().expectStatus().isEqualTo(403);
 
         // 缺断言 → 401
@@ -840,10 +842,10 @@ class MediaControllerIT {
 
     private String sign(String accountId, String organizationId) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(
                 accountId, "recommender", "sid-" + accountId, organizationId, null,
                 "cookie-session", "level1", null, "request", "trace",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-intelligence", now, now.plusSeconds(60), null, null));
     }
 
     /** 造一个 marketplace 服务断言（callerKind=service + principal=marketplace + org 上下文），镜像 ServiceAssertionIssuer.issueForOrg。 */
@@ -853,10 +855,10 @@ class MediaControllerIT {
 
     private String signService(String organizationId, String principal) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return serviceSigner(principal, "grassland-intelligence").sign(new IdentityAssertion(
                 "service:" + principal, null, null, organizationId, null,
                 "service", "internal", null, "request", "trace",
-                "grassland-internal", now, now.plusSeconds(30),
+                "grassland-intelligence", now, now.plusSeconds(30),
                 "service", principal));
     }
 }

@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -35,7 +36,6 @@ public class FinanceReconciliationClient {
         this.webClient = WebClient.builder().baseUrl(baseUrl).build();
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     public Mono<Result> reconcile(String organizationId, String engagementRef, String finalDecision) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/reconcile", engagementRef)
@@ -47,8 +47,8 @@ public class FinanceReconciliationClient {
                     log.info("finance reconcile HTTP {} org={} ref={} decision={}",
                             code, organizationId, engagementRef, finalDecision);
                     if (code == 200) {
-                        return resp.bodyToMono(Map.class)
-                                .map(body -> map((Map<String, Object>) body));
+                        return resp.bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                                .map(FinanceReconciliationClient::map);
                     }
                     return resp.bodyToMono(String.class).defaultIfEmpty("")
                             .flatMap(b -> Mono.<Result>error(
@@ -58,8 +58,7 @@ public class FinanceReconciliationClient {
     }
 
     static Result map(Map<String, Object> body) {
-        Map<String, Object> data = (Map<String, Object>) body.get("data");
-        if (data == null) {
+        if (!(body.get("data") instanceof Map<?, ?> data)) {
             throw new FinanceReconciliationException("finance reconcile body missing data");
         }
         Object outcome = data.get("outcome");

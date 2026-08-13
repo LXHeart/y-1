@@ -97,21 +97,16 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
                         Map.of("applicationId", "slice7a-app-1")))
                 .block();
 
-        OutboxRepository.OutboxRow first = outbox
-                .claimBatch(CLAIM_TOKEN_A, 10, Duration.ofSeconds(30))
-                .single()
-                .block();
+        OutboxRepository.OutboxRow first = claimForEvent(CLAIM_TOKEN_A, "slice7a-test-claim");
         assertThat(first).isNotNull();
         assertThat(first.attemptCount()).isEqualTo(1);
-        assertThat(outbox.claimBatch(CLAIM_TOKEN_B, 10, Duration.ofSeconds(30)).collectList().block())
-                .isEmpty();
+        assertThat(claimForEventOrNull(CLAIM_TOKEN_B, "slice7a-test-claim")).isNull();
 
         assertThat(outbox.markPublished(first.id(), CLAIM_TOKEN_B).block()).isFalse();
         assertThat(outbox.markFailed(
                         first.id(), CLAIM_TOKEN_A, "broker unavailable", Duration.ofSeconds(10))
                 .block()).isTrue();
-        assertThat(outbox.claimBatch(CLAIM_TOKEN_B, 10, Duration.ofSeconds(30)).collectList().block())
-                .isEmpty();
+        assertThat(claimForEventOrNull(CLAIM_TOKEN_B, "slice7a-test-claim")).isNull();
 
         db.sql("""
                         UPDATE marketplace_outbox SET next_attempt_at = now() - interval '1 second'
@@ -119,10 +114,7 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
                         """)
                 .then()
                 .block();
-        OutboxRepository.OutboxRow retried = outbox
-                .claimBatch(CLAIM_TOKEN_B, 10, Duration.ofSeconds(30))
-                .single()
-                .block();
+        OutboxRepository.OutboxRow retried = claimForEvent(CLAIM_TOKEN_B, "slice7a-test-claim");
         assertThat(retried.attemptCount()).isEqualTo(2);
         assertThat(outbox.markPublished(retried.id(), CLAIM_TOKEN_A).block()).isFalse();
         assertThat(outbox.markPublished(retried.id(), CLAIM_TOKEN_B).block()).isTrue();
@@ -218,6 +210,19 @@ class MarketplaceEventReliabilityIT extends MarketplaceItSupport {
                 .bind("appId", applicationId)
                 .map(row -> row.get("c", Long.class))
                 .one()
+                .block();
+    }
+
+    private OutboxRepository.OutboxRow claimForEvent(String claimToken, String eventId) {
+        OutboxRepository.OutboxRow row = claimForEventOrNull(claimToken, eventId);
+        assertThat(row).as("claimed outbox event %s", eventId).isNotNull();
+        return row;
+    }
+
+    private OutboxRepository.OutboxRow claimForEventOrNull(String claimToken, String eventId) {
+        return outbox.claimBatch(claimToken, 10, Duration.ofSeconds(30))
+                .filter(row -> eventId.equals(row.eventId()))
+                .next()
                 .block();
     }
 

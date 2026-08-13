@@ -123,9 +123,9 @@ class CurrentAccountResolverAssertionTest extends IdentityItSupport {
 
     private String sign(String accountId, String active, String sid) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return com.grassland.identity.assertion.TestAssertionHelper.userSigner("edge-bff", "grassland-identity").sign(new IdentityAssertion(
                 accountId, active, sid, null, null, "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-identity", now, now.plusSeconds(60), null, null));
     }
 
     private static ServerHttpRequest request(String assertion, String cookie) {

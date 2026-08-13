@@ -20,6 +20,7 @@ import reactor.core.publisher.Mono;
  * 争议端到端（草场 Epic 6 Slice 6A）。继承 {@link TrustItSupport}。
  * 覆盖：open（成功+幂等/角色门禁）、活跃争议查询（marketplace 服务断言 200 / 404 / org 自查）、decide（open→final 手动终局/重复 409）。
  */
+@SuppressWarnings("unchecked")
 class DisputeControllerIT extends TrustItSupport {
 
     /** 争议仓储 spy（D-03 审阅 F2）：默认透传真实实现；并发用例把 create 变成「插入成功但返回空」。 */

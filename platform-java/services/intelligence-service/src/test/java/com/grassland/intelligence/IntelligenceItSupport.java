@@ -3,6 +3,12 @@ package com.grassland.intelligence;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.edgeBffSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,7 +35,44 @@ public abstract class IntelligenceItSupport {
 
     static {
         POSTGRES.start();
+        createBootstrapPrerequisites();
         QWEN.start();
+    }
+
+    private static void createBootstrapPrerequisites() {
+        try (Connection connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+             Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    CREATE TABLE app_users (
+                        id uuid PRIMARY KEY,
+                        email text NOT NULL UNIQUE,
+                        password_hash text NOT NULL,
+                        display_name text,
+                        role text NOT NULL DEFAULT 'user',
+                        status text NOT NULL DEFAULT 'active',
+                        created_at timestamptz NOT NULL DEFAULT now(),
+                        updated_at timestamptz NOT NULL DEFAULT now(),
+                        last_login_at timestamptz
+                    )
+                    """);
+            statement.execute("""
+                    CREATE TABLE user_settings (
+                        id uuid PRIMARY KEY,
+                        user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                        settings_type text NOT NULL,
+                        settings_json jsonb NOT NULL,
+                        version integer NOT NULL DEFAULT 1,
+                        created_at timestamptz NOT NULL DEFAULT now(),
+                        updated_at timestamptz NOT NULL DEFAULT now(),
+                        CONSTRAINT user_settings_type_check
+                            CHECK (settings_type IN ('analysis', 'homepage', 'image-review-style')),
+                        CONSTRAINT user_settings_unique_user_type UNIQUE (user_id, settings_type)
+                    )
+                    """);
+        } catch (Exception failure) {
+            throw new ExceptionInInitializerError(failure);
+        }
     }
 
     @LocalServerPort
@@ -49,15 +92,14 @@ public abstract class IntelligenceItSupport {
         r.add("DATABASE_URL", () -> dbUrl);
         r.add("management.server.port", () -> "0");
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "intelligence");
         r.add("intelligence.outbox.enabled", () -> "false");
         r.add("ai.credit-compensation.enabled", () -> "false");
         // 未启 MinIO：回落 LocalGeneratedImageStore（本地卷），S3 自动配置与 S3GeneratedImageStore 不装配。
         r.add("object-storage.enabled", () -> "false");
         // 平台默认 Qwen 指向 WireMock：base-url 是主机名（localhost）→ SSRF 结构校验通过（IP 字面量才拒）。
         r.add("ai.qwen.base-url", QWEN::baseUrl);
-        r.add("ai.qwen.api-key", () -> "sk-test");
+        r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
         r.add("ai.qwen.model", () -> "qwen-plus");
         r.add("ai.platform-model.allow-insecure-loopback", () -> "true");
     }
@@ -74,10 +116,10 @@ public abstract class IntelligenceItSupport {
     /** 签带 role 的断言（GL-P3-AI-001：requireAdmin / 组织作用域测试用）。role 经 16 参构造器。 */
     protected String signWithRole(String accountId, String activeIdentityType, String organizationId, String role) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, null,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null, role));
+                "grassland-intelligence", now, now.plusSeconds(60), null, null, role));
     }
 
     /** 平台管理员断言（role=admin）。 */

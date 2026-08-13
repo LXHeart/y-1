@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.assertion.TestAssertionHelper;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,14 +21,13 @@ import reactor.core.publisher.Mono;
 /** media upload-ticket 频率闸门：仅 POST /api/media/upload-tickets 命中；同账号前 10 次放行，第 11 次 429；匿名按 IP。 */
 class MediaUploadTicketPreflightFilterTest {
 
-    private static final String SECRET = "test-secret-32-chars-min!!!";
-    private static final String AUDIENCE = "grassland-internal";
+    private static final String AUDIENCE = "grassland-intelligence";
     private static final Instant NOW = Instant.parse("2026-07-29T12:00:00Z");
     private static final Instant SIGNING_NOW = Instant.now();
     private static final String PATH = "/api/media/upload-tickets";
 
     private final IdentityAssertionSigner signer =
-            new IdentityAssertionSigner(SECRET.getBytes(), AUDIENCE, Duration.ZERO);
+            TestAssertionHelper.userSigner("edge-bff", AUDIENCE);
     private final IntelligenceCallerResolver callers =
             new IntelligenceCallerResolver(signer, "X-Grassland-Identity");
     private final MediaUploadTicketPreflightFilter filter =

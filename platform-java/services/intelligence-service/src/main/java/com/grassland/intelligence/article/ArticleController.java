@@ -6,6 +6,7 @@ import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.Sse;
 import com.grassland.intelligence.ai.TextRunCommand;
+import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.article.ArticlePrompts.Platform;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
@@ -14,6 +15,7 @@ import com.grassland.intelligence.security.IntelligenceException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -27,9 +29,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * 文章生成（草场 intelligence Slice 3）：titles / outline / content 三端点。路径沿用 legacy
- * {@code /api/article-generation/*}，edge-bff 仅把这三个文本端点路由到 intelligence
- * （图片相关端点仍在 legacy），前端零改动。
+ * 文章生成（草场 intelligence Slice 3）：titles / outline / content 三端点。
+ * {@code /api/article-generation/*} 文本与图片端点均由 intelligence 承载，前端路径不变。
  *
  * <p>与 legacy 行为一致：<b>仅 titles 扣 1 积分</b>（{@link CreditFeature#ARTICLE_GENERATION}），
  * outline / content 是免费 SSE（创作者已为 titles 付费后的免费跟进）。titles 非流式——聚合流式输出
@@ -43,11 +44,16 @@ public class ArticleController {
     private final IntelligenceCallerResolver callers;
     private final AiCapabilityAdapter ai;
     private final CreditsClient credits;
+    private final FrozenTextExecutionService frozenText;
+    private final ArticleCreationContext creationContexts;
 
-    public ArticleController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits) {
+    public ArticleController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits,
+                             FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
+        this.frozenText = frozenText;
+        this.creationContexts = creationContexts;
     }
 
     // ---------- titles：扣积分 + 聚合流式 → 解析 JSON ----------
@@ -55,6 +61,19 @@ public class ArticleController {
     @PostMapping("/api/article-generation/titles")
     public Mono<Map<String, Object>> titles(@RequestBody TitlesRequest body, ServerWebExchange exchange) {
         Platform platform = Platform.fromKey(body.platform());
+        if (body.isTaskMode()) {
+            return callers.requireUser(exchange.getRequest())
+                    .flatMap(caller -> creationContexts.bind(
+                            body.contextSnapshotId(), caller.accountId(), body.platform()))
+                    .flatMap(binding -> frozenText.execute(
+                            exchange, body.contextSnapshotId(), List.of(
+                                    ArticlePrompts.titlesSystem(binding.platform()),
+                                    binding.promptContext(), ArticlePrompts.titlesUser(body.topic())),
+                            1024, CreditFeature.ARTICLE_GENERATION,
+                            completion -> parseTitles(completion.content())))
+                    .map(titles -> Map.<String, Object>of(
+                            "success", true, "data", Map.of("titles", titles)));
+        }
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.ARTICLE_GENERATION))
                 .flatMap(charge -> ai.startTextRun(new TextRunCommand(List.of(
@@ -74,6 +93,11 @@ public class ArticleController {
     @PostMapping("/api/article-generation/outline")
     public Mono<ResponseEntity<Flux<DataBuffer>>> outline(@RequestBody OutlineRequest body, ServerWebExchange exchange) {
         Platform platform = Platform.fromKey(body.platform());
+        if (body.isTaskMode()) {
+            return taskStream(exchange, body.contextSnapshotId(), body.platform(), binding -> List.of(
+                    ArticlePrompts.outlineSystem(binding.platform()), binding.promptContext(),
+                    ArticlePrompts.outlineUser(body.topic(), body.title())), 2048, "大纲生成失败");
+        }
         return callers.resolve(exchange.getRequest()).map(caller -> {
             Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
                     ArticlePrompts.outlineSystem(platform),
@@ -89,6 +113,11 @@ public class ArticleController {
     @PostMapping("/api/article-generation/content")
     public Mono<ResponseEntity<Flux<DataBuffer>>> content(@RequestBody ContentRequest body, ServerWebExchange exchange) {
         Platform platform = Platform.fromKey(body.platform());
+        if (body.isTaskMode()) {
+            return taskStream(exchange, body.contextSnapshotId(), body.platform(), binding -> List.of(
+                    ArticlePrompts.contentSystem(binding.platform()), binding.promptContext(),
+                    ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())), 4096, "正文生成失败");
+        }
         return callers.resolve(exchange.getRequest()).map(caller -> {
             Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
                     ArticlePrompts.contentSystem(platform),
@@ -100,6 +129,20 @@ public class ArticleController {
     }
 
     // ---------- helpers ----------
+
+    private Mono<ResponseEntity<Flux<DataBuffer>>> taskStream(
+            ServerWebExchange exchange, UUID snapshotId, String platform,
+            java.util.function.Function<ArticleCreationContext.Binding, List<com.grassland.intelligence.ai.ChatMessage>> messages,
+            int maxTokens, String failureMessage) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> creationContexts.bind(snapshotId, caller.accountId(), platform))
+                .flatMap(binding -> frozenText.execute(
+                        exchange, snapshotId, messages.apply(binding), maxTokens, null,
+                        completion -> completion.content()))
+                .map(content -> sseEntity(Flux.just(frame(Map.of("content", content))), exchange))
+                .onErrorMap(error -> error instanceof IntelligenceException
+                        ? error : new IntelligenceException(502, failureMessage));
+    }
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {
         Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
@@ -163,17 +206,29 @@ public class ArticleController {
     public record Title(String title, String hook) {}
 
     /** topic 1-200；platform 可省略（默认 wechat）。 */
-    public record TitlesRequest(String topic, String platform) {
+    public record TitlesRequest(
+            String topic, String platform, Boolean taskMode, UUID contextSnapshotId) {
+        public TitlesRequest(String topic, String platform) {
+            this(topic, platform, false, null);
+        }
+
         public TitlesRequest {
             topic = topic == null ? "" : topic.trim();
             if (topic.isEmpty() || topic.length() > 200) {
                 throw new IllegalArgumentException("请输入主题或关键词");
             }
         }
+
+        boolean isTaskMode() { return Boolean.TRUE.equals(taskMode); }
     }
 
     /** topic 1-200、title 1-100；platform 可省略。 */
-    public record OutlineRequest(String topic, String title, String platform) {
+    public record OutlineRequest(
+            String topic, String title, String platform, Boolean taskMode, UUID contextSnapshotId) {
+        public OutlineRequest(String topic, String title, String platform) {
+            this(topic, title, platform, false, null);
+        }
+
         public OutlineRequest {
             topic = topic == null ? "" : topic.trim();
             title = title == null ? "" : title.trim();
@@ -184,10 +239,18 @@ public class ArticleController {
                 throw new IllegalArgumentException("请选择或输入标题");
             }
         }
+
+        boolean isTaskMode() { return Boolean.TRUE.equals(taskMode); }
     }
 
     /** topic 1-200、title 1-100、outline ≥10；platform 可省略。 */
-    public record ContentRequest(String topic, String title, String outline, String platform) {
+    public record ContentRequest(
+            String topic, String title, String outline, String platform,
+            Boolean taskMode, UUID contextSnapshotId) {
+        public ContentRequest(String topic, String title, String outline, String platform) {
+            this(topic, title, outline, platform, false, null);
+        }
+
         public ContentRequest {
             topic = topic == null ? "" : topic.trim();
             title = title == null ? "" : title.trim();
@@ -202,5 +265,7 @@ public class ArticleController {
                 throw new IllegalArgumentException("大纲内容过短");
             }
         }
+
+        boolean isTaskMode() { return Boolean.TRUE.equals(taskMode); }
     }
 }

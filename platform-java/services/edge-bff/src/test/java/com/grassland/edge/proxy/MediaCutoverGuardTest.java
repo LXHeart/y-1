@@ -12,9 +12,9 @@ class MediaCutoverGuardTest {
 
     private static EdgeRoutingProperties routing(boolean enabled) {
         return new EdgeRoutingProperties(
-                Map.of("legacy", URI.create("http://legacy"), "intelligence", URI.create("http://intelligence")),
+                Map.of("intelligence", URI.create("http://intelligence")),
                 List.of(new RouteProperties("POST", "/api/douyin/extract-video", "intelligence", enabled, true)),
-                "legacy");
+                EdgeRoutingProperties.FAIL_CLOSED);
     }
 
     @Test

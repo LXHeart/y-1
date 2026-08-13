@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.identityprofile.DeviceFingerprint;
 import com.grassland.identity.identityprofile.IdentitySessionRepository;
 import com.grassland.identity.user.AuthUser;
-import com.grassland.identity.user.LegacyUserLookup;
+import com.grassland.identity.user.UserLookup;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -41,7 +41,7 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository repository;
     private final IdentitySessionRepository identitySessions;
-    private final LegacyUserLookup users;
+    private final UserLookup users;
     private final AccessTokenIssuer accessTokenIssuer;
     private final TransactionalOperator transactions;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -50,7 +50,7 @@ public class RefreshTokenService {
 
     public RefreshTokenService(RefreshTokenRepository repository,
                                IdentitySessionRepository identitySessions,
-                               LegacyUserLookup users,
+                               UserLookup users,
                                AccessTokenIssuer accessTokenIssuer,
                                TransactionalOperator transactions,
                                @Value("${identity.mobile.refresh-token.ttl-days:30}") long ttlDays,

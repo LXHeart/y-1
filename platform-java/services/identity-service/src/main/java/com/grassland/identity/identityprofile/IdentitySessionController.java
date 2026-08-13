@@ -2,7 +2,7 @@ package com.grassland.identity.identityprofile;
 
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.organization.CurrentAccountResolver;
-import com.grassland.identity.session.LegacySessionBridge;
+import com.grassland.identity.session.SessionRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
@@ -34,10 +34,10 @@ public class IdentitySessionController {
     private final CurrentAccountResolver accounts;
     private final IdentitySessionRepository sessions;
     private final IdentityAuditLogRepository audit;
-    private final LegacySessionBridge loginSessions;
+    private final SessionRepository loginSessions;
 
     public IdentitySessionController(CurrentAccountResolver accounts, IdentitySessionRepository sessions,
-                                     IdentityAuditLogRepository audit, LegacySessionBridge loginSessions) {
+                                     IdentityAuditLogRepository audit, SessionRepository loginSessions) {
         this.accounts = accounts;
         this.sessions = sessions;
         this.audit = audit;

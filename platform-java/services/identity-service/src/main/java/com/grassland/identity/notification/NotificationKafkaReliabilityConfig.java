@@ -89,6 +89,7 @@ public class NotificationKafkaReliabilityConfig {
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
         factory.getContainerProperties().setAsyncAcks(true);
         factory.getContainerProperties().setDeliveryAttemptHeader(true);
+        factory.getContainerProperties().setObservationEnabled(true);
         return factory;
     }
 }

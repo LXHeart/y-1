@@ -25,6 +25,7 @@ import reactor.test.StepVerifier;
 
 /** MediaCleanup 的 claim、双 key 删除、审计顺序与失败重试语义。 */
 @ExtendWith(MockitoExtension.class)
+@SuppressWarnings("unchecked")
 class MediaCleanupTest {
 
     @Mock

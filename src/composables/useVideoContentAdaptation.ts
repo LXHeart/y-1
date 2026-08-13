@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { ApiResponse } from '../types/douyin'
 import type { VideoAdaptationResult, VideoAdaptationUserInstructions } from '../types/video-recreation'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -124,6 +125,7 @@ export function useVideoContentAdaptation() {
     },
     userInstructions?: VideoAdaptationUserInstructions,
     images?: File[],
+    taskContext?: VideoTaskExecutionContext,
   ): Promise<VideoAdaptationResult | null> {
     const normalizedProxyVideoUrl = proxyVideoUrl.trim()
 
@@ -153,6 +155,11 @@ export function useVideoContentAdaptation() {
         if (userInstructions) {
           formData.append('userInstructions', JSON.stringify(userInstructions))
         }
+        if (taskContext) {
+          formData.append('taskMode', 'true')
+          formData.append('contextSnapshotId', taskContext.contextSnapshotId)
+          formData.append('targetPlatform', taskContext.targetPlatform)
+        }
         for (const file of images!) {
           formData.append('images', file)
         }
@@ -163,6 +170,7 @@ export function useVideoContentAdaptation() {
           proxyVideoUrl: normalizedProxyVideoUrl,
           extractedContent,
           userInstructions: userInstructions || undefined,
+          ...(taskContext || {}),
         })
       }
 

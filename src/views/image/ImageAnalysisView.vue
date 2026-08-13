@@ -562,6 +562,7 @@ const {
   optimizePreferences,
   confirmOptimizedPreferences,
   cancelOptimizePreferences,
+  bindCreationContext,
 } = useImageAnalysis()
 
 const hydratedCreationRevision = ref<number | null>(null)
@@ -570,6 +571,7 @@ watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'image' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
   reset()
+  bindCreationContext(handoff.source.type === 'task', handoff.contextSnapshotId)
   platform.value = 'dianping'
   feelings.value = [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n')
 }, { immediate: true })

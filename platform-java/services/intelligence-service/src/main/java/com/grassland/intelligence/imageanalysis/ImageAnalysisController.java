@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.Sse;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.creationcontext.GraphicTaskCreationContext;
 import com.grassland.intelligence.imageanalysis.FeishuExportService.FeishuExportInput;
 import com.grassland.intelligence.imageanalysis.FeishuExportService.FeishuImageInput;
 import com.grassland.intelligence.imageanalysis.FeishuCredentialsRepository.FeishuCredentials;
@@ -19,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpHeaders;
@@ -61,17 +63,20 @@ public class ImageAnalysisController {
     private final FeishuExportService feishuExport;
     private final FeishuCredentialsRepository feishuCreds;
     private final CreditsClient credits;
+    private final GraphicTaskCreationContext creationContexts;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public ImageAnalysisController(IntelligenceCallerResolver callers, ImageAnalysisService analysis,
                                    StylePreferencesService styles, FeishuExportService feishuExport,
-                                   FeishuCredentialsRepository feishuCreds, CreditsClient credits) {
+                                   FeishuCredentialsRepository feishuCreds, CreditsClient credits,
+                                   GraphicTaskCreationContext creationContexts) {
         this.callers = callers;
         this.analysis = analysis;
         this.styles = styles;
         this.feishuExport = feishuExport;
         this.feishuCreds = feishuCreds;
         this.credits = credits;
+        this.creationContexts = creationContexts;
     }
 
     // ---------------- SSE 生成端点 ----------------
@@ -79,19 +84,32 @@ public class ImageAnalysisController {
     @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<ResponseEntity<Flux<DataBuffer>>> analyze(ServerWebExchange exchange) {
         return exchange.getMultipartData().flatMap(form -> Mono.defer(() -> {
-            ImageReviewInput baseInput = parseGenerationInput(form);
+            GenerationInput input = parseGenerationInput(form);
             validateMultipartShape(form, true);
-            return readImages(form).flatMap(images ->
-                    sseResponse(exchange, analyzeEvents(exchange, baseInput, images)));
+            return readImages(form).flatMap(images -> input.taskModeEnabled()
+                    ? taskBinding(exchange, input)
+                            .map(binding -> analysis.analyzeTask(
+                                    images, binding.input(), binding.binding(), exchange)
+                                    .onErrorResume(error -> Flux.just(
+                                            errorFrame(error, ANALYZE_FALLBACK))))
+                            .flatMap(events -> sseResponse(exchange, events))
+                    : sseResponse(exchange, analyzeEvents(exchange, input.input(), images)));
         }).doFinally(s -> releaseParts(form)));
     }
 
     @PostMapping(value = "/step/draft", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<ResponseEntity<Flux<DataBuffer>>> draft(ServerWebExchange exchange) {
         return exchange.getMultipartData().flatMap(form -> Mono.defer(() -> {
-            ImageReviewInput baseInput = parseGenerationInput(form);
+            GenerationInput input = parseGenerationInput(form);
             validateMultipartShape(form, true);
-            return readImages(form).flatMap(images -> sseResponse(exchange, draftEvents(exchange, baseInput, images)));
+            return readImages(form).flatMap(images -> input.taskModeEnabled()
+                    ? taskBinding(exchange, input)
+                            .map(binding -> analysis.draftTask(
+                                    images, binding.input(), binding.binding(), exchange)
+                                    .onErrorResume(error -> Flux.just(
+                                            errorFrame(error, DRAFT_FALLBACK))))
+                            .flatMap(events -> sseResponse(exchange, events))
+                    : sseResponse(exchange, draftEvents(exchange, input.input(), images)));
         }).doFinally(s -> releaseParts(form)));
     }
 
@@ -119,6 +137,12 @@ public class ImageAnalysisController {
 
     @PostMapping(value = "/step/optimize", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> optimize(@RequestBody StepRequest body, ServerWebExchange exchange) {
+        if (body.isTaskMode()) {
+            return taskBinding(exchange, body)
+                    .flatMap(binding -> analysis.optimizeTask(
+                            body.review(), binding.input(), binding.binding(), exchange))
+                    .map(result -> success(resultData(result, false, 0)));
+        }
         return appendixFor(exchange, body.toInput())
                 .flatMap(in -> analysis.optimize(body.review(), in))
                 .map(result -> success(resultData(result, false, 0)));
@@ -126,6 +150,12 @@ public class ImageAnalysisController {
 
     @PostMapping(value = "/step/style-refine", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> styleRefine(@RequestBody StepRequest body, ServerWebExchange exchange) {
+        if (body.isTaskMode()) {
+            return taskBinding(exchange, body)
+                    .flatMap(binding -> analysis.styleRefineTask(
+                            body.review(), binding.input(), binding.binding(), exchange))
+                    .map(result -> success(resultData(result, false, 0)));
+        }
         return appendixFor(exchange, body.toInput())
                 .flatMap(in -> analysis.styleRefine(body.review(), in))
                 .map(result -> success(resultData(result, false, 0)));
@@ -233,11 +263,16 @@ public class ImageAnalysisController {
         return data;
     }
 
-    private ImageReviewInput parseGenerationInput(MultiValueMap<String, Part> form) {
+    private GenerationInput parseGenerationInput(MultiValueMap<String, Part> form) {
         int reviewLength = parseReviewLength(field(form, "reviewLength"), 0, 15, 300);
         String feelings = optionalField(form, "feelings", 200, "感受内容不能超过 200 字");
         String platform = parsePlatform(field(form, "platform"));
-        return new ImageReviewInput(reviewLength, feelings, platform, null);
+        boolean taskMode = parseTaskMode(field(form, "taskMode"));
+        UUID contextSnapshotId = parseContextSnapshotId(field(form, "contextSnapshotId"));
+        validateTaskBinding(taskMode, contextSnapshotId);
+        return new GenerationInput(
+                new ImageReviewInput(reviewLength, feelings, platform, null),
+                taskMode, contextSnapshotId);
     }
 
     private ExportFields parseExportFields(MultiValueMap<String, Part> form) {
@@ -350,7 +385,7 @@ public class ImageAnalysisController {
      */
     private static void validateMultipartShape(MultiValueMap<String, Part> form, boolean generation) {
         Set<String> allowed = generation
-                ? Set.of("images", "reviewLength", "feelings", "platform")
+                ? Set.of("images", "reviewLength", "feelings", "platform", "taskMode", "contextSnapshotId")
                 : Set.of("images", "review", "title", "tags", "runId", "platform", "reviewLength", "feelings");
         int totalParts = form.values().stream().mapToInt(List::size).sum();
         int imageCount = form.getOrDefault("images", List.of()).size();
@@ -374,6 +409,45 @@ public class ImageAnalysisController {
         }
         if (fieldCount > 8 || totalParts > 14) {
             throw new IntelligenceException(400, "图片上传失败，请检查文件后重试");
+        }
+    }
+
+    private Mono<TaskBinding> taskBinding(ServerWebExchange exchange, TaskInput input) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> creationContexts.bind(
+                        input.contextSnapshotId(), caller.accountId(), input.platform()))
+                .flatMap(binding -> styles.styleAppendixFor(binding.snapshot().accountId())
+                        .map(appendix -> new TaskBinding(
+                                binding, withStyle(input.toInput(), appendix))));
+    }
+
+    private static boolean parseTaskMode(String raw) {
+        if (raw == null || raw.isBlank() || "false".equalsIgnoreCase(raw.trim())) {
+            return false;
+        }
+        if ("true".equalsIgnoreCase(raw.trim())) {
+            return true;
+        }
+        throw new IntelligenceException(400, "任务创作模式参数不合法");
+    }
+
+    private static UUID parseContextSnapshotId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException error) {
+            throw new IntelligenceException(400, "创作上下文快照标识不合法");
+        }
+    }
+
+    private static void validateTaskBinding(boolean taskMode, UUID contextSnapshotId) {
+        if (taskMode && contextSnapshotId == null) {
+            throw new IntelligenceException(400, "任务创作必须绑定创作上下文快照");
+        }
+        if (!taskMode && contextSnapshotId != null) {
+            throw new IntelligenceException(400, "独立创作不能绑定任务创作上下文");
         }
     }
 
@@ -436,7 +510,45 @@ public class ImageAnalysisController {
                                 String platform, Integer reviewLength, String feelings) {}
 
     /** {@code /step/optimize} 与 {@code /step/style-refine} 请求体。 */
-    public record StepRequest(String review, String title, List<String> tags, Integer reviewLength, String feelings, String platform) {
+    private interface TaskInput {
+        ImageReviewInput toInput();
+        boolean taskModeEnabled();
+        UUID contextSnapshotId();
+
+        default boolean isTaskMode() {
+            return taskModeEnabled();
+        }
+
+        default String platform() {
+            return toInput().platform();
+        }
+    }
+
+    private record GenerationInput(
+            ImageReviewInput input, boolean taskMode, UUID contextSnapshotId) implements TaskInput {
+        @Override
+        public ImageReviewInput toInput() {
+            return input;
+        }
+
+        @Override
+        public boolean taskModeEnabled() {
+            return taskMode;
+        }
+
+        @Override
+        public UUID contextSnapshotId() {
+            return contextSnapshotId;
+        }
+    }
+
+    private record TaskBinding(
+            GraphicTaskCreationContext.Binding binding, ImageReviewInput input) {}
+
+    public record StepRequest(
+            String review, String title, List<String> tags, Integer reviewLength,
+            String feelings, String platform, Boolean taskMode,
+            UUID contextSnapshotId) implements TaskInput {
         public StepRequest {
             review = review == null ? "" : review.trim();
             if (review.isEmpty()) {
@@ -459,10 +571,16 @@ public class ImageAnalysisController {
                 throw new IllegalArgumentException("评价平台无效");
             }
             reviewLength = length;
+            validateTaskBinding(Boolean.TRUE.equals(taskMode), contextSnapshotId);
         }
 
-        ImageReviewInput toInput() {
+        public ImageReviewInput toInput() {
             return new ImageReviewInput(reviewLength, feelings, platform, null);
+        }
+
+        @Override
+        public boolean taskModeEnabled() {
+            return Boolean.TRUE.equals(taskMode);
         }
     }
 

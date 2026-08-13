@@ -1,0 +1,119 @@
+package com.grassland.intelligence.videoproduction;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.github.tomakehurst.wiremock.WireMockServer;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class VideoProviderAdapterContractTest {
+    private static WireMockServer wireMock;
+    private static VideoGenerationProperties properties;
+
+    @BeforeAll
+    static void start() {
+        wireMock = new WireMockServer(options().dynamicPort());
+        wireMock.start();
+        properties = new VideoGenerationProperties();
+        properties.setBaseUrl(wireMock.baseUrl());
+        properties.setApiKey("video-test-key");
+        properties.setModel("video-01");
+        properties.setCreatePath("/create");
+        properties.setPollPath("/poll/{taskId}");
+        properties.setRetrievePath("/retrieve");
+    }
+
+    @AfterAll
+    static void stop() {
+        if (wireMock != null) wireMock.stop();
+    }
+
+    @BeforeEach
+    void reset() {
+        wireMock.resetAll();
+        properties.setPollPath("/poll/{taskId}");
+    }
+
+    @Test
+    void seedanceSubmitAndPollMapsNestedVideoUrl() {
+        SeedanceVideoGenerationProvider provider = new SeedanceVideoGenerationProvider(properties);
+        wireMock.stubFor(post(urlEqualTo("/create")).willReturn(aResponse().withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"id\":\"task-seed-1\"}")));
+        VideoGenerationProvider.ProviderResult submitted = provider.submit(command()).block();
+        assertThat(submitted.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.QUEUED);
+        assertThat(submitted.providerTaskId()).isEqualTo("task-seed-1");
+        wireMock.verify(postRequestedFor(urlEqualTo("/create"))
+                .withHeader("Authorization", equalTo("Bearer video-test-key"))
+                .withRequestBody(containing("\"duration\":6"))
+                .withRequestBody(containing("\"ratio\":\"9:16\"")));
+
+        wireMock.stubFor(get(urlEqualTo("/poll/task-seed-1")).willReturn(aResponse().withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"status\":\"succeeded\",\"content\":{\"video_url\":\"https://vendor/video.mp4\"},\"progress\":100}")));
+        VideoGenerationProvider.ProviderResult result = provider.poll("task-seed-1", 6).block();
+        assertThat(result.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.SUCCEEDED);
+        assertThat(result.resultUrl()).isEqualTo("https://vendor/video.mp4");
+    }
+
+    @Test
+    void minimaxPollRetrievesFileIdWhenSuccessHasNoDirectUrl() {
+        properties.setPollPath("/poll");
+        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(properties);
+        wireMock.stubFor(get(urlEqualTo("/poll?task_id=task-mini-1"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"success\",\"file_id\":\"file-1\"}")));
+        wireMock.stubFor(get(urlEqualTo("/retrieve?file_id=file-1"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"file\":{\"download_url\":\"https://vendor/minimax.mp4\"}}")));
+
+        VideoGenerationProvider.ProviderResult result = provider.poll("task-mini-1", 6).block();
+        assertThat(result.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.SUCCEEDED);
+        assertThat(result.resultUrl()).isEqualTo("https://vendor/minimax.mp4");
+        wireMock.verify(getRequestedFor(urlEqualTo("/retrieve?file_id=file-1"))
+                .withHeader("Authorization", equalTo("Bearer video-test-key")));
+    }
+
+    @Test
+    void failedStatusPreservesVendorErrorCodeAndMessage() {
+        properties.setPollPath("/poll");
+        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(properties);
+        wireMock.stubFor(get(urlEqualTo("/poll?task_id=task-mini-2"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(
+                        "{\"status\":\"failed\",\"base_resp\":{\"status_code\":1008,\"status_msg\":\"quota\"}}")));
+        VideoGenerationProvider.ProviderResult result = provider.poll("task-mini-2", 6).block();
+        assertThat(result.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.FAILED);
+        assertThat(result.errorCode()).isEqualTo("1008");
+        assertThat(result.errorMessage()).isEqualTo("quota");
+    }
+
+    @Test
+    void malformedVendorJsonFailsClosed() {
+        properties.setPollPath("/poll");
+        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(properties);
+        wireMock.stubFor(get(urlEqualTo("/poll?task_id=task-malformed"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("not-json")));
+        assertThatThrownBy(() -> provider.poll("task-malformed", 6).block())
+                .hasMessageContaining("响应 JSON 无效");
+    }
+
+    private static VideoGenerationProvider.ProviderCommand command() {
+        return new VideoGenerationProvider.ProviderCommand(
+                UUID.randomUUID(), "video-01", "生成一段视频", List.of("AAAA"), 6, "9:16");
+    }
+}

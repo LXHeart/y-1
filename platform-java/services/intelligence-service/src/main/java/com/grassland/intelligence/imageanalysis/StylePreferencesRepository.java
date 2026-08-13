@@ -10,8 +10,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * 图片评价风格偏好仓储（草场 intelligence Slice 6）。表 {@code intelligence_style_preferences} 由 Flyway V2 建。
- * 镜像 legacy {@code image-review-style.service.ts} 经 {@code user_settings(settings_type='image-review-style')} 的读写语义，
- * 但落在 intelligence 专属表（写入只进本服务，不写回 legacy）。{@code preferences} 为 {@code string[]}（jsonb）。
+ * 保持旧 {@code image-review-style} API 的读写语义，但落在 intelligence 专属表。
+ * {@code preferences} 为 {@code string[]}（jsonb）。
  *
  * <p>用法复刻 {@code OutboxRepository}：注入 {@link DatabaseClient}，写时 {@code CAST(:json AS jsonb)}，读时 {@code ::text}。
  */

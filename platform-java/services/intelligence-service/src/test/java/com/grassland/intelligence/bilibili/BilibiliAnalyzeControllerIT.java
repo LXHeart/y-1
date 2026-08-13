@@ -64,8 +64,7 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     static void bilibiliProps(DynamicPropertyRegistry registry) {
         registry.add("bilibili.proxy.token-secret", () -> SECRET);
         registry.add("app.public-backend-origin", () -> PUBLIC_ORIGIN);
-        registry.add("credits.legacy.base-url", LEGACY::baseUrl);
-        // 默认 CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
+        // CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
         registry.add("credits.finance.base-url", LEGACY::baseUrl);
         registry.add("marketplace.service.base-url", LEGACY::baseUrl);
         registry.add("ai.bilibili-analysis.provider", () -> "qwen");

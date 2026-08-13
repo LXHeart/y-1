@@ -26,6 +26,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @ExtendWith(MockitoExtension.class)
+@SuppressWarnings("unchecked")
 class OutboxPublisherTest {
 
     private static final String TOPIC = "grassland.identity.events";

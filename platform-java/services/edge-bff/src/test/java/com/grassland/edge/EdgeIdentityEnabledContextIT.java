@@ -1,6 +1,7 @@
 package com.grassland.edge;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
 
 import com.grassland.edge.internalassertion.InternalAssertionFilter;
 import com.grassland.edge.internalassertion.AccessTokenFilter;
@@ -39,13 +40,13 @@ class EdgeIdentityEnabledContextIT {
         // InternalAssertionFilter（由 from-database-url 激活）依赖 IdentityAssertionSigner，
         // 后者由 identity-assertion.enabled=true 提供——生产里两者同开，测试也要同开。
         registry.add("identity-assertion.enabled", () -> "true");
-        registry.add("identity-assertion.secret", () -> "test-assertion-secret-32-chars-min!!");
+        registerServiceKeyring(registry, "edge-bff");
         // 直给 spring.r2dbc.url，避开 EdgeR2dbcConfig 的 DATABASE_URL→r2dbc 改写分支（那条另有单测覆盖）
         registry.add("spring.r2dbc.url", () -> "r2dbc:postgresql://"
                 + POSTGRES.getUsername() + ":" + POSTGRES.getPassword() + "@"
                 + POSTGRES.getHost() + ":" + POSTGRES.getFirstMappedPort() + "/" + POSTGRES.getDatabaseName());
-        registry.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
-        registry.add("identity.legacy.session.cookie-name", () -> "y1.sid");
+        registry.add("identity.session.secret", () -> "test-secret-32-chars-minimum!!!");
+        registry.add("identity.session.cookie-name", () -> "y1.sid");
     }
 
     @Autowired(required = false)

@@ -17,7 +17,8 @@ public record UpdateTaskRequest(
         Integer maxSlots,
         Long bountyCents,
         Instant applicationDeadline,
-        Integer minRecommenderLevel
+        Integer minRecommenderLevel,
+        TaskRequirements requirements
 ) {
     public UpdateTaskRequest {
         if (title == null || title.isBlank()) {

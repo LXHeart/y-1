@@ -5,7 +5,7 @@ import java.util.Locale;
 import org.springframework.stereotype.Component;
 
 /**
- * 按 method + path 选择目标上游。先匹配 routes，未命中走 default-upstream。
+ * 按 method + path 选择目标上游。先匹配 routes；生产默认策略为 fail-closed。
  */
 @Component
 public class UpstreamResolver {
@@ -19,7 +19,7 @@ public class UpstreamResolver {
         return properties.upstreams().get(resolveUpstreamName(method, path));
     }
 
-    /** 命中 route 的上游名；未命中走 default-upstream。供断言 filter 判定 legacy/内部。 */
+    /** 命中 route 的上游名；未命中返回默认策略。供断言 filter 与代理 handler 判定。 */
     public String resolveUpstreamName(String method, String path) {
         if (method != null && path != null) {
             for (RouteProperties route : properties.routes()) {
@@ -31,9 +31,10 @@ public class UpstreamResolver {
         return properties.defaultUpstream();
     }
 
-    /** 内部 Java 上游 = 命中 route 的上游不是 legacy 默认上游。仅对这些上游签发断言（HLD 7.4「BFF → 内部服务」）。 */
+    /** 仅对已声明的 Java 上游签发内部断言；fail-closed 不签发。 */
     public boolean isInternalUpstream(String method, String path) {
-        return !resolveUpstreamName(method, path).equals(properties.defaultUpstream());
+        String upstream = resolveUpstreamName(method, path);
+        return properties.upstreams().containsKey(upstream);
     }
 
     boolean matches(RouteProperties route, String method, String path) {

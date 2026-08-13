@@ -1,6 +1,7 @@
 package com.grassland.edge.internalassertion;
 
 import com.grassland.edge.proxy.UpstreamResolver;
+import com.grassland.edge.proxy.EdgeRoutingProperties;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionProperties;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
@@ -22,7 +23,7 @@ import reactor.core.publisher.Mono;
  * BFF 内部身份断言签发（HLD 7.4 + GL-P0-ASSERT-001 keyring 模式）。
  *
  * <p>对<b>所有</b>请求：剥离客户端伪造的内部身份 Header（{@code internalHeaderDenylist}）——防御纵深。
- * 对<b>内部 Java 上游</b>（非 legacy，见 {@link UpstreamResolver#isInternalUpstream}）：解析当前账号，
+ * 对<b>内部 Java 上游</b>（见 {@link UpstreamResolver#isInternalUpstream}）：解析当前账号，
  * 按目标上游选对应的签名钥，签发短时断言并附加 {@code X-Grassland-Identity}。匿名/未解析 → 不附断言（下游视作匿名）。
  *
  * <p>目标受众映射：从 upstream 名推导 audience（如 {@code identity} → {@code grassland-identity}），
@@ -108,13 +109,7 @@ public class InternalAssertionFilter implements WebFilter {
         IdentityAssertion base = buildBaseAssertion(identity, request, accessTokenAuthenticated);
         String token;
         try {
-            if (signer.isLegacy()) {
-                // legacy 模式：用单一 secret 签发（不区分目标）
-                token = signer.sign(base);
-            } else {
-                // keyring 模式：按目标受众选签名钥
-                token = signer.sign(base, targetAudience);
-            }
+            token = signer.sign(base, targetAudience);
         } catch (Exception e) {
             log.warn("Failed to sign assertion for audience={}: {} (not attaching assertion)", targetAudience, e.getMessage());
             return stripInternalHeaders(request);
@@ -132,11 +127,11 @@ public class InternalAssertionFilter implements WebFilter {
      * 从 upstream 名解析目标受众。
      *
      * <p>映射规则：{@code <service>} → {@code grassland-<service>}（如 identity → grassland-identity）。
-     * legacy 上游返回 null（不附断言）。
+     * fail-closed 返回 null（不附断言）。
      */
     private String resolveTargetAudience(String method, String path) {
         String upstreamName = upstreamResolver.resolveUpstreamName(method, path);
-        if (upstreamName == null || "legacy".equalsIgnoreCase(upstreamName)) {
+        if (upstreamName == null || EdgeRoutingProperties.FAIL_CLOSED.equals(upstreamName)) {
             return null;
         }
         return "grassland-" + upstreamName;
@@ -163,8 +158,7 @@ public class InternalAssertionFilter implements WebFilter {
                 identity.reauthenticatedAt(),
                 headerOrUuid(request, "X-Request-Id"),
                 headerOrUuid(request, "X-Trace-Id"),
-                // 默认 audience：keyring 模式下由 signer.sign(assertion, targetAudience) 重写为目标受众；
-                // legacy 模式下保留 properties.audience()（与验签端一致）。
+                // 默认 audience 会由 signer.sign(assertion, targetAudience) 重写为目标受众。
                 properties.audience(), now, now.plus(properties.ttl()),
                 "user", null,
                 // 平台角色（app_users.role）：与业务身份正交，供下游做平台侧授权

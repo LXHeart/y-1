@@ -31,7 +31,7 @@ HLD §12.3 定义平台 AI 能力管理：按能力（文本/视觉/图片/视�
 
 ## 当前代码现状
 
-- intelligence-service 有 `AiCapabilityAdapter` 抽象、`GeneratedImageStore`（S3）、`media_reference`；能力含文本（Qwen/OpenAI-compat）、视觉、图片生成、视频生成（stub，`VIDEO_GENERATION_IMPLEMENTED` 常量硬关，GL-P0-BILL-001）。
+- intelligence-service 有 `AiCapabilityAdapter` 抽象、`GeneratedImageStore`（S3）、`media_reference`；能力含文本（Qwen/OpenAI-compat）、视觉、图片生成，以及已落地 Sandbox/异步 provider-neutral 视频生成（历史 Express 回滚路径仍由 `VIDEO_GENERATION_IMPLEMENTED` 硬关，GL-P0-BILL-001）。
 - **计费**：legacy credits——`requireCredit` 在调用前扣积分，失败 `charge.refund()`（GL-P0-BILL-002 的 `CreditCharge` 句柄），用户 abort 不退。积分是抽象单位，不映射真实成本。
 - **BYOK**：设置里有服务端持久化的 provider 凭据（per-org），但**无 Envelope Encryption**（明文或简单加密）、无 BYOK 与平台模型的运行时分发与计费区分。
 - **无 usage account**：无 Run 记录、无 token/张/秒计量、无 model budget。
@@ -114,7 +114,7 @@ HLD §12.3 定义平台 AI 能力管理：按能力（文本/视觉/图片/视�
 3. **model budget 默认值**：每 Run / 每 org 的 token/张/秒预算上限默认值（⚙️ 需运营/成本定）。
 4. **usage account 归属**：推荐 intelligence 写用量事实、finance 记账本；是否同意此拆分？
 5. **价目表定价**：各能力各模型的具体价格（含平台 margin）——需成本核算 + 产品定价，本 ADR 只定口径。
-6. **视频生成**当前硬关（`VIDEO_GENERATION_IMPLEMENTED`）；接入时（`GL-P3-VIDEO-001`）按秒计费，是否纳入本 ADR 口径（推荐纳入，统一计量）。
+6. **视频生成**的历史 Express 回滚路径硬关（`VIDEO_GENERATION_IMPLEMENTED`）；当前默认由 intelligence Sandbox 异步任务承载。真实 provider 接入（`GL-P3-VIDEO-001`）按秒计费，继续沿用本 ADR 口径。
 
 ## 影响
 

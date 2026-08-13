@@ -1,6 +1,7 @@
 package com.grassland.trust.dispute;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.trust.TrustItSupport;
@@ -208,9 +209,9 @@ class DisputeEvidenceIT extends TrustItSupport {
     /** 签客服断言（role=customer_service，按平台角色判定，见 TrustCallerResolver 注释）。 */
     private String signCs(String accountId, Instant reauthenticatedAt) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
                 accountId, null, "sid-" + accountId, null, null,
                 "cookie-session", "level2", reauthenticatedAt, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null, "customer_service"));
+                "grassland-trust", now, now.plusSeconds(60), null, null, "customer_service"));
     }
 }

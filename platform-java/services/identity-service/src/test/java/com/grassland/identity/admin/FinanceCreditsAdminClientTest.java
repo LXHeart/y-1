@@ -37,7 +37,8 @@ class FinanceCreditsAdminClientTest {
         String acctB = UUID.randomUUID().toString();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/internal/credits/balances", exchange -> {
-            assertThat(exchange.getRequestHeaders().getFirst("X-Internal-Key")).isEqualTo("test-key");
+            assertThat(exchange.getRequestHeaders().getFirst("X-Grassland-Identity"))
+                    .isEqualTo("identity-finance-assertion");
             byte[] body = ("{\"success\":true,\"data\":{\"accounts\":["
                     + "{\"accountId\":\"" + acctA + "\",\"balance\":5,\"totalEarned\":5,\"totalSpent\":0},"
                     + "{\"accountId\":\"" + acctB + "\",\"balance\":3,\"totalEarned\":10,\"totalSpent\":7}"
@@ -61,7 +62,7 @@ class FinanceCreditsAdminClientTest {
     void fetchBalancesReturnsEmptyMapForEmptyInput() {
         // 空入参不发 HTTP，直接返回空 map（不需要起 server）
         FinanceCreditsAdminClient client = new FinanceCreditsAdminClient(
-                "http://127.0.0.1:1", "test-key", 1000, assertionIssuer());
+                "http://127.0.0.1:1", 1000, assertionIssuer());
         Map<String, FinanceCreditsAdminClient.AccountBalance> balances =
                 client.fetchBalances(List.of()).block();
         assertThat(balances).isEmpty();
@@ -138,7 +139,7 @@ class FinanceCreditsAdminClientTest {
 
     private FinanceCreditsAdminClient client() {
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
-        return new FinanceCreditsAdminClient(base, "test-key", 2000, assertionIssuer());
+        return new FinanceCreditsAdminClient(base, 2000, assertionIssuer());
     }
 
     private static IdentityServiceAssertionIssuer assertionIssuer() {

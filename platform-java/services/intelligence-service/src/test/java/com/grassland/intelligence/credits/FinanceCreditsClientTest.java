@@ -26,11 +26,11 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
 /**
- * {@link FinanceCreditsClient}：经共享密钥 {@code X-Internal-Key} 调 finance 内部端点，
+ * {@link FinanceCreditsClient}：经命名服务断言调 finance 内部端点，
  * 200→完成、402→{@link InsufficientCreditsException}、其它 4xx→400、5xx→502。
  *
  * <p>关键修正：refund 必须发送 {@code refund:<consumeId>} 作为 operationId（finance 原样存储，
- * 与 consume 行的 {@code <consumeId>} 区分，保证一次扣减至多一次退款）。旧 {@link LegacyCreditsClient}
+ * 与 consume 行的 {@code <consumeId>} 区分，保证一次扣减至多一次退款）。旧回退实现
  * 误传原始 consume id → 与 consume 行撞车被 dedup 吞掉，退款从未生效。
  */
 class FinanceCreditsClientTest {
@@ -60,7 +60,7 @@ class FinanceCreditsClientTest {
         when(entitlements.get(ACCOUNT)).thenReturn(Mono.just(
                 new MarketplaceAiEntitlementClient.AiEntitlement(ACCOUNT, 15_000, 7)));
         client = new FinanceCreditsClient(wireMock.baseUrl(),
-                "/internal/credits/consume", "/internal/credits/refund", "shared-secret",
+                "/internal/credits/consume", "/internal/credits/refund",
                 entitlements, assertionIssuer, compensationRepository);
     }
 
@@ -70,7 +70,7 @@ class FinanceCreditsClientTest {
     }
 
     @Test
-    @DisplayName("200 → 扣减完成；请求带共享密钥与 {accountId, feature}")
+    @DisplayName("200 → 扣减完成；请求带服务断言与 {accountId, feature}")
     void consumeSuccess() {
         wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withStatus(200)
@@ -83,7 +83,6 @@ class FinanceCreditsClientTest {
         assertThat(charge.policyVersion()).isEqualTo(7);
         verify(entitlements).get(ACCOUNT);
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/consume"))
-                .withHeader("X-Internal-Key", equalTo("shared-secret"))
                 .withHeader("X-Grassland-Identity", equalTo("intelligence-finance-assertion"))
                 .withRequestBody(containing("\"accountId\":\"" + ACCOUNT + "\""))
                 .withRequestBody(containing("\"feature\":\"comedy_generation\""))
@@ -115,7 +114,7 @@ class FinanceCreditsClientTest {
 
         // refund 的 operationId 必须是 refund:<consumeId>——与 consume 行键区分，否则被 finance dedup 吞掉。
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/refund"))
-                .withHeader("X-Internal-Key", equalTo("shared-secret"))
+                .withHeader("X-Grassland-Identity", equalTo("intelligence-finance-assertion"))
                 .withRequestBody(containing("\"operationId\":\"refund:" + charge.operationId() + "\""))
                 .withRequestBody(containing("\"feature\":\"comedy_generation\"")));
     }
@@ -130,7 +129,6 @@ class FinanceCreditsClientTest {
         client.compensate(charge, "AI run failed").block();
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/consume-compensations"))
-                .withHeader("X-Internal-Key", equalTo("shared-secret"))
                 .withHeader("X-Grassland-Identity", equalTo("intelligence-finance-assertion"))
                 .withRequestBody(containing("\"consumeOperationId\":\"op-ai-1\""))
                 .withRequestBody(containing("\"feature\":\"ai_run_text\"")));
@@ -269,7 +267,7 @@ class FinanceCreditsClientTest {
     void consumeTimeoutCompensatesOriginalOperation() {
         String operationId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
         client = new FinanceCreditsClient(wireMock.baseUrl(),
-                "/internal/credits/consume", "/internal/credits/refund", "shared-secret",
+                "/internal/credits/consume", "/internal/credits/refund",
                 100, 50, entitlements, assertionIssuer, compensationRepository);
         wireMock.stubFor(post(urlEqualTo("/internal/credits/consume"))
                 .willReturn(aResponse().withFixedDelay(250).withStatus(200)

@@ -9,6 +9,8 @@ import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
 import com.grassland.intelligence.mediaplatform.PlatformMediaService;
 import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.videorecreation.TaskVideoAnalysisService;
+import com.grassland.intelligence.videorecreation.VideoRecreationTaskRequest;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -16,6 +18,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 /**
@@ -49,10 +52,12 @@ public class BilibiliAnalysisService {
     private final String publicBackendOrigin;
     private final PlatformMediaService media;
     private final VideoSegmentAnalysisService segmented;
+    private final TaskVideoAnalysisService taskAnalysis;
 
     public BilibiliAnalysisService(AiCapabilityAdapter ai, BilibiliProxyToken tokenCodec, CreditsClient credits,
                                    Environment environment, PlatformMediaService media,
-                                   VideoSegmentAnalysisService segmented) {
+                                   VideoSegmentAnalysisService segmented,
+                                   TaskVideoAnalysisService taskAnalysis) {
         this.ai = ai;
         this.tokenCodec = tokenCodec;
         this.credits = credits;
@@ -64,6 +69,7 @@ public class BilibiliAnalysisService {
         this.publicBackendOrigin = environment.getProperty("app.public-backend-origin", "");
         this.media = media;
         this.segmented = segmented;
+        this.taskAnalysis = taskAnalysis;
     }
 
     /** content 提取（live 端点 {@code POST /api/bilibili/analyze-video}）。 */
@@ -78,6 +84,31 @@ public class BilibiliAnalysisService {
                         // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "Bilibili 视频分析失败自动退回")
                                 .then(Mono.error(error))));
+    }
+
+    public Mono<BilibiliAnalysisOutcome> analyzeTask(
+            String proxyVideoUrl,
+            String accountId,
+            VideoRecreationTaskRequest task,
+            ServerWebExchange exchange) {
+        String token = extractToken(proxyVideoUrl);
+        BilibiliMediaTarget target = tokenCodec.parse(token);
+        long duration = assertAnalysisDuration(target.durationSeconds());
+        assertJavaConfigured();
+        if (target instanceof BilibiliMediaTarget.Progressive && duration <= maxSingleSegmentSeconds) {
+            return taskAnalysis.analyzeShort(
+                            buildPublicProxyUrl(token), accountId, task, exchange)
+                    .map(BilibiliAnalysisOutcome::new);
+        }
+        return media.prepareBilibili(target).flatMap(sourceId ->
+                (duration > maxSingleSegmentSeconds
+                        ? media.createClips(sourceId, duration, 30)
+                        : Mono.just(List.of(sourceId)))
+                        .flatMap(ids -> taskAnalysis.analyzeSegments(
+                                        "bilibili", ids, accountId, task, exchange)
+                                .map(BilibiliAnalysisOutcome::new)
+                                .doFinally(signal -> ids.forEach(media::remove)))
+                        .doFinally(signal -> media.remove(sourceId)));
     }
 
     /**

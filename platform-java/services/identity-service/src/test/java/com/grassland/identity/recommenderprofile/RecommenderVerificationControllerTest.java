@@ -20,6 +20,7 @@ import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
+@SuppressWarnings("unchecked")
 class RecommenderVerificationControllerTest {
 
     private CurrentAccountResolver accounts;

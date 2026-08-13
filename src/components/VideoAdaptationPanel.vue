@@ -14,7 +14,7 @@
     </div>
 
     <div v-if="showForm" class="adaptation-form">
-      <div class="instruction-field">
+      <div v-if="!taskContext" class="instruction-field">
         <label for="script-instruction">视频脚本改编提示</label>
         <textarea id="script-instruction" v-model="scriptInstruction" placeholder="例如：改为美食探店风格，增加特写镜头描述" rows="2" class="instruction-input" />
         <p class="field-hint">改编后的脚本可直接用于 Seedance 2.0 视频生成</p>
@@ -106,11 +106,13 @@ import { computed, ref } from 'vue'
 import { useVideoContentAdaptation } from '../composables/useVideoContentAdaptation'
 import { buildVideoAdaptationDisplayCards } from '../types/video-recreation'
 import type { VideoAnalysisResult } from '../types/video-recreation'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
 const props = defineProps<{
   platform: 'douyin' | 'bilibili'
   proxyVideoUrl: string
   extractedContent: VideoAnalysisResult | null
+  taskContext?: VideoTaskExecutionContext
 }>()
 
 const scriptInstruction = ref('')
@@ -248,6 +250,7 @@ async function handleAdapt(): Promise<void> {
       voiceInstruction: voiceInstruction.value.trim() || undefined,
     },
     selectedImages.value.length > 0 ? selectedImages.value : undefined,
+    props.taskContext,
   )
 }
 

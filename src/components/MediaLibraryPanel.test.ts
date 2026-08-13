@@ -84,6 +84,28 @@ describe('MediaLibraryPanel', () => {
     expect(wrapper.text()).toContain('文案')
   })
 
+  test('可选模式勾选素材并回传稳定 ID 列表', async () => {
+    const fetchMock = mockFetch({
+      '/api/content-assets?libraryType=personal': { items: [
+        { id: 'p1', mediaId: 'm1', libraryType: 'personal', category: 'copy',
+          title: '任务文案', tags: [], status: 'active', version: 1,
+          createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' },
+      ] },
+      '/api/me/identities': [],
+      '/api/me/store-scopes': [],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MediaLibraryPanel, {
+      props: { authenticated: true, selectable: true, selectedAssetIds: [] },
+    })
+    await flushPromises()
+    await wrapper.get('input[aria-label="选择素材：任务文案"]').setValue(true)
+
+    expect(wrapper.emitted('selection-change')?.[0]?.[0]).toEqual(['p1'])
+    expect(wrapper.text()).toContain('已选择 1 / 50 项创作素材')
+  })
+
   test('纯门店 MANAGER 可进入商家素材管理并限定到获授权门店', async () => {
     const fetchMock = mockFetch({
       '/api/me/identities': [],

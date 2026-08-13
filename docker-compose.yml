@@ -7,7 +7,7 @@ services:
       - "${FRONTEND_PORT:-8080}:80"
       - "${MINIO_PROXY_PORT:-9002}:9002"  # 草场 Slice 11 Stage 3: MinIO CORS 反代端口
     environment:
-      # 公网 API 默认统一经 edge-bff；应急整入口回退可临时设 backend:3000 后 recreate frontend。
+      # 公网 API 统一经 edge-bff；未登记路由由 Edge fail-closed 404。
       API_UPSTREAM: ${API_UPSTREAM:-edge-bff:8080}
       # 可信公网协议；TLS 在上游 LB/ingress 终止时必须显式设为 https，禁止透传客户端 XFP。
       PUBLIC_FORWARDED_PROTO: ${PUBLIC_FORWARDED_PROTO:-http}
@@ -16,64 +16,27 @@ services:
     depends_on:
       edge-bff:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
 
-  backend:
+  # JBE-02: one-shot Java bootstrap for shared account/session/settings tables.
+  # It is the only empty-database prerequisite for Java services; Express no longer owns bootstrap order.
+  database-bootstrap:
     build:
-      context: .
-      dockerfile: Dockerfile.backend
+      context: ./platform-java
+      dockerfile: services/database-bootstrap/Dockerfile
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      PORT: ${PORT:-3000}
-      CORS_ORIGIN: ${CORS_ORIGIN}
-      TRUST_PROXY: ${TRUST_PROXY:-1}
-      DOUYIN_FETCH_TIMEOUT_MS: ${DOUYIN_FETCH_TIMEOUT_MS:-15000}
-      DOUYIN_LOGIN_TIMEOUT_MS: ${DOUYIN_LOGIN_TIMEOUT_MS:-180000}
-      DOUYIN_LOGIN_URL: ${DOUYIN_LOGIN_URL:-https://www.douyin.com/}
-      DOUYIN_STORAGE_STATE_PATH: ${DOUYIN_STORAGE_STATE_PATH:-server/.data/douyin-storage-state.json}
-      DOUYIN_MEDIA_PROCESS_TIMEOUT_MS: ${DOUYIN_MEDIA_PROCESS_TIMEOUT_MS:-45000}
-      DOUYIN_MEDIA_TEMP_DIR: ${DOUYIN_MEDIA_TEMP_DIR:-server/.data/douyin-audio}
-      DOUYIN_USER_AGENT: ${DOUYIN_USER_AGENT:-Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36}
-      DOUYIN_PROXY_TOKEN_SECRET: ${DOUYIN_PROXY_TOKEN_SECRET}
-      PUBLIC_BACKEND_ORIGIN: ${PUBLIC_BACKEND_ORIGIN}
-      VIDEO_ANALYSIS_API_PATH: ${VIDEO_ANALYSIS_API_PATH:-}
-      VIDEO_ANALYSIS_API_TIMEOUT_MS: ${VIDEO_ANALYSIS_API_TIMEOUT_MS:-180000}
-      BILIBILI_FETCH_TIMEOUT_MS: ${BILIBILI_FETCH_TIMEOUT_MS:-15000}
-      BILIBILI_MEDIA_TEMP_DIR: ${BILIBILI_MEDIA_TEMP_DIR:-server/.data/bilibili-media}
-      BILIBILI_USER_AGENT: ${BILIBILI_USER_AGENT:-Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36}
-      BILIBILI_PROXY_TOKEN_SECRET: ${BILIBILI_PROXY_TOKEN_SECRET}
-      FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: ${DATABASE_URL:-}
-      SESSION_SECRET: ${SESSION_SECRET:-}
-      # GL-P0-AUTH-001：cookie 属性须与 identity-service 完全一致（同一张 session 表）。
-      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-y1.sid}
-      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-auto}
-      SESSION_COOKIE_SAME_SITE: ${SESSION_COOKIE_SAME_SITE:-Lax}
-      # 生产（HTTPS 入口）置 1 开 HSTS；HTTP 入口下即使置 1 也不会发（见 security-headers.ts）。
-      SECURITY_HSTS_ENABLED: ${SECURITY_HSTS_ENABLED:-0}
-      IDENTITY_DATASOURCE_FROM_DATABASE_URL: "true"
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-465}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      IDENTITY_EXTERNAL_DELIVERY_ENABLED: ${IDENTITY_EXTERNAL_DELIVERY_ENABLED:-false}
-      IDENTITY_SMS_CHALLENGE_SECRET: ${IDENTITY_SMS_CHALLENGE_SECRET:-}
-      PUSH_GATEWAY_ENDPOINT: ${PUSH_GATEWAY_ENDPOINT:-}
-      PUSH_GATEWAY_TOKEN: ${PUSH_GATEWAY_TOKEN:-}
-      SMS_GATEWAY_ENDPOINT: ${SMS_GATEWAY_ENDPOINT:-}
-      SMS_GATEWAY_TOKEN: ${SMS_GATEWAY_TOKEN:-}
-      # 草场 intelligence → legacy credits 过渡通道的共享密钥（两端同值；未配则 legacy 端点 fail-closed 503）。
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-    ports:
-      # legacy 只保留宿主机本地调试入口，公网流量必须经 Nginx -> edge-bff。
-      - "127.0.0.1:${BACKEND_PORT:-3000}:3000"
-    volumes:
-      - backend_data:/app/server/.data
-    restart: unless-stopped
+      DATABASE_BOOTSTRAP_MAX_ATTEMPTS: ${DATABASE_BOOTSTRAP_MAX_ATTEMPTS:-30}
+      DATABASE_BOOTSTRAP_RETRY_DELAY_MS: ${DATABASE_BOOTSTRAP_RETRY_DELAY_MS:-2000}
+    restart: "no"
 
-  # Java identity-service：默认应用栈组成部分，复用 backend 的 DATABASE_URL（自动派生 r2dbc）。
+  # Java identity-service：默认应用栈组成部分，使用共享 DATABASE_URL（自动派生 r2dbc）。
   identity-service:
     build:
       context: ./platform-java
@@ -82,7 +45,7 @@ services:
       SERVER_PORT: "8082"
       DATABASE_URL: ${DATABASE_URL:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
-      # GL-P0-AUTH-001：与 backend 同值，否则同一张 session 表上会写出属性不一致的 cookie。
+      # GL-P0-AUTH-001：Java Web 会话 cookie 策略的部署配置。
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-y1.sid}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-auto}
       SESSION_COOKIE_SAME_SITE: ${SESSION_COOKIE_SAME_SITE:-Lax}
@@ -131,6 +94,7 @@ services:
       # 未配置时 KYB 敏感字段端点 fail-closed 503，不落明文。
       CRYPTO_KEK_BASE64: ${CRYPTO_KEK_BASE64:-}
       IDENTITY_KYB_REVIEW_SLA_SECONDS: ${IDENTITY_KYB_REVIEW_SLA_SECONDS:-259200}
+      IDENTITY_KYB_MEDIA_VALIDATION_TIMEOUT_MS: ${IDENTITY_KYB_MEDIA_VALIDATION_TIMEOUT_MS:-3000}
       IDENTITY_KYB_DOCUMENT_ANALYSIS_ENABLED: ${IDENTITY_KYB_DOCUMENT_ANALYSIS_ENABLED:-true}
       IDENTITY_PERMISSION_SLA_MONITOR_ENABLED: ${IDENTITY_PERMISSION_SLA_MONITOR_ENABLED:-true}
       IDENTITY_PERMISSION_SLA_MONITOR_POLL_INTERVAL_MS: ${IDENTITY_PERMISSION_SLA_MONITOR_POLL_INTERVAL_MS:-60000}
@@ -152,10 +116,16 @@ services:
       # 过期行清理定时任务：默认关（本地/测试不起），容器内开。
       IDENTITY_REFRESH_TOKEN_CLEANUP_ENABLED: ${IDENTITY_REFRESH_TOKEN_CLEANUP_ENABLED:-true}
     depends_on:
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9082/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   # GL-P3-PLATFORM-001：私网 Prometheus，抓六个 Java 服务与领域积压指标，加载告警规则。
@@ -216,15 +186,14 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  # 统一 Java Edge BFF 入口。Nginx 的 /api 与 /health 默认只指向本服务；
-  # RouteManifest 将已迁移路由送往 Java 领域服务，其余透明回落 Express。
+  # 统一 Java Edge BFF 入口。Nginx 的 /api 与 /health 只指向本服务；
+  # RouteManifest 未命中、method 不匹配或 flag=false 均在 Edge 返回 404。
   edge-bff:
     build:
       context: ./platform-java
       dockerfile: services/edge-bff/Dockerfile
     environment:
       SERVER_PORT: "8080"
-      LEGACY_EXPRESS_BASE_URL: http://backend:3000
       IDENTITY_SERVICE_BASE_URL: http://identity-service:8082
       MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
       FINANCE_SERVICE_BASE_URL: http://finance-service:8084
@@ -260,6 +229,7 @@ services:
       EDGE_ROUTE_ADMIN_CONTENT_ASSETS_INTELLIGENCE: ${EDGE_ROUTE_ADMIN_CONTENT_ASSETS_INTELLIGENCE:-true}
       EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE: ${EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE:-true}
       EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE: ${EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE:-true}
+      EDGE_ROUTE_CREATION_CONTEXTS_INTELLIGENCE: ${EDGE_ROUTE_CREATION_CONTEXTS_INTELLIGENCE:-true}
       EDGE_ROUTE_RECOMMENDERS_IDENTITY: ${EDGE_ROUTE_RECOMMENDERS_IDENTITY:-true}
       EDGE_ROUTE_OPS_MARKETPLACE: ${EDGE_ROUTE_OPS_MARKETPLACE:-true}
       EDGE_ROUTE_REPUTATION_MARKETPLACE: ${EDGE_ROUTE_REPUTATION_MARKETPLACE:-true}
@@ -282,7 +252,7 @@ services:
       EDGE_ROUTE_IMAGE_ANALYSIS_GENERATION_INTELLIGENCE: ${EDGE_ROUTE_IMAGE_ANALYSIS_GENERATION_INTELLIGENCE:-true}
       EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE: ${EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE:-true}
       EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE: ${EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE:-true}
-      # 媒体链路默认由 Java 承载；显式 false 可整族回切 legacy。
+      # 媒体链路由 Java 承载；显式 false 会停用该路由族并返回 404。
       EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:-true}
       EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE: ${EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE:-true}
       EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:-true}
@@ -323,12 +293,22 @@ services:
       # Vite 本地开发仍可访问 localhost:8081；公网只能经 frontend Nginx。
       - "127.0.0.1:${EDGE_BFF_PORT:-8081}:8080"
     depends_on:
-      - backend
-      - identity-service
-      - marketplace-service
-      - finance-service
-      - trust-service
-      - intelligence-service
+      identity-service:
+        condition: service_healthy
+      marketplace-service:
+        condition: service_healthy
+      finance-service:
+        condition: service_healthy
+      trust-service:
+        condition: service_healthy
+      intelligence-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   # Java marketplace-service（Epic 4）：默认应用栈组成部分。
@@ -395,8 +375,8 @@ services:
       MARKETPLACE_OPS_DLT_CLEANUP_ENABLED: ${MARKETPLACE_OPS_DLT_CLEANUP_ENABLED:-${MARKETPLACE_DLT_CONSUMER_ENABLED:-${MARKETPLACE_TRUST_CONSUMER_ENABLED:-true}}}
       MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS: ${MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS:-30}
     depends_on:
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
       temporal:
         condition: service_healthy
       finance-service:
@@ -407,6 +387,12 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9082/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   # Java finance-service（Epic 4 Slice 4D）：默认应用栈组成部分。
@@ -447,14 +433,19 @@ services:
       IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE:-}
       IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE_PREVIOUS_KID: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE_PREVIOUS_KID:-}
       IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE_PREVIOUS: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE_PREVIOUS:-}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
       AI_FREE_QUOTA_BASE_DAILY: ${AI_FREE_QUOTA_BASE_DAILY:-2}
       AI_FREE_QUOTA_ZONE_ID: ${AI_FREE_QUOTA_ZONE_ID:-Asia/Shanghai}
     depends_on:
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9082/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   # Java trust-service（Epic 6 Slice 6A）：默认应用栈组成部分。
@@ -473,7 +464,7 @@ services:
       TRUST_ADJUDICATION_VOTE_WINDOW_SECONDS: ${TRUST_ADJUDICATION_VOTE_WINDOW_SECONDS:-60}
       TRUST_ADJUDICATION_APPEAL_WINDOW_SECONDS: ${TRUST_ADJUDICATION_APPEAL_WINDOW_SECONDS:-60}
       TRUST_EVIDENCE_RETENTION_DAYS: ${TRUST_EVIDENCE_RETENTION_DAYS:-365}
-      TRUST_EVIDENCE_PSEUDONYM_SECRET: ${TRUST_EVIDENCE_PSEUDONYM_SECRET:-development-only-evidence-pseudonym-secret}
+      TRUST_EVIDENCE_PSEUDONYM_SECRET: ${TRUST_EVIDENCE_PSEUDONYM_SECRET:-}
       # GL-P0-ASSERT-001 keyring 模式：trust 签发服务断言到 finance/marketplace，验证 edge-bff 用户断言 + marketplace 服务断言
       IDENTITY_ASSERTION_ENABLED: "true"
       IDENTITY_ASSERTION_ISSUER: ${IDENTITY_ASSERTION_ISSUER:-trust}
@@ -498,12 +489,18 @@ services:
       MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
       IDENTITY_SERVICE_BASE_URL: http://identity-service:8082
     depends_on:
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
       temporal:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9082/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   # Java intelligence-service（草场 intelligence Slice 1）：默认应用栈组成部分。
@@ -546,12 +543,16 @@ services:
       IDENTITY_SERVICE_BASE_URL: http://identity-service:8082
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # 平台默认 Qwen（HLD §12.3 第一步）；QWEN_API_KEY 未配则 PlatformModelConfig 启动 fail-fast。
-      QWEN_BASE_URL: ${QWEN_BASE_URL:-}
-      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:?QWEN_BASE_URL is required for intelligence-service}
+      QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required for intelligence-service}
       QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
       IMAGE_GENERATION_BASE_URL: ${IMAGE_GENERATION_BASE_URL:-}
       IMAGE_GENERATION_API_KEY: ${IMAGE_GENERATION_API_KEY:-}
       IMAGE_GENERATION_MODEL: ${IMAGE_GENERATION_MODEL:-}
+      IMAGE_GENERATION_PROVIDER: ${IMAGE_GENERATION_PROVIDER:-qwen}
+      IMAGE_GENERATION_PRICING_VERSION: ${IMAGE_GENERATION_PRICING_VERSION:-image-config-v1}
+      IMAGE_GENERATION_UNIT_PRICE_CENTS: ${IMAGE_GENERATION_UNIT_PRICE_CENTS:-80}
+      IMAGE_GENERATION_PLATFORM_MODEL_VERSION: ${IMAGE_GENERATION_PLATFORM_MODEL_VERSION:-1}
       # Slice 13 Bilibili：共享 HMAC token secret；public origin 必须是浏览器/模型可达的 edge-bff 外部地址。
       # 媒体路由默认开启，须配置 secret（≥32 chars）及浏览器/模型可达的 PUBLIC_BACKEND_ORIGIN。
       BILIBILI_PROXY_TOKEN_SECRET: ${BILIBILI_PROXY_TOKEN_SECRET:-}
@@ -594,20 +595,26 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
       MINIO_BUCKET: ${MINIO_BUCKET:-grassland}
       MINIO_AUTO_CREATE_BUCKET: "false"
-      # 积分默认走 finance-service；legacy bridge 仅供显式应急回退。
-      LEGACY_CREDITS_BASE_URL: http://backend:3000
+      # Intelligence 只直连 Java finance-service，不存在 Node 内部 bridge 回退。
       FINANCE_CREDITS_BASE_URL: http://finance-service:8084
       MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     volumes:
       - intelligence_media_data:/var/lib/grassland-media
     depends_on:
+      database-bootstrap:
+        condition: service_completed_successfully
       minio:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9082/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   # Epic 3：事件基础设施
@@ -710,8 +717,7 @@ services:
   # 用法：docker compose up -d   （DATABASE_URL 见 .env）
   # 宿主机连（跑脚本/psql）：postgresql://grassland:grassland@localhost:55432/grassland
   #
-  # ⚠️ 空库初始化顺序：Java 服务 Flyway 只建草场表；session/app_users 等 legacy 表由
-  # server/sql/ 管理，须先跑 `npm run db:migrate:local`，否则 identity 报 relation "session" does not exist。
+  # 空库初始化由 database-bootstrap 一次性 Java 服务负责；Java 领域 Flyway 随后并行启动。
   # 一键种 e2e 数据：`npm run e2e:seed`
   postgres-local:
     image: postgres:18-alpine
@@ -734,7 +740,6 @@ services:
       retries: 12
 
 volumes:
-  backend_data:
   intelligence_media_data:
   minio_data:
   temporal_dev_data:

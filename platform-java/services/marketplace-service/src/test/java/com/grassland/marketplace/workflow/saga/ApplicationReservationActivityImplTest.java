@@ -35,6 +35,7 @@ import reactor.core.publisher.Mono;
  * 真实回滚由 {@code ActivityOutboxAtomicityIT}（testcontainers + spy outbox）证明。
  */
 @ExtendWith(MockitoExtension.class)
+@SuppressWarnings("unchecked")
 class ApplicationReservationActivityImplTest {
 
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";

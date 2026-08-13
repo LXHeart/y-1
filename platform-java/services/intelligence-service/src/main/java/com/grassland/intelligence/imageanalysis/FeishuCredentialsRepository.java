@@ -7,11 +7,11 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * 飞书应用凭据只读访问（草场 intelligence Slice 6）。凭据存于 legacy {@code user_settings(settings_type='analysis')}
- * 的 {@code settings_json->integrations->feishu}，由 legacy {@code /api/settings/*} 管理（本 slice 不迁）。
+ * 飞书应用凭据只读访问（草场 intelligence Slice 6）。凭据存于 Java bootstrap 管理的
+ * {@code user_settings(settings_type='analysis')} 的 {@code settings_json->integrations->feishu}，
+ * 由 intelligence {@code /api/settings/*} 管理。
  *
- * <p>与 identity 读 legacy {@code app_users}/{@code session} 同构：跨服务只读 legacy 表。表由 V2 {@code IF NOT EXISTS} 兜底创建，
- * 缺行/缺表→{@link Mono#empty}（controller 转 400「飞书应用凭证未配置」）。后续 settings 迁移后此仓储可移除。
+ * <p>缺行返回 {@link Mono#empty}（controller 转 400「飞书应用凭证未配置」）。
  */
 @Component
 public class FeishuCredentialsRepository {
@@ -24,20 +24,15 @@ public class FeishuCredentialsRepository {
     }
 
     public Mono<FeishuCredentials> find(String accountId) {
-        // user_settings 是 legacy-owned：空库若 legacy migration 尚未跑，表不存在。先查 regclass，避免导出端点 500；
         // user_id 是 uuid 列，按 text 比较避免非 uuid 形态 accountId 强转错误。
-        return db.sql("SELECT to_regclass('public.user_settings') IS NOT NULL AS present")
-                .map(r -> Boolean.TRUE.equals(r.get("present", Boolean.class)))
+        return db.sql("""
+                SELECT settings_json::text FROM user_settings
+                WHERE user_id::text = :accountId AND settings_type = 'analysis'
+                ORDER BY updated_at DESC LIMIT 1
+                """)
+                .bind("accountId", accountId)
+                .map(r -> r.get("settings_json", String.class))
                 .one()
-                .filter(Boolean::booleanValue)
-                .flatMap(ignored -> db.sql("""
-                        SELECT settings_json::text FROM user_settings
-                        WHERE user_id::text = :accountId AND settings_type = 'analysis'
-                        ORDER BY updated_at DESC LIMIT 1
-                        """)
-                        .bind("accountId", accountId)
-                        .map(r -> r.get("settings_json", String.class))
-                        .one())
                 .map(FeishuCredentialsRepository::parse);
     }
 

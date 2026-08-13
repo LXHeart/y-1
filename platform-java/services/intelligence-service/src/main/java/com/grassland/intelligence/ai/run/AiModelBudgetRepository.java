@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
-import org.springframework.r2dbc.core.Parameter;
+import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -49,15 +49,15 @@ public class AiModelBudgetRepository {
                 )
                 RETURNING id::text
                 """)
-                .bind("orgId", Parameter.fromOrEmpty(budget.organizationId(), String.class))
+                .bind("orgId", nullable(budget.organizationId(), String.class))
                 .bind("capability", budget.capability())
                 .bind("provider", budget.provider())
-                .bind("maxTokensRun", Parameter.fromOrEmpty(budget.maxTokensPerRun(), Integer.class))
-                .bind("maxTokensDaily", Parameter.fromOrEmpty(budget.maxTokensDaily(), Long.class))
-                .bind("maxTokensMonthly", Parameter.fromOrEmpty(budget.maxTokensMonthly(), Long.class))
-                .bind("maxCentsRun", Parameter.fromOrEmpty(budget.maxCentsPerRun(), Integer.class))
-                .bind("maxCentsDaily", Parameter.fromOrEmpty(budget.maxCentsDaily(), Long.class))
-                .bind("maxCentsMonthly", Parameter.fromOrEmpty(budget.maxCentsMonthly(), Long.class))
+                .bind("maxTokensRun", nullable(budget.maxTokensPerRun(), Integer.class))
+                .bind("maxTokensDaily", nullable(budget.maxTokensDaily(), Long.class))
+                .bind("maxTokensMonthly", nullable(budget.maxTokensMonthly(), Long.class))
+                .bind("maxCentsRun", nullable(budget.maxCentsPerRun(), Integer.class))
+                .bind("maxCentsDaily", nullable(budget.maxCentsDaily(), Long.class))
+                .bind("maxCentsMonthly", nullable(budget.maxCentsMonthly(), Long.class))
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);

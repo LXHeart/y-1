@@ -8,6 +8,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "edge")
 public record EdgeRoutingProperties(Map<String, URI> upstreams, List<RouteProperties> routes, String defaultUpstream) {
+    public static final String FAIL_CLOSED = "fail-closed";
+
     public EdgeRoutingProperties {
         if (upstreams == null || upstreams.isEmpty()) {
             throw new IllegalArgumentException("edge.upstreams must define at least one upstream");
@@ -28,7 +30,7 @@ public record EdgeRoutingProperties(Map<String, URI> upstreams, List<RouteProper
         if (defaultUpstream == null || defaultUpstream.isBlank()) {
             throw new IllegalArgumentException("edge.default-upstream must be set");
         }
-        if (!upstreams.containsKey(defaultUpstream)) {
+        if (!FAIL_CLOSED.equals(defaultUpstream) && !upstreams.containsKey(defaultUpstream)) {
             throw new IllegalArgumentException("edge.default-upstream '" + defaultUpstream + "' is not defined in edge.upstreams");
         }
         routes = routes == null ? List.of() : routes;

@@ -10,17 +10,41 @@ server:
     enabled: false
 
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    export:
+      enabled: ${OTEL_TRACING_ENABLED:false}
+      otlp:
+        enabled: ${OTEL_EXPORT_ENABLED:false}
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      consume: W3C
+      produce: W3C
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:}
   server:
     port: ${MANAGEMENT_SERVER_PORT:9080}
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
 
 edge:
-  default-upstream: legacy
+  # Unknown, method-mismatched, or disabled routes return 404 at Edge; there is no backend fallback.
+  default-upstream: fail-closed
   security:
-    # 与 legacy Express 的全局写请求 Origin/Referer 门禁同口径；0/false 仅用于应急兼容排障。
+    # Cookie 写请求的全局 Origin/Referer 门禁；0/false 仅用于应急排障。
     csrf-origin-check: ${SECURITY_CSRF_ORIGIN_CHECK:1}
     allowed-origins: ${CORS_ORIGIN:},${PUBLIC_BACKEND_ORIGIN:}
     internal-identity-header: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
@@ -35,7 +59,6 @@ edge:
     previous-keys: ${EDGE_ACCESS_TOKEN_PREVIOUS_KEYS:}
     leeway-seconds: ${EDGE_ACCESS_TOKEN_LEEWAY_SECONDS:5}
   upstreams:
-    legacy: ${LEGACY_EXPRESS_BASE_URL:http://localhost:3000}
     identity: ${IDENTITY_SERVICE_BASE_URL:http://localhost:8082}
     marketplace: ${MARKETPLACE_SERVICE_BASE_URL:http://localhost:8083}
     finance: ${FINANCE_SERVICE_BASE_URL:http://localhost:8084}
@@ -90,7 +113,7 @@ edge:
     - path: /api/v2
       upstream: marketplace
       enabled: ${EDGE_ROUTE_COMMERCE_MARKETPLACE:true}
-    # ---- 身份域非 auth 端点（Slice 2E–2L）→ identity-service。legacy Express 无这些前缀，纯增量不抢旧流量。----
+    # ---- 身份域非 auth 端点（Slice 2E–2L）→ identity-service。----
     # 组织/门店/成员/权限申请/额度（前缀覆盖全部子路径）。
     - path: /api/organizations
       upstream: identity
@@ -114,7 +137,7 @@ edge:
       enabled: ${EDGE_ROUTE_ADMIN_RECOMMENDER_IDENTITY:true}
     # 平台 AI 控制面（GL-P3-AI-001）→ intelligence-service。
     # /api/ai 前缀：BYOK 密钥管理（/api/ai/keys，Phase 1 已交付）+ 控制面 Run（/api/ai/runs）。
-    # 全新路径、无 legacy 碰撞——此前 /api/ai/keys 经 edge 落 legacy 404（隐性不可达 bug），本路由让其首次可达。
+    # /api/ai/keys 与 /api/ai/runs 统一由 intelligence 承载。
     - path: /api/ai
       upstream: intelligence
       enabled: ${EDGE_ROUTE_AI_INTELLIGENCE:true}
@@ -150,7 +173,7 @@ edge:
       upstream: trust
       enabled: ${EDGE_ROUTE_ADMIN_TRUST:true}
     # 内容素材库（PRD §4.8 / Slice 14）→ intelligence。/api/content-assets 三类库 CRUD + 授权 + 下载；
-    # 物理资产三步上传走既有 /api/media 路由（无需另配）。全新路径，无 legacy 碰撞。
+    # 物理资产三步上传走既有 /api/media 路由（无需另配）。
     - path: /api/content-assets
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CONTENT_ASSETS_INTELLIGENCE:true}
@@ -160,7 +183,7 @@ edge:
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_CONTENT_ASSETS_INTELLIGENCE:true}
     # 智能创作助手（PRD §4.9 / Slice 15）→ intelligence。/api/creation-assistant 全部 5 个 SSE 端点
-    #（score/suggest/guide/task-coverage/topic-from-hot）。全新路径，无 legacy 碰撞。
+    #（score/suggest/guide/task-coverage/topic-from-hot）。
     - path: /api/creation-assistant
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE:true}
@@ -168,7 +191,11 @@ edge:
     - path: /api/creation-drafts
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE:true}
-    # 平台 admin 用户管理 + 积分调整（迁自 legacy Express）→ identity。
+    # P1 任务创作上下文快照：开始创作时由 intelligence 冻结任务/规则/素材/AI 配置。
+    - path: /api/creation-contexts
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_CONTEXTS_INTELLIGENCE:true}
+    # 平台 admin 用户管理 + 积分调整 → identity。
     # 精确路径，不抢同前缀的 permission-requests/kyb-requests/ai（它们排在前面，更具体优先）。
     # 同一 flag 绑定两者（同属一次迁移，不应分开切流）。
     - path: /api/admin/users
@@ -183,7 +210,7 @@ edge:
       upstream: identity
       enabled: ${EDGE_ROUTE_RECOMMENDERS_IDENTITY:true}
     # 运营处置台（GL-P1-OPS-001）→ marketplace。前缀覆盖 /api/ops/cases、/api/ops/dlt、
-    # /api/ops/pending-verifications。legacy Express 无 /api/ops 前缀，纯增量不抢旧流量。
+    # /api/ops/pending-verifications。
     # 闸门在 marketplace 侧按平台角色（customer_service/admin）判，edge 只透传断言。
     - path: /api/ops
       upstream: marketplace
@@ -197,8 +224,7 @@ edge:
       upstream: finance
       enabled: ${EDGE_ROUTE_FINANCE:true}
     # ---- 积分读端（GL-P3-AI-001 下属切片）→ finance-service。balance/history 由 finance 承载，
-    # 用户断言由 InternalAssertionFilter 自动签发（grassland-finance audience）。前缀窄、无碰撞；
-    # 回滚 EDGE_ROUTE_CREDITS_FINANCE=false 即回落 legacy default upstream。
+    # 用户断言由 InternalAssertionFilter 自动签发（grassland-finance audience）。flag=false 时 404。
     - path: /api/credits
       upstream: finance
       enabled: ${EDGE_ROUTE_CREDITS_FINANCE:true}
@@ -207,18 +233,16 @@ edge:
       upstream: trust
       enabled: ${EDGE_ROUTE_TRUST:true}
     # ---- intelligence（草场 intelligence Slice 1）→ intelligence-service。AI 基建 + 冒烟端点。----
-    # legacy AI 工具（/api/image-analysis、/api/article-generation、/api/douyin 等）仍走 legacy，
-    # 本路由只接管 /api/intelligence 前缀；后续业务模块迁入时再逐族加路由（各带回滚开关）。
     - path: /api/intelligence
       upstream: intelligence
       enabled: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:true}
-    # ---- 用户级分析设置（Legacy 迁移）→ intelligence-service。AI provider 配置同域。----
+    # ---- 用户级分析设置 → intelligence-service。AI provider 配置同域。----
     # /api/settings/analysis（GET/PUT）、/analysis/models、/analysis/verify-model、/api/settings/homepage。
     # 密钥在响应中掩码（**** + 末4位）；PUT 掩码原样回传 = 不变，空串 = 清空。
     - path: /api/settings
       upstream: intelligence
       enabled: ${EDGE_ROUTE_SETTINGS_INTELLIGENCE:true}
-    # ---- 首页热点聚合（Legacy 迁移）→ intelligence-service。GET /api/homepage/hot-items。----
+    # ---- 首页热点聚合 → intelligence-service。GET /api/homepage/hot-items。----
     # 不强制登录：登录用户按其 homepage settings 选 provider（60s/alapi），未登录走平台默认 60s。
     - path: /api/homepage
       upstream: intelligence
@@ -228,16 +252,13 @@ edge:
     - path: /api/media
       upstream: intelligence
       enabled: ${EDGE_ROUTE_MEDIA_INTELLIGENCE:true}
-    # ---- comedy 生成（草场 intelligence Slice 2）→ intelligence-service。路径沿用 legacy
+    # ---- comedy 生成（草场 intelligence Slice 2）→ intelligence-service。路径沿用旧公开契约，
     # /api/comedy-generation/generate-script，前端零改动；扣积分 + 李继刚 prompt 在 intelligence。
-    # legacy 同名端点随本路由开启而退役（回滚：EDGE_ROUTE_COMEDY_INTELLIGENCE=false 即回退 legacy）。
+    # flag=false 时停用并返回 404。
     - path: /api/comedy-generation
       upstream: intelligence
       enabled: ${EDGE_ROUTE_COMEDY_INTELLIGENCE:true}
-    # ---- 文章生成（草场 intelligence Slice 3）→ intelligence-service。⚠️ 前缀 /api/article-generation
-    # 与 legacy 图片端点（image-recommendations/search-images/generate-image/generated-images）共享，
-    # 故只把三个文本端点用 method+path 精确路由到 intelligence；图片端点仍走 legacy default upstream。
-    # 各带回滚开关；legacy 同名文本端点随路由开启退役。
+    # ---- 文章生成（草场 intelligence Slice 3/5）→ intelligence-service。精确 method+path 防误吞未知端点。
     - method: POST
       path: /api/article-generation/titles
       upstream: intelligence
@@ -275,8 +296,8 @@ edge:
       path: /api/article-generation/generated-images
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE:true}
-    # ---- 视频制作脚本（草场 intelligence Slice 4）→ intelligence-service。仅精确切 generate-script；
-    # /api/video-production/generate-video 仍是 legacy Seedance stub，不得被抢走。回滚开关默认开。
+    # ---- 视频制作（草场 intelligence Slice 4 / GL-P3-VIDEO-001）→ intelligence-service。
+    # 脚本、异步任务、任务查询和能力探测共用独立开关；关闭后 404。
     - method: POST
       path: /api/video-production/generate-script
       upstream: intelligence
@@ -292,6 +313,11 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
+    - method: POST
+      path: /api/video-production/webhooks
+      upstream: intelligence
+      exact: false
+      enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
     - method: GET
       path: /api/video-production/jobs
       upstream: intelligence
@@ -300,9 +326,8 @@ edge:
       path: /api/video-production/jobs
       upstream: intelligence
       enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
-    # ---- 视频改编出图（草场 intelligence Slice 9）→ intelligence-service。⚠️ 前缀 /api/video-recreation
-    # 与 legacy adapt-content（Slice 10 仍 legacy）共享，故 4 个图片端点用 method+path 精确路由；
-    # adapt-content 不在本批，仍走 legacy default upstream。四个端点共享一个回滚开关，默认开。
+    # ---- 视频改编出图（草场 intelligence Slice 9）→ intelligence-service。
+    # 4 个图片端点用 method+path 精确路由，避免捕获未知 sibling；共享一个停用开关。
     - method: POST
       path: /api/video-recreation/generate-asset-image
       upstream: intelligence
@@ -324,17 +349,16 @@ edge:
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_RECREATION_IMAGES_INTELLIGENCE:true}
     # ---- 视频改编内容（草场 intelligence Slice 10）→ intelligence-service。adapt-content 携带
-    # multipart（4×5MB + 嵌套 JSON），默认由 Java 承载，显式 false 回切 legacy。家族限流由 BFF
+    # multipart（4×5MB + 嵌套 JSON），由 Java 承载；显式 false 停用并返回 404。家族限流由 BFF
     # VideoRecreationRateLimitFilter 在分流前对整个 /api/video-recreation 共享 10/min，不另开桶。
     - method: POST
       path: /api/video-recreation/adapt-content
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE:true}
-    # ---- 图片评价文案（草场 intelligence Slice 6）→ intelligence-service。⚠️ 前缀 /api/image-analysis
-    # 当前未整体路由（回落 legacy），故按 leaf method+path 精确切到 intelligence，分三域回滚开关：
+    # ---- 图片评价文案（草场 intelligence Slice 6）→ intelligence-service。按 leaf method+path 精确路由，分三域开关：
     # 生成（analyze + step/*）、风格数据（style-preferences* + save-style-memory）、飞书导出（export-feishu）。
-    # /analyze 的 20/min 限流由 intelligence 的 ImageAnalysisPreflightFilter 负责（legacy 的 app.ts 限流不再触达）。
+    # /analyze 的 20/min 限流由 intelligence 的 ImageAnalysisPreflightFilter 负责。
     - method: POST
       path: /api/image-analysis/analyze
       upstream: intelligence
@@ -388,7 +412,7 @@ edge:
       exact: true
       enabled: ${EDGE_ROUTE_DOUYIN_HOT_ITEMS_INTELLIGENCE:true}
     # ---- Bilibili 完整媒体链路 → intelligence-service。DASH mux、Range、分段分析均由 Java 承载。
-    # 同一开关整族切流；显式 false 时由 edge 回切 legacy。
+    # 同一开关整族启停；显式 false 时 Edge 返回 404。
     - method: POST
       path: /api/bilibili/extract-video
       upstream: intelligence
@@ -414,7 +438,7 @@ edge:
       upstream: intelligence
       enabled: ${EDGE_ROUTE_BILIBILI_MEDIA_INTELLIGENCE:true}
     # ---- Douyin 完整媒体链路 → intelligence-service。含 Playwright session、音频、分段分析和 Range。
-    # 同一开关整族切流；显式 false 时由 edge 回切 legacy。
+    # 同一开关整族启停；显式 false 时 Edge 返回 404。
     - method: POST
       path: /api/douyin/extract-video
       upstream: intelligence
@@ -485,7 +509,6 @@ identity-assertion:
     key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 identity:
-  legacy:
-    session:
-      cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
-      secret: ${SESSION_SECRET:}
+  session:
+    cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
+    secret: ${SESSION_SECRET:}

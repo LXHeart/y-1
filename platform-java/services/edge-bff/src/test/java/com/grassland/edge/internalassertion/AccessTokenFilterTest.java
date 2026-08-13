@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.grassland.edge.proxy.UpstreamResolver;
+import com.grassland.edge.proxy.EdgeRoutingProperties;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -61,9 +62,9 @@ class AccessTokenFilterTest {
     }
 
     @Test
-    void legacyRouteStripsBearerWithoutTryingToAuthenticate() {
+    void failClosedRouteStripsBearerWithoutTryingToAuthenticate() {
         AccessTokenFilter filter = new AccessTokenFilter(provider(null), upstream(false));
-        client(filter).get().uri("/api/legacy-tool")
+        client(filter).get().uri("/api/unknown-tool")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer access-token")
                 .exchange()
                 .expectStatus().isOk()
@@ -83,7 +84,7 @@ class AccessTokenFilterTest {
     }
 
     @Test
-    void refreshRouteFallbackToLegacyStripsBearer() {
+    void disabledRefreshRouteStripsBearer() {
         AccessTokenFilter filter = new AccessTokenFilter(provider(null), upstream(false));
         client(filter).post().uri("/api/auth/refresh")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer refresh-token")
@@ -117,7 +118,8 @@ class AccessTokenFilterTest {
     private static UpstreamResolver upstream(boolean internal) {
         UpstreamResolver upstream = mock(UpstreamResolver.class);
         when(upstream.isInternalUpstream(anyString(), anyString())).thenReturn(internal);
-        when(upstream.resolveUpstreamName(anyString(), anyString())).thenReturn(internal ? "identity" : "legacy");
+        when(upstream.resolveUpstreamName(anyString(), anyString()))
+                .thenReturn(internal ? "identity" : EdgeRoutingProperties.FAIL_CLOSED);
         return upstream;
     }
 

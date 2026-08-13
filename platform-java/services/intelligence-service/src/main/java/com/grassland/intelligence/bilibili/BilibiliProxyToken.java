@@ -183,7 +183,7 @@ public final class BilibiliProxyToken {
             return null;
         }
         Map<String, String> headers = new LinkedHashMap<>();
-        node.fields().forEachRemaining(entry -> {
+        node.properties().forEach(entry -> {
             JsonNode value = entry.getValue();
             if (value != null && value.isTextual()) {
                 headers.put(entry.getKey(), value.asText());

@@ -6,7 +6,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
-import org.springframework.r2dbc.core.Parameter;
+import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -22,7 +22,7 @@ public class AiRunRepository {
             + "input_tokens, output_tokens, images_generated, video_seconds, "
             + "budget_cents, actual_cents, status, failure_reason, "
             + "started_at, completed_at, price_table_version, operation_id::text, refund_operation_id::text, "
-            + "created_at, updated_at, platform_model_version, fallback_authorized";
+            + "created_at, updated_at, platform_model_version, fallback_authorized, context_snapshot_id::text";
 
     private final DatabaseClient db;
 
@@ -35,23 +35,26 @@ public class AiRunRepository {
         return db.sql("""
                 INSERT INTO ai_run(
                     organization_id, account_id, capability, provider, model, run_type,
-                    budget_cents, operation_id, platform_model_version, fallback_authorized
+                    budget_cents, operation_id, platform_model_version, fallback_authorized, context_snapshot_id
                 ) VALUES (
                     :orgId, :accountId, :capability, :provider, :model, :runType,
-                    :budgetCents, CAST(:operationId AS uuid), :platformModelVersion, :fallbackAuthorized
+                    :budgetCents, CAST(:operationId AS uuid), :platformModelVersion, :fallbackAuthorized,
+                    CAST(:contextSnapshotId AS uuid)
                 )
                 RETURNING id::text
                 """)
-                .bind("orgId", Parameter.fromOrEmpty(run.organizationId(), String.class))
+                .bind("orgId", nullable(run.organizationId(), String.class))
                 .bind("accountId", run.accountId())
                 .bind("capability", run.capability())
                 .bind("provider", run.provider())
-                .bind("model", Parameter.fromOrEmpty(run.model(), String.class))
+                .bind("model", nullable(run.model(), String.class))
                 .bind("runType", run.runType())
                 .bind("budgetCents", run.budgetCents())
                 .bind("operationId", run.operationId().toString())
-                .bind("platformModelVersion", Parameter.fromOrEmpty(run.platformModelVersion(), Integer.class))
+                .bind("platformModelVersion", nullable(run.platformModelVersion(), Integer.class))
                 .bind("fallbackAuthorized", run.fallbackAuthorized())
+                .bind("contextSnapshotId", nullable(
+                        run.contextSnapshotId() == null ? null : run.contextSnapshotId().toString(), String.class))
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
@@ -75,8 +78,8 @@ public class AiRunRepository {
                 """)
                 .bind("id", id.toString())
                 .bind("actualCents", actualCents)
-                .bind("inputTokens", Parameter.fromOrEmpty(inputTokens, Integer.class))
-                .bind("outputTokens", Parameter.fromOrEmpty(outputTokens, Integer.class))
+                .bind("inputTokens", nullable(inputTokens, Integer.class))
+                .bind("outputTokens", nullable(outputTokens, Integer.class))
                 .bind("imagesGenerated", imagesGenerated)
                 .bind("videoSeconds", videoSeconds)
                 .map((r, meta) -> r.get("id", String.class))
@@ -187,7 +190,8 @@ public class AiRunRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
                 row.get("platform_model_version", Integer.class),
-                row.get("fallback_authorized", Boolean.class)
+                row.get("fallback_authorized", Boolean.class),
+                uuidFromString(row.get("context_snapshot_id", String.class))
         );
     }
 

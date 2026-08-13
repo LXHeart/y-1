@@ -125,6 +125,26 @@ public class OutboxRepository {
                 .map(updated -> updated > 0);
     }
 
+    public Mono<Long> pendingCount() {
+        return db.sql("SELECT COUNT(*)::bigint AS pending_count FROM marketplace_outbox WHERE published_at IS NULL")
+                .map(row -> valueOrZero(row.get("pending_count", Long.class)))
+                .one()
+                .defaultIfEmpty(0L);
+    }
+
+    public Mono<Long> oldestPendingAgeSeconds() {
+        return db.sql("""
+                        SELECT COALESCE(
+                            GREATEST(FLOOR(EXTRACT(EPOCH FROM (now() - MIN(created_at)))), 0),
+                            0)::bigint AS age_seconds
+                        FROM marketplace_outbox
+                        WHERE published_at IS NULL
+                        """)
+                .map(row -> valueOrZero(row.get("age_seconds", Long.class)))
+                .one()
+                .defaultIfEmpty(0L);
+    }
+
     public record OutboxRow(
             String id,
             String eventId,
@@ -180,5 +200,9 @@ public class OutboxRepository {
 
     private static int valueOrZero(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private static long valueOrZero(Long value) {
+        return value == null ? 0L : value;
     }
 }

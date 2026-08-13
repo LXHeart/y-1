@@ -6,7 +6,7 @@ import com.grassland.intelligence.ai.ChatMessage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** {@link ComedyPrompts} 忠实移植 legacy：duration/wordCount 替换、wordCount = duration×4.5、主题插值。 */
+/** {@link ComedyPrompts}: duration/wordCount replacement and topic interpolation. */
 class ComedyPromptsTest {
 
     @Test
@@ -16,8 +16,8 @@ class ComedyPromptsTest {
         assertThat(m.role()).isEqualTo("system");
         assertThat(m.content()).contains("总时长约 60 秒（约 270 字）");   // 60 × 4.5 = 270
         assertThat(m.content()).doesNotContain("{duration}").doesNotContain("{wordCount}");
-        // 风格锚点保留（移植完整性）
-        assertThat(m.content()).contains("李继刚").contains("【铺垫】").contains("【爆点】");
+        assertThat(m.content()).contains("中文舞台喜剧").contains("【铺垫】").contains("【爆点】");
+        assertThat(m.content()).doesNotContain("李继刚");
     }
 
     @Test

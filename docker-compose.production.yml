@@ -1,5 +1,15 @@
 # Production application overlay. Kafka and Temporal are external HA services; this file deliberately
 # removes local development dependencies and mounts only client credentials into application containers.
+x-production-resources: &production-resources
+  deploy:
+    resources:
+      limits:
+        cpus: ${PRODUCTION_SERVICE_CPU_LIMIT:-2.0}
+        memory: ${PRODUCTION_SERVICE_MEMORY_LIMIT:-2G}
+      reservations:
+        cpus: ${PRODUCTION_SERVICE_CPU_RESERVATION:-0.25}
+        memory: ${PRODUCTION_SERVICE_MEMORY_RESERVATION:-256M}
+
 x-kafka-production: &kafka-production
   KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?external Kafka bootstrap servers are required}
   KAFKA_SECURITY_PROTOCOL: SASL_SSL
@@ -20,29 +30,49 @@ x-temporal-production: &temporal-production
   TEMPORAL_TARGET: ${TEMPORAL_TARGET:?external Temporal frontend is required}
   TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:?Temporal namespace is required}
   TEMPORAL_ENABLE_HTTPS: "true"
-  TEMPORAL_MTLS_CERT_CHAIN_FILE: /run/secrets/grassland/temporal-client.crt
-  TEMPORAL_MTLS_KEY_FILE: /run/secrets/grassland/temporal-client.key
-  TEMPORAL_MTLS_SERVER_NAME: ${TEMPORAL_MTLS_SERVER_NAME:?Temporal TLS server name is required}
+  SPRING_TEMPORAL_CONNECTION_MTLS_CERT_CHAIN_FILE: /run/secrets/grassland/temporal-client.crt
+  SPRING_TEMPORAL_CONNECTION_MTLS_KEY_FILE: /run/secrets/grassland/temporal-client.key
+  SPRING_TEMPORAL_CONNECTION_MTLS_SERVER_NAME: ${TEMPORAL_MTLS_SERVER_NAME:?Temporal TLS server name is required}
+  SPRING_TEMPORAL_CONNECTION_MTLS_INSECURE_TRUST_MANAGER: "false"
+
+x-otel-production: &otel-production
+  OTEL_TRACING_ENABLED: "true"
+  OTEL_EXPORT_ENABLED: "true"
+  OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:?OTel trace sampling probability is required}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:?OTLP traces endpoint is required}
 
 services:
+  frontend:
+    <<: *production-resources
+
+  database-bootstrap:
+    <<: *production-resources
+
   kafka:
     profiles: [development]
 
   temporal:
     profiles: [development]
 
-  identity-service:
+  edge-bff:
+    <<: *production-resources
     environment:
-      <<: *kafka-production
+      <<: *otel-production
+
+  identity-service:
+    <<: *production-resources
+    environment:
+      <<: [*kafka-production, *otel-production]
     volumes:
       - *kafka-volume
     depends_on: !override
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
 
   marketplace-service:
+    <<: *production-resources
     environment:
-      <<: [*kafka-production, *temporal-production]
+      <<: [*kafka-production, *temporal-production, *otel-production]
     volumes:
       - *kafka-volume
       - type: bind
@@ -54,21 +84,26 @@ services:
         target: /run/secrets/grassland/temporal-client.key
         read_only: true
     depends_on: !override
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
 
   finance-service:
+    <<: *production-resources
     environment:
-      <<: *kafka-production
+      <<: [*kafka-production, *otel-production]
+      # Production must select an explicitly implemented external custodian/PSP
+      # adapter. The Java default is sandbox, which is intentionally forbidden here.
+      FINANCE_PSP_MODE: ${FINANCE_PSP_MODE:?FINANCE_PSP_MODE is required}
     volumes:
       - *kafka-volume
     depends_on: !override
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
 
   trust-service:
+    <<: *production-resources
     environment:
-      <<: [*kafka-production, *temporal-production]
+      <<: [*kafka-production, *temporal-production, *otel-production]
     volumes:
       - *kafka-volume
       - type: bind
@@ -80,16 +115,36 @@ services:
         target: /run/secrets/grassland/temporal-client.key
         read_only: true
     depends_on: !override
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
 
   intelligence-service:
+    <<: *production-resources
     environment:
-      <<: *kafka-production
+      <<: [*kafka-production, *otel-production]
+      QWEN_BASE_URL: ${QWEN_BASE_URL:?QWEN_BASE_URL is required}
+      QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required}
+      # Production must opt into a configured vendor adapter explicitly. Sandbox is
+      # intentionally unavailable in the production overlay.
+      VIDEO_GENERATION_MODE: ${VIDEO_GENERATION_MODE:?VIDEO_GENERATION_MODE is required}
+      VIDEO_GENERATION_BASE_URL: ${VIDEO_GENERATION_BASE_URL:?VIDEO_GENERATION_BASE_URL is required}
+      VIDEO_GENERATION_API_KEY: ${VIDEO_GENERATION_API_KEY:?VIDEO_GENERATION_API_KEY is required}
+      VIDEO_GENERATION_MODEL: ${VIDEO_GENERATION_MODEL:?VIDEO_GENERATION_MODEL is required}
+      VIDEO_GENERATION_CREATE_PATH: ${VIDEO_GENERATION_CREATE_PATH:?VIDEO_GENERATION_CREATE_PATH is required}
+      VIDEO_GENERATION_POLL_PATH: ${VIDEO_GENERATION_POLL_PATH:?VIDEO_GENERATION_POLL_PATH is required}
+      VIDEO_GENERATION_PRICING_VERSION: ${VIDEO_GENERATION_PRICING_VERSION:?VIDEO_GENERATION_PRICING_VERSION is required}
+      VIDEO_GENERATION_UNIT_PRICE_CENTS: ${VIDEO_GENERATION_UNIT_PRICE_CENTS:?VIDEO_GENERATION_UNIT_PRICE_CENTS is required}
+      VIDEO_GENERATION_WEBHOOK_SECRET: ${VIDEO_GENERATION_WEBHOOK_SECRET:?VIDEO_GENERATION_WEBHOOK_SECRET is required}
+      FINANCE_CREDITS_CENTS_POLICY_VERSION: ${FINANCE_CREDITS_CENTS_POLICY_VERSION:?FINANCE_CREDITS_CENTS_POLICY_VERSION is required}
+      FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT: ${FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT:?FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT is required}
+      FINANCE_CREDITS_CENTS_POLICY_ROUNDING: ${FINANCE_CREDITS_CENTS_POLICY_ROUNDING:?FINANCE_CREDITS_CENTS_POLICY_ROUNDING is required}
+      FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:?FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR is required}
+      FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:?FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR is required}
+      FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:?FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION is required}
     volumes:
       - *kafka-volume
     depends_on: !override
-      backend:
-        condition: service_started
+      database-bootstrap:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully

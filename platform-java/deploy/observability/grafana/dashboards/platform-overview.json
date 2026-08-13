@@ -38,6 +38,20 @@
       "gridPos": {"h": 9, "w": 12, "x": 12, "y": 17},
       "targets": [{"expr": "process_cpu_usage", "legendFormat": "{{job}}"}],
       "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox Oldest Pending Age",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 26},
+      "targets": [{"expr": "grassland_outbox_oldest_pending_age_seconds{job=~\"identity-service|marketplace-service|finance-service|trust-service|intelligence-service\"}", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Consumer Lag",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 26},
+      "targets": [{"expr": "kafka_consumer_records_lag_max{job=~\"identity-service|marketplace-service\"}", "legendFormat": "{{job}} {{client_id}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []}
     }
   ],
   "refresh": "30s",

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.ProviderUrlGuard;
 import com.grassland.intelligence.ai.DnsPinningResolver;
+import com.grassland.intelligence.ai.ChatMessage;
+import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
 import com.grassland.intelligence.security.IntelligenceException;
 import io.netty.resolver.AbstractAddressResolver;
@@ -56,9 +58,15 @@ public class TextCompletionClient {
 
     public Mono<TextCompletionResult> complete(
             String baseUrl, String bearer, String model, String prompt, int maxTokens, boolean byok) {
+        return completeMessages(baseUrl, bearer, model, List.of(ChatMessage.user(prompt)), maxTokens, byok);
+    }
+
+    public Mono<TextCompletionResult> completeMessages(
+            String baseUrl, String bearer, String model, List<ChatMessage> messages,
+            int maxTokens, boolean byok) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);
-        body.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        body.put("messages", messages.stream().map(TextCompletionClient::messageBody).toList());
         body.put("stream", false);
         body.put("max_tokens", maxTokens);
         body.put("enable_thinking", false);
@@ -80,6 +88,25 @@ public class TextCompletionClient {
                 .timeout(timeout)
                 .onErrorMap(TimeoutException.class, e -> new IntelligenceException(504, "AI provider 调用超时"))
                 .onErrorMap(e -> e instanceof IntelligenceException ? e : new IntelligenceException(502, "AI provider 调用失败"));
+    }
+
+    private static Map<String, Object> messageBody(ChatMessage message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("role", message.role());
+        body.put("content", message.multimodal()
+                ? message.parts().stream().map(TextCompletionClient::partBody).toList()
+                : message.content());
+        return body;
+    }
+
+    private static Map<String, Object> partBody(ContentPart part) {
+        return switch (part) {
+            case ContentPart.Text text -> Map.of("type", "text", "text", text.text());
+            case ContentPart.Image image -> Map.of(
+                    "type", "image_url", "image_url", Map.of("url", image.url()));
+            case ContentPart.Video video -> Map.of(
+                    "type", "video_url", "video_url", Map.of("url", video.url()));
+        };
     }
 
     private WebClient platformClient(String baseUrl) {

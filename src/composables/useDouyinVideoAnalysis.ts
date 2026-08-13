@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { ApiResponse } from '../types/douyin'
 import type { VideoAnalysisResult } from '../types/video-recreation'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -68,6 +69,7 @@ export function useDouyinVideoAnalysis() {
 
   async function analyzeVideo(
     proxyVideoUrl: string,
+    taskContext?: VideoTaskExecutionContext,
   ): Promise<VideoAnalysisResult | null> {
     const normalizedProxyVideoUrl = proxyVideoUrl.trim()
 
@@ -94,6 +96,7 @@ export function useDouyinVideoAnalysis() {
         },
         body: JSON.stringify({
           proxyVideoUrl: normalizedProxyVideoUrl,
+          ...(taskContext || {}),
         }),
         signal: controller.signal,
       })

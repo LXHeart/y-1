@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 public class CookieSigner {
     private final byte[] secretBytes;
 
-    public CookieSigner(@Value("${identity.legacy.session.secret:}") String secret) {
+    public CookieSigner(@Value("${identity.session.secret:}") String secret) {
         this.secretBytes = secret == null ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
     }
 

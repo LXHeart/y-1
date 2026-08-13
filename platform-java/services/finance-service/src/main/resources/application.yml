@@ -3,6 +3,8 @@ spring:
     name: finance-service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    template:
+      observation-enabled: true
     properties:
       security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
       sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
@@ -24,8 +26,31 @@ spring:
 server:
   port: ${SERVER_PORT:8084}
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    export:
+      enabled: ${OTEL_TRACING_ENABLED:false}
+      otlp:
+        enabled: ${OTEL_EXPORT_ENABLED:false}
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      consume: W3C
+      produce: W3C
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:}
   server:
     port: ${MANAGEMENT_SERVER_PORT:9082}
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:
@@ -115,10 +140,7 @@ identity-assertion:
     key-prefix: ${IDENTITY_ASSERTION_REPLAY_KEY_PREFIX:grassland:identity-assertion:replay:}
 
 # 积分内部端点共享密钥（GL-P3-AI-001 下属切片）。/internal/credits/{consume,refund,award} 由
-# CreditsInternalAuthFilter 校验 X-Internal-Key；未配 → 503 fail-closed（与 legacy bridge 同口径）。
-# intelligence FinanceCreditsClient 与 legacy Express 代理共用此密钥。
 credits:
-  internal-key: ${INTERNAL_API_KEY:}
   ai-quota:
     base-daily: ${AI_FREE_QUOTA_BASE_DAILY:0}
     zone-id: ${AI_FREE_QUOTA_ZONE_ID:Asia/Shanghai}

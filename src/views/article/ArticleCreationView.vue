@@ -299,7 +299,7 @@ const {
   selectTitle, goToTitles, goToOutline, goToContent,
   loadImageRecommendations, searchImageForSlot, generateImageForSlot,
   selectImageForSlot, clearImageForSlot, toggleSlot,
-  reset, cancel, setTopic, finish,
+  reset, cancel, setTopic, bindCreationContext, finish,
 } = useArticleCreation()
 
 const articleInitialTopic = inject<Ref<string>>('articleInitialTopic')
@@ -326,6 +326,9 @@ watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
   setTopic(handoff.prefill?.topic || '')
+  bindCreationContext(
+    handoff.source.type === 'task', handoff.contextSnapshotId, handoff.platformId,
+  )
   const platformByEntry = {
     'wechat-official': 'wechat',
     zhihu: 'zhihu',

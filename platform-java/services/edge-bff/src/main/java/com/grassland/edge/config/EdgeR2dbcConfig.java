@@ -47,7 +47,7 @@ public class EdgeR2dbcConfig {
     }
 
     @Bean
-    EdgeCookieSigner edgeCookieSigner(@Value("${identity.legacy.session.secret:}") String secret) {
+    EdgeCookieSigner edgeCookieSigner(@Value("${identity.session.secret:}") String secret) {
         return new EdgeCookieSigner(secret);
     }
 

@@ -23,7 +23,8 @@ public class SandboxVideoGenerationProvider implements VideoGenerationProvider {
     @Override
     public Mono<ProviderResult> poll(String providerTaskId, int requestedDurationSeconds) {
         return Mono.just(new ProviderResult(
-                ProviderResult.State.SUCCEEDED, providerTaskId, 100, null,
+                ProviderResult.State.SUCCEEDED, providerTaskId, 100,
+                "/api/video-production/sandbox/videos/" + providerTaskId.substring("sandbox:".length()),
                 requestedDurationSeconds, null, null));
     }
 }

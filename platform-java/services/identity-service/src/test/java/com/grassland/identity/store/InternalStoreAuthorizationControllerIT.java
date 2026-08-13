@@ -136,9 +136,9 @@ class InternalStoreAuthorizationControllerIT extends IdentityItSupport {
 
     private String serviceAssertion(String principal) {
         Instant now = Instant.now();
-        return assertionSigner.sign(new IdentityAssertion(
+        return com.grassland.identity.assertion.TestAssertionHelper.serviceSigner(principal, "grassland-identity").sign(new IdentityAssertion(
                 "service:" + principal, null, null, null, null,
                 "service", "internal", null, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
-                "grassland-internal", now, now.plusSeconds(30), "service", principal));
+                "grassland-identity", now, now.plusSeconds(30), "service", principal));
     }
 }

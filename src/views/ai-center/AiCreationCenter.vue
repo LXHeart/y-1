@@ -78,6 +78,27 @@
       </div>
       </section>
 
+      <section
+        v-if="contentFormId === 'video' && sourceType && sourceType !== 'reference'"
+        class="choice-band"
+        aria-labelledby="video-workflow-title"
+      >
+        <div class="choice-title-row">
+          <h3 id="video-workflow-title">创作类型</h3>
+          <span>选择本次视频文稿的工作流</span>
+        </div>
+        <div class="segmented" role="group" aria-label="视频创作类型">
+          <button
+            v-for="option in videoWorkflowOptions"
+            :key="option.id"
+            type="button"
+            :class="{ active: option.id === videoWorkflowId }"
+            :aria-pressed="option.id === videoWorkflowId"
+            @click="videoWorkflowId = option.id"
+          >{{ option.label }}</button>
+        </div>
+      </section>
+
       <section v-if="sourceType" class="context-band" aria-labelledby="context-title">
       <div class="choice-title-row">
         <h3 id="context-title">创作上下文</h3>
@@ -148,6 +169,32 @@
         />
       </label>
 
+      <div v-if="videoWorkflowId === 'video-recreation' && sourceType !== 'reference'" class="topic-field">
+        <span id="recreation-reference-label">参考链接或分享文本</span>
+        <div class="segmented" role="group" aria-label="参考视频来源平台">
+          <button
+            type="button"
+            :class="{ active: referencePlatform === 'douyin' }"
+            :aria-pressed="referencePlatform === 'douyin'"
+            @click="referencePlatform = 'douyin'"
+          >抖音</button>
+          <button
+            type="button"
+            :class="{ active: referencePlatform === 'bilibili' }"
+            :aria-pressed="referencePlatform === 'bilibili'"
+            @click="referencePlatform = 'bilibili'"
+          >B 站</button>
+        </div>
+        <textarea
+          v-model="referenceUrl"
+          name="recreation-reference-url"
+          aria-labelledby="recreation-reference-label"
+          rows="3"
+          maxlength="2000"
+          placeholder="粘贴抖音或 B 站链接、分享文本"
+        />
+      </div>
+
       <label v-if="sourceType === 'independent' || sourceType === 'hot-topic' || sourceType === 'store'" class="topic-field">
         <span>补充要求</span>
         <textarea v-model="instructions" rows="3" maxlength="1000" placeholder="可选：语气、重点、必须包含或避免的内容" />
@@ -179,6 +226,11 @@
         <p v-if="entry.prefill.instructions">{{ entry.prefill.instructions }}</p>
       </div>
 
+      <div v-if="taskSourceLocked" class="material-selection">
+        <span>{{ materialIds.length ? `已选择 ${materialIds.length} 项创作素材` : '未选择创作素材' }}</span>
+        <button type="button" class="secondary-command" @click="activeSection = 'library'">选择素材</button>
+      </div>
+
       <p v-if="contextError" class="error-state" role="alert">{{ contextError }}</p>
       </section>
 
@@ -186,7 +238,9 @@
         <p data-testid="selection-summary">{{ selectionSummary }}</p>
         <div>
           <span v-if="workflow.status === 'planned'" class="planned-state">该创作路径尚未接入</span>
-          <button type="button" class="primary-command" :disabled="!canStart" @click="startWorkflow">开始创作</button>
+          <button type="button" class="primary-command" :disabled="!canStart || freezingContext" @click="startWorkflow">
+            {{ freezingContext ? '正在准备...' : '开始创作' }}
+          </button>
         </div>
       </footer>
     </template>
@@ -205,6 +259,9 @@
     <MediaLibraryPanel
       v-else-if="activeSection === 'library'"
       :authenticated="props.authenticated"
+      :selectable="taskSourceLocked"
+      :selected-asset-ids="materialIds"
+      @selection-change="setSelectedMaterials"
       @request-login="emit('request-login')"
     />
     <AiProviderKeysPanel v-else />
@@ -236,6 +293,7 @@ import type {
   CreationHandoff,
   CreationSource,
   CreationSourceType,
+  VideoCreationWorkflowId,
 } from '../../types/ai-creation'
 
 type AiCenterSection = 'create' | 'runs' | 'assistant' | 'keys' | 'library'
@@ -259,9 +317,11 @@ const pickedHotTitle = ref('')
 const platformId = ref<AiPlatformId | ''>('')
 const contentFormId = ref<AiContentFormId | ''>('')
 const sourceType = ref<CreationSourceType | ''>('')
+const videoWorkflowId = ref<VideoCreationWorkflowId>('video-script')
 const topic = ref('')
 const instructions = ref('')
 const referenceUrl = ref('')
+const referencePlatform = ref<'douyin' | 'bilibili'>('douyin')
 const organizations = ref<Organization[]>([])
 const stores = ref<Store[]>([])
 const organizationId = ref('')
@@ -269,6 +329,9 @@ const storeId = ref('')
 const storeProfile = ref<StoreProfile | null>(null)
 const loadingContext = ref(false)
 const contextError = ref('')
+const contextSnapshotId = ref('')
+const freezingContext = ref(false)
+const materialIds = ref<string[]>([])
 const storeProfileLoaded = ref(false)
 const hydratedRevision = ref<number | null>(null)
 let contextRequestEpoch = 0
@@ -289,6 +352,11 @@ const sourceOptions: ReadonlyArray<{ id: CreationSourceType; label: string; note
   { id: 'store', label: '从门店创作', note: '带入门店资料' },
   { id: 'hot-topic', label: '从热点创作', note: '以热点标题为主题' },
   { id: 'reference', label: '参考素材', note: '分析抖音或 B站视频' },
+]
+const videoWorkflowOptions: ReadonlyArray<{ id: VideoCreationWorkflowId; label: string }> = [
+  { id: 'video-script', label: '常规视频脚本' },
+  { id: 'comedy-script', label: '风格化喜剧脚本' },
+  { id: 'video-recreation', label: '参考视频复刻' },
 ]
 
 const taskSourceLocked = computed(() => props.entry?.source.type === 'task')
@@ -321,7 +389,7 @@ const sectionTitle = computed(() => {
   return '选择发布平台'
 })
 const workflow = computed(() => platformId.value && contentFormId.value && sourceType.value
-  ? resolveWorkflow(platformId.value, contentFormId.value, sourceType.value)
+  ? resolveWorkflow(platformId.value, contentFormId.value, sourceType.value, videoWorkflowId.value)
   : { status: 'unsupported' as const, workflowId: null, targetView: null })
 const selectionSummary = computed(() => {
   const platform = selectedPlatform.value?.label || '未选平台'
@@ -330,7 +398,10 @@ const selectionSummary = computed(() => {
 })
 const canStart = computed(() => {
   if (workflow.value.status !== 'available' || !sourceType.value) return false
-  if (sourceType.value === 'task') return props.authenticated && props.entry?.source.type === 'task'
+  if (sourceType.value === 'task') {
+    return props.authenticated && props.entry?.source.type === 'task'
+      && (videoWorkflowId.value !== 'video-recreation' || referenceUrl.value.trim().length > 0)
+  }
   if (sourceType.value === 'store') {
     return props.authenticated
       && Boolean(organizationId.value && storeId.value && storeProfileLoaded.value)
@@ -350,19 +421,26 @@ watch(() => props.entry, (entry) => {
     hydratedRevision.value = null
     pickedHotTitle.value = ''
     clearStoreContext()
+    contextSnapshotId.value = ''
+    materialIds.value = []
     return
   }
   if (hydratedRevision.value === entry.revision) return
   contextRequestEpoch += 1
   activeSection.value = 'create'
   hydratedRevision.value = entry.revision
+  contextSnapshotId.value = entry.contextSnapshotId || ''
+  materialIds.value = [...(entry.materialIds || [])]
   platformId.value = entry.platformId ?? ''
   contentFormId.value = entry.contentFormId ?? ''
   sourceType.value = entry.source.type
+  videoWorkflowId.value = 'video-script'
   topic.value = entry.prefill?.topic || ''
   instructions.value = entry.prefill?.instructions || ''
   pickedHotTitle.value = entry.source.type === 'hot-topic' ? entry.source.title : ''
   referenceUrl.value = entry.source.type === 'reference' ? entry.source.sourceUrl || '' : ''
+  if (entry.prefill?.referenceUrl) referenceUrl.value = entry.prefill.referenceUrl
+  referencePlatform.value = entry.prefill?.referencePlatform || 'douyin'
   if (entry.source.type === 'store') {
     organizationId.value = entry.source.organizationId
     storeId.value = entry.source.storeId
@@ -405,11 +483,16 @@ function selectSection(next: AiCenterSection): void {
   activeSection.value = next
 }
 
+function setSelectedMaterials(assetIds: string[]): void {
+  materialIds.value = [...new Set(assetIds)].slice(0, 50)
+}
+
 function selectPlatform(next: AiPlatformId): void {
   const preservesEntryContext = props.entry?.source.type === 'hot-topic' && !platformId.value
   if (sourceType.value === 'hot-topic') clearHotTopicContext(!preservesEntryContext)
   platformId.value = next
   contentFormId.value = ''
+  videoWorkflowId.value = 'video-script'
   if (!props.entry) sourceType.value = ''
 }
 
@@ -417,6 +500,7 @@ function selectContentForm(next: AiContentFormId): void {
   const preservesEntryContext = props.entry?.source.type === 'hot-topic' && !contentFormId.value
   if (sourceType.value === 'hot-topic') clearHotTopicContext(!preservesEntryContext)
   contentFormId.value = next
+  videoWorkflowId.value = 'video-script'
   if (!props.entry) sourceType.value = ''
 }
 
@@ -646,11 +730,27 @@ function sourceForHandoff(): CreationSource | null {
 }
 
 function prefillForHandoff(): CreationDraftPrefill {
-  if (props.entry?.prefill && taskSourceLocked.value) return { ...props.entry.prefill }
+  if (taskSourceLocked.value) {
+    return {
+      ...(props.entry?.prefill || {}),
+      referenceUrl: videoWorkflowId.value === 'video-recreation'
+        ? referenceUrl.value.trim() || undefined
+        : undefined,
+      referencePlatform: videoWorkflowId.value === 'video-recreation'
+        ? referencePlatform.value
+        : undefined,
+    }
+  }
   const store = stores.value.find((item) => item.id === storeId.value)
   return {
     topic: topic.value.trim() || undefined,
     instructions: instructions.value.trim() || undefined,
+    referenceUrl: videoWorkflowId.value === 'video-recreation'
+      ? referenceUrl.value.trim() || undefined
+      : undefined,
+    referencePlatform: videoWorkflowId.value === 'video-recreation'
+      ? referencePlatform.value
+      : undefined,
     storeName: store?.name,
     address: parseAddress(storeProfile.value?.address),
     storeDescription: storeProfile.value?.description || undefined,
@@ -661,7 +761,7 @@ function startWorkflow(): void {
   if (!canStart.value || !platformId.value || !contentFormId.value) return
   const source = sourceForHandoff()
   if (!source || !workflow.value.workflowId || !workflow.value.targetView) return
-  emit('start-workflow', {
+  const handoff: CreationHandoff = {
     revision: nextWorkflowRevision(),
     platformId: platformId.value,
     contentFormId: contentFormId.value,
@@ -670,7 +770,27 @@ function startWorkflow(): void {
     targetView: workflow.value.targetView,
     prefill: prefillForHandoff(),
     taskContext: props.entry?.taskContext,
-  })
+    contextSnapshotId: contextSnapshotId.value || undefined,
+    materialIds: materialIds.value.length ? [...materialIds.value] : undefined,
+  }
+  if (source.type === 'task' && source.applicationId && source.taskVersion) {
+    freezingContext.value = true
+    contextError.value = ''
+    void grassland.createCreationContext({
+      taskId: source.taskId, applicationId: source.applicationId, taskVersion: source.taskVersion,
+      platformId: platformId.value, contentFormId: contentFormId.value,
+      materialIds: materialIds.value.length ? [...materialIds.value] : undefined,
+    }).then((snapshot) => {
+      if (snapshot) {
+        contextSnapshotId.value = snapshot.id
+        emit('start-workflow', { ...handoff, contextSnapshotId: snapshot.id })
+      } else {
+        contextError.value = grassland.error.value || '创作上下文冻结失败，请重试'
+      }
+    }).finally(() => { freezingContext.value = false })
+    return
+  }
+  emit('start-workflow', handoff)
 }
 
 function formatRequirement(value: unknown): string {
@@ -731,6 +851,7 @@ textarea { resize: vertical; min-height: 76px; }
 .task-context-summary dt { color: var(--color-text-muted); font-size: 0.72rem; }
 .task-context-summary dd { margin: 3px 0 0; color: var(--color-text); overflow-wrap: anywhere; }
 .task-context-summary > p, .task-requirements p { margin: 0; color: var(--color-text-secondary); }
+.material-selection { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 0.82rem; }
 .task-requirements { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid var(--color-border); }
 .task-requirements > div { display: grid; grid-template-columns: minmax(100px, 0.35fr) 1fr; gap: 10px; }
 .task-requirements span { color: var(--color-text-muted); font-size: 0.78rem; overflow-wrap: anywhere; }

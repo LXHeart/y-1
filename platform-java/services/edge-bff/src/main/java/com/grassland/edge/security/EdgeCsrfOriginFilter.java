@@ -20,7 +20,7 @@ import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
-/** Cookie 写请求的全局 Origin/Referer 门禁，覆盖所有 Java 与 legacy BFF 路由。 */
+/** Cookie 写请求的全局 Origin/Referer 门禁，覆盖全部 Edge 公共路由。 */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public final class EdgeCsrfOriginFilter implements WebFilter {

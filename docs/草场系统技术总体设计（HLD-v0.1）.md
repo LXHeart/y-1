@@ -21,7 +21,7 @@
 
 ### 1.1 本版本覆盖范围
 
-本 HLD 定义草场长期目标架构，以及从当前 Vue 3 + Express/TypeScript 系统迁移至 Java 微服务的总体方案，覆盖：
+本 HLD 定义草场长期目标架构，以及从历史 Vue 3 + Express/TypeScript 后端契约迁移至 Java 微服务的总体方案，覆盖：
 
 1. 统一账号、商家/推荐官活动身份和默认消费者场景。
 2. 商家主体、多门店、成员关系和三级商家准入权限。
@@ -29,7 +29,7 @@
 4. 消费者扫码下单、支付、核销、退款和推荐官/商家分账。
 5. 争议、审判、客服终审和资金冻结协作。
 6. 商家与推荐官共享的 AI 内容创作中心。
-7. 六个 Java 部署单元和迁移期 Legacy Node。
+7. 六个 Java 部署单元，以及独立于后端的 Node 前端/测试工具链边界。
 8. 数据所有权、同步 API、Kafka、Outbox、Inbox 和 Temporal。
 9. 第三方支付、AI、社交平台核实、媒体、通知和对象存储边界。
 10. 安全、部署、可观测性、韧性、测试和迁移策略。
@@ -55,9 +55,9 @@
 5. 内容创作先选择发布平台，再选择该平台支持的图文或视频形式。
 6. 商家采用“商家主体 + 多门店”模型。
 7. 商家准入分为草稿权限、基础发布权限和资金交易权限。
-8. 新草场领域数据直接进入 Java 服务数据库，不先写入 Legacy 数据库。
+8. 新草场领域数据直接进入 Java 服务数据库，不写入历史 Legacy 数据库；历史库只作为迁移证据和兼容输入。
 9. 初始 Java 服务为 `edge-bff`、`identity-service`、`marketplace-service`、`finance-service`、`trust-service` 和 `intelligence-service`。
-10. Legacy Node 在迁移期作为受控 API/Worker，不再直接暴露给浏览器。
+10. 后端全部由 Java 25 承载；Node 仅用于 Vue/Vite、Vitest、Playwright/E2E seed 和 Java Playwright driver，不直接提供 API 或领域 Worker。
 
 ---
 
@@ -163,8 +163,6 @@ flowchart TB
     Finance["finance-service\n支付、托管、账本、退款、结算、分账、对账"]
     Trust["trust-service\n争议、审判、等级、风险"]
     Intelligence["intelligence-service\nAI、媒体、素材、模型、热点、核实 Adapter"]
-    Legacy["legacy-node\n迁移期 Express API / Node Worker"]
-
     Kafka["Kafka + Apicurio Registry"]
     Temporal["Temporal"]
     Redis["Redis"]
@@ -176,7 +174,6 @@ flowchart TB
     FinanceDB[("finance_db")]
     TrustDB[("trust_db")]
     IntelligenceDB[("intelligence_db")]
-    LegacyDB[("legacy_db")]
   end
 
   subgraph External["外部依赖"]
@@ -195,14 +192,12 @@ flowchart TB
   Edge --> Finance
   Edge --> Trust
   Edge --> Intelligence
-  Edge --> Legacy
 
   Identity --> IdentityDB
   Marketplace --> MarketplaceDB
   Finance --> FinanceDB
   Trust --> TrustDB
   Intelligence --> IntelligenceDB
-  Legacy --> LegacyDB
 
   Edge <--> Redis
   Identity <--> Redis
@@ -231,7 +226,6 @@ flowchart TB
   Finance --> Observability
   Trust --> Observability
   Intelligence --> Observability
-  Legacy --> Observability
 ```
 
 ### 4.1 容器职责
@@ -244,7 +238,7 @@ flowchart TB
 |`finance-service`|金融 Policy、支付、托管、双录账本、退款、结算、分账和对账|直接改变任务或争议状态。|
 |`trust-service`|争议、审判、上诉、客服终审、等级和风险信号|直接写金融数据库或自行过账。|
 |`intelligence-service`|AI 内容创作、模型配置、素材、热点、媒体任务和平台核实 Adapter|发布任务、接受报名、作出最终资金裁决。|
-|`legacy-node`|迁移期承接 Playwright、FFmpeg、视频提取和未迁移 AI/SSE 能力|成为新草场领域权威写入方，继续直接对公网暴露。|
+|Node 工具链（不属于后端容器）|Vue/Vite 开发构建、Vitest、前端 Playwright/E2E seed；Intelligence 镜像内的 Node 仅作为 Java Playwright driver|启动 Node HTTP 服务、Node 领域 Worker、Node 数据库迁移或重新引入 Express。|
 
 ---
 
@@ -313,7 +307,7 @@ flowchart TB
 - `usage-account`：AI 用量预留、扣减、退回和流水。
 - `media-reference`：视频提取、预览、音频、分析和对象生命周期。
 - `verification-adapter`：链接、API、OCR 和视觉核实建议。
-- `legacy-worker-adapter`：调用 Legacy Node 能力并记录审计、进度和取消传播。
+- `media-provider-adapter`：由 Java Intelligence 调用媒体/AI provider，并记录审计、进度和取消传播；Node 仅作为 Java Playwright driver。
 
 ---
 
@@ -330,7 +324,7 @@ flowchart TB
 |Finance|`finance_db`|Product Policy、Payment、Escrow、Ledger、Settlement、Refund、Payout、Reconciliation|
 |Trust|`trust_db`|Dispute、Decision、Judge Assignment/Vote、Appeal、Reputation、Badge、Risk Signal|
 |Intelligence|`intelligence_db`|Platform Capability、AI Run、Context Snapshot、Asset Metadata、Model Config、Usage Record、Media Job、Hot Topic Cache|
-|Legacy|`legacy_db`|尚未迁移的旧账号设置、Session 和工具数据，仅迁移期保留|
+|历史数据/兼容记录|不属于当前服务数据库|仅作为迁移证据、历史契约和数据治理输入；不承载当前后端运行时写入|
 
 ### 6.2 跨服务数据规则
 
@@ -548,7 +542,7 @@ sequenceDiagram
 |`DisputeAdjudicationWorkflow`|有效争议被提出|资金 Hold、审判、重开、上诉和终局裁决。|
 |`ConsumerPaymentRedemptionWorkflow`|消费者支付成功|管理待核销、退款窗口、核销后分账和异常。|
 |`PaymentRecoveryWorkflow`|支付/退款/付款处于未知状态|主动查询、等待回调和对账恢复。|
-|`AiMediaJobWorkflow`|图片、视频、媒体生成或解析|调度 Adapter/Legacy Worker，管理进度、取消和恢复。|
+|`AiMediaJobWorkflow`|图片、视频、媒体生成或解析|调度 Java Intelligence Adapter，管理进度、取消和恢复；Playwright 的 Node driver 仅为进程依赖。|
 
 ---
 
@@ -820,7 +814,7 @@ sequenceDiagram
 |支付|`PaymentProviderAdapter`|支付、查询、退款、Webhook、付款/分账、对账|**DECISION REQUIRED**：供应商和合规模式。|
 |社交核实|`VerificationDataAdapter`|链接、授权 API、指标、截图/OCR 建议|**TBD**：逐平台可用和合法方案。|
 |AI|`AiCapabilityAdapter`|文本、视觉、图片、视频、语音、内容安全、Embedding|平台模型、组织模型和 BYOK 路由策略。|
-|媒体|`MediaProcessingAdapter`|解析、转码、音频、预览、签名下载和生成|Legacy Node 退出标准。|
+|媒体|`MediaProcessingAdapter`|解析、转码、音频、预览、签名下载和生成|Java Intelligence 的真实 provider、FFmpeg/Playwright 运行稳定性和生产凭据门禁。|
 |通知|`NotificationAdapter`|站内信、事务邮件、短信、推送和验证码|站内信、事务邮件及 provider-neutral Push/SMS outbox 已实现；生产供应商、凭据、模板备案、退订/送达 SLA 和容量演练仍属部署门禁。|
 |对象存储|`ObjectStorageAdapter`|上传票据、受控下载、保留、删除和校验|生产存储与数据地域。|
 |风控|`RiskSignalAdapter`|账号、交易、任务和内容风险信号|自动限制与人工复核边界。|
@@ -885,7 +879,6 @@ flowchart LR
     Finance["finance Pods"]
     Trust["trust Pods"]
     Intel["intelligence Pods"]
-    Legacy["legacy-node Pods"]
     Kafka["Managed Kafka"]
     PG["Managed PostgreSQL\n逻辑库隔离"]
     Redis["Managed Redis"]
@@ -899,14 +892,11 @@ flowchart LR
   Edge --> Finance
   Edge --> Trust
   Edge --> Intel
-  Edge --> Legacy
-
   Identity --> PG
   Market --> PG
   Finance --> PG
   Trust --> PG
   Intel --> PG
-  Legacy --> PG
 
   Identity --> Kafka
   Market --> Kafka
@@ -930,7 +920,6 @@ flowchart LR
   Finance --> OTel
   Trust --> OTel
   Intel --> OTel
-  Legacy --> OTel
 ```
 
 ### 13.3 配置、密钥和发布
@@ -969,7 +958,7 @@ flowchart LR
 
 |服务/流程|指标|目标|
 |---|---|---|
-|BFF|成功率、p95/p99、5xx、限流|**TBD：先建立 Legacy 基线**|
+|BFF|成功率、p95/p99、5xx、限流|**TBD：以历史契约基线和 Java 当前流量建立基线**|
 |SSE|首字节、流中断、取消传播|**TBD**|
 |媒体|206 成功率、416 异常率、代理首包|**TBD**|
 |Kafka|Consumer Lag、Outbox Age、DLQ|**TBD；Finance/Trust 高优先级**|
@@ -998,24 +987,23 @@ flowchart LR
 |阶段|内容|退出条件|回滚|
 |---|---|---|---|
 |Epic 0|ADR、API Matrix、Golden Fixture、生产 Session/Hash/Token 核实|契约自动执行，登录和媒体格式无未知项|无业务切换|
-|Epic 1|Java 平台和 BFF，全部旧 API 透明代理|Cookie、SVG、SSE、Multipart、Range 和错误兼容通过|Nginx 直连 Express|
+|Epic 1|Java 平台和 BFF，承载兼容 API|Cookie、SVG、SSE、Multipart、Range 和错误兼容通过|停用对应 Java 路由并修复，不恢复 Node backend|
 |Epic 2|Identity 和 Session 绞杀|认证路由分批迁移，Redis 双读稳定|单路由切回 Express|
 |Epic 3|Kafka、Outbox、Inbox、Temporal、对象存储和审计|事件和 Workflow 基础验证完成|不承载真实资金|
 |Epic 4|Marketplace MVP|任务、报名、履约、证据和核实骨架完成|Route 回退，新数据不回写旧库|
 |Epic 5|Finance Sandbox|双录、预留、Hold、退款/分账模拟和对账演练通过|不接真实资金|
 |Epic 6|Trust|争议、客服裁决和等级投影；审判后续开放|人工客服兜底|
 |Epic 7|消费者核销和真实支付|供应商、合规、退款/核销竞态和对账完成|停止新交易，继续处理存量|
-|Epic 8|Intelligence 迁移和 Node 缩减|路由族兼容、性能和稳定性达标|切回 Node Adapter|
+|Epic 8|Intelligence 后端能力收口|路由族兼容、性能、真实 provider 和生产门禁达标|停用对应 Java 路由并修复，不回退 Node 后端|
 |Epic 9|APP/小程序 `/api/v2`|OAuth、端侧能力矩阵和 E2E 完成|旧 Web API 保留|
 
-### 15.3 Legacy Node 退出标准
+### 15.3 后端 Java 完成标准与 Node 边界
 
-- Java 实现通过 Golden Contract、故障注入和 E2E。
-- SSE、媒体、Range、取消和错误语义经过真实流量验证。
-- 成本、成功率和延迟达到设定阈值。
-- 无未关闭依赖路由或后台任务。
-- 数据、对象存储和审计迁移完成。
-- Playwright/FFmpeg 替代没有降低安全、合法性和稳定性。
+- 每个后端路由和异步任务都有 Java 权威实现，并通过 Golden Contract、故障注入和 E2E。
+- SSE、媒体、Range、Multipart、取消、错误和权限语义经过真实流量或等价容器验证。
+- 数据库迁移、Outbox/Inbox、定时任务和审计均由 Java 服务拥有；没有 Node HTTP/领域 Worker 或 Express 回退。
+- 成本、成功率、延迟、幂等和失败补偿达到设定阈值，真实 provider 凭据与回调门禁通过。
+- Node 允许范围仅为 Vue/Vite、Vitest、前端 Playwright、E2E seed、覆盖率/secret scan，以及 Java Playwright driver；这些依赖不构成后端未迁移项。
 
 ---
 
@@ -1031,7 +1019,7 @@ flowchart LR
 |Kafka 重复/乱序|Inbox 去重，依据 Aggregate Version 拒绝旧事件，必要时查询源服务。|
 |Temporal Worker 重启|Workflow Replay、Activity 幂等，业务事实从私有数据库重新校验。|
 |AI Provider 不可用|按授权策略切换备用模型或明确失败，保留已完成步骤和用量流水。|
-|Legacy Worker 不可用|回退 Route/Adapter 或延迟任务，不向客户端暴露内部 Node。|
+|Java provider/媒体依赖不可用|按任务状态重试、延迟或明确失败；不向客户端暴露 provider 临时地址，也不启动 Node 后端回退。|
 |对象存储不可用|阻断证据/素材确认并保留草稿，禁止创建无对象引用的已提交证据。|
 |核实结果不确定|进入 `INCONCLUSIVE` 或人工复核，不自动判定失败或移动资金。|
 
@@ -1101,7 +1089,7 @@ flowchart LR
 |D-09|`/api/v2` 首批客户端、OAuth/微信绑定和支付回跳|待决策|BFF、Identity、APP/小程序|
 |D-10|数据保留、删除、导出、审计、证据脱敏和地域要求|**已采纳（阈值 provisional）**|所有服务；具体阈值待法务/财务校准|
 |D-11|AI 用量单位、预留/退回、平台模型和 BYOK 计费边界|**已采纳**|约束 Intelligence、Finance|
-|D-12|Legacy Node 各能力退出优先级和验收阈值|待决策|BFF、Intelligence、部署|
+|D-12|Java 后端能力与 Node 工具链边界、真实 provider 生产验收阈值|部分已冻结；provider 阈值待定|BFF、Intelligence、部署|
 
 ---
 
@@ -1111,7 +1099,7 @@ HLD 评审后建议按以下顺序产出：
 
 1. 领域术语、聚合与权威数据所有权说明。
 2. 商家准入、任务、履约、核实、争议、资金、订单和 AI Run 状态机。
-3. Legacy `/api/**` Contract Matrix 和 Golden Fixture。
+3. 历史 `/api/**` Contract Matrix 和 Golden Fixture（仅作 Java 兼容基线）。
 4. `/api/v2` OpenAPI 初稿。
 5. Protobuf 事件目录和 Temporal Workflow 设计。
 6. 各服务逻辑数据模型和数据生命周期设计。
@@ -1126,7 +1114,7 @@ HLD 评审后建议按以下顺序产出：
 
 |评审项|状态|备注|
 |---|---|---|
-|系统边界|已评审|六个粗粒度领域服务 + Edge + 受控 Legacy Worker。|
+|系统边界|已评审|六个粗粒度 Java 领域服务 + Edge；Node 仅为前端/测试工具链和 Java Playwright driver。|
 |六服务划分|已评审|按事实所有权和一致性边界维持当前划分。|
 |数据所有权|已评审|事实单写，禁止跨库 JOIN 和共享 Repository。|
 |BFF 和迁移策略|条件批准|代码基线成立；生产 TLS/LB、canary、readiness 与回切演练仍是门禁。|

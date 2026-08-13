@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.taskcatalog.LinkReachabilityChecker;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import com.grassland.marketplace.workflow.saga.DisputeChecker;
 import java.time.Instant;
@@ -37,6 +38,9 @@ class ReputationControllerIT extends MarketplaceItSupport {
     @MockitoBean
     private DisputeChecker disputeChecker;
 
+    @MockitoBean
+    private LinkReachabilityChecker linkChecker;
+
     /** 配置 finance mock：release/reserve/capture 全返回成功（幂等）——非资金型任务不走 finance，但 cancel 路径会调用 release。 */
     @BeforeEach
     void setUpFinanceMock() {
@@ -44,6 +48,9 @@ class ReputationControllerIT extends MarketplaceItSupport {
         when(financeClient.reserve(anyString(), anyString(), anyLong(), anyString()))
                 .thenReturn(Mono.empty());
         when(financeClient.capture(anyString(), anyString())).thenReturn(Mono.empty());
+        // Reputation tests do not exercise link verification; keep the fixture independent of external DNS/HTTP.
+        when(linkChecker.check(anyString()))
+                .thenReturn(Mono.just(new LinkReachabilityChecker.CheckResult("passed", "HTTP 200")));
     }
 
     @Test

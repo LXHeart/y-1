@@ -23,6 +23,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * 靠本类专属 {@code @DynamicPropertySource} 覆盖基类。冷却期"禁用"路径（hours=0/seconds=0 → 不拦）
  * 是 TrustItSupport 默认，由其余争议 IT 隐式覆盖（它们自由开争议不被冷却拦截）。
  */
+@SuppressWarnings("unchecked")
 class DisputeCooldownIT extends TrustItSupport {
 
     /**

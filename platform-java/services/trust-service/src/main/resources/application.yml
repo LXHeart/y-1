@@ -3,6 +3,8 @@ spring:
     name: trust-service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    template:
+      observation-enabled: true
     properties:
       security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
       sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
@@ -26,11 +28,6 @@ spring:
     connection:
       target: ${TEMPORAL_TARGET:temporal:7233}
       enable-https: ${TEMPORAL_ENABLE_HTTPS:false}
-      mtls:
-        cert-chain-file: ${TEMPORAL_MTLS_CERT_CHAIN_FILE:}
-        key-file: ${TEMPORAL_MTLS_KEY_FILE:}
-        server-name: ${TEMPORAL_MTLS_SERVER_NAME:}
-        insecure-trust-manager: false
     namespace: ${TEMPORAL_NAMESPACE:default}
     # 显式 worker：trust-adjudication 承载审判 workflow 与其 activity。
     workers:
@@ -46,8 +43,31 @@ spring:
 server:
   port: ${SERVER_PORT:8085}
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    export:
+      enabled: ${OTEL_TRACING_ENABLED:false}
+      otlp:
+        enabled: ${OTEL_EXPORT_ENABLED:false}
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      consume: W3C
+      produce: W3C
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:}
   server:
     port: ${MANAGEMENT_SERVER_PORT:9082}
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:

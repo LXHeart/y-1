@@ -118,6 +118,7 @@
         platform="bilibili"
         :proxy-video-url="extractedVideo.proxyVideoUrl"
         :extracted-content="analysis"
+        :task-context="taskContext"
       />
     </template>
   </section>
@@ -126,6 +127,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { BilibiliVideoAnalysisResult, ExtractedBilibiliVideoPayload } from '../types/bilibili'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 import { buildVideoAnalysisDisplayCards } from '../types/video-recreation'
 import VideoAdaptationPanel from './VideoAdaptationPanel.vue'
 
@@ -138,6 +140,7 @@ const props = defineProps<{
   analysis: BilibiliVideoAnalysisResult | null
   analysisLoading: boolean
   analysisError: string
+  taskContext?: VideoTaskExecutionContext
 }>()
 
 defineEmits<{

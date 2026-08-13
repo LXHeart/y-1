@@ -66,4 +66,62 @@ test.describe('unified Edge public entrypoint', () => {
     expect(mediaBody.success).toBe(false)
     expect(mediaBody.error).toBe('媒体不存在')
   })
+
+  test('accepts mobile access tokens and rechecks refresh-token revocation at Edge', async ({ request }) => {
+    const password = process.env.E2E_PASSWORD
+    test.skip(!password, 'E2E_PASSWORD is required for the isolated seeded account')
+
+    const deviceHeaders = {
+      Origin: process.env.BASE_URL || 'http://127.0.0.1:18080',
+      'X-Device-Info': `playwright-edge-${Date.now()}`,
+      'X-Device-Name': 'Playwright Edge',
+    }
+    const login = await request.post('/api/auth/login', {
+      headers: deviceHeaders,
+      data: { email, password },
+    })
+    expect(login.status(), await login.text()).toBe(200)
+    const loginBody = await login.json() as {
+      success: boolean
+      data: { tokens: { access_token: string; refresh_token: string } }
+    }
+    expect(loginBody.success).toBe(true)
+    const accessToken = loginBody.data.tokens.access_token
+    const refreshToken = loginBody.data.tokens.refresh_token
+    expect(accessToken).toBeTruthy()
+    expect(refreshToken).toBeTruthy()
+
+    const authenticated = await request.get('/api/tasks/feed', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    expect(authenticated.status(), await authenticated.text()).toBe(200)
+
+    const refreshed = await request.post('/api/auth/refresh', {
+      headers: { ...deviceHeaders, Authorization: `Bearer ${refreshToken}` },
+    })
+    expect(refreshed.status(), await refreshed.text()).toBe(200)
+    const refreshedBody = await refreshed.json() as {
+      success: boolean
+      data: { access_token: string; expires_in: number }
+    }
+    expect(refreshedBody.success).toBe(true)
+    const refreshedAccessToken = refreshedBody.data.access_token
+    expect(refreshedAccessToken).toBeTruthy()
+
+    const authenticatedAfterRefresh = await request.get('/api/tasks/feed', {
+      headers: { Authorization: `Bearer ${refreshedAccessToken}` },
+    })
+    expect(authenticatedAfterRefresh.status(), await authenticatedAfterRefresh.text()).toBe(200)
+
+    const revoked = await request.post('/api/auth/revoke', {
+      headers: deviceHeaders,
+      data: { refresh_token: refreshToken, all_devices: false },
+    })
+    expect(revoked.status(), await revoked.text()).toBe(200)
+
+    const afterRevoke = await request.get('/api/tasks/feed', {
+      headers: { Authorization: `Bearer ${refreshedAccessToken}` },
+    })
+    expect(afterRevoke.status(), await afterRevoke.text()).toBe(401)
+  })
 })

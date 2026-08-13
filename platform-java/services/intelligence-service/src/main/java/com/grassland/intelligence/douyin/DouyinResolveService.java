@@ -582,14 +582,14 @@ public class DouyinResolveService {
             }
             JsonNode video = getRecord(candidate, "video");
             JsonNode playAddr = getRecord(video, "play_addr") != null ? getRecord(video, "play_addr") : getRecord(video, "playAddr");
-            Optional<Long> hit = firstPresent(
+            Optional<Long> hit = firstPresent(List.of(
                     readDuration(candidate, "duration"),
                     readDuration(candidate, "duration_ms"),
                     readDuration(candidate, "durationMs"),
                     readDuration(video, "duration_ms"),
                     readDuration(video, "durationMs"),
                     readDuration(video, "duration"),
-                    readDuration(playAddr, "duration"));
+                    readDuration(playAddr, "duration")));
             if (hit.isPresent()) {
                 return hit;
             }
@@ -602,9 +602,8 @@ public class DouyinResolveService {
         if (loaderData == null) {
             return Optional.empty();
         }
-        var fields = loaderData.fields();
-        while (fields.hasNext()) {
-            JsonNode loaderValue = fields.next().getValue();
+        for (var field : loaderData.properties()) {
+            JsonNode loaderValue = field.getValue();
             if (loaderValue == null || !loaderValue.isObject()) {
                 continue;
             }
@@ -612,10 +611,10 @@ public class DouyinResolveService {
             JsonNode itemList = videoInfoResponse == null ? null : videoInfoResponse.get("item_list");
             JsonNode firstItem = itemList != null && itemList.isArray() && !itemList.isEmpty() ? itemList.get(0) : null;
             JsonNode video = getRecord(firstItem, "video");
-            Optional<Long> hit = firstPresent(
+            Optional<Long> hit = firstPresent(List.of(
                     readDuration(video, "duration"),
                     readDuration(video, "duration_ms"),
-                    readDuration(video, "durationMs"));
+                    readDuration(video, "durationMs")));
             if (hit.isPresent()) {
                 return hit;
             }
@@ -623,8 +622,7 @@ public class DouyinResolveService {
         return Optional.empty();
     }
 
-    @SuppressWarnings("unchecked")
-    private static Optional<Long> firstPresent(Optional<Long>... candidates) {
+    private static Optional<Long> firstPresent(List<Optional<Long>> candidates) {
         for (Optional<Long> candidate : candidates) {
             if (candidate.isPresent()) {
                 return candidate;

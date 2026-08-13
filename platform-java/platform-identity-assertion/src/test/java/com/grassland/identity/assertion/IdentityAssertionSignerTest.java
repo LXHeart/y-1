@@ -1,8 +1,6 @@
 package com.grassland.identity.assertion;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -10,10 +8,11 @@ import org.junit.jupiter.api.Test;
 /** 验签铁律：任何失败一律 empty（不抛），调用方据此回退 cookie。 */
 class IdentityAssertionSignerTest {
 
-    private static final byte[] SECRET = "super-secret-key".getBytes(); // secret-scan: allow - test fixture
+    private static final String SECRET = "super-secret-key"; // secret-scan: allow - test fixture
     private static final Instant NOW = Instant.parse("2026-07-23T12:00:00Z");
 
-    private final IdentityAssertionSigner signer = new IdentityAssertionSigner(SECRET, "grassland-internal", Duration.ofSeconds(5));
+    private final IdentityAssertionSigner signer = TestAssertionHelper.signer(
+            "edge-bff", "user", "grassland-internal", SECRET, Duration.ofSeconds(5));
 
     private IdentityAssertion assertion(Instant issued, Instant expires) {
         return new IdentityAssertion(
@@ -110,7 +109,8 @@ class IdentityAssertionSignerTest {
     @Test
     void wrongAudience_isRejected() {
         IdentityAssertionSigner otherAudience =
-                new IdentityAssertionSigner(SECRET, "some-other-audience", Duration.ofSeconds(5));
+                TestAssertionHelper.signer(
+                        "edge-bff", "user", "some-other-audience", SECRET, Duration.ofSeconds(5));
         String token = signer.sign(assertion(NOW, NOW.plusSeconds(60)));
         assertThat(otherAudience.verify(token, NOW)).isEmpty();
     }
@@ -118,16 +118,16 @@ class IdentityAssertionSignerTest {
     @Test
     void wrongSecret_isRejected() {
         IdentityAssertionSigner otherSecret =
-                new IdentityAssertionSigner("different-secret".getBytes(), "grassland-internal", Duration.ofSeconds(5));
+                TestAssertionHelper.signer(
+                        "edge-bff", "user", "grassland-internal", "different-secret", Duration.ofSeconds(5));
         String token = signer.sign(assertion(NOW, NOW.plusSeconds(60)));
         assertThat(otherSecret.verify(token, NOW)).isEmpty();
     }
 
     @Test
-    void emptySecret_signThrowsAndVerifyEmpty() {
-        IdentityAssertionSigner emptySecret = new IdentityAssertionSigner(new byte[0], "grassland-internal", Duration.ofSeconds(5));
-        assertThatThrownBy(() -> emptySecret.sign(assertion(NOW, NOW.plusSeconds(60))))
-                .isInstanceOf(IdentityAssertionException.class);
-        assertThat(emptySecret.verify("payload.mac", NOW)).isEmpty();
+    void unknownKeyIsRejected() {
+        IdentityAssertionSigner otherIssuer = TestAssertionHelper.signer(
+                "marketplace", "user", "grassland-internal", SECRET, Duration.ofSeconds(5));
+        assertThat(otherIssuer.verify(signer.sign(assertion(NOW, NOW.plusSeconds(60))), NOW)).isEmpty();
     }
 }

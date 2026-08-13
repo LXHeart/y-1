@@ -75,7 +75,9 @@ public class EngagementVerificationRepository {
                         .bind("runId", runId).bind("sub", submissionId).bind("status", status)
                         .bind("context", taskContextJson).bind("evidence", evidenceJson)
                         .bind("checks", checksJson)
-                        .bind("actor", org.springframework.r2dbc.core.Parameter.fromOrEmpty(triggeredBy, String.class))
+                        .bind("actor", triggeredBy == null
+                                ? io.r2dbc.spi.Parameters.in(String.class)
+                                : io.r2dbc.spi.Parameters.in(triggeredBy))
                         .map(row -> row.get("id", String.class)).one())
                 .flatMap(savedRunId -> db.sql("""
                         INSERT INTO engagement_verification(

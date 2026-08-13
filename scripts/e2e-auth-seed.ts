@@ -1,6 +1,6 @@
 /** Seed isolated merchant and administrator accounts for public Edge E2E flows. */
 import bcrypt from 'bcryptjs'
-import { queryDb } from '../server/src/lib/db.js'
+import { closeDbPool, queryDb } from './lib/db.js'
 
 const email = process.env.E2E_EMAIL?.trim().toLowerCase()
 const password = process.env.E2E_PASSWORD
@@ -33,16 +33,19 @@ async function upsertAccount(
   )
 }
 
-await upsertAccount(email, password, displayName, 'user')
-await upsertAccount(adminEmail, adminPassword, adminDisplayName, 'admin')
+try {
+  await upsertAccount(email, password, displayName, 'user')
+  await upsertAccount(adminEmail, adminPassword, adminDisplayName, 'admin')
 
-// GL-P2-ADMIN-001：admin 账号补 backend_role 行（platform_admin 超集）。
-// V26 backfill 也会迁 role='admin' 的行，但 seed 可能跑在空库首次建表时，显式补一行幂等保证。
-await queryDb(
-  `INSERT INTO backend_role (account_id, role)
-   SELECT id, 'platform_admin' FROM app_users WHERE email = $1
-   ON CONFLICT (account_id, role) DO NOTHING`,
-  [adminEmail],
-)
+  // GL-P2-ADMIN-001：admin 账号补 backend_role 行（platform_admin 超集）。
+  await queryDb(
+    `INSERT INTO backend_role (account_id, role)
+     SELECT id, 'platform_admin' FROM app_users WHERE email = $1
+     ON CONFLICT (account_id, role) DO NOTHING`,
+    [adminEmail],
+  )
 
-console.log(`[e2e-auth-seed] ready: ${email}, ${adminEmail}`)
+  console.log(`[e2e-auth-seed] ready: ${email}, ${adminEmail}`)
+} finally {
+  await closeDbPool()
+}

@@ -118,6 +118,40 @@ public class CreditsRepository {
                         .one());
     }
 
+    /** Read-only authority lookup for cross-service reconciliation; never creates or locks fences. */
+    public Flux<ConsumeOperation> findConsumeOperations(java.util.Collection<String> operationIds) {
+        if (operationIds == null || operationIds.isEmpty()) {
+            return Flux.empty();
+        }
+        return db.sql("""
+                SELECT operation_id, account_id::text, feature, state,
+                       consume_transaction_id::text, refund_transaction_id::text,
+                       consume_balance_after, charge_source, quota_day, quota_limit,
+                       policy_version, ai_quota_multiplier_bps,
+                       quota_consume_transaction_id::text, quota_refund_transaction_id::text
+                FROM credits_consume_operation
+                WHERE operation_id = ANY(CAST(:operationIds AS text[]))
+                """)
+                .bind("operationIds", operationIds.toArray(String[]::new))
+                .map(row -> new ConsumeOperation(
+                        row.get("operation_id", String.class),
+                        row.get("account_id", String.class),
+                        row.get("feature", String.class),
+                        row.get("state", String.class),
+                        row.get("consume_transaction_id", String.class),
+                        row.get("refund_transaction_id", String.class),
+                        row.get("consume_balance_after", Integer.class),
+                        row.get("charge_source", String.class),
+                        row.get("quota_day", LocalDate.class),
+                        row.get("quota_limit", Integer.class),
+                        row.get("policy_version", Long.class),
+                        row.get("ai_quota_multiplier_bps", Integer.class),
+                        row.get("quota_consume_transaction_id", String.class),
+                        row.get("quota_refund_transaction_id", String.class),
+                        false))
+                .all();
+    }
+
     public Mono<Boolean> markConsumeOperationConsumed(
             String operationId, String transactionId, int balanceAfter) {
         return db.sql("""

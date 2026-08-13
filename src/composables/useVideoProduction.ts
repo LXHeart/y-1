@@ -40,6 +40,8 @@ export function useVideoProduction() {
   const videoLoading = ref(false)
   const videoProgress = ref(0)
   const error = ref('')
+  const taskMode = ref(false)
+  const contextSnapshotId = ref<string | null>(null)
 
   // fail-closed：拉取失败时保持不可用，宁可误禁也不误扣积分
   const videoGenerationAvailable = ref(false)
@@ -56,6 +58,12 @@ export function useVideoProduction() {
       && form.value.shopName.trim().length > 0
       && form.value.targetPlatform.length > 0
   })
+
+  function executionContext() {
+    return taskMode.value
+      ? { taskMode: true, contextSnapshotId: contextSnapshotId.value }
+      : {}
+  }
 
   async function addImages(files: File[]): Promise<void> {
     const remaining = MAX_IMAGES - images.value.length
@@ -122,6 +130,7 @@ export function useVideoProduction() {
           shopDescription: form.value.shopDescription.trim() || undefined,
           videoStyle: form.value.videoStyle,
           customPrompt: form.value.customPrompt.trim() || undefined,
+          ...executionContext(),
         }),
         signal: controller.signal,
       })
@@ -192,6 +201,8 @@ export function useVideoProduction() {
           videoStyle: form.value.videoStyle,
           shopName: form.value.shopName.trim(),
           shopAddress: form.value.shopAddress.trim() || undefined,
+          targetPlatform: form.value.targetPlatform,
+          ...executionContext(),
         }),
         signal: controller.signal,
       })
@@ -207,11 +218,22 @@ export function useVideoProduction() {
       while (!controller.signal.aborted) {
         await new Promise((resolve) => setTimeout(resolve, 2000))
         const statusResponse = await fetch(`/api/video-production/jobs/${id}`, { signal: controller.signal })
-        const statusBody = await statusResponse.json() as { data?: { status: string; progress: number; resultUrl?: string; errorMessage?: string } }
+        const statusBody = await statusResponse.json() as { data?: { status: string; progress: number; errorMessage?: string } }
         const job = statusBody.data
         if (!job) throw new Error('视频任务状态读取失败')
         videoProgress.value = job.progress ?? 0
-        if (job.status === 'succeeded') { videoUrl.value = job.resultUrl ?? ''; break }
+        if (job.status === 'succeeded') {
+          const downloadResponse = await fetch(
+            `/api/video-production/jobs/${id}/download-url`,
+            { signal: controller.signal },
+          )
+          const downloadBody = await downloadResponse.json() as { downloadUrl?: string; error?: string }
+          if (!downloadResponse.ok || !downloadBody.downloadUrl) {
+            throw new Error(downloadBody.error || '视频下载地址获取失败')
+          }
+          videoUrl.value = downloadBody.downloadUrl
+          break
+        }
         if (job.status === 'failed' || job.status === 'cancelled') throw new Error(job.errorMessage || '视频生成失败')
       }
     } catch (err: unknown) {
@@ -265,6 +287,11 @@ export function useVideoProduction() {
     error.value = ''
   }
 
+  function bindCreationContext(isTaskMode: boolean, snapshotId?: string): void {
+    taskMode.value = isTaskMode
+    contextSnapshotId.value = snapshotId || null
+  }
+
   async function consumeSSEStream(
     response: Response,
     onChunk: (text: string) => void,
@@ -315,7 +342,7 @@ export function useVideoProduction() {
     addImages, removeImage, reorderImage,
     generateScript, startVideoGeneration,
     goBackToUpload, goBackToScript,
-    reset,
+    reset, bindCreationContext,
   }
 }
 

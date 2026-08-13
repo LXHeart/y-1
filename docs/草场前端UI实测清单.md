@@ -7,7 +7,7 @@
 
 ```bash
 docker compose --profile java-edge up -d   # 全栈（数据库已默认本地 postgres）
-npm run db:migrate:local                   # 仅首次/换空库时
+docker compose run --rm database-bootstrap # 仅首次/换空库时；前端 Node 工具链保持不变
 npm run e2e:seed                           # 种测试数据（幂等，可重复跑）
 npm run dev:client                         # http://localhost:5173
 ```

@@ -96,14 +96,35 @@ backup() {
 
 verify() {
   [[ -r "$MANIFEST" ]] || die "manifest is not readable: $MANIFEST"
-  local root="$(cd "$(dirname "$MANIFEST")" && pwd)" hash rel actual
+  local root header postgres_dump minio_prefix hash rel actual kind
+  root="$(cd "$(dirname "$MANIFEST")" && pwd)"
+  MANIFEST="$root/$(basename "$MANIFEST")"
+  IFS= read -r header < "$MANIFEST"
+  [[ "$header" == "# grassland backup manifest v1" ]] || die "unsupported or missing backup manifest version"
+  postgres_dump="$(sed -n 's/^postgres_dump=//p' "$MANIFEST")"
+  minio_prefix="$(sed -n 's/^minio_prefix=//p' "$MANIFEST")"
+  [[ "$postgres_dump" == "postgres.dump" ]] || die "manifest must reference postgres.dump"
+  [[ "$minio_prefix" != /* && "$minio_prefix" != *..* ]] || die "unsafe MinIO backup prefix"
+  [[ -n "$minio_prefix" && -d "$root/$minio_prefix" ]] || die "MinIO backup prefix is missing"
+
+  local checksum_count=0 postgres_checksum_count=0 seen_paths actual_file_count
+  seen_paths=$'\n'
   while read -r kind hash rel; do
     [[ "$kind" == sha256 ]] || continue
     [[ "$rel" != /* && "$rel" != *..* ]] || die "unsafe manifest path: $rel"
+    [[ "$hash" =~ ^[0-9a-fA-F]{64}$ && -n "$rel" ]] || die "invalid checksum entry"
+    [[ "$seen_paths" != *$'\n'"$rel"$'\n'* ]] || die "duplicate manifest path: $rel"
+    seen_paths+="$rel"$'\n'
     [[ -f "$root/$rel" ]] || die "manifest file missing: $rel"
     actual="$(sha256 "$root/$rel")"
     [[ "$actual" == "$hash" ]] || die "checksum mismatch: $rel"
+    checksum_count=$((checksum_count + 1))
+    [[ "$rel" != "$postgres_dump" ]] || postgres_checksum_count=$((postgres_checksum_count + 1))
   done < "$MANIFEST"
+  [[ "$postgres_checksum_count" -eq 1 ]] || die "manifest must contain exactly one PostgreSQL dump checksum"
+  actual_file_count="$(find "$root" -type f ! -path "$MANIFEST" -print | wc -l | tr -d ' ')"
+  [[ "$checksum_count" -eq "$actual_file_count" ]] \
+    || die "manifest checksum set is incomplete: expected $actual_file_count, found $checksum_count"
   printf '%s\n' "manifest verified: $MANIFEST"
 }
 

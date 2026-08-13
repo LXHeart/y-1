@@ -94,7 +94,7 @@ public record IdentityAssertion(
      *
      * <p>{@code issuer}/{@code keyId}/{@code jti} 缺省 null：由 {@link IdentityAssertionSigner}
      * 在 keyring 模式签发时填充（{@link #withEnvelope}）。直接用本构造器签发的 token 无法通过
-     * keyring 验签（缺 issuer/kid），仅 legacy 模式或测试夹具用。
+     * keyring 验签（缺 issuer/kid）；生产签发必须经 {@link IdentityAssertionSigner#sign} 填充 envelope。
      */
     public IdentityAssertion(String accountId, String activeIdentityType, String sessionToken,
                              String organizationId, String permissionTier, String authMethod,

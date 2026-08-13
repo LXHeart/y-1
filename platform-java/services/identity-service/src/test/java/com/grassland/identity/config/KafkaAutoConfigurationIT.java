@@ -8,6 +8,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.kafka.core.KafkaTemplate;
 
 /**
@@ -25,11 +26,17 @@ class KafkaAutoConfigurationIT extends IdentityItSupport {
     @Autowired
     KafkaTemplate<String, String> kafkaTemplate;
 
+    @Autowired
+    KafkaProperties kafkaProperties;
+
     @Test
     void kafkaTemplateAutoConfiguredFromProperties() {
         assertThat(kafkaTemplate)
                 .as("auto-config 必须产出 KafkaTemplate（换 spring-boot-starter-kafka 后）")
                 .isNotNull();
+        assertThat(kafkaProperties.getTemplate().isObservationEnabled())
+                .as("Kafka producer observation 配置必须由 Boot 绑定")
+                .isTrue();
 
         // 直接读 ProducerFactory 配置 map，证明 spring.kafka.* 经 KafkaProperties → ProducerFactory 正确流入
         Map<String, Object> cfg = kafkaTemplate.getProducerFactory().getConfigurationProperties();

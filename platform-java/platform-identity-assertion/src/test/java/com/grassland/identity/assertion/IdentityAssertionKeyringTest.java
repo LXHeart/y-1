@@ -18,8 +18,7 @@ class IdentityAssertionKeyringTest {
     // 构造测试用的 keyring
     private static IdentityAssertionKeyring testKeyring() {
         return PropertiesKeyring.from(new IdentityAssertionProperties(
-                true,
-                null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                 "edge-bff",
                 List.of(
                         new IdentityAssertionProperties.KeyEntry(
@@ -83,8 +82,8 @@ class IdentityAssertionKeyringTest {
         assertThat(keys.get(0).issuer()).isEqualTo("marketplace");
         assertThat(keys.get(0).purpose()).isEqualTo(Purpose.SERVICE);
 
-        // kid 缺失：返回该 issuer 的全部验签钥
-        assertThat(keyring.verifyKeys("marketplace", null)).hasSize(1);
+        // kid 缺失：keyring-only 模式 fail closed
+        assertThat(keyring.verifyKeys("marketplace", null)).isEmpty();
 
         // issuer 不存在
         assertThat(keyring.verifyKeys("unknown", "any-kid")).isEmpty();
@@ -114,7 +113,7 @@ class IdentityAssertionKeyringTest {
     @Test
     void signer_keyringMode_serviceAssertionUsesServiceKey() {
         IdentityAssertionKeyring keyring = PropertiesKeyring.from(new IdentityAssertionProperties(
-                true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                 "marketplace",
                 List.of(
                         new IdentityAssertionProperties.KeyEntry(
@@ -178,7 +177,7 @@ class IdentityAssertionKeyringTest {
 
         // 只信任 identity 密钥的验证方（镜像真实 identity-service：仅持 edge→identity 验签钥）
         IdentityAssertionKeyring identityOnlyVerifier = PropertiesKeyring.from(new IdentityAssertionProperties(
-                true, null, 60, null, null, 0, null, "identity",
+                true, 60, null, null, 0, null, "identity",
                 List.of(),
                 List.of(new IdentityAssertionProperties.KeyEntry(
                         "edge-user-identity-v1", "edge-bff", "user", "grassland-identity",
@@ -217,7 +216,7 @@ class IdentityAssertionKeyringTest {
         // 这里简化测试：直接验证 user 钥不会接受 service 断言
         // 用另一个 keyring（只有验签钥）来验证
         IdentityAssertionKeyring verifyOnlyKeyring = PropertiesKeyring.from(new IdentityAssertionProperties(
-                true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                 "edge-bff",
                 List.of(),
                 List.of(new IdentityAssertionProperties.KeyEntry(
@@ -243,7 +242,7 @@ class IdentityAssertionKeyringTest {
     @Test
     void verify_keyringMode_principalBindingReject_serviceKeyWithWrongPrincipal() {
         IdentityAssertionKeyring keyring = PropertiesKeyring.from(new IdentityAssertionProperties(
-                true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                 "marketplace",
                 List.of(new IdentityAssertionProperties.KeyEntry(
                         "marketplace-service-finance-v1", null, "service", "grassland-finance",
@@ -367,7 +366,7 @@ class IdentityAssertionKeyringTest {
 
     private IdentityAssertionSigner signerWithSigningKey(String kid, String secret) {
         var props = new IdentityAssertionProperties(
-                true, null, 60, null, null, 5, List.of(), "edge-bff",
+                true, 60, null, null, 5, List.of(), "edge-bff",
                 List.of(new IdentityAssertionProperties.KeyEntry(
                         kid, null, "user", "grassland-identity", secret)),
                 List.of(), new IdentityAssertionProperties.ReplayProtectionConfig(false));
@@ -377,7 +376,7 @@ class IdentityAssertionKeyringTest {
 
     private IdentityAssertionSigner verifierWithKeys(List<IdentityAssertionProperties.KeyEntry> keys) {
         var props = new IdentityAssertionProperties(
-                true, null, 60, null, null, 5, List.of(), "identity",
+                true, 60, null, null, 5, List.of(), "identity",
                 List.of(), keys, new IdentityAssertionProperties.ReplayProtectionConfig(false));
         return new IdentityAssertionSigner(PropertiesKeyring.from(props), "identity",
                 AssertionReplayGuard.NO_OP, Duration.ZERO);
@@ -437,7 +436,7 @@ class IdentityAssertionKeyringTest {
     void propertiesKeyring_duplicateKidThrows() {
         assertThatThrownBy(() -> {
             new IdentityAssertionProperties(
-                    true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                    true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                     "edge-bff",
                     List.of(
                             new IdentityAssertionProperties.KeyEntry("dup-kid", null, "user", "grassland-identity", "s1"),
@@ -453,7 +452,7 @@ class IdentityAssertionKeyringTest {
         // 对称 HMAC：同一 kid 可同时出现在 signing-keys 与 verify-keys（同一服务既签又验）
         // 不应抛异常
         var props = new IdentityAssertionProperties(
-                true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                 "edge-bff",
                 List.of(new IdentityAssertionProperties.KeyEntry("same-kid", null, "user", "grassland-identity", "s1")),
                 List.of(new IdentityAssertionProperties.KeyEntry("same-kid", "edge-bff", "user", "grassland-identity", "s1")),
@@ -467,7 +466,7 @@ class IdentityAssertionKeyringTest {
         // verify-keys 内部 kid 重复 → 抛异常
         assertThatThrownBy(() -> {
             new IdentityAssertionProperties(
-                    true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                    true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                     "edge-bff",
                     List.of(),
                     List.of(
@@ -481,7 +480,7 @@ class IdentityAssertionKeyringTest {
     @Test
     void propertiesKeyring_allSigningKeysAndVerifyKeys() {
         PropertiesKeyring keyring = PropertiesKeyring.from(new IdentityAssertionProperties(
-                true, null, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
+                true, 60, "grassland-internal", "X-Grassland-Identity", 5, List.of(),
                 "edge-bff",
                 List.of(
                         new IdentityAssertionProperties.KeyEntry("k1", null, "user", "grassland-identity", "s1"),

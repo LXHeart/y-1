@@ -8,6 +8,7 @@ import type {
   ImageRecommendation,
   ImageSearchResult,
 } from '../types/article-creation'
+import type { AiPlatformId } from '../types/ai-creation'
 
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
@@ -27,12 +28,32 @@ export function useArticleCreation() {
   const imageRecommendations = ref<ImageRecommendation | null>(null)
   const loadingRecommendations = ref(false)
   const completed = ref(false)
+  const taskMode = ref(false)
+  const contextSnapshotId = ref<string | null>(null)
+  const taskPlatformId = ref<AiPlatformId | null>(null)
 
   let titlesController: AbortController | null = null
   let outlineController: AbortController | null = null
   let contentController: AbortController | null = null
   let recommendationsController: AbortController | null = null
   const slotControllers = new Map<number, AbortController>()
+
+  function executionContext() {
+    return taskMode.value
+      ? { taskMode: true, contextSnapshotId: contextSnapshotId.value }
+      : {}
+  }
+
+  function imageExecutionContext() {
+    if (!taskMode.value) return {}
+    const targetPlatform = taskPlatformId.value
+      || (platform.value === 'wechat' ? 'wechat-official' : platform.value)
+    return {
+      taskMode: true,
+      contextSnapshotId: contextSnapshotId.value,
+      targetPlatform,
+    }
+  }
 
   async function consumeSSEStream(
     response: Response,
@@ -96,7 +117,7 @@ export function useArticleCreation() {
       const response = await fetch('/api/article-generation/titles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: trimmed, platform: platform.value }),
+        body: JSON.stringify({ topic: trimmed, platform: platform.value, ...executionContext() }),
         signal: controller.signal,
       })
 
@@ -137,7 +158,9 @@ export function useArticleCreation() {
       const response = await fetch('/api/article-generation/outline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.value.trim(), title: trimmed, platform: platform.value }),
+        body: JSON.stringify({
+          topic: topic.value.trim(), title: trimmed, platform: platform.value, ...executionContext(),
+        }),
         signal: controller.signal,
       })
 
@@ -179,6 +202,7 @@ export function useArticleCreation() {
           title: selectedTitle.value.trim(),
           outline: outline.value.trim(),
           platform: platform.value,
+          ...executionContext(),
         }),
         signal: controller.signal,
       })
@@ -344,6 +368,7 @@ export function useArticleCreation() {
         body: JSON.stringify({
           prompt: slot.placement.prompt,
           size: '1024x1024',
+          ...imageExecutionContext(),
         }),
         signal: controller.signal,
       })
@@ -440,6 +465,16 @@ export function useArticleCreation() {
     stage.value = 'topic'
   }
 
+  function bindCreationContext(
+    isTaskMode: boolean,
+    snapshotId?: string,
+    platformId?: AiPlatformId,
+  ): void {
+    taskMode.value = isTaskMode
+    contextSnapshotId.value = snapshotId || null
+    taskPlatformId.value = isTaskMode ? platformId || null : null
+  }
+
   function cancel(): void {
     titlesController?.abort()
     outlineController?.abort()
@@ -458,6 +493,6 @@ export function useArticleCreation() {
     goToTitles, goToOutline, goToContent,
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
     selectImageForSlot, clearImageForSlot, toggleSlot,
-    reset, cancel, setTopic, finish,
+    reset, cancel, setTopic, bindCreationContext, finish,
   }
 }

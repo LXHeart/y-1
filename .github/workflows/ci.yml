@@ -27,6 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run security:secrets
+      - run: ./scripts/validate-released-migrations.sh
       - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm run test:coverage
@@ -59,6 +60,7 @@ jobs:
         working-directory: platform-java
         run: >-
           ./gradlew test
+          :services:database-bootstrap:bootJar
           :services:edge-bff:bootJar
           :services:identity-service:bootJar
           :services:marketplace-service:bootJar
@@ -80,6 +82,12 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Verify Docker builder
+        run: |
+          docker version
+          docker buildx inspect --bootstrap
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -113,3 +121,38 @@ jobs:
             test-artifacts/
           if-no-files-found: ignore
           retention-days: 14
+
+  image-security:
+    name: Image vulnerability scan and SBOM
+    needs: [node, java]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Verify Docker builder
+        run: |
+          docker version
+          docker buildx inspect --bootstrap
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Restore packaged Java services
+        uses: actions/download-artifact@v4
+        with:
+          name: java-service-jars
+          path: platform-java/services
+      - name: Build, scan, and generate SPDX SBOMs for application images
+        run: scripts/ci-image-security.sh
+      - name: Validate image security evidence
+        run: scripts/validate-image-security-evidence.sh
+      - name: Upload image security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-security-${{ github.run_id }}
+          path: test-artifacts/image-security/
+          if-no-files-found: warn
+          retention-days: 30

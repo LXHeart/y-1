@@ -36,6 +36,7 @@ function dataFor(url: string): unknown {
     return [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
   }
   if (url === '/api/organizations') return [ORG]
+  if (url.includes('/stores')) return []
   if (url === '/api/me/store-scopes') return []
   if (url.startsWith('/api/tasks/feed')) return { items: [], nextCursor: null, hasMore: false }
   if (url.startsWith('/api/tasks')) return []
@@ -158,14 +159,14 @@ describe('GrasslandWorkbench 登录态', () => {
     const calls: Array<[string, RequestInit | undefined]> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push([url, init])
-      let data: unknown = {}
+      let data: unknown = []
       if (url === '/api/me/identities' || url === '/api/organizations') data = []
       else if (url === '/api/me/store-scopes') data = [{
         storeId: 'store-managed', storeName: '经理负责门店', storeStatus: 'active',
         organizationId: 'org-managed', organizationName: '授权组织', organizationStatus: 'active',
         permissionTier: 'basic_publish', role: 'manager',
       }]
-      else if (url.startsWith('/api/tasks?')) data = []
+      else if (url.startsWith('/api/tasks?') || url.includes('/stores')) data = []
       return { ok: true, headers: { get: () => 'application/json' },
         json: async () => ({ success: true, data }) }
     }))
@@ -231,7 +232,7 @@ describe('GrasslandWorkbench 商家 contest', () => {
     const calls: Array<[string, RequestInit | undefined]> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push([url, init])
-      let data: unknown = {}
+      let data: unknown = []
       if (url === '/api/me/identities') {
         data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
       } else if (url === '/api/organizations') {
@@ -308,7 +309,7 @@ describe('GrasslandWorkbench deferred 争议', () => {
     const calls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(url)
-      let data: unknown = {}
+      let data: unknown = []
       if (url === '/api/me/identities') {
         data = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
       } else if (url === '/api/organizations') {
@@ -474,13 +475,18 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
       title: '原标题', description: '原描述', status: 'published',
       contentForm: null, platform: 'douyin', maxSlots: 3, bountyCents: 500,
       minRecommenderLevel: 4,
+      requirements: {
+        productServiceInfo: '原套餐', mustInclude: ['门店名'], forbiddenContent: ['绝对化功效'],
+        publishStartAt: '2026-08-20T10:00:00Z', publishEndAt: '2026-08-25T10:00:00Z',
+        metricRequirements: ['播放量截图'], evidenceRequirements: ['发布链接'],
+      },
       version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
       cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
     }
     const calls: Array<[string, RequestInit | undefined]> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push([url, init])
-      let data: unknown = {}
+      let data: unknown = []
       if (url === '/api/me/identities') {
         data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
       } else if (url === '/api/organizations') {
@@ -512,6 +518,11 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     expect(wrapper.find('input[placeholder="平台（可选）"]').attributes('disabled')).toBeUndefined()
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('修订标题')
+    await wrapper.get('[aria-label="产品服务信息"]').setValue(' 双人招牌套餐 ')
+    await wrapper.get('[aria-label="必须包含"]').setValue('门店名\n招牌菜\n门店名')
+    await wrapper.get('[aria-label="禁止内容"]').setValue('绝对化功效')
+    await wrapper.get('[aria-label="指标要求"]').setValue('发布后 24 小时播放量')
+    await wrapper.get('[aria-label="凭证要求"]').setValue('发布链接\n后台截图')
     const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存修订')!
     await saveBtn.trigger('click')
     await flushPromises()
@@ -524,5 +535,14 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     expect(body.platform).toBe('douyin')
     expect(body.bountyCents).toBe(500)
     expect(body.minRecommenderLevel).toBe(4)
+    expect(body.requirements).toMatchObject({
+      productServiceInfo: '双人招牌套餐',
+      mustInclude: ['门店名', '招牌菜'],
+      forbiddenContent: ['绝对化功效'],
+      metricRequirements: ['发布后 24 小时播放量'],
+      evidenceRequirements: ['发布链接', '后台截图'],
+    })
+    expect(body.requirements.publishStartAt).toBe('2026-08-20T10:00:00.000Z')
+    expect(body.requirements.publishEndAt).toBe('2026-08-25T10:00:00.000Z')
   })
 })

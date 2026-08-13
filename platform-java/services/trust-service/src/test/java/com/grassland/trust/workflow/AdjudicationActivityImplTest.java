@@ -39,6 +39,7 @@ import reactor.core.publisher.Mono;
  * 单测里把 {@link TransactionalOperator} 桩成<b>直通</b>（原样返回被包的 Mono），故断言不变；
  * 真实回滚由 {@code ActivityOutboxAtomicityIT}（testcontainers + spy outbox）证明。
  */
+@SuppressWarnings("unchecked")
 class AdjudicationActivityImplTest {
 
     private final DisputeCaseRepository disputes = mock(DisputeCaseRepository.class);

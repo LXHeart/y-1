@@ -83,6 +83,8 @@ const creditAmountYuan = ref(1000)
 const taskForm = ref({
   title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
   applicationDeadline: '', minRecommenderLevel: 1,
+  productServiceInfo: '', mustInclude: '', forbiddenContent: '',
+  publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
 })
 /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
 const editingDraft = ref<{ id: string; version: number } | null>(null)
@@ -419,6 +421,7 @@ async function publishTask(): Promise<void> {
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
     applicationDeadline: deadlineIso(),
     minRecommenderLevel: taskForm.value.minRecommenderLevel,
+    requirements: taskRequirements(),
   })
   if (!created) return
   resetTaskForm()
@@ -434,6 +437,28 @@ function deadlineIso(): string | undefined {
   return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
 }
 
+function localDateTimeIso(value: string): string | undefined {
+  if (!value) return undefined
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
+}
+
+function lines(value: string): string[] {
+  return [...new Set(value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))]
+}
+
+function taskRequirements() {
+  return {
+    productServiceInfo: taskForm.value.productServiceInfo.trim() || undefined,
+    mustInclude: lines(taskForm.value.mustInclude),
+    forbiddenContent: lines(taskForm.value.forbiddenContent),
+    publishStartAt: localDateTimeIso(taskForm.value.publishStartAt),
+    publishEndAt: localDateTimeIso(taskForm.value.publishEndAt),
+    metricRequirements: lines(taskForm.value.metricRequirements),
+    evidenceRequirements: lines(taskForm.value.evidenceRequirements),
+  }
+}
+
 /** ISO → datetime-local（回填编辑草稿用）。 */
 function isoToLocalInput(iso: string | null): string {
   if (!iso) return ''
@@ -445,7 +470,8 @@ function isoToLocalInput(iso: string | null): string {
 
 function resetTaskForm(): void {
   taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
-    applicationDeadline: '', minRecommenderLevel: 1 }
+    applicationDeadline: '', minRecommenderLevel: 1, productServiceInfo: '', mustInclude: '',
+    forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '' }
   editingDraft.value = null
   revisingTask.value = null
 }
@@ -467,6 +493,7 @@ async function saveDraft(): Promise<void> {
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
+      requirements: taskRequirements(),
     })
     if (!revised) return
     setNotice(`任务「${revised.title}」已修订出新版本（v${revised.version}）`)
@@ -486,6 +513,7 @@ async function saveDraft(): Promise<void> {
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
+      requirements: taskRequirements(),
     })
     if (!updated) return
     setNotice(`草稿「${updated.title}」已更新（v${updated.version}）`)
@@ -501,6 +529,7 @@ async function saveDraft(): Promise<void> {
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
+      requirements: taskRequirements(),
     })
     if (!created) return
     setNotice(`草稿「${created.title}」已保存`)
@@ -523,6 +552,13 @@ function editDraft(task: Task): void {
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
     minRecommenderLevel: task.minRecommenderLevel ?? 1,
+    productServiceInfo: task.requirements?.productServiceInfo || '',
+    mustInclude: (task.requirements?.mustInclude || []).join('\n'),
+    forbiddenContent: (task.requirements?.forbiddenContent || []).join('\n'),
+    publishStartAt: isoToLocalInput(task.requirements?.publishStartAt || null),
+    publishEndAt: isoToLocalInput(task.requirements?.publishEndAt || null),
+    metricRequirements: (task.requirements?.metricRequirements || []).join('\n'),
+    evidenceRequirements: (task.requirements?.evidenceRequirements || []).join('\n'),
   }
 }
 
@@ -543,6 +579,13 @@ function editPublished(task: Task): void {
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
     minRecommenderLevel: task.minRecommenderLevel ?? 1,
+    productServiceInfo: task.requirements?.productServiceInfo || '',
+    mustInclude: (task.requirements?.mustInclude || []).join('\n'),
+    forbiddenContent: (task.requirements?.forbiddenContent || []).join('\n'),
+    publishStartAt: isoToLocalInput(task.requirements?.publishStartAt || null),
+    publishEndAt: isoToLocalInput(task.requirements?.publishEndAt || null),
+    metricRequirements: (task.requirements?.metricRequirements || []).join('\n'),
+    evidenceRequirements: (task.requirements?.evidenceRequirements || []).join('\n'),
   }
 }
 

@@ -467,6 +467,9 @@ function handleStartWorkflow(handoff: CreationHandoff): void {
     contentFormId: handoff.contentFormId,
     source: { ...handoff.source },
     prefill: handoff.prefill ? { ...handoff.prefill } : undefined,
+    taskContext: handoff.taskContext,
+    contextSnapshotId: handoff.contextSnapshotId,
+    materialIds: handoff.materialIds ? [...handoff.materialIds] : undefined,
   }
   creationHandoff.value = {
     ...handoff, source: { ...handoff.source },

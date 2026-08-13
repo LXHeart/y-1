@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 public class RequiredIdentityAssertionKeyValidator {
 
     public RequiredIdentityAssertionKeyValidator(IdentityAssertionProperties properties) {
-        if (!properties.enabled() || properties.isLegacyMode()) {
+        if (!properties.enabled()) {
             return;
         }
         if (!"trust".equals(properties.issuer())) {

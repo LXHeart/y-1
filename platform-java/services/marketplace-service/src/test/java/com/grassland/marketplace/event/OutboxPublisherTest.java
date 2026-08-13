@@ -22,6 +22,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+@SuppressWarnings("unchecked")
 class OutboxPublisherTest {
 
     private final OutboxRepository repository = mock(OutboxRepository.class);
@@ -53,6 +54,8 @@ class OutboxPublisherTest {
 
         verify(repository).markPublished(eq("7a979ae8-e0bb-49f3-b612-554974dd0f6b"), anyString());
         assertThat(meterRegistry.counter("marketplace.outbox.published").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("grassland.outbox.pending").gauge().value()).isEqualTo(2.0);
+        assertThat(meterRegistry.get("grassland.outbox.oldest.pending.age").gauge().value()).isEqualTo(12.0);
     }
 
     @Test
@@ -94,6 +97,8 @@ class OutboxPublisherTest {
     private void stubClaim(int attemptCount) {
         when(repository.claimBatch(anyString(), eq(10), eq(Duration.ofMinutes(5))))
                 .thenAnswer(invocation -> Flux.just(row(attemptCount, invocation.getArgument(0))));
+        when(repository.pendingCount()).thenReturn(Mono.just(2L));
+        when(repository.oldestPendingAgeSeconds()).thenReturn(Mono.just(12L));
     }
 
     private OutboxRepository.OutboxRow row(int attemptCount, String claimToken) {

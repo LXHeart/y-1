@@ -93,6 +93,7 @@
         :analysis="videoAnalysis"
         :analysis-loading="analysisLoading"
         :analysis-error="analysisError"
+        :task-context="taskExecutionContext"
         @retry="handleExtractDouyinVideo"
         @retry-analysis="handleRetryDouyinAnalysis"
       />
@@ -105,6 +106,7 @@
         :analysis="bilibiliVideoAnalysis"
         :analysis-loading="bilibiliAnalysisLoading"
         :analysis-error="bilibiliAnalysisError"
+        :task-context="taskExecutionContext"
         @retry="handleExtractBilibiliVideo"
         @retry-analysis="handleRetryBilibiliAnalysis"
       />
@@ -135,6 +137,7 @@ import { useDouyinParse } from '../../composables/useDouyinParse'
 import { useDouyinSession } from '../../composables/useDouyinSession'
 import { useDouyinVideoAnalysis } from '../../composables/useDouyinVideoAnalysis'
 import type { CreationHandoff } from '../../types/ai-creation'
+import type { VideoTaskExecutionContext } from '../../types/video-recreation'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -196,6 +199,7 @@ const activePlatform = ref<SupportedPlatform>('douyin')
 const videoInput = ref('')
 const showSessionPanel = ref(false)
 const hydratedCreationRevision = ref<number | null>(null)
+const taskExecutionContext = ref<VideoTaskExecutionContext | undefined>()
 
 const {
   extractedVideo,
@@ -262,13 +266,13 @@ void refreshDouyinSession()
 async function handleRetryDouyinAnalysis(): Promise<void> {
   const proxyVideoUrl = extractedVideo.value?.proxyVideoUrl
   if (!proxyVideoUrl) return
-  await analyzeVideo(proxyVideoUrl)
+  await analyzeVideo(proxyVideoUrl, taskExecutionContext.value)
 }
 
 async function handleRetryBilibiliAnalysis(): Promise<void> {
   const proxyVideoUrl = bilibiliExtractedVideo.value?.proxyVideoUrl
   if (!proxyVideoUrl) return
-  await analyzeBilibiliVideo(proxyVideoUrl)
+  await analyzeBilibiliVideo(proxyVideoUrl, taskExecutionContext.value)
 }
 
 async function handleExtractDouyinVideo(): Promise<void> {
@@ -316,9 +320,22 @@ function handleReset(): void {
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'video' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
-  const nextPlatform: SupportedPlatform = handoff.platformId === 'bilibili' ? 'bilibili' : 'douyin'
+  const nextPlatform: SupportedPlatform = handoff.workflowId === 'video-recreation'
+    ? handoff.prefill?.referencePlatform || 'douyin'
+    : handoff.platformId === 'bilibili' ? 'bilibili' : 'douyin'
   handleSwitchPlatform(nextPlatform)
-  videoInput.value = handoff.source.type === 'reference' ? handoff.source.sourceUrl || '' : ''
+  taskExecutionContext.value = handoff.workflowId === 'video-recreation'
+    && handoff.source.type === 'task'
+    && handoff.contextSnapshotId
+    ? {
+        taskMode: true,
+        contextSnapshotId: handoff.contextSnapshotId,
+        targetPlatform: handoff.platformId,
+      }
+    : undefined
+  videoInput.value = handoff.workflowId === 'video-recreation'
+    ? handoff.prefill?.referenceUrl || ''
+    : handoff.source.type === 'reference' ? handoff.source.sourceUrl || '' : ''
 }, { immediate: true })
 </script>
 

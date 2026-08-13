@@ -17,20 +17,17 @@ import reactor.core.publisher.Mono;
 
 /**
  * 积分域端到端（GL-P3-AI-001 下属切片）：award/consume/refund 的余额、流水、幂等与余额不足；
- * 内部端点共享密钥鉴权 + rejectForwarded；公共读端用户断言鉴权。
+ * 内部端点服务断言鉴权 + rejectForwarded；公共读端用户断言鉴权。
  *
  * <p>逻辑逐字移植自 legacy {@code credit.service.ts}，本组锁住最不能靠人工点一遍代替的并发与幂等不变量。
  */
 class CreditsControllerIT extends FinanceItSupport {
-
-    private static final String INTERNAL_KEY = "test-internal-key";
 
     @org.springframework.beans.factory.annotation.Autowired
     TransactionalOperator transactions;
 
     @DynamicPropertySource
     static void creditsProps(DynamicPropertyRegistry r) {
-        r.add("credits.internal-key", () -> INTERNAL_KEY);
         r.add("credits.ai-quota.base-daily", () -> "2");
         r.add("credits.ai-quota.zone-id", () -> "Asia/Shanghai");
     }
@@ -55,7 +52,7 @@ class CreditsControllerIT extends FinanceItSupport {
     }
 
     @Test
-    void aiQuotaRequiresIntelligenceServiceAssertionInAdditionToSharedKey() {
+    void aiQuotaRequiresIntelligenceServiceAssertion() {
         String acct = UUID.randomUUID().toString();
         Map<String, Object> body = Map.of(
                 "accountId", acct,
@@ -65,16 +62,32 @@ class CreditsControllerIT extends FinanceItSupport {
                 "policyVersion", 99);
 
         client().post().uri("/internal/credits/consume")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange().expectStatus().isUnauthorized();
         client().post().uri("/internal/credits/consume")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange().expectStatus().isForbidden();
 
         assertThat(quotaUsed(acct)).isZero();
+    }
+
+    @Test
+    void paidConsumeAlsoRequiresIntelligenceServiceAssertion() {
+        String acct = UUID.randomUUID().toString();
+        award(acct, 1);
+        Map<String, Object> body = Map.of(
+                "accountId", acct,
+                "feature", "comedy_generation",
+                "operationId", "untrusted-paid-" + acct);
+
+        client().post().uri("/internal/credits/consume")
+                .header("X-Grassland-Identity", signService(null, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+
+        assertThat(balanceOf(acct)).isEqualTo(1);
+        assertThat(txnCount(acct)).isEqualTo(1);
     }
 
     @Test
@@ -89,11 +102,9 @@ class CreditsControllerIT extends FinanceItSupport {
                 "note", "failed");
 
         client().post().uri("/internal/credits/consume-compensations")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange().expectStatus().isUnauthorized();
         client().post().uri("/internal/credits/consume-compensations")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "trust"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
                 .exchange().expectStatus().isForbidden();
@@ -108,7 +119,6 @@ class CreditsControllerIT extends FinanceItSupport {
         String acct = UUID.randomUUID().toString();
 
         client().post().uri("/internal/credits/consume")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of(
@@ -202,7 +212,6 @@ class CreditsControllerIT extends FinanceItSupport {
         String acct = UUID.randomUUID().toString();
         WebClient webClient = WebClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .defaultHeader("X-Internal-Key", INTERNAL_KEY)
                 .defaultHeader("X-Grassland-Identity", signService(null, "intelligence"))
                 .build();
 
@@ -232,7 +241,6 @@ class CreditsControllerIT extends FinanceItSupport {
         entitledConsume(acct, "bad-high-" + acct, 100_001, 1).expectStatus().isBadRequest();
         entitledConsume(acct, "bad-version-" + acct, 10_000, 0).expectStatus().isBadRequest();
         client().post().uri("/internal/credits/consume")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of(
                         "accountId", acct,
@@ -307,7 +315,6 @@ class CreditsControllerIT extends FinanceItSupport {
 
         // 退款键 = refund:<consumeId>（与 consume 行键区分，否则被 dedup 吞掉）
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "comedy_generation",
@@ -317,7 +324,6 @@ class CreditsControllerIT extends FinanceItSupport {
 
         // 重复退款 → deduplicated，余额不再叠加
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "comedy_generation",
@@ -336,7 +342,6 @@ class CreditsControllerIT extends FinanceItSupport {
         consume(acct, "comedy_generation", "X-" + acct);   // balance 1
         // 误用原始 consume 键作 refund（错误用法）→ 命中 consume 行，dedup，不退款
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "comedy_generation",
@@ -378,12 +383,10 @@ class CreditsControllerIT extends FinanceItSupport {
                 "operationId", "refund:" + operationId,
                 "note", "untrusted legacy caller");
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isUnauthorized();
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
@@ -405,24 +408,20 @@ class CreditsControllerIT extends FinanceItSupport {
                 "note", "untrusted adjustment");
 
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isUnauthorized();
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "marketplace"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isForbidden();
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isForbidden();
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
@@ -438,18 +437,15 @@ class CreditsControllerIT extends FinanceItSupport {
                 "accountId", acct, "amount", 3, "note", "admin grant");
 
         client().post().uri("/internal/credits/award")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isUnauthorized();
         client().post().uri("/internal/credits/award")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isForbidden();
         client().post().uri("/internal/credits/award")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
@@ -498,7 +494,6 @@ class CreditsControllerIT extends FinanceItSupport {
         internalCompensate(acct, "ai_run_text", "o".repeat(257))
                 .expectStatus().isBadRequest();
         client().post().uri("/internal/credits/consume-compensations")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of(
                         "accountId", acct,
@@ -517,7 +512,6 @@ class CreditsControllerIT extends FinanceItSupport {
         award(acct, 2);
         WebClient webClient = WebClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .defaultHeader("X-Internal-Key", INTERNAL_KEY)
                 .defaultHeader("X-Grassland-Identity", signService(null, "intelligence"))
                 .build();
 
@@ -548,7 +542,6 @@ class CreditsControllerIT extends FinanceItSupport {
         award(acct, 2);
         consume(acct, "ai_run_text", operationId);
         client().post().uri("/internal/credits/refund")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", 1, "feature", "ai_run_text",
@@ -607,9 +600,9 @@ class CreditsControllerIT extends FinanceItSupport {
     }
 
     @Test
-    void internalEndpointsRequireSharedKey() {
+    void internalEndpointsRequireServiceAssertionAndRejectForwardedRequests() {
         String acct = UUID.randomUUID().toString();
-        // 无 X-Internal-Key → 401
+        // 无服务断言 → 401
         client().post().uri("/internal/credits/consume")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", "comedy_generation", "operationId", "op"))
@@ -617,7 +610,7 @@ class CreditsControllerIT extends FinanceItSupport {
         // 经代理（带 X-Forwarded-For）→ 404（rejectForwarded 纵深防御）
         client().post().uri("/internal/credits/consume")
                 .header("X-Forwarded-For", "10.0.0.1")
-                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", "comedy_generation", "operationId", "op"))
                 .exchange().expectStatus().isNotFound();
@@ -643,7 +636,7 @@ class CreditsControllerIT extends FinanceItSupport {
         award(acctB, 3);
 
         client().post().uri("/internal/credits/balances")
-                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountIds", java.util.List.of(acctA, acctB)))
                 .exchange().expectStatus().isOk().expectBody()
@@ -659,7 +652,7 @@ class CreditsControllerIT extends FinanceItSupport {
 
         // 未建户的 accountId 不在结果里（调用方按缺失 = 0 余额处理）
         client().post().uri("/internal/credits/balances")
-                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountIds", java.util.List.of(withCredits, noCredits)))
                 .exchange().expectStatus().isOk().expectBody()
@@ -671,7 +664,7 @@ class CreditsControllerIT extends FinanceItSupport {
     @Test
     void internalBalancesAcceptsEmptyListAndMissingAccounts() {
         client().post().uri("/internal/credits/balances")
-                .header("X-Internal-Key", INTERNAL_KEY)
+                .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountIds", java.util.List.of()))
                 .exchange().expectStatus().isOk().expectBody()
@@ -679,18 +672,68 @@ class CreditsControllerIT extends FinanceItSupport {
     }
 
     @Test
-    void internalBalancesRequiresSharedKey() {
+    void internalBalancesRequiresIdentityServiceAssertion() {
         client().post().uri("/internal/credits/balances")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountIds", java.util.List.of(UUID.randomUUID().toString())))
                 .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/balances")
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountIds", java.util.List.of(UUID.randomUUID().toString())))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void consumeOperationQueryReturnsFinanceAuthorityWithoutBalances() {
+        String paidAccount = UUID.randomUUID().toString();
+        String quotaAccount = UUID.randomUUID().toString();
+        String paidOperation = "reconcile-paid-" + paidAccount;
+        String quotaOperation = "reconcile-quota-" + quotaAccount;
+        award(paidAccount, 1);
+        consume(paidAccount, "video_production_video", paidOperation);
+        entitledConsume(quotaAccount, quotaOperation, 10_000, 42).expectStatus().isOk();
+        internalCompensate(paidAccount, "video_production_video", paidOperation)
+                .expectStatus().isOk();
+
+        client().post().uri("/internal/credits/consume-operations/query")
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("operationIds", java.util.List.of(
+                        paidOperation, quotaOperation, "missing-operation")))
+                .exchange().expectStatus().isOk().expectBody(String.class)
+                .value(body -> assertThat(body)
+                        .contains(paidOperation, quotaOperation)
+                        .contains("\"state\":\"compensated\"")
+                        .contains("\"source\":\"paid\"")
+                        .contains("\"state\":\"consumed\"")
+                        .contains("\"source\":\"quota\"")
+                        .contains("\"policyVersion\":42")
+                        .doesNotContain("missing-operation")
+                        .doesNotContain("balance"));
+    }
+
+    @Test
+    void consumeOperationQueryRequiresIntelligenceAndBoundsInput() {
+        Map<String, Object> body = Map.of("operationIds", java.util.List.of("operation"));
+        client().post().uri("/internal/credits/consume-operations/query")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().post().uri("/internal/credits/consume-operations/query")
+                .header("X-Grassland-Identity", signService(null, "identity"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/internal/credits/consume-operations/query")
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("operationIds", java.util.Collections.nCopies(501, "operation")))
+                .exchange().expectStatus().isBadRequest();
     }
 
     // ---------- helpers ----------
 
     private void award(String acct, int amount) {
         client().post().uri("/internal/credits/award")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "amount", amount, "note", "test grant"))
@@ -703,7 +746,6 @@ class CreditsControllerIT extends FinanceItSupport {
 
     private WebTestClient.ResponseSpec internalConsume(String acct, String feature, String operationId) {
         return client().post().uri("/internal/credits/consume")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", feature, "operationId", operationId))
@@ -713,7 +755,6 @@ class CreditsControllerIT extends FinanceItSupport {
     private WebTestClient.ResponseSpec entitledConsume(
             String acct, String operationId, int multiplierBps, long policyVersion) {
         return client().post().uri("/internal/credits/consume")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of(
@@ -727,7 +768,6 @@ class CreditsControllerIT extends FinanceItSupport {
 
     private WebTestClient.ResponseSpec internalCompensate(String acct, String feature, String operationId) {
         return client().post().uri("/internal/credits/consume-compensations")
-                .header("X-Internal-Key", INTERNAL_KEY)
                 .header("X-Grassland-Identity", signService(null, "intelligence"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountId", acct, "feature", feature,

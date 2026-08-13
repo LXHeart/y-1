@@ -26,6 +26,7 @@ import reactor.core.publisher.Mono;
  * ② tier（DRAFT/null→403）；③ 按 org tier 的 maxActiveTasks 限额（超出→409）。
  * ⚠️ 既有 happy path 须用 4 参 sign（带 org + tier=basic_publish），否则 null tier 触发新闸门 403（回归）。
  */
+@SuppressWarnings("unchecked")
 class TaskControllerIT extends MarketplaceItSupport {
 
     @Test
@@ -625,10 +626,19 @@ class TaskControllerIT extends MarketplaceItSupport {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String id = createDraft(merchant, org, "basic_publish", "原标题");
+        Map<String, Object> requirements = Map.of(
+                "productServiceInfo", "双人招牌套餐",
+                "mustInclude", List.of("门店名", "招牌菜"),
+                "forbiddenContent", List.of("绝对化功效"),
+                "publishStartAt", "2026-08-20T10:00:00Z",
+                "publishEndAt", "2026-08-25T10:00:00Z",
+                "metricRequirements", List.of("发布后 24 小时播放量"),
+                "evidenceRequirements", List.of("发布链接", "后台截图"));
         client().put().uri("/api/tasks/" + id)
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", 0, "title", "终标题", "bountyCents", 0))
+                .bodyValue(Map.of("expectedVersion", 0, "title", "终标题", "bountyCents", 0,
+                        "requirements", requirements))
                 .exchange().expectStatus().isOk();
         Map<String, Object> response = client().post().uri("/api/tasks/" + id + "/publish")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -643,6 +653,12 @@ class TaskControllerIT extends MarketplaceItSupport {
         String snapTitle = db.sql("SELECT title FROM task_version WHERE task_id = CAST(:id AS uuid) ORDER BY version DESC LIMIT 1")
                 .bind("id", id).map(r -> r.get("title", String.class)).one().block();
         assertThat(snapTitle).isEqualTo("终标题");
+        String snapshotRequirements = db.sql("SELECT requirements::text FROM task_version "
+                        + "WHERE task_id = CAST(:id AS uuid) ORDER BY version DESC LIMIT 1")
+                .bind("id", id).map(r -> r.get("requirements", String.class)).one().block();
+        assertThat(snapshotRequirements)
+                .contains("双人招牌套餐", "门店名", "绝对化功效", "2026-08-20T10:00:00Z",
+                        "发布后 24 小时播放量", "后台截图");
     }
 
     // ---------- GL-P1-TASK-001：编辑出新版本（restricted revise） ----------

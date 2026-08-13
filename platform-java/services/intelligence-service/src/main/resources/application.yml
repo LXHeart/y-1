@@ -15,6 +15,8 @@ spring:
       streaming: false
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    template:
+      observation-enabled: true
     properties:
       security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
       sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
@@ -42,8 +44,31 @@ server:
     enabled: false
   max-http-request-header-size: 16KB
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    export:
+      enabled: ${OTEL_TRACING_ENABLED:false}
+      otlp:
+        enabled: ${OTEL_EXPORT_ENABLED:false}
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      consume: W3C
+      produce: W3C
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:}
   server:
     port: ${MANAGEMENT_SERVER_PORT:9082}
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:
@@ -153,6 +178,14 @@ ai:
     max-concurrency: ${VIDEO_GENERATION_MAX_CONCURRENCY:4}
     max-attempts: ${VIDEO_GENERATION_MAX_ATTEMPTS:60}
     worker-enabled: ${VIDEO_GENERATION_WORKER_ENABLED:true}
+    webhook-secret: ${VIDEO_GENERATION_WEBHOOK_SECRET:}
+    webhook-timestamp-window: ${VIDEO_GENERATION_WEBHOOK_TIMESTAMP_WINDOW:5m}
+    finance-credits-cents-policy-version: ${FINANCE_CREDITS_CENTS_POLICY_VERSION:}
+    finance-credits-cents-policy-effective-at: ${FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT:}
+    finance-credits-cents-policy-rounding: ${FINANCE_CREDITS_CENTS_POLICY_ROUNDING:}
+    finance-credits-cents-policy-cents-numerator: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:}
+    finance-credits-cents-policy-credits-denominator: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:}
+    finance-credits-cents-policy-max-cents-per-operation: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:}
   qwen:
     base-url: ${QWEN_BASE_URL:}
     api-key: ${QWEN_API_KEY:}
@@ -160,10 +193,15 @@ ai:
     connect-timeout-ms: ${QWEN_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${QWEN_READ_TIMEOUT_MS:120000}
   # 图片生成可使用独立 OpenAI-compatible provider；未配时回落上面的平台 Qwen。
+  # provider/model/价目版本/单价/平台版本会在任务创作开始时冻结；密钥和 base URL 不入快照。
   image-generation:
+    provider: ${IMAGE_GENERATION_PROVIDER:qwen}
     base-url: ${IMAGE_GENERATION_BASE_URL:}
     api-key: ${IMAGE_GENERATION_API_KEY:}
     model: ${IMAGE_GENERATION_MODEL:}
+    pricing-version: ${IMAGE_GENERATION_PRICING_VERSION:image-config-v1}
+    unit-price-cents: ${IMAGE_GENERATION_UNIT_PRICE_CENTS:80}
+    platform-model-version: ${IMAGE_GENERATION_PLATFORM_MODEL_VERSION:1}
     connect-timeout-ms: ${IMAGE_GENERATION_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${IMAGE_GENERATION_READ_TIMEOUT_MS:300000}
   # Bilibili 视频分析：仅平台级 Qwen，不读用户 BYOK。短视频直接提交公开代理 URL；
@@ -266,27 +304,16 @@ bilibili:
     user-agent: ${BILIBILI_USER_AGENT:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36}
     timeout-ms: ${BILIBILI_FETCH_TIMEOUT_MS:15000}
 
-# 积分扣减：默认经 finance-service（Java 原生积分域，GL-P3-AI-001）；credits.client.impl=legacy 回退 bridge。
+# 积分扣减：只经 finance-service（Java 原生积分域，GL-P3-AI-001）。
 credits:
-  client:
-    impl: ${CREDITS_CLIENT_IMPL:finance}
   finance:
     # 直连 finance 容器（不经 edge-bff，避免 intelligence↔edge 循环；同 marketplace→finance 模式）。
     base-url: ${FINANCE_CREDITS_BASE_URL:http://finance-service:8084}
-    internal-key: ${INTERNAL_API_KEY:}
     connect-timeout-ms: ${FINANCE_CREDITS_CONNECT_TIMEOUT_MS:3000}
     response-timeout-ms: ${FINANCE_CREDITS_RESPONSE_TIMEOUT_MS:5000}
     consume-path: /internal/credits/consume
     refund-path: /internal/credits/refund
     compensation-path: /internal/credits/consume-compensations
-  legacy:
-    base-url: ${LEGACY_CREDITS_BASE_URL:http://backend:3000}
-    internal-key: ${INTERNAL_API_KEY:}
-    # 内部 bridge 在公共 `/api` 树之外（GL-P0-CRED-001）：nginx 对 `/api/internal/` 与 `/internal/` 均 404，
-    # 仅容器网络直连 backend:3000 可达。
-    consume-path: /internal/credits/consume
-    refund-path: /internal/credits/refund
-
 # 首页热点聚合（Legacy 迁移）。60s 为无鉴权公共源；ALAPI 需用户级 token（存 user_settings，不在此配）。
 # 60s 结果落 DB 缓存（intelligence_cached_hot_topics，2h TTL，上游失败降级到过期缓存）；ALAPI 走进程内 5min 缓存。
 hot-items:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import { useAuth } from '../composables/useAuth'
 import MediaUploader from './MediaUploader.vue'
@@ -24,8 +24,18 @@ import type {
  * 嵌入 AiCreationCenter 第 4 tab；下载走后端中转签短时 URL，不预渲染。
  */
 
-const props = defineProps<{ authenticated: boolean }>()
-const emit = defineEmits<{ 'request-login': [] }>()
+const props = withDefaults(defineProps<{
+  authenticated: boolean
+  selectable?: boolean
+  selectedAssetIds?: string[]
+}>(), {
+  selectable: false,
+  selectedAssetIds: () => [],
+})
+const emit = defineEmits<{
+  'request-login': []
+  'selection-change': [assetIds: string[]]
+}>()
 
 const grassland = useGrassland()
 const auth = useAuth()
@@ -43,6 +53,7 @@ const storeScopes = ref<StoreAccessScope[]>([])
 const selectedOrganizationId = ref('')
 /** Empty means organization-level merchant assets; otherwise the selected store scope. */
 const selectedStoreId = ref('')
+const selectedIds = ref<string[]>([...props.selectedAssetIds])
 
 const CATEGORIES: ReadonlyArray<{ id: ContentAssetCategory; label: string }> = [
   { id: 'store', label: '门店' },
@@ -83,6 +94,10 @@ const canManageCurrentMerchantScope = computed(() => {
       && scope.storeId === selectedStoreId.value)
 })
 const canReviewPublic = computed(() => auth.hasBackendRole('content_reviewer'))
+
+watch(() => props.selectedAssetIds, (ids) => {
+  selectedIds.value = [...ids]
+}, { deep: true })
 
 /** 商家 tab 可见：有商家身份（管理自己的）或有推荐官身份（看被授权的）。 */
 const merchantTabVisible = computed(() =>
@@ -215,9 +230,25 @@ async function remove(asset: ContentAsset): Promise<void> {
   if (!confirm(`删除「${asset.title}」？`)) return
   const result = await grassland.deleteContentAsset(asset.id)
   if (result) {
+    if (selectedIds.value.includes(asset.id)) toggleSelection(asset.id)
     notice.value = '已删除'
     await refresh()
   }
+}
+
+function canSelect(asset: ContentAsset): boolean {
+  if (!props.selectable) return false
+  if (activeTab.value === 'merchant' && !grantedView.value) return false
+  return selectedIds.value.includes(asset.id) || selectedIds.value.length < 50
+}
+
+function toggleSelection(assetId: string): void {
+  const next = selectedIds.value.includes(assetId)
+    ? selectedIds.value.filter((id) => id !== assetId)
+    : [...selectedIds.value, assetId]
+  if (next.length > 50) return
+  selectedIds.value = next
+  emit('selection-change', [...next])
 }
 
 async function download(asset: ContentAsset): Promise<void> {
@@ -248,6 +279,9 @@ function formatSize(bytes: number | null | undefined): string {
   <section class="library">
     <p v-if="grassland.error.value" class="lib-alert lib-err" role="alert">{{ grassland.error.value }}</p>
     <p v-if="notice" class="lib-alert lib-ok">{{ notice }}</p>
+    <p v-if="selectable" class="lib-selection" aria-live="polite">
+      已选择 {{ selectedIds.length }} / 50 项创作素材
+    </p>
 
     <nav class="lib-tabs" role="tablist">
       <button type="button" role="tab" :aria-selected="activeTab === 'personal'"
@@ -287,7 +321,12 @@ function formatSize(bytes: number | null | undefined): string {
     <ul v-if="assets.length > 0" class="lib-grid">
       <li v-for="asset in assets" :key="asset.id" class="lib-card">
         <div class="lib-card-head">
-          <span class="lib-title">{{ asset.title }}</span>
+          <label v-if="selectable && (activeTab !== 'merchant' || grantedView)" class="lib-select">
+            <input type="checkbox" :checked="selectedIds.includes(asset.id)" :disabled="!canSelect(asset)"
+              :aria-label="`选择素材：${asset.title}`" @change="toggleSelection(asset.id)" />
+            <span class="lib-title">{{ asset.title }}</span>
+          </label>
+          <span v-else class="lib-title">{{ asset.title }}</span>
           <span class="lib-cat">{{ categoryLabel(asset.category) }}</span>
         </div>
         <p v-if="asset.mimeType || asset.sizeBytes" class="lib-meta">
@@ -322,6 +361,7 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .lib-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .lib-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.lib-selection { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
 .lib-tabs button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
 .lib-tabs button.active { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .lib-actions { display: flex; gap: 8px; }
@@ -331,6 +371,8 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .lib-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
 .lib-card-head { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.lib-select { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lib-select input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
 .lib-title { font-size: 13px; font-weight: 500; word-break: break-all; }
 .lib-cat { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); white-space: nowrap; }
 .lib-meta, .lib-tags, .lib-source { margin: 0; font-size: 11px; opacity: 0.65; word-break: break-all; }

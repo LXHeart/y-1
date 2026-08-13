@@ -1,6 +1,7 @@
 package com.grassland.trust.adjudication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -609,10 +610,10 @@ class AdjudicationControllerIT extends TrustItSupport {
         String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);
         Instant now = Instant.now();
-        String adminAssertion = signer.sign(new IdentityAssertion(
+        String adminAssertion = userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
                 UUID.randomUUID().toString(), null, "sid-admin", null, null,
                 "cookie-session", "level2", now, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null, "admin"));
+                "grassland-trust", now, now.plusSeconds(60), null, null, "admin"));
 
         client().post().uri("/api/trust/disputes/" + id + "/final-decision")
                 .header("X-Grassland-Identity", adminAssertion)
@@ -628,10 +629,7 @@ class AdjudicationControllerIT extends TrustItSupport {
         String id = open(merchant, org, UUID.randomUUID().toString());
         toAppealed(id);
         Instant now = Instant.now();
-        String serviceWithRole = signer.sign(new IdentityAssertion(
-                "service:marketplace", null, null, org, null,
-                "service", "internal", now, "r", "t",
-                "grassland-internal", now, now.plusSeconds(30), "service", "marketplace", "customer_service"));
+        String serviceWithRole = signServiceWithRole(org, "marketplace", "customer_service");
 
         client().post().uri("/api/trust/disputes/" + id + "/final-decision")
                 .header("X-Grassland-Identity", serviceWithRole)
@@ -774,9 +772,9 @@ class AdjudicationControllerIT extends TrustItSupport {
      */
     private String signCs(String accountId, Instant reauthenticatedAt) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
                 accountId, null, "sid-" + accountId, null, null,
                 "cookie-session", "level2", reauthenticatedAt, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null, "customer_service"));
+                "grassland-trust", now, now.plusSeconds(60), null, null, "customer_service"));
     }
 }

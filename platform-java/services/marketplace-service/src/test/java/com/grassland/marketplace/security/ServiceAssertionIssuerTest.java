@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.assertion.TestAssertionHelper;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,7 @@ class ServiceAssertionIssuerTest {
     private static final String ORG = "11111111-1111-1111-1111-111111111111";
 
     private final IdentityAssertionSigner signer =
-            new IdentityAssertionSigner(SECRET.getBytes(), AUDIENCE, Duration.ofSeconds(5));
+            TestAssertionHelper.signer("marketplace", "service", AUDIENCE, SECRET, Duration.ofSeconds(5));
 
     @Test
     void issuedTokenVerifiesAsMarketplaceService() {

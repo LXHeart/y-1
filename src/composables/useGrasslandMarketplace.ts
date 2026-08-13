@@ -78,7 +78,17 @@ export function useGrasslandMarketplace(run: RunFn) {
 
   const getTaskContext = (taskId: string, applicationId: string) =>
     run(() => request<TaskContextSnapshot>(
-      `/api/tasks/${taskId}/applications/${applicationId}/task-context`))
+        `/api/tasks/${taskId}/applications/${applicationId}/task-context`))
+
+  const createCreationContext = (input: {
+    taskId: string
+    applicationId: string
+    taskVersion?: number
+    platformId: string
+    contentFormId: string
+    materialIds?: string[]
+  }) => run(() => request<{ id: string }>(
+    '/api/creation-contexts', { method: 'POST', body: JSON.stringify(input) }))
 
   const listVerificationRuns = async (taskId: string, applicationId: string, submissionId: string) =>
     run(async () => {
@@ -402,7 +412,7 @@ export function useGrasslandMarketplace(run: RunFn) {
   return {
     getMerchantAnalytics,
     submitDeliverable, listDeliverables, rejectDeliverable, runVerificationChecks,
-    getTaskContext, listVerificationRuns,
+    getTaskContext, createCreationContext, listVerificationRuns,
     createMediaUploadTicket, confirmMediaUpload, uploadEngagementAttachment, getAttachmentDownloadUrl,
     getMyRecommenderProfile, updateMyRecommenderProfile, getRecommenderProfile, getReputation,
     getReputationPolicy, updateReputationPolicy, getAdminReputation, updateLv5Admission,

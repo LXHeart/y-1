@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.assertion.TestAssertionHelper;
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import java.time.Duration;
 import org.junit.jupiter.api.AfterEach;
@@ -20,8 +21,7 @@ import reactor.test.StepVerifier;
 
 class FinanceEscrowClientTest {
 
-    private static final String SECRET = "test-secret-32-chars-min!!!";
-    private static final String AUDIENCE = "grassland-internal";
+    private static final String AUDIENCE = "grassland-finance";
     private static final String ORG = "11111111-1111-1111-1111-111111111111";
     private static final String REF = "application-42";
     private static final String PAYEE = "22222222-2222-2222-2222-222222222222";
@@ -33,8 +33,7 @@ class FinanceEscrowClientTest {
     void setUp() {
         wireMock = new WireMockServer(options().dynamicPort());
         wireMock.start();
-        IdentityAssertionSigner signer =
-                new IdentityAssertionSigner(SECRET.getBytes(), AUDIENCE, Duration.ofSeconds(5));
+        IdentityAssertionSigner signer = TestAssertionHelper.serviceSigner("marketplace", AUDIENCE);
         ServiceAssertionIssuer issuer = new ServiceAssertionIssuer(signer, AUDIENCE);
         client = new FinanceEscrowClient(issuer, wireMock.baseUrl(), "X-Grassland-Identity");
     }

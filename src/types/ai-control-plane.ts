@@ -9,6 +9,7 @@ export interface AiTaskContext {
   priceTableVersion: string
   platformModelVersion: number | null
   fallbackAuthorized: boolean
+  contextSnapshotId: string | null
   startedAt: string
 }
 

@@ -22,13 +22,14 @@ public record CreateTaskRequest(
         Long bountyCents,
         Instant applicationDeadline,
         Integer minRecommenderLevel,
-        String storeId
+        String storeId,
+        TaskRequirements requirements
 ) {
     public CreateTaskRequest(String organizationId, String title, String description, String contentForm,
                              String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
                              Integer minRecommenderLevel) {
         this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents,
-                applicationDeadline, minRecommenderLevel, null);
+                applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty());
     }
 
     public CreateTaskRequest {
@@ -47,5 +48,6 @@ public record CreateTaskRequest(
         if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
             throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
         }
+        requirements = TaskRequirements.normalize(requirements);
     }
 }

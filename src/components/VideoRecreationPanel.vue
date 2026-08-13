@@ -91,11 +91,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { VideoScene } from '../types/video-recreation'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 import { useVideoRecreation } from '../composables/useVideoRecreation'
 
 const props = defineProps<{
   scenes: VideoScene[]
   overallStyle?: string
+  taskContext?: VideoTaskExecutionContext
 }>()
 
 const {
@@ -104,7 +106,7 @@ const {
   generateSceneImage,
   generateAllImages,
   copyFullScript,
-} = useVideoRecreation()
+} = useVideoRecreation(props.taskContext)
 
 const copied = ref(false)
 const lightboxSrc = ref('')

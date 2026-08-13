@@ -28,6 +28,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /** {@link SettlementReconciliationActivityImpl} 对账决策矩阵（Slice 7B）。 */
+@SuppressWarnings("unchecked")
 class SettlementReconciliationActivityImplTest {
 
     private static final String SOURCE = "src-1";

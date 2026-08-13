@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: database-bootstrap
+  main:
+    web-application-type: none
+    banner-mode: off
+
+logging:
+  level:
+    root: INFO
+
+bootstrap:
+  max-attempts: ${DATABASE_BOOTSTRAP_MAX_ATTEMPTS:30}
+  retry-delay-ms: ${DATABASE_BOOTSTRAP_RETRY_DELAY_MS:2000}

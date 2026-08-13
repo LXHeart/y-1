@@ -4,6 +4,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
@@ -36,8 +37,12 @@ public final class RoutingProxyHandler {
         String method = request.getMethod().name();
         String path = request.getURI().getPath();
         URI upstream = resolver.resolve(method, path);
+        if (upstream == null) {
+            exchange.getResponse().setStatusCode(HttpStatus.NOT_FOUND);
+            return exchange.getResponse().setComplete();
+        }
         URI target = targetUri(upstream, request.getURI());
-        HttpHeaders requestHeaders = LegacyProxyHeaderPolicy.requestHeaders(request.getHeaders());
+        HttpHeaders requestHeaders = ProxyHeaderPolicy.requestHeaders(request.getHeaders());
         Flux<DataBuffer> requestBody = request.getBody();
 
         return webClient.method(request.getMethod())
@@ -52,7 +57,7 @@ public final class RoutingProxyHandler {
         String rateLimit = exchange.getResponse().getHeaders().getFirst("RateLimit-Limit");
         String rateRemaining = exchange.getResponse().getHeaders().getFirst("RateLimit-Remaining");
         String rateReset = exchange.getResponse().getHeaders().getFirst("RateLimit-Reset");
-        HttpHeaders responseHeaders = LegacyProxyHeaderPolicy.responseHeaders(response.headers().asHttpHeaders());
+        HttpHeaders responseHeaders = ProxyHeaderPolicy.responseHeaders(response.headers().asHttpHeaders());
         exchange.getResponse().getHeaders().putAll(responseHeaders);
         // 若 BFF 已为跨上游路由族（如视频改编）施加共享配额，则不能被下游独立桶的同名头覆盖。
         restoreRateLimitHeaders(exchange, rateLimit, rateRemaining, rateReset);

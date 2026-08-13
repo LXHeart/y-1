@@ -67,9 +67,9 @@ class RoutingProxyHandlerTest {
     @Test
     void joinsUpstreamBasePathAndOmitsEmptyQuery() {
         URI target = RoutingProxyHandler.targetUri(
-                URI.create("http://legacy:3000/base"),
+                URI.create("http://upstream:8080/base"),
                 URI.create("http://localhost:8080/api/health"));
 
-        assertThat(target.toString()).isEqualTo("http://legacy:3000/base/api/health");
+        assertThat(target.toString()).isEqualTo("http://upstream:8080/base/api/health");
     }
 }

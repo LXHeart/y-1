@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -34,7 +35,6 @@ public class TrustResolutionClient {
         this.webClient = WebClient.builder().baseUrl(baseUrl).build();
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     public Mono<TrustResolution> resolve(String organizationId, String disputeId) {
         return webClient.get()
                 .uri("/api/trust/disputes/{id}/resolution", disputeId)
@@ -44,8 +44,8 @@ public class TrustResolutionClient {
                     int code = resp.statusCode().value();
                     log.info("trust resolution HTTP {} org={} dispute={}", code, organizationId, disputeId);
                     if (code == 200) {
-                        return resp.bodyToMono(Map.class)
-                                .map(body -> map((Map<String, Object>) body));
+                        return resp.bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                                .map(TrustResolutionClient::map);
                     }
                     return resp.bodyToMono(String.class).defaultIfEmpty("")
                             .flatMap(b -> Mono.<TrustResolution>error(
@@ -54,8 +54,7 @@ public class TrustResolutionClient {
     }
 
     static TrustResolution map(Map<String, Object> body) {
-        Map<String, Object> data = (Map<String, Object>) body.get("data");
-        if (data == null) {
+        if (!(body.get("data") instanceof Map<?, ?> data)) {
             throw new TrustResolutionException("trust resolution body missing data");
         }
         return new TrustResolution(

@@ -9,6 +9,8 @@ import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
 import com.grassland.intelligence.mediaplatform.PlatformMediaService;
 import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.videorecreation.TaskVideoAnalysisService;
+import com.grassland.intelligence.videorecreation.VideoRecreationTaskRequest;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -16,6 +18,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 /**
@@ -51,10 +54,12 @@ public class DouyinAnalysisService {
     private final String publicBackendOrigin;
     private final PlatformMediaService media;
     private final VideoSegmentAnalysisService segmented;
+    private final TaskVideoAnalysisService taskAnalysis;
 
     public DouyinAnalysisService(AiCapabilityAdapter ai, DouyinProxyToken tokenCodec, CreditsClient credits,
                                  Environment environment, PlatformMediaService media,
-                                 VideoSegmentAnalysisService segmented) {
+                                 VideoSegmentAnalysisService segmented,
+                                 TaskVideoAnalysisService taskAnalysis) {
         this.ai = ai;
         this.tokenCodec = tokenCodec;
         this.credits = credits;
@@ -66,6 +71,7 @@ public class DouyinAnalysisService {
         this.publicBackendOrigin = environment.getProperty("app.public-backend-origin", "");
         this.media = media;
         this.segmented = segmented;
+        this.taskAnalysis = taskAnalysis;
     }
 
     /** content 提取（live 端点 {@code POST /api/douyin/analyze-video}）。 */
@@ -82,6 +88,30 @@ public class DouyinAnalysisService {
                         // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "抖音视频分析失败自动退回")
                                 .then(Mono.error(error))));
+    }
+
+    public Mono<DouyinAnalysisOutcome> analyzeTask(
+            String proxyVideoUrl,
+            String accountId,
+            VideoRecreationTaskRequest task,
+            ServerWebExchange exchange) {
+        String token = extractToken(proxyVideoUrl);
+        DouyinMediaTarget target = tokenCodec.parse(token);
+        long duration = assertAnalysisDuration(target.durationSeconds());
+        if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
+            throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+        }
+        if (duration <= maxSingleSegmentSeconds) {
+            return taskAnalysis.analyzeShort(
+                            buildPublicProxyUrl(token), accountId, task, exchange)
+                    .map(DouyinAnalysisOutcome::new);
+        }
+        return media.prepareDouyinVideo(target).flatMap(sourceId -> media.createClips(sourceId, duration, 30)
+                .flatMap(ids -> taskAnalysis.analyzeSegments(
+                                "douyin", ids, accountId, task, exchange)
+                        .map(DouyinAnalysisOutcome::new)
+                        .doFinally(signal -> ids.forEach(media::remove)))
+                .doFinally(signal -> media.remove(sourceId)));
     }
 
     private Mono<DouyinAnalysisOutcome> analyzeTarget(String token, DouyinMediaTarget target, long duration) {

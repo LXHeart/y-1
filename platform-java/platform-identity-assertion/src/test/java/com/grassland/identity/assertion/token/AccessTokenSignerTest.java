@@ -91,7 +91,7 @@ class AccessTokenSignerTest {
     @Test
     void previousVerificationKeyAcceptedDuringRotationWindow() {
         AccessTokenSigner oldSigner = new AccessTokenSigner(SECRET, "access-token-v1", Duration.ofSeconds(5));
-        byte[] nextSecret = "next-mobile-access-token-secret-32ch".getBytes();
+        byte[] nextSecret = "next-mobile-access-token-secret-32ch".getBytes(); // secret-scan: allow - synthetic rotation fixture
         AccessTokenSigner rotatingVerifier = new AccessTokenSigner(nextSecret, "access-token-v2",
                 Map.of("access-token-v1", SECRET), Duration.ofSeconds(5));
 

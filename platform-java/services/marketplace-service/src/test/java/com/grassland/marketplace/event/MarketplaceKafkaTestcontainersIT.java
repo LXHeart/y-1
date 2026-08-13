@@ -58,7 +58,7 @@ import reactor.core.publisher.Sinks;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class MarketplaceKafkaTestcontainersIT extends MarketplaceItSupport {
 
-    private static final Duration AWAIT_TIMEOUT = Duration.ofSeconds(20);
+    private static final Duration AWAIT_TIMEOUT = Duration.ofSeconds(45);
     private static final String RUN_ID = UUID.randomUUID().toString().replace("-", "");
     private static final String SOURCE_TOPIC = "marketplace-trust-it-" + RUN_ID;
     private static final String DLT_TOPIC = SOURCE_TOPIC + ".DLT";

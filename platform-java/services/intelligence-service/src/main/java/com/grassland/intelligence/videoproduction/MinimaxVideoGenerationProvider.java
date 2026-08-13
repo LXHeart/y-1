@@ -1,6 +1,7 @@
 package com.grassland.intelligence.videoproduction;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -15,6 +16,7 @@ import reactor.core.publisher.Mono;
 public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
 
     private final VideoGenerationProperties properties;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public MinimaxVideoGenerationProvider(VideoGenerationProperties properties) {
         this.properties = properties;
@@ -37,7 +39,8 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
             payload.put("first_frame_image", VideoProviderJson.dataImage(command.images().getFirst()));
         }
         return client().post().uri(properties.resolvedCreatePath()).bodyValue(payload)
-                .retrieve().bodyToMono(JsonNode.class).timeout(properties.getRequestTimeout())
+                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+                .map(this::readJson)
                 .map(node -> {
                     String taskId = VideoProviderJson.text(node, "/task_id", "/data/task_id", "/id");
                     if (taskId == null) {
@@ -52,7 +55,8 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
     public Mono<ProviderResult> poll(String providerTaskId, int requestedDurationSeconds) {
         return client().get().uri(builder -> builder.path(properties.resolvedPollPath())
                         .queryParam("task_id", providerTaskId).build())
-                .retrieve().bodyToMono(JsonNode.class).timeout(properties.getRequestTimeout())
+                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+                .map(this::readJson)
                 .flatMap(node -> mapStatus(node, providerTaskId, requestedDurationSeconds));
     }
 
@@ -86,7 +90,8 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
     private Mono<String> retrieve(String fileId) {
         return client().get().uri(builder -> builder.path(properties.getRetrievePath())
                         .queryParam("file_id", fileId).build())
-                .retrieve().bodyToMono(JsonNode.class).timeout(properties.getRequestTimeout())
+                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+                .map(this::readJson)
                 .map(node -> {
                     String url = VideoProviderJson.text(node, "/file/download_url", "/download_url",
                             "/data/download_url");
@@ -112,5 +117,13 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
         return WebClient.builder().baseUrl(properties.getBaseUrl())
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
                 .build();
+    }
+
+    private JsonNode readJson(String body) {
+        try {
+            return mapper.readTree(body);
+        } catch (Exception error) {
+            throw new IllegalStateException("MiniMax 响应 JSON 无效", error);
+        }
     }
 }

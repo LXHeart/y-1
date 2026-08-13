@@ -2,6 +2,9 @@ package com.grassland.finance;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -46,8 +49,7 @@ public abstract class FinanceItSupport {
         r.add("management.server.port", () -> "0");
         r.add("finance.outbox.enabled", () -> "false");
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "finance");
     }
 
     protected WebTestClient client() {
@@ -57,28 +59,28 @@ public abstract class FinanceItSupport {
     /** 签一个带 org/tier 的断言（merchant 用于开户；其它 activeType 用于 403 场景）。 */
     protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-finance").sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-finance", now, now.plusSeconds(60), null, null));
     }
 
     /** 签一个服务间断言（HLD 11.1 服务身份，Slice 4F）：callerKind=service + principal，带 org 上下文。 */
     protected String signService(String organizationId, String principal) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return serviceSigner(principal, "grassland-finance").sign(new IdentityAssertion(
                 "service:" + principal, null, null, organizationId, null,
                 "service", "internal", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(30),
+                "grassland-finance", now, now.plusSeconds(30),
                 "service", principal));
     }
 
     /** 签一个平台后台角色断言，用于财务管理端点。 */
     protected String signRole(String accountId, String role) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-finance").sign(new IdentityAssertion(
                 accountId, null, "sid-" + accountId, null, null,
                 "cookie-session", "level2", now, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null, role));
+                "grassland-finance", now, now.plusSeconds(60), null, null, role));
     }
 }

@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { ApiResponse } from '../types/bilibili'
 import type { VideoAnalysisResult } from '../types/video-recreation'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -60,7 +61,10 @@ export function useBilibiliVideoAnalysis() {
   let requestCounter = 0
   let currentController: AbortController | null = null
 
-  async function analyzeVideo(proxyVideoUrl: string): Promise<VideoAnalysisResult | null> {
+  async function analyzeVideo(
+    proxyVideoUrl: string,
+    taskContext?: VideoTaskExecutionContext,
+  ): Promise<VideoAnalysisResult | null> {
     const normalizedProxyVideoUrl = proxyVideoUrl.trim()
     if (!normalizedProxyVideoUrl) {
       analysis.value = null
@@ -81,7 +85,7 @@ export function useBilibiliVideoAnalysis() {
       const response = await fetch('/api/bilibili/analyze-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxyVideoUrl: normalizedProxyVideoUrl }),
+        body: JSON.stringify({ proxyVideoUrl: normalizedProxyVideoUrl, ...(taskContext || {}) }),
         signal: controller.signal,
       })
 

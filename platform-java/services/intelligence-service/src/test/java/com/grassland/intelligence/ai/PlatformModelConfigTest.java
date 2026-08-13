@@ -14,6 +14,8 @@ import org.springframework.mock.env.MockEnvironment;
  */
 class PlatformModelConfigTest {
 
+    private static final String VALID_KEY = "sk-synthetic-unit-test-key";
+
     private PlatformModelConfig with(String baseUrl, String apiKey, String model) {
         MockEnvironment env = new MockEnvironment();
         if (baseUrl != null) env.setProperty("ai.qwen.base-url", baseUrl);
@@ -27,26 +29,37 @@ class PlatformModelConfigTest {
     void missingConfigFailsFast() {
         assertThatThrownBy(() -> with("https://dashscope.aliyuncs.com", null, null).validate())
                 .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> with(null, "sk-xxx", null).validate())
+        assertThatThrownBy(() -> with(null, VALID_KEY, null).validate())
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> with("  ", "  ", null).validate())
                 .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
+    @DisplayName("短值或模板 api-key → fail-fast")
+    void placeholderApiKeyFailsFast() {
+        for (String apiKey : new String[]{"sk-short", "replace-with-qwen-api-key", "placeholder-qwen-key",
+                "changeme-qwen-api-key", "your-qwen-api-key"}) {
+            assertThatThrownBy(() -> with("https://dashscope.aliyuncs.com", apiKey, null).validate())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("模板占位值");
+        }
+    }
+
+    @Test
     @DisplayName("base-url 指向私有 IP → SSRF 拒绝（fail-fast）")
     void privateBaseUrlFailsFast() {
-        assertThatThrownBy(() -> with("http://127.0.0.1", "sk-xxx", null).validate())
+        assertThatThrownBy(() -> with("http://127.0.0.1", VALID_KEY, null).validate())
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("已拒绝");
     }
 
     @Test
     @DisplayName("合法配置 → validate 通过，读取值正确（含默认超时/模型）")
     void validConfigPassesAndReadsValues() {
-        PlatformModelConfig cfg = with("https://dashscope.aliyuncs.com", "sk-xxx", "qwen-turbo");
+        PlatformModelConfig cfg = with("https://dashscope.aliyuncs.com", VALID_KEY, "qwen-turbo");
         cfg.validate();
         assertThat(cfg.baseUrl()).isEqualTo("https://dashscope.aliyuncs.com");
-        assertThat(cfg.apiKey()).isEqualTo("sk-xxx");
+        assertThat(cfg.apiKey()).isEqualTo(VALID_KEY);
         assertThat(cfg.model()).isEqualTo("qwen-turbo");
         assertThat(cfg.connectTimeout()).isEqualTo(Duration.ofMillis(5000));
         assertThat(cfg.readTimeout()).isEqualTo(Duration.ofMillis(120000));
@@ -57,7 +70,7 @@ class PlatformModelConfigTest {
     void defaultsAndOverrides() {
         MockEnvironment env = new MockEnvironment();
         env.setProperty("ai.qwen.base-url", "https://dashscope.aliyuncs.com");
-        env.setProperty("ai.qwen.api-key", "sk-xxx");
+        env.setProperty("ai.qwen.api-key", VALID_KEY);
         env.setProperty("ai.qwen.connect-timeout-ms", "2000");
         env.setProperty("ai.qwen.read-timeout-ms", "30000");
         PlatformModelConfig cfg = new PlatformModelConfig(env);

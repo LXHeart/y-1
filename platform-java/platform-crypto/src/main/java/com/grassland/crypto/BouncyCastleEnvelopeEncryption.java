@@ -9,6 +9,7 @@ import java.util.Base64;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.bouncycastle.crypto.engines.AESEngine;
 import org.bouncycastle.crypto.modes.GCMBlockCipher;
+import org.bouncycastle.crypto.modes.GCMModeCipher;
 import org.bouncycastle.crypto.params.AEADParameters;
 import org.bouncycastle.crypto.params.KeyParameter;
 import org.bouncycastle.crypto.InvalidCipherTextException;
@@ -182,7 +183,7 @@ public final class BouncyCastleEnvelopeEncryption implements EnvelopeEncryption 
      */
     private byte[] encryptWithGcm(byte[] key, byte[] iv, byte[] plaintext) {
         try {
-            GCMBlockCipher cipher = new GCMBlockCipher(new AESEngine());
+            GCMModeCipher cipher = GCMBlockCipher.newInstance(AESEngine.newInstance());
             cipher.init(true, new AEADParameters(new KeyParameter(key), GCM_TAG_SIZE * 8, iv));
 
             byte[] output = new byte[cipher.getOutputSize(plaintext.length)];
@@ -208,7 +209,7 @@ public final class BouncyCastleEnvelopeEncryption implements EnvelopeEncryption 
      */
     private byte[] decryptWithGcm(byte[] key, byte[] iv, byte[] ciphertext) {
         try {
-            GCMBlockCipher cipher = new GCMBlockCipher(new AESEngine());
+            GCMModeCipher cipher = GCMBlockCipher.newInstance(AESEngine.newInstance());
             cipher.init(false, new AEADParameters(new KeyParameter(key), GCM_TAG_SIZE * 8, iv));
 
             int outputSize = cipher.getOutputSize(ciphertext.length);

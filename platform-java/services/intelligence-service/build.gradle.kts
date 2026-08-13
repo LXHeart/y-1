@@ -12,8 +12,10 @@ java {
 dependencies {
     implementation(platform(libs.spring.boot.dependencies))
     implementation(libs.spring.boot.actuator)
+    implementation(libs.spring.boot.opentelemetry)
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     implementation(project(":platform-identity-assertion"))
+    testImplementation(testFixtures(project(":platform-identity-assertion")))
     implementation(project(":platform-storage"))
     implementation(project(":platform-crypto"))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
@@ -31,7 +33,7 @@ dependencies {
     }
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
-    implementation("org.postgresql:postgresql")
+    implementation("org.postgresql:postgresql:42.7.12")
 
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.reactor.test)
@@ -39,7 +41,7 @@ dependencies {
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.r2dbc)
     testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.postgresql:postgresql")
+    testImplementation("org.postgresql:postgresql:42.7.12")
     testImplementation("org.wiremock:wiremock-standalone:3.9.2")
     // S3GeneratedImageStoreIT 直连 testcontainers MinIO 构造 S3ObjectStorageAdapter（仅测试）。
     testImplementation(platform(libs.aws.bom))
@@ -49,6 +51,13 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// Keep the server-authoritative snapshot rules identical to the frontend contract.
+tasks.processResources {
+    from(rootProject.file("../contracts/platform-format-rules.json")) {
+        into("contracts")
+    }
 }
 
 // Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.

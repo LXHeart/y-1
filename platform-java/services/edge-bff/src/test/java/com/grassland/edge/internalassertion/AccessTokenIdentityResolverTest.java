@@ -69,7 +69,7 @@ class AccessTokenIdentityResolverTest {
     @Test
     void refreshTokenFormatNotMisverified() {
         // refresh_token 是 128B base64url 无点号——verify 会直接返回 empty（不误验为 access token）
-        String refreshToken = "abcDEF1234567890abcDEF1234567890abcDEF1234567890";
+        String refreshToken = "abcDEF1234567890abcDEF1234567890abcDEF1234567890"; // secret-scan: allow - synthetic token fixture
         assertThat(signer.verify(refreshToken, null)).isEmpty();
     }
 

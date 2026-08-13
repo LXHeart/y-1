@@ -2,7 +2,7 @@ spring:
   application:
     name: identity-service
   r2dbc:
-    url: ${LEGACY_DATABASE_R2DBC_URL:}
+    url: ${R2DBC_DATABASE_URL:}
   flyway:
     enabled: ${FLYWAY_ENABLED:true}
     baseline-on-migrate: true
@@ -10,6 +10,10 @@ spring:
     locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    template:
+      observation-enabled: true
+    listener:
+      observation-enabled: true
     properties:
       security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
       sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
@@ -58,25 +62,45 @@ server:
   port: ${SERVER_PORT:8082}
 
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    export:
+      enabled: ${OTEL_TRACING_ENABLED:false}
+      otlp:
+        enabled: ${OTEL_EXPORT_ENABLED:false}
+    sampling:
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      consume: W3C
+      produce: W3C
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:}
   server:
     port: ${MANAGEMENT_SERVER_PORT:9082}
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
 
 identity:
-  legacy:
-    session:
-      cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
-      secret: ${SESSION_SECRET:}
-      # GL-P0-AUTH-001：会话 cookie 的 Secure 策略，与 Express 的 SESSION_COOKIE_SECURE 同名同义。
-      # auto=按 X-Forwarded-Proto/scheme 判定（默认，本地 HTTP 与生产 HTTPS 同一份配置）；
-      # always=恒定加 Secure（生产全站 TLS 推荐，不依赖转发头）；never=恒不加（仅无 TLS 内网）。
-      cookie-secure: ${SESSION_COOKIE_SECURE:auto}
-      cookie-same-site: ${SESSION_COOKIE_SAME_SITE:Lax}
-      # 0 = 用默认 7 天；非 0 时须与 Express 的 SESSION_COOKIE_MAX_AGE_MS 一致（同一张 session 表）。
-      cookie-max-age-ms: ${SESSION_COOKIE_MAX_AGE_MS:0}
+  session:
+    cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
+    secret: ${SESSION_SECRET:}
+    # auto=按可信 X-Forwarded-Proto/scheme 判定；always=恒定加 Secure；never=仅无 TLS 调试。
+    cookie-secure: ${SESSION_COOKIE_SECURE:auto}
+    cookie-same-site: ${SESSION_COOKIE_SAME_SITE:Lax}
+    # 0 = 使用默认 7 天。
+    cookie-max-age-ms: ${SESSION_COOKIE_MAX_AGE_MS:0}
   # GL-P3-MERCHANT-001：KYB 审核。
   kyb:
     # 审核 SLA，写入 kyb_verification_request.review_deadline。默认 3 天（与 D-03 确认窗口同量级）。

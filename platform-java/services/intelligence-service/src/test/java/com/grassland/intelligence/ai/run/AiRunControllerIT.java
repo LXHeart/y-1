@@ -29,6 +29,7 @@ import com.grassland.intelligence.credits.CreditsClient;
 import java.net.InetAddress;
 import java.time.Duration;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -91,12 +92,9 @@ class AiRunControllerIT extends IntelligenceItSupport {
     @DynamicPropertySource
     static void extraProps(DynamicPropertyRegistry r) {
         r.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
-        r.add("credits.legacy.base-url", CREDITS::baseUrl);
-        r.add("credits.legacy.internal-key", () -> "test-internal-key");
-        // 默认 CreditsClient 已是 FinanceCreditsClient（GL-P3-AI-001）；把它指向同一个 WireMock，
-        // 使 consume/refund 走生产路径打到桩端点。credits.legacy.* 退化为未使用配置。
+        // CreditsClient 是 FinanceCreditsClient（GL-P3-AI-001）；把它指向同一个 WireMock，
+        // 使 consume/refund 走生产路径打到桩端点。
         r.add("credits.finance.base-url", CREDITS::baseUrl);
-        r.add("credits.finance.internal-key", () -> "test-internal-key");
         r.add("marketplace.service.base-url", CREDITS::baseUrl);
     }
 
@@ -105,6 +103,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
         db.sql("DELETE FROM intelligence_outbox").then().block();
         db.sql("DELETE FROM ai_credit_compensation").then().block();
         db.sql("DELETE FROM ai_run").then().block();
+        db.sql("DELETE FROM creation_context_snapshot").then().block();
         db.sql("DELETE FROM ai_provider_key").then().block();
         db.sql("DELETE FROM ai_model_budget").then().block();
         db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
@@ -779,6 +778,42 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isNotFound();
     }
 
+    @Test
+    @DisplayName("Run 绑定本人创作快照并在 TaskContext 返回；他人快照 → 403")
+    void creationContextSnapshotIsAccountScopedAndReturned() {
+        stubQwenOk();
+        String ownedSnapshot = seedCreationContext(ACCOUNT);
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":32,"allowFallback":true,
+                         "contextSnapshotId":"%s"}
+                        """.formatted(ownedSnapshot))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.taskContext.contextSnapshotId").isEqualTo(ownedSnapshot);
+
+        String persisted = db.sql("SELECT context_snapshot_id::text AS id FROM ai_run LIMIT 1")
+                .map(row -> row.get("id", String.class)).one().block();
+        assertThat(persisted).isEqualTo(ownedSnapshot);
+
+        db.sql("DELETE FROM ai_run").then().block();
+        String foreignSnapshot = seedCreationContext("77777777-7777-7777-7777-777777777777");
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":32,"allowFallback":true,
+                         "contextSnapshotId":"%s"}
+                        """.formatted(foreignSnapshot))
+                .exchange().expectStatus().isForbidden();
+        Long runCount = db.sql("SELECT COUNT(*) AS n FROM ai_run")
+                .map(row -> row.get("n", Long.class)).one().block();
+        assertThat(runCount).isZero();
+    }
+
     // ---------- helpers ----------
 
     private void stubQwenOk() {
@@ -787,6 +822,27 @@ class AiRunControllerIT extends IntelligenceItSupport {
                         {"choices":[{"message":{"content":"hello"}}],
                          "usage":{"prompt_tokens":10,"completion_tokens":5}}
                         """)));
+    }
+
+    private String seedCreationContext(String accountId) {
+        return db.sql("""
+                        INSERT INTO creation_context_snapshot(
+                            account_id, task_id, application_id, task_version, platform_id, content_form_id,
+                            task_snapshot, platform_rules_snapshot, material_snapshot, ai_config_snapshot)
+                        SELECT :account, :task, :application, 1, 'xiaohongshu', 'graphic',
+                            '{}'::jsonb, '{}'::jsonb, '{"items":[]}'::jsonb,
+                            jsonb_build_object(
+                                'resolutionType', 'PLATFORM', 'configId', id::text,
+                                'provider', provider, 'model', model,
+                                'platformModelVersion', version, 'modelRole', model_role)
+                        FROM platform_model_config
+                        WHERE capability='text' AND model_role='primary' AND enabled=true
+                        RETURNING id::text
+                        """)
+                .bind("account", accountId)
+                .bind("task", UUID.randomUUID().toString())
+                .bind("application", UUID.randomUUID().toString())
+                .map(row -> row.get("id", String.class)).one().block();
     }
 
     private void stubCreditsOk() {

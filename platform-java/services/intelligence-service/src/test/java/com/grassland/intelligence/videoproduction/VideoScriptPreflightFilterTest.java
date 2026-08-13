@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.assertion.TestAssertionHelper;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,13 +21,12 @@ import reactor.core.publisher.Mono;
 /** body 前置身份/限流闸门：未登录不进入 chain；每账号每分钟前 10 次放行，第 11 次 429。 */
 class VideoScriptPreflightFilterTest {
 
-    private static final String SECRET = "test-secret-32-chars-min!!!";
-    private static final String AUDIENCE = "grassland-internal";
+    private static final String AUDIENCE = "grassland-intelligence";
     private static final Instant NOW = Instant.parse("2026-07-27T12:00:00Z");
     private static final Instant SIGNING_NOW = Instant.now();
 
     private final IdentityAssertionSigner signer =
-            new IdentityAssertionSigner(SECRET.getBytes(), AUDIENCE, Duration.ZERO);
+            TestAssertionHelper.userSigner("edge-bff", AUDIENCE);
     private final IntelligenceCallerResolver callers =
             new IntelligenceCallerResolver(signer, "X-Grassland-Identity");
     private final VideoScriptPreflightFilter filter =

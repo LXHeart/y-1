@@ -306,7 +306,7 @@ const {
   addImages, removeImage, reorderImage,
   generateScript, startVideoGeneration,
   goBackToUpload, goBackToScript,
-  reset,
+  reset, bindCreationContext,
 } = useVideoProduction()
 
 const hydratedCreationRevision = ref<number | null>(null)
@@ -364,6 +364,7 @@ watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'video-production' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
   reset()
+  bindCreationContext(handoff.source.type === 'task', handoff.contextSnapshotId)
   clearOptionalInputState()
   const promptParts = [
     handoff.prefill?.topic ? `创作主题：${handoff.prefill.topic}` : '',

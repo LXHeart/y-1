@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
@@ -21,16 +20,15 @@ import reactor.netty.http.client.HttpClient;
  * 经 finance-service 扣费（GL-P3-AI-001 下属切片，Java 原生积分的默认实现）。
  *
  * <p>直连 finance 容器（{@code credits.finance.base-url}），不经 edge-bff（避免 intelligence↔edge-bff 循环；
- * 与 marketplace→finance 直连同模式）。鉴权用共享密钥 {@code X-Internal-Key}（两端同 {@code INTERNAL_API_KEY}）——
- * finance 的 {@code CreditsInternalAuthFilter} fail-closed 校验。
+ * 与 marketplace→finance 直连同模式）。每个请求携带受众为 finance 的命名服务断言，
+ * finance 按 intelligence principal 授权。
  *
  * <p><b>refund 幂等键派生</b>：consume 用 {@code operationId=X}，对应失败退款必须用 {@code refund:X}
  * （finance 按 operation_id 原样存储，partial unique index 据此保证「一次扣减至多一次退款」）。
- * 旧 {@link LegacyCreditsClient} 误传原始 consume id，与 consume 行 operation_id 撞车被当 dedup 吞掉 → 退款从未生效；
- * 此处在客户端派生 {@code refund:<consumeId>} 修正。legacy Express {@code createCharge} 侧早已如此派生。
+ * 旧回退实现曾误传原始 consume id，与 consume 行 operation_id 撞车被当 dedup 吞掉；
+ * 此处在客户端派生 {@code refund:<consumeId>}，避免退款与扣减共享幂等键。
  */
 @Component
-@ConditionalOnProperty(name = "credits.client.impl", havingValue = "finance", matchIfMissing = true)
 public class FinanceCreditsClient implements CreditsClient {
 
     private static final String FINANCE_AUDIENCE = "grassland-finance";
@@ -39,7 +37,6 @@ public class FinanceCreditsClient implements CreditsClient {
     private final String consumePath;
     private final String refundPath;
     private final String compensationPath;
-    private final String internalKey;
     private final MarketplaceAiEntitlementClient entitlements;
     private final IntelligenceServiceAssertionIssuer assertionIssuer;
     private final CreditCompensationRepository compensationRepository;
@@ -51,7 +48,6 @@ public class FinanceCreditsClient implements CreditsClient {
                                 @Value("${credits.finance.refund-path:/internal/credits/refund}") String refundPath,
                                 @Value("${credits.finance.compensation-path:/internal/credits/consume-compensations}")
                                 String compensationPath,
-                                @Value("${credits.finance.internal-key:}") String internalKey,
                                 @Value("${credits.finance.connect-timeout-ms:3000}") int connectTimeoutMs,
                                 @Value("${credits.finance.response-timeout-ms:5000}") long responseTimeoutMs,
                                 MarketplaceAiEntitlementClient entitlements,
@@ -65,7 +61,6 @@ public class FinanceCreditsClient implements CreditsClient {
         this.consumePath = consumePath;
         this.refundPath = refundPath;
         this.compensationPath = compensationPath;
-        this.internalKey = internalKey;
         this.entitlements = entitlements;
         this.assertionIssuer = assertionIssuer;
         this.compensationRepository = compensationRepository;
@@ -73,22 +68,22 @@ public class FinanceCreditsClient implements CreditsClient {
     }
 
     FinanceCreditsClient(
-            String baseUrl, String consumePath, String refundPath, String internalKey,
+            String baseUrl, String consumePath, String refundPath,
             MarketplaceAiEntitlementClient entitlements,
             IntelligenceServiceAssertionIssuer assertionIssuer,
             CreditCompensationRepository compensationRepository) {
-        this(baseUrl, consumePath, refundPath, internalKey, 1_000, 3_000,
+        this(baseUrl, consumePath, refundPath, 1_000, 3_000,
                 entitlements, assertionIssuer, compensationRepository);
     }
 
     FinanceCreditsClient(
-            String baseUrl, String consumePath, String refundPath, String internalKey,
+            String baseUrl, String consumePath, String refundPath,
             int connectTimeoutMs, long responseTimeoutMs,
             MarketplaceAiEntitlementClient entitlements,
             IntelligenceServiceAssertionIssuer assertionIssuer,
             CreditCompensationRepository compensationRepository) {
         this(baseUrl, consumePath, refundPath, "/internal/credits/consume-compensations",
-                internalKey, connectTimeoutMs, responseTimeoutMs, entitlements, assertionIssuer,
+                connectTimeoutMs, responseTimeoutMs, entitlements, assertionIssuer,
                 compensationRepository);
     }
 
@@ -102,7 +97,6 @@ public class FinanceCreditsClient implements CreditsClient {
         return entitlements.get(accountId)
                 .flatMap(entitlement -> webClient.post().uri(consumePath)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("X-Internal-Key", internalKey)
                         .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
                         .bodyValue(Map.of(
                                 "accountId", accountId,
@@ -133,7 +127,6 @@ public class FinanceCreditsClient implements CreditsClient {
     public Mono<Void> refund(CreditCharge charge, String note) {
         return webClient.post().uri(refundPath)
                 .contentType(MediaType.APPLICATION_JSON)
-                .header("X-Internal-Key", internalKey)
                 .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
                 .bodyValue(Map.of(
                         "accountId", charge.accountId(),
@@ -157,7 +150,6 @@ public class FinanceCreditsClient implements CreditsClient {
             String accountId, CreditFeature feature, String operationId, String note) {
         return webClient.post().uri(compensationPath)
                 .contentType(MediaType.APPLICATION_JSON)
-                .header("X-Internal-Key", internalKey)
                 .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
                 .bodyValue(Map.of(
                         "accountId", accountId,

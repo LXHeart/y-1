@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
  * <p>Stage 1 尚无事件写入方，故通知通过 {@link NotificationRepository#insertIfAbsent} 直接 seed
  * （Stage 2 起由消费者写入）。沿用 {@link IdentityItSupport} 的单例容器与 Flyway V11 建表。
  */
+@SuppressWarnings("unchecked")
 class NotificationControllerIT extends IdentityItSupport {
 
     private static final Map<String, Object> PAYLOAD = Map.of("organizationId", "org-1");

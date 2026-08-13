@@ -4,6 +4,16 @@
  * draft=草稿；pending_review=待审核；published=大厅可见；closed=已关闭报名；cancelled=已取消。 */
 export type TaskStatus = 'draft' | 'pending_review' | 'published' | 'closed' | 'cancelled'
 
+export interface TaskRequirements {
+  productServiceInfo?: string | null
+  mustInclude: string[]
+  forbiddenContent: string[]
+  publishStartAt?: string | null
+  publishEndAt?: string | null
+  metricRequirements: string[]
+  evidenceRequirements: string[]
+}
+
 export interface Task {
   id: string
   ownerAccountId: string
@@ -37,6 +47,8 @@ export interface Task {
   refundedCount?: number
   /** Present only in a feed response when distance filtering is active. */
   distanceKm?: number
+  /** PRD 4.12 structured contract frozen into task_version when published or revised. */
+  requirements: TaskRequirements
 }
 
 export interface CreateTaskInput {
@@ -51,6 +63,7 @@ export interface CreateTaskInput {
   /** 报名截止时间（ISO）；可空 = 无时间截止。 */
   applicationDeadline?: string
   minRecommenderLevel?: number
+  requirements?: Partial<TaskRequirements>
 }
 
 /** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
@@ -67,6 +80,7 @@ export interface UpdateTaskInput {
   bountyCents?: number
   applicationDeadline?: string
   minRecommenderLevel?: number
+  requirements?: Partial<TaskRequirements>
 }
 
 /**
@@ -85,6 +99,7 @@ export interface ReviseTaskInput {
   bountyCents?: number
   applicationDeadline?: string
   minRecommenderLevel?: number
+  requirements?: Partial<TaskRequirements>
 }
 
 /** 任务大厅 feed 查询（GL-P1-TASK-001 Stage 2）。 */

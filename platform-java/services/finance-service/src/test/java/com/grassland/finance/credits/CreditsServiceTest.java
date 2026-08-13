@@ -26,6 +26,7 @@ import reactor.test.StepVerifier;
  * {@link CreditsService} 单测：dedup 预检、余额不足 402、23505 并发冲突重读、映射口径。
  * TransactionalOperator 打桩为透传（不启真事务），Repo 用 Mockito。端到端 SQL 行为由 {@code CreditsControllerIT} 覆盖。
  */
+@SuppressWarnings("unchecked")
 class CreditsServiceTest {
 
     private CreditsRepository repo;

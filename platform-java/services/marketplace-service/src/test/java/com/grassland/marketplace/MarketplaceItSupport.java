@@ -2,6 +2,9 @@ package com.grassland.marketplace;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import java.time.Instant;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,8 +69,7 @@ public abstract class MarketplaceItSupport {
         r.add("DATABASE_URL", () -> dbUrl);
         r.add("management.server.port", () -> "0");
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "marketplace");
         r.add("object-storage.enabled", () -> "false");
         // outbox 发布器在 IT 里必须关掉：默认 bootstrap 是 `kafka:9092`（compose 内部名），
         // 测试跑在宿主机上解析不到，KafkaTemplate 会在**事件循环线程**上阻塞等 metadata 到 60s 超时，
@@ -94,10 +96,10 @@ public abstract class MarketplaceItSupport {
     /** 签一个带 org/tier 的断言（Slice 4B：发布限额按 tier、org 归属校验按 organizationId）。 */
     protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-marketplace").sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-marketplace", now, now.plusSeconds(60), null, null));
     }
 
     /**
@@ -108,18 +110,18 @@ public abstract class MarketplaceItSupport {
      */
     protected String signWithRole(String accountId, String role) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-marketplace").sign(new IdentityAssertion(
                 accountId, null, "sid-" + accountId, null, null,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null, role));
+                "grassland-marketplace", now, now.plusSeconds(60), null, null, role));
     }
 
     /** 签一个服务间断言（Slice 12：trust 调内部争议参与方授权端点）。 */
     protected String signService(String principal) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return serviceSigner(principal, "grassland-marketplace").sign(new IdentityAssertion(
                 "service:" + principal, null, null, null, null,
                 "service", "internal", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(30), "service", principal));
+                "grassland-marketplace", now, now.plusSeconds(30), "service", principal));
     }
 }

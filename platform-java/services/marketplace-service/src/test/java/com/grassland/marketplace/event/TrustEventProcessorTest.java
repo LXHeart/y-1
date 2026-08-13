@@ -25,6 +25,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+@SuppressWarnings("unchecked")
 class TrustEventProcessorTest {
 
     private final InboxRepository inbox = mock(InboxRepository.class);

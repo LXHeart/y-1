@@ -8,6 +8,7 @@ import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBufferUtils;
@@ -44,10 +45,14 @@ public class ArticleImageController {
 
     private final IntelligenceCallerResolver callers;
     private final ArticleImageService images;
+    private final TaskImageGenerationService taskImages;
 
-    public ArticleImageController(IntelligenceCallerResolver callers, ArticleImageService images) {
+    public ArticleImageController(
+            IntelligenceCallerResolver callers, ArticleImageService images,
+            TaskImageGenerationService taskImages) {
         this.callers = callers;
         this.images = images;
+        this.taskImages = taskImages;
     }
 
     @PostMapping(value = "/image-recommendations", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -71,9 +76,13 @@ public class ArticleImageController {
     public Mono<Map<String, Object>> generateJson(
             @RequestBody GenerateJsonRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> images.generate(
-                        new GenerateCommand(body.prompt(), body.size(), List.of()),
-                        new MediaOwner(caller.accountId(), caller.organizationId())))
+                .flatMap(caller -> body.isTaskMode()
+                        ? taskImages.generate(
+                                new GenerateCommand(body.prompt(), body.size(), List.of()),
+                                caller.accountId(), body.contextSnapshotId(), body.targetPlatform())
+                        : images.generate(
+                                new GenerateCommand(body.prompt(), body.size(), List.of()),
+                                new MediaOwner(caller.accountId(), caller.organizationId())))
                 .map(ArticleImageController::success);
     }
 
@@ -82,8 +91,13 @@ public class ArticleImageController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> exchange.getMultipartData()
                         .flatMap(this::parseMultipart)
-                        .flatMap(cmd -> images.generate(
-                                cmd, new MediaOwner(caller.accountId(), caller.organizationId()))))
+                        .flatMap(input -> input.taskMode()
+                                ? taskImages.generate(
+                                        input.command(), caller.accountId(),
+                                        input.contextSnapshotId(), input.targetPlatform())
+                                : images.generate(
+                                        input.command(), new MediaOwner(
+                                                caller.accountId(), caller.organizationId()))))
                 .map(ArticleImageController::success);
     }
 
@@ -100,8 +114,8 @@ public class ArticleImageController {
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "图片不存在或已过期")));
     }
 
-    private Mono<GenerateCommand> parseMultipart(MultiValueMap<String, Part> parts) {
-        Mono<GenerateCommand> parsed = Mono.defer(() -> parseMultipartValidated(parts));
+    private Mono<GenerationInput> parseMultipart(MultiValueMap<String, Part> parts) {
+        Mono<GenerationInput> parsed = Mono.defer(() -> parseMultipartValidated(parts));
         return parsed.doFinally(signal -> Flux.fromIterable(parts.values())
                 .flatMapIterable(value -> value)
                 .flatMap(Part::delete)
@@ -109,13 +123,14 @@ public class ArticleImageController {
                 .subscribe());
     }
 
-    private Mono<GenerateCommand> parseMultipartValidated(MultiValueMap<String, Part> parts) {
+    private Mono<GenerationInput> parseMultipartValidated(MultiValueMap<String, Part> parts) {
         int partCount = parts.values().stream().mapToInt(List::size).sum();
         if (partCount > MAX_PARTS) {
             return Mono.error(new IllegalArgumentException("图片上传失败，请检查文件后重试"));
         }
         for (String name : parts.keySet()) {
-            if (!Set.of("prompt", "size", "images").contains(name)) {
+            if (!Set.of("prompt", "size", "images", "taskMode", "contextSnapshotId", "targetPlatform")
+                    .contains(name)) {
                 return Mono.error(new IllegalArgumentException("仅支持上传 images 字段的图片文件"));
             }
         }
@@ -125,7 +140,7 @@ public class ArticleImageController {
         return parseMultipartParts(parts, promptParts, sizeParts, imageParts);
     }
 
-    private Mono<GenerateCommand> parseMultipartParts(
+    private Mono<GenerationInput> parseMultipartParts(
             MultiValueMap<String, Part> parts,
             List<Part> promptParts,
             List<Part> sizeParts,
@@ -148,10 +163,20 @@ public class ArticleImageController {
         }
         String prompt = validatePrompt(promptPart.value());
         String size = validateSize(sizeParts.isEmpty() ? null : ((FormFieldPart) sizeParts.getFirst()).value());
+        boolean taskMode = parseTaskMode(field(parts, "taskMode"));
+        UUID contextSnapshotId = parseUuid(field(parts, "contextSnapshotId"));
+        String targetPlatform = optional(field(parts, "targetPlatform"));
+        validateTaskBinding(taskMode, contextSnapshotId, targetPlatform);
+        if (taskMode && !imageParts.isEmpty()) {
+            return Mono.error(new IllegalArgumentException(
+                    "任务生图只能使用创作开始时冻结的授权素材"));
+        }
         return Flux.fromIterable(imageParts)
                 .concatMap(this::readImage)
                 .collectList()
-                .map(references -> new GenerateCommand(prompt, size, references));
+                .map(references -> new GenerationInput(
+                        new GenerateCommand(prompt, size, references), taskMode,
+                        contextSnapshotId, targetPlatform));
     }
 
     private Mono<ReferenceImage> readImage(Part part) {
@@ -239,10 +264,52 @@ public class ArticleImageController {
         }
     }
 
-    public record GenerateJsonRequest(String prompt, String size) {
+    public record GenerateJsonRequest(
+            String prompt, String size, Boolean taskMode,
+            UUID contextSnapshotId, String targetPlatform) {
         public GenerateJsonRequest {
             prompt = validatePrompt(prompt);
             size = validateSize(size);
+            targetPlatform = optional(targetPlatform);
+            validateTaskBinding(Boolean.TRUE.equals(taskMode), contextSnapshotId, targetPlatform);
+        }
+
+        boolean isTaskMode() {
+            return Boolean.TRUE.equals(taskMode);
+        }
+    }
+
+    private record GenerationInput(
+            GenerateCommand command, boolean taskMode,
+            UUID contextSnapshotId, String targetPlatform) {}
+
+    private static String field(MultiValueMap<String, Part> parts, String name) {
+        Part part = parts.getFirst(name);
+        return part instanceof FormFieldPart field ? field.value() : null;
+    }
+
+    private static boolean parseTaskMode(String raw) {
+        if (raw == null || raw.isBlank() || "false".equalsIgnoreCase(raw.trim())) return false;
+        if ("true".equalsIgnoreCase(raw.trim())) return true;
+        throw new IllegalArgumentException("任务创作模式参数不合法");
+    }
+
+    private static UUID parseUuid(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException error) {
+            throw new IllegalArgumentException("创作上下文快照标识不合法");
+        }
+    }
+
+    private static void validateTaskBinding(
+            boolean taskMode, UUID contextSnapshotId, String targetPlatform) {
+        if (taskMode && (contextSnapshotId == null || targetPlatform == null)) {
+            throw new IllegalArgumentException("任务生图必须绑定创作上下文快照和目标平台");
+        }
+        if (!taskMode && (contextSnapshotId != null || targetPlatform != null)) {
+            throw new IllegalArgumentException("独立生图不能绑定任务创作上下文");
         }
     }
 

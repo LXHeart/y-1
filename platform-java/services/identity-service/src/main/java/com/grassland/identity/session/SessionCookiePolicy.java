@@ -10,18 +10,14 @@ import org.springframework.stereotype.Component;
 /**
  * 会话 cookie 属性的唯一真相源（GL-P0-AUTH-001）。
  *
- * <p>Java 侧写出的 Set-Cookie 与 session 表里 {@code sess.cookie} 的属性必须一致：
- * express-session 的 rolling 续期会用库里存的 cookie 属性重发 Set-Cookie，
- * 若 Java 写 {@code secure:false} 而实际需要 Secure，续期时 Secure 会被抹掉（降级为可明文回传）。
+ * <p>Java 写出的 Set-Cookie 与 session 表里 {@code sess.cookie} 的属性必须一致，
+ * 确保登录、续期与注销使用同一组安全属性。
  *
- * <p>secure 模式（与 Express {@code SESSION_COOKIE_SECURE} 同名同义）：
+ * <p>secure 模式：
  * <ul>
  *   <li>{@code auto}（默认）— 按当前请求是否 HTTPS 决定。判定顺序 X-Forwarded-Proto → request scheme。
- *       等价于 express-session 的 {@code secure: 'auto'}，本地 HTTP 与生产 HTTPS 同一份配置都对。</li>
- *   <li>{@code always} — 恒定加 Secure，不看连接是否 HTTPS。
- *       ⚠️ 与 Express 不完全同义：express-session 在 {@code secure:true} 且连接非 HTTPS 时
- *       会整个不发 Set-Cookie（登录静默失效），Java 侧则照发。两端在 {@code auto} 下语义一致，
- *       混合部署（Express + identity-service 共用 session 表）推荐统一用 {@code auto}。</li>
+ *       本地 HTTP 与生产 HTTPS 可使用同一份配置。</li>
+ *   <li>{@code always} — 恒定加 Secure，不看连接是否 HTTPS。</li>
  *   <li>{@code never} — 恒不加。仅用于明确无 TLS 的内网/调试。</li>
  * </ul>
  *
@@ -31,7 +27,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class SessionCookiePolicy {
-    /** express-session 默认 7 天，与 SESSION_COOKIE_MAX_AGE_MS 缺省一致。 */
+    /** 既有浏览器会话契约默认 7 天，与 SESSION_COOKIE_MAX_AGE_MS 缺省一致。 */
     public static final long DEFAULT_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000;
 
     private static final String EXPIRED = "Thu, 01 Jan 1970 00:00:00 GMT";
@@ -42,10 +38,10 @@ public class SessionCookiePolicy {
     private final long maxAgeMs;
 
     public SessionCookiePolicy(
-        @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName,
-        @Value("${identity.legacy.session.cookie-secure:auto}") String cookieSecure,
-        @Value("${identity.legacy.session.cookie-same-site:Lax}") String sameSite,
-        @Value("${identity.legacy.session.cookie-max-age-ms:0}") long maxAgeMs) {
+        @Value("${identity.session.cookie-name:y1.sid}") String cookieName,
+        @Value("${identity.session.cookie-secure:auto}") String cookieSecure,
+        @Value("${identity.session.cookie-same-site:Lax}") String sameSite,
+        @Value("${identity.session.cookie-max-age-ms:0}") long maxAgeMs) {
         this.cookieName = cookieName;
         this.secureMode = SecureMode.parse(cookieSecure);
         this.sameSite = normalizeSameSite(sameSite);

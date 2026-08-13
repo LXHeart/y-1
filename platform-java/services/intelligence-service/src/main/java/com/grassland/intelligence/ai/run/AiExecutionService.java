@@ -11,6 +11,7 @@ import com.grassland.intelligence.event.EventEnvelope;
 import com.grassland.intelligence.event.OutboxRepository;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.creationcontext.FrozenAiConfigResolver;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -56,6 +57,7 @@ public class AiExecutionService {
     private final TransactionalOperator transactions;
     private final CreditCompensationRepository compensationRepository;
     private final CreditCompensationDispatcher compensationDispatcher;
+    private final FrozenAiConfigResolver frozenAiConfigs;
 
     public AiExecutionService(
             ModelBudgetService budgetService,
@@ -67,7 +69,8 @@ public class AiExecutionService {
             OutboxRepository outbox,
             TransactionalOperator transactions,
             CreditCompensationRepository compensationRepository,
-            CreditCompensationDispatcher compensationDispatcher) {
+            CreditCompensationDispatcher compensationDispatcher,
+            FrozenAiConfigResolver frozenAiConfigs) {
         this.budgetService = budgetService;
         this.routingService = routingService;
         this.priceTableService = priceTableService;
@@ -78,6 +81,7 @@ public class AiExecutionService {
         this.transactions = transactions;
         this.compensationRepository = compensationRepository;
         this.compensationDispatcher = compensationDispatcher;
+        this.frozenAiConfigs = frozenAiConfigs;
     }
 
     /**
@@ -93,12 +97,29 @@ public class AiExecutionService {
             int estimatedOutputTokens,
             boolean allowFallback) {
 
+        return prepareExecution(exchange, capability, feature, estimatedInputTokens, estimatedOutputTokens,
+                allowFallback, null);
+    }
+
+    public Mono<ExecutionResult> prepareExecution(
+            ServerWebExchange exchange,
+            String capability,
+            CreditFeature feature,
+            int estimatedInputTokens,
+            int estimatedOutputTokens,
+            boolean allowFallback,
+            UUID contextSnapshotId) {
+
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> {
                     String orgId = caller.organizationId();
                     String accountId = caller.accountId();
                     UUID budgetOpId = UUID.randomUUID();
-                    return routingService.resolveProvider(orgId, accountId, capability, allowFallback)
+                    Mono<ProviderResolution> providerResolution = contextSnapshotId == null
+                            ? routingService.resolveProvider(orgId, accountId, capability, allowFallback)
+                            : frozenAiConfigs.resolve(contextSnapshotId, accountId, capability)
+                                    .map(FrozenAiConfigResolver.ResolvedSnapshot::provider);
+                    return providerResolution
                             .flatMap(provider -> {
                                 if (provider.isDenied()) {
                                     return Mono.just(ExecutionResult.denied(provider.denialReason()));
@@ -114,7 +135,7 @@ public class AiExecutionService {
                                         provider, orgId, accountId, capability, feature,
                                         allowFallback, budgetOpId, decryptedKey,
                                         estimatedInputTokens, estimatedOutputTokens,
-                                        estimatedTokens, estimatedCents, "sync", "v1");
+                                        estimatedTokens, estimatedCents, "sync", "v1", contextSnapshotId);
                             });
                 })
                 .onErrorResume(InsufficientCreditsException.class,
@@ -126,13 +147,21 @@ public class AiExecutionService {
             String accountId, String organizationId, String capability, CreditFeature feature,
             ProviderResolution provider, UUID operationId, int estimatedCents,
             String priceTableVersion) {
+        return preparePlatformAsyncExecution(accountId, organizationId, capability, feature,
+                provider, operationId, estimatedCents, priceTableVersion, null);
+    }
+
+    public Mono<ExecutionResult> preparePlatformAsyncExecution(
+            String accountId, String organizationId, String capability, CreditFeature feature,
+            ProviderResolution provider, UUID operationId, int estimatedCents,
+            String priceTableVersion, UUID contextSnapshotId) {
         if (!provider.isPlatform() || estimatedCents < 0) {
             return Mono.error(new IllegalArgumentException("异步媒体任务必须使用合法的平台 provider"));
         }
         return reserveCreateAndCharge(
                         provider, organizationId, accountId, capability, feature,
                         true, operationId, null, 0, 0, 0, estimatedCents,
-                        "async", priceTableVersion)
+                        "async", priceTableVersion, contextSnapshotId)
                 .onErrorResume(InsufficientCreditsException.class,
                         e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
     }
@@ -143,11 +172,11 @@ public class AiExecutionService {
             boolean allowFallback, UUID budgetOpId, String decryptedKey,
             int estimatedInputTokens, int estimatedOutputTokens,
             int estimatedTokens, int estimatedCents, String runType,
-            String priceTableVersion) {
+            String priceTableVersion, UUID contextSnapshotId) {
 
         Mono<RunPreparation> preparation = reserveAndCreateRun(
                 provider, orgId, accountId, capability, allowFallback, budgetOpId,
-                estimatedTokens, estimatedCents, runType, priceTableVersion);
+                estimatedTokens, estimatedCents, runType, priceTableVersion, contextSnapshotId);
         return transactions.execute(ignored -> preparation)
                 .single()
                 .flatMap(prepared -> prepared.allowed()
@@ -164,7 +193,7 @@ public class AiExecutionService {
             String orgId, String accountId, String capability,
             boolean allowFallback, UUID budgetOpId,
             int estimatedTokens, int estimatedCents, String runType,
-            String priceTableVersion) {
+            String priceTableVersion, UUID contextSnapshotId) {
 
         return budgetService.checkAndReserve(
                         orgId, capability,
@@ -173,7 +202,7 @@ public class AiExecutionService {
                 .flatMap(budget -> budget.allowed()
                         ? createRunRecord(
                                 budget, provider, orgId, accountId, capability,
-                                allowFallback, budgetOpId, runType, priceTableVersion)
+                                allowFallback, budgetOpId, runType, priceTableVersion, contextSnapshotId)
                         : Mono.just(RunPreparation.denied(budget.denialReason())));
     }
 
@@ -182,13 +211,13 @@ public class AiExecutionService {
             ProviderResolution provider,
             String orgId, String accountId, String capability,
             boolean allowFallback, UUID budgetOpId, String runType,
-            String priceTableVersion) {
+            String priceTableVersion, UUID contextSnapshotId) {
 
         AiRun run = AiRun.forCreate(orgId, accountId, capability,
                 provider.provider(), provider.model(), runType,
                 budget.reservedCents(), budgetOpId, priceTableVersion,
                 provider.platformModelVersion() > 0 ? provider.platformModelVersion() : null,
-                allowFallback);
+                allowFallback, contextSnapshotId);
         return budgetService.createRun(run)
                 .map(runId -> RunPreparation.allowed(
                         runId, budget, run.priceTableVersion()));
@@ -223,14 +252,14 @@ public class AiExecutionService {
             int estimatedOutputTokens) {
         ExecutionContext cancellationContext = new ExecutionContext(
                 runId, orgId, accountId, capability, provider, budget, operationId,
-                null, feature, provider.isPlatform(), decryptedKey,
+                null, feature, provider.isPlatform() && feature != null, decryptedKey,
                 priceTableVersion, estimatedInputTokens, estimatedOutputTokens);
-        Mono<Optional<CreditCharge>> chargeMono = provider.isPlatform()
+        Mono<Optional<CreditCharge>> chargeMono = provider.isPlatform() && feature != null
                 ? credits.consume(accountId, feature, operationId.toString()).map(Optional::of)
                 : Mono.just(Optional.empty());
         Mono<ExecutionResult> charge = chargeMono.map(optCharge -> ExecutionResult.allowed(new ExecutionContext(
                 runId, orgId, accountId, capability, provider, budget, operationId,
-                optCharge.orElse(null), feature, provider.isPlatform(), decryptedKey,
+                optCharge.orElse(null), feature, provider.isPlatform() && feature != null, decryptedKey,
                 priceTableVersion, estimatedInputTokens, estimatedOutputTokens)));
         return Mono.usingWhen(
                         Mono.just(cancellationContext),
@@ -242,7 +271,8 @@ public class AiExecutionService {
                     ExecutionContext failedContext = new ExecutionContext(
                             runId, orgId, accountId, capability, provider, budget, operationId,
                             null, feature,
-                            provider.isPlatform() && !(error instanceof InsufficientCreditsException),
+                            provider.isPlatform() && feature != null
+                                    && !(error instanceof InsufficientCreditsException),
                             decryptedKey, priceTableVersion, estimatedInputTokens, estimatedOutputTokens);
                     return handleFailure(failedContext, errorMessage(error))
                             .then(Mono.error(error));

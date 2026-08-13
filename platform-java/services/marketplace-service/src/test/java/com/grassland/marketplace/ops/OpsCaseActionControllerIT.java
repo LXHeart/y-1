@@ -284,7 +284,8 @@ class OpsCaseActionControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.data.status").isEqualTo("failed")
-                .jsonPath("$.data.error").value(org.hamcrest.Matchers.containsString("manual_clawback_required"));
+                .jsonPath("$.data.error").value(String.class,
+                        value -> assertThat(value).contains("manual_clawback_required"));
     }
 
     @Test

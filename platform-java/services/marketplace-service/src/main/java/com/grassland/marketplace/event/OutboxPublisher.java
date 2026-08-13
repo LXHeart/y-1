@@ -63,6 +63,16 @@ public class OutboxPublisher {
                 .claimBatch(claimToken, properties.batchSize(), properties.claimDuration())
                 .doOnNext(ignored -> metrics.claimed())
                 .flatMap(this::publishOne, properties.maxConcurrency())
+                .then(refreshBacklogMetrics());
+    }
+
+    private Mono<Void> refreshBacklogMetrics() {
+        return Mono.zip(
+                        repository.pendingCount().defaultIfEmpty(0L),
+                        repository.oldestPendingAgeSeconds().defaultIfEmpty(0L))
+                .doOnNext(backlog -> metrics.backlog(backlog.getT1(), backlog.getT2()))
+                .doOnError(error -> log.warn("Failed to refresh marketplace outbox metrics", error))
+                .onErrorResume(error -> Mono.empty())
                 .then();
     }
 

@@ -99,7 +99,7 @@ public class TaskController {
                                         .then(tasks.create(caller.accountId(), access.organizationId(), body.title(),
                                                 body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                 body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                                access.storeId()))
+                                                access.storeId(), body.requirements()))
                                         .flatMap(task -> taskReviews.append(task.id(), "submitted", null, null)
                                                 .then(outbox.append(taskSubmittedEnvelope(task)))
                                                 .thenReturn(task)))))
@@ -116,7 +116,7 @@ public class TaskController {
                             tasks.createDraft(caller.accountId(), access.organizationId(), body.title(),
                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                     body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                    access.storeId()))))
+                                    access.storeId(), body.requirements()))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -129,7 +129,7 @@ public class TaskController {
                         .flatMap(ignored -> transactions.transactional(
                                 tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-                                        body.applicationDeadline(), body.minRecommenderLevel())
+                                        body.applicationDeadline(), body.minRecommenderLevel(), body.requirements())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                         .flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task)))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -238,7 +238,8 @@ public class TaskController {
                                 .flatMap(v -> transactions.transactional(
                                         tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
                                                 body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-                                                body.applicationDeadline(), body.minRecommenderLevel(), caller.accountId())
+                                                body.applicationDeadline(), body.minRecommenderLevel(),
+                                                body.requirements(), caller.accountId())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                                 .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -719,6 +720,7 @@ public class TaskController {
         m.put("maxSlots", task.maxSlots());
         m.put("bountyCents", task.bountyCents());
         m.put("minRecommenderLevel", task.minRecommenderLevel());
+        m.put("requirements", task.requirements());
         m.put("version", task.version());
         m.put("applicationDeadline", task.applicationDeadline() == null ? null : task.applicationDeadline().toString());
         m.put("publishedAt", task.publishedAt() == null ? null : task.publishedAt().toString());

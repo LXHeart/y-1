@@ -1,5 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -31,8 +33,11 @@ public class TaskRepository {
     private static final String SELECT_COLS =
             "id::text, owner_account_id::text, organization_id::text, store_id::text, title, description, status,"
                     + " content_form, platform, max_slots, bounty_cents, created_at, updated_at,"
-                    + " version, application_deadline, published_at, cancelled_at, min_recommender_level";
+                    + " version, application_deadline, published_at, cancelled_at, min_recommender_level,"
+                    + " requirements::text";
 
+    private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final DatabaseClient db;
 
     public TaskRepository(DatabaseClient db) {
@@ -51,21 +56,21 @@ public class TaskRepository {
                              String description, String contentForm, String platform, Integer maxSlots,
                              Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel) {
         return create(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
-                bountyCents, applicationDeadline, minRecommenderLevel, null);
+                bountyCents, applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty());
     }
 
     public Mono<Task> create(String ownerAccountId, String organizationId, String title,
                              String description, String contentForm, String platform, Integer maxSlots,
                              Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
-                             String storeId) {
+                             String storeId, TaskRequirements requirements) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
                 INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
                                  content_form, platform, max_slots, bounty_cents, application_deadline,
-                                 min_recommender_level)
+                                 min_recommender_level, requirements)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
                         :desc, 'pending_review', :contentForm, :platform, :maxSlots, :bountyCents,
-                        :deadline, :minLevel)
+                        :deadline, :minLevel, CAST(:requirements AS jsonb))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
@@ -77,6 +82,7 @@ public class TaskRepository {
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         spec = bindNullable(spec, "store", storeId);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
+        spec = spec.bind("requirements", json(TaskRequirements.normalize(requirements)));
         return spec.map(TaskRepository::map).one();
     }
 
@@ -85,20 +91,21 @@ public class TaskRepository {
                                   String description, String contentForm, String platform, Integer maxSlots,
                                   Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel) {
         return createDraft(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
-                bountyCents, applicationDeadline, minRecommenderLevel, null);
+                bountyCents, applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty());
     }
 
     public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title,
                                   String description, String contentForm, String platform, Integer maxSlots,
                                   Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
-                                  String storeId) {
+                                  String storeId, TaskRequirements requirements) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
                 INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
                                  content_form, platform, max_slots, bounty_cents, version, application_deadline,
-                                 min_recommender_level)
+                                 min_recommender_level, requirements)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
-                        :desc, 'draft', :contentForm, :platform, :maxSlots, :bountyCents, 0, :deadline, :minLevel)
+                        :desc, 'draft', :contentForm, :platform, :maxSlots, :bountyCents, 0, :deadline, :minLevel,
+                        CAST(:requirements AS jsonb))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
@@ -110,17 +117,20 @@ public class TaskRepository {
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         spec = bindNullable(spec, "store", storeId);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
+        spec = spec.bind("requirements", json(TaskRequirements.normalize(requirements)));
         return spec.map(TaskRepository::map).one();
     }
 
     /** 编辑草稿字段（仅 draft 态；guarded by status+version，version+1）。0 行（非 draft / 版本冲突）→ empty。 */
     public Mono<Task> updateDraft(String id, int expectedVersion, String title, String description,
                                   String contentForm, String platform, Integer maxSlots, Long bountyCents,
-                                  Instant applicationDeadline, Integer minRecommenderLevel) {
+                                  Instant applicationDeadline, Integer minRecommenderLevel,
+                                  TaskRequirements requirements) {
         var spec = db.sql("""
                 UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
                                 platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
                                 application_deadline = :deadline, min_recommender_level = :minLevel,
+                                requirements = COALESCE(CAST(:requirements AS jsonb), requirements),
                                 version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'draft' AND version = :expected
                 RETURNING %s
@@ -133,6 +143,7 @@ public class TaskRepository {
         spec = bindNullableLong(spec, "bountyCents", bountyCents);
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
+        spec = bindNullable(spec, "requirements", requirements == null ? null : json(requirements));
         return spec.map(TaskRepository::map).one();
     }
 
@@ -166,11 +177,13 @@ public class TaskRepository {
      */
     public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
                                       String contentForm, String platform, Integer maxSlots, Long bountyCents,
-                                      Instant applicationDeadline, Integer minRecommenderLevel, String revisedBy) {
+                                      Instant applicationDeadline, Integer minRecommenderLevel,
+                                      TaskRequirements requirements, String revisedBy) {
         var spec = db.sql("""
                 UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
                                 platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
                                 application_deadline = :deadline, min_recommender_level = :minLevel,
+                                requirements = COALESCE(CAST(:requirements AS jsonb), requirements),
                                 version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
                 RETURNING %s
@@ -183,6 +196,7 @@ public class TaskRepository {
         spec = bindNullableLong(spec, "bountyCents", bountyCents);
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
+        spec = bindNullable(spec, "requirements", requirements == null ? null : json(requirements));
         return spec.map(TaskRepository::map).one()
                 .flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
     }
@@ -362,13 +376,14 @@ public class TaskRepository {
         var spec = db.sql("""
                 INSERT INTO task_version(task_id, version, store_id, title, description, content_form, platform,
                                          max_slots, bounty_cents, application_deadline, published_at, published_by,
-                                         min_recommender_level)
+                                         min_recommender_level, requirements)
                 VALUES (CAST(:taskId AS uuid), :version, CAST(:store AS uuid), :title, :desc, :contentForm, :platform,
                         :maxSlots, :bountyCents, :deadline, COALESCE(:publishedAt, now()), CAST(:publishedBy AS uuid),
-                        :minLevel)
+                        :minLevel, CAST(:requirements AS jsonb))
                 """)
                 .bind("taskId", task.id()).bind("version", task.version()).bind("title", task.title());
         spec = spec.bind("minLevel", task.minRecommenderLevel());
+        spec = spec.bind("requirements", json(task.requirements()));
         spec = bindNullable(spec, "store", task.storeId());
         spec = bindNullable(spec, "publishedBy", publishedBy);
         spec = bindNullable(spec, "desc", task.description());
@@ -411,8 +426,25 @@ public class TaskRepository {
                 toInstant(row.get("published_at", OffsetDateTime.class)),
                 toInstant(row.get("cancelled_at", OffsetDateTime.class)),
                 value(row.get("min_recommender_level", Integer.class), 1),
-                row.get("store_id", String.class)
+                row.get("store_id", String.class),
+                requirements(row.get("requirements", String.class))
         );
+    }
+
+    private String json(TaskRequirements value) {
+        try {
+            return MAPPER.writeValueAsString(TaskRequirements.normalize(value));
+        } catch (Exception error) {
+            throw new IllegalArgumentException("任务要求格式不合法", error);
+        }
+    }
+
+    private static TaskRequirements requirements(String value) {
+        try {
+            return value == null ? TaskRequirements.empty() : MAPPER.readValue(value, TaskRequirements.class);
+        } catch (Exception error) {
+            throw new IllegalStateException("任务要求数据损坏", error);
+        }
     }
 
     private static Instant toInstant(OffsetDateTime value) {

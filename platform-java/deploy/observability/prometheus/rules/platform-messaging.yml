@@ -1,0 +1,50 @@
+groups:
+  - name: grassland-platform-messaging
+    rules:
+      - alert: GrasslandOutboxBacklogOldestAge
+        expr: >-
+          grassland_outbox_oldest_pending_age_seconds{job=~"identity-service|marketplace-service|finance-service|trust-service|intelligence-service"} > 60
+        for: 2m
+        labels:
+          severity: critical
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Outbox oldest pending event exceeds 60 seconds"
+          description: "{{ $labels.job }} has an unpublished outbox event older than 60 seconds."
+
+      - alert: GrasslandOutboxMetricsMissing
+        expr: >-
+          count by (job) (up{job=~"identity-service|marketplace-service|finance-service|trust-service|intelligence-service"} == 1)
+          unless
+          count by (job) (grassland_outbox_oldest_pending_age_seconds{job=~"identity-service|marketplace-service|finance-service|trust-service|intelligence-service"})
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Outbox backlog metrics are missing"
+          description: "{{ $labels.job }} is scrapeable but does not expose the required outbox age gauge."
+
+      - alert: GrasslandKafkaConsumerLagHigh
+        expr: >-
+          kafka_consumer_records_lag_max{job=~"identity-service|marketplace-service"} > 1000
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Kafka consumer lag exceeds 1000 records"
+          description: "{{ $labels.job }} has sustained consumer lag above 1000 records for five minutes."
+
+      - alert: GrasslandKafkaConsumerLagMetricsMissing
+        expr: >-
+          count by (job) (up{job=~"identity-service|marketplace-service"} == 1)
+          unless
+          count by (job) (kafka_consumer_records_lag_max{job=~"identity-service|marketplace-service"})
+        for: 10m
+        labels:
+          severity: warning
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Kafka consumer lag metrics are missing"
+          description: "{{ $labels.job }} is scrapeable but does not expose Kafka consumer lag metrics."

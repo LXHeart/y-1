@@ -6,6 +6,9 @@ import static org.mockito.Mockito.when;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import com.grassland.trust.dispute.MarketplaceEngagementAuthorizationClient;
 import com.grassland.trust.judge.IdentityOrganizationMembershipClient;
 import com.grassland.trust.judge.MarketplaceReputationClient;
@@ -91,8 +94,8 @@ public abstract class TrustItSupport {
         r.add("management.server.port", () -> "0");
         r.add("trust.outbox.enabled", () -> "false");
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "trust");
+        r.add("trust.evidence.pseudonym-secret", () -> "test-trust-evidence-pseudonym-secret-32-chars");
         // 6C 起 trust-service 引入 Temporal：IT 用内存 test-server（免 temporal 容器），镜像 marketplace。
         r.add("spring.temporal.test-server.enabled", () -> "true");
         r.add("trust.adjudication.dispatcher.enabled", () -> "false");
@@ -109,19 +112,24 @@ public abstract class TrustItSupport {
     /** 签一个带 org/tier 的用户断言（merchant 开争议/裁决；其它 activeType 用于 403 场景）。 */
     protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
                 "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-trust", now, now.plusSeconds(60), null, null));
     }
 
     /** 签一个服务间断言（marketplace 查开放争议用）。 */
     protected String signService(String organizationId, String principal) {
+        return signServiceWithRole(organizationId, principal, null);
+    }
+
+    /** 签一个合法服务断言并附加角色，用于验证服务不能冒充平台人员。 */
+    protected String signServiceWithRole(String organizationId, String principal, String role) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return serviceSigner(principal, "grassland-trust").sign(new IdentityAssertion(
                 "service:" + principal, null, null, organizationId, null,
                 "service", "internal", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(30),
-                "service", principal));
+                "grassland-trust", now, now.plusSeconds(30),
+                "service", principal, role));
     }
 }

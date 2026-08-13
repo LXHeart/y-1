@@ -22,7 +22,7 @@ class NotificationEndpointControllerIT extends IdentityItSupport {
     @Test
     void pushEndpointReceivesEventThroughDurableOutbox() {
         var account = seedAccount("push-endpoint-" + UUID.randomUUID() + "@example.com");
-        String token = "ExponentPushToken[abcdefghijklmnopqrstuvwxyz123456]";
+        String token = "ExponentPushToken[abcdefghijklmnopqrstuvwxyz123456]"; // secret-scan: allow - synthetic push fixture
         client().post().uri("/api/me/notification-endpoints/push")
                 .header("Cookie", "y1.sid=" + account.cookie())
                 .contentType(MediaType.APPLICATION_JSON)
@@ -80,7 +80,7 @@ class NotificationEndpointControllerIT extends IdentityItSupport {
     @Test
     void preferenceDisablesPushForCategory() {
         var account = seedAccount("push-pref-" + UUID.randomUUID() + "@example.com");
-        String token = "ExponentPushToken[preferenceabcdefghijklmnopqrstuvwxyz]";
+        String token = "ExponentPushToken[preferenceabcdefghijklmnopqrstuvwxyz]"; // secret-scan: allow - synthetic push fixture
         client().post().uri("/api/me/notification-endpoints/push")
                 .header("Cookie", "y1.sid=" + account.cookie()).contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("provider", "expo", "token", token)).exchange().expectStatus().isOk();
@@ -93,4 +93,3 @@ class NotificationEndpointControllerIT extends IdentityItSupport {
         assertThat(active).isZero();
     }
 }
-

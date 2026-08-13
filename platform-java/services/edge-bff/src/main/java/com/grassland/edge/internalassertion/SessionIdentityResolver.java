@@ -15,9 +15,9 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * 直读 legacy session 表解析当前调用者身份（HLD 7.4「BFF 直读 session 表」）。
+ * 直读 Java database-bootstrap 管理的 session 表解析当前调用者身份（HLD 7.4）。
  *
- * <p>解析链路镜像 identity-service 的 {@code CurrentAccountResolver} + {@code LegacySessionBridge}：
+ * <p>解析链路镜像 identity-service 的 {@code CurrentAccountResolver} + {@code SessionRepository}：
  * cookie → {@link EdgeCookieSigner#unsign} → sid → {@code session.sess.user.id}（JSON）
  * → {@code app_users}（role/status）→ {@code identity_session.active_identity_type}。
  * 任一闸门无结果（无 cookie / 验签失败 / session 过期 / 账号不存在）→ {@link Mono#empty()}（匿名，下游视作匿名）。
@@ -34,7 +34,7 @@ public class SessionIdentityResolver {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public SessionIdentityResolver(DatabaseClient db, EdgeCookieSigner cookieSigner,
-                                   @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName) {
+                                   @Value("${identity.session.cookie-name:y1.sid}") String cookieName) {
         this.db = db;
         this.cookieSigner = cookieSigner;
         this.cookieName = cookieName;

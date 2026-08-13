@@ -2,9 +2,9 @@
 
 ## Context
 
-用户已明确决定将后端从 Express + TypeScript 迁移为 Java，并将“草场”作为长期项目按微服务架构建设。当前仓库已有可运行的 Vue 3 前端和 TypeScript 后端，前端强依赖现有 `/api/**` 路径、`y1.sid` Cookie、JSON 响应格式、POST SSE、Multipart 字段、签名媒体 URL 和 Range 视频流语义，因此不能采用一次性重写。对应产品需求见[《草场产品需求文档》](./草场产品需求文档.md)。
+用户已明确决定将后端从 Express + TypeScript 迁移为 Java，并将“草场”作为长期项目按微服务架构建设。前端仍依赖现有 `/api/**` 路径、`y1.sid` Cookie、JSON 响应格式、POST SSE、Multipart 字段、签名媒体 URL 和 Range 视频流语义，因此不能采用一次性重写。迁移目标是后端运行面全部由 Java 25 承载；Node 继续作为 Vue/Vite、Vitest、Playwright/E2E seed 工具链，Intelligence 容器内仅作为 Java Playwright driver，不承载 HTTP 服务、领域逻辑、数据库迁移或业务 Worker。对应产品需求见[《草场产品需求文档》](./草场产品需求文档.md)。
 
-本方案采用**绞杀者迁移**：先建立 Java 网关/BFF，让 Vue 始终访问同一个 `/api` 入口；旧请求继续转发到 Express，新领域和已迁移能力进入 Java 服务。初始只建立粗粒度服务，避免把每个实体拆成一个服务而形成分布式单体。跨服务一致性使用本地事务、Transactional Outbox、Kafka、幂等 Inbox 和 Temporal Saga，不使用 XA/2PC。
+本方案采用**绞杀者迁移**：先建立 Java 网关/BFF，让 Vue 始终访问同一个 `/api` 入口；历史请求按冻结契约逐组迁入 Java，当前 Express 后端已退役，Edge 对未登记或停用路由 fail-closed。初始只建立粗粒度服务，避免把每个实体拆成一个服务而形成分布式单体。跨服务一致性使用本地事务、Transactional Outbox、Kafka、幂等 Inbox 和 Temporal Saga，不使用 XA/2PC。
 
 ---
 
@@ -144,7 +144,6 @@ marketplace_db
 finance_db
 trust_db
 intelligence_db
-legacy_db
 ```
 
 强制规则：
@@ -309,15 +308,12 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 
 不要优先重写最脆弱的 Playwright/FFmpeg/平台解析代码。
 
-迁移期：
+当前实现与后续工作：
 
-- intelligence-service 创建任务、授权、配额和审计。
-- legacy Express/Node worker 执行已有抖音/Bilibili、浏览器登录、FFmpeg 和部分 AI Stream。
-- 通过内部 API/Kafka Job 调用，不暴露 Node 给前端。
-- 媒体逐步迁移到 S3/MinIO，BFF/媒体组件保持签名 URL 和 Range 流。
+- intelligence-service 创建任务、授权、配额和审计，并承载热点、AI 流、媒体代理、Bilibili/Douyin 等后端路由。
 - Java WebFlux/WebClient 负责 AI Provider SSE 编排和取消传播；Provider URL 继续实行 SSRF allowlist、DNS/IP 复核和重定向限制。
-
-建议迁移顺序：热点和只读 Provider → AI 设置/模型验证 → 文章/图片/脱口秀 SSE → 视频分析/改编 → 媒体代理 → Bilibili → 抖音 Playwright Session。每一族路由达到契约和真实流量验证后再关闭 Node 实现。
+- Java Playwright 使用上游 Node driver，FFmpeg 作为受控进程依赖；二者是 Java 服务运行时依赖，不是 Node 后端。
+- 媒体统一落 S3/MinIO，BFF/媒体组件保持签名 URL 和 Range 流。后续集中在真实 provider、回调验签、对象归档、受权短 URL、正式计价和生产门禁。
 
 ---
 
@@ -364,7 +360,7 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 ```text
 /apps
   /web-vue                  # 迁移现有 src/
-  /legacy-node              # 迁移期保留现有 server/
+  /scripts                   # Node 驱动的前端/E2E/质量工具（不是后端）
 /platform-java
   settings.gradle.kts
   build.gradle.kts
@@ -400,7 +396,7 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 首批关键修改位置：
 
 - `nginx.conf`：将 `/api` 指向 edge-bff，并保留 SSE/Range 设置。
-- `docker-compose.yml`：加入 Java 基础设施和服务，保留 legacy Express。
+- `docker-compose.yml`：只编排 Java 后端、基础设施和 Nginx 前端，不声明 Node/Express backend 服务。
 - `src/composables/**`：首期不改行为；后续集中到 typed API client。
 - `server/src/app.ts`：迁移期增加内部健康/会话/legacy worker 接口，逐步缩减公开路由。
 - `server/src/lib/session.ts`、`server/src/lib/password.ts`：为会话和密码兼容提供事实依据。
@@ -428,7 +424,7 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 - `/api/**` 全量透明代理旧 Express。
 - SSE、Multipart、SVG、Range、Cookie 契约测试。
 
-**回滚**：Nginx 一键重新直连 Express。
+**回滚**：停用对应 Java RouteManifest 路由并修复；当前部署不提供 Express/Node backend 回退。
 
 ### Epic 2：身份与 Session 绞杀
 
@@ -473,11 +469,10 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 - 合规确认后只接一个真实支付渠道。
 - Webhook、退款、分账和每日对账生产演练。
 
-### Epic 8：intelligence-service 和旧 Node 缩减
+### Epic 8：intelligence-service 后端能力收口
 
-- 依次迁移热点、设置、AI 流、媒体和平台解析。
-- 每组路由 Shadow/Canary，对比结果、Header、SSE 和性能。
-- Node 最后只剩难迁移 Worker，随后下线或保留为受控专用组件。
+- 依次迁移热点、设置、AI 流、媒体和平台解析等后端能力；每组路由执行契约、权限、幂等、SSE/Range/Multipart 和性能验证。
+- 迁移完成后，Node 仅保留前端/测试工具链以及 Java Playwright driver。若未来要求后端镜像不含 Node 二进制，另立 Java Playwright driver 替换项目，不得把它误记为后端迁移项。
 
 ### Epic 9：APP/小程序 `/api/v2`
 
@@ -563,7 +558,7 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 7. jOOQ 而非 JPA 作为核心持久化方案。
 8. Finance 内部不可变双录账本。
 9. BFF Cookie 与 `/api` 兼容策略。
-10. Legacy Node Worker 的临时保留和退出标准。
+10. Node 前端/测试工具链与 Java 后端唯一运行面边界。
 11. Web Cookie、APP/小程序 OAuth 的双认证策略。
 12. S3/MinIO 作为证据与媒体事实存储。
 
@@ -571,9 +566,9 @@ Settlement Policy 必须检查：商家确认、最终核实、争议窗口、�
 
 ## 15. 实施原则
 
-- 这是 Java 微服务目标，但迁移过程允许 Node 作为受控 Legacy Worker；不能为了语言纯度牺牲业务连续性。
+- 这是 Java 微服务目标；Node 只属于前端/测试工具链和 Java Playwright driver，不是后端运行时。不能把 npm、Vite、Vitest、Playwright 或 E2E seed 的存在误判为 Node 后端未迁移。
 - 服务按业务一致性和团队边界拆分，不按数据库表或名词拆分。
-- 先兼容、再迁移、后优化；每一族路由均可单独切回旧实现。
+- 先兼容、再迁移、后优化；每一族 Java 路由均可单独停用并修复，不提供 Node 后端回退。
 - 新草场领域从第一天进入 Java 服务，旧营销工具按价值和风险逐步迁移。
 - 新旧系统不长期双写同一业务表。
 - 金融事实、证据和审计不可通过回滚删除。

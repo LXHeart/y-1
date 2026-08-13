@@ -36,14 +36,20 @@ public record Task(
         Instant publishedAt,
         Instant cancelledAt,
         int minRecommenderLevel,
-        String storeId
+        String storeId,
+        TaskRequirements requirements
 ) {
+    public Task {
+        requirements = TaskRequirements.normalize(requirements);
+    }
+
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
                 String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
                 Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
                 Instant publishedAt, Instant cancelledAt) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
-                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt, 1, null);
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+                1, null, TaskRequirements.empty());
     }
 
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
@@ -52,6 +58,15 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt, int minRecommenderLevel) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                minRecommenderLevel, null);
+                minRecommenderLevel, null, TaskRequirements.empty());
+    }
+
+    public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+                String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
+                Instant publishedAt, Instant cancelledAt, int minRecommenderLevel, String storeId) {
+        this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+                minRecommenderLevel, storeId, TaskRequirements.empty());
     }
 }

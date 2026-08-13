@@ -2,6 +2,7 @@ package com.grassland.intelligence.bilibili;
 
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.videorecreation.VideoRecreationTaskRequest;
 import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -13,7 +14,7 @@ import reactor.core.publisher.Mono;
  * Bilibili 视频内容分析（草场 Slice 13 Stage 5）：{@code POST /api/bilibili/analyze-video}。
  *
  * <p>需登录；短 progressive 视频直接交给 Qwen，DASH/长视频由 Java mux/切片并经 analysis-media 回源。
- * 整次分析只扣一次积分。Edge 开关默认开启，显式关闭可整族回切 legacy。
+ * 整次分析只扣一次积分。Edge 开关默认开启，显式关闭会 fail-closed 404。
  */
 @RestController
 public class BilibiliAnalyzeController {
@@ -30,8 +31,11 @@ public class BilibiliAnalyzeController {
     @PostMapping("/api/bilibili/analyze-video")
     public Mono<Map<String, Object>> analyze(@RequestBody Map<String, Object> body, ServerWebExchange exchange) {
         String proxyVideoUrl = requireProxyVideoUrl(body);
+        VideoRecreationTaskRequest task = VideoRecreationTaskRequest.parse(body);
         return resolver.resolve(exchange.getRequest())
-                .flatMap(caller -> service.analyze(proxyVideoUrl, caller.accountId())
+                .flatMap(caller -> (task.taskMode()
+                        ? service.analyzeTask(proxyVideoUrl, caller.accountId(), task, exchange)
+                        : service.analyze(proxyVideoUrl, caller.accountId()))
                         .map(outcome -> Map.<String, Object>of("success", true, "data", outcome.data())));
     }
 

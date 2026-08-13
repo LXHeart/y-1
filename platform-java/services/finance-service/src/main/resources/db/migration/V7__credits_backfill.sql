@@ -14,15 +14,32 @@ BEGIN
        AND to_regclass('public.credit_transactions') IS NOT NULL THEN
 
         INSERT INTO credits_account (account_id, balance, total_earned, total_spent, created_at, updated_at)
-        SELECT user_id, balance, total_earned, total_spent, created_at, updated_at
-        FROM user_credits
+        SELECT legacy.user_id, legacy.balance, legacy.total_earned, legacy.total_spent,
+               legacy.created_at, legacy.updated_at
+        FROM user_credits AS legacy
         ON CONFLICT (account_id) DO NOTHING;
 
-        INSERT INTO credits_transaction
-            (id, account_id, amount, balance_after, type, feature, note, operation_id, created_at)
-        SELECT id, user_id, amount, balance_after, type, feature, note, operation_id, created_at
-        FROM credit_transactions
-        ON CONFLICT (id) DO NOTHING;
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'credit_transactions'
+              AND column_name = 'operation_id'
+        ) THEN
+            INSERT INTO credits_transaction
+                (id, account_id, amount, balance_after, type, feature, note, operation_id, created_at)
+            SELECT legacy.id, legacy.user_id, legacy.amount, legacy.balance_after, legacy.type,
+                   legacy.feature, legacy.note, legacy.operation_id, legacy.created_at
+            FROM credit_transactions AS legacy
+            ON CONFLICT (id) DO NOTHING;
+        ELSE
+            INSERT INTO credits_transaction
+                (id, account_id, amount, balance_after, type, feature, note, operation_id, created_at)
+            SELECT legacy.id, legacy.user_id, legacy.amount, legacy.balance_after, legacy.type,
+                   legacy.feature, legacy.note, NULL::text, legacy.created_at
+            FROM credit_transactions AS legacy
+            ON CONFLICT (id) DO NOTHING;
+        END IF;
 
     END IF;
 END $$;

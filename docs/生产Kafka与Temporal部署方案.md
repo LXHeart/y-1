@@ -41,3 +41,17 @@ namespace、PLAINTEXT Kafka、缺失 mTLS 文件和权限过宽的 Temporal 私�
 3. 各制造一笔任务预留、确认结算、争议审判，观察 Outbox 到 Kafka、消费者 Inbox 和 Temporal history。
 4. 分别停止一个 broker、一个 worker 副本和一个持久层只读副本，确认业务无数据丢失且告警送达。
 5. 演练证书轮换、consumer group 回滚、Workflow worker 回滚，并记录实测 RPO/RTO。
+
+## Trace 验收
+
+本地 collector 只用于开发链路 smoke，不进入生产 overlay。运行：
+
+```bash
+./scripts/local-otel-trace-smoke.sh
+```
+
+该命令启动隔离的 `observability` Compose project，向 OTLP/HTTP receiver 发送一条唯一 trace，
+并从 collector debug exporter 日志确认 trace/span ID 已被接收，完成后自动清理。它证明本地
+receiver 和 HTTP delivery 路径可用，不证明生产外部 collector、Kafka/Temporal 多进程 trace 或
+Alertmanager receiver 已验收。生产必须使用 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 指向外部 HTTPS
+collector，并保存真实 trace delivery evidence。

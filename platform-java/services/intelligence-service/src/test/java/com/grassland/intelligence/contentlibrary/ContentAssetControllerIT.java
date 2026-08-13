@@ -25,6 +25,7 @@ import reactor.core.publisher.Mono;
  * <p>锁定：创建（IDOR 守卫 media owner）、列表（仅自己 active）、详情（跨账号 404）、编辑（落 version 快照 +
  * 乐观锁 409）、删除（软删后不可见/不可下钻）、下载（storage 未启 503）。
  */
+@SuppressWarnings("unchecked")
 class ContentAssetControllerIT extends IntelligenceItSupport {
 
     @MockitoBean

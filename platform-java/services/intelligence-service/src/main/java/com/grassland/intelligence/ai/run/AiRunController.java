@@ -67,7 +67,7 @@ public class AiRunController {
         int maxTokens = body.maxTokens() == null ? DEFAULT_MAX_TOKENS : body.maxTokens();
         int estimatedInputTokens = body.prompt().getBytes(StandardCharsets.UTF_8).length;
         return aiExecution.prepareExecution(exchange, body.capability(), CreditFeature.AI_RUN_TEXT,
-                estimatedInputTokens, maxTokens, allowFallback)
+                estimatedInputTokens, maxTokens, allowFallback, body.contextSnapshotId())
                 .flatMap(result -> result.allowed()
                         ? doExecute(result.context(), body.prompt(), maxTokens)
                         : Mono.error(deniedException(result.denialReason())));

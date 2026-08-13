@@ -18,6 +18,7 @@ import reactor.core.scheduler.Schedulers;
  * <p>锁定：创建（source 关联）、列表（仅自己）、详情（跨账号 404）、自动保存（落 version 快照 +
  * 乐观锁 409）、软删（删后不可见/不可下钻）、鉴权。
  */
+@SuppressWarnings("unchecked")
 class CreationDraftControllerIT extends IntelligenceItSupport {
 
     private String header() {

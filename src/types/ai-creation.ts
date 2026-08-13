@@ -13,8 +13,15 @@ export type AiPlatformId =
 
 export type AiContentFormId = 'graphic' | 'video' | 'image-text' | 'video-text'
 export type CreationSourceType = 'independent' | 'task' | 'store' | 'hot-topic' | 'reference'
-export type CreationWorkflowId = 'longform' | 'review-copy' | 'video-script' | 'reference-analyze'
-export type CreationTargetView = 'article' | 'image' | 'video-production' | 'video'
+export type CreationWorkflowId =
+  | 'longform'
+  | 'review-copy'
+  | 'video-script'
+  | 'comedy-script'
+  | 'video-recreation'
+  | 'reference-analyze'
+export type VideoCreationWorkflowId = 'video-script' | 'comedy-script' | 'video-recreation'
+export type CreationTargetView = 'article' | 'image' | 'video-production' | 'video' | 'comedy'
 
 export type CreationSource =
   | { type: 'independent' }
@@ -29,6 +36,8 @@ export type CreationSource =
 export interface CreationDraftPrefill {
   topic?: string
   instructions?: string
+  referenceUrl?: string
+  referencePlatform?: 'douyin' | 'bilibili'
   storeName?: string
   address?: string
   storeDescription?: string
@@ -43,6 +52,10 @@ export interface CreationEntry {
   prefill?: CreationDraftPrefill
   /** Accepted-at snapshot returned by marketplace; authoritative for task-mode creation. */
   taskContext?: TaskContextSnapshot
+  /** Server-frozen intelligence context used by subsequent AI runs. */
+  contextSnapshotId?: string
+  /** Content-library assets selected when the creation context is frozen. */
+  materialIds?: string[]
 }
 
 /** 创作中心完成合法性解析后交给现有工作流的 handoff。 */

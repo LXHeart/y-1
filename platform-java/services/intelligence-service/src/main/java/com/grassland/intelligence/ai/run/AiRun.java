@@ -47,8 +47,20 @@ public record AiRun(
 
     // 任务上下文快照（TaskContext，V8 新增）
     Integer platformModelVersion, // 平台模型配置版本（平台 run 冻结；BYOK run 为 null）
-    boolean fallbackAuthorized    // 本次调用是否经授权回退平台（HLD §12.3 审计）
+    boolean fallbackAuthorized,   // 本次调用是否经授权回退平台（HLD §12.3 审计）
+    UUID contextSnapshotId         // PRD §4.12 task creation snapshot, nullable for independent runs
 ) {
+    public AiRun(
+            UUID id, String organizationId, String accountId, String capability, String provider, String model,
+            String runType, Integer inputTokens, Integer outputTokens, Integer imagesGenerated, Integer videoSeconds,
+            int budgetCents, Integer actualCents, String status, String failureReason, Instant startedAt,
+            Instant completedAt, String priceTableVersion, UUID operationId, UUID refundOperationId,
+            Instant createdAt, Instant updatedAt, Integer platformModelVersion, boolean fallbackAuthorized) {
+        this(id, organizationId, accountId, capability, provider, model, runType, inputTokens, outputTokens,
+                imagesGenerated, videoSeconds, budgetCents, actualCents, status, failureReason, startedAt,
+                completedAt, priceTableVersion, operationId, refundOperationId, createdAt, updatedAt,
+                platformModelVersion, fallbackAuthorized, null);
+    }
     /** 创建新 Run。 */
     public static AiRun forCreate(
         String organizationId,
@@ -65,7 +77,7 @@ public record AiRun(
     ) {
         return forCreate(organizationId, accountId, capability, provider, model, runType,
                 budgetCents, operationId, priceTableVersion == 1 ? "v1" : "v" + priceTableVersion,
-                platformModelVersion, fallbackAuthorized);
+                platformModelVersion, fallbackAuthorized, null);
     }
 
     /** 创建使用显式冻结价目版本的 Run，供异步媒体任务使用。 */
@@ -81,6 +93,26 @@ public record AiRun(
         String priceTableVersion,
         Integer platformModelVersion,
         boolean fallbackAuthorized
+    ) {
+        return forCreate(organizationId, accountId, capability, provider, model, runType,
+                budgetCents, operationId, priceTableVersion, platformModelVersion,
+                fallbackAuthorized, null);
+    }
+
+    /** 创建带任务创作上下文快照的 Run。 */
+    public static AiRun forCreate(
+        String organizationId,
+        String accountId,
+        String capability,
+        String provider,
+        String model,
+        String runType,
+        int budgetCents,
+        UUID operationId,
+        String priceTableVersion,
+        Integer platformModelVersion,
+        boolean fallbackAuthorized,
+        UUID contextSnapshotId
     ) {
         return new AiRun(
             null,  // id 由数据库生成
@@ -105,8 +137,9 @@ public record AiRun(
             null,  // refundOperationId
             null,  // createdAt 由数据库默认
             null,  // updatedAt 由数据库默认
-            platformModelVersion,
-            fallbackAuthorized
+                platformModelVersion,
+                fallbackAuthorized,
+                contextSnapshotId
         );
     }
 

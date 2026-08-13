@@ -6,7 +6,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
-import org.springframework.r2dbc.core.Parameter;
+import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -38,6 +38,15 @@ public class PlatformModelConfigRepository {
                 + " WHERE capability = :capability AND model_role = :modelRole AND enabled = true")
                 .bind("capability", capability)
                 .bind("modelRole", modelRole)
+                .map(PlatformModelConfigRepository::map)
+                .one();
+    }
+
+    /** 按不可变配置 ID 读取历史版本；供创作上下文快照复现运行时配置。 */
+    public Mono<PlatformModelConfig> findById(UUID id) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM platform_model_config WHERE id = CAST(:id AS uuid)")
+                .bind("id", id.toString())
                 .map(PlatformModelConfigRepository::map)
                 .one();
     }
@@ -89,9 +98,9 @@ public class PlatformModelConfigRepository {
                 .bind("provider", c.provider())
                 .bind("model", c.model())
                 .bind("baseUrl", c.baseUrl())
-                .bind("maxConcurrency", Parameter.fromOrEmpty(c.maxConcurrency(), Integer.class))
+                .bind("maxConcurrency", nullable(c.maxConcurrency(), Integer.class))
                 .bind("healthStatus", c.healthStatus())
-                .bind("adminId", Parameter.fromOrEmpty(adminId, String.class))
+                .bind("adminId", nullable(adminId, String.class))
                 .map((r, m) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString)
@@ -122,10 +131,10 @@ public class PlatformModelConfigRepository {
                                 .bind("provider", next.provider())
                                 .bind("model", next.model())
                                 .bind("baseUrl", next.baseUrl())
-                                .bind("maxConcurrency", Parameter.fromOrEmpty(next.maxConcurrency(), Integer.class))
+                                .bind("maxConcurrency", nullable(next.maxConcurrency(), Integer.class))
                                 .bind("healthStatus", next.healthStatus())
                                 .bind("version", current.version() + 1)
-                                .bind("adminId", Parameter.fromOrEmpty(adminId, String.class))
+                                .bind("adminId", nullable(adminId, String.class))
                                 .map((r, m) -> r.get("id", String.class))
                                 .one()
                                 .map(UUID::fromString)
@@ -151,7 +160,7 @@ public class PlatformModelConfigRepository {
                 RETURNING id::text
                 """)
                 .bind("id", id.toString())
-                .bind("adminId", Parameter.fromOrEmpty(adminId, String.class))
+                .bind("adminId", nullable(adminId, String.class))
                 .map((r, m) -> r.get("id", String.class))
                 .one()
                 .hasElement();
@@ -186,10 +195,10 @@ public class PlatformModelConfigRepository {
                 .bind("provider", c.provider())
                 .bind("model", c.model())
                 .bind("baseUrl", c.baseUrl())
-                .bind("maxConcurrency", Parameter.fromOrEmpty(c.maxConcurrency(), Integer.class))
+                .bind("maxConcurrency", nullable(c.maxConcurrency(), Integer.class))
                 .bind("healthStatus", c.healthStatus())
                 .bind("version", version)
-                .bind("changedBy", Parameter.fromOrEmpty(changedBy, String.class))
+                .bind("changedBy", nullable(changedBy, String.class))
                 .bind("changeType", changeType)
                 .then();
     }

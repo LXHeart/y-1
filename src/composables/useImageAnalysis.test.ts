@@ -200,6 +200,54 @@ describe('useImageAnalysis', () => {
     ])
   })
 
+  it('reuses one frozen snapshot across every task generation step', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createSseResponse([
+        { type: 'result', data: { review: 'draft', imageCount: 1 } },
+      ]))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        success: true, data: { review: 'optimized', imageCount: 1 },
+      }), { headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        success: true, data: { review: 'final', imageCount: 1 },
+      }), { headers: { 'Content-Type': 'application/json' } }))
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const analysis = useImageAnalysis()
+    analysis.bindCreationContext(true, '11111111-1111-1111-1111-111111111111')
+    analysis.addFiles([new File(['image-data'], 'cover.png', { type: 'image/png' })])
+
+    await analysis.startGeneration()
+    await analysis.proceedToOptimize()
+    await analysis.proceedToStyleRefine()
+
+    const draftForm = fetchMock.mock.calls[0][1]?.body as FormData
+    expect(draftForm.get('taskMode')).toBe('true')
+    expect(draftForm.get('contextSnapshotId')).toBe('11111111-1111-1111-1111-111111111111')
+    for (const call of fetchMock.mock.calls.slice(1)) {
+      expect(JSON.parse(String(call[1]?.body))).toMatchObject({
+        taskMode: true,
+        contextSnapshotId: '11111111-1111-1111-1111-111111111111',
+      })
+    }
+  })
+
+  it('keeps independent image requests free of task fields', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createSseResponse([
+      { type: 'result', data: { review: 'independent', imageCount: 1 } },
+    ]))
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const analysis = useImageAnalysis()
+    analysis.bindCreationContext(false, 'must-not-leak')
+    analysis.addFiles([new File(['image-data'], 'cover.png', { type: 'image/png' })])
+    await analysis.startGeneration()
+
+    const form = fetchMock.mock.calls[0][1]?.body as FormData
+    expect(form.has('taskMode')).toBe(false)
+    expect(form.has('contextSnapshotId')).toBe(false)
+  })
+
   it('ignores stale stream events after a newer request has started', async () => {
     const firstStream = createControlledSseResponse()
     const secondStream = createControlledSseResponse()

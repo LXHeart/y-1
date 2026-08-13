@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.core.env.Environment;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
@@ -30,7 +31,8 @@ public final class VideoRecreationAdaptationParser {
     static final int MAX_FIELDS = 12;
     static final int MAX_PARTS = 16;
     private static final Set<String> FIELD_NAMES = Set.of(
-            "platform", "proxyVideoUrl", "extractedContent", "userInstructions", "images");
+            "platform", "proxyVideoUrl", "extractedContent", "userInstructions", "images",
+            "targetPlatform", "taskMode", "contextSnapshotId");
     private static final Set<String> CONTENT_FIELDS = Set.of(
             "videoCaptions", "videoScript", "charactersDescription", "voiceDescription",
             "propsDescription", "sceneDescription");
@@ -52,7 +54,11 @@ public final class VideoRecreationAdaptationParser {
         Map<String, String> content = parseStringMap(rawContent, CONTENT_FIELDS, false);
         Map<String, String> instructions = parseOptionalObject(body.get("userInstructions"), INSTRUCTION_FIELDS);
         validate(platform, proxyVideoUrl, content, instructions);
-        return new VideoRecreationAdaptationRequest(platform, proxyVideoUrl, content, instructions, List.of());
+        boolean taskMode = booleanValue(body.get("taskMode"));
+        return new VideoRecreationAdaptationRequest(
+                platform, proxyVideoUrl, content, instructions, List.of(),
+                optionalString(body.get("targetPlatform")), taskMode,
+                uuidValue(body.get("contextSnapshotId")));
     }
 
     public Mono<VideoRecreationAdaptationRequest> parseMultipart(MultiValueMap<String, Part> parts) {
@@ -87,10 +93,13 @@ public final class VideoRecreationAdaptationParser {
                             ? Map.of() : parseOptionalInstructionJson(values.getT2());
                     validate(platform, proxy, content, instructions);
                     List<Part> imageParts = parts.getOrDefault("images", List.of());
-                    if (imageParts.size() > MAX_FILES) return Mono.error(new IllegalArgumentException("最多上传 6 张图片"));
+                    if (imageParts.size() > MAX_FILES) return Mono.error(new IllegalArgumentException("最多上传 4 张图片"));
                     return Flux.fromIterable(imageParts).concatMap(this::readImage).collectList()
                             .map(images -> new VideoRecreationAdaptationRequest(
-                                    platform, proxy, content, instructions, images));
+                                    platform, proxy, content, instructions, images,
+                                    optionalPart(parts, "targetPlatform"),
+                                    booleanValue(optionalPart(parts, "taskMode")),
+                                    uuidValue(optionalPart(parts, "contextSnapshotId"))));
                 });
     }
 
@@ -107,7 +116,10 @@ public final class VideoRecreationAdaptationParser {
 
     private Mono<String> optionalScalar(MultiValueMap<String, Part> parts, String name) {
         List<Part> values = parts.getOrDefault(name, List.of());
-        if (values.isEmpty()) return Mono.empty();
+        // Keep the zip chain alive when the optional field is absent. Mono.zipWith
+        // treats an empty source as an empty result, which would otherwise make a
+        // valid request complete without a response.
+        if (values.isEmpty()) return Mono.just("");
         if (values.size() != 1 || !(values.getFirst() instanceof FormFieldPart field)) {
             return Mono.error(new IllegalArgumentException("图片上传失败，请检查文件后重试"));
         }
@@ -115,6 +127,16 @@ public final class VideoRecreationAdaptationParser {
             return Mono.error(new IllegalArgumentException("图片上传失败，请检查文件后重试"));
         }
         return Mono.just(field.value());
+    }
+
+    private String optionalPart(MultiValueMap<String, Part> parts, String name) {
+        List<Part> values = parts.getOrDefault(name, List.of());
+        if (values.isEmpty()) return null;
+        if (values.size() != 1 || !(values.getFirst() instanceof FormFieldPart field)
+                || utf8Length(field.value()) > MAX_FIELD_BYTES) {
+            throw new IllegalArgumentException("请求参数无效");
+        }
+        return field.value();
     }
 
     private Mono<ContentPart> readImage(Part part) {
@@ -219,5 +241,28 @@ public final class VideoRecreationAdaptationParser {
 
     private static int utf8Length(String value) {
         return value.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private static String optionalString(Object value) {
+        if (value == null) return null;
+        if (!(value instanceof String string)) throw new IllegalArgumentException("请求参数无效");
+        String result = string.trim();
+        return result.isEmpty() ? null : result;
+    }
+
+    private static boolean booleanValue(Object value) {
+        if (value == null || "false".equalsIgnoreCase(String.valueOf(value))) return false;
+        if (Boolean.TRUE.equals(value) || "true".equalsIgnoreCase(String.valueOf(value))) return true;
+        throw new IllegalArgumentException("请求参数无效");
+    }
+
+    private static UUID uuidValue(Object value) {
+        String text = optionalString(value);
+        if (text == null) return null;
+        try {
+            return UUID.fromString(text);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalArgumentException("创作上下文快照标识无效");
+        }
     }
 }

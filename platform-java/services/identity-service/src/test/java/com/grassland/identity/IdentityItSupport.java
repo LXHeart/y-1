@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -80,22 +81,21 @@ public abstract class IdentityItSupport {
         r.add("identity.kyb.retention.enabled", () -> "false");
         r.add("identity.external-delivery.challenge-secret",
                 () -> "test-sms-challenge-secret-at-least-32-characters");
-        r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
+        r.add("identity.session.secret", () -> "test-secret-32-chars-minimum!!!");
         // Slice 2K：启用内部身份断言消费（signer bean 注入）。仅在请求带断言头时触发，其余走 cookie 路径。
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-assertion-secret-32-chars!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "identity");
     }
 
     @BeforeAll
     static void schema() throws Exception {
-        // organization/store/organization_membership/outbox 由 Flyway 建；这里仅补 legacy app_users/session。
+        // organization/store/organization_membership/outbox 由 Flyway 建；这里补 Java bootstrap 管理的共享身份表。
         // IF NOT EXISTS：多个子类各自触发一次 @BeforeAll，需幂等。
         try (var c = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              var s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz)");
             s.execute("CREATE TABLE IF NOT EXISTS session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
-            // 注册验证码同属 legacy Express 建的表（identity 只读写，不由 Flyway 建），
+            // 注册验证码表由 database-bootstrap 管理，identity 只读写，不由本服务 Flyway 建，
             // 列名/类型对齐 EmailVerificationService 的 SQL：明文 code、used 标记。
             s.execute("CREATE TABLE IF NOT EXISTS email_verification_codes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
                     + "email text NOT NULL, code text NOT NULL, used boolean NOT NULL DEFAULT false, "

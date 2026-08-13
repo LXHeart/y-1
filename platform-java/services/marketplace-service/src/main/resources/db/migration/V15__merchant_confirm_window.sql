@@ -8,7 +8,9 @@
 -- auto_confirmed_at：仅 D-03 窗口到期路径写入；商家手动确认只写 confirmed_at。Temporal activity 重试据此区分：
 -- auto_confirmed_at 非空 = 本 workflow 已取得自动确认权，可继续幂等 capture；仅 confirmed_at 非空 = 商家先确认，本 workflow abort。
 --
--- 用 IF NOT EXISTS：生产顺序迁移（V1→V15）列不存在时正常新增，也允许修复环境在重放前已补列。
+-- 用 IF NOT EXISTS：生产顺序迁移（V1→V15）列不存在→正常新增；TaskLifecycleMigrationTest 在共享 testcontainer
+-- 的隔离 schema（baseline=10）跑 V11+，engagement_submission 经 search_path 落到 public（已被主 context 的 V15 加过列），
+-- IF NOT EXISTS 使其幂等无副作用——不影响 greenfield 行为。
 ALTER TABLE task_application
     ADD COLUMN IF NOT EXISTS merchant_confirm_deadline_at timestamptz,
     ADD COLUMN IF NOT EXISTS auto_confirmed_at timestamptz;

@@ -27,6 +27,7 @@ import reactor.core.publisher.Mono;
  * {@link ConfirmationActivityImpl} 单测（D-03）：submission 绑定、自动确认原子写、手动确认竞态、
  * activity 崩溃重试、AutoSettledOnTimeout exactly-once 与 captureOrHold 映射。
  */
+@SuppressWarnings("unchecked")
 class ConfirmationActivityImplTest {
 
     private TaskApplicationRepository apps;

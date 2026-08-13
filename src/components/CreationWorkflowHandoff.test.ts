@@ -3,6 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
 import ArticleCreationView from '../views/article/ArticleCreationView.vue'
+import ComedyWritingView from '../views/comedy/ComedyWritingView.vue'
 import VideoAnalysisView from '../views/video/VideoAnalysisView.vue'
 import VideoProductionView from '../views/video-production/VideoProductionView.vue'
 import type { CreationHandoff } from '../types/ai-creation'
@@ -53,6 +54,7 @@ vi.mock('../composables/useArticleCreation', async () => {
           topic.value = value
           stage.value = 'topic'
         },
+        bindCreationContext: () => undefined,
         finish: () => undefined,
       }
     },
@@ -89,6 +91,14 @@ function videoProductionHandoff(revision: number): CreationHandoff {
       address: '人民路 8 号',
       storeDescription: '手工面与现熬汤底',
     },
+  }
+}
+
+function videoTaskHandoff(revision: number): CreationHandoff {
+  return {
+    ...videoProductionHandoff(revision),
+    source: { type: 'task', taskId: 'task-1', applicationId: 'application-1', taskVersion: 3 },
+    contextSnapshotId: '11111111-1111-1111-1111-111111111111',
   }
 }
 
@@ -181,6 +191,38 @@ describe('创作工作流 handoff', () => {
     expect((wrapper.get('#vp-shop-name').element as HTMLInputElement).value).toBe('云朵面馆')
   })
 
+  test('视频任务 handoff 绑定冻结快照并保持任务来源', async () => {
+    stubBackendFetch()
+    const wrapper = mount(VideoProductionView, { props: { creationHandoff: videoTaskHandoff(1) } })
+    await flushPromises()
+
+    expect((wrapper.get('#vp-platform').element as HTMLSelectElement).value).toBe('kuaishou')
+    expect(wrapper.props('creationHandoff')?.source.type).toBe('task')
+    expect(wrapper.props('creationHandoff')?.contextSnapshotId)
+      .toBe('11111111-1111-1111-1111-111111111111')
+  })
+
+  test('喜剧脚本任务 handoff 绑定冻结快照并预填主题', () => {
+    const handoff: CreationHandoff = {
+      revision: 9,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'task', taskId: 'task-9', applicationId: 'app-9', taskVersion: 2 },
+      workflowId: 'comedy-script',
+      targetView: 'comedy',
+      prefill: { topic: '任务喜剧主题' },
+      contextSnapshotId: '99999999-9999-9999-9999-999999999999',
+    }
+    const wrapper = mount(ComedyWritingView, {
+      props: { creationHandoff: handoff },
+      global: { provide: { comedyInitialTopic: ref('') } },
+    })
+
+    expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('任务喜剧主题')
+    expect(wrapper.props('creationHandoff')?.contextSnapshotId)
+      .toBe('99999999-9999-9999-9999-999999999999')
+  })
+
   test('reference handoff 落到视频提取分析视图并预填平台与链接，新 revision 才重新预填', async () => {
     stubBackendFetch()
     const first = referenceHandoff(1, 'bilibili', 'https://www.bilibili.com/video/BV1example')
@@ -197,5 +239,31 @@ describe('创作工作流 handoff', () => {
     await wrapper.setProps({ creationHandoff: referenceHandoff(2, 'douyin', 'https://v.douyin.com/xxxx/') })
     expect(wrapper.get('.platform-tab-active').text()).toContain('抖音')
     expect((wrapper.get('#video-input').element as HTMLTextAreaElement).value).toBe('https://v.douyin.com/xxxx/')
+  })
+
+  test('视频复刻任务分别保留发布平台、参考来源平台和冻结快照', async () => {
+    stubBackendFetch()
+    const handoff: CreationHandoff = {
+      revision: 12,
+      platformId: 'xiaohongshu',
+      contentFormId: 'video',
+      source: { type: 'task', taskId: 'task-12', applicationId: 'app-12', taskVersion: 4 },
+      workflowId: 'video-recreation',
+      targetView: 'video',
+      prefill: {
+        referencePlatform: 'bilibili',
+        referenceUrl: 'https://www.bilibili.com/video/BV1task',
+      },
+      contextSnapshotId: '12121212-1212-1212-1212-121212121212',
+    }
+    const wrapper = mount(VideoAnalysisView, { props: { creationHandoff: handoff } })
+    await flushPromises()
+
+    expect(wrapper.get('.platform-tab-active').text()).toContain('B 站')
+    expect((wrapper.get('#video-input').element as HTMLTextAreaElement).value)
+      .toBe('https://www.bilibili.com/video/BV1task')
+    expect(wrapper.props('creationHandoff')?.platformId).toBe('xiaohongshu')
+    expect(wrapper.props('creationHandoff')?.contextSnapshotId)
+      .toBe('12121212-1212-1212-1212-121212121212')
   })
 })

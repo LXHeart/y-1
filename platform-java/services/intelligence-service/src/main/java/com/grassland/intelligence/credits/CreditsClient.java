@@ -3,8 +3,8 @@ package com.grassland.intelligence.credits;
 import reactor.core.publisher.Mono;
 
 /**
- * 积分扣减端口。Slice 1 唯一实现 {@link LegacyCreditsClient}（经 legacy 内部端点）。
- * 后续草场 {@code usage-account} 落地后可换实现，业务 controller 不变（端口隔离）。
+ * 积分扣减端口。生产实现为 {@link FinanceCreditsClient}，直接调用 Java finance-service。
+ * 业务 controller 只依赖此端口，不感知积分域的传输细节。
  */
 public interface CreditsClient {
 

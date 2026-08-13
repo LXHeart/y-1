@@ -255,7 +255,7 @@ public class TrustEventProcessor {
         if (node.isObject()) {
             com.fasterxml.jackson.databind.node.ObjectNode sorted = mapper.createObjectNode();
             Map<String, JsonNode> fields = new TreeMap<>();
-            node.fields().forEachRemaining(entry -> fields.put(entry.getKey(), entry.getValue()));
+            node.properties().forEach(entry -> fields.put(entry.getKey(), entry.getValue()));
             fields.forEach((key, value) -> sorted.set(key, canonicalize(value)));
             return sorted;
         }

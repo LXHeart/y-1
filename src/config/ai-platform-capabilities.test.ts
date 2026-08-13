@@ -67,6 +67,21 @@ describe('AI 平台能力矩阵', () => {
     }
   })
 
+  test('视频创作可显式选择风格化喜剧脚本，默认工作流保持不变', () => {
+    expect(resolveWorkflow('douyin', 'video', 'task')).toEqual({
+      status: 'available', workflowId: 'video-script', targetView: 'video-production',
+    })
+    expect(resolveWorkflow('douyin', 'video', 'task', 'comedy-script')).toEqual({
+      status: 'available', workflowId: 'comedy-script', targetView: 'comedy',
+    })
+    expect(resolveWorkflow('xiaohongshu', 'video', 'task', 'video-recreation')).toEqual({
+      status: 'available', workflowId: 'video-recreation', targetView: 'video',
+    })
+    expect(resolveWorkflow('douyin', 'video', 'reference', 'comedy-script')).toEqual({
+      status: 'available', workflowId: 'reference-analyze', targetView: 'video',
+    })
+  })
+
   test('非法平台或内容形式返回 null，不依赖 UI 隐藏来保证合法性', () => {
     expect(getContentForm('kuaishou', 'graphic')).toBeNull()
     expect(getContentForm('unknown' as never, 'video')).toBeNull()

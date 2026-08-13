@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
+import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -92,6 +93,36 @@ public class ContentAssetRepository {
         return db.sql("SELECT " + SELECT_COLS + " FROM content_asset WHERE id=CAST(:id AS uuid)")
                 .bind("id", id.toString())
                 .map(ContentAssetRepository::map).one();
+    }
+
+    /**
+     * Resolve assets for a task creation snapshot. Every requested asset must still be active and unexpired;
+     * personal assets belong to the creator and merchant assets belong to the task organization and are checked
+     * separately through the grant relation.
+     */
+    public Flux<ContentAsset> findForCreation(List<UUID> ids, String accountId, String organizationId) {
+        if (ids == null || ids.isEmpty()) {
+            return Flux.empty();
+        }
+        String placeholders = java.util.stream.IntStream.range(0, ids.size())
+                .mapToObj(i -> "CAST(:asset" + i + " AS uuid)")
+                .collect(java.util.stream.Collectors.joining(","));
+        String sql = "SELECT " + SELECT_COLS + " FROM content_asset a WHERE a.id IN ("
+                + placeholders + ") AND a.deleted_at IS NULL AND a.status='active'"
+                + " AND (a.valid_until IS NULL OR a.valid_until > now())"
+                + " AND (a.library_type='personal' AND a.owner_account_id=:accountId"
+                + " OR a.library_type='merchant' AND a.organization_id=:organizationId"
+                + " AND EXISTS (SELECT 1 FROM content_asset_grant g WHERE g.asset_id=a.id"
+                + " AND g.grant_type='recommender_share' AND g.grantee_account_id=:accountId"
+                + " AND g.released_at IS NULL AND (g.lease_until IS NULL OR g.lease_until > now()))"
+                + " OR a.library_type='public')";
+        DatabaseClient.GenericExecuteSpec spec = db.sql(sql)
+                .bind("accountId", accountId)
+                .bind("organizationId", nullable(organizationId, String.class));
+        for (int i = 0; i < ids.size(); i++) {
+            spec = spec.bind("asset" + i, ids.get(i).toString());
+        }
+        return spec.map(ContentAssetRepository::map).all();
     }
 
     /**

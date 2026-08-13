@@ -47,11 +47,11 @@ class RouteOwnershipContractTest {
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
-        for (String name : new String[] {"legacy", "identity", "marketplace", "finance", "trust", "intelligence"}) {
+        for (String name : new String[] {"identity", "marketplace", "finance", "trust", "intelligence"}) {
             registry.add("edge.upstreams." + name,
                     () -> "http://localhost:" + upstream.port() + "/" + name);
         }
-        registry.add("edge.default-upstream", () -> "legacy");
+        registry.add("edge.default-upstream", () -> EdgeRoutingProperties.FAIL_CLOSED);
         registry.add("management.server.port", () -> "0");
         registry.add("PUBLIC_BACKEND_ORIGIN", () -> "http://localhost:" + upstream.port());
         registry.add("BILIBILI_PROXY_TOKEN_SECRET", () -> "x".repeat(32));
@@ -92,7 +92,6 @@ class RouteOwnershipContractTest {
                 Arguments.of(HttpMethod.GET, "/api/admin/reputation-config", "marketplace"),
                 Arguments.of(HttpMethod.GET, "/api/admin/trust/judges", "trust"),
                 Arguments.of(HttpMethod.GET, "/api/admin/trust/evidence-access-audits", "trust"),
-                Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "intelligence"),
-                Arguments.of(HttpMethod.GET, "/health", "legacy"));
+                Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "intelligence"));
     }
 }

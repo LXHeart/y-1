@@ -21,7 +21,8 @@ public record ReviseTaskRequest(
         Integer maxSlots,
         Long bountyCents,
         Instant applicationDeadline,
-        Integer minRecommenderLevel
+        Integer minRecommenderLevel,
+        TaskRequirements requirements
 ) {
     public ReviseTaskRequest {
         if (title == null || title.isBlank()) {

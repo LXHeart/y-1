@@ -33,7 +33,7 @@ class LoginControllerIT {
         r.add("spring.r2dbc.username", postgres::getUsername);
         r.add("spring.r2dbc.password", postgres::getPassword);
         r.add("management.server.port", () -> "0");
-        r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
+        r.add("identity.session.secret", () -> "test-secret-32-chars-minimum!!!");
     }
 
     @BeforeAll

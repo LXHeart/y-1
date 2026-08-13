@@ -6,6 +6,8 @@ import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
+import com.grassland.intelligence.creationcontext.GraphicTaskCreationContext;
 import com.grassland.intelligence.imageanalysis.ImageAnalysisPrompts.ImageReviewInput;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -42,10 +45,12 @@ public class ImageAnalysisService {
     static final Set<String> ALLOWED_MIME = Set.of("image/jpeg", "image/png", "image/webp");
 
     private final AiCapabilityAdapter ai;
+    private final FrozenTextExecutionService frozenText;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ImageAnalysisService(AiCapabilityAdapter ai) {
+    public ImageAnalysisService(AiCapabilityAdapter ai, FrozenTextExecutionService frozenText) {
         this.ai = ai;
+        this.frozenText = frozenText;
     }
 
     /** 多轮生成 → 事件流（progress/result，错误以 onError 信号抛出，由 controller 转 error 帧）。 */
@@ -104,6 +109,69 @@ public class ImageAnalysisService {
         return completeText(ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, previousReview), "图片评价风格优化");
     }
 
+    public Flux<String> draftTask(List<UploadedImage> images, ImageReviewInput input,
+                                  GraphicTaskCreationContext.Binding binding, ServerWebExchange exchange) {
+        return Flux.defer(() -> {
+            List<String> dataUrls = validateAndEncode(images);
+            ImageAnalysisResult[] latest = new ImageAnalysisResult[]{null};
+            Mono<Void> call = completeFrozen(dataUrls,
+                            ImageAnalysisPrompts.buildImageReviewPrompt(input), binding, exchange)
+                    .doOnNext(result -> latest[0] = result)
+                    .then();
+            return Flux.concat(
+                    Mono.just(prepareFrame(1, images.size())),
+                    Mono.just(progressFrame("draft", 1, 1, describeStage("draft", 1, 1))),
+                    call.thenMany(Flux.empty()),
+                    Mono.fromSupplier(() -> resultFrame(latest[0], images.size())));
+        });
+    }
+
+    public Flux<String> analyzeTask(List<UploadedImage> images, ImageReviewInput input,
+                                    GraphicTaskCreationContext.Binding binding, ServerWebExchange exchange) {
+        return Flux.defer(() -> {
+            List<String> dataUrls = validateAndEncode(images);
+            boolean hasStyle = input.stylePreferences() != null && !input.stylePreferences().isBlank();
+            int totalRounds = 1 + OPTIMIZATION_ROUNDS + (hasStyle ? 1 : 0);
+            ImageAnalysisResult[] latest = new ImageAnalysisResult[]{null};
+            Flux<String> stages = Flux.range(0, totalRounds).concatMap(index -> {
+                int attempt = index + 1;
+                String stage = stageType(index, hasStyle);
+                String previous = latest[0] == null ? "" : latest[0].review();
+                Mono<Void> call = runTaskStage(
+                                stage, dataUrls, input, previous, attempt, binding, exchange)
+                        .doOnNext(result -> latest[0] = result)
+                        .then();
+                return Flux.concat(
+                        Mono.just(progressFrame(
+                                stage, attempt, totalRounds,
+                                describeStage(stage, attempt, totalRounds))),
+                        call.thenMany(Flux.empty()));
+            });
+            return Flux.concat(
+                    Mono.just(prepareFrame(totalRounds, images.size())),
+                    stages,
+                    Mono.just(progressFrame(
+                            "complete", totalRounds, totalRounds, "文案生成完成，正在返回结果")),
+                    Mono.fromSupplier(() -> resultFrame(latest[0], images.size())));
+        });
+    }
+
+    public Mono<ImageAnalysisResult> optimizeTask(String previousReview, ImageReviewInput input,
+                                                   GraphicTaskCreationContext.Binding binding,
+                                                   ServerWebExchange exchange) {
+        return completeFrozen(List.of(),
+                ImageAnalysisPrompts.buildImageReviewOptimizationPrompt(input, previousReview, 1),
+                binding, exchange);
+    }
+
+    public Mono<ImageAnalysisResult> styleRefineTask(String previousReview, ImageReviewInput input,
+                                                      GraphicTaskCreationContext.Binding binding,
+                                                      ServerWebExchange exchange) {
+        return completeFrozen(List.of(),
+                ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, previousReview),
+                binding, exchange);
+    }
+
     private Mono<ImageAnalysisResult> runStage(String stage, List<String> dataUrls, ImageReviewInput input,
                                                String prevReview, int attempt) {
         return switch (stage) {
@@ -114,6 +182,20 @@ public class ImageAnalysisService {
                     ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, prevReview), "图片评价风格优化");
             default -> Mono.error(new IllegalStateException("unknown stage: " + stage));
         };
+    }
+
+    private Mono<ImageAnalysisResult> runTaskStage(
+            String stage, List<String> dataUrls, ImageReviewInput input, String previousReview,
+            int attempt, GraphicTaskCreationContext.Binding binding, ServerWebExchange exchange) {
+        String prompt = switch (stage) {
+            case "draft" -> ImageAnalysisPrompts.buildImageReviewPrompt(input);
+            case "optimize" -> ImageAnalysisPrompts.buildImageReviewOptimizationPrompt(
+                    input, previousReview, attempt);
+            case "style-refine" -> ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(
+                    input, previousReview);
+            default -> throw new IllegalStateException("unknown stage: " + stage);
+        };
+        return completeFrozen(dataUrls, prompt, binding, exchange);
     }
 
     private static String stageType(int index, boolean hasStyle) {
@@ -141,6 +223,19 @@ public class ImageAnalysisService {
         return ai.completeText(new TextCompletionCommand(
                 List.of(ChatMessage.user(prompt)), label + "失败，请稍后重试", GENERATION_TIMEOUT))
                 .map(this::parseResult);
+    }
+
+    private Mono<ImageAnalysisResult> completeFrozen(
+            List<String> dataUrls, String prompt, GraphicTaskCreationContext.Binding binding,
+            ServerWebExchange exchange) {
+        List<ContentPart> parts = new ArrayList<>();
+        dataUrls.forEach(url -> parts.add(ContentPart.image(url)));
+        parts.add(ContentPart.text(prompt));
+        return frozenText.execute(
+                exchange, binding.snapshot().id(),
+                List.of(binding.promptContext(), ChatMessage.user(parts)),
+                2048, com.grassland.intelligence.credits.CreditFeature.IMAGE_ANALYSIS,
+                completion -> parseResult(completion.content()));
     }
 
     /** 镜像 legacy {@code normalizeImageAnalysisResult} + {@code parseJsonContent}：剥 code fence→解析→校验 review 非空。 */

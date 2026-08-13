@@ -10,6 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
@@ -21,14 +22,13 @@ import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
  * 断言自动配置（GL-P0-ASSERT-001 keyring 模式）。
  *
  * <p>消费者加 {@code implementation(project(":platform-identity-assertion"))} 并设
- * {@code identity-assertion.enabled=true} + keyring keys（或 legacy secret）即可获得
+ * {@code identity-assertion.enabled=true} + keyring keys 即可获得
  * {@link IdentityAssertionSigner} Bean，无需改主类。
  *
  * <h3>Bean 装配规则</h3>
  * <ul>
- *   <li>keyring 模式：构造 {@link PropertiesKeyring} + {@link InMemoryAssertionReplayGuard}，
+ *   <li>构造 {@link PropertiesKeyring} + {@link InMemoryAssertionReplayGuard}，
  *       装配 keyring 构造器的 {@link IdentityAssertionSigner}。</li>
- *   <li>legacy 模式：装配 legacy 构造器的 {@link IdentityAssertionSigner}（仅测试兼容）。</li>
  *   <li>未启用：不装配 signer Bean（服务正常启动）。</li>
  * </ul>
  */
@@ -38,6 +38,7 @@ import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 public class IdentityAssertionAutoConfiguration {
 
     @Bean(name = "identityAssertionReplayConnectionFactory", destroyMethod = "destroy")
+    @Primary
     @ConditionalOnExpression("${identity-assertion.replay-protection.enabled:false}"
             + " && '${identity-assertion.replay-protection.storage:redis}' == 'redis'")
     LettuceConnectionFactory identityAssertionReplayConnectionFactory(IdentityAssertionProperties props) {
@@ -72,8 +73,8 @@ public class IdentityAssertionAutoConfiguration {
     /**
      * 装配 keyring Bean。
      *
-     * <p>keyring 模式：含 signing-keys/verify-keys。legacy 模式：空 keyring（无钥，signer 走 legacy 构造器不读它）。
-     * 始终装配以保证 {@code identityAssertionSigner} 的 keyring 入参可注入（legacy 配置不设 issuer 也能启动）。
+     * <p>启用断言时 properties 已强制至少配置一把 signing/verify key；
+     * signer 仅支持 keyring 模式。
      */
     @Bean
     IdentityAssertionKeyring identityAssertionKeyring(IdentityAssertionProperties props) {
@@ -91,7 +92,7 @@ public class IdentityAssertionAutoConfiguration {
             IdentityAssertionProperties props,
             @Qualifier("identityAssertionReplayConnectionFactory")
             ObjectProvider<LettuceConnectionFactory> replayConnectionFactory) {
-        if (!props.isLegacyMode() && props.replayProtection().usesRedis()) {
+        if (props.replayProtection().usesRedis()) {
             LettuceConnectionFactory factory = replayConnectionFactory.getIfAvailable();
             if (factory == null) {
                 throw new IllegalStateException("Redis replay protection enabled without connection factory");
@@ -99,30 +100,17 @@ public class IdentityAssertionAutoConfiguration {
             return new RedisAssertionReplayGuard(
                     new ReactiveStringRedisTemplate(factory), props.replayProtection().keyPrefix());
         }
-        if (!props.isLegacyMode() && props.replayProtection().usesMemory()) {
+        if (props.replayProtection().usesMemory()) {
             return new InMemoryAssertionReplayGuard(true);
         }
         return AssertionReplayGuard.NO_OP;
     }
 
-    /**
-     * 装配 signer Bean（keyring 或 legacy 模式）。
-     *
-     * <p>keyring 模式：需 keyring Bean + issuer。
-     * <p>legacy 模式：需 secret + audience。
-     */
+    /** 装配 keyring signer Bean。 */
     @Bean
     IdentityAssertionSigner identityAssertionSigner(IdentityAssertionProperties props,
                                                      IdentityAssertionKeyring keyring,
                                                      AssertionReplayGuard replayGuard) {
-        if (props.isLegacyMode()) {
-            // legacy 模式：单 secret 构造器
-            return new IdentityAssertionSigner(
-                    props.secret().getBytes(StandardCharsets.UTF_8),
-                    props.audience(),
-                    props.leeway());
-        }
-        // keyring 模式：keyring 构造器
         return new IdentityAssertionSigner(keyring, props.issuer(), replayGuard, props.leeway());
     }
 }

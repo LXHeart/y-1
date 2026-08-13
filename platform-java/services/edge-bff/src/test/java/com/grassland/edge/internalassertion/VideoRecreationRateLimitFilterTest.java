@@ -21,7 +21,7 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
-/** 跨迁移/legacy 上游保持视频改编 router-wide 10/min 的回归测试。 */
+/** 保持视频改编 router-wide 10/min 的回归测试。 */
 @ExtendWith(MockitoExtension.class)
 class VideoRecreationRateLimitFilterTest {
     @Mock private SessionIdentityResolver identities;
@@ -37,7 +37,7 @@ class VideoRecreationRateLimitFilterTest {
     }
 
     @Test
-    void migratedImageAndLegacyAdaptContentShareOneAccountBucket() {
+    void imageAndAdaptContentRoutesShareOneAccountBucket() {
         for (int i = 0; i < 10; i++) {
             filter.filter(post("/api/video-recreation/generate-scene-image"), chain).block();
         }

@@ -1,12 +1,25 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import AiCreationCenter from '../views/ai-center/AiCreationCenter.vue'
 import CreationAssistantPanel from './CreationAssistantPanel.vue'
 import type { CreationEntry } from '../types/ai-creation'
 
 enableAutoUnmount(afterEach)
-afterEach(() => vi.unstubAllGlobals())
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const data = url === '/api/homepage/hot-items'
+      ? { provider: '60s', items: [], groups: [], fetchedAt: '2026-08-13T00:00:00Z' }
+      : []
+    return new Response(JSON.stringify({ success: true, data }), {
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }))
+})
+afterEach(async () => {
+  await flushPromises()
+  vi.unstubAllGlobals()
+})
 
 function buttons(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('button')
@@ -42,6 +55,19 @@ function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((next) => { resolve = next })
   return { promise, resolve }
+}
+
+function stubCreationContext(id = 'context-1') {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url === '/api/creation-contexts') {
+      return new Response(JSON.stringify({ success: true, data: { id } }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({ success: true, data: [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }))
 }
 
 describe('AI 内容创作中心', () => {
@@ -201,6 +227,7 @@ describe('AI 内容创作中心', () => {
   })
 
   test('工作台传入任务入口后锁定任务平台和形式并带入引用', async () => {
+    stubCreationContext('context-task-1')
     const entry: CreationEntry = {
       revision: 7,
       platformId: 'xiaohongshu',
@@ -217,12 +244,47 @@ describe('AI 内容创作中心', () => {
     expect(wrapper.get('[data-testid="selection-summary"]').text()).toContain('小红书')
 
     await button(wrapper, '开始创作').trigger('click')
+    await flushPromises()
     const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as CreationEntry
-    expect(handoff).toMatchObject({ ...entry, revision: expect.any(Number) })
+    expect(handoff).toMatchObject({ ...entry, revision: expect.any(Number), contextSnapshotId: 'context-task-1' })
     expect(handoff.revision).toBeGreaterThan(entry.revision)
   })
 
+  test('任务创作把已选素材 ID 一并冻结并保留到 handoff', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/creation-contexts') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ materialIds: ['asset-1', 'asset-2'] })
+        return new Response(JSON.stringify({ success: true, data: { id: 'context-materials' } }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ success: true, data: [] }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const entry: CreationEntry = {
+      revision: 73,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'task', taskId: 'task-73', applicationId: 'app-73', taskVersion: 5 },
+      materialIds: ['asset-1', 'asset-2'],
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已选择 2 项创作素材')
+    await button(wrapper, '开始创作').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      contextSnapshotId: 'context-materials',
+      materialIds: ['asset-1', 'asset-2'],
+    })
+  })
+
   test('展示接受时任务快照并原样传给工作流', async () => {
+    stubCreationContext('context-task-71')
     const entry: CreationEntry = {
       revision: 71,
       platformId: 'xiaohongshu',
@@ -243,6 +305,7 @@ describe('AI 内容创作中心', () => {
     expect(wrapper.text()).toContain('¥88.00')
     expect(wrapper.text()).toContain('招牌菜、门店地址')
     await button(wrapper, '开始创作').trigger('click')
+    await flushPromises()
     expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({ taskContext: entry.taskContext })
   })
 
@@ -302,6 +365,7 @@ describe('AI 内容创作中心', () => {
   })
 
   test('任务未提供内容形式时保留任务引用并要求用户显式选择', async () => {
+    stubCreationContext('context-task-2')
     const entry: CreationEntry = {
       revision: 8,
       platformId: 'xiaohongshu',
@@ -316,13 +380,90 @@ describe('AI 内容创作中心', () => {
     expect(choiceButton(wrapper, '内容形式', '视频').attributes('disabled')).toBeUndefined()
     await choiceButton(wrapper, '内容形式', '视频').trigger('click')
     await button(wrapper, '开始创作').trigger('click')
+    await flushPromises()
 
     expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
       platformId: 'xiaohongshu',
       contentFormId: 'video',
       source: { type: 'task', taskId: 'task-2', applicationId: 'app-2', taskVersion: 1 },
       targetView: 'video-production',
+      contextSnapshotId: 'context-task-2',
     })
+  })
+
+  test('视频任务可显式选择风格化喜剧脚本，并把冻结快照交给喜剧页', async () => {
+    stubCreationContext('context-comedy-task')
+    const entry: CreationEntry = {
+      revision: 81,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'task', taskId: 'task-81', applicationId: 'app-81', taskVersion: 2 },
+      prefill: { topic: '夜市摊主的一天' },
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry } })
+    await choiceButton(wrapper, '视频创作类型', '风格化喜剧脚本').trigger('click')
+    await button(wrapper, '开始创作').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      workflowId: 'comedy-script',
+      targetView: 'comedy',
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: entry.source,
+      contextSnapshotId: 'context-comedy-task',
+    })
+  })
+
+  test('视频任务可选择参考视频复刻，冻结后保留任务平台和参考来源平台', async () => {
+    stubCreationContext('context-recreation-task')
+    const entry: CreationEntry = {
+      revision: 82,
+      platformId: 'xiaohongshu',
+      contentFormId: 'video',
+      source: { type: 'task', taskId: 'task-82', applicationId: 'app-82', taskVersion: 5 },
+      prefill: { topic: '新品短视频' },
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry } })
+    await choiceButton(wrapper, '视频创作类型', '参考视频复刻').trigger('click')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
+    await choiceButton(wrapper, '参考视频来源平台', 'B 站').trigger('click')
+    await wrapper.get('textarea[name="recreation-reference-url"]')
+      .setValue('https://www.bilibili.com/video/BV1example')
+    await button(wrapper, '开始创作').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      workflowId: 'video-recreation',
+      targetView: 'video',
+      platformId: 'xiaohongshu',
+      source: entry.source,
+      contextSnapshotId: 'context-recreation-task',
+      prefill: {
+        referencePlatform: 'bilibili',
+        referenceUrl: 'https://www.bilibili.com/video/BV1example',
+      },
+    })
+  })
+
+  test('任务上下文冻结失败时不进入工作流并允许重试', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      success: false, error: '任务上下文服务不可用',
+    }), { status: 502, headers: { 'Content-Type': 'application/json' } })))
+    const entry: CreationEntry = {
+      revision: 72,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'task', taskId: 'task-72', applicationId: 'app-72', taskVersion: 2 },
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry } })
+    await button(wrapper, '开始创作').trigger('click')
+    expect(button(wrapper, '正在准备...').attributes('disabled')).toBeDefined()
+    await flushPromises()
+
+    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+    expect(wrapper.text()).toContain('任务上下文服务不可用')
+    expect(button(wrapper, '开始创作').attributes('disabled')).toBeUndefined()
   })
 
   test('热点来源在补选平台和形式后仍保留热点上下文', async () => {

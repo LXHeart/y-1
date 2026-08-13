@@ -1,6 +1,8 @@
 package com.grassland.identity.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.edgeBffSigner;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
@@ -51,18 +53,17 @@ class MeControllerIT {
         registry.add("spring.r2dbc.username", postgres::getUsername);
         registry.add("spring.r2dbc.password", postgres::getPassword);
         registry.add("management.server.port", () -> "0");
-        registry.add("identity.legacy.session.secret", () -> "test-session-secret-32-chars-min!!");
+        registry.add("identity.session.secret", () -> "test-session-secret-32-chars-min!!");
         // Slice 2K：启用断言消费，验证 /api/auth/me 经 CurrentAccountResolver 信任断言头。
         registry.add("identity-assertion.enabled", () -> "true");
-        registry.add("identity-assertion.secret", () -> "test-assertion-secret-32-chars!!");
-        registry.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(registry, "identity");
     }
 
     @BeforeAll
     static void initSchema() throws Exception {
         try (var conn = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
              Statement stmt = conn.createStatement()) {
-            try (InputStream in = MeControllerIT.class.getResourceAsStream("/legacy-schema.sql")) {
+            try (InputStream in = MeControllerIT.class.getResourceAsStream("/identity-test-schema.sql")) {
                 String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 for (String s : sql.split(";")) {
                     String trimmed = s.trim();
@@ -160,9 +161,9 @@ class MeControllerIT {
 
     private String signAssertion(String accountId) {
         Instant now = Instant.now();
-        return assertionSigner.sign(new IdentityAssertion(
+        return edgeBffSigner().sign(new IdentityAssertion(
                 accountId, null, "sid-me", null, null, "cookie-session", "level1", null, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-identity", now, now.plusSeconds(60), null, null));
     }
 
     private String seedUser(String status, String email) {

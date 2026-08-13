@@ -1,8 +1,9 @@
 import { ref } from 'vue'
 import type { VideoScene } from '../types/video-recreation'
 import type { SceneImageState } from '../types/video-recreation'
+import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
-export function useVideoRecreation() {
+export function useVideoRecreation(taskContext?: VideoTaskExecutionContext) {
   const sceneImages = ref<Map<number, SceneImageState>>(new Map())
   const allImagesLoading = ref(false)
 
@@ -20,7 +21,7 @@ export function useVideoRecreation() {
       const response = await fetch('/api/video-recreation/generate-scene-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene, overallStyle }),
+        body: JSON.stringify({ scene, overallStyle, ...(taskContext || {}) }),
       })
 
       const body = await response.json() as {
@@ -63,7 +64,7 @@ export function useVideoRecreation() {
       const response = await fetch('/api/video-recreation/generate-all-scene-images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenes, overallStyle }),
+        body: JSON.stringify({ scenes, overallStyle, ...(taskContext || {}) }),
       })
 
       const body = await response.json() as {

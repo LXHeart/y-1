@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
  * admin 列 pending、批准→tier 升级、拒绝→tier 不变、终态再审 409、非 admin 403、无 cookie 401；
  * Slice 2L：申诉（rejected→201 引用原申请 / 非 rejected→409）、额度查询、slaStatus（within/overdue/completed）、行业快照。
  */
+@SuppressWarnings("unchecked")
 class PermissionRequestControllerIT extends IdentityItSupport {
 
     @Autowired

@@ -27,6 +27,7 @@ import org.springframework.kafka.support.SendResult;
 import org.springframework.util.backoff.BackOffExecution;
 import org.springframework.util.backoff.FixedBackOff;
 
+@SuppressWarnings("unchecked")
 class KafkaConsumerReliabilityConfigTest {
 
     private final KafkaConsumerReliabilityConfig config = new KafkaConsumerReliabilityConfig();
@@ -47,6 +48,7 @@ class KafkaConsumerReliabilityConfigTest {
                 .isEqualTo(ContainerProperties.AckMode.MANUAL);
         assertThat(factory.getContainerProperties().isAsyncAcks()).isTrue();
         assertThat(factory.getContainerProperties().isDeliveryAttemptHeader()).isTrue();
+        assertThat(factory.getContainerProperties().isObservationEnabled()).isTrue();
     }
 
     @Test

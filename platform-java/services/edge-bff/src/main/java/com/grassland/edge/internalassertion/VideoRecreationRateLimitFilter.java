@@ -17,14 +17,13 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 /**
- * 保持视频改编路由族在 Strangler 切分后的原有 router-wide 限流语义（草场 Slice 9 review 修复）。
+ * 保持视频改编路由族的 router-wide 限流语义（草场 Slice 9 review 修复）。
  *
- * <p>legacy Express 原先在 {@code /api/video-recreation} router 对全部 POST（含仍在 legacy 的
- * {@code adapt-content} 与已迁 intelligence 的四个出图 leaf）共用每账号 10 次/60 秒。精确路由切分后，
- * 两端各自的内存桶无法共享，故 BFF 在分流前按 session 解析出的 accountId 维护该族唯一桶；下游的
+ * <p>{@code /api/video-recreation} 的全部 POST 共用每账号 10 次/60 秒。多个精确路由
+ * 在 BFF 分流前按 session 解析出的 accountId 维护该族唯一桶；下游的
  * intelligence filter 仍保留，以保护绕过 BFF 的内部直连及 batch 额外 2/min 规则。
  *
- * <p>仅在 BFF 已启 session 直读时装配；匿名/未解析请求不计数，仍由 legacy/下游各自的鉴权返回 401。
+ * <p>仅在 BFF 已启 session 直读时装配；匿名/未解析请求不计数，由下游鉴权返回 401。
  */
 @Component
 @ConditionalOnProperty(name = "edge.identity.from-database-url", havingValue = "true")
@@ -56,7 +55,7 @@ public class VideoRecreationRateLimitFilter implements WebFilter, Ordered {
 
     @Override
     public int getOrder() {
-        // 此 filter 在内部断言签发前计数，避免 route split 让 legacy 与 intelligence 各有一桶。
+        // 在内部断言签发前计数，确保全部精确路由共享同一桶。
         return Ordered.HIGHEST_PRECEDENCE + 99;
     }
 

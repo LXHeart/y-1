@@ -7,6 +7,13 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
+import org.springframework.http.codec.multipart.FormFieldPart;
+import org.springframework.http.codec.multipart.Part;
+import org.springframework.util.LinkedMultiValueMap;
+import reactor.core.publisher.Mono;
+
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class VideoRecreationAdaptationParserTest {
 
@@ -86,5 +93,28 @@ class VideoRecreationAdaptationParserTest {
     void rejectsInvalidPlatform() {
         assertThatThrownBy(() -> parser(null).parseJson(body("kuaishou", "/api/douyin/proxy/token-1")))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void multipartWithoutOptionalInstructionsStillProducesARequest() {
+        LinkedMultiValueMap<String, Part> parts = new LinkedMultiValueMap<>();
+        addField(parts, "platform", "douyin");
+        addField(parts, "proxyVideoUrl", "/api/douyin/proxy/token-1");
+        addField(parts, "extractedContent", "{\"videoScript\":\"脚本内容\"}");
+
+        VideoRecreationAdaptationRequest request = parser(null)
+                .parseMultipart(parts).block();
+
+        assertThat(request).isNotNull();
+        assertThat(request.userInstructions()).isEmpty();
+        assertThat(request.referenceImages()).isEmpty();
+    }
+
+    private static void addField(LinkedMultiValueMap<String, Part> parts, String name, String value) {
+        FormFieldPart field = mock(FormFieldPart.class);
+        when(field.value()).thenReturn(value);
+        when(field.name()).thenReturn(name);
+        when(field.delete()).thenReturn(Mono.empty());
+        parts.add(name, field);
     }
 }

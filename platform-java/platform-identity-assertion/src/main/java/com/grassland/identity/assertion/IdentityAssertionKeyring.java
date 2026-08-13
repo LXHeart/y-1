@@ -10,8 +10,8 @@ import java.util.Optional;
  * 按 {@code (purpose, targetAudience)} 唯一确定一把钥（生产环境应唯一，缺少时 fail-fast）。
  *
  * <h3>验签钥查询</h3>
- * 按 {@code (issuer, kid)} 精确匹配（kid 来自 payload {@code keyId} claim）。
- * kid 为 null 时返回该 issuer 的全部验签钥（用于 kid 缺失的 legacy token，单钥场景）。
+ * 按 {@code (issuer, kid)} 精确匹配（kid 来自 payload {@code keyId} claim）；
+ * issuer 或 kid 缺失时必须返回空集合。
  *
  * <h3>安全性</h3>
  * <ul>

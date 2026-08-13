@@ -2,6 +2,7 @@ import type {
   AiContentFormId,
   AiPlatformId,
   CreationSourceType,
+  VideoCreationWorkflowId,
   CreationWorkflowResolution,
 } from '../types/ai-creation'
 
@@ -139,6 +140,7 @@ export function resolveWorkflow(
   platformId: AiPlatformId,
   formId: AiContentFormId,
   source: CreationSourceType,
+  videoWorkflow: VideoCreationWorkflowId = 'video-script',
 ): CreationWorkflowResolution {
   if (!getContentForm(platformId, formId)) return UNSUPPORTED
 
@@ -148,7 +150,11 @@ export function resolveWorkflow(
       : PLANNED
   }
 
-  if (formId === 'video') return available('video-script', 'video-production')
+  if (formId === 'video') {
+    if (videoWorkflow === 'comedy-script') return available('comedy-script', 'comedy')
+    if (videoWorkflow === 'video-recreation') return available('video-recreation', 'video')
+    return available('video-script', 'video-production')
+  }
   if (formId === 'graphic' && platformId === 'dianping') return available('review-copy', 'image')
   if (formId === 'graphic' && ['xiaohongshu', 'douyin', 'wechat-official', 'zhihu'].includes(platformId)) {
     return available('longform', 'article')

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
 import ComedyWritingView from '../views/comedy/ComedyWritingView.vue'
 import { STYLE_TEMPLATES } from '../config/style-templates'
+import type { CreationHandoff } from '../types/ai-creation'
 
 /**
  * ComedyWritingView 特征测试（重构安全网）。
@@ -36,8 +37,9 @@ afterEach(() => {
 
 enableAutoUnmount(afterEach)
 
-function mountView() {
+function mountView(creationHandoff: CreationHandoff | null = null) {
   return mount(ComedyWritingView, {
+    props: { creationHandoff },
     global: {
       provide: { comedyInitialTopic: ref('') },
     },
@@ -145,6 +147,9 @@ describe('ComedyWritingView 生成交互', () => {
     expect(payload.topic).toContain('上班摸鱼')
     expect(payload.topic).toContain(STYLE_TEMPLATES[0].description)
     expect(payload.duration).toBe(60)
+    expect(payload).not.toHaveProperty('taskMode')
+    expect(payload).not.toHaveProperty('contextSnapshotId')
+    expect(payload).not.toHaveProperty('targetPlatform')
     // 失败时展示服务端错误信息，并恢复按钮
     expect(wrapper.find('.error-msg').text()).toBe('生成服务暂不可用')
     expect(wrapper.get('button.gen-btn').text()).toBe('开始创作')
@@ -194,5 +199,66 @@ describe('ComedyWritingView 生成交互', () => {
     // 原默认风格描述不再出现
     expect(payload.topic).not.toContain(STYLE_TEMPLATES[0].description)
     expect(payload.duration).toBe(60)
+  })
+
+  test('任务 handoff 预填主题，并让重复生成复用同一冻结快照', async () => {
+    stubFetch(() => ({
+      ok: false,
+      status: 502,
+      json: async () => ({ error: '测试结束' }),
+    }))
+    const snapshotId = '11111111-1111-1111-1111-111111111111'
+    const handoff: CreationHandoff = {
+      revision: 21,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'task', taskId: 'task-21', applicationId: 'app-21', taskVersion: 3 },
+      workflowId: 'comedy-script',
+      targetView: 'comedy',
+      prefill: { topic: '冻结任务主题' },
+      contextSnapshotId: snapshotId,
+    }
+    const wrapper = mountView(handoff)
+
+    expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value)
+      .toBe('冻结任务主题')
+    await wrapper.get('button.gen-btn').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.gen-btn').trigger('click')
+    await flushPromises()
+
+    const payloads = calls.map((call) => JSON.parse(String(call.init?.body)) as Record<string, unknown>)
+    expect(payloads).toHaveLength(2)
+    expect(payloads.every((payload) => payload.taskMode === true)).toBe(true)
+    expect(payloads.map((payload) => payload.contextSnapshotId)).toEqual([snapshotId, snapshotId])
+    expect(payloads.every((payload) => payload.targetPlatform === 'douyin')).toBe(true)
+  })
+
+  test('相同 revision 不覆盖编辑，新 revision 才重新绑定任务上下文', async () => {
+    const first: CreationHandoff = {
+      revision: 31,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      source: { type: 'task', taskId: 'task-31' },
+      workflowId: 'comedy-script',
+      targetView: 'comedy',
+      prefill: { topic: '初始主题' },
+      contextSnapshotId: '11111111-1111-1111-1111-111111111111',
+    }
+    const wrapper = mountView(first)
+    await wrapper.get('textarea.topic-input').setValue('用户已修改')
+    await wrapper.setProps({ creationHandoff: { ...first, prefill: { topic: '不应覆盖' } } })
+    expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('用户已修改')
+
+    await wrapper.setProps({
+      creationHandoff: {
+        ...first,
+        revision: 32,
+        platformId: 'kuaishou',
+        prefill: { topic: '新任务主题' },
+        contextSnapshotId: '22222222-2222-2222-2222-222222222222',
+      },
+    })
+    expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('新任务主题')
   })
 })

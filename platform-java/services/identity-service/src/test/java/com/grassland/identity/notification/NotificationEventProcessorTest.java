@@ -35,6 +35,7 @@ import reactor.test.StepVerifier;
  * 收件人解析失败不报错、多收件人扇出、排除操作者本人。
  */
 @ExtendWith(MockitoExtension.class)
+@SuppressWarnings("unchecked")
 class NotificationEventProcessorTest {
 
     private final ObjectMapper mapper = new ObjectMapper();

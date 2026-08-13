@@ -12,7 +12,7 @@ import reactor.core.publisher.Mono;
  *
  * <p>只读 {@code app_users}；credits 余额由 {@link FinanceCreditsAdminClient} 经 finance 批量端点取
  * （database-per-service：不跨服务 JOIN credits_account，虽然同库同 schema）。
- * {@code created_at} legacy admin 列表需要，{@link com.grassland.identity.user.LegacyUserLookup} 不取该列故独立查询。
+ * 管理列表需要 {@code created_at}，{@link com.grassland.identity.user.UserLookup} 不取该列，故独立查询。
  */
 @Component
 public class AdminUserRepository {

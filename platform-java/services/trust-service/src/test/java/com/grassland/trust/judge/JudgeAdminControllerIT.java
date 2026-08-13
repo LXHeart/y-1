@@ -2,6 +2,7 @@ package com.grassland.trust.judge;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import static org.mockito.Mockito.when;
 
 import com.grassland.identity.assertion.IdentityAssertion;
@@ -159,12 +160,14 @@ class JudgeAdminControllerIT extends TrustItSupport {
     }
 
     private String signWithRole(String accountId, String role, boolean service) {
+        if (service) {
+            return signServiceWithRole(null, "marketplace", role);
+        }
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
-                accountId, null, service ? null : "sid-" + accountId, null, null,
-                service ? "service" : "cookie-session", service ? "internal" : "level2", now, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), service ? "service" : null,
-                service ? "marketplace" : null, role));
+        return userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
+                accountId, null, "sid-" + accountId, null, null,
+                "cookie-session", "level2", now, "r", "t",
+                "grassland-trust", now, now.plusSeconds(60), null, null, role));
     }
 
     private record WebExchange(org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec response) {

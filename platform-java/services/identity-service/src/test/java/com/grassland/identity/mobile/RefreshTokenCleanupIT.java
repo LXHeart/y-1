@@ -53,8 +53,9 @@ class RefreshTokenCleanupIT extends IdentityItSupport {
                         + "VALUES (CAST(:id AS uuid), CAST(:acc AS uuid), :hash, :exp, :rev)")
                 .bind("id", id).bind("acc", accountId).bind("hash", "hash-" + id)
                 .bind("exp", expiresAt)
-                .bind("rev", revokedAt == null ? org.springframework.r2dbc.core.Parameter.empty(Instant.class)
-                        : org.springframework.r2dbc.core.Parameter.from(revokedAt))
+                .bind("rev", revokedAt == null
+                        ? io.r2dbc.spi.Parameters.in(Instant.class)
+                        : io.r2dbc.spi.Parameters.in(revokedAt))
                 .then().block();
         return id;
     }

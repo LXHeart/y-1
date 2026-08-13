@@ -16,7 +16,7 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 /**
- * identity 到 finance 的积分 admin 客户端（{@code X-Internal-Key} 共享密钥，镜像 intelligence {@code FinanceCreditsClient}）。
+ * identity 到 finance 的积分 admin 客户端。每个请求携带受众为 finance 的命名服务断言。
  *
  * <p>供 {@link AdminUserController} 读批量余额 + 写 award/refund。finance 不可用 → {@link IdentityException}(502)，
  * 调用方直接透传给 admin（不静默吞）。
@@ -28,17 +28,14 @@ public class FinanceCreditsAdminClient {
             new ParameterizedTypeReference<>() {};
 
     private final WebClient webClient;
-    private final String internalKey;
     private final Duration timeout;
     private final IdentityServiceAssertionIssuer assertionIssuer;
 
     public FinanceCreditsAdminClient(
             @Value("${identity.finance-credits.base-url:http://finance-service:8084}") String baseUrl,
-            @Value("${identity.finance-credits.internal-key:${INTERNAL_API_KEY:}}") String internalKey,
             @Value("${identity.finance-credits.timeout-ms:5000}") long timeoutMs,
             IdentityServiceAssertionIssuer assertionIssuer) {
         this.webClient = WebClient.builder().baseUrl(baseUrl).build();
-        this.internalKey = internalKey;
         this.timeout = Duration.ofMillis(Math.max(timeoutMs, 100));
         this.assertionIssuer = assertionIssuer;
     }
@@ -54,7 +51,8 @@ public class FinanceCreditsAdminClient {
         List<String> ids = List.copyOf(accountIds);
         return webClient.post()
                 .uri("/internal/credits/balances")
-                .header("X-Internal-Key", internalKey)
+                .header("X-Grassland-Identity",
+                        assertionIssuer.issueForOrganization(null, "grassland-finance"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("accountIds", ids))
                 .retrieve()
@@ -92,7 +90,6 @@ public class FinanceCreditsAdminClient {
     private Mono<Void> postVoid(String path, Map<String, ?> body) {
         return webClient.post()
                 .uri(path)
-                .header("X-Internal-Key", internalKey)
                 .header("X-Grassland-Identity",
                         assertionIssuer.issueForOrganization(null, "grassland-finance"))
                 .contentType(MediaType.APPLICATION_JSON)

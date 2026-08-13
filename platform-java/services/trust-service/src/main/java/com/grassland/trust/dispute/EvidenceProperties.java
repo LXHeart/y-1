@@ -15,7 +15,7 @@ public record EvidenceProperties(int retentionDays, String pseudonymSecret) {
             retentionDays = 365;
         }
         if (pseudonymSecret == null || pseudonymSecret.isBlank()) {
-            pseudonymSecret = "development-only-evidence-pseudonym-secret";
+            throw new IllegalStateException("trust.evidence.pseudonym-secret must be configured");
         }
     }
 }

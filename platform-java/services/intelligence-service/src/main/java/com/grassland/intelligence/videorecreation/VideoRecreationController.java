@@ -1,11 +1,17 @@
 package com.grassland.intelligence.videorecreation;
 
+import com.grassland.intelligence.articleimage.ArticleImageService;
+import com.grassland.intelligence.articleimage.GeneratedImageResponse;
+import com.grassland.intelligence.articleimage.TaskImageGenerationService;
 import com.grassland.intelligence.media.MediaOwner;
+import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
+import com.grassland.intelligence.security.IntelligenceException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.MediaType;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Flux;
 
 /**
  * 视频改编出图四端点（草场 intelligence Slice 9），镜像 legacy {@code /api/video-recreation/*} 图片端点。
@@ -33,13 +40,19 @@ public class VideoRecreationController {
     private final VideoRecreationImageService images;
     private final VideoRecreationAdaptationParser adaptationParser;
     private final VideoRecreationAdaptationService adaptation;
+    private final VideoRecreationTaskCreationContext creationContexts;
+    private final TaskImageGenerationService taskImages;
 
     public VideoRecreationController(IntelligenceCallerResolver callers, VideoRecreationImageService images,
-            VideoRecreationAdaptationParser adaptationParser, VideoRecreationAdaptationService adaptation) {
+            VideoRecreationAdaptationParser adaptationParser, VideoRecreationAdaptationService adaptation,
+            VideoRecreationTaskCreationContext creationContexts,
+            TaskImageGenerationService taskImages) {
         this.callers = callers;
         this.images = images;
         this.adaptationParser = adaptationParser;
         this.adaptation = adaptation;
+        this.creationContexts = creationContexts;
+        this.taskImages = taskImages;
     }
 
     @PostMapping(value = "/generate-asset-image", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -47,7 +60,14 @@ public class VideoRecreationController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> {
                     AssetRequest req = parseSingleAsset(body);
-                    return images.generateAsset(req.asset(), req.visualStyle(), req.size(), owner(caller));
+                    TaskBinding task = taskBinding(body);
+                    return task.taskMode()
+                            ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
+                                    .flatMap(binding -> taskImage(
+                                            VideoRecreationPrompts.buildAssetImagePrompt(
+                                                    req.asset(), req.visualStyle()),
+                                            req.size(), binding))
+                            : images.generateAsset(req.asset(), req.visualStyle(), req.size(), owner(caller));
                 })
                 .map(VideoRecreationController::success);
     }
@@ -57,7 +77,16 @@ public class VideoRecreationController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> {
                     AssetBatchRequest req = parseBatchAssets(body);
-                    return images.generateAllAssets(req.assets(), req.visualStyle(), req.size(), owner(caller));
+                    TaskBinding task = taskBinding(body);
+                    return task.taskMode()
+                            ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
+                                    .flatMap(binding -> Flux.fromIterable(req.assets())
+                                            .concatMap(asset -> taskImage(
+                                                    VideoRecreationPrompts.buildAssetImagePrompt(
+                                                            asset, req.visualStyle()),
+                                                    req.size(), binding))
+                                            .collectList())
+                            : images.generateAllAssets(req.assets(), req.visualStyle(), req.size(), owner(caller));
                 })
                 .map(list -> success(Map.of("images", list)));
     }
@@ -68,7 +97,14 @@ public class VideoRecreationController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> {
                     SceneRequest req = parseSingleScene(body);
-                    return images.generateScene(req.scene(), req.overallStyle(), req.size(), owner(caller));
+                    TaskBinding task = taskBinding(body);
+                    return task.taskMode()
+                            ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
+                                    .flatMap(binding -> taskImage(
+                                            VideoRecreationPrompts.buildSceneImagePrompt(
+                                                    req.scene(), req.overallStyle()),
+                                            req.size(), binding))
+                            : images.generateScene(req.scene(), req.overallStyle(), req.size(), owner(caller));
                 })
                 .map(VideoRecreationController::success);
     }
@@ -79,7 +115,16 @@ public class VideoRecreationController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> {
                     SceneBatchRequest req = parseBatchScenes(body);
-                    return images.generateAllScenes(req.scenes(), req.overallStyle(), req.size(), owner(caller));
+                    TaskBinding task = taskBinding(body);
+                    return task.taskMode()
+                            ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
+                                    .flatMap(binding -> Flux.fromIterable(req.scenes())
+                                            .concatMap(scene -> taskImage(
+                                                    VideoRecreationPrompts.buildSceneImagePrompt(
+                                                            scene, req.overallStyle()),
+                                                    req.size(), binding))
+                                            .collectList())
+                            : images.generateAllScenes(req.scenes(), req.overallStyle(), req.size(), owner(caller));
                 })
                 .map(list -> success(Map.of("images", list)));
     }
@@ -88,7 +133,7 @@ public class VideoRecreationController {
     public Mono<Map<String, Object>> adaptContentJson(
             @RequestBody Map<String, Object> body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> adaptation.adapt(adaptationParser.parseJson(body)))
+                .flatMap(caller -> adapt(adaptationParser.parseJson(body), caller, exchange))
                 .map(VideoRecreationController::success);
     }
 
@@ -97,8 +142,25 @@ public class VideoRecreationController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> exchange.getMultipartData()
                         .flatMap(adaptationParser::parseMultipart)
-                        .flatMap(adaptation::adapt))
+                        .flatMap(request -> adapt(request, caller, exchange)))
                 .map(VideoRecreationController::success);
+    }
+
+    private Mono<Map<String, Object>> adapt(
+            VideoRecreationAdaptationRequest request,
+            IntelligenceCallerResolver.Caller caller,
+            ServerWebExchange exchange) {
+        if (!request.taskMode()) return adaptation.adapt(request);
+        return creationContexts.bind(
+                        request.contextSnapshotId(), caller.accountId(), request.targetPlatform())
+                .flatMap(binding -> adaptation.adaptTask(request, binding, exchange));
+    }
+
+    private Mono<GeneratedImageResponse> taskImage(
+            String prompt, String size, VideoRecreationTaskCreationContext.Binding binding) {
+        return taskImages.generateForBoundContext(
+                new ArticleImageService.GenerateCommand(prompt, size, List.of()),
+                binding.snapshot(), binding.promptContext(), MediaPurpose.VIDEO_ASSET);
     }
 
     private static MediaOwner owner(IntelligenceCallerResolver.Caller caller) {
@@ -205,6 +267,44 @@ public class VideoRecreationController {
         return trimmed;
     }
 
+    private static TaskBinding taskBinding(Map<String, Object> body) {
+        boolean taskMode = booleanValue(body == null ? null : body.get("taskMode"));
+        UUID snapshotId = uuidValue(body == null ? null : body.get("contextSnapshotId"));
+        String targetPlatform = body == null ? null : optionalText(body.get("targetPlatform"));
+        if (taskMode && (snapshotId == null || targetPlatform == null)) {
+            throw new IllegalArgumentException("任务创作必须绑定目标平台和创作上下文快照");
+        }
+        if (!taskMode && snapshotId != null) {
+            throw new IllegalArgumentException("独立创作不能绑定任务上下文快照");
+        }
+        return new TaskBinding(taskMode, snapshotId, targetPlatform);
+    }
+
+    private static boolean booleanValue(Object value) {
+        if (value == null || Boolean.FALSE.equals(value) || "false".equalsIgnoreCase(String.valueOf(value))) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(value) || "true".equalsIgnoreCase(String.valueOf(value))) return true;
+        throw new IllegalArgumentException("请求参数无效");
+    }
+
+    private static String optionalText(Object value) {
+        if (value == null) return null;
+        if (!(value instanceof String text)) throw new IllegalArgumentException("请求参数无效");
+        String result = text.trim();
+        return result.isEmpty() ? null : result;
+    }
+
+    private static UUID uuidValue(Object value) {
+        String text = optionalText(value);
+        if (text == null) return null;
+        try {
+            return UUID.fromString(text);
+        } catch (IllegalArgumentException error) {
+            throw new IntelligenceException(400, "创作上下文快照标识无效");
+        }
+    }
+
     private record AssetRequest(Asset asset, String visualStyle, String size) {}
 
     private record AssetBatchRequest(List<Asset> assets, String visualStyle, String size) {}
@@ -212,4 +312,6 @@ public class VideoRecreationController {
     private record SceneRequest(VideoScene scene, String overallStyle, String size) {}
 
     private record SceneBatchRequest(List<VideoScene> scenes, String overallStyle, String size) {}
+
+    private record TaskBinding(boolean taskMode, UUID snapshotId, String targetPlatform) {}
 }

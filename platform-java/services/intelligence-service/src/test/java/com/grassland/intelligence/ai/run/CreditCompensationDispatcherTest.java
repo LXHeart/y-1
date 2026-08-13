@@ -17,6 +17,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
+@SuppressWarnings("unchecked")
 class CreditCompensationDispatcherTest {
 
     @Test

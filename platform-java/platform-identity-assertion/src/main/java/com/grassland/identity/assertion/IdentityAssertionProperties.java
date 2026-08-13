@@ -13,13 +13,9 @@ import org.springframework.boot.context.properties.bind.ConstructorBinding;
  * <h3>属性前缀</h3>
  * {@code identity-assertion}
  *
- * <h3>两种模式</h3>
- * <ul>
- *   <li><b>keyring 模式</b>（生产）：{@code signing-keys} + {@code verify-keys} 显式配置 per-pair 密钥。
- *       必须设置 {@code issuer}。</li>
- *   <li><b>legacy 模式</b>（测试兼容）：仅设置 {@code secret} + {@code audience}，不校验 issuer/kid 绑定。
- *       不与 keys 混用（混用则启动失败）。</li>
- * </ul>
+ * <h3>Keyring-only 模式</h3>
+ * <p>签名与验签均通过 {@code signing-keys} / {@code verify-keys} 的密钥环完成，
+ * 每个断言绑定 issuer、kid、purpose 与 audience。</p>
  *
  * <h3>keyring 配置示例</h3>
  * <pre>{@code
@@ -38,7 +34,7 @@ import org.springframework.boot.context.properties.bind.ConstructorBinding;
  *
  * <h3>配置校验</h3>
  * <ul>
- *   <li>enabled=true 且非 legacy 模式时，keys 不能为空。</li>
+ *   <li>enabled=true 时，keys 不能为空。</li>
  *   <li>signing-keys 条目的 kid/issuer/purpose/audience/secret 不能为空。</li>
  *   <li>signing-keys 和 verify-keys 的 kid 不能重复（含两者之间）。</li>
  * </ul>
@@ -46,8 +42,6 @@ import org.springframework.boot.context.properties.bind.ConstructorBinding;
 @ConfigurationProperties(prefix = "identity-assertion")
 public record IdentityAssertionProperties(
         boolean enabled,
-        // legacy 模式字段（仅测试兼容）
-        String secret,
         long ttlSeconds,
         String audience,
         String headerName,
@@ -81,10 +75,8 @@ public record IdentityAssertionProperties(
                         "X-Grassland-Session-Token")
                 : List.copyOf(internalHeaderDenylist);
 
-        // 过滤掉 secret 为空的条目：env 占位符 ${VAR:} 未设置时为空字符串，
-        // 视作「该钥未配置」（本地/测试未注入 env 时自动回落 legacy secret，不破坏上下文启动）。
-        // 生产环境须确保所有 key env 已注入（.env.example + compose 已列全）；缺钥会在签发时抛
-        // IdentityAssertionException（fail-closed），故此过滤只放宽「启动期强校验」，不放宽「运行期缺钥」。
+        // 过滤掉 secret 为空的条目：env 占位符 ${VAR:} 未设置时为空字符串，视作「该钥未配置」。
+        // 生产环境须确保所有 key env 已注入；缺钥时启动失败或签发 fail-closed。
         signingKeys = (signingKeys == null ? List.<KeyEntry>of() : signingKeys).stream()
                 .filter(e -> e != null && e.secret() != null && !e.secret().isBlank())
                 .toList();
@@ -93,18 +85,11 @@ public record IdentityAssertionProperties(
                 .toList();
         replayProtection = replayProtection != null ? replayProtection : new ReplayProtectionConfig(false);
 
-        // 校验模式：enabled 时必须二选一（legacy secret 或有效 keyring keys），不可同时设置
-        boolean hasLegacySecret = secret != null && !secret.isBlank();
         boolean hasKeyringKeys = !signingKeys.isEmpty() || !verifyKeys.isEmpty();
-        if (enabled && hasLegacySecret && hasKeyringKeys) {
+        if (enabled && !hasKeyringKeys) {
             throw new IllegalArgumentException(
-                    "identity-assertion: legacy secret and keyring keys cannot both be set");
-        }
-        if (enabled && !hasLegacySecret && !hasKeyringKeys) {
-            // 既无 legacy secret 也无有效 keyring keys → fail-fast（覆盖旧版「secret 必填」语义）
-            throw new IllegalArgumentException(
-                    "identity-assertion.secret (legacy) or signing-keys/verify-keys (keyring) "
-                            + "must be set when identity-assertion.enabled=true");
+                    "identity-assertion signing-keys/verify-keys must be set when "
+                            + "identity-assertion.enabled=true");
         }
         if (enabled && hasKeyringKeys && replayProtection.enabled()
                 && replayProtection.usesRedis() && replayProtection.redisUrl().isBlank()) {
@@ -164,13 +149,6 @@ public record IdentityAssertionProperties(
 
     public Duration leeway() {
         return Duration.ofSeconds(leewaySeconds);
-    }
-
-    /** 是否为 legacy 模式（单 secret）。 */
-    public boolean isLegacyMode() {
-        boolean hasLegacySecret = secret != null && !secret.isBlank();
-        boolean hasKeyringKeys = !signingKeys.isEmpty() || !verifyKeys.isEmpty();
-        return hasLegacySecret && !hasKeyringKeys;
     }
 
     /**

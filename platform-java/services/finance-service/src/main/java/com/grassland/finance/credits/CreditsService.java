@@ -152,6 +152,10 @@ public class CreditsService {
         return repo.history(accountId, Math.max(1, limit));
     }
 
+    public Flux<ConsumeOperation> consumeOperations(java.util.Collection<String> operationIds) {
+        return repo.findConsumeOperations(operationIds);
+    }
+
     // ---------- 内部 ----------
 
     private Mono<MutationResult> fencedConsume(

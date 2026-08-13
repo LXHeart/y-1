@@ -17,10 +17,12 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.credits.CreditsStubs;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
+import com.grassland.storage.ObjectStorageAdapter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.net.URI;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,10 +41,18 @@ class VideoProductionControllerIT extends IntelligenceItSupport {
     @MockitoBean
     private CreditsClient credits;
 
+    @MockitoBean
+    private ObjectStorageAdapter storage;
+
     @BeforeEach
     void setUp() {
         reset(ai, credits);
+        reset(storage);
         CreditsStubs.stubDefaults(credits);
+        when(storage.presignDownload(any(), any(Long.class)))
+                .thenReturn(URI.create("https://media.example.test/signed-video"));
+        db.sql("DELETE FROM video_generation_job").then().block();
+        db.sql("DELETE FROM media_reference WHERE purpose='video_asset'").then().block();
     }
 
     private String signed() {
@@ -132,6 +142,65 @@ class VideoProductionControllerIT extends IntelligenceItSupport {
                 .contains("2 张素材图片");
         assertThat(((ContentPart.Image) parts.get(1)).url()).isEqualTo("data:image/jpeg;base64,AAAA");
         assertThat(((ContentPart.Image) parts.get(2)).url()).isEqualTo("data:image/png;base64,BBBB");
+    }
+
+    @Test
+    @DisplayName("完成视频只返回 owner scoped 短时媒体 URL，不泄漏 provider URL")
+    void completedVideoReturnsShortLivedArchivedUrl() {
+        String account = "41414141-4141-4141-4141-414141414141";
+        UUID mediaId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        db.sql("""
+                INSERT INTO media_reference(id, owner_account_id, purpose, domain_type, domain_id,
+                    object_key, mime_type, size_bytes, checksum, source, status)
+                VALUES (CAST(:media AS uuid), :account, 'video_asset', 'video_generation_job',
+                    :job, 'media/video_asset/' || :media, 'video/mp4', 8, repeat('a', 64), 'generated', 'active')
+                """)
+                .bind("media", mediaId.toString()).bind("account", account)
+                .bind("job", jobId.toString()).then().block();
+        db.sql("""
+                INSERT INTO video_generation_job(id, account_id, idempotency_key, provider, model, status,
+                    progress, input_payload, result_url, requested_duration_seconds, aspect_ratio,
+                    pricing_version, unit_price_cents, estimated_cost_cents, platform_model_version)
+                VALUES (CAST(:job AS uuid), :account, :key, 'minimax', 'video-01', 'succeeded', 100,
+                    '{}'::jsonb, :reference, 5, '9:16', 'test-v1', 2, 10, 1)
+                """)
+                .bind("job", jobId.toString()).bind("account", account)
+                .bind("key", UUID.randomUUID().toString())
+                .bind("reference", "/api/media/" + mediaId).then().block();
+
+        client().get().uri("/api/video-production/jobs/{id}/download-url", jobId)
+                .header("X-Grassland-Identity", sign(account, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.downloadUrl").isEqualTo("https://media.example.test/signed-video")
+                .jsonPath("$.mediaId").isEqualTo(mediaId.toString())
+                .jsonPath("$.downloadUrl").value(value ->
+                        assertThat((String) value).doesNotContain("provider.example"));
+        verify(storage).presignDownload("media/video_asset/" + mediaId, 300L);
+    }
+
+    @Test
+    @DisplayName("视频下载 URL 对跨账号和未归档 provider URL fail-closed")
+    void videoDownloadUrlDoesNotCrossAccountOrFallbackToProviderUrl() {
+        String owner = "42424242-4242-4242-4242-424242424242";
+        UUID jobId = UUID.randomUUID();
+        db.sql("""
+                INSERT INTO video_generation_job(id, account_id, idempotency_key, provider, model, status,
+                    progress, input_payload, result_url, requested_duration_seconds, aspect_ratio,
+                    pricing_version, unit_price_cents, estimated_cost_cents, platform_model_version)
+                VALUES (CAST(:job AS uuid), :account, :key, 'minimax', 'video-01', 'succeeded', 100,
+                    '{}'::jsonb, 'https://provider.example/video.mp4', 5, '9:16', 'test-v1', 2, 10, 1)
+                """)
+                .bind("job", jobId.toString()).bind("account", owner)
+                .bind("key", UUID.randomUUID().toString()).then().block();
+
+        client().get().uri("/api/video-production/jobs/{id}/download-url", jobId)
+                .header("X-Grassland-Identity", sign("43434343-4343-4343-4343-434343434343", "merchant"))
+                .exchange().expectStatus().isNotFound();
+        client().get().uri("/api/video-production/jobs/{id}/download-url", jobId)
+                .header("X-Grassland-Identity", sign(owner, "merchant"))
+                .exchange().expectStatus().isNotFound();
+        verify(storage, never()).presignDownload(any(), any(Long.class));
     }
 
     private static Map<String, Object> validBody() {

@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.imageanalysis.ImageAnalysisService.ImageAnalysisResult;
 import com.grassland.intelligence.imageanalysis.ImageAnalysisService.UploadedImage;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.mock;
 
 /** 图片评价校验与结果解析的单元测试（镜像 legacy uploadedImageListSchema + normalizeImageAnalysisResult）。 */
 class ImageAnalysisServiceTest {
@@ -18,7 +20,7 @@ class ImageAnalysisServiceTest {
                 com.grassland.intelligence.ai.TextRunCommand c) { throw new UnsupportedOperationException(); }
         @Override public reactor.core.publisher.Mono<String> completeText(
                 com.grassland.intelligence.ai.TextCompletionCommand c) { throw new UnsupportedOperationException(); }
-    });
+    }, mock(FrozenTextExecutionService.class));
 
     // ---------------- validateAndEncode ----------------
 

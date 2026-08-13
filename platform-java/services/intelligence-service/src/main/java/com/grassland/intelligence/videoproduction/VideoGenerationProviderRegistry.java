@@ -25,4 +25,11 @@ public class VideoGenerationProviderRegistry {
                 .findFirst()
                 .orElseThrow(() -> new IntelligenceException(503, "视频 provider adapter 未装配"));
     }
+
+    public VideoGenerationProvider require(String providerId) {
+        return providers.stream()
+                .filter(provider -> provider.id().equalsIgnoreCase(providerId))
+                .findFirst()
+                .orElseThrow(() -> new IntelligenceException(503, "视频 provider adapter 未装配"));
+    }
 }

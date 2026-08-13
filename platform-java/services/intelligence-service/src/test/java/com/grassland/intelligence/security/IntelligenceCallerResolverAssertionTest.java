@@ -4,9 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.grassland.identity.assertion.IdentityAssertion;
+import com.grassland.identity.assertion.AssertionReplayGuard;
+import com.grassland.identity.assertion.IdentityAssertionProperties;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.assertion.PropertiesKeyring;
+import com.grassland.identity.assertion.TestAssertionHelper;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -18,13 +23,14 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
  */
 class IntelligenceCallerResolverAssertionTest {
 
-    private static final String SECRET = "test-secret-32-chars-min!!!";
-    private static final String AUDIENCE = "grassland-internal";
+    private static final String AUDIENCE = "grassland-intelligence";
     private static final String ACCOUNT = "44444444-4444-4444-4444-444444444444";
 
-    private final IdentityAssertionSigner signer =
-            new IdentityAssertionSigner(SECRET.getBytes(), AUDIENCE, Duration.ofSeconds(5));
-    private final IntelligenceCallerResolver resolver = new IntelligenceCallerResolver(signer, "X-Grassland-Identity");
+    private final IdentityAssertionSigner userAssertionSigner =
+            TestAssertionHelper.userSigner("edge-bff", AUDIENCE);
+    private final IdentityAssertionSigner resolverVerifier = verifier();
+    private final IntelligenceCallerResolver resolver =
+            new IntelligenceCallerResolver(resolverVerifier, "X-Grassland-Identity");
 
     private String sign(String activeIdentityType) {
         return signWithRole(activeIdentityType, null);
@@ -33,7 +39,7 @@ class IntelligenceCallerResolverAssertionTest {
     /** 带 role 的用户断言（GL-P3-AI-001 requireAdmin 测试用）。role 走 16 参便捷构造器。 */
     private String signWithRole(String activeIdentityType, String role) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userAssertionSigner.sign(new IdentityAssertion(
                 ACCOUNT, activeIdentityType, "sid-" + ACCOUNT, null, null,
                 "cookie-session", "level1", null, "r", "t",
                 AUDIENCE, now, now.plusSeconds(60), null, null, role));
@@ -42,7 +48,7 @@ class IntelligenceCallerResolverAssertionTest {
     /** 造一个服务断言（callerKind=service + principal），镜像 ServiceAssertionIssuer.issueForOrg 的 claims 形状。 */
     private String signService(String principal) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return TestAssertionHelper.serviceSigner(principal, AUDIENCE).sign(new IdentityAssertion(
                 "service:" + principal, null, null, null, null,
                 "service", "internal", null, "r", "t",
                 AUDIENCE, now, now.plusSeconds(30), "service", principal));
@@ -107,7 +113,7 @@ class IntelligenceCallerResolverAssertionTest {
 
         // 服务断言但 principal 不是 marketplace → 403
         assertThatThrownBy(() -> resolver
-                .requireServicePrincipal(requestWith(signService("trust")), "marketplace").block())
+                .requireServicePrincipal(requestWith(signService("identity")), "marketplace").block())
                 .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
     }
 
@@ -153,11 +159,32 @@ class IntelligenceCallerResolverAssertionTest {
                 "service:marketplace", null, null, null, null,
                 "service", "internal", null, "r", "t",
                 AUDIENCE, now, now.plusSeconds(30), "service", "marketplace", "admin");
-        IntelligenceCallerResolver.Caller c = resolver.resolve(requestWith(signer.sign(serviceWithAdminRole))).block();
+        IdentityAssertionSigner marketplaceSigner = TestAssertionHelper.serviceSigner("marketplace", AUDIENCE);
+        IntelligenceCallerResolver.Caller c = resolver.resolve(
+                requestWith(marketplaceSigner.sign(serviceWithAdminRole))).block();
         assertThat(c).isNotNull();
         assertThat(c.isService()).isTrue();
         assertThat(c.isAdmin()).isFalse();
-        assertThatThrownBy(() -> resolver.requireAdmin(requestWith(signer.sign(serviceWithAdminRole))).block())
+        assertThatThrownBy(() -> resolver.requireAdmin(
+                requestWith(marketplaceSigner.sign(serviceWithAdminRole))).block())
                 .isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(403));
+    }
+
+    private static IdentityAssertionSigner verifier() {
+        List<IdentityAssertionProperties.KeyEntry> verifyKeys = List.of(
+                verifyKey("edge-bff", "user"),
+                verifyKey("marketplace", "service"),
+                verifyKey("identity", "service"));
+        IdentityAssertionProperties properties = new IdentityAssertionProperties(
+                true, 60, AUDIENCE, null, 5, null, "intelligence",
+                List.of(), verifyKeys, new IdentityAssertionProperties.ReplayProtectionConfig(false));
+        return new IdentityAssertionSigner(
+                PropertiesKeyring.from(properties), "intelligence", AssertionReplayGuard.NO_OP, Duration.ofSeconds(5));
+    }
+
+    private static IdentityAssertionProperties.KeyEntry verifyKey(String issuer, String purpose) {
+        String kid = issuer + "-" + purpose + "-intelligence-test-v1";
+        return new IdentityAssertionProperties.KeyEntry(
+                kid, issuer, purpose, AUDIENCE, TestAssertionHelper.DEFAULT_SECRET);
     }
 }

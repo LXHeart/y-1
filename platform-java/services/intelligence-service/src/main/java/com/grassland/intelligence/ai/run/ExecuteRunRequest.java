@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.UUID;
 
 /**
  * 执行一次控制面 text run（POST /api/ai/runs）。
@@ -18,5 +19,10 @@ public record ExecuteRunRequest(
         @NotBlank(message = "prompt 必填")
         @Size(max = 50000, message = "prompt 最多 50000 字符") String prompt,
         @Positive @Max(8192) Integer maxTokens,
-        Boolean allowFallback) {
+        Boolean allowFallback,
+        UUID contextSnapshotId) {
+
+    public ExecuteRunRequest(String capability, String prompt, Integer maxTokens, Boolean allowFallback) {
+        this(capability, prompt, maxTokens, allowFallback, null);
+    }
 }

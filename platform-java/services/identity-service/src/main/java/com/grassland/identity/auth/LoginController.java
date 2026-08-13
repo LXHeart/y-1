@@ -8,8 +8,8 @@ import com.grassland.identity.security.LoginRateLimiter;
 import com.grassland.identity.security.PasswordVerifier;
 import com.grassland.identity.session.SessionWriter;
 import com.grassland.identity.user.AuthUser;
-import com.grassland.identity.user.LegacyUserLookup;
-import com.grassland.identity.user.LegacyUserRepository;
+import com.grassland.identity.user.UserLookup;
+import com.grassland.identity.user.UserRepository;
 import com.grassland.identity.user.LoginUser;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,15 +27,15 @@ import reactor.core.scheduler.Schedulers;
 public class LoginController {
     private static final String LOGIN_ERROR = "\u90ae\u7bb1\u6216\u5bc6\u7801\u9519\u8bef";
 
-    private final LegacyUserLookup userLookup;
-    private final LegacyUserRepository userRepository;
+    private final UserLookup userLookup;
+    private final UserRepository userRepository;
     private final PasswordVerifier passwordVerifier;
     private final Argon2PasswordHasher argon2Hasher;
     private final SessionWriter sessionWriter;
     private final LoginRateLimiter rateLimiter;
     private final RefreshTokenService refreshTokens;
 
-    public LoginController(LegacyUserLookup userLookup, LegacyUserRepository userRepository,
+    public LoginController(UserLookup userLookup, UserRepository userRepository,
                            PasswordVerifier passwordVerifier, Argon2PasswordHasher argon2Hasher,
                            SessionWriter sessionWriter, LoginRateLimiter rateLimiter,
                            RefreshTokenService refreshTokens) {

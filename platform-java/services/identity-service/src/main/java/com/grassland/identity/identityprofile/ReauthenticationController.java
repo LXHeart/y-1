@@ -3,7 +3,7 @@ package com.grassland.identity.identityprofile;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.security.PasswordVerifier;
-import com.grassland.identity.user.LegacyUserLookup;
+import com.grassland.identity.user.UserLookup;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
@@ -32,11 +32,11 @@ import reactor.core.publisher.Mono;
 public class ReauthenticationController {
 
     private final CurrentAccountResolver accounts;
-    private final LegacyUserLookup users;
+    private final UserLookup users;
     private final PasswordVerifier passwords;
     private final IdentitySessionRepository sessions;
 
-    public ReauthenticationController(CurrentAccountResolver accounts, LegacyUserLookup users,
+    public ReauthenticationController(CurrentAccountResolver accounts, UserLookup users,
                                       PasswordVerifier passwords, IdentitySessionRepository sessions) {
         this.accounts = accounts;
         this.users = users;

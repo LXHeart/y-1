@@ -1,6 +1,7 @@
 package com.grassland.trust.dispute;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.trust.TrustItSupport;
@@ -90,12 +91,14 @@ class DisputeAdminControllerIT extends TrustItSupport {
     }
 
     private String signRole(String accountId, String role, boolean service) {
+        if (service) {
+            return signServiceWithRole(null, "marketplace", role);
+        }
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
-                accountId, null, service ? null : "sid-" + accountId, null, null,
-                service ? "service" : "cookie-session", service ? "internal" : "level2", now, "r", "t",
-                "grassland-internal", now, now.plusSeconds(60), service ? "service" : null,
-                service ? "marketplace" : null, role));
+        return userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
+                accountId, null, "sid-" + accountId, null, null,
+                "cookie-session", "level2", now, "r", "t",
+                "grassland-trust", now, now.plusSeconds(60), null, null, role));
     }
 
     private static String itemId(List<?> items, int index) {

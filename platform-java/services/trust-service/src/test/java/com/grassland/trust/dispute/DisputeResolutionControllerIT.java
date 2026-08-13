@@ -48,7 +48,7 @@ class DisputeResolutionControllerIT extends TrustItSupport {
                 .exchange().expectStatus().isForbidden();
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
                 .header("X-Grassland-Identity", signService(org, "trust"))
-                .exchange().expectStatus().isForbidden();
+                .exchange().expectStatus().isUnauthorized();
     }
 
     @Test

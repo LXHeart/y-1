@@ -20,6 +20,6 @@ public interface VideoGenerationProvider {
     record ProviderResult(
             State state, String providerTaskId, Integer progress, String resultUrl,
             Integer durationSeconds, String errorCode, String errorMessage) {
-        public enum State { QUEUED, PROCESSING, SUCCEEDED, FAILED }
+        public enum State { QUEUED, PROCESSING, UNKNOWN, SUCCEEDED, FAILED }
     }
 }

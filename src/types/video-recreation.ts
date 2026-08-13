@@ -146,6 +146,12 @@ export interface VideoAdaptationUserInstructions {
   voiceInstruction?: string
 }
 
+export interface VideoTaskExecutionContext {
+  taskMode: true
+  contextSnapshotId: string
+  targetPlatform: string
+}
+
 export interface VideoAdaptationDisplayCard {
   key: string
   label: string

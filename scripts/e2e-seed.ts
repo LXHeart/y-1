@@ -9,10 +9,10 @@
  *   npm run e2e:seed -- --reset   # 清理脚本声誉样本和登录态，再恢复可审计的测试状态
  *
  * 全部写入幂等（ON CONFLICT），可安全重跑。
- * ⚠️ 前置：须先跑 `npm run db:migrate:local`（建 legacy 的 session/app_users 等表）。
+ * 前置：须先运行 Java `database-bootstrap`（Compose E2E 已自动执行）。
  */
 import bcrypt from 'bcryptjs'
-import { queryDb } from '../server/src/lib/db'
+import { closeDbPool, queryDb } from './lib/db'
 
 /** 统一测试口令——e2e 脚本与手工验证共用，可通过 E2E_PASSWORD 覆盖。 */
 const PASSWORD = process.env.E2E_PASSWORD || 'test-password-2026'
@@ -384,8 +384,11 @@ async function main(): Promise<void> {
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => {
+    process.exitCode = 0
+  })
   .catch((error: unknown) => {
     console.error('[e2e-seed] 失败:', error instanceof Error ? error.message : error)
-    process.exit(1)
+    process.exitCode = 1
   })
+  .finally(closeDbPool)

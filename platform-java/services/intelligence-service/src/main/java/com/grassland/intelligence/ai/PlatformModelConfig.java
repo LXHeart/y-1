@@ -2,6 +2,7 @@ package com.grassland.intelligence.ai;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
+import java.util.Locale;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +34,14 @@ public class PlatformModelConfig {
     void validate() {
         if (baseUrl.isBlank() || apiKey.isBlank()) {
             throw new IllegalStateException("intelligence-service 需要配置 ai.qwen.base-url 与 ai.qwen.api-key");
+        }
+        String normalizedKey = apiKey.trim().toLowerCase(Locale.ROOT);
+        if (normalizedKey.length() < 16
+                || normalizedKey.contains("replace-with")
+                || normalizedKey.contains("placeholder")
+                || normalizedKey.contains("changeme")
+                || normalizedKey.startsWith("your-")) {
+            throw new IllegalStateException("intelligence-service 的 ai.qwen.api-key 不能使用短值或模板占位值");
         }
         ProviderUrlGuard.validate(baseUrl);
     }

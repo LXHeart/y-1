@@ -1,6 +1,7 @@
 package com.grassland.intelligence.videoproduction;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +17,7 @@ import reactor.core.publisher.Mono;
 public class SeedanceVideoGenerationProvider implements VideoGenerationProvider {
 
     private final VideoGenerationProperties properties;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public SeedanceVideoGenerationProvider(VideoGenerationProperties properties) {
         this.properties = properties;
@@ -43,7 +45,8 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
         payload.put("duration", command.durationSeconds());
         payload.put("ratio", command.aspectRatio());
         return client().post().uri(properties.resolvedCreatePath()).bodyValue(payload)
-                .retrieve().bodyToMono(JsonNode.class).timeout(properties.getRequestTimeout())
+                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+                .map(this::readJson)
                 .map(node -> {
                     String taskId = VideoProviderJson.text(node, "/id", "/task_id", "/data/id");
                     if (taskId == null) {
@@ -58,8 +61,9 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
     @Override
     public Mono<ProviderResult> poll(String providerTaskId, int requestedDurationSeconds) {
         String path = properties.resolvedPollPath().replace("{taskId}", providerTaskId);
-        return client().get().uri(path).retrieve().bodyToMono(JsonNode.class)
+        return client().get().uri(path).retrieve().bodyToMono(String.class)
                 .timeout(properties.getRequestTimeout())
+                .map(this::readJson)
                 .map(node -> mapStatus(node, providerTaskId, requestedDurationSeconds));
     }
 
@@ -97,5 +101,13 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
         return WebClient.builder().baseUrl(properties.getBaseUrl())
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
                 .build();
+    }
+
+    private JsonNode readJson(String body) {
+        try {
+            return mapper.readTree(body);
+        } catch (Exception error) {
+            throw new IllegalStateException("Seedance 响应 JSON 无效", error);
+        }
     }
 }

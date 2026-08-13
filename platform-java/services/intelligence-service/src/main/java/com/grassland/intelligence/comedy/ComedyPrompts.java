@@ -3,15 +3,14 @@ package com.grassland.intelligence.comedy;
 import com.grassland.intelligence.ai.ChatMessage;
 
 /**
- * 脱口秀文稿 prompt（忠实移植 legacy {@code qwen-provider.ts} 的 {@code COMEDY_SCRIPT_SYSTEM_PROMPT}，
- * 仿李继刚风格）。wordCount = duration × 4.5（与 legacy 一致：每秒约 4.5 字）。
+ * 风格化喜剧文稿 prompt。wordCount = duration × 4.5（每秒约 4.5 字）。
  *
  * <p>迁入草场 intelligence 后 prompt 单一真相源在此；legacy 同名常量在该端点路由切到 intelligence 后退役。
  */
 final class ComedyPrompts {
 
     private static final String SYSTEM_TEMPLATE = """
-            ;; 作者: 仿李继刚风格
+            ;; 风格: 中文舞台喜剧
             ;; 版本: 1.0
             ;; 用途: 中文脱口秀段子生成
 

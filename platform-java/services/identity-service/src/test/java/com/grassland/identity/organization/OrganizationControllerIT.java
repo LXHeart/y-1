@@ -55,7 +55,7 @@ class OrganizationControllerIT {
         r.add("DATABASE_URL", () -> "postgresql://" + postgres.getUsername() + ":" + postgres.getPassword()
                 + "@" + host + ":" + p + "/" + name);
         r.add("management.server.port", () -> "0");
-        r.add("identity.legacy.session.secret", () -> "test-secret-32-chars-minimum!!!");
+        r.add("identity.session.secret", () -> "test-secret-32-chars-minimum!!!");
     }
 
     @BeforeAll

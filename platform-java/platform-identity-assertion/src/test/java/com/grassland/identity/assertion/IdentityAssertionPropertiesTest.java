@@ -16,14 +16,13 @@ class IdentityAssertionPropertiesTest {
 
     @Test
     void disabled_doesNotRequireSecret() {
-        var props = new IdentityAssertionProperties(false, null, 0, null, null, -1, null, null, null, null, null);
+        var props = new IdentityAssertionProperties(false, 0, null, null, -1, null, null, null, null, null);
         assertThat(props.enabled()).isFalse();
-        assertThat(props.secret()).isNull();
     }
 
     @Test
     void defaults_applied() {
-        var props = new IdentityAssertionProperties(false, null, 0, null, null, -1, null, null, null, null, null);
+        var props = new IdentityAssertionProperties(false, 0, null, null, -1, null, null, null, null, null);
         assertThat(props.ttlSeconds()).isEqualTo(60);
         assertThat(props.leewaySeconds()).isEqualTo(5);
         assertThat(props.audience()).isEqualTo("grassland-internal");
@@ -35,27 +34,22 @@ class IdentityAssertionPropertiesTest {
 
     @Test
     void durationAccessors() {
-        var props = new IdentityAssertionProperties(false, null, 120, null, null, 10, null, null, null, null, null);
+        var props = new IdentityAssertionProperties(false, 120, null, null, 10, null, null, null, null, null);
         assertThat(props.ttl()).isEqualTo(Duration.ofSeconds(120));
         assertThat(props.leeway()).isEqualTo(Duration.ofSeconds(10));
     }
 
     @Test
-    void enabled_blankSecret_throws() {
-        assertThatThrownBy(() -> new IdentityAssertionProperties(true, "  ", 60, null, null, 5, null, null, null, null, null))
+    void enabled_withoutKeys_throws() {
+        assertThatThrownBy(() -> new IdentityAssertionProperties(true, 60, null, null, 5, null, null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("identity-assertion.secret");
-    }
-
-    @Test
-    void enabled_nullSecret_throws() {
-        assertThatThrownBy(() -> new IdentityAssertionProperties(true, null, 60, null, null, 5, null, null, null, null, null))
-                .isInstanceOf(IllegalArgumentException.class);
+                .hasMessageContaining("signing-keys/verify-keys");
     }
 
     @Test
     void customDenylist_preservedAndCopied() {
-        var props = new IdentityAssertionProperties(true, "s", 60, null, null, 5, List.of("X-Custom-1", "X-Custom-2"), null, null, null, null);
+        var key = new IdentityAssertionProperties.KeyEntry("test", "test", "user", "grassland-test", "secret");
+        var props = new IdentityAssertionProperties(true, 60, null, null, 5, List.of("X-Custom-1", "X-Custom-2"), "test", List.of(key), List.of(), null);
         assertThat(props.internalHeaderDenylist()).containsExactly("X-Custom-1", "X-Custom-2");
     }
 
@@ -65,7 +59,7 @@ class IdentityAssertionPropertiesTest {
                 "edge-user-identity-v1", null, "user", "grassland-identity", "secret");
 
         assertThatThrownBy(() -> new IdentityAssertionProperties(
-                true, null, 60, null, null, 5, null, "edge-bff", List.of(key), List.of(),
+                true, 60, null, null, 5, null, "edge-bff", List.of(key), List.of(),
                 new IdentityAssertionProperties.ReplayProtectionConfig(true, "redis", "", null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("redis-url");

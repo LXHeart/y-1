@@ -17,15 +17,8 @@ import reactor.core.publisher.Mono;
  * <h3>Token 格式</h3>
  * {@code <payloadB64url>.<macB64url>}，MAC = base64url(HMAC-SHA256(secret, payloadB64url))。
  *
- * <h3>两种构造器</h3>
- * <ul>
- *   <li><b>keyring 构造器</b>（生产）：需 {@link IdentityAssertionKeyring} + {@code issuer} + {@code replayGuard}。
- *       按 {@code (purpose, targetAudience)} 选签名钥，填充 {@code issuer/keyId/jti} claims；
- *       验签时按 {@code (issuer, kid)} 选验签钥，校验 audience/purpose/principal 绑定与 replay。</li>
- *   <li><b>legacy 构造器</b>（测试兼容）：单 secret + 单 audience，不校验 issuer/kid 绑定。
- *       保留此构造器仅为纯单元测试无侵入迁移（如 {@code SmokePreflightFilterTest}）。
- *       不接受 {@code secret=null}（与 properties 强校验一致）。</li>
- </ul>
+ * <p>仅支持 keyring 构造器：按 {@code (purpose, targetAudience)} 选签名钥，
+ * 并在验签时按 {@code (issuer, kid)} 校验 audience/purpose/principal 绑定。</p>
  *
  * <h3>keyring 模式签发流程</h3>
  * <ol>
@@ -57,10 +50,6 @@ public final class IdentityAssertionSigner {
     private final AssertionReplayGuard replayGuard;
     private final Duration leeway;
 
-    /** legacy 模式：单 secret + 单 audience（仅测试用）。 */
-    private final byte[] legacySecret;
-    private final String legacyAudience;
-
     /**
      * keyring 模式构造器（生产）。
      *
@@ -81,34 +70,6 @@ public final class IdentityAssertionSigner {
         this.issuer = issuer;
         this.replayGuard = replayGuard != null ? replayGuard : AssertionReplayGuard.NO_OP;
         this.leeway = leeway != null ? leeway : Duration.ofSeconds(5);
-        this.legacySecret = null;
-        this.legacyAudience = null;
-    }
-
-    /**
-     * legacy 构造器（纯测试兼容）。
-     *
-     * <p>仅用于不涉及 issuer/kid 绑定的单元测试（如 {@code SmokePreflightFilterTest}）。
-     * 集成测试应迁移到 keyring 模式。
-     *
-     * @param secret HMAC 密钥（非空，长度≥32 字节建议）
-     * @param audience 单一受众（legacy 默认 grassland-internal）
-     * @param leeway 时钟偏差容忍
-     */
-    public IdentityAssertionSigner(byte[] secret, String audience, Duration leeway) {
-        // 允许空 secret：与旧版一致——构造不抛，sign 时才抛 IdentityAssertionException，
-        // verify 对空 secret 返回 empty（调用方据此降级）。
-        this.legacySecret = secret == null ? new byte[0] : secret.clone();
-        this.legacyAudience = audience != null ? audience : "grassland-internal";
-        this.leeway = leeway != null ? leeway : Duration.ZERO;
-        this.keyring = null;
-        this.issuer = null;
-        this.replayGuard = null;
-    }
-
-    /** 是否为 legacy 模式（单 secret）。 */
-    public boolean isLegacy() {
-        return keyring == null;
     }
 
     /**
@@ -122,11 +83,6 @@ public final class IdentityAssertionSigner {
      * @throws IdentityAssertionException 缺签名钥
      */
     public String sign(IdentityAssertion assertion, String targetAudience) {
-        if (keyring == null) {
-            // legacy 模式：单一密钥，targetAudience 无意义（只有一个受众），直接走 1 参签发。
-            // 使单元测试可用 legacy signer 驱动调用方（production 走 keyring 模式，targetAudience 才真正选钥）。
-            return sign(assertion);
-        }
         Purpose purpose = Purpose.fromAssertion(assertion.isService());
         IdentityAssertionKey key = keyring.signingKey(purpose, targetAudience)
                 .orElseThrow(() -> new IdentityAssertionException(
@@ -137,31 +93,19 @@ public final class IdentityAssertionSigner {
         return payload + "." + mac(payload, key.secret());
     }
 
-    /**
-     * legacy 模式签发 token（兼容测试）。
-     *
-     * <p>不填充 issuer/keyId/jti，不校验 purpose/audience 绑定。
-     *
-     * @param assertion 待签断言
-     * @return 已签 token
-     * @throws IdentityAssertionException secret 未配置（编程错误）
-     */
+    /** Keyring convenience for fixtures whose assertion already carries its target audience. */
     public String sign(IdentityAssertion assertion) {
-        if (keyring != null) {
-            throw new IllegalStateException("sign(assertion) without targetAudience requires legacy mode");
+        String targetAudience = assertion.audience();
+        if (targetAudience == null || targetAudience.isBlank()) {
+            throw new IdentityAssertionException("assertion audience must be set when signing without targetAudience");
         }
-        if (legacySecret.length == 0) {
-            throw new IdentityAssertionException("identity-assertion signer secret not configured");
-        }
-        String payload = IdentityAssertionCodec.encodePayload(assertion);
-        return payload + "." + mac(payload, legacySecret);
+        return sign(assertion, targetAudience);
     }
 
     /**
-     * 验签 + 校验时间窗与绑定（keyring/legacy 兼容）。
+     * 验签 + 校验时间窗与绑定。
      *
-     * <p>keyring 模式：查询验签钥 → MAC → 绑定（audience/purpose/principal） → 时间窗 → replay。
-     * <p>legacy 模式：用单一 secret 验签，只校验时间窗与 audience。
+     * <p>查询验签钥 → MAC → 绑定（audience/purpose/principal） → 时间窗 → replay。
      *
      * @param token 待验 token
      * @param now 当前时刻（null → {@link Instant#now()}）
@@ -169,7 +113,7 @@ public final class IdentityAssertionSigner {
      */
     public Optional<IdentityAssertion> verify(String token, Instant now) {
         Optional<IdentityAssertion> verified = verifyWithoutReplay(token, now);
-        if (verified.isEmpty() || keyring == null || replayGuard == null) {
+        if (verified.isEmpty() || replayGuard == null) {
             return verified;
         }
         IdentityAssertion assertion = verified.get();
@@ -191,7 +135,7 @@ public final class IdentityAssertionSigner {
             return Mono.empty();
         }
         IdentityAssertion assertion = verified.get();
-        if (keyring == null || replayGuard == null || assertion.jti() == null || assertion.jti().isBlank()) {
+        if (replayGuard == null || assertion.jti() == null || assertion.jti().isBlank()) {
             return Mono.just(assertion);
         }
         return replayGuard.consumeOnceReactive(assertion.jti(), assertion.expiresAt().plus(leeway))
@@ -220,8 +164,8 @@ public final class IdentityAssertionSigner {
 
         // 查验签钥并验 MAC
         byte[] secret;
-        if (keyring != null) {
-            // keyring 模式：按 issuer+kid 查钥
+        {
+            // 按 issuer+kid 查钥
             String issuer = assertion.issuer();
             String kid = assertion.keyId();
             if (issuer == null || issuer.isBlank() || kid == null || kid.isBlank()) {
@@ -259,30 +203,9 @@ public final class IdentityAssertionSigner {
             if (!key.matches(assertion, isService)) {
                 return Optional.empty();
             }
-        } else {
-            // legacy 模式：单 secret
-            if (legacySecret.length == 0) {
-                return Optional.empty();
-            }
-            secret = legacySecret;
-            String expectedMac;
-            try {
-                expectedMac = mac(payload, secret);
-            } catch (IdentityAssertionException ignored) {
-                return Optional.empty();
-            }
-            if (!MessageDigest.isEqual(
-                    expectedMac.getBytes(StandardCharsets.UTF_8),
-                    providedMac.getBytes(StandardCharsets.UTF_8))) {
-                return Optional.empty();
-            }
-            // legacy 模式只校验 audience（若无 audience 字段则跳过）
-            if (assertion.audience() != null && !assertion.audience().equals(legacyAudience)) {
-                return Optional.empty();
-            }
         }
 
-        // 时间窗校验（legacy 与 keyring 模式共用构造器传入的 leeway）
+        // 时间窗校验
         Instant when = now != null ? now : Instant.now();
         if (when.isBefore(assertion.issuedAt().minus(leeway))
                 || when.isAfter(assertion.expiresAt().plus(leeway))) {

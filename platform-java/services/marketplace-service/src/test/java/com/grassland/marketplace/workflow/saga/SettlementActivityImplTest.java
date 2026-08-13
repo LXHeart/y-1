@@ -32,6 +32,7 @@ import reactor.core.publisher.Mono;
  * 验证窗口到期 captureSettlement 的重验（accepted+confirmed）、争议 seam、capture 映射、幂等。
  */
 @ExtendWith(MockitoExtension.class)
+@SuppressWarnings("unchecked")
 class SettlementActivityImplTest {
 
     private static final String APP_ID = "22222222-2222-2222-2222-222222222222";

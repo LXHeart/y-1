@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.edge.proxy.UpstreamResolver;
 import com.grassland.identity.assertion.IdentityAssertionProperties;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import com.grassland.identity.assertion.TestAssertionHelper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -19,26 +20,26 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
-/** InternalAssertionFilter slice 测试：剥离伪造头、内部上游签发、legacy/匿名跳过。 */
+/** InternalAssertionFilter slice 测试：剥离伪造头、内部上游签发、fail-closed/匿名跳过。 */
 class InternalAssertionFilterTest {
 
     private static final String SECRET = "filter-test-secret-32-chars!!";
 
-    private final IdentityAssertionSigner signer =
-            new IdentityAssertionSigner(SECRET.getBytes(), "grassland-internal", Duration.ofSeconds(5));
+    private final IdentityAssertionSigner signer = TestAssertionHelper.signer(
+            "edge-bff", "user", "grassland-identity", SECRET, Duration.ofSeconds(5));
     private final IdentityAssertionProperties props =
             new IdentityAssertionProperties(
                     true, // enabled
-                    SECRET, // legacy secret
                     60, // ttlSeconds
-                    "grassland-internal", // audience
+                    "grassland-identity", // audience
                     "X-Grassland-Identity", // headerName
                     5, // leewaySeconds
                     List.of("X-Grassland-Identity", "X-Grassland-Account-Id",
                             "X-Grassland-Active-Identity", "X-Grassland-Session-Token"), // internalHeaderDenylist
-                    null, // issuer (null for legacy mode)
-                    List.of(), // signingKeys (empty for legacy mode)
-                    List.of(), // verifyKeys (empty for legacy mode)
+                    "edge-bff",
+                    List.of(new IdentityAssertionProperties.KeyEntry(
+                            "edge-user-test-v1", "edge-bff", "user", "grassland-identity", SECRET)),
+                    List.of(),
                     new IdentityAssertionProperties.ReplayProtectionConfig(false)); // replayProtection
 
     /** 回显 filter 附加后的 X-Grassland-Identity 头（无则 "none"）。 */
@@ -122,14 +123,14 @@ class InternalAssertionFilterTest {
     }
 
     @Test
-    void legacyUpstream_noAssertionAttached() {
+    void failClosedRoute_noAssertionAttached() {
         SessionIdentityResolver resolver = resolverReturning(identity());
         UpstreamResolver upstream = mock(UpstreamResolver.class);
         when(upstream.isInternalUpstream(anyString(), anyString())).thenReturn(false);
         var filter = new InternalAssertionFilter(resolver, signer, props, upstream);
 
         String token = readToken(client(filter)
-                .get().uri("/legacy/anything")
+                .get().uri("/unknown/anything")
                 .cookie("y1.sid", "anything")
                 .exchange()
                 .expectStatus().isOk()

@@ -7,9 +7,9 @@ import com.grassland.identity.assertion.IdentityAssertionSigner;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.identityprofile.IdentitySessionRepository;
 import com.grassland.identity.security.CookieSigner;
-import com.grassland.identity.session.LegacySessionBridge;
+import com.grassland.identity.session.SessionRepository;
 import com.grassland.identity.user.AuthUser;
-import com.grassland.identity.user.LegacyUserLookup;
+import com.grassland.identity.user.UserLookup;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -24,13 +24,13 @@ import reactor.core.publisher.Mono;
 /**
  * 从请求 cookie 解析当前登录 account（封装 MeController 的鉴权链路，供受保护端点复用）。
  *
- * <p>cookie → unsign → sid → {@link LegacySessionBridge#findUserId} → {@link LegacyUserLookup#findById} → {@link AuthUser}。
+ * <p>cookie → unsign → sid → {@link SessionRepository#findUserId} → {@link UserLookup#findById} → {@link AuthUser}。
  */
 @Component
 public class CurrentAccountResolver {
 
-    private final LegacySessionBridge sessionBridge;
-    private final LegacyUserLookup userLookup;
+    private final SessionRepository sessionBridge;
+    private final UserLookup userLookup;
     private final CookieSigner cookieSigner;
     private final String cookieName;
     private final ObjectProvider<IdentityAssertionSigner> signerProvider;
@@ -38,9 +38,9 @@ public class CurrentAccountResolver {
     private final BackendRoleRepository backendRoles;
     private final IdentitySessionRepository identitySessions;
 
-    public CurrentAccountResolver(LegacySessionBridge sessionBridge, LegacyUserLookup userLookup,
+    public CurrentAccountResolver(SessionRepository sessionBridge, UserLookup userLookup,
                                   CookieSigner cookieSigner,
-                                  @Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName,
+                                  @Value("${identity.session.cookie-name:y1.sid}") String cookieName,
                                   ObjectProvider<IdentityAssertionSigner> signerProvider,
                                   @Value("${identity-assertion.header-name:X-Grassland-Identity}") String assertionHeaderName,
                                   BackendRoleRepository backendRoles,
@@ -61,7 +61,7 @@ public class CurrentAccountResolver {
 
     /**
      * 解析当前会话主体（账号 + sid）。草场身份域 Slice 2I（HLD D-08 per-session：活动身份按 session 隔离，端点需 sid）。
-     * cookie → unsign → sid → {@link LegacySessionBridge#findUserId} → {@link LegacyUserLookup#findById} → {@link SessionPrincipal}。
+     * cookie → unsign → sid → {@link SessionRepository#findUserId} → {@link UserLookup#findById} → {@link SessionPrincipal}。
      */
     /**
      * 解析当前会话主体（账号 + sid）。草场身份域 Slice 2K（HLD 7.4 内部身份断言消费）：

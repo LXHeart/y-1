@@ -21,7 +21,7 @@ public class SendCodeController {
 
     public SendCodeController(SessionService sessionService, EmailVerificationService codeService,
                               SmtpMailSender mailSender,
-                              @org.springframework.beans.factory.annotation.Value("${identity.legacy.session.cookie-name:y1.sid}") String cookieName) {
+                              @org.springframework.beans.factory.annotation.Value("${identity.session.cookie-name:y1.sid}") String cookieName) {
         this.sessionService = sessionService; this.codeService = codeService;
         this.mailSender = mailSender; this.cookieName = cookieName;
     }

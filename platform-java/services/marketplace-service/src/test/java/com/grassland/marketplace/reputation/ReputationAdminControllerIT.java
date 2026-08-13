@@ -347,7 +347,7 @@ class ReputationAdminControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isForbidden();
 
         client().get().uri("/internal/marketplace/reputation/" + accountId + "/level")
-                .header("X-Grassland-Identity", signService("finance"))
+                .header("X-Grassland-Identity", signService("intelligence"))
                 .exchange().expectStatus().isForbidden();
     }
 

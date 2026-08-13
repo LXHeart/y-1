@@ -5,14 +5,14 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-final class MediaLifecycleEvents {
+public final class MediaLifecycleEvents {
     private MediaLifecycleEvents() {}
 
     static EventEnvelope reserved(MediaReference ref) {
         return event(ref, "MediaUploadReserved", 1, Map.of("status", "pending"));
     }
 
-    static EventEnvelope activated(MediaReference ref) {
+    public static EventEnvelope activated(MediaReference ref) {
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("status", "active");
         extra.put("checksum", value(ref.checksum()));
@@ -45,4 +45,3 @@ final class MediaLifecycleEvents {
         return value == null ? "" : value;
     }
 }
-

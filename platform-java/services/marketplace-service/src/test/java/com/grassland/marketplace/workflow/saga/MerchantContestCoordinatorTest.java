@@ -27,6 +27,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /** {@link MerchantContestCoordinator} durable claim 恢复、幂等本地完成与 SLA 启窗单测。 */
+@SuppressWarnings("unchecked")
 class MerchantContestCoordinatorTest {
 
     private TaskApplicationRepository apps;

@@ -19,6 +19,7 @@ public record TaskContext(
         String priceTableVersion,
         Integer platformModelVersion,
         boolean fallbackAuthorized,
+        UUID contextSnapshotId,
         Instant startedAt) {
 
     public static TaskContext from(AiRun run) {
@@ -31,6 +32,7 @@ public record TaskContext(
                 run.priceTableVersion(),
                 run.platformModelVersion(),
                 run.fallbackAuthorized(),
+                run.contextSnapshotId(),
                 run.startedAt());
     }
 }

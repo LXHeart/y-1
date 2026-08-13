@@ -180,10 +180,15 @@ class EscrowControllerIT extends FinanceItSupport {
         String org = UUID.randomUUID().toString();
         provision(merchant, org);
         credit(merchant, org, 1000);
-        // 非 marketplace 的服务 principal → 403（finance 仅信任 marketplace 编排）
+        // 未受信服务签发方在验签阶段拒绝 → 401
         client().post().uri("/api/finance/accounts/" + org + "/reservations")
                 .header("X-Grassland-Identity", signService(org, "imposter"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "eng-x", "amountCents", 100))
+                .exchange().expectStatus().isUnauthorized();
+        // 已受信但无该端点权限的 trust 服务 → 403
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", "eng-trust", "amountCents", 100))
                 .exchange().expectStatus().isForbidden();
         // org 不符的 marketplace 服务断言 → 403
         client().post().uri("/api/finance/accounts/" + org + "/reservations")

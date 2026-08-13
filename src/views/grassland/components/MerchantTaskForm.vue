@@ -14,6 +14,25 @@
     </div>
     <div class="gl-row">
       <input :value="form.description" placeholder="任务描述（可选）" @input="updateField('description', ($event.target as HTMLInputElement).value)" />
+      <textarea :value="form.productServiceInfo" aria-label="产品服务信息" placeholder="产品/服务信息" rows="3" @input="updateField('productServiceInfo', ($event.target as HTMLTextAreaElement).value)" />
+    </div>
+    <div class="gl-row task-requirement-grid">
+      <label>必须包含
+        <textarea :value="form.mustInclude" aria-label="必须包含" rows="4" @input="updateField('mustInclude', ($event.target as HTMLTextAreaElement).value)" />
+      </label>
+      <label>禁止内容
+        <textarea :value="form.forbiddenContent" aria-label="禁止内容" rows="4" @input="updateField('forbiddenContent', ($event.target as HTMLTextAreaElement).value)" />
+      </label>
+      <label>指标要求
+        <textarea :value="form.metricRequirements" aria-label="指标要求" rows="4" @input="updateField('metricRequirements', ($event.target as HTMLTextAreaElement).value)" />
+      </label>
+      <label>凭证要求
+        <textarea :value="form.evidenceRequirements" aria-label="凭证要求" rows="4" @input="updateField('evidenceRequirements', ($event.target as HTMLTextAreaElement).value)" />
+      </label>
+    </div>
+    <div class="gl-row">
+      <label>最早发布时间 <input :value="form.publishStartAt" type="datetime-local" @input="updateField('publishStartAt', ($event.target as HTMLInputElement).value)" /></label>
+      <label>最晚发布时间 <input :value="form.publishEndAt" type="datetime-local" @input="updateField('publishEndAt', ($event.target as HTMLInputElement).value)" /></label>
     </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -46,6 +65,13 @@ interface TaskFormData {
   bountyYuan: number
   applicationDeadline: string
   minRecommenderLevel: number
+  productServiceInfo: string
+  mustInclude: string
+  forbiddenContent: string
+  publishStartAt: string
+  publishEndAt: string
+  metricRequirements: string
+  evidenceRequirements: string
 }
 
 defineProps<{
@@ -72,3 +98,21 @@ function updateField(field: string, value: string | number): void {
   emit('update:field', field, value)
 }
 </script>
+
+<style scoped>
+.task-requirement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.task-requirement-grid label,
+.task-requirement-grid textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .task-requirement-grid { grid-template-columns: 1fr; }
+}
+</style>

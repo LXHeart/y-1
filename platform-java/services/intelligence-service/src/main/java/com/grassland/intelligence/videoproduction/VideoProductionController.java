@@ -4,9 +4,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.Sse;
 import com.grassland.intelligence.ai.TextRunCommand;
+import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
+import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.media.MediaPurpose;
+import com.grassland.intelligence.media.MediaReferenceRepository;
+import com.grassland.intelligence.media.MediaStatus;
+import com.grassland.storage.ObjectStorageAdapter;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +28,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -42,17 +52,32 @@ public class VideoProductionController {
     private final CreditsClient credits;
     private final VideoGenerationService video;
     private final VideoGenerationProperties videoProperties;
+    private final FrozenTextExecutionService frozenText;
+    private final VideoTaskCreationContext creationContexts;
+    private final VideoGenerationJobRepository jobs;
+    private final MediaReferenceRepository mediaRefs;
+    private final ObjectProvider<ObjectStorageAdapter> storageProvider;
+    private final long downloadUrlTtlSeconds;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public VideoProductionController(
-            IntelligenceCallerResolver callers,
-            AiCapabilityAdapter ai,
-            CreditsClient credits, VideoGenerationService video, VideoGenerationProperties videoProperties) {
+            IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits,
+            VideoGenerationService video, VideoGenerationProperties videoProperties,
+            FrozenTextExecutionService frozenText, VideoTaskCreationContext creationContexts,
+            VideoGenerationJobRepository jobs, MediaReferenceRepository mediaRefs,
+            ObjectProvider<ObjectStorageAdapter> storageProvider,
+            @Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
         this.video = video;
         this.videoProperties = videoProperties;
+        this.frozenText = frozenText;
+        this.creationContexts = creationContexts;
+        this.jobs = jobs;
+        this.mediaRefs = mediaRefs;
+        this.storageProvider = storageProvider;
+        this.downloadUrlTtlSeconds = Math.max(1L, downloadUrlTtlSeconds);
     }
 
     @PostMapping("/api/video-production/generate-video")
@@ -65,6 +90,52 @@ public class VideoProductionController {
     public Mono<ResponseEntity<Map<String,Object>>> getVideo(@PathVariable UUID id, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest()).flatMap(c -> video.get(id, c.accountId()))
                 .map(job -> ResponseEntity.ok(envelope(job))).defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Owner-scoped short-lived access to an archived video. The provider's temporary URL is
+     * deliberately not a fallback: until private archival is complete this endpoint is 404.
+     */
+    @GetMapping("/api/video-production/jobs/{id}/download-url")
+    public Mono<Map<String, Object>> downloadVideo(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> jobs.findById(id, caller.accountId()))
+                .filter(job -> "succeeded".equals(job.status()) && job.resultUrl() != null)
+                .flatMap(job -> archivedReference(job.resultUrl(), job.accountId()))
+                .map(ref -> {
+                    Instant now = Instant.now();
+                    long remaining = ref.expiresAt() == null
+                            ? downloadUrlTtlSeconds
+                            : Math.max(1L, Duration.between(now, ref.expiresAt()).toSeconds());
+                    long ttl = Math.min(downloadUrlTtlSeconds, remaining);
+                    Instant expiresAt = now.plusSeconds(ttl);
+                    ObjectStorageAdapter storage = storageProvider.getIfAvailable();
+                    if (storage == null) {
+                        throw new IntelligenceException(404, "视频结果尚未归档或不存在");
+                    }
+                    return Map.<String, Object>of(
+                            "downloadUrl", storage.presignDownload(ref.objectKey(), ttl).toString(),
+                            "expiresAt", expiresAt.toString(),
+                            "mediaId", ref.id().toString());
+                })
+                .switchIfEmpty(Mono.error(new IntelligenceException(404, "视频结果尚未归档或不存在")));
+    }
+
+    private Mono<com.grassland.intelligence.media.MediaReference> archivedReference(
+            String resultReference, String ownerAccountId) {
+        if (!resultReference.startsWith("/api/media/")) {
+            return Mono.empty();
+        }
+        try {
+            UUID mediaId = UUID.fromString(resultReference.substring("/api/media/".length()));
+            return mediaRefs.findById(mediaId)
+                    .filter(ref -> ownerAccountId.equals(ref.ownerAccountId())
+                            && MediaPurpose.VIDEO_ASSET.db().equals(ref.purpose())
+                            && ref.status() == MediaStatus.ACTIVE
+                            && (ref.expiresAt() == null || ref.expiresAt().isAfter(Instant.now())));
+        } catch (IllegalArgumentException ignored) {
+            return Mono.empty();
+        }
     }
 
     @GetMapping("/api/video-production/jobs")
@@ -83,13 +154,27 @@ public class VideoProductionController {
     }
     private static Map<String,Object> envelope(VideoGenerationJob j) { return Map.of("success", true, "data", snapshot(j)); }
     private static Map<String,Object> snapshot(VideoGenerationJob j) {
-        Map<String,Object> m = new LinkedHashMap<>(); m.put("id", j.id()); m.put("status", j.status()); m.put("progress", j.progress()); m.put("provider", j.provider()); m.put("model", j.model()); m.put("resultUrl", j.resultUrl()); m.put("actualDurationSeconds", j.actualDurationSeconds()); m.put("actualCostCents", j.actualCostCents()); m.put("errorMessage", j.errorMessage()); return m;
+        Map<String,Object> m = new LinkedHashMap<>(); m.put("id", j.id()); m.put("status", j.status()); m.put("progress", j.progress()); m.put("provider", j.provider()); m.put("model", j.model()); m.put("contextSnapshotId", j.contextSnapshotId()); m.put("resultUrl", j.resultUrl()); m.put("actualDurationSeconds", j.actualDurationSeconds()); m.put("actualCostCents", j.actualCostCents()); m.put("errorMessage", j.errorMessage()); return m;
     }
 
     @PostMapping("/api/video-production/generate-script")
     public Mono<ResponseEntity<Flux<DataBuffer>>> generateScript(
             @RequestBody ScriptRequest body,
             ServerWebExchange exchange) {
+        if (body.isTaskMode()) {
+            return callers.requireUser(exchange.getRequest())
+                    .flatMap(caller -> creationContexts.bind(
+                            body.contextSnapshotId(), caller.accountId(), body.targetPlatform()))
+                    .flatMap(binding -> frozenText.execute(
+                            exchange, body.contextSnapshotId(), List.of(
+                                    VideoScriptPrompts.system(body.videoStyle(), body.industryType()),
+                                    binding.promptContext(), VideoScriptPrompts.user(body)),
+                            2048, CreditFeature.VIDEO_PRODUCTION_SCRIPT,
+                            completion -> completion.content()))
+                    .map(content -> sseEntity(Flux.just(frame(Map.of("content", content))), exchange))
+                    .onErrorMap(error -> error instanceof com.grassland.intelligence.security.IntelligenceException
+                            ? error : new com.grassland.intelligence.security.IntelligenceException(502, ERROR_MESSAGE));
+        }
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.VIDEO_PRODUCTION_SCRIPT))
                 .map(charge -> {
@@ -109,6 +194,16 @@ public class VideoProductionController {
                 });
     }
 
+    private ResponseEntity<Flux<DataBuffer>> sseEntity(
+            Flux<String> payloads, ServerWebExchange exchange) {
+        Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.TEXT_EVENT_STREAM);
+        headers.set("X-Accel-Buffering", "no");
+        headers.setCacheControl("no-cache");
+        return new ResponseEntity<>(sseBody, headers, HttpStatus.OK);
+    }
+
     private String frame(Map<String, String> fields) {
         try {
             return mapper.writeValueAsString(fields);
@@ -125,7 +220,10 @@ public class VideoProductionController {
             String shopAddress,
             String shopDescription,
             String videoStyle,
-            String customPrompt) {
+            String customPrompt,
+            String targetPlatform,
+            Boolean taskMode,
+            UUID contextSnapshotId) {
 
         public ScriptRequest {
             images = images == null ? List.of() : List.copyOf(images);
@@ -135,6 +233,7 @@ public class VideoProductionController {
             shopDescription = optionalTrimmed(shopDescription);
             videoStyle = trimmed(videoStyle);
             customPrompt = optionalTrimmed(customPrompt);
+            targetPlatform = optionalTrimmed(targetPlatform);
 
             if (images.isEmpty() || images.size() > 9 || images.stream().anyMatch(String::isBlank)) {
                 throw new IllegalArgumentException("请上传 1-9 张有效图片");
@@ -158,6 +257,8 @@ public class VideoProductionController {
                 throw new IllegalArgumentException("用户要求最多 500 字");
             }
         }
+
+        boolean isTaskMode() { return Boolean.TRUE.equals(taskMode); }
 
         private static String trimmed(String value) {
             return value == null ? "" : value.trim();

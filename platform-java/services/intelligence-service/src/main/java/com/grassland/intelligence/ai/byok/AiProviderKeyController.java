@@ -119,7 +119,7 @@ public class AiProviderKeyController {
      */
     @GetMapping
     public Flux<AiProviderKeyResponse> list(ServerWebExchange exchange) {
-        // WebFlux 将 Flux 汇聚为 JSON 数组（与 legacy {success,data:[...]} 的信封差异由路由开关默认 false 兜底）
+        // WebFlux 将 Flux 汇聚为 JSON 数组；该形状是当前公开契约。
         return callers.resolve(exchange.getRequest())
                 .flatMapMany(caller -> repository.findPersonalByOwner(caller.accountId())
                         .map(AiProviderKey::toResponse));

@@ -1,0 +1,9 @@
+# Migrations known to be applied in a released or retained environment. Once listed, files are immutable.
+# Schema and comment changes require a new migration version or ordinary documentation update.
+6b1aa86df4d22f03fb21fc161ec5c9dd77297404909296197df718db1a79f379  platform-java/services/finance-service/src/main/resources/db/migration/V1__init_account.sql
+42697020d83ad28232ff32f018ab34f2ef150f2a1cf75b7481df94584e98903d  platform-java/services/finance-service/src/main/resources/db/migration/V2__add_reservation.sql
+b51bc0f3421943756c7ed7be60640946e27245b8345452f84fd89f35aa5821d9  platform-java/services/finance-service/src/main/resources/db/migration/V3__recommender_wallet.sql
+7431e5ba85402f968ec860d02851d7f31d2f28238755468ec5d14d750fe3efca  platform-java/services/finance-service/src/main/resources/db/migration/V4__outbox_reliability.sql
+69106e1b2731161fb7b6e28d2779d8c442582f3cebcd21dc911120e08cded7e2  platform-java/services/finance-service/src/main/resources/db/migration/V5__ledger.sql
+a5ac284f4fce7b56fbe5aab1baa9d4455bfa342f9b0b1ebc2d4a9459d8e7087b  platform-java/services/finance-service/src/main/resources/db/migration/V6__credits_account.sql
+3eedb1a55eaf1b88d1d260269360fd486e32e57fd8f86039f4db148c352eb600  platform-java/services/marketplace-service/src/main/resources/db/migration/V15__merchant_confirm_window.sql

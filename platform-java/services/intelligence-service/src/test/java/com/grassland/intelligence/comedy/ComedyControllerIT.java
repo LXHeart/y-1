@@ -29,7 +29,7 @@ import reactor.core.publisher.Mono;
 
 /**
  * 脱口秀端到端（草场 intelligence Slice 2）：401 无断言、400 参数非法、402 积分不足（不流式）、
- * 200 流式（扣积分 + 李继刚 prompt + SSE 字节契约）。Ai 能力与积分用 {@link MockitoBean} 隔离，
+ * 200 流式（扣积分 + 抽象喜剧 prompt + SSE 字节契约）。Ai 能力与积分用 {@link MockitoBean} 隔离，
  * 断言真实 controller 编排（断言→扣费→prompt 组装→SSE 帧）。
  */
 class ComedyControllerIT extends IntelligenceItSupport {
@@ -90,7 +90,7 @@ class ComedyControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("成功 → 200 流式 SSE：扣 comedy_generation + 李继刚 prompt(duration/wordCount/主题) + 逐块 + [DONE]")
+    @DisplayName("成功 → 200 流式 SSE：扣 comedy_generation + 喜剧 prompt(duration/wordCount/主题) + 逐块 + [DONE]")
     void streamsComedyScript() {
         ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
         when(credits.consume(any(), featureCaptor.capture())).thenAnswer(inv ->
@@ -122,6 +122,7 @@ class ComedyControllerIT extends IntelligenceItSupport {
         assertThat(cmd.messages()).hasSize(2);
         assertThat(cmd.messages().get(0).role()).isEqualTo("system");
         assertThat(cmd.messages().get(0).content()).contains("总时长约 60 秒（约 270 字）");
+        assertThat(cmd.messages().get(0).content()).doesNotContain("李继刚");
         assertThat(cmd.messages().get(1).role()).isEqualTo("user");
         assertThat(cmd.messages().get(1).content()).contains("职场加班");
     }

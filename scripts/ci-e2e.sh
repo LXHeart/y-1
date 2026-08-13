@@ -10,7 +10,6 @@ MINIO_PROXY_PORT="${MINIO_PROXY_PORT:-19002}"
 LOCAL_DB_PORT="${LOCAL_DB_PORT:-15432}"
 export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
 export FRONTEND_PORT MINIO_PROXY_PORT LOCAL_DB_PORT
-export BACKEND_PORT="${BACKEND_PORT:-13000}"
 export EDGE_BFF_PORT="${EDGE_BFF_PORT:-18081}"
 export KAFKA_PORT="${KAFKA_PORT:-19092}"
 export REDIS_PORT="${REDIS_PORT:-16379}"
@@ -38,18 +37,29 @@ export LOCAL_DB_USER=grassland LOCAL_DB_PASSWORD=grassland LOCAL_DB_NAME=grassla
 export NODE_ENV=production
 export DOUYIN_USER_AGENT='CI E2E'
 export BILIBILI_USER_AGENT='CI E2E'
-export INTERNAL_API_KEY="$(openssl rand -hex 32)"
 export DOUYIN_PROXY_TOKEN_SECRET="$(openssl rand -hex 32)"
 export BILIBILI_PROXY_TOKEN_SECRET="$(openssl rand -hex 32)"
 export MINIO_ROOT_USER=ci-minio
 export MINIO_ROOT_PASSWORD="$(openssl rand -hex 32)"
 export MINIO_ACCESS_KEY=ci-media-runtime
-export MINIO_SECRET_KEY="$(openssl rand -hex 32)"
+# MinIO service-account secrets must be 8-40 characters (root password has no
+# this limit); keep the isolated E2E credential within that provider boundary.
+export MINIO_SECRET_KEY="$(openssl rand -hex 20)"
 export QWEN_BASE_URL='https://qwen-e2e.invalid/v1'
 export QWEN_API_KEY="$(openssl rand -hex 32)"
+# The isolated stack uses Temporal's plaintext development server. Explicitly
+# clear production mTLS paths so the SDK does not interpret a host directory
+# or inherited environment value as a certificate file.
+export TEMPORAL_ENABLE_HTTPS=false
+export TEMPORAL_MTLS_CERT_CHAIN_FILE=
+export TEMPORAL_MTLS_KEY_FILE=
+export TEMPORAL_MTLS_SERVER_NAME=
+export TEMPORAL_NAMESPACE=default
 export IDENTITY_ACCESS_TOKEN_SECRET="$(openssl rand -hex 32)"
+export IDENTITY_KYB_MEDIA_VALIDATION_TIMEOUT_MS=10000
 export CRYPTO_KEK_BASE64="$(openssl rand -base64 32 | tr -d '\n')"
 export SESSION_SECRET="$(openssl rand -hex 32)"
+export TRUST_EVIDENCE_PSEUDONYM_SECRET="$(openssl rand -hex 32)"
 
 for key in \
   IDENTITY_ASSERTION_KEY_EDGE_USER_IDENTITY \
@@ -115,7 +125,6 @@ dc up -d postgres-local
 wait_for_postgres 60
 
 HOST_DATABASE_URL="postgresql://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@127.0.0.1:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}"
-DATABASE_URL="$HOST_DATABASE_URL" npm run db:migrate
 
 if [[ "${SKIP_JAVA_BUILD:-0}" != "1" ]]; then
   (
@@ -124,6 +133,7 @@ if [[ "${SKIP_JAVA_BUILD:-0}" != "1" ]]; then
     source "$ROOT_DIR/scripts/lib/java-runtime.sh"
     ensure_java_runtime 25
     ./gradlew \
+      :services:database-bootstrap:bootJar \
       :services:edge-bff:bootJar \
       :services:identity-service:bootJar \
       :services:marketplace-service:bootJar \
@@ -133,6 +143,8 @@ if [[ "${SKIP_JAVA_BUILD:-0}" != "1" ]]; then
       --no-daemon --console=plain
   )
 fi
+
+dc run --rm database-bootstrap
 
 dc up -d --build
 
@@ -156,6 +168,27 @@ wait_for_public_endpoint() {
 
 wait_for_public_endpoint /health 200
 wait_for_public_endpoint /api/auth/captcha 200
+
+wait_for_java_schema() {
+  local max_attempts="${1:-120}"
+  local attempts=0
+  while (( attempts < max_attempts )); do
+    if dc exec -T postgres-local psql \
+      -U "$LOCAL_DB_USER" -d "$LOCAL_DB_NAME" -v ON_ERROR_STOP=1 -Atqc \
+      "SELECT CASE WHEN to_regclass('public.task_application') IS NOT NULL
+                    AND to_regclass('public.reputation_level_rule') IS NOT NULL
+                    AND to_regclass('public.refresh_token') IS NOT NULL
+                  THEN 'ready' ELSE 'waiting' END" 2>/dev/null | grep -qx ready; then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 2
+  done
+  echo "Timed out waiting for Java service schemas" >&2
+  return 1
+}
+
+wait_for_java_schema 120
 DATABASE_URL="$HOST_DATABASE_URL" npm run e2e:seed:auth
 DATABASE_URL="$HOST_DATABASE_URL" npx tsx scripts/e2e-seed.ts
 

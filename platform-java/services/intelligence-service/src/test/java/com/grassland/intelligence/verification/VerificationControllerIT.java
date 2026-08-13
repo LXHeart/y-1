@@ -1,6 +1,9 @@
 package com.grassland.intelligence.verification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
+import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
+import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -76,11 +79,10 @@ class VerificationControllerIT {
         r.add("DATABASE_URL", () -> dbUrl);
         r.add("management.server.port", () -> "0");
         r.add("identity-assertion.enabled", () -> "true");
-        r.add("identity-assertion.secret", () -> "test-secret-32-chars-min!!!");
-        r.add("identity-assertion.audience", () -> "grassland-internal");
+        registerServiceKeyring(r, "intelligence");
         r.add("intelligence.outbox.enabled", () -> "false");
         r.add("ai.qwen.base-url", () -> "https://example.com");
-        r.add("ai.qwen.api-key", () -> "sk-test");
+        r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
         r.add("ai.qwen.model", () -> "qwen-plus");
         r.add("object-storage.enabled", () -> "true");
         r.add("object-storage.endpoint", () -> minioUrl);
@@ -116,7 +118,7 @@ class VerificationControllerIT {
     }
 
     @Test
-    @DisplayName("analyze 拒终端用户与非 marketplace 服务断言 → 403")
+    @DisplayName("analyze 拒终端用户与已受信的非 marketplace 服务断言 → 403")
     void analyzeRejectsUserAndNonMarketplacePrincipal() {
         String org = "org-" + UUID.randomUUID();
         UUID mediaId = createActiveAttachment("acct-" + UUID.randomUUID(), org);
@@ -128,7 +130,7 @@ class VerificationControllerIT {
                 .exchange().expectStatus().isEqualTo(403);
 
         client().post().uri("/api/verification/analyze")
-                .header("X-Grassland-Identity", signService(org, "trust"))
+                .header("X-Grassland-Identity", signService(org, "identity"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(analyzeBody(List.of(mediaId.toString())))
                 .exchange().expectStatus().isEqualTo(403);
@@ -306,19 +308,19 @@ class VerificationControllerIT {
 
     private String sign(String accountId, String organizationId, String activeIdentityType) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(
                 accountId, activeIdentityType, "sid-" + accountId, organizationId, null,
                 "cookie-session", "level1", null, "request", "trace",
-                "grassland-internal", now, now.plusSeconds(60), null, null));
+                "grassland-intelligence", now, now.plusSeconds(60), null, null));
     }
 
     /** marketplace 服务断言（callerKind=service + principal=marketplace），镜像 ServiceAssertionIssuer.issueForOrg。 */
     private String signService(String organizationId, String principal) {
         Instant now = Instant.now();
-        return signer.sign(new IdentityAssertion(
+        return serviceSigner(principal, "grassland-intelligence").sign(new IdentityAssertion(
                 "service:" + principal, null, null, organizationId, null,
                 "service", "internal", null, "request", "trace",
-                "grassland-internal", now, now.plusSeconds(30),
+                "grassland-intelligence", now, now.plusSeconds(30),
                 "service", principal));
     }
 

@@ -26,6 +26,16 @@ function stubFetch(impl: (call: FetchCall) => Partial<Response>) {
   }))
 }
 
+function sseResponse(content: string): Response {
+  const payload = `data: ${JSON.stringify({ content })}\n\ndata: [DONE]\n\n`
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(payload))
+      controller.close()
+    },
+  }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+}
+
 beforeEach(() => {
   calls.length = 0
 })
@@ -282,14 +292,17 @@ describe('ArticleCreationView 平台规范提示条', () => {
 })
 
 describe('ArticleCreationView creationHandoff 预填', () => {
-  function buildHandoff(platformId: CreationHandoff['platformId']): CreationHandoff {
+  function buildHandoff(platformId: CreationHandoff['platformId'], taskMode = false): CreationHandoff {
     return {
       revision: 1,
       platformId,
       contentFormId: 'graphic',
       workflowId: 'longform',
       targetView: 'article',
-      source: { type: 'independent' },
+      source: taskMode
+        ? { type: 'task', taskId: 'task-1', applicationId: 'application-1', taskVersion: 3 }
+        : { type: 'independent' },
+      contextSnapshotId: taskMode ? '11111111-1111-1111-1111-111111111111' : undefined,
       prefill: { topic: '餐饮创业复盘' },
     }
   }
@@ -311,5 +324,134 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     const buttons = wrapper.get('[aria-label="文章平台"]').findAll('button')
     expect(buttons[3].classes()).toContain('platform-btn-active')
     expect(wrapper.find('.platform-mode-hint').exists()).toBe(true)
+  })
+
+  test('任务 handoff 的标题请求强制携带 taskMode 与冻结快照 ID', async () => {
+    stubFetch(() => ({
+      ok: true,
+      json: async () => ({ success: true, data: { titles: [{ title: '任务标题', hook: '' }] } }),
+    }))
+    const wrapper = mountView(buildHandoff('xiaohongshu', true))
+    await flushPromises()
+
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      topic: '餐饮创业复盘',
+      platform: 'xiaohongshu',
+      taskMode: true,
+      contextSnapshotId: '11111111-1111-1111-1111-111111111111',
+    })
+  })
+
+  test('独立创作请求不伪装成任务模式', async () => {
+    stubFetch(() => ({
+      ok: true,
+      json: async () => ({ success: true, data: { titles: [{ title: '独立标题', hook: '' }] } }),
+    }))
+    const wrapper = mountView(buildHandoff('zhihu'))
+    await flushPromises()
+
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      topic: '餐饮创业复盘', platform: 'zhihu',
+    })
+  })
+
+  test('任务模式三阶段始终复用同一个冻结快照 ID', async () => {
+    stubFetch((call) => {
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({
+          success: true, data: { titles: [{ title: '任务标题', hook: '' }] },
+        }) }
+      }
+      return { ok: true, body: sseResponse('任务生成内容').body }
+    })
+    const wrapper = mountView(buildHandoff('wechat-official', true))
+    await flushPromises()
+
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    await wrapper.find('.title-item').trigger('click')
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+
+    const bodies = calls.map((call) => JSON.parse(String(call.init?.body)))
+    expect(bodies).toHaveLength(3)
+    expect(bodies.map((body) => body.contextSnapshotId)).toEqual([
+      '11111111-1111-1111-1111-111111111111',
+      '11111111-1111-1111-1111-111111111111',
+      '11111111-1111-1111-1111-111111111111',
+    ])
+    expect(bodies.every((body) => body.taskMode === true)).toBe(true)
+  })
+
+  test('任务文章配图复用冻结快照和 handoff 原始平台', async () => {
+    stubFetch(() => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { imageUrl: '/api/article-generation/generated-images/task-image' },
+      }),
+    }))
+    const wrapper = mountView(buildHandoff('douyin', true))
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      imageSlots: Array<Record<string, unknown>>
+      generateImageForSlot: (index: number) => Promise<void>
+    }
+    vm.imageSlots = [{
+      placement: {
+        position: '封面', description: '门店封面', searchKeywords: '门店',
+        prompt: '生成门店竖版封面',
+      },
+      mode: 'none', searchResults: [], selectedImage: null,
+      generating: false, searching: false, skipped: false,
+    }]
+
+    await vm.generateImageForSlot(0)
+
+    expect(calls[0].url).toBe('/api/article-generation/generate-image')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      prompt: '生成门店竖版封面',
+      size: '1024x1024',
+      taskMode: true,
+      contextSnapshotId: '11111111-1111-1111-1111-111111111111',
+      targetPlatform: 'douyin',
+    })
+  })
+
+  test('独立文章配图不携带任务字段', async () => {
+    stubFetch(() => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { imageUrl: '/api/article-generation/generated-images/independent' },
+      }),
+    }))
+    const wrapper = mountView(buildHandoff('zhihu'))
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      imageSlots: Array<Record<string, unknown>>
+      generateImageForSlot: (index: number) => Promise<void>
+    }
+    vm.imageSlots = [{
+      placement: {
+        position: '正文', description: '插图', searchKeywords: '插图', prompt: '生成正文插图',
+      },
+      mode: 'none', searchResults: [], selectedImage: null,
+      generating: false, searching: false, skipped: false,
+    }]
+
+    await vm.generateImageForSlot(0)
+
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      prompt: '生成正文插图', size: '1024x1024',
+    })
   })
 })

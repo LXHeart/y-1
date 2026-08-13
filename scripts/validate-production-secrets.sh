@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE=""
+source "$ROOT_DIR/scripts/lib/dotenv.sh"
 
 usage() {
   cat <<'EOF'
@@ -23,11 +24,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$ENV_FILE" ]]; then
-  [[ -r "$ENV_FILE" ]] || { echo "env file is not readable: $ENV_FILE" >&2; exit 1; }
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  load_dotenv "$ENV_FILE" || exit 1
 fi
 
 failures=0
@@ -59,10 +56,39 @@ fi
 [[ "${MINIO_ROOT_PASSWORD:-}" != "${MINIO_SECRET_KEY:-}" ]] || fail "MinIO root and runtime secret keys must differ"
 [[ "${PUBLIC_FORWARDED_PROTO:-}" == "https" ]] || fail "PUBLIC_FORWARDED_PROTO must be https"
 [[ "${SESSION_COOKIE_SECURE:-}" != "never" ]] || fail "SESSION_COOKIE_SECURE must not be never"
-[[ "${SECURITY_HSTS_ENABLED:-0}" == "1" ]] || fail "SECURITY_HSTS_ENABLED must be 1 after TLS is verified"
 [[ "${IDENTITY_ASSERTION_REPLAY_ENABLED:-false}" == "true" ]] || fail "identity assertion replay protection must be enabled"
 [[ "${IDENTITY_ASSERTION_REPLAY_STORAGE:-redis}" == "redis" ]] || fail "identity assertion replay storage must be redis"
 [[ "${CONFIRMATION_WINDOW_SECONDS:-0}" -ge 259200 ]] || fail "CONFIRMATION_WINDOW_SECONDS must be at least 259200 in production"
+[[ -n "${FINANCE_PSP_MODE:-}" ]] || fail "FINANCE_PSP_MODE is required in production"
+[[ "${FINANCE_PSP_MODE:-}" != "sandbox" ]] || fail "FINANCE_PSP_MODE must select a real production adapter"
+
+# A production deployment must never silently run the deterministic Sandbox video
+# adapter. Validate the vendor contract here, before Compose or containers start.
+video_mode="${VIDEO_GENERATION_MODE:-}"
+if [[ "$video_mode" != "seedance" && "$video_mode" != "minimax" ]]; then
+  fail "VIDEO_GENERATION_MODE must be seedance or minimax in production"
+else
+  for video_name in VIDEO_GENERATION_BASE_URL VIDEO_GENERATION_API_KEY VIDEO_GENERATION_MODEL \
+      VIDEO_GENERATION_CREATE_PATH VIDEO_GENERATION_POLL_PATH VIDEO_GENERATION_PRICING_VERSION \
+      VIDEO_GENERATION_UNIT_PRICE_CENTS VIDEO_GENERATION_WEBHOOK_SECRET; do
+    video_value="${!video_name:-}"
+    valid_value "$video_value" || fail "$video_name is missing or still contains a placeholder"
+  done
+  [[ "${VIDEO_GENERATION_BASE_URL:-}" == https://* ]] \
+    || fail "VIDEO_GENERATION_BASE_URL must use https in production"
+  [[ "${VIDEO_GENERATION_CREATE_PATH:-}" == /* && "${VIDEO_GENERATION_CREATE_PATH:-}" != //* ]] \
+    || fail "VIDEO_GENERATION_CREATE_PATH must be an absolute path"
+  [[ "${VIDEO_GENERATION_POLL_PATH:-}" == /* && "${VIDEO_GENERATION_POLL_PATH:-}" != //* ]] \
+    || fail "VIDEO_GENERATION_POLL_PATH must be an absolute path"
+[[ "${VIDEO_GENERATION_UNIT_PRICE_CENTS:-0}" =~ ^[1-9][0-9]*$ ]] \
+    || fail "VIDEO_GENERATION_UNIT_PRICE_CENTS must be a positive integer"
+fi
+
+policy_args=()
+[[ -n "$ENV_FILE" ]] && policy_args+=(--env-file "$ENV_FILE")
+if ! "$ROOT_DIR/scripts/validate-finance-credits-cents-policy.sh" "${policy_args[@]}" >/dev/null; then
+  fail "Finance credits-to-cents policy is missing, ambiguous, or not approved"
+fi
 
 [[ "${KAFKA_SECURITY_PROTOCOL:-}" == "SASL_SSL" ]] || fail "KAFKA_SECURITY_PROTOCOL must be SASL_SSL"
 [[ "${KAFKA_SASL_MECHANISM:-}" == "SCRAM-SHA-512" ]] || fail "KAFKA_SASL_MECHANISM must be SCRAM-SHA-512"

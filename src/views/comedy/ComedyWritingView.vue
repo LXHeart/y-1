@@ -83,6 +83,11 @@
 <script setup lang="ts">
 import { computed, inject, onActivated, ref, type Ref, watch } from 'vue'
 import { getStyleTemplate, STYLE_TEMPLATES, type StyleTemplateId } from '../../config/style-templates'
+import type { CreationHandoff } from '../../types/ai-creation'
+
+const props = defineProps<{
+  creationHandoff?: CreationHandoff | null
+}>()
 
 const API_BASE = ''
 
@@ -94,6 +99,10 @@ const script = ref('')
 const generating = ref(false)
 const error = ref('')
 const copied = ref(false)
+const taskMode = ref(false)
+const contextSnapshotId = ref<string | null>(null)
+const targetPlatform = ref<string | null>(null)
+const hydratedRevision = ref<number | null>(null)
 
 const durationOptions = [
   { value: 30, label: '30 秒' },
@@ -119,6 +128,18 @@ watch(comedyInitialTopic!, (val) => {
 })
 
 onActivated(consumeInitialTopic)
+
+watch(() => props.creationHandoff, (handoff) => {
+  if (!handoff || handoff.targetView !== 'comedy' || handoff.workflowId !== 'comedy-script') return
+  if (hydratedRevision.value === handoff.revision) return
+  hydratedRevision.value = handoff.revision
+  taskMode.value = handoff.source.type === 'task'
+  contextSnapshotId.value = handoff.contextSnapshotId || null
+  targetPlatform.value = handoff.platformId
+  topic.value = handoff.prefill?.topic || ''
+  script.value = ''
+  error.value = ''
+}, { immediate: true })
 
 const canGenerate = computed(() => topic.value.trim().length > 0 && !generating.value)
 
@@ -199,7 +220,15 @@ async function handleGenerate(): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ topic: buildStyledTopic(trimmed), duration: duration.value }),
+      body: JSON.stringify({
+        topic: buildStyledTopic(trimmed),
+        duration: duration.value,
+        ...(taskMode.value ? {
+          targetPlatform: targetPlatform.value,
+          taskMode: true,
+          contextSnapshotId: contextSnapshotId.value,
+        } : {}),
+      }),
     })
 
     if (!response.ok) {

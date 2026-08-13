@@ -21,7 +21,7 @@ class RequiredIdentityAssertionKeyValidatorTest {
     @Test
     void rejectsNonTrustIssuerEvenWhenTheRequiredKeyExists() {
         IdentityAssertionProperties props = new IdentityAssertionProperties(
-                true, null, 60, null, null, 5, null,
+                true, 60, null, null, 5, null,
                 "marketplace", List.of(key("identity", "grassland-identity")), List.of(), null);
 
         assertThatThrownBy(() -> new RequiredIdentityAssertionKeyValidator(props))
@@ -30,17 +30,14 @@ class RequiredIdentityAssertionKeyValidatorTest {
     }
 
     @Test
-    void acceptsTrustToIdentitySigningKeyAndLegacyTestMode() {
+    void acceptsTrustToIdentitySigningKey() {
         assertThatCode(() -> new RequiredIdentityAssertionKeyValidator(
                 properties(List.of(key("identity", "grassland-identity")))))
                 .doesNotThrowAnyException();
-        assertThatCode(() -> new RequiredIdentityAssertionKeyValidator(new IdentityAssertionProperties(
-                true, "legacy-test-secret", 60, null, null, 5, null,
-                "trust", null, null, null))).doesNotThrowAnyException();
     }
 
     private static IdentityAssertionProperties properties(List<IdentityAssertionProperties.KeyEntry> signing) {
-        return new IdentityAssertionProperties(true, null, 60, null, null, 5, null,
+        return new IdentityAssertionProperties(true, 60, null, null, 5, null,
                 "trust", signing, List.of(), null);
     }
 

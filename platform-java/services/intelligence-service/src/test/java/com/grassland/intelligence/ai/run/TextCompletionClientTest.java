@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.ai.DnsPinningResolver;
+import com.grassland.intelligence.ai.ChatMessage;
+import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
 import io.netty.util.concurrent.DefaultEventExecutor;
 import java.net.InetAddress;
@@ -55,6 +57,34 @@ class TextCompletionClientTest {
 
         assertThat(result.content()).isEqualTo("ok");
         provider.verify(1, postRequestedFor(urlEqualTo("/compatible-mode/v1/chat/completions")));
+    }
+
+    @Test
+    @DisplayName("冻结执行客户端保留多模态图片片断")
+    void serializesMultimodalParts() {
+        provider.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(okJson("""
+                        {"choices":[{"message":{"content":"ok"}}],
+                         "usage":{"prompt_tokens":3,"completion_tokens":1}}
+                        """)));
+        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
+        when(policy.validateBaseUrl(provider.baseUrl()))
+                .thenReturn(java.net.URI.create(provider.baseUrl()));
+        TextCompletionClient client = new TextCompletionClient(
+                5_000, DnsPinningResolver.create(), policy);
+
+        TextCompletionResult result = client.completeMessages(
+                provider.baseUrl(), "key", "vision-model",
+                List.of(ChatMessage.system("frozen task"), ChatMessage.user(List.of(
+                        ContentPart.image("data:image/png;base64,iVBORw0KGgo="),
+                        ContentPart.text("describe")))),
+                16, false).block();
+
+        assertThat(result.content()).isEqualTo("ok");
+        provider.verify(postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.containing("frozen task"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.containing("image_url"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.containing("data:image/png;base64")));
     }
 
     @Test

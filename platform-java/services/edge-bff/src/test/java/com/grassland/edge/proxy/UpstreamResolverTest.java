@@ -8,7 +8,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class UpstreamResolverTest {
-    private static final URI LEGACY = URI.create("http://legacy:3000");
     private static final URI IDENTITY = URI.create("http://identity:8082");
     private static final URI MARKETPLACE = URI.create("http://marketplace:8083");
     private static final URI FINANCE = URI.create("http://finance:8084");
@@ -16,7 +15,7 @@ class UpstreamResolverTest {
     private static final URI INTELLIGENCE = URI.create("http://intelligence:8086");
 
     private final EdgeRoutingProperties properties = new EdgeRoutingProperties(
-        Map.of("legacy", LEGACY, "identity", IDENTITY, "marketplace", MARKETPLACE,
+        Map.of("identity", IDENTITY, "marketplace", MARKETPLACE,
             "finance", FINANCE, "trust", TRUST, "intelligence", INTELLIGENCE),
         List.of(
             new RouteProperties("GET", "/api/auth/me", "identity", true),
@@ -35,7 +34,8 @@ class UpstreamResolverTest {
             // /api/admin/ai（模型配置 admin）精确前缀，不抢其它 /api/admin/*（同 kyb 口径）。
             new RouteProperties(null, "/api/ai", "intelligence", true),
             new RouteProperties(null, "/api/admin/ai", "intelligence", true),
-            // Legacy 迁移：admin 用户管理 + 积分调整 → identity（排在更具体的 permission/kyb/ai 之后）
+            new RouteProperties(null, "/api/creation-contexts", "intelligence", true),
+            // admin 用户管理 + 积分调整 → identity（排在更具体的 permission/kyb/ai 之后）
             new RouteProperties(null, "/api/admin/users", "identity", true),
             new RouteProperties(null, "/api/admin/adjust-credits", "identity", true),
             // GL-P2-ADMIN-006：财务对账台 → finance
@@ -58,14 +58,14 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/ops", "marketplace", true),
             // intelligence Slice 1：/api/intelligence 前缀 → intelligence（冒烟端点 + 后续业务）
             new RouteProperties(null, "/api/intelligence", "intelligence", true),
-            // Legacy 迁移：用户级分析设置 + 首页热点聚合 → intelligence
+            // 用户级分析设置 + 首页热点聚合 → intelligence
             new RouteProperties(null, "/api/settings", "intelligence", true),
             new RouteProperties(null, "/api/homepage", "intelligence", true),
             // intelligence Slice 8：media-reference 鉴权上传/签名读 → intelligence
             new RouteProperties(null, "/api/media", "intelligence", true),
-            // intelligence Slice 2：/api/comedy-generation 前缀 → intelligence（脱口秀迁入，路径沿用 legacy）
+            // intelligence Slice 2：/api/comedy-generation 前缀 → intelligence
             new RouteProperties(null, "/api/comedy-generation", "intelligence", true),
-            // intelligence Slice 3：文章生成三文本端点 method+path 精确路由（图片端点与该前缀共享，仍走 legacy）
+            // intelligence Slice 3：文章生成端点 method+path 精确路由
             new RouteProperties("POST", "/api/article-generation/titles", "intelligence", true, true),
             new RouteProperties("POST", "/api/article-generation/outline", "intelligence", true, true),
             new RouteProperties("POST", "/api/article-generation/content", "intelligence", true, true),
@@ -74,16 +74,20 @@ class UpstreamResolverTest {
             new RouteProperties("POST", "/api/article-generation/search-images", "intelligence", true, true),
             new RouteProperties("POST", "/api/article-generation/generate-image", "intelligence", true, true),
             new RouteProperties("GET", "/api/article-generation/generated-images", "intelligence", true),
-            // intelligence Slice 4：视频制作脚本精确切换；generate-video stub 仍 legacy
+            // intelligence Slice 4/GL-P3-VIDEO-001：视频制作脚本与异步生成精确切换
             new RouteProperties("POST", "/api/video-production/generate-script", "intelligence", true, true),
+            new RouteProperties("GET", "/api/video-production/capabilities", "intelligence", true, true),
+            new RouteProperties("POST", "/api/video-production/generate-video", "intelligence", true, true),
+            new RouteProperties("GET", "/api/video-production/jobs", "intelligence", true),
+            new RouteProperties("POST", "/api/video-production/jobs", "intelligence", true),
             // intelligence Slice 9：视频改编出图 4 端点精确切换
             new RouteProperties("POST", "/api/video-recreation/generate-asset-image", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-all-asset-images", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-scene-image", "intelligence", true, true),
             new RouteProperties("POST", "/api/video-recreation/generate-all-scene-images", "intelligence", true, true),
-            // intelligence Slice 10：adapt-content 默认精确切换，独立回滚开关可显式关闭。
+            // intelligence Slice 10：adapt-content 默认精确路由，独立停用开关可显式关闭。
             new RouteProperties("POST", "/api/video-recreation/adapt-content", "intelligence", true, true),
-            // intelligence Slice 6：图片评价文案 9 端点精确切换（分三域回滚开关；前缀 /api/image-analysis 未整体路由）
+            // intelligence Slice 6：图片评价文案 9 端点精确路由（分三域停用开关）
             new RouteProperties("POST", "/api/image-analysis/analyze", "intelligence", true, true),
             new RouteProperties("POST", "/api/image-analysis/step/draft", "intelligence", true, true),
             new RouteProperties("POST", "/api/image-analysis/step/optimize", "intelligence", true, true),
@@ -93,7 +97,7 @@ class UpstreamResolverTest {
             new RouteProperties("POST", "/api/image-analysis/style-preferences/optimize", "intelligence", true, true),
             new RouteProperties("POST", "/api/image-analysis/save-style-memory", "intelligence", true, true),
             new RouteProperties("POST", "/api/image-analysis/export-feishu", "intelligence", true, true)),
-        "legacy");
+        EdgeRoutingProperties.FAIL_CLOSED);
 
     private final UpstreamResolver resolver = new UpstreamResolver(properties);
 
@@ -103,29 +107,29 @@ class UpstreamResolverTest {
     }
 
     @Test
-    void routesLegacyByDefault() {
-        assertThat(resolver.resolve("POST", "/api/auth/login")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/api/douyin/proxy/token")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/health")).isEqualTo(LEGACY);
+    void unknownRoutesFailClosed() {
+        assertThat(resolver.resolve("POST", "/api/auth/unknown")).isNull();
+        assertThat(resolver.resolve("GET", "/api/douyin/proxy/token")).isNull();
+        assertThat(resolver.resolve("GET", "/health")).isNull();
     }
 
     @Test
     void methodSpecificity() {
-        // POST /api/auth/me should NOT match the GET-only route -> legacy
-        assertThat(resolver.resolve("POST", "/api/auth/me")).isEqualTo(LEGACY);
+        // POST /api/auth/me should NOT match the GET-only route -> fail-closed
+        assertThat(resolver.resolve("POST", "/api/auth/me")).isNull();
     }
 
     UpstreamResolver disabledRouteResolver() {
         EdgeRoutingProperties disabled = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "identity", IDENTITY),
+            Map.of("identity", IDENTITY),
             List.of(new RouteProperties("GET", "/api/auth/me", "identity", false)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         return new UpstreamResolver(disabled);
     }
 
     @Test
-    void disabledRouteFallsBackToLegacy() {
-        assertThat(disabledRouteResolver().resolve("GET", "/api/auth/me")).isEqualTo(LEGACY);
+    void disabledRouteFailsClosed() {
+        assertThat(disabledRouteResolver().resolve("GET", "/api/auth/me")).isNull();
     }
 
     @Test
@@ -151,7 +155,7 @@ class UpstreamResolverTest {
         // isInternalUpstream=true → InternalAssertionFilter 签发 X-Grassland-Identity（HLD 7.4 端到端打通）
         assertThat(resolver.isInternalUpstream("POST", "/api/tasks")).isTrue();
         assertThat(resolver.isInternalUpstream("GET", "/api/tasks/" + TASK_ID + "/applications")).isTrue();
-        // 非 task 路径仍是 legacy（内部判定 false → 不签断言）
+        // 未登记路径 fail closed（内部判定 false → 不签断言）
         assertThat(resolver.isInternalUpstream("GET", "/api/douyin/proxy/token")).isFalse();
     }
 
@@ -177,7 +181,7 @@ class UpstreamResolverTest {
 
     @Test
     void routesCreditsReadsToFinanceAsInternalUpstream() {
-        // GL-P3-AI-001 下属切片：积分 balance/history → finance；前缀窄，不抢 legacy /api/admin/*。
+        // GL-P3-AI-001 下属切片：积分 balance/history → finance；前缀窄，不抢 /api/admin/*。
         assertThat(resolver.resolve("GET", "/api/credits/balance")).isEqualTo(FINANCE);
         assertThat(resolver.resolve("GET", "/api/credits/history")).isEqualTo(FINANCE);
         // 内部上游 → InternalAssertionFilter 签发 grassland-finance 用户断言，finance 才能解析 accountId。
@@ -187,14 +191,13 @@ class UpstreamResolverTest {
     }
 
     @Test
-    void creditsReadsFallBackToLegacyWhenFlagDisabled() {
-        // 回滚：EDGE_ROUTE_CREDITS_FINANCE=false → /api/credits 回落 legacy default upstream。
+    void creditsReadsFailClosedWhenFlagDisabled() {
         EdgeRoutingProperties disabled = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "finance", FINANCE),
+            Map.of("finance", FINANCE),
             List.of(new RouteProperties(null, "/api/credits", "finance", false)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
-        assertThat(disabledResolver.resolve("GET", "/api/credits/balance")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("GET", "/api/credits/balance")).isNull();
     }
 
     @Test
@@ -232,9 +235,28 @@ class UpstreamResolverTest {
         // 平台模型配置 admin CRUD → intelligence
         assertThat(resolver.resolve("GET", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/admin/ai/video-reconciliation"))
+                .isEqualTo(INTELLIGENCE);
         // 内部上游 → edge 签身份断言（admin role 经断言传播，intelligence 侧 requireAdmin 才能放行）
         assertThat(resolver.isInternalUpstream("POST", "/api/ai/runs")).isTrue();
         assertThat(resolver.isInternalUpstream("POST", "/api/admin/ai/models")).isTrue();
+        assertThat(resolver.isInternalUpstream("GET", "/api/admin/ai/video-reconciliation"))
+                .isTrue();
+    }
+
+    @Test
+    void creationContextsGoToIntelligenceAndCanRollBack() {
+        assertThat(resolver.resolve("POST", "/api/creation-contexts")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/creation-contexts/" + java.util.UUID.randomUUID()))
+                .isEqualTo(INTELLIGENCE);
+        assertThat(resolver.isInternalUpstream("POST", "/api/creation-contexts")).isTrue();
+
+        EdgeRoutingProperties disabled = new EdgeRoutingProperties(
+                Map.of("intelligence", INTELLIGENCE),
+                List.of(new RouteProperties(null, "/api/creation-contexts", "intelligence", false)),
+                EdgeRoutingProperties.FAIL_CLOSED);
+        UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
+        assertThat(disabledResolver.resolve("POST", "/api/creation-contexts")).isNull();
     }
 
     @Test
@@ -283,20 +305,20 @@ class UpstreamResolverTest {
     }
 
     @Test
-    void reputationAndTrustAdminRoutesFallBackIndependentlyWhenFlagsAreDisabled() {
+    void reputationAndTrustAdminRoutesFailClosedIndependentlyWhenFlagsAreDisabled() {
         EdgeRoutingProperties disabled = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "marketplace", MARKETPLACE, "trust", TRUST),
+            Map.of("marketplace", MARKETPLACE, "trust", TRUST),
             List.of(
                 new RouteProperties(null, "/api/admin/reputation-config", "marketplace", false),
                 new RouteProperties(null, "/api/admin/reputation", "marketplace", false),
                 new RouteProperties(null, "/api/admin/trust", "trust", false)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
 
-        assertThat(disabledResolver.resolve("GET", "/api/admin/reputation-config")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("GET", "/api/admin/reputation-config")).isNull();
         assertThat(disabledResolver.resolve("PUT", "/api/admin/reputation/" + ACCOUNT_ID + "/lv5-admission"))
-                .isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("GET", "/api/admin/trust/judges")).isEqualTo(LEGACY);
+                .isNull();
+        assertThat(disabledResolver.resolve("GET", "/api/admin/trust/judges")).isNull();
     }
 
     // ---------- 推荐官画像 + 声誉（PRD 五/六）：两条前缀分别落到不同上游 ----------
@@ -331,15 +353,15 @@ class UpstreamResolverTest {
     // ---------- intelligence Slice 1：/api/intelligence → intelligence（内部上游）----------
 
     @Test
-    void routesIntelligenceSmokeToIntelligenceAndKeepsLegacyAiOnLegacy() {
+    void routesIntelligenceSmokeAndRejectsUnknownAiPaths() {
         assertThat(resolver.resolve("POST", "/api/intelligence/smoke/chat")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/intelligence/smoke/chat")).isTrue();
-        // 回归防护：脱口秀/文章/图片评价/视频脚本已迁入 intelligence；抖音等 legacy AI 工具仍走 legacy default upstream。
-        assertThat(resolver.resolve("POST", "/api/douyin/extract")).isEqualTo(LEGACY);
-        // 图片评价未整体路由：精确 leaf 之外的子路径仍走 legacy。
-        assertThat(resolver.resolve("POST", "/api/image-analysis/unknown-leaf")).isEqualTo(LEGACY);
-        // legacy 内部扣费端点（草场 intelligence → legacy credits，不经 BFF）即便经 BFF 也应落 legacy。
-        assertThat(resolver.resolve("POST", "/api/internal/credits/consume")).isEqualTo(LEGACY);
+        // 未登记的旧拼写和未知 leaf 必须 fail closed。
+        assertThat(resolver.resolve("POST", "/api/douyin/extract")).isNull();
+        // 图片评价使用精确 leaf，未知子路径不匹配。
+        assertThat(resolver.resolve("POST", "/api/image-analysis/unknown-leaf")).isNull();
+        // 内部路径不得出现在公共 RouteManifest。
+        assertThat(resolver.resolve("POST", "/api/internal/credits/consume")).isNull();
     }
 
     @Test
@@ -349,12 +371,12 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("GET", "/api/media/" + APP_ID)).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("DELETE", "/api/media/" + APP_ID)).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("GET", "/api/media/" + APP_ID)).isTrue();
-        assertThat(resolver.resolve("GET", "/api/medialibrary")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/medialibrary")).isNull();
     }
 
     @Test
     void routesSettingsAndHomepageToIntelligence() {
-        // Legacy 迁移：用户级分析设置 + 首页热点。路径沿用 legacy → 前端零改动。
+        // 用户级分析设置 + 首页热点沿用公开路径，前端零改动。
         assertThat(resolver.resolve("GET", "/api/settings/analysis")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("PUT", "/api/settings/analysis")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/settings/analysis/models")).isEqualTo(INTELLIGENCE);
@@ -364,14 +386,14 @@ class UpstreamResolverTest {
         // 内部上游：BFF 须签发身份断言（settings 读写用户密钥，homepage 读用户 provider 偏好）。
         assertThat(resolver.isInternalUpstream("GET", "/api/settings/analysis")).isTrue();
         assertThat(resolver.isInternalUpstream("GET", "/api/homepage/hot-items")).isTrue();
-        // 前缀不误吞：/api/settingsx、/api/homepages 仍走 legacy。
-        assertThat(resolver.resolve("GET", "/api/settingsx")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/api/homepages")).isEqualTo(LEGACY);
+        // 前缀不误吞：/api/settingsx、/api/homepages fail closed。
+        assertThat(resolver.resolve("GET", "/api/settingsx")).isNull();
+        assertThat(resolver.resolve("GET", "/api/homepages")).isNull();
     }
 
     @Test
     void routesComedyGenerationToIntelligence() {
-        // Slice 2：脱口秀迁入 intelligence，路径沿用 legacy → 前端零改动。
+        // Slice 2：脱口秀沿用公开路径，前端零改动。
         assertThat(resolver.resolve("POST", "/api/comedy-generation/generate-script")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/comedy-generation/generate-script")).isTrue();
     }
@@ -391,23 +413,26 @@ class UpstreamResolverTest {
                 .isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/article-generation/generate-image")).isTrue();
 
-        // method 与相近 sibling 必须回 legacy；精确叶子不能捕获子路径。
-        assertThat(resolver.resolve("GET", "/api/article-generation/generate-image")).isEqualTo(LEGACY);
+        // method 与相近 sibling 必须 fail closed；精确叶子不能捕获子路径。
+        assertThat(resolver.resolve("GET", "/api/article-generation/generate-image")).isNull();
         assertThat(resolver.resolve("POST", "/api/article-generation/generated-images/" + APP_ID))
-                .isEqualTo(LEGACY);
+                .isNull();
         assertThat(resolver.resolve("POST", "/api/article-generation/generate-image/other"))
-                .isEqualTo(LEGACY);
+                .isNull();
         assertThat(resolver.resolve("POST", "/api/article-generation/search-images-preview"))
-                .isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/api/article-generation/unknown")).isEqualTo(LEGACY);
+                .isNull();
+        assertThat(resolver.resolve("GET", "/api/article-generation/unknown")).isNull();
     }
 
     @Test
-    void routesVideoScriptToIntelligenceButVideoGenerationStaysLegacy() {
+    void routesVideoProductionToIntelligenceAndRejectsUnknownPaths() {
         assertThat(resolver.resolve("POST", "/api/video-production/generate-script")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/video-production/generate-script")).isTrue();
-        // Seedance 集成仍是 legacy stub；精确路由不能抢走它。
-        assertThat(resolver.resolve("POST", "/api/video-production/generate-video")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("GET", "/api/video-production/capabilities")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/video-production/generate-video")).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/video-production/jobs/job-1/download-url"))
+                .isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("POST", "/api/video-production/unknown")).isNull();
     }
 
     @Test
@@ -418,25 +443,24 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-scene-image")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/video-recreation/generate-all-scene-images")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/video-recreation/generate-scene-image")).isTrue();
-        // Slice 10：adapt-content 精确切到 intelligence（开启回滚开关时）。
+        // Slice 10：adapt-content 精确路由到 intelligence。
         assertThat(resolver.resolve("POST", "/api/video-recreation/adapt-content")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.isInternalUpstream("POST", "/api/video-recreation/adapt-content")).isTrue();
-        // ⚠️ 回归防护：method 与子路径不抢——GET/sibling/extra 仍回 legacy。
-        assertThat(resolver.resolve("GET", "/api/video-recreation/adapt-content")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/api/video-recreation/generate-scene-image")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-asset-image/extra")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/video-recreation/unknown")).isEqualTo(LEGACY);
+        // 回归防护：method 与子路径不抢，GET/sibling/extra 均 fail closed。
+        assertThat(resolver.resolve("GET", "/api/video-recreation/adapt-content")).isNull();
+        assertThat(resolver.resolve("GET", "/api/video-recreation/generate-scene-image")).isNull();
+        assertThat(resolver.resolve("POST", "/api/video-recreation/generate-asset-image/extra")).isNull();
+        assertThat(resolver.resolve("POST", "/api/video-recreation/unknown")).isNull();
     }
 
     @Test
-    void adaptContentFallsBackToLegacyWhenFlagDisabled() {
-        // Slice 10 回滚：EDGE_ROUTE_VIDEO_RECREATION_ADAPTATION_INTELLIGENCE=false → 仍走 legacy。
+    void adaptContentFailsClosedWhenFlagDisabled() {
         EdgeRoutingProperties disabled = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            Map.of("intelligence", INTELLIGENCE),
             List.of(new RouteProperties("POST", "/api/video-recreation/adapt-content", "intelligence", false, true)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
-        assertThat(disabledResolver.resolve("POST", "/api/video-recreation/adapt-content")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("POST", "/api/video-recreation/adapt-content")).isNull();
     }
 
     @Test
@@ -456,16 +480,16 @@ class UpstreamResolverTest {
         assertThat(resolver.isInternalUpstream("GET", "/api/image-analysis/style-preferences")).isTrue();
         // method+path 精确：兄弟/未知子路径不抢
         assertThat(resolver.resolve("GET", "/api/image-analysis/style-preferences")).isEqualTo(INTELLIGENCE);
-        assertThat(resolver.resolve("DELETE", "/api/image-analysis/style-preferences")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("POST", "/api/image-analysis/style-preferences/optimize/extra")).isEqualTo(LEGACY);
-        assertThat(resolver.resolve("GET", "/api/image-analysis/unknown")).isEqualTo(LEGACY);
+        assertThat(resolver.resolve("DELETE", "/api/image-analysis/style-preferences")).isNull();
+        assertThat(resolver.resolve("POST", "/api/image-analysis/style-preferences/optimize/extra")).isNull();
+        assertThat(resolver.resolve("GET", "/api/image-analysis/unknown")).isNull();
     }
 
     // ---------- GL-P3-MEDIA-001：Douyin 完整媒体链路 → intelligence ----------
 
     UpstreamResolver douyinMediaResolver() {
         EdgeRoutingProperties douyin = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            Map.of("intelligence", INTELLIGENCE),
             List.of(
                 new RouteProperties("POST", "/api/douyin/extract-video", "intelligence", true, true),
                 new RouteProperties("POST", "/api/douyin/analyze-video", "intelligence", true, true),
@@ -475,7 +499,7 @@ class UpstreamResolverTest {
                 new RouteProperties("GET", "/api/douyin/analysis-media", "intelligence", true),
                 new RouteProperties(null, "/api/douyin/session", "intelligence", true),
                 new RouteProperties("GET", "/api/douyin/hot-items", "intelligence", true, true)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         return new UpstreamResolver(douyin);
     }
 
@@ -493,25 +517,24 @@ class UpstreamResolverTest {
         assertThat(douyinResolver.resolve("GET", "/api/douyin/hot-items")).isEqualTo(INTELLIGENCE);
         assertThat(douyinResolver.isInternalUpstream("POST", "/api/douyin/analyze-video")).isTrue();
         // extract-video 是精确叶子；相近旧路径和热点子路径不被媒体族误吞。
-        assertThat(douyinResolver.resolve("POST", "/api/douyin/extract")).isEqualTo(LEGACY);
-        assertThat(douyinResolver.resolve("GET", "/api/douyin/hot-items/extra")).isEqualTo(LEGACY);
+        assertThat(douyinResolver.resolve("POST", "/api/douyin/extract")).isNull();
+        assertThat(douyinResolver.resolve("GET", "/api/douyin/hot-items/extra")).isNull();
     }
 
     @Test
-    void douyinHotItemsFallsBackToLegacyWhenFlagDisabled() {
+    void douyinHotItemsFailsClosedWhenFlagDisabled() {
         EdgeRoutingProperties disabled = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            Map.of("intelligence", INTELLIGENCE),
             List.of(new RouteProperties("GET", "/api/douyin/hot-items", "intelligence", false, true)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
-        assertThat(disabledResolver.resolve("GET", "/api/douyin/hot-items")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/hot-items")).isNull();
     }
 
     @Test
-    void douyinMediaFallsBackToLegacyWhenFlagDisabled() {
-        // 回滚：EDGE_ROUTE_DOUYIN_MEDIA_INTELLIGENCE=false → 全部回落 legacy。
+    void douyinMediaFailsClosedWhenFlagDisabled() {
         EdgeRoutingProperties disabled = new EdgeRoutingProperties(
-            Map.of("legacy", LEGACY, "intelligence", INTELLIGENCE),
+            Map.of("intelligence", INTELLIGENCE),
             List.of(
                 new RouteProperties("POST", "/api/douyin/extract-video", "intelligence", false, true),
                 new RouteProperties("POST", "/api/douyin/analyze-video", "intelligence", false, true),
@@ -520,15 +543,15 @@ class UpstreamResolverTest {
                 new RouteProperties("GET", "/api/douyin/audio", "intelligence", false),
                 new RouteProperties("GET", "/api/douyin/analysis-media", "intelligence", false),
                 new RouteProperties(null, "/api/douyin/session", "intelligence", false)),
-            "legacy");
+            EdgeRoutingProperties.FAIL_CLOSED);
         UpstreamResolver disabledResolver = new UpstreamResolver(disabled);
-        assertThat(disabledResolver.resolve("POST", "/api/douyin/extract-video")).isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("POST", "/api/douyin/analyze-video")).isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("GET", "/api/douyin/proxy/token")).isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("GET", "/api/douyin/download/token")).isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("GET", "/api/douyin/audio/token")).isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("GET", "/api/douyin/analysis-media/x")).isEqualTo(LEGACY);
-        assertThat(disabledResolver.resolve("POST", "/api/douyin/session/start")).isEqualTo(LEGACY);
+        assertThat(disabledResolver.resolve("POST", "/api/douyin/extract-video")).isNull();
+        assertThat(disabledResolver.resolve("POST", "/api/douyin/analyze-video")).isNull();
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/proxy/token")).isNull();
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/download/token")).isNull();
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/audio/token")).isNull();
+        assertThat(disabledResolver.resolve("GET", "/api/douyin/analysis-media/x")).isNull();
+        assertThat(disabledResolver.resolve("POST", "/api/douyin/session/start")).isNull();
     }
 
     private static final String TASK_ID = "11111111-1111-1111-1111-111111111111";

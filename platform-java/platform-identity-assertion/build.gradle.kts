@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `java-test-fixtures`
 }
 
 java {
@@ -18,6 +19,9 @@ dependencies {
     // autoconfigure/@ConfigurationProperties 注解编译期可见，运行时由消费者提供 Boot（与 platform-storage 一致）。
     compileOnly("org.springframework.boot:spring-boot-autoconfigure")
     compileOnly("org.springframework.boot:spring-boot")
+
+    testFixturesImplementation(platform(libs.spring.boot.dependencies))
+    testFixturesImplementation("org.springframework:spring-test")
 
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.spring.boot.test)

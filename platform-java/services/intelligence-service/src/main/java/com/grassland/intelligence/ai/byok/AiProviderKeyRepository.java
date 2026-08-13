@@ -6,7 +6,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
-import org.springframework.r2dbc.core.Parameter;
+import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -39,12 +39,12 @@ public class AiProviderKeyRepository {
                 )
                 RETURNING id::text
                 """)
-                .bind("orgId", Parameter.fromOrEmpty(key.organizationId(), String.class))  // 个人密钥可空
+                .bind("orgId", nullable(key.organizationId(), String.class))  // 个人密钥可空
                 .bind("owner", key.ownerAccountId())
                 .bind("capability", key.capability())
                 .bind("provider", key.provider())
                 .bind("baseUrl", key.baseUrl())
-                .bind("model", Parameter.fromOrEmpty(key.model(), String.class))  // 可空
+                .bind("model", nullable(key.model(), String.class))  // 可空
                 .bind("encryptedKey", key.encryptedKey())
                 .bind("keyVersion", key.keyVersion())
                 .bind("maskedHint", key.maskedHint())
@@ -110,7 +110,7 @@ public class AiProviderKeyRepository {
                 .bind("id", id.toString())
                 .bind("owner", ownerAccountId)
                 .bind("baseUrl", baseUrl)
-                .bind("model", Parameter.fromOrEmpty(model, String.class))
+                .bind("model", nullable(model, String.class))
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .hasElement();

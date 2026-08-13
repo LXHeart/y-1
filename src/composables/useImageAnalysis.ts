@@ -108,6 +108,8 @@ export function useImageAnalysis() {
   const reviewLength = ref(DEFAULT_REVIEW_LENGTH)
   const feelings = ref('')
   const platform = ref<ReviewPlatform>('taobao')
+  const taskMode = ref(false)
+  const contextSnapshotId = ref<string | null>(null)
   const generationStage = ref<GenerationStage>('idle')
   const error = ref('')
   const progressEvents = ref<ImageAnalysisProgressEvent[]>([])
@@ -157,6 +159,23 @@ export function useImageAnalysis() {
   const paginatedStartIndex = computed(() => (preferencePage.value - 1) * PREFERENCE_PAGE_SIZE)
 
   let currentController: AbortController | null = null
+
+  function bindCreationContext(isTaskMode: boolean, snapshotId?: string): void {
+    taskMode.value = isTaskMode
+    contextSnapshotId.value = snapshotId || null
+  }
+
+  function appendExecutionContext(formData: FormData): void {
+    if (!taskMode.value) return
+    formData.append('taskMode', 'true')
+    if (contextSnapshotId.value) formData.append('contextSnapshotId', contextSnapshotId.value)
+  }
+
+  function executionContext(): Pick<StepReviewRequest, 'taskMode' | 'contextSnapshotId'> {
+    return taskMode.value
+      ? { taskMode: true, contextSnapshotId: contextSnapshotId.value || undefined }
+      : {}
+  }
 
   function revokeAllPreviews(): void {
     for (const image of images.value) {
@@ -310,6 +329,7 @@ export function useImageAnalysis() {
     formData.append('reviewLength', String(reviewLength.value))
     formData.append('feelings', feelings.value)
     formData.append('platform', platform.value)
+    appendExecutionContext(formData)
 
     try {
       const response = await fetch('/api/image-analysis/step/draft', {
@@ -367,6 +387,7 @@ export function useImageAnalysis() {
       reviewLength: reviewLength.value,
       feelings: feelings.value || undefined,
       platform: platform.value,
+      ...executionContext(),
     }
   }
 
@@ -756,6 +777,8 @@ export function useImageAnalysis() {
     optimizingPreferences,
     optimizedPreferences,
     optimizeError,
+    taskMode,
+    contextSnapshotId,
     addFiles,
     removeImage,
     cancel,
@@ -785,5 +808,6 @@ export function useImageAnalysis() {
     optimizePreferences,
     confirmOptimizedPreferences,
     cancelOptimizePreferences,
+    bindCreationContext,
   }
 }

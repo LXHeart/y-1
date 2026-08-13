@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test;
 class VideoRecreationAdaptationPromptsTest {
 
     private VideoRecreationAdaptationRequest request(Map<String, String> content, Map<String, String> instructions) {
-        return new VideoRecreationAdaptationRequest("douyin", "/api/douyin/proxy/token-1", content, instructions, List.of());
+        return new VideoRecreationAdaptationRequest(
+                "douyin", "/api/douyin/proxy/token-1", content, instructions,
+                List.of(), null, false, null);
     }
 
     @Test
@@ -38,7 +40,8 @@ class VideoRecreationAdaptationPromptsTest {
     @Test
     void promptNeverContainsProxyVideoUrl() {
         VideoRecreationAdaptationRequest req = new VideoRecreationAdaptationRequest(
-                "bilibili", "/api/bilibili/proxy/secret-token", Map.of("videoScript", "脚本"), Map.of(), List.of());
+                "bilibili", "/api/bilibili/proxy/secret-token", Map.of("videoScript", "脚本"), Map.of(),
+                List.of(), null, false, null);
         String prompt = VideoRecreationAdaptationPrompts.build(req);
         assertThat(prompt).doesNotContain("secret-token");
         assertThat(prompt).doesNotContain("/api/bilibili/proxy");

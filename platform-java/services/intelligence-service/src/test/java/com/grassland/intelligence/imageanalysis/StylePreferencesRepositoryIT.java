@@ -62,19 +62,15 @@ class StylePreferencesRepositoryIT extends IntelligenceItSupport {
     @Test
     void backfillFromLegacyUserSettingsPopulatesStyleTableWhenLegacyTableExists() {
         String userId = UUID.randomUUID().toString();
-        // 模拟 legacy migration 已先创建权威 user_settings（V2 本身不再创建 legacy-owned 表）。
+        // 模拟 V2 执行前已存在的共享 user_settings 存量行。
         db.sql("""
-                CREATE TABLE IF NOT EXISTS user_settings (
-                    id uuid PRIMARY KEY,
-                    user_id uuid NOT NULL,
-                    settings_type text NOT NULL,
-                    settings_json jsonb NOT NULL,
-                    version integer NOT NULL DEFAULT 1,
-                    created_at timestamptz NOT NULL DEFAULT now(),
-                    updated_at timestamptz NOT NULL DEFAULT now(),
-                    CONSTRAINT user_settings_unique_user_type UNIQUE (user_id, settings_type)
-                )
-                """).then().block();
+                INSERT INTO app_users (id, email, password_hash)
+                VALUES (CAST(:uid AS uuid), :email, 'test-hash')
+                ON CONFLICT (id) DO NOTHING
+                """)
+                .bind("uid", UUID.fromString(userId))
+                .bind("email", userId + "@test.local")
+                .then().block();
         db.sql("""
                 INSERT INTO user_settings (id, user_id, settings_type, settings_json)
                 VALUES (:id, CAST(:uid AS uuid), 'image-review-style', CAST(:json AS jsonb))

@@ -1,7 +1,6 @@
 package com.grassland.identity.assertion;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -83,8 +82,7 @@ public final class PropertiesKeyring implements IdentityAssertionKeyring {
             return List.of();
         }
         if (kid == null || kid.isBlank()) {
-            // kid 缺失：返回该 issuer 的全部验签钥（兼容 legacy token）
-            return new ArrayList<>(byKid.values());
+            return List.of();
         }
         // kid 精确匹配
         IdentityAssertionKey key = byKid.get(kid);

@@ -24,9 +24,9 @@ import reactor.core.publisher.Mono;
  * accountId 取自 {@link FinanceCallerResolver}（edge-bff 签发的 {@code X-Grassland-Identity}），不接受路径/请求体传入，
  * 故无越权维度。返回 legacy 同构响应：balance 裸对象、history 包 {@code {history:[…]}}。
  *
- * <p><b>内部写（容器直连，共享密钥 + 服务断言）</b>：{@code POST /internal/credits/{consume,refund,award}}。
- * {@link CreditsInternalAuthFilter} 先校验 {@code X-Internal-Key} + rejectForwarded；高价值变更再按服务
- * principal 授权：identity 可人工调账，intelligence 只可做受限 AI 退款。
+ * <p><b>内部命令（容器直连、服务断言）</b>：{@code /internal/credits/**}。
+ * 每个端点按已验签的服务 principal 授权：identity 可读取批量余额并人工调账，
+ * intelligence 可扣减、补偿及执行受限 AI 退款。通用共享密钥不授予任何权限。
  * 响应保持 legacy 信封 {@code {success:true, data:{…,deduplicated}}}，402→{@code {success:false,error}}（经全局 advice）。
  * {@code operation_id} 原样透传给 {@link CreditsService}（调用方自行派生 {@code refund:<consumeId>}）。
  */
@@ -71,10 +71,8 @@ public class CreditsController {
     @PostMapping("/internal/credits/consume")
     public Mono<Map<String, Object>> consume(
             ServerHttpRequest request, @RequestBody ConsumeRequest body) {
-        Mono<Void> authorization = body.hasAiQuotaEntitlement()
-                ? callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE).then()
-                : Mono.empty();
-        return authorization.then(credits.consume(body.accountId(), body.feature(), body.operationId(),
+        return callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE)
+                .then(credits.consume(body.accountId(), body.feature(), body.operationId(),
                         body.aiQuotaMultiplierBps(), body.policyVersion()))
                 .map(result -> success(mutationBody("consumed", result)));
     }
@@ -109,38 +107,30 @@ public class CreditsController {
                 .map(result -> success(mutationBody("awarded", result)));
     }
 
-    // ---------------- 内部读（容器直连，共享密钥）——供 legacy Express 回滚读端代理 ----------------
-
-    @GetMapping("/internal/credits/balance")
-    public Mono<Map<String, Object>> internalBalance(@org.springframework.web.bind.annotation.RequestParam String accountId) {
-        if (accountId == null || accountId.isBlank()) {
-            throw new IllegalArgumentException("缺少 accountId");
-        }
-        return credits.balance(accountId).map(CreditsController::balanceBody);
-    }
-
-    @GetMapping("/internal/credits/history")
-    public Mono<Map<String, Object>> internalHistory(
-            @org.springframework.web.bind.annotation.RequestParam String accountId,
-            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int limit) {
-        if (accountId == null || accountId.isBlank()) {
-            throw new IllegalArgumentException("缺少 accountId");
-        }
-        return credits.history(accountId, limit).collectList()
-                .map(items -> Map.<String, Object>of("history", items.stream().map(CreditsController::historyItem).toList()));
-    }
-
     /**
      * 批量余额（admin 用户列表用，避免 N+1）。
      *
-     * <p>容器直连，{@code X-Internal-Key} 鉴权（同其它 {@code /internal/credits/*}）。
+     * <p>仅接受 identity-service 签发、受众为 finance 的服务断言。
      * 未建户的 accountId 不在 {@code accounts} 数组里（调用方按缺失 = 0 余额处理）。
      */
     @PostMapping("/internal/credits/balances")
-    public Mono<Map<String, Object>> internalBalances(@RequestBody BalancesRequest body) {
-        return credits.balances(body.accountIds()).collectList()
+    public Mono<Map<String, Object>> internalBalances(
+            ServerHttpRequest request, @RequestBody BalancesRequest body) {
+        return callers.requireService(request, FinanceCallerResolver.IDENTITY_SERVICE)
+                .thenMany(credits.balances(body.accountIds())).collectList()
                 .map(accounts -> success(Map.of(
                         "accounts", accounts.stream().map(CreditsController::balanceEntry).toList())));
+    }
+
+    /** Finance-authoritative, read-only consume fences for Intelligence reconciliation. */
+    @PostMapping("/internal/credits/consume-operations/query")
+    public Mono<Map<String, Object>> consumeOperations(
+            ServerHttpRequest request, @RequestBody ConsumeOperationsRequest body) {
+        return callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE)
+                .thenMany(credits.consumeOperations(body.operationIds()))
+                .map(CreditsController::consumeOperationItem)
+                .collectList()
+                .map(items -> success(Map.of("operations", items)));
     }
 
     // ---------------- helpers ----------------
@@ -200,6 +190,22 @@ public class CreditsController {
         item.put("feature", txn.feature());
         item.put("note", txn.note());
         item.put("createdAt", txn.createdAt() == null ? null : txn.createdAt().toString());
+        return item;
+    }
+
+    private static Map<String, Object> consumeOperationItem(
+            CreditsRepository.ConsumeOperation operation) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("operationId", operation.operationId());
+        item.put("accountId", operation.accountId());
+        item.put("feature", operation.feature());
+        item.put("state", operation.state());
+        item.put("source", operation.chargeSource());
+        item.put("policyVersion", operation.policyVersion());
+        item.put("consumeTransactionId", "quota".equals(operation.chargeSource())
+                ? operation.quotaConsumeTransactionId() : operation.consumeTransactionId());
+        item.put("refundTransactionId", "quota".equals(operation.chargeSource())
+                ? operation.quotaRefundTransactionId() : operation.refundTransactionId());
         return item;
     }
 
@@ -304,6 +310,24 @@ public class CreditsController {
             }
             if (accountIds.size() > 1000) {
                 throw new IllegalArgumentException("accountIds 过多（上限 1000）");
+            }
+        }
+    }
+
+    public record ConsumeOperationsRequest(java.util.List<String> operationIds) {
+        public ConsumeOperationsRequest {
+            if (operationIds == null) {
+                throw new IllegalArgumentException("缺少 operationIds");
+            }
+            if (operationIds.size() > 500) {
+                throw new IllegalArgumentException("operationIds 过多（上限 500）");
+            }
+            operationIds = operationIds.stream().distinct().toList();
+            for (String operationId : operationIds) {
+                if (operationId == null || operationId.isBlank()) {
+                    throw new IllegalArgumentException("operationId 无效");
+                }
+                requireMaxLength(operationId, MAX_OPERATION_ID_LENGTH, "operationId 过长");
             }
         }
     }

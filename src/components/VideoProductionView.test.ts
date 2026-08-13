@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import VideoProductionView from '../views/video-production/VideoProductionView.vue'
+import type { CreationHandoff } from '../types/ai-creation'
 
 /**
  * VideoProductionView 特征测试（重构安全网）。
@@ -12,6 +13,7 @@ import VideoProductionView from '../views/video-production/VideoProductionView.v
  */
 
 const fetchUrls: string[] = []
+const fetchCalls: Array<{ url: string; init?: RequestInit }> = []
 
 function jsonResponse(data: unknown) {
   return {
@@ -46,8 +48,10 @@ const douyinAnalysisPayload = {
 
 beforeEach(() => {
   fetchUrls.length = 0
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+  fetchCalls.length = 0
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     fetchUrls.push(url)
+    fetchCalls.push({ url, init })
     if (url === '/api/douyin/extract-video') {
       return jsonResponse({ success: true, data: douyinExtractPayload })
     }
@@ -60,6 +64,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -198,5 +203,98 @@ describe('VideoProductionView 可选输入方式', () => {
 
     const customPrompt = (wrapper.get('#vp-prompt').element as HTMLTextAreaElement).value
     expect(customPrompt).toBe('创作主题：城市夜骑')
+  })
+})
+
+describe('VideoProductionView 任务上下文快照', () => {
+  const snapshotId = '11111111-1111-1111-1111-111111111111'
+
+  function handoff(taskMode: boolean): CreationHandoff {
+    return {
+      revision: 1,
+      platformId: 'douyin',
+      contentFormId: 'video',
+      workflowId: 'video-script',
+      targetView: 'video-production',
+      source: taskMode
+        ? { type: 'task', taskId: 'task-1', applicationId: 'application-1', taskVersion: 3 }
+        : { type: 'independent' },
+      contextSnapshotId: taskMode ? snapshotId : undefined,
+      prefill: { storeName: '任务门店' },
+    }
+  }
+
+  test('任务 handoff 的脚本请求携带冻结快照，独立模式不携带任务字段', async () => {
+    const wrapper = mount(VideoProductionView, { props: { creationHandoff: handoff(true) } })
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as {
+      images: Array<{ id: string; dataUrl: string; name: string }>
+      generateScript: () => Promise<void>
+    }
+    vm.images = [{ id: 'img-1', dataUrl: 'data:image/png;base64,AAAA', name: 'a.png' }]
+    await vm.generateScript()
+
+    const request = fetchCalls.find((call) => call.url === '/api/video-production/generate-script')
+    expect(JSON.parse(String(request?.init?.body))).toMatchObject({
+      targetPlatform: 'douyin',
+      taskMode: true,
+      contextSnapshotId: snapshotId,
+    })
+
+    await wrapper.setProps({ creationHandoff: { ...handoff(false), revision: 2 } })
+    vm.images = [{ id: 'img-2', dataUrl: 'data:image/png;base64,BBBB', name: 'b.png' }]
+    await vm.generateScript()
+    const scriptCalls = fetchCalls.filter((call) => call.url === '/api/video-production/generate-script')
+    const independent = JSON.parse(String(scriptCalls[scriptCalls.length - 1]?.init?.body))
+    expect(independent).not.toHaveProperty('taskMode')
+    expect(independent).not.toHaveProperty('contextSnapshotId')
+  })
+
+  test('脚本和视频创建始终复用同一个快照 ID', async () => {
+    vi.stubGlobal('crypto', { randomUUID: () => 'operation-1' })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      fetchCalls.push({ url, init })
+      if (url === '/api/video-production/capabilities') {
+        return jsonResponse({ available: true, reason: '' })
+      }
+      if (url === '/api/video-production/generate-script') {
+        return new Response('data: {"content":"任务脚本"}\n\ndata: [DONE]\n\n', {
+          status: 200, headers: { 'Content-Type': 'text/event-stream' },
+        })
+      }
+      if (url === '/api/video-production/generate-video') {
+        return jsonResponse({ success: true, data: { id: 'job-1' } })
+      }
+      if (url === '/api/video-production/jobs/job-1/download-url') {
+        return jsonResponse({ downloadUrl: 'https://media.example.test/signed-video' })
+      }
+      return jsonResponse({ data: { status: 'succeeded', progress: 100, resultUrl: '/api/media/job-1' } })
+    }))
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler) => {
+      if (typeof handler === 'function') handler()
+      return 1
+    }) as typeof setTimeout)
+
+    const wrapper = mount(VideoProductionView, { props: { creationHandoff: handoff(true) } })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      images: Array<{ id: string; dataUrl: string; name: string }>
+      generateScript: () => Promise<void>
+      startVideoGeneration: () => Promise<void>
+    }
+    vm.images = [{ id: 'img-1', dataUrl: 'data:image/png;base64,AAAA', name: 'a.png' }]
+    await vm.generateScript()
+    await vm.startVideoGeneration()
+
+    const bodies = fetchCalls
+      .filter((call) => call.url === '/api/video-production/generate-script'
+        || call.url === '/api/video-production/generate-video')
+      .map((call) => JSON.parse(String(call.init?.body)))
+    expect(bodies).toHaveLength(2)
+    expect(bodies.every((body) => body.taskMode === true)).toBe(true)
+    expect(bodies.map((body) => body.contextSnapshotId)).toEqual([snapshotId, snapshotId])
+    expect(fetchCalls.some((call) => call.url === '/api/video-production/jobs/job-1/download-url'))
+      .toBe(true)
   })
 })

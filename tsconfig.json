@@ -21,6 +21,8 @@
     "vite.config.ts",
     "vitest.config.ts",
     "vite-env.d.ts",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    "scripts/**/*.ts",
+    "playwright.config.ts"
   ]
 }

@@ -61,7 +61,7 @@ public class PermissionRequestController {
     private final PermissionAutomaticReviewer automaticReviewer;
     private final PermissionRequestAuditRepository audits;
     private final TransactionalOperator transactions;
-    // 本地 ObjectMapper（Spring Boot 4 的 Jackson autoconfig 在独立模块，identity 未引入；与 LegacySessionBridge 同模式）。
+    // 本地 ObjectMapper（Spring Boot 4 的 Jackson autoconfig 在独立模块，identity 未引入）。
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PermissionRequestController(CurrentAccountResolver accounts, OrgAuthorization authz,
