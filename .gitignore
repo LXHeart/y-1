@@ -1,6 +1,8 @@
 node_modules
 dist
 server/dist
+# Gradle 本地缓存（GRADLE_USER_HOME 指到仓库内时的 caches/daemon/wrapper 等）
+.gradle-local/
 # 凭据：忽略所有 .env 变体（历史上 .env.docker / .env.local-db 因只忽略 .env 而被提交）
 # 仅 *.example 模板入库，且模板内不得写真值
 .env
