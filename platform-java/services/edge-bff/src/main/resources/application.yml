@@ -258,6 +258,12 @@ edge:
     - path: /api/comedy-generation
       upstream: intelligence
       enabled: ${EDGE_ROUTE_COMEDY_INTELLIGENCE:true}
+    # ---- 朋友圈内容生成（PRD §4.4 图片+文字）→ intelligence-service。
+    # POST /api/moments-generation/generate（SSE 非帧流：progress/result/error + [DONE]），
+    # 扣 moments_generation 积分；flag=false 时停用并返回 404。
+    - path: /api/moments-generation
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_MOMENTS_GENERATION_INTELLIGENCE:true}
     # ---- 文章生成（草场 intelligence Slice 3/5）→ intelligence-service。精确 method+path 防误吞未知端点。
     - method: POST
       path: /api/article-generation/titles

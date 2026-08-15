@@ -100,6 +100,7 @@ class JavaRouteManifestGateTest {
                 route("GET", "/api/homepage/hot-items", "intelligence"),
                 route("POST", "/api/media/upload-tickets", "intelligence"),
                 route("POST", "/api/comedy-generation/generate-script", "intelligence"),
+                route("POST", "/api/moments-generation/generate", "intelligence"),
                 route("POST", "/api/article-generation/titles", "intelligence"),
                 route("POST", "/api/article-generation/outline", "intelligence"),
                 route("POST", "/api/article-generation/content", "intelligence"),
