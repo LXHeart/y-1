@@ -21,6 +21,7 @@ public record OpsPendingVerification(
         String taskId,
         String taskTitle,
         String organizationId,
+        String taskOwnerAccountId,
         String recommenderAccountId,
         String contentUrl,
         String checksJson,

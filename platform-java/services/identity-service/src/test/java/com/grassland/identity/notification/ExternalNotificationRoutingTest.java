@@ -247,6 +247,21 @@ class ExternalNotificationRoutingTest {
     }
 
     @Test
+    void reviewRejectionAndVerificationOverrideNotifyOnlyTaskOwner() {
+        for (String eventType : List.of("TaskReviewRejected", "VerificationOverridden")) {
+            Map<String, Object> fields = Map.of(
+                    "taskId", "task-1", "taskOwnerId", OWNER,
+                    "recommenderAccountId", RECOMMENDER, "reason", "人工复核");
+            assertThat(resolve(eventType, fields)).as(eventType).containsExactly(OWNER);
+            NotificationTemplates.Template template = NotificationTemplates.template(eventType, payload(fields));
+            assertThat(template).isNotNull();
+            assertThat(template.category()).isEqualTo(NotificationCategory.ENGAGEMENT);
+            assertThat(template.payload()).containsEntry("taskId", "task-1")
+                    .doesNotContainKey("taskOwnerId").doesNotContainKey("recommenderAccountId");
+        }
+    }
+
+    @Test
     void fundsReservedAndReversedTemplatesAreWalletCategoryWithAmounts() {
         // GL-P1-NOTIFY-001 残留补全：FundsReserved/FundsReversed 走钱包类，携带金额供前端渲染。
         for (String eventType : List.of("FundsReserved", "FundsReversed")) {

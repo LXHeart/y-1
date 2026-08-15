@@ -64,10 +64,26 @@ public class TaskReviewRepository {
                 .one();
     }
 
+    /** Merchant trust signal derived from append-only task review decisions in this service. */
+    public Mono<MerchantReviewStats> merchantStats(String ownerAccountId) {
+        return db.sql("""
+                SELECT COUNT(*) FILTER (WHERE tr.action = 'approved')::int AS approved,
+                       COUNT(*) FILTER (WHERE tr.action = 'rejected')::int AS rejected
+                FROM task_review tr JOIN task t ON t.id = tr.task_id
+                WHERE t.owner_account_id = CAST(:owner AS uuid)
+                """)
+                .bind("owner", ownerAccountId)
+                .map(row -> new MerchantReviewStats(
+                        value(row.get("approved", Integer.class)), value(row.get("rejected", Integer.class))))
+                .one();
+    }
+
     public record TaskReviewEntry(String id, String taskId, String action, String reviewerAccountId,
                                   String note, java.time.Instant createdAt) {}
 
     public record ReviewQueueStats(int pending, int overdue, int approvedLast24Hours, int rejectedLast24Hours) {}
+
+    public record MerchantReviewStats(int approved, int rejected) {}
 
     private static int value(Integer value) {
         return value == null ? 0 : value;

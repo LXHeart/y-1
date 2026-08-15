@@ -19,6 +19,7 @@ public final class NotificationTemplates {
     static final String LINK_PERMISSION = "/me/organizations";
     static final String LINK_ENGAGEMENTS = "/me/engagements";
     static final String LINK_TASK_INVITATIONS = "/me/task-invitations";
+    static final String LINK_TASK_REVIEW = "/me/task-review";
     static final String LINK_DISPUTES = "/me/disputes";
     static final String LINK_WALLET = "/me/wallet";
 
@@ -70,6 +71,9 @@ public final class NotificationTemplates {
             case "TaskRecommenderInvited" -> new Template(
                     NotificationCategory.ENGAGEMENT, "你收到一份任务邀请",
                     "有商家邀请你参与任务，点击查看并报名", LINK_TASK_INVITATIONS, taskPayload(payload));
+            case "TaskReviewRejected" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "任务审核未通过",
+                    "你的任务未通过平台审核，请查看驳回原因并修改后重新提交", LINK_TASK_REVIEW, taskPayload(payload));
             case "ApplicationWithdrawn" -> new Template(
                     NotificationCategory.ENGAGEMENT, "有报名被撤回",
                     "你的任务有一份报名已被撤回", LINK_ENGAGEMENTS, taskPayload(payload));
@@ -79,6 +83,9 @@ public final class NotificationTemplates {
             case "DeliverableRejected" -> new Template(
                     NotificationCategory.ENGAGEMENT, "你的凭证被退回",
                     "你提交的履约凭证被退回，请查看原因后重新提交", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "VerificationOverridden" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "履约核验已人工复核",
+                    "运营已对该履约的自动核验结果作出人工结论，请查看详情", LINK_ENGAGEMENTS, taskPayload(payload));
             case "VerificationChecked" -> new Template(
                     NotificationCategory.ENGAGEMENT, "履约核验有结果",
                     "该履约的凭证核验已出结果", LINK_ENGAGEMENTS, taskPayload(payload));

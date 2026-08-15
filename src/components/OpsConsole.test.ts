@@ -388,4 +388,22 @@ describe('OpsConsole', () => {
     expect(wrapper.findAll('.ops-table tbody tr')).toHaveLength(1)
     expect(wrapper.find('.ops-table tbody').text()).toContain('结算暂缓')
   })
+
+  test('merchant_rejection 处置单提供客服裁定快捷入口', async () => {
+    const merchantRejection = {
+      ...CASE_BLOCKED, id: 'case-mr', sourceKind: 'merchant_rejection', sourceRef: 'dispute-42',
+      reason: 'merchant_contested_verified_work',
+    }
+    const { wrapper } = await mountConsole([
+      { match: '/api/ops/cases', data: [merchantRejection] },
+      { match: '/api/ops/cases/case-mr', data: { case: merchantRejection, audits: AUDITS, actions: [] } },
+    ])
+
+    expect(wrapper.text()).toContain('商家履约异议')
+    await wrapper.find('.ops-table .ops-quiet').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '前往客服裁定')!.trigger('click')
+
+    expect(wrapper.emitted('open-dispute')).toEqual([['dispute-42']])
+  })
 })

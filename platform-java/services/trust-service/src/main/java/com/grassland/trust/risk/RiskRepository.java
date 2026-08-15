@@ -65,6 +65,13 @@ public class RiskRepository {
                 .map(RiskRepository::mapSignal).one();
     }
 
+    public Mono<Integer> countSignals(String subjectKind, String subjectRef, String ruleCode) {
+        return db.sql("SELECT COUNT(*)::int AS count FROM risk_signal WHERE subject_kind=:kind"
+                        + " AND subject_ref=:ref AND rule_code=:rule")
+                .bind("kind", subjectKind).bind("ref", subjectRef).bind("rule", ruleCode)
+                .map(row -> value(row.get("count", Integer.class))).one().defaultIfEmpty(0);
+    }
+
     public Flux<Signal> listSignals(String status, String subjectKind, String subjectRef, int limit) {
         var spec = db.sql("SELECT " + SIGNAL_COLS + " FROM risk_signal WHERE "
                         + "(:status IS NULL OR status=:status) AND (:kind IS NULL OR subject_kind=:kind) "
@@ -171,6 +178,8 @@ public class RiskRepository {
         try { return mapper.writeValueAsString(value); }
         catch (JsonProcessingException error) { throw new IllegalArgumentException("evidence 不是合法 JSON"); }
     }
+
+    private static int value(Integer value) { return value == null ? 0 : value; }
 
     private static Signal mapSignal(Readable row) {
         return new Signal(row.get("id", String.class), row.get("source_kind", String.class),

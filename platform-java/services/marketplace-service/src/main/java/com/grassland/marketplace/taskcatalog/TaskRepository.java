@@ -250,6 +250,16 @@ public class TaskRepository {
                 .map(TaskRepository::map).all();
     }
 
+    /** SLA queue uses updated_at because every resubmission refreshes it and pending_review has no other writes. */
+    public reactor.core.publisher.Flux<Task> findPendingReviewBefore(Instant cutoff, int limit) {
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM task WHERE status = 'pending_review' AND updated_at <= :cutoff"
+                        + " ORDER BY updated_at, id LIMIT :limit FOR UPDATE SKIP LOCKED")
+                .bind("cutoff", cutoff.atOffset(ZoneOffset.UTC))
+                .bind("limit", Math.max(1, Math.min(limit, 200)))
+                .map(TaskRepository::map).all();
+    }
+
     /** Operational review queue with status, organization, platform, SLA and offset filters. */
     public reactor.core.publisher.Flux<Task> findReviewQueue(
             String status, String organizationId, String platform, boolean overdue, int limit, int offset) {

@@ -76,8 +76,12 @@ public class NotificationRecipientResolver {
                     accountIds(payload, "taskOwnerId");
             // 推荐官任务邀请：收件人已由 marketplace 冻结进 payload，identity 不反查任务域。
             case "TaskRecommenderInvited" -> accountIds(payload, "recommenderAccountId");
+            // 任务审核结果：只读 marketplace 发出的任务归属人字段，不反查任务域。
+            case "TaskReviewRejected" -> accountIds(payload, "taskOwnerId", "ownerAccountId");
             // 推荐官侧：凭证被退回。
             case "DeliverableRejected" -> accountIds(payload, "recommenderAccountId");
+            // 人工改判核验结果：商家是唯一需要知道运营结论的一方。
+            case "VerificationOverridden" -> accountIds(payload, "taskOwnerId", "ownerAccountId");
             // 双方都关心：核验结果、结算、结算挂起、取消退款（D-03 §5）。
             case "VerificationChecked", "EngagementSettled", "SettlementHeld", "EngagementRefundedOnCancel" ->
                     accountIds(payload, "taskOwnerId", "recommenderAccountId");

@@ -2,9 +2,12 @@ package com.grassland.marketplace.ops;
 
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.taskcatalog.EngagementVerificationRepository;
 import com.grassland.marketplace.taskcatalog.VerificationOverride;
 import com.grassland.marketplace.taskcatalog.VerificationOverrideRepository;
+import com.grassland.marketplace.event.EventEnvelope;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.MediaType;
@@ -48,6 +51,7 @@ public class OpsCaseController {
     private final VerificationOverrideRepository verificationOverrides;
     private final EngagementVerificationRepository verifications;
     private final MarketplaceCallerResolver callers;
+    private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
     public OpsCaseController(OpsCaseRepository cases, OpsCaseAuditRepository audits,
@@ -56,7 +60,8 @@ public class OpsCaseController {
                              OpsPendingVerificationRepository pendingVerifications,
                              VerificationOverrideRepository verificationOverrides,
                              EngagementVerificationRepository verifications,
-                             MarketplaceCallerResolver callers, TransactionalOperator transactions) {
+                             MarketplaceCallerResolver callers, OutboxRepository outbox,
+                             TransactionalOperator transactions) {
         this.pendingVerifications = pendingVerifications;
         this.verificationOverrides = verificationOverrides;
         this.verifications = verifications;
@@ -67,6 +72,7 @@ public class OpsCaseController {
         this.dltMessages = dltMessages;
         this.dltActions = dltActions;
         this.callers = callers;
+        this.outbox = outbox;
         this.transactions = transactions;
     }
 
@@ -232,7 +238,13 @@ public class OpsCaseController {
                                         409, "仅可人工复核 inconclusive 核验"));
                             }
                             return transactions.transactional(
-                                    verificationOverrides.upsert(submissionId, status, caller.accountId(), note));
+                                    pendingVerifications.findOverrideContext(submissionId)
+                                            .switchIfEmpty(Mono.error(new MarketplaceException(404, "履约上下文不存在")))
+                                            .flatMap(context -> verificationOverrides.upsert(
+                                                    submissionId, status, caller.accountId(), note)
+                                                    .flatMap(override -> outbox.append(
+                                                            verificationOverriddenEnvelope(context, override))
+                                                            .thenReturn(override))));
                         }))
                 .map(override -> ResponseEntity.ok(Map.of("success", true,
                         "data", toVerificationOverrideBody(override))));
@@ -245,9 +257,28 @@ public class OpsCaseController {
         body.put("status", override.status());
         body.put("reviewerAccountId", override.reviewerAccountId());
         body.put("reviewNote", override.reviewNote());
+        body.put("version", override.version());
         body.put("createdAt", override.createdAt());
         body.put("updatedAt", override.updatedAt());
         return body;
+    }
+
+    private static EventEnvelope verificationOverriddenEnvelope(
+            OpsPendingVerificationRepository.VerificationOverrideContext context,
+            VerificationOverride override) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", context.taskId());
+        payload.put("applicationId", context.applicationId());
+        payload.put("submissionId", context.submissionId());
+        payload.put("organizationId", context.organizationId());
+        payload.put("taskOwnerId", context.taskOwnerAccountId());
+        payload.put("recommenderAccountId", context.recommenderAccountId());
+        payload.put("status", override.status());
+        payload.put("reason", override.reviewNote());
+        payload.put("reviewerAccountId", override.reviewerAccountId());
+        return new EventEnvelope("VerificationOverridden:" + override.id() + ":" + override.version(),
+                "VerificationOverridden", "Verification", override.submissionId(), override.version(),
+                Instant.now(), null, payload);
     }
 
     /** 人工改判请求：status 只能 passed/failed，note 必填且最多 500 字。 */

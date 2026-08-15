@@ -1,7 +1,7 @@
 // ---------- 运营处置台（GL-P1-OPS-001）----------
 
 /** 处置单来源。`dlt_message` 的 sourceRef 是 Kafka 位点 `topic:partition:offset`。 */
-export type OpsCaseSourceKind = 'settlement_blocked' | 'settlement_held' | 'dlt_message'
+export type OpsCaseSourceKind = 'settlement_blocked' | 'settlement_held' | 'dlt_message' | 'merchant_rejection'
 
 /** 状态机：open→in_review→approved|rejected→resolved。rejected 是终态（不处置）。 */
 export type OpsCaseStatus = 'open' | 'in_review' | 'approved' | 'rejected' | 'resolved'

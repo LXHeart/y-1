@@ -973,6 +973,32 @@ watch(grasslandAnchor, async (anchor) => {
 
 /** Task invitations are the only notification route that intentionally selects a role and exact task. */
 watch(grasslandNavigationTarget, async (target) => {
+  if (target?.disputeId) {
+    activeDisputeId.value = target.disputeId
+    await nextTick()
+    document.getElementById('gl-disputes')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    grasslandNavigationTarget.value = null
+    return
+  }
+  if (target?.taskId && target.side === 'merchant') {
+    try {
+      if (side.value !== 'merchant') await switchSide('merchant')
+      if (side.value !== 'merchant') return
+      const task = await grassland.getTask(target.taskId)
+      if (!task) {
+        setNotice(grassland.error.value || '审核任务当前不可查看')
+        return
+      }
+      tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
+      await selectTask(task.id)
+      await nextTick()
+      document.getElementById('gl-engagements')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setNotice('已打开审核任务，可修改后重新提交')
+    } finally {
+      grasslandNavigationTarget.value = null
+    }
+    return
+  }
   if (!target?.taskId || target.side !== 'recommender') return
   try {
     if (side.value !== 'recommender') await switchSide('recommender')

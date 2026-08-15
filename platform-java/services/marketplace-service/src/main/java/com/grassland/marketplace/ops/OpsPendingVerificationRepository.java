@@ -25,6 +25,7 @@ public class OpsPendingVerificationRepository {
                         SELECT v.id::text AS verification_id, s.id::text AS submission_id,
                                a.id::text AS application_id, t.id::text AS task_id, t.title AS task_title,
                                t.organization_id::text AS organization_id,
+                               t.owner_account_id::text AS task_owner_account_id,
                                s.recommender_account_id::text AS recommender_account_id,
                                s.content_url, v.checks::text AS checks_json,
                                v.last_checked_at, s.created_at AS submitted_at
@@ -49,6 +50,7 @@ public class OpsPendingVerificationRepository {
                         row.get("task_id", String.class),
                         row.get("task_title", String.class),
                         row.get("organization_id", String.class),
+                        row.get("task_owner_account_id", String.class),
                         row.get("recommender_account_id", String.class),
                         row.get("content_url", String.class),
                         row.get("checks_json", String.class),
@@ -56,4 +58,29 @@ public class OpsPendingVerificationRepository {
                         row.get("submitted_at", java.time.Instant.class)))
                 .all();
     }
+
+    /** Minimal immutable context needed to emit a merchant-facing override event. */
+    public reactor.core.publisher.Mono<VerificationOverrideContext> findOverrideContext(String submissionId) {
+        return db.sql("""
+                SELECT s.id::text AS submission_id, a.id::text AS application_id,
+                       t.id::text AS task_id, t.organization_id::text AS organization_id,
+                       t.owner_account_id::text AS task_owner_account_id,
+                       a.recommender_account_id::text AS recommender_account_id
+                  FROM engagement_submission s
+                  JOIN task_application a ON a.id = s.application_id
+                  JOIN task t ON t.id = a.task_id
+                 WHERE s.id = CAST(:submission AS uuid)
+                """)
+                .bind("submission", submissionId)
+                .map((row, meta) -> new VerificationOverrideContext(
+                        row.get("submission_id", String.class), row.get("application_id", String.class),
+                        row.get("task_id", String.class), row.get("organization_id", String.class),
+                        row.get("task_owner_account_id", String.class),
+                        row.get("recommender_account_id", String.class)))
+                .one();
+    }
+
+    public record VerificationOverrideContext(String submissionId, String applicationId, String taskId,
+                                              String organizationId, String taskOwnerAccountId,
+                                              String recommenderAccountId) {}
 }

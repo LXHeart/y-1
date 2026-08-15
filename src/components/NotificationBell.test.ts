@@ -174,7 +174,9 @@ describe('面板开合', () => {
     await wrapper.find('.nt-item').trigger('click')
     await flushPromises()
 
-    expect(wrapper.emitted('navigate')?.[0]).toEqual([{ view: 'grassland', anchor: 'gl-disputes' }])
+    expect(wrapper.emitted('navigate')?.[0]).toEqual([{
+      view: 'grassland', anchor: 'gl-disputes', disputeId: 'dsp-1234abcd',
+    }])
     expect(wrapper.find('.nt-panel').exists()).toBe(false)  // 跳转后自动收起
   })
 })

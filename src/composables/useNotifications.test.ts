@@ -235,4 +235,13 @@ describe('linkPath 落点', () => {
     })
     expect(resolveLinkTarget('/me/task-invitations', {})).toBeNull()
   })
+
+  test('任务驳回通知直达商家任务，争议通知携带精确争议 id', () => {
+    expect(resolveLinkTarget('/me/task-review', { taskId: 'task-2' })).toEqual({
+      view: 'grassland', anchor: 'gl-engagements', side: 'merchant', taskId: 'task-2',
+    })
+    expect(resolveLinkTarget('/me/disputes', { disputeId: 'dispute-1' })).toEqual({
+      view: 'grassland', anchor: 'gl-disputes', disputeId: 'dispute-1',
+    })
+  })
 })

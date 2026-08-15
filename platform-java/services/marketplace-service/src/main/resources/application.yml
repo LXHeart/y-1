@@ -111,8 +111,11 @@ marketplace:
     reminder-lead-seconds: ${CONFIRMATION_REMINDER_LEAD_SECONDS:86400}
     # 商家要求补证（退回重交）次数上限（D-03 §3）。
     supplement-cap: ${CONFIRMATION_SUPPLEMENT_CAP:2}
-    # merchant_rejection 客服裁定 SLA：3 工作日首期按 3 自然日秒数执行；超时默认 for_recommender。
-    cs-sla-seconds: ${CONFIRMATION_CS_SLA_SECONDS:259200}
+    # merchant_rejection 客服裁定 SLA：默认 3 个业务日；秒数 >0 时作为测试/运维覆盖。
+    cs-sla-seconds: ${CONFIRMATION_CS_SLA_SECONDS:0}
+    cs-sla-business-days: ${MARKETPLACE_CONFIRMATION_CS_SLA_BUSINESS_DAYS:3}
+    holidays: ${MARKETPLACE_CONFIRMATION_HOLIDAYS:}
+    working-days: ${MARKETPLACE_CONFIRMATION_WORKING_DAYS:}
     # 补启派发器：消除 DB 提交与 Temporal start 的间隙（进程崩溃/网络失败时下轮扫描补启）。
     dispatcher-enabled: ${MARKETPLACE_CONFIRMATION_DISPATCHER_ENABLED:true}
     dispatcher-poll-ms: ${MARKETPLACE_CONFIRMATION_DISPATCHER_POLL_MS:2000}
@@ -122,6 +125,15 @@ marketplace:
     dispatcher-enabled: ${MARKETPLACE_CONTEST_DISPATCHER_ENABLED:true}
     dispatcher-poll-ms: ${MARKETPLACE_CONTEST_DISPATCHER_POLL_MS:2000}
     dispatcher-batch-size: ${MARKETPLACE_CONTEST_DISPATCHER_BATCH_SIZE:32}
+  task-review:
+    policy-enabled: ${MARKETPLACE_TASK_REVIEW_POLICY_ENABLED:true}
+    sampled-min-approved: ${MARKETPLACE_TASK_REVIEW_SAMPLED_MIN_APPROVED:3}
+    exempt-min-approved: ${MARKETPLACE_TASK_REVIEW_EXEMPT_MIN_APPROVED:10}
+    sample-rate-bps: ${MARKETPLACE_TASK_REVIEW_SAMPLE_RATE_BPS:2000}
+    sla-hours: ${MARKETPLACE_TASK_REVIEW_SLA_HOURS:24}
+    sla-auto-approve-enabled: ${MARKETPLACE_TASK_REVIEW_SLA_AUTO_APPROVE_ENABLED:true}
+    poll-ms: ${MARKETPLACE_TASK_REVIEW_POLL_MS:60000}
+    batch-size: ${MARKETPLACE_TASK_REVIEW_BATCH_SIZE:50}
   commerce:
     # HMAC 派生可重复展示的高熵核销码；数据库只保存 SHA-256，不长期保存明文。
     redeem-code-secret: ${MARKETPLACE_COMMERCE_REDEEM_CODE_SECRET:local-commerce-redeem-secret-change-me}

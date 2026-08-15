@@ -21,7 +21,7 @@ import reactor.core.publisher.Mono;
 public class VerificationOverrideRepository {
 
     private static final String SELECT_COLS =
-            "id::text, submission_id::text, status, reviewer_account_id::text, review_note, created_at, updated_at";
+            "id::text, submission_id::text, status, reviewer_account_id::text, review_note, version, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -44,7 +44,8 @@ public class VerificationOverrideRepository {
                 VALUES (CAST(:sub AS uuid), :status, CAST(:reviewer AS uuid), :note)
                 ON CONFLICT (submission_id) DO UPDATE
                     SET status = :status, reviewer_account_id = EXCLUDED.reviewer_account_id,
-                        review_note = EXCLUDED.review_note, updated_at = now()
+                        review_note = EXCLUDED.review_note, version = verification_override.version + 1,
+                        updated_at = now()
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("sub", submissionId)
@@ -61,6 +62,7 @@ public class VerificationOverrideRepository {
                 row.get("status", String.class),
                 row.get("reviewer_account_id", String.class),
                 row.get("review_note", String.class),
+                row.get("version", Long.class) == null ? 1L : row.get("version", Long.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)));
     }

@@ -56,6 +56,8 @@ public class TaskController {
     private final MarketplaceCallerResolver callers;
     private final TaskRepository tasks;
     private final TaskReviewRepository taskReviews;
+    private final TaskReviewService taskReviewService;
+    private final TaskPublishGate publishGate;
     private final OutboxRepository outbox;
     private final TaskApplicationRepository apps;
     private final FinanceEscrowClient finance;
@@ -68,6 +70,7 @@ public class TaskController {
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
+                          TaskReviewService taskReviewService, TaskPublishGate publishGate,
                           TaskApplicationRepository apps, FinanceEscrowClient finance,
                           TransactionalOperator transactions, ReputationService reputationService,
                           TaskResourceAuthorization taskAuthorization,
@@ -76,6 +79,8 @@ public class TaskController {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
+        this.taskReviewService = taskReviewService;
+        this.publishGate = publishGate;
         this.outbox = outbox;
         this.apps = apps;
         this.finance = finance;
@@ -100,9 +105,7 @@ public class TaskController {
                                                 body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                 body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
                                                 access.storeId(), body.requirements()))
-                                        .flatMap(task -> taskReviews.append(task.id(), "submitted", null, null)
-                                                .then(outbox.append(taskSubmittedEnvelope(task)))
-                                                .thenReturn(task)))))
+                                        .flatMap(taskReviewService::submit))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -147,9 +150,7 @@ public class TaskController {
                                                 access.permissionTier(), access.task().bountyCents()))
                                         .then(tasks.publish(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                                .flatMap(task -> taskReviews.append(task.id(), "submitted", null, null)
-                                                        .then(outbox.append(taskSubmittedEnvelope(task)))
-                                                        .thenReturn(task))))))
+                                                .flatMap(taskReviewService::submit))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -413,6 +414,7 @@ public class TaskController {
                                         tasks.reviewReject(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                                 .flatMap(rejected -> taskReviews.append(id, "rejected", reviewer.accountId(), note)
+                                                        .then(outbox.append(taskRejectedEnvelope(rejected, note)))
                                                         .thenReturn(rejected)));
                             });
                 })
@@ -580,27 +582,7 @@ public class TaskController {
      * 闸门 1（org 归属）由 {@link #loadOwnedTask} 隐含（owner 必属该 org）。
      */
     private Mono<Void> enforcePublishGates(String organizationId, String permissionTier, Long bountyCents) {
-        MerchantTier tier = MerchantTier.fromDb(permissionTier);
-        int maxActive = PublishQuotaPolicy.maxActiveTasks(tier);
-        if (maxActive == 0) {
-            return Mono.error(new MarketplaceException(403, "当前等级不可发布任务"));
-        }
-        long bounty = bountyCents == null ? 0L : bountyCents;
-        long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
-        if (bounty > 0 && maxTx == 0) {
-            return Mono.error(new MarketplaceException(403, "当前等级不可发布资金型任务"));
-        }
-        if (bounty > maxTx) {
-            return Mono.error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
-        }
-        int maxMonthly = PublishQuotaPolicy.maxMonthlyTasks(tier);
-        return tasks.countActiveByOrganization(organizationId)
-                .flatMap(active -> active >= maxActive
-                        ? Mono.<Integer>error(new MarketplaceException(409, "已达本组织发布上限"))
-                        : tasks.countCreatedThisMonthByOrganization(organizationId))
-                .flatMap(monthly -> monthly >= maxMonthly
-                        ? Mono.<Void>error(new MarketplaceException(409, "已达本组织本月发布上限"))
-                        : Mono.empty());
+        return publishGate.enforce(organizationId, permissionTier, bountyCents);
     }
 
     /** 组织级任务沿用 owner 管理；门店任务允许该店 MANAGER 管理。 */
@@ -633,10 +615,13 @@ public class TaskController {
                 task.id(), task.version(), Instant.now(), null, payload);
     }
 
-    /** GL-P2-ADMIN-003 全审政策：提交审核事件（与 TaskPublished 同构，区分审核态）。 */
-    private EventEnvelope taskSubmittedEnvelope(Task task) {
-        return new EventEnvelope(UUID.randomUUID().toString(), "TaskSubmittedForReview", "Task",
-                task.id(), task.version(), Instant.now(), null, taskEventPayload(task, true));
+    /** Reviewer rejection is a merchant-facing event; identity resolves only the owner in this payload. */
+    private EventEnvelope taskRejectedEnvelope(Task task, String note) {
+        Map<String, Object> payload = taskEventPayload(task, true);
+        payload.put("reason", note);
+        payload.put("status", "draft");
+        return new EventEnvelope(UUID.randomUUID().toString(), "TaskReviewRejected", "Task",
+                task.id(), task.version(), Instant.now(), null, payload);
     }
 
     private EventEnvelope taskDraftUpdatedEnvelope(Task task) {

@@ -9,6 +9,7 @@ public record VerificationOverride(
         String status,
         String reviewerAccountId,
         String reviewNote,
+        long version,
         Instant createdAt,
         Instant updatedAt) {
 }

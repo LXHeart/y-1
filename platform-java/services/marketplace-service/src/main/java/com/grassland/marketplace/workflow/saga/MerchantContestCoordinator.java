@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -34,7 +35,10 @@ public class MerchantContestCoordinator {
     private final MerchantRejectionReviewWorkflowStarter workflows;
     private final TransactionalOperator transactions;
     private final long csSlaSeconds;
+    private final int csSlaBusinessDays;
+    private final BusinessDayCalendar calendar;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public MerchantContestCoordinator(
             TaskApplicationRepository apps,
             SubmissionRepository submissions,
@@ -44,7 +48,10 @@ public class MerchantContestCoordinator {
             MerchantRejectionReviewWorkflowStarter workflows,
             TransactionalOperator transactions,
             @org.springframework.beans.factory.annotation.Value(
-                    "${marketplace.confirmation.cs-sla-seconds:259200}") long csSlaSeconds) {
+                    "${marketplace.confirmation.cs-sla-seconds:0}") long csSlaSeconds,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${marketplace.confirmation.cs-sla-business-days:3}") int csSlaBusinessDays,
+            BusinessDayCalendar calendar) {
         this.apps = apps;
         this.submissions = submissions;
         this.trust = trust;
@@ -53,6 +60,17 @@ public class MerchantContestCoordinator {
         this.workflows = workflows;
         this.transactions = transactions;
         this.csSlaSeconds = Math.max(0, csSlaSeconds);
+        this.csSlaBusinessDays = Math.max(0, csSlaBusinessDays);
+        this.calendar = calendar;
+    }
+
+    /** Test/backward-compatible constructor; production wiring uses the calendar-aware overload. */
+    MerchantContestCoordinator(TaskApplicationRepository apps, SubmissionRepository submissions,
+            TrustDisputeClient trust, OpsCaseRegistrar opsCases, OutboxRepository outbox,
+            MerchantRejectionReviewWorkflowStarter workflows, TransactionalOperator transactions,
+            long csSlaSeconds) {
+        this(apps, submissions, trust, opsCases, outbox, workflows, transactions, csSlaSeconds, 3,
+                new BusinessDayCalendar(Set.of(), Set.of()));
     }
 
     public Mono<TaskApplication> dispatch(TaskApplication claimed, Task task) {
@@ -64,7 +82,7 @@ public class MerchantContestCoordinator {
                         .flatMap(disputeId -> completeLocally(claimed, task, disputeId))
                 : Mono.just(claimed);
         return completed.flatMap(app -> workflows.start(
-                        app.id(), app.merchantRejectionDisputeId(), task.organizationId(), csSlaSeconds)
+                        app.id(), app.merchantRejectionDisputeId(), task.organizationId(), slaSeconds())
                 .then(Mono.defer(() -> apps.markRejectionWorkflowStarted(
                         app.id(), app.merchantRejectionDisputeId())))
                 .then(Mono.defer(() -> apps.findById(app.id()))));
@@ -99,6 +117,12 @@ public class MerchantContestCoordinator {
                 .then(Mono.defer(() -> apps.findById(claimed.id())))
                 .filter(app -> disputeId.equals(app.merchantRejectionDisputeId()))
                 .switchIfEmpty(Mono.error(new IllegalStateException("contest commit not visible")));
+    }
+
+    private long slaSeconds() {
+        if (csSlaSeconds > 0) return csSlaSeconds;
+        Instant now = Instant.now();
+        return calendar.secondsUntil(calendar.addBusinessDays(now, csSlaBusinessDays), now);
     }
 
     private EventEnvelope merchantContestedEnvelope(

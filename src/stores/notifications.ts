@@ -80,6 +80,18 @@ export function resolveLinkTarget(
       ? { view: 'grassland', anchor: 'gl-task-hall', side: 'recommender', taskId }
       : null
   }
+  if (linkPath === '/me/task-review') {
+    const taskId = payload.taskId
+    return typeof taskId === 'string' && taskId
+      ? { view: 'grassland', anchor: 'gl-engagements', side: 'merchant', taskId }
+      : null
+  }
+  if (linkPath === '/me/disputes') {
+    const disputeId = payload.disputeId
+    return typeof disputeId === 'string' && disputeId
+      ? { view: 'grassland', anchor: 'gl-disputes', disputeId }
+      : NOTIFICATION_LINK_TARGETS[linkPath]
+  }
   return NOTIFICATION_LINK_TARGETS[linkPath] ?? null
 }
 

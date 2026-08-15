@@ -28,7 +28,7 @@
 - **跨服务断言**：trust 调 marketplace 参与方授权使用 `purpose=service`、`audience=grassland-marketplace`；marketplace 的 verify keyring 必须同时包含 edge 用户键与 trust→marketplace 服务键。配置只引用环境变量，不在仓库记录密钥值。
 - 其余规则：补证上限默认 2；cancel 仅对 `accepted + 尚无 submission` 的 engagement 全额 release；`ConfirmationWindowEntered` / `ConfirmationWindowExpiring` / `AutoSettledOnTimeout` 走邮件+站内通知。
 - **验证边界（2026-08-03）**：marketplace/trust 全量测试与 `bootJar` 使用显式 JDK 25 通过；根工程 62 个测试文件、659 项测试、typecheck、build 通过。容器以 bootJar 后生成的新 JAR 重建；真实 Temporal + Kafka 闭环覆盖 F6 Timer-first 409 与 contest-first 保持 reserved、F5 人工终审及 300 秒 SLA 两条 deferred→successor→voting 路径、旧案 inboxed 但 reconciliation suppressed、successor final 正常 reconciled。真实浏览器走 Vite `:5173` → edge-bff `:8081`，中间等待只观察 DOM。上述均为本地测试/容器验证，未做生产真实流量验证。
-- **仍延后**：merchant cancel 的 trust 声誉计数消费者；merchant_rejection 的客服 UI 专用快捷入口（ops case 已保存 disputeId）；法定节假日工作日历（当前默认秒数近似 3 个自然日）。
+- **收尾完成（2026-08-16）**：trust 消费 merchant cancel 事件并按累计次数生成幂等风险信号；运营处置单可按 sourceRef 直达客服裁定；客服 SLA 使用上海时区的可配置业务日日历（法定假日/调休工作日由部署配置，秒数仅作测试或运维覆盖）。
 
 ## 背景
 

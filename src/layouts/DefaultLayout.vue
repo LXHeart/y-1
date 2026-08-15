@@ -293,6 +293,7 @@
             @start-workflow="handleStartWorkflow"
             @request-login="openLoginModal('任务和门店资料按账号隔离，请先登录。')"
             @open-grassland="handleOpenGrassland"
+            @open-dispute="handleOpenDispute"
           />
         </KeepAlive>
       </router-view>
@@ -528,7 +529,13 @@ provide('grasslandNavigationTarget', grasslandNavigationTarget)
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
   router.push({ name: target.view })
   grasslandAnchor.value = target.anchor
-  grasslandNavigationTarget.value = target.taskId ? target : null
+  grasslandNavigationTarget.value = target.taskId || target.disputeId ? target : null
+}
+
+function handleOpenDispute(disputeId: string): void {
+  router.push({ name: 'grassland' })
+  grasslandAnchor.value = 'gl-disputes'
+  grasslandNavigationTarget.value = { view: 'grassland', anchor: 'gl-disputes', disputeId }
 }
 
 function handleSaveSettings(newSettings: AnalysisSettings, newHomepageSettings: HomepageSettings): void {

@@ -41,6 +41,7 @@ public class RiskRuleEngine {
             case "repeated_rejected_submissions" -> Math.min(100, 20 + count * 18);
             case "dispute_velocity" -> Math.min(100, 30 + count * 20);
             case "abnormal_application_velocity" -> Math.min(100, 20 + count * 15);
+            case "merchant_cancelled_engagement" -> Math.min(100, 35 + count * 15);
             default -> 50;
         };
     }

@@ -12,6 +12,8 @@ import type {
   OpsPendingVerification,
 } from '../../types/grassland'
 
+const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
+
 /**
  * 运营处置台（GL-P1-OPS-001 Stage 3）。
  *
@@ -64,6 +66,7 @@ const SOURCE_LABEL: Record<OpsCaseSourceKind, string> = {
   settlement_blocked: '对账阻断',
   settlement_held: '结算暂缓',
   dlt_message: '死信消息',
+  merchant_rejection: '商家履约异议',
 }
 
 const STATUS_LABEL: Record<OpsCaseStatus, string> = {
@@ -93,6 +96,7 @@ const ACTIONS_BY_SOURCE: Record<OpsCaseSourceKind, OpsActionKind[]> = {
   settlement_blocked: ['retry_reconciliation'],
   settlement_held: ['release_funds'],
   dlt_message: [],
+  merchant_rejection: [],
 }
 
 const filteredCases = computed(() => cases.value.filter((c) => {
@@ -323,6 +327,7 @@ function checksOf(row: OpsPendingVerification) {
             <option value="settlement_blocked">对账阻断</option>
             <option value="settlement_held">结算暂缓</option>
             <option value="dlt_message">死信消息</option>
+            <option value="merchant_rejection">商家履约异议</option>
           </select>
         </label>
         <label class="ops-check">
@@ -385,6 +390,7 @@ function checksOf(row: OpsPendingVerification) {
           <div><dt>消息 key</dt><dd><code>{{ m.messageKey || '—' }}</code></dd></div>
           <div><dt>入队时间</dt><dd>{{ time(m.createdAt) }}</dd></div>
         </dl>
+
         <div v-if="m.errorSummary" class="ops-err-summary">
           <p class="ops-err-head">{{ errorHeadline(m.errorSummary) }}</p>
           <details><summary>完整报错</summary><pre>{{ m.errorSummary }}</pre></details>
@@ -472,6 +478,9 @@ function checksOf(row: OpsPendingVerification) {
           <div><dt>提审人</dt><dd><code>{{ shortId(detail.case.submittedBy) }}</code></dd></div>
           <div><dt>审批人</dt><dd><code>{{ shortId(detail.case.approvedBy) }}</code></dd></div>
         </dl>
+
+        <button v-if="detail.case.sourceKind === 'merchant_rejection'" type="button" class="ops-quiet"
+          @click="emit('open-dispute', detail.case.sourceRef)">前往客服裁定</button>
 
         <p v-if="detail.case.resolution" class="ops-resolution">处置结果：{{ detail.case.resolution }}</p>
 

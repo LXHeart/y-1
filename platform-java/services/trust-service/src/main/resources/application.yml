@@ -87,6 +87,11 @@ trust:
     claim-lease-ms: ${TRUST_OUTBOX_CLAIM_LEASE_MS:300000}
     initial-backoff-ms: ${TRUST_OUTBOX_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${TRUST_OUTBOX_MAX_BACKOFF_MS:60000}
+  marketplace-consumer:
+    enabled: ${TRUST_MARKETPLACE_CONSUMER_ENABLED:true}
+    topic: ${TRUST_MARKETPLACE_CONSUMER_TOPIC:grassland.marketplace.events}
+    group-id: ${TRUST_MARKETPLACE_CONSUMER_GROUP_ID:trust-marketplace-reputation}
+    auto-startup: ${TRUST_MARKETPLACE_CONSUMER_AUTO_STARTUP:true}
   evidence:
     retention-days: ${TRUST_EVIDENCE_RETENTION_DAYS:365}
     pseudonym-secret: ${TRUST_EVIDENCE_PSEUDONYM_SECRET:}
