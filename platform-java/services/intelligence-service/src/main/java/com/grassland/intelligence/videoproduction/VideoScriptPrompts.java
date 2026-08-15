@@ -39,11 +39,25 @@ final class VideoScriptPrompts {
 
     private VideoScriptPrompts() {}
 
-    static ChatMessage system(String videoStyle, String industryType) {
-        return ChatMessage.system(SYSTEM_TEMPLATE
+    /**
+     * 朋友圈（targetPlatform=moments）在通用模板上追加熟人分享适配（PRD §4.7）；
+     * 其它平台不注入，prompt 逐字不变。
+     */
+    static ChatMessage system(String videoStyle, String industryType, String targetPlatform) {
+        String prompt = SYSTEM_TEMPLATE
                 .replace("{videoStyle}", videoStyle)
-                .replace("{industryType}", industryType));
+                .replace("{industryType}", industryType);
+        if ("moments".equals(targetPlatform == null ? "" : targetPlatform.trim())) {
+            prompt = prompt + MOMENTS_ADAPTATION;
+        }
+        return ChatMessage.system(prompt);
     }
+
+    private static final String MOMENTS_ADAPTATION = """
+
+            ## 朋友圈适配
+            这条视频将发布在微信朋友圈：面向熟人社交关系，语气自然亲近、像顺手分享；
+            节奏轻快、信息精简，结尾自然带互动表达（约朋友来店 / 点赞 / 评论），不要广告腔。""";
 
     static ChatMessage user(VideoProductionController.ScriptRequest request) {
         List<String> lines = new ArrayList<>();

@@ -167,7 +167,7 @@ public class VideoProductionController {
                             body.contextSnapshotId(), caller.accountId(), body.targetPlatform()))
                     .flatMap(binding -> frozenText.execute(
                             exchange, body.contextSnapshotId(), List.of(
-                                    VideoScriptPrompts.system(body.videoStyle(), body.industryType()),
+                                    VideoScriptPrompts.system(body.videoStyle(), body.industryType(), body.targetPlatform()),
                                     binding.promptContext(), VideoScriptPrompts.user(body)),
                             2048, CreditFeature.VIDEO_PRODUCTION_SCRIPT,
                             completion -> completion.content()))
@@ -179,7 +179,7 @@ public class VideoProductionController {
                 .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.VIDEO_PRODUCTION_SCRIPT))
                 .map(charge -> {
                     Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
-                                    VideoScriptPrompts.system(body.videoStyle(), body.industryType()),
+                                    VideoScriptPrompts.system(body.videoStyle(), body.industryType(), body.targetPlatform()),
                                     VideoScriptPrompts.user(body))))
                             .map(chunk -> frame(Map.of("content", chunk.content())))
                             // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）

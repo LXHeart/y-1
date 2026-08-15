@@ -32,7 +32,8 @@ public class VideoTaskCreationContext {
     }
 
     private Binding binding(CreationContextSnapshot snapshot, String requestedPlatform) {
-        if (!"video".equals(snapshot.contentFormId())) {
+        // 朋友圈视频任务的形式是 video-text（PRD §4.4），与 video 同属视频工作流。
+        if (!"video".equals(snapshot.contentFormId()) && !"video-text".equals(snapshot.contentFormId())) {
             throw new IntelligenceException(409, "创作上下文不是视频任务");
         }
         if (requestedPlatform == null || !snapshot.platformId().equals(requestedPlatform.trim())) {
