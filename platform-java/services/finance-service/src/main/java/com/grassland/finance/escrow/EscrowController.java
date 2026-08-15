@@ -154,7 +154,9 @@ public class EscrowController {
     }
 
     @PostMapping("/api/finance/reservations/{engagementRef}/capture")
-    public Mono<ResponseEntity<Map<String, Object>>> capture(@PathVariable String engagementRef, ServerHttpRequest request) {
+    public Mono<ResponseEntity<Map<String, Object>>> capture(@PathVariable String engagementRef,
+                                                             @RequestBody(required = false) CaptureRequest body,
+                                                             ServerHttpRequest request) {
         return callers.resolveMerchantOrServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE, FinanceCallerResolver.TRUST_SERVICE)
                 .flatMap(caller -> reservations.findByEngagementRef(engagementRef)
                         .switchIfEmpty(fail(404, "预留不存在"))
@@ -162,10 +164,14 @@ public class EscrowController {
                             if (!r.organizationId().equals(caller.organizationId())) {
                                 return fail(403, "无权操作该组织预留");
                             }
+                            if (body != null && body.settlementAmountCents() != null
+                                    && !caller.isServicePrincipal(FinanceCallerResolver.MARKETPLACE_SERVICE)) {
+                                return fail(403, "阶梯结算只能由 marketplace 服务执行");
+                            }
                             if (!"reserved".equals(r.status())) {
                                 return fail(409, "该预留已处理");
                             }
-                            return lifecycle.capture(r);
+                            return lifecycle.capture(r, body == null ? null : body.settlementAmountCents());
                         })
                         .map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
     }
@@ -253,15 +259,18 @@ public class EscrowController {
         m.put("status", r.status());
         m.put("payeeAccountId", r.payeeAccountId());
         m.put("payoutCents", r.payoutCents());   // capture 后 = 实际打给推荐官的净额；null = 未分账
+        m.put("settlementAmountCents", r.settlementAmountCents());
+        m.put("settlementCommissionBonusCents", r.effectiveSettlementCommissionBonusCents());
         m.put("commissionBonusBps", r.commissionBonusBps());
         m.put("commissionBonusCents", r.commissionBonusCents());
         if (r.payoutCents() == null) {
             m.put("basePayoutCents", null);
             m.put("platformFeeCents", null);
         } else {
-            long basePayout = r.payoutCents() - r.commissionBonusCents();
+            long basePayout = r.payoutCents() - r.effectiveSettlementCommissionBonusCents();
             m.put("basePayoutCents", basePayout);
-            m.put("platformFeeCents", r.amountCents() - basePayout);
+            long settledGross = r.effectiveSettlementAmountCents();
+            m.put("platformFeeCents", settledGross - basePayout);
         }
         m.put("createdAt", r.createdAt() == null ? null : r.createdAt().toString());
         return m;

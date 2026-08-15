@@ -50,7 +50,12 @@ public class EscrowLifecycleService {
     }
 
     public Mono<FundsReservation> capture(FundsReservation reservation) {
-        return transactions.transactional(captureWork(reservation));
+        return capture(reservation, null);
+    }
+
+    /** Capture the selected gross tier and return any reserved remainder to the merchant. */
+    public Mono<FundsReservation> capture(FundsReservation reservation, Long settlementAmountCents) {
+        return transactions.transactional(captureWork(reservation, settlementAmountCents));
     }
 
     public Mono<FundsReservation> reverse(FundsReservation reservation) {
@@ -115,16 +120,24 @@ public class EscrowLifecycleService {
                         .thenReturn(released));
     }
 
-    private Mono<FundsReservation> captureWork(FundsReservation reservation) {
+    private Mono<FundsReservation> captureWork(FundsReservation reservation, Long requestedSettlementAmountCents) {
+        long settlementAmount = requestedSettlementAmountCents == null
+                ? reservation.amountCents() : requestedSettlementAmountCents;
+        if (settlementAmount < 1 || settlementAmount > reservation.amountCents()) {
+            return Mono.error(new FinanceException(400, "阶梯结算金额必须在预留金额范围内"));
+        }
+        long settlementBonus = reservation.payeeAccountId() == null
+                ? 0 : CommissionBonusPolicy.calculateCents(settlementAmount, reservation.commissionBonusBps());
         Long payout = reservation.payeeAccountId() == null ? null : Math.addExact(
-                fees.payoutFor(reservation.amountCents()), reservation.commissionBonusCents());
-        return reservations.capture(reservation.id(), payout)
+                fees.payoutFor(settlementAmount), settlementBonus);
+        return reservations.capture(reservation.id(), payout, settlementAmount, settlementBonus)
                 .switchIfEmpty(Mono.error(new FinanceException(409, "该预留已处理")))
                 .flatMap(this::splitToPayee)
                 .flatMap(captured -> ledger.postCapture(
                                 captured.organizationId(), captured.engagementRef(),
-                                captured.amountCents(), captured.payeeAccountId(), captured.payoutCents(),
-                                captured.commissionBonusCents())
+                                settledGross(captured), captured.payeeAccountId(), captured.payoutCents(),
+                                captured.effectiveSettlementCommissionBonusCents())
+                        .then(releaseRemainder(captured))
                         .then(outbox.append(reservationEnvelope("FundsCaptured", captured)))
                         .thenReturn(captured));
     }
@@ -134,11 +147,11 @@ public class EscrowLifecycleService {
                 .then(reservations.reverse(reservation.id()))
                 .switchIfEmpty(Mono.error(new FinanceException(409, "该预留不可冲正（须 captured）")))
                 .flatMap(refunded -> accounts.credit(
-                                reservation.organizationId(), reservation.amountCents())
+                                reservation.organizationId(), settledGross(reservation))
                         .then(ledger.postReverse(
                                 reservation.organizationId(), reservation.engagementRef(),
-                                reservation.amountCents(), reservation.payeeAccountId(), reservation.payoutCents(),
-                                reservation.commissionBonusCents()))
+                                settledGross(reservation), reservation.payeeAccountId(), reservation.payoutCents(),
+                                reservation.effectiveSettlementCommissionBonusCents()))
                         .then(outbox.append(reservationEnvelope("FundsReversed", refunded)))
                         .thenReturn(refunded));
     }
@@ -150,15 +163,15 @@ public class EscrowLifecycleService {
             return Mono.just(captured);
         }
         long payout = captured.payoutCents();
-        long basePayout = payout - captured.commissionBonusCents();
-        long fee = captured.amountCents() - basePayout;
+        long basePayout = payout - captured.effectiveSettlementCommissionBonusCents();
+        long fee = settledGross(captured) - basePayout;
         return wallets.credit(captured.payeeAccountId(), payout)
                 .then(wallets.appendEntry(
                         captured.payeeAccountId(),
                         WalletEntryType.TASK_PAYOUT,
                         payout,
                         fee,
-                        captured.commissionBonusCents(),
+                        captured.effectiveSettlementCommissionBonusCents(),
                         captured.engagementRef(),
                         "任务结算入账"))
                 .then(outbox.append(new EventEnvelope(
@@ -172,13 +185,27 @@ public class EscrowLifecycleService {
                         Map.of(
                                 "engagementRef", String.valueOf(captured.engagementRef()),
                                 "payeeAccountId", captured.payeeAccountId(),
-                                "grossCents", captured.amountCents(),
+                                "grossCents", settledGross(captured),
+                                "reservedGrossCents", captured.amountCents(),
                                 "basePayoutCents", basePayout,
                                 "payoutCents", payout,
                                 "platformFeeCents", fee,
                                 "commissionBonusBps", captured.commissionBonusBps(),
-                                "commissionBonusCents", captured.commissionBonusCents()))))
+                                "commissionBonusCents", captured.effectiveSettlementCommissionBonusCents()))))
                 .thenReturn(captured);
+    }
+
+    private Mono<Void> releaseRemainder(FundsReservation captured) {
+        long remainder = captured.amountCents() - settledGross(captured);
+        if (remainder == 0) return Mono.empty();
+        return accounts.credit(captured.organizationId(), remainder)
+                .then(ledger.postRelease(captured.organizationId(), captured.engagementRef(), remainder))
+                .then(outbox.append(reservationEnvelope("FundsPartiallyReleased", captured)))
+                .then();
+    }
+
+    private static long settledGross(FundsReservation reservation) {
+        return reservation.effectiveSettlementAmountCents();
     }
 
     private Mono<Void> clawbackFromPayee(FundsReservation reservation) {
@@ -196,7 +223,7 @@ public class EscrowLifecycleService {
                         WalletEntryType.CLAWBACK,
                         -payout,
                         0,
-                        reservation.commissionBonusCents(),
+                        reservation.effectiveSettlementCommissionBonusCents(),
                         reservation.engagementRef(),
                         "争议冲正扣回"))
                 .then();
@@ -214,14 +241,16 @@ public class EscrowLifecycleService {
         payload.put("status", reservation.status());
         payload.put("commissionBonusBps", reservation.commissionBonusBps());
         payload.put("commissionBonusCents", reservation.commissionBonusCents());
+        payload.put("settlementAmountCents", reservation.settlementAmountCents());
+        payload.put("settlementCommissionBonusCents", reservation.effectiveSettlementCommissionBonusCents());
         if (reservation.payeeAccountId() != null) {
             payload.put("payeeAccountId", reservation.payeeAccountId());
         }
         if (reservation.payoutCents() != null) {
             payload.put("payoutCents", reservation.payoutCents());
-            long basePayout = reservation.payoutCents() - reservation.commissionBonusCents();
+            long basePayout = reservation.payoutCents() - reservation.effectiveSettlementCommissionBonusCents();
             payload.put("basePayoutCents", basePayout);
-            payload.put("platformFeeCents", reservation.amountCents() - basePayout);
+            payload.put("platformFeeCents", settledGross(reservation) - basePayout);
         }
         return new EventEnvelope(
                 UUID.randomUUID().toString(),

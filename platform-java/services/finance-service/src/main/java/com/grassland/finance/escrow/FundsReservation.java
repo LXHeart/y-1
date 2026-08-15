@@ -25,5 +25,24 @@ public record FundsReservation(
         /** 平台承担的佣金补贴分，按原任务赏金计算并在 reserve 时冻结。 */
         long commissionBonusCents,
         Instant createdAt,
-        Instant updatedAt
-) {}
+        Instant updatedAt,
+        /** 阶梯结算实际捕获的毛额；reserved 时为空，固定佣金 capture 时等于 amountCents。 */
+        Long settlementAmountCents,
+        /** 阶梯结算实际使用的补贴；反冲必须使用该值而不是预留上限的补贴。 */
+        long settlementCommissionBonusCents
+) {
+    /** Backward-compatible view for captured rows written before V15. */
+    public long effectiveSettlementCommissionBonusCents() {
+        if (settlementAmountCents != null) {
+            return settlementCommissionBonusCents;
+        }
+        // V15 was not backfilled: only legacy captured/refunded rows represent a
+        // completed settlement; reserved/released rows have no settlement bonus.
+        return ("captured".equals(status) || "refunded".equals(status))
+                ? commissionBonusCents : 0L;
+    }
+
+    public long effectiveSettlementAmountCents() {
+        return settlementAmountCents == null ? amountCents : settlementAmountCents;
+    }
+}

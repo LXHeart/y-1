@@ -24,7 +24,8 @@ class CommissionBonusIT extends FinanceItSupport {
                 .expectBody()
                 .jsonPath("$.data.amountCents").isEqualTo(1_000)
                 .jsonPath("$.data.commissionBonusBps").isEqualTo(1_000)
-                .jsonPath("$.data.commissionBonusCents").isEqualTo(100);
+                .jsonPath("$.data.commissionBonusCents").isEqualTo(100)
+                .jsonPath("$.data.settlementCommissionBonusCents").isEqualTo(0);
 
         // 完整 scope 相同才是幂等重试，返回第一次冻结值且商家只扣一次原赏金。
         reserveAsMarketplace(org, ref, recommender, 1_000, 1_000)
@@ -121,6 +122,89 @@ class CommissionBonusIT extends FinanceItSupport {
                 .exchange().expectStatus().isForbidden();
 
         assertThat(merchantBalance(org)).isEqualTo(1_000);
+    }
+
+    @Test
+    void capturesSelectedLadderAmountAndReturnsUnusedReserveToMerchant() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String ref = "ladder-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 2_000);
+
+        reserveAsMarketplace(org, ref, recommender, 1_500, 0)
+                .expectStatus().isCreated();
+
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("settlementAmountCents", 900))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.amountCents").isEqualTo(1_500)
+                .jsonPath("$.data.settlementAmountCents").isEqualTo(900)
+                .jsonPath("$.data.payoutCents").isEqualTo(900);
+
+        assertThat(merchantBalance(org)).isEqualTo(1_100);
+        assertThat(walletBalance(recommender)).isEqualTo(900);
+        assertThat(outboxLong("FundsPartiallyReleased", ref, "settlementAmountCents")).isEqualTo(900);
+    }
+
+    @Test
+    void rejectsLadderCaptureAboveReservedAmountWithoutChangingBalances() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String ref = "ladder-over-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1_000);
+        reserveAsMarketplace(org, ref, recommender, 1_000, 0).expectStatus().isCreated();
+
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("settlementAmountCents", 1_001))
+                .exchange().expectStatus().isBadRequest();
+
+        assertThat(merchantBalance(org)).isZero();
+        assertThat(walletBalance(recommender)).isZero();
+    }
+
+    @Test
+    void merchantCannotChooseTheLadderSettlementAmount() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String ref = "ladder-merchant-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1_000);
+        reserveAsMarketplace(org, ref, recommender, 1_000, 0).expectStatus().isCreated();
+
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("settlementAmountCents", 1))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void trustCannotChooseTheLadderSettlementAmount() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String ref = "ladder-trust-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1_000);
+        reserveAsMarketplace(org, ref, recommender, 1_000, 0).expectStatus().isCreated();
+
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "trust"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("settlementAmountCents", 1))
+                .exchange().expectStatus().isForbidden();
+
+        assertThat(merchantBalance(org)).isZero();
+        assertThat(walletBalance(recommender)).isZero();
     }
 
     @Test

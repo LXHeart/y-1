@@ -22,6 +22,7 @@ public class ReservationRepository {
     private static final String SELECT_COLS =
             "id::text, account_id::text, organization_id::text, engagement_ref, amount_cents, status,"
                     + " payee_account_id::text, payout_cents, commission_bonus_bps, commission_bonus_cents,"
+                    + " settlement_amount_cents, settlement_commission_bonus_cents,"
                     + " created_at, updated_at";
 
     private final DatabaseClient db;
@@ -74,13 +75,18 @@ public class ReservationRepository {
      * <p>商家余额在 reserve 时就已扣掉，故这里不动商家余额；{@code payoutCents} 是随后要打进推荐官钱包的净额
      * （无收款人时为 null = 不分账，钱留在平台账上，与本次改动前的行为一致）。
      */
-    public Mono<FundsReservation> capture(String id, Long payoutCents) {
+    public Mono<FundsReservation> capture(String id, Long payoutCents,
+                                          long settlementAmountCents, long settlementBonusCents) {
         var spec = db.sql("""
-                UPDATE funds_reservation SET status = 'captured', payout_cents = :payout, updated_at = now()
+                UPDATE funds_reservation SET status = 'captured', payout_cents = :payout,
+                    settlement_amount_cents = :settlementAmount,
+                    settlement_commission_bonus_cents = :settlementBonus,
+                    updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'reserved'
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id);
+                .bind("id", id).bind("settlementAmount", settlementAmountCents)
+                .bind("settlementBonus", settlementBonusCents);
         spec = payoutCents == null ? spec.bindNull("payout", Long.class) : spec.bind("payout", payoutCents);
         return spec.map(ReservationRepository::map).one();
     }
@@ -110,12 +116,18 @@ public class ReservationRepository {
                 row.get("commission_bonus_bps", Integer.class),
                 row.get("commission_bonus_cents", Long.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
-                toInstant(row.get("updated_at", OffsetDateTime.class))
+                toInstant(row.get("updated_at", OffsetDateTime.class)),
+                row.get("settlement_amount_cents", Long.class),
+                longValue(row.get("settlement_commission_bonus_cents", Long.class))
         );
     }
 
     private static Instant toInstant(OffsetDateTime value) {
         return value == null ? null : value.toInstant();
+    }
+
+    private static long longValue(Long value) {
+        return value == null ? 0L : value;
     }
 
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
