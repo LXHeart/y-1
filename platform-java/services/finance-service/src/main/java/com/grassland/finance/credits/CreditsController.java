@@ -40,7 +40,7 @@ public class CreditsController {
     private static final Set<String> AI_QUOTA_FEATURES = Set.of(
             "video_analysis", "image_analysis", "article_generation", "comedy_generation",
             "video_production_script", "video_production_video", "ai_run_text",
-            "intelligence_smoke", "creation_assistant");
+            "intelligence_smoke", "creation_assistant", "moments_generation");
 
     private final FinanceCallerResolver callers;
     private final CreditsService credits;

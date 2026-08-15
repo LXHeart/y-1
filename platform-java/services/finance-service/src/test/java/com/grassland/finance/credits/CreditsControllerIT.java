@@ -133,6 +133,26 @@ class CreditsControllerIT extends FinanceItSupport {
     }
 
     @Test
+    void momentsGenerationSupportsAiQuotaEntitlement() {
+        // 朋友圈内容生成（PRD §4.4）：intelligence 的 FinanceCreditsClient 必带权益快照字段扣减，
+        // finance 白名单必须包含 moments_generation，否则整条链路 400（浏览器实测抓到的跨服务契约缺陷）。
+        String acct = UUID.randomUUID().toString();
+        award(acct, 1);
+
+        client().post().uri("/internal/credits/consume")
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "accountId", acct,
+                        "feature", "moments_generation",
+                        "operationId", "moments-quota-" + acct,
+                        "aiQuotaMultiplierBps", 10_000,
+                        "policyVersion", 1))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.source").isNotEmpty();
+    }
+
+    @Test
     void aiQuotaMultiplierFloorsLimitAndThenFallsBackToPaidBalance() {
         String acct = UUID.randomUUID().toString();
         award(acct, 1);
