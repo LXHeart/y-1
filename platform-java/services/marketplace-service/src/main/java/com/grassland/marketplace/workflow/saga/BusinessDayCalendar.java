@@ -18,6 +18,7 @@ public class BusinessDayCalendar {
     private final Set<LocalDate> holidays;
     private final Set<LocalDate> workingDays;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public BusinessDayCalendar(
             @org.springframework.beans.factory.annotation.Value("${marketplace.confirmation.holidays:}") String holidays,
             @org.springframework.beans.factory.annotation.Value("${marketplace.confirmation.working-days:}") String workingDays) {

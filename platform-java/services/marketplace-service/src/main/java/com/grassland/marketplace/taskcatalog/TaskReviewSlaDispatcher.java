@@ -25,6 +25,7 @@ public class TaskReviewSlaDispatcher {
     private final boolean enabled;
     private final Clock clock;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public TaskReviewSlaDispatcher(
             TaskRepository tasks, TaskResourceAuthorization authorization, TaskPublishGate publishGate,
             TaskReviewService reviews, TransactionalOperator transactions,

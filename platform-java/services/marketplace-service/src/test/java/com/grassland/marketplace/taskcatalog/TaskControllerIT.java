@@ -17,6 +17,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import reactor.core.publisher.Mono;
 
 /**
@@ -28,6 +30,13 @@ import reactor.core.publisher.Mono;
  */
 @SuppressWarnings("unchecked")
 class TaskControllerIT extends MarketplaceItSupport {
+
+    @DynamicPropertySource
+    static void deterministicFullReview(DynamicPropertyRegistry registry) {
+        // 抽样免审（task-review-v1）会让「≥3 通过且 0 拒绝」的商家大概率在创建时自动上架，
+        // 配额/并发审核用例需要确定性的「创建即 pending_review + 人工 approve」路径。新商家行为两态一致。
+        registry.add("marketplace.task-review.policy-enabled", () -> "false");
+    }
 
     @Test
     void storeScopedDraftPersistsAndRequiresStoreAuthorization() {
