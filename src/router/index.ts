@@ -39,6 +39,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/article/ArticleCreationView.vue'),
       },
       {
+        path: 'moments',
+        name: 'moments',
+        component: () => import('../views/moments/MomentsCreationView.vue'),
+      },
+      {
         path: 'image-gen',
         name: 'image-gen',
         component: () => import('../views/image-gen/ImageGenerationView.vue'),

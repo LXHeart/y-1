@@ -20,8 +20,9 @@ export type CreationWorkflowId =
   | 'comedy-script'
   | 'video-recreation'
   | 'reference-analyze'
+  | 'moments-image-text'
 export type VideoCreationWorkflowId = 'video-script' | 'comedy-script' | 'video-recreation'
-export type CreationTargetView = 'article' | 'image' | 'video-production' | 'video' | 'comedy'
+export type CreationTargetView = 'article' | 'image' | 'video-production' | 'video' | 'comedy' | 'moments'
 
 export type CreationSource =
   | { type: 'independent' }

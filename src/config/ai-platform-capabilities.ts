@@ -150,7 +150,7 @@ export function resolveWorkflow(
       : PLANNED
   }
 
-  if (formId === 'video') {
+  if (formId === 'video' || (formId === 'video-text' && platformId === 'moments')) {
     if (videoWorkflow === 'comedy-script') return available('comedy-script', 'comedy')
     if (videoWorkflow === 'video-recreation') return available('video-recreation', 'video')
     return available('video-script', 'video-production')
@@ -159,6 +159,8 @@ export function resolveWorkflow(
   if (formId === 'graphic' && ['xiaohongshu', 'douyin', 'wechat-official', 'zhihu'].includes(platformId)) {
     return available('longform', 'article')
   }
-  // 朋友圈的图片+文字/视频+文字是 PRD 合法组合，尚未接入工作流，显式返回 planned，不静默降级。
+  if (formId === 'image-text' && platformId === 'moments') {
+    return available('moments-image-text', 'moments')
+  }
   return PLANNED
 }

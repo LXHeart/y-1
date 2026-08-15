@@ -214,13 +214,53 @@ describe('AI 内容创作中心', () => {
     })
   })
 
-  test('不支持的已规划组合显示尚未接入且不能开始', async () => {
+  test('朋友圈图片+文字进入朋友圈工作流并 handoff 到朋友圈视图', async () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
 
     await wrapper.get('[data-platform-id="moments"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图片 + 文字').trigger('click')
     await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
     await wrapper.get('textarea[name="creation-topic"]').setValue('门店探店')
+
+    expect(wrapper.text()).not.toContain('该创作路径尚未接入')
+    const start = button(wrapper, '开始创作')
+    expect(start.attributes('disabled')).toBeUndefined()
+    await start.trigger('click')
+
+    const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as Record<string, unknown>
+    expect(handoff).toMatchObject({
+      platformId: 'moments', contentFormId: 'image-text', source: { type: 'independent' },
+      workflowId: 'moments-image-text', targetView: 'moments',
+    })
+  })
+
+  test('朋友圈视频+文字进入视频制作工作流', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+
+    await wrapper.get('[data-platform-id="moments"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频 + 文字').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('门店探店')
+
+    expect(wrapper.text()).not.toContain('该创作路径尚未接入')
+    const start = button(wrapper, '开始创作')
+    expect(start.attributes('disabled')).toBeUndefined()
+    await start.trigger('click')
+
+    const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as Record<string, unknown>
+    expect(handoff).toMatchObject({
+      platformId: 'moments', contentFormId: 'video-text', source: { type: 'independent' },
+      workflowId: 'video-script', targetView: 'video-production',
+    })
+  })
+
+  test('不支持的已规划组合显示尚未接入且不能开始', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+
+    await wrapper.get('[data-platform-id="moments"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图片 + 文字').trigger('click')
+    await choiceButton(wrapper, '创作来源', '参考素材').trigger('click')
+    await wrapper.get('textarea[name="reference-url"]').setValue('https://example.com/share')
 
     expect(wrapper.text()).toContain('该创作路径尚未接入')
     expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()

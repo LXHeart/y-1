@@ -23,6 +23,7 @@
 - **图片评价文案**：点评探店定位：上传图片 → 选择平台（淘宝/大众点评）→ 生成探店点评文案 → 一键复制 / 导出飞书，支持本次会话多版本对比
 - **爆款文章创作**：主题 → 平台（微信公众号/知乎/小红书/抖音图集短文案）→ 标题 → 大纲 → 正文 → 按段落配图，SSE 流式输出，附只读平台规范提示
 - **脱口秀/风格化脚本**：六种抽象风格模板（不模仿特定在世创作者），SSE 流式输出
+- **朋友圈创作**：图片+文字（专用轻量流程：主题/四风格/素材图 → 精简文案+九宫格顺序建议+每图配文，一次多模态 SSE）与视频+文字（路由到视频制作，脚本 prompt 注入朋友圈熟人分享适配）
 - **图片生成**：素材生成定位：独立图片生成，支持参考图上传和 @mention
 - **视频内容改编**：将视频分析结果转为分镜脚本，支持用户自定义指令和图片上传
 - **视频制作**：上传素材图片 / 粘贴参考视频链接（内嵌抖音/B站参考提取）/ 从热点选主题 + 店铺信息 → AI 脚本生成（SSE 流式）→ 异步视频生成（Sandbox 已可用，Seedance/MiniMax 真实渠道待联调）
@@ -82,6 +83,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 图片评价 | `/api/image-analysis/*` | analyze (SSE), export-feishu, save-style-memory, style-preferences (GET/PUT), style-preferences/optimize, step/draft, step/optimize, step/style-refine |
 | 文章生成 | `/api/article-generation/*` | titles, outline (SSE), content (SSE), image-recommendations, search-images, generate-image |
 | 脱口秀 | `/api/comedy-generation/*` | generate-script (SSE) |
+| 朋友圈 | `/api/moments-generation/*` | generate (SSE 判别帧 progress/result/error)：一次多模态调用产出精简文案+九宫格顺序建议+每图配文；扣 moments_generation 积分，失败退款；任务模式绑定 moments+image-text 快照（intelligence-service，PRD §4.4）|
 | 视频制作 | `/api/video-production/*` | `capabilities`、`generate-video`、`jobs` 查询/取消已由 intelligence 提供异步 Sandbox 闭环；Seedance/MiniMax 真实渠道待联调 |
 | 视频改编 | `/api/video-recreation/*` | adapt-content, generate-asset-image, generate-all-asset-images, generate-scene-image, generate-all-scene-images |
 | 创作助手 | `/api/creation-assistant/*` | score (SSE), suggest (SSE), guide (SSE), task-coverage (SSE), topic-from-hot (SSE)（intelligence-service，PRD §4.9）|

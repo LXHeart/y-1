@@ -46,10 +46,13 @@ describe('AI 平台能力矩阵', () => {
       status: 'available', workflowId: 'longform', targetView: 'article',
     })
     expect(resolveWorkflow('moments', 'image-text', 'independent')).toEqual({
-      status: 'planned', workflowId: null, targetView: null,
+      status: 'available', workflowId: 'moments-image-text', targetView: 'moments',
+    })
+    expect(resolveWorkflow('moments', 'image-text', 'task')).toEqual({
+      status: 'available', workflowId: 'moments-image-text', targetView: 'moments',
     })
     expect(resolveWorkflow('moments', 'video-text', 'store')).toEqual({
-      status: 'planned', workflowId: null, targetView: null,
+      status: 'available', workflowId: 'video-script', targetView: 'video-production',
     })
     expect(resolveWorkflow('kuaishou', 'graphic', 'independent')).toEqual({
       status: 'unsupported', workflowId: null, targetView: null,

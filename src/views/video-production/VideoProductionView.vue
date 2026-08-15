@@ -381,7 +381,9 @@ watch(() => props.creationHandoff, (handoff) => {
 }, { immediate: true })
 
 const MAX_IMAGES = 9
-const videoPlatforms = AI_PLATFORM_DEFINITIONS.filter((item) => item.forms.some((form) => form.id === 'video'))
+// 朋友圈的视频形式是 video-text（PRD §4.4），同样落到视频制作。
+const videoPlatforms = AI_PLATFORM_DEFINITIONS.filter((item) =>
+  item.forms.some((form) => form.id === 'video' || form.id === 'video-text'))
 
 const steps = [
   { key: 'upload' as const, label: '上传素材' },

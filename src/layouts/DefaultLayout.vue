@@ -167,6 +167,20 @@
         </button>
         <button
           class="nav-tab"
+          :class="{ 'nav-tab-active': currentViewName === 'moments' }"
+          :aria-current="currentViewName === 'moments' ? 'page' : undefined"
+          type="button"
+          @click="navigateTo('moments')"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="5.5" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
+            <circle cx="11" cy="6.5" r="2.2" stroke="currentColor" stroke-width="1.2"/>
+            <circle cx="6" cy="11.5" r="2.2" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+          朋友圈创作
+        </button>
+        <button
+          class="nav-tab"
           :class="{ 'nav-tab-active': currentViewName === 'image-gen' }"
           :aria-current="currentViewName === 'image-gen' ? 'page' : undefined"
           type="button"
@@ -332,16 +346,15 @@ import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from '../types/settings'
 
-type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'image-gen' | 'comedy' | 'video-production' | 'commerce' | 'grassland' | 'ops' | 'admin'
+type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'moments' | 'image-gen' | 'comedy' | 'video-production' | 'commerce' | 'grassland' | 'ops' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
-
 const route = useRoute()
 const router = useRouter()
 
 const currentViewName = computed<AppView>(() => (route.name as AppView) || 'ai-center')
 const creationContextEpoch = ref(0)
 const showLegacyTools = ref(false)
-const legacyViews: readonly AppView[] = ['home', 'video', 'image', 'article', 'image-gen', 'comedy', 'video-production']
+const legacyViews: readonly AppView[] = ['home', 'video', 'image', 'article', 'moments', 'image-gen', 'comedy', 'video-production']
 const creationEntry = ref<CreationEntry | null>(null)
 const creationHandoff = ref<CreationHandoff | null>(null)
 let creationRevision = Date.now()
