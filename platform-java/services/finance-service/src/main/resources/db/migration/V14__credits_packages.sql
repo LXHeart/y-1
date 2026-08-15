@@ -10,6 +10,10 @@
 --
 -- account_id 跨服务引用 app_users.id，不建 FK（database-per-service 约定）。
 
+-- V5 的 posting.account_type varchar(16) 放不下 AI_CREDIT_REVENUE（18 字符）——随本特性加宽。
+-- journal_type 已是 varchar(32)（AI_CREDIT_PURCHASE 19 字符可容纳），无需改动。
+ALTER TABLE posting ALTER COLUMN account_type TYPE varchar(32);
+
 CREATE TABLE credits_package (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name               text NOT NULL,

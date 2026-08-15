@@ -38,6 +38,8 @@ public record JournalEntry(
         CONSUMER_REFUND,
         /** 核销后向推荐官、商家和平台分账。 */
         CONSUMER_SPLIT,
+        /** AI 积分包购买入账（AI 套餐 v1）。 */
+        AI_CREDIT_PURCHASE,
         /** 迁移期回填存量余额。 */
         OPENING;
 

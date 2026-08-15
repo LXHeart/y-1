@@ -157,6 +157,16 @@ public class LedgerService {
                         orgId, orderRef, "consumer refund " + orderRef, postings));
     }
 
+    /** AI 积分包购买（AI 套餐 v1）：Dr EXTERNAL / Cr AI_CREDIT_REVENUE。账号级收入，无组织维度。 */
+    public Mono<Void> postAiCreditPurchase(String orderRef, long amount) {
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.external(psp.channel()), amount),
+                Posting.credit(LedgerAccount.aiCreditRevenue(), amount));
+        return psp.recordExternalMovement(ExternalMovement.in(amount, CURRENCY, orderRef, "ai credits purchase"))
+                .then(post(JournalEntry.Type.AI_CREDIT_PURCHASE, "ai-credit-purchase:" + orderRef,
+                        null, null, "ai credits purchase " + orderRef, postings));
+    }
+
     /** 核销分账：托管负债清零，三方金额必须精确等于订单金额。 */
     public Mono<Void> postConsumerSplit(
             String orgId, String orderRef, long total, String recommenderAccountId,

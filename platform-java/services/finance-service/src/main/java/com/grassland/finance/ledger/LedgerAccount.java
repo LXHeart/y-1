@@ -29,6 +29,8 @@ public record LedgerAccount(Type type, String owner, String ref) {
         FEE,
         /** 平台为等级权益承担的佣金补贴费用。借记增加、冲正时贷记回冲。 */
         SUBSIDY_EXPENSE,
+        /** AI 积分包销售收入（AI 套餐 v1）；收入类，credit 增。 */
+        AI_CREDIT_REVENUE,
         EXTERNAL;
 
         public String dbValue() {
@@ -58,6 +60,11 @@ public record LedgerAccount(Type type, String owner, String ref) {
 
     public static LedgerAccount fee() {
         return new LedgerAccount(Type.FEE, null, null);
+    }
+
+    /** AI 积分包销售收入账户（AI 套餐 v1，平台级无 owner）。 */
+    public static LedgerAccount aiCreditRevenue() {
+        return new LedgerAccount(Type.AI_CREDIT_REVENUE, null, null);
     }
 
     public static LedgerAccount subsidy() {

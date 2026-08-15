@@ -133,6 +133,21 @@ public class CreditsService {
                 () -> mutate(accountId, amount, amount, 0, "reward", null, note, operationId));
     }
 
+    /**
+     * 购买入账（AI 套餐 v1，type='purchase'）：deltaBalance/deltaEarned 同 award，
+     * 但流水类型区分「花钱买」与「平台赠」，对账口径不同。operationId 必填（`purchase:<orderId>`）。
+     */
+    public Mono<MutationResult> purchaseCredit(String accountId, int amount, String note, String operationId) {
+        if (amount <= 0) {
+            return Mono.error(new FinanceException(400, "购买积分必须为正"));
+        }
+        if (operationId == null || operationId.isBlank()) {
+            return Mono.error(new FinanceException(400, "购买入账缺少幂等键"));
+        }
+        return idempotent(accountId, operationId,
+                () -> mutate(accountId, amount, amount, 0, "purchase", null, note, operationId));
+    }
+
     /** 余额（账户不存在 → 0）。 */
     public Mono<CreditsAccount> balance(String accountId) {
         return repo.findAccount(accountId)

@@ -104,7 +104,7 @@ public class CreditsPackageRepository {
     private DatabaseClient.GenericExecuteSpec query(String condition) {
         return db.sql("""
                         SELECT p.id::text AS package_id, p.name, p.description, p.status,
-                               v.version, v.price_cents, v.credits_amount, v.note
+                               v.id::text AS version_id, v.version, v.price_cents, v.credits_amount, v.note
                         FROM credits_package p
                         JOIN credits_package_version v ON v.id = p.current_version_id
                         WHERE """ + " " + condition + " ORDER BY p.created_at DESC");
@@ -165,12 +165,13 @@ public class CreditsPackageRepository {
 
     /** 积分包对外视图：壳字段 + current 版本的价格/面值。 */
     public record PackageView(
-            String id, String name, String description, String status,
+            String id, String versionId, String name, String description, String status,
             long version, long priceCents, int creditsAmount, String note) {
 
         static PackageView fromRow(io.r2dbc.spi.Readable row) {
             return new PackageView(
                     row.get("package_id", String.class),
+                    row.get("version_id", String.class),
                     row.get("name", String.class),
                     row.get("description", String.class),
                     row.get("status", String.class),
