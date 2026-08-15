@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.creationcontext.MarketplaceCreationContextClient;
+import com.grassland.intelligence.security.IdentityOrgAuthorizationClient;
 import com.grassland.intelligence.security.IdentityStoreAuthorizationClient;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
@@ -30,6 +32,23 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
 
     @MockitoBean
     IdentityStoreAuthorizationClient storeAuthorization;
+
+    @MockitoBean
+    IdentityOrgAuthorizationClient orgAuthorization;
+
+    @MockitoBean
+    MarketplaceCreationContextClient marketplaceCreationContext;
+
+    /** 组织级商家素材的管理路径按 org ADMIN/OWNER 放行（identity 权威判定在本 IT 中打桩）。 */
+    private void allowOrgAdmin(String account, String org) {
+        when(orgAuthorization.require(account, org, "admin")).thenReturn(Mono.empty());
+    }
+
+    /** 组织级商家素材的管理路径对 org member 拒绝。 */
+    private void denyOrgAdmin(String account, String org) {
+        when(orgAuthorization.require(account, org, "admin"))
+                .thenReturn(Mono.error(new IntelligenceException(403, "组织权限不足")));
+    }
 
     @BeforeEach
     void cleanContentAssets() {
@@ -329,6 +348,8 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     @Test
     void merchantCreatesAndListsByOrg() {
         String org = "org-merchant";
+        allowOrgAdmin("merchant-a", org);
+        allowOrgAdmin("merchant-b", org);
         String mediaId = seedMedia("merchant-a");
         createMerchantAsset("merchant-a", org, mediaId, "门店照");
         createMerchantAsset("merchant-a", org, seedMedia("merchant-a"), "菜单");
@@ -348,8 +369,67 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     }
 
     @Test
+    void orgMemberCannotManageOrgLevelAssetsButCanRead() {
+        // org admin/member 粒度：组织级素材管理要求 org ADMIN/OWNER；member 只读。
+        String org = "org-granularity";
+        String admin = "org-admin";
+        String member = "org-member";
+        allowOrgAdmin(admin, org);
+        denyOrgAdmin(member, org);
+
+        // member 创建组织级素材 → 403
+        client().post().uri("/api/content-assets")
+                .header(header(), signWithOrg(member, org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "merchant", "mediaId", seedMedia(member),
+                        "category", "store", "title", "成员新建"))
+                .exchange().expectStatus().isForbidden();
+
+        // admin 创建后，member 能读（列表 + 详情），但编辑/删除/授权全部 403
+        String assetId = createMerchantAsset(admin, org, seedMedia(admin), "管理员素材");
+        client().get().uri("/api/content-assets?libraryType=merchant")
+                .header(header(), signWithOrg(member, org))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.items.length()").isEqualTo(1);
+        client().get().uri("/api/content-assets/" + assetId)
+                .header(header(), signWithOrg(member, org))
+                .exchange().expectStatus().isOk();
+        client().put().uri("/api/content-assets/" + assetId)
+                .header(header(), signWithOrg(member, org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "category", "store", "title", "成员越权编辑"))
+                .exchange().expectStatus().isForbidden();
+        client().delete().uri("/api/content-assets/" + assetId)
+                .header(header(), signWithOrg(member, org))
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/api/content-assets/" + assetId + "/grants")
+                .header(header(), signWithOrg(member, org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("granteeAccountId", "recommender-gran"))
+                .exchange().expectStatus().isForbidden();
+        client().get().uri("/api/content-assets/" + assetId + "/grants")
+                .header(header(), signWithOrg(member, org))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void orgLevelManageFailsClosedWhenIdentityUnavailable() {
+        // identity 不可达（5xx）不降级放行——组织级管理 fail-closed。
+        String org = "org-failclosed";
+        when(orgAuthorization.require("merchant-fc", org, "admin"))
+                .thenReturn(Mono.error(new IllegalStateException("identity down")));
+        client().post().uri("/api/content-assets")
+                .header(header(), signWithOrg("merchant-fc", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("libraryType", "merchant", "mediaId", seedMedia("merchant-fc"),
+                        "category", "store", "title", "x"))
+                .exchange().expectStatus().is5xxServerError();
+    }
+
+    @Test
     void merchantListIsolatedByOrg() {
         // 不同 org 的商家看不到对方素材。
+        allowOrgAdmin("merchant-x", "org-1");
         String mediaId = seedMedia("merchant-x");
         createMerchantAsset("merchant-x", "org-1", mediaId, "org1 素材");
 
@@ -367,6 +447,7 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     @Test
     void merchantGrantsAssetToRecommenderAndRecommenderCanRead() {
         String org = "org-grant";
+        allowOrgAdmin("merchant-g", org);
         String mediaId = seedMedia("merchant-g");
         String assetId = createMerchantAsset("merchant-g", org, mediaId, "授权素材");
 
@@ -400,6 +481,7 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     @Test
     void ungrantedRecommenderCannotReadMerchantAsset() {
         String org = "org-grant2";
+        allowOrgAdmin("merchant-h", org);
         String mediaId = seedMedia("merchant-h");
         String assetId = createMerchantAsset("merchant-h", org, mediaId, "未授权素材");
 
@@ -424,6 +506,7 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     @Test
     void revokeGrantHidesAssetFromRecommender() {
         String org = "org-revoke";
+        allowOrgAdmin("merchant-r", org);
         String mediaId = seedMedia("merchant-r");
         String assetId = createMerchantAsset("merchant-r", org, mediaId, "将撤销");
 
@@ -451,6 +534,7 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     @Test
     void merchantGrantIdempotentRenewal() {
         String org = "org-renew";
+        allowOrgAdmin("merchant-n", org);
         String mediaId = seedMedia("merchant-n");
         String assetId = createMerchantAsset("merchant-n", org, mediaId, "续约");
 
@@ -597,6 +681,163 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .expectStatus().isNotFound();
     }
 
+    // ---------------- 智能素材推荐（PRD §4.8「按任务和平台智能推荐」） ----------------
+
+    @Test
+    void standaloneRecommendationsRankAccessibleAssetsWithReasons() {
+        String user = "rec-user";
+        String matched = createPersonalAsset(user, seedMedia(user), "开业招牌海报", "store",
+                List.of("开业", "招牌"));
+        String unmatched = createPersonalAsset(user, seedMedia(user), "日常随手拍", "other", List.of());
+        // 他人个人素材：即使关键词命中也不入池（推荐只重排不越权）。
+        String stranger = createPersonalAsset("rec-stranger", seedMedia("rec-stranger"),
+                "开业探店素材", "store", List.of("开业"));
+        // 公共素材：审核通过后入池。
+        String publicAsset = createPublicAsset("reviewer-acct", seedMedia("reviewer-acct"), "开业气氛公共背景");
+        db.sql("UPDATE content_asset SET status='active' WHERE id=CAST(:id AS uuid)")
+                .bind("id", publicAsset).then().block();
+
+        Map<String, Object> response = client().get()
+                .uri("/api/content-assets/recommendations?keywords=开业,招牌&contentForm=graphic"
+                        + "&platform=xiaohongshu&category=store")
+                .header(header(), sign(user, null))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> items =
+                (List<Map<String, Object>>) ((Map<String, Object>) response.get("data")).get("items");
+        assertThat(items).isNotEmpty();
+        List<String> ids = items.stream().map(item -> item.get("id").toString()).toList();
+        assertThat(ids).contains(matched, publicAsset, unmatched);
+        assertThat(ids).doesNotContain(stranger);
+        // 关键词命中的个人素材排最前，分数非增，带解释。
+        assertThat(ids.get(0)).isEqualTo(matched);
+        assertThat((List<String>) items.get(0).get("reasons")).contains("个人素材");
+        int previous = Integer.MAX_VALUE;
+        for (Map<String, Object> item : items) {
+            int score = ((Number) item.get("score")).intValue();
+            assertThat(score).isLessThanOrEqualTo(previous);
+            previous = score;
+        }
+        Map<String, Object> query = (Map<String, Object>) ((Map<String, Object>) response.get("data")).get("query");
+        assertThat(query.get("platform")).isEqualTo("xiaohongshu");
+        assertThat((List<String>) query.get("terms")).contains("开业", "招牌");
+    }
+
+    @Test
+    void recommendationsIncludeGrantedMerchantAssetsForRecommenderOnly() {
+        String org = "org-rec-grant";
+        allowOrgAdmin("merchant-rec", org);
+        String granted = createMerchantAsset("merchant-rec", org, seedMedia("merchant-rec"), "授权的招牌素材");
+        String ungranted = createMerchantAsset("merchant-rec", org, seedMedia("merchant-rec"), "未授权素材");
+        client().post().uri("/api/content-assets/" + granted + "/grants")
+                .header(header(), signWithOrg("merchant-rec", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("granteeAccountId", "recommender-rec"))
+                .exchange().expectStatus().isOk();
+
+        // 被授权推荐官：授权素材带「商家授权素材」理由入池；未授权素材绝不出现。
+        Map<String, Object> response = client().get()
+                .uri("/api/content-assets/recommendations?keywords=招牌")
+                .header(header(), sign("recommender-rec", "recommender"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> items =
+                (List<Map<String, Object>>) ((Map<String, Object>) response.get("data")).get("items");
+        List<String> ids = items.stream().map(item -> item.get("id").toString()).toList();
+        assertThat(ids).contains(granted).doesNotContain(ungranted);
+        Map<String, Object> grantedItem = items.stream()
+                .filter(item -> item.get("id").toString().equals(granted)).findFirst().orElseThrow();
+        assertThat((List<String>) grantedItem.get("reasons")).contains("商家授权素材");
+
+        // 未被授权的推荐官看不到任何商家素材。
+        List<Map<String, Object>> otherItems = (List<Map<String, Object>>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets/recommendations?keywords=招牌")
+                        .header(header(), sign("recommender-other", "recommender"))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        assertThat(otherItems.stream().map(item -> item.get("id").toString()).toList())
+                .doesNotContain(granted, ungranted);
+
+        // 商家本人（merchant 身份）：本组织素材以「本组织素材」入池。
+        List<Map<String, Object>> merchantItems = (List<Map<String, Object>>) ((Map<String, Object>)
+                client().get().uri("/api/content-assets/recommendations?keywords=素材")
+                        .header(header(), signWithOrg("merchant-rec", org))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(Map.class).returnResult().getResponseBody()
+                        .get("data")).get("items");
+        Map<String, Object> ownItem = merchantItems.stream()
+                .filter(item -> item.get("id").toString().equals(ungranted)).findFirst().orElseThrow();
+        assertThat((List<String>) ownItem.get("reasons")).contains("本组织素材");
+    }
+
+    @Test
+    void taskModeRecommendationsUseAuthoritativeTaskContext() {
+        String recommender = "recommender-task";
+        String applicationId = UUID.randomUUID().toString();
+        String taskId = UUID.randomUUID().toString();
+        String matching = createPersonalAsset(recommender, seedMedia(recommender), "新店开业探店vlog",
+                "store", List.of("新店", "开业"));
+        createPersonalAsset(recommender, seedMedia(recommender), "无关日常素材", "other", List.of());
+        Map<String, Object> taskContext = Map.of(
+                "taskId", taskId,
+                "title", "新店开业探店图文",
+                "description", "突出新店开业气氛与招牌菜",
+                "contentForm", "graphic",
+                "platform", "xiaohongshu",
+                "requirements", Map.of("tone", "开业喜庆", "mustInclude", List.of("新店开业")));
+        when(marketplaceCreationContext.fetch(applicationId, taskId, recommender))
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(
+                        taskContext, "org-task")));
+
+        Map<String, Object> response = client().get()
+                .uri("/api/content-assets/recommendations?applicationId=" + applicationId
+                        + "&taskId=" + taskId)
+                .header(header(), sign(recommender, "recommender"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+        assertThat(items.get(0).get("id").toString()).isEqualTo(matching);
+        assertThat(items.get(0).get("reasons")).isNotNull();
+        assertThat(data.get("sourceTitle")).isEqualTo("新店开业探店图文");
+        Map<String, Object> query = (Map<String, Object>) data.get("query");
+        assertThat(query.get("platform")).isEqualTo("xiaohongshu");
+        assertThat(query.get("contentForm")).isEqualTo("graphic");
+
+        // 参与方不匹配（marketplace 权威 403）→ 原样透传，不降级为独立模式。
+        when(marketplaceCreationContext.fetch(applicationId, taskId, "recommender-imposter"))
+                .thenReturn(Mono.error(new IntelligenceException(403, "任务上下文参与方不匹配")));
+        client().get().uri("/api/content-assets/recommendations?applicationId=" + applicationId
+                        + "&taskId=" + taskId)
+                .header(header(), sign("recommender-imposter", "recommender"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void recommendationsValidateParamsAndRequireLogin() {
+        client().get().uri("/api/content-assets/recommendations")
+                .exchange().expectStatus().isUnauthorized();
+        client().get().uri("/api/content-assets/recommendations?category=bogus")
+                .header(header(), sign("rec-plain", null))
+                .exchange().expectStatus().isBadRequest();
+        // 任务模式两个 ID 必须成对。
+        client().get().uri("/api/content-assets/recommendations?applicationId="
+                        + UUID.randomUUID())
+                .header(header(), sign("rec-plain", null))
+                .exchange().expectStatus().isBadRequest();
+        // limit 收敛到 [1,50]。
+        client().get().uri("/api/content-assets/recommendations?limit=999")
+                .header(header(), sign("rec-plain", null))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.items.length()").isEqualTo(0);
+    }
+
     // ---- 辅助 ----
 
     private String header() {
@@ -609,6 +850,19 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .header(header(), sign(account, null))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("mediaId", mediaId, "category", "store", "title", title))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return ((Map<String, Object>) response.get("data")).get("id").toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createPersonalAsset(
+            String account, String mediaId, String title, String category, List<String> tags) {
+        Map<String, Object> response = client().post().uri("/api/content-assets")
+                .header(header(), sign(account, null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("mediaId", mediaId, "category", category, "title", title, "tags", tags))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();

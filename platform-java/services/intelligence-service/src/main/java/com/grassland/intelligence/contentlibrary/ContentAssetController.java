@@ -7,6 +7,7 @@ import com.grassland.intelligence.media.MediaStatus;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.security.IdentityOrgAuthorizationClient;
 import com.grassland.intelligence.security.IdentityStoreAuthorizationClient;
 import com.grassland.storage.ObjectStorageAdapter;
 import java.time.Instant;
@@ -59,6 +60,8 @@ public class ContentAssetController {
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final IdentityStoreAuthorizationClient storeAuthorization;
+    private final IdentityOrgAuthorizationClient orgAuthorization;
+    private final ContentAssetRecommendationService recommendations;
 
     public ContentAssetController(
             IntelligenceCallerResolver callers,
@@ -68,7 +71,9 @@ public class ContentAssetController {
             ObjectProvider<ObjectStorageAdapter> storageProvider,
             OutboxRepository outbox,
             TransactionalOperator transactions,
-            IdentityStoreAuthorizationClient storeAuthorization) {
+            IdentityStoreAuthorizationClient storeAuthorization,
+            IdentityOrgAuthorizationClient orgAuthorization,
+            ContentAssetRecommendationService recommendations) {
         this.callers = callers;
         this.assets = assets;
         this.grants = grants;
@@ -77,6 +82,8 @@ public class ContentAssetController {
         this.outbox = outbox;
         this.transactions = transactions;
         this.storeAuthorization = storeAuthorization;
+        this.orgAuthorization = orgAuthorization;
+        this.recommendations = recommendations;
     }
 
     /** 创建素材（个人库任意登录用户 / 商家库组织管理员或门店 MANAGER）。按 body libraryType 分流。 */
@@ -102,8 +109,11 @@ public class ContentAssetController {
                                     && !requestedOrganizationId.equals(caller.organizationId())) {
                                 return Mono.error(new IntelligenceException(403, "需要商家组织身份"));
                             }
-                            return createAsset(caller, body, LibraryType.MERCHANT,
-                                    caller.organizationId(), null);
+                            // org admin/member 粒度：组织级素材创建要求 org ADMIN/OWNER（Identity 权威判定）。
+                            String organizationId = caller.organizationId();
+                            return orgAuthorization.require(caller.accountId(), organizationId, "admin")
+                                    .then(Mono.defer(() -> createAsset(caller, body, LibraryType.MERCHANT,
+                                            organizationId, null)));
                         }
                         String organizationId = requestedOrganizationId != null
                                 ? requestedOrganizationId : caller.organizationId();
@@ -194,6 +204,54 @@ public class ContentAssetController {
         }
         return assets.listPublic(category).collectList()
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
+    }
+
+    /**
+     * 智能素材推荐（PRD §4.8「按任务和平台智能推荐素材」）。任务模式（applicationId+taskId）从
+     * marketplace 权威任务上下文提词；独立模式用显式 platform/contentForm/category/keywords。
+     * 候选只含本人可访问素材（个人/被授权/本组织/公共），推荐只重排不越权；见
+     * {@link ContentAssetRecommendationService}。
+     */
+    @GetMapping("/api/content-assets/recommendations")
+    public Mono<ResponseEntity<Map<String, Object>>> recommendations(
+            @RequestParam(name = "applicationId", required = false) String applicationId,
+            @RequestParam(name = "taskId", required = false) String taskId,
+            @RequestParam(name = "platform", required = false) String platform,
+            @RequestParam(name = "contentForm", required = false) String contentForm,
+            @RequestParam(name = "category", required = false) String categoryRaw,
+            @RequestParam(name = "keywords", required = false) String keywords,
+            @RequestParam(name = "limit", required = false) Integer limit,
+            ServerWebExchange exchange) {
+        AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
+        if (categoryRaw != null && category == null) {
+            return Mono.error(new IntelligenceException(400, "category 无效"));
+        }
+        String applicationUuid = applicationId == null ? null : parseUuid(applicationId, "applicationId").toString();
+        String taskUuid = taskId == null ? null : parseUuid(taskId, "taskId").toString();
+        List<String> keywordList = keywords == null || keywords.isBlank()
+                ? List.of()
+                : List.of(keywords.trim().split("[,，;；\\s]+"));
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> recommendations.recommend(caller,
+                        new ContentAssetRecommendationService.Request(
+                                applicationUuid, taskUuid, blankToNull(platform), blankToNull(contentForm),
+                                category, keywordList, limit)))
+                .map(result -> {
+                    Map<String, Object> query = new LinkedHashMap<>();
+                    query.put("platform", result.platform() == null ? "" : result.platform());
+                    query.put("contentForm", result.contentForm() == null ? "" : result.contentForm());
+                    query.put("category", result.category() == null ? "" : result.category().db());
+                    query.put("terms", result.terms());
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("items", result.items().stream()
+                            .map(ContentAssetController::toRecommendationResponse).toList());
+                    data.put("query", query);
+                    if (result.sourceTitle() != null) {
+                        data.put("sourceTitle", result.sourceTitle());
+                    }
+                    return data;
+                })
+                .map(ContentAssetController::success);
     }
 
     /** 素材详情（个人库 owner 校验 / 商家库 org 校验 / 被授权推荐官 grant 校验）。 */
@@ -411,8 +469,9 @@ public class ContentAssetController {
     }
 
     /**
-     * 加载素材并校验管理权限（编辑/删除用）。个人库 owner==accountId；商家库 org 匹配。
-     * 跨账号/跨 org/不存在统一 404（防存在性探测，同 MediaController.owned 口径）。
+     * 加载素材并校验管理权限（编辑/删除/授权用）。个人库 owner==accountId；商家库组织级行要求同 org
+     * 商家身份 + org ADMIN/OWNER（Identity 权威），门店行要求门店 MANAGER。跨账号/跨 org/不存在统一 404
+     * （防存在性探测，同 MediaController.owned 口径）；同 org 但角色不足 → 403。
      */
     private Mono<ContentAsset> loadManageable(String id, Caller caller) {
         UUID assetId = parseUuid(id, "id");
@@ -433,7 +492,13 @@ public class ContentAssetController {
             boolean sameOrgMerchant = asset.organizationId() != null
                     && asset.organizationId().equals(caller.organizationId())
                     && caller.isMerchant();
-            return sameOrgMerchant ? Mono.just(asset) : Mono.empty();
+            if (!sameOrgMerchant) {
+                return Mono.empty();
+            }
+            // org admin/member 粒度：同 org 商家成员还需 ADMIN/OWNER 才能管理组织级素材；
+            // 不足 → 403（对同 org 成员不隐藏存在性，镜像门店 MANAGER 口径）。
+            return orgAuthorization.require(caller.accountId(), asset.organizationId(), "admin")
+                    .thenReturn(asset);
         }
         if (caller.isService() || asset.organizationId() == null) {
             return Mono.empty();
@@ -548,8 +613,7 @@ public class ContentAssetController {
 
     static Map<String, Object> toResponse(ContentAsset asset) {
         Map<String, Object> map = new LinkedHashMap<>();
-        map.put("id", asset.id().toString());
-        map.put("mediaId", asset.mediaReferenceId().toString());
+        map.put("id", asset.id().toString());        map.put("mediaId", asset.mediaReferenceId().toString());
         map.put("libraryType", asset.libraryType().db());
         map.put("category", asset.category().db());
         map.put("title", asset.title());
@@ -579,6 +643,14 @@ public class ContentAssetController {
         if (asset.licenseScope() != null) {
             map.put("licenseScope", asset.licenseScope());
         }
+        return map;
+    }
+
+    /** 推荐结果 = 素材响应 + 分数与解释（可解释排序）。 */
+    private static Map<String, Object> toRecommendationResponse(ContentAssetRecommender.Scored scored) {
+        Map<String, Object> map = new LinkedHashMap<>(toResponse(scored.asset()));
+        map.put("score", scored.score());
+        map.put("reasons", scored.reasons());
         return map;
     }
 
