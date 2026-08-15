@@ -19,7 +19,9 @@ public enum CreditFeature {
     /** 冒烟端点：真实消耗 Qwen 上游，与其它 AI 调用同等扣分（GL-P0-SEC-002，原先免费）。 */
     INTELLIGENCE_SMOKE("intelligence_smoke"),
     /** 智能创作助手（PRD §4.9）：内容评分 / 优化建议 / 问答引导等 AI 诊断调用，单次扣 1 积分。 */
-    CREATION_ASSISTANT("creation_assistant");
+    CREATION_ASSISTANT("creation_assistant"),
+    /** 朋友圈内容生成（PRD §4.4 图片+文字）：一次多模态调用产出精简文案 + 图片顺序建议 + 每图配文，单次扣 1 积分。 */
+    MOMENTS_GENERATION("moments_generation");
 
     private final String key;
 
