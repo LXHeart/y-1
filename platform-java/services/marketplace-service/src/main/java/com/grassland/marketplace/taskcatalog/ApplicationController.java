@@ -2,6 +2,7 @@ package com.grassland.marketplace.taskcatalog;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.matching.TaskRecommenderInvitationRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
@@ -87,6 +88,7 @@ public class ApplicationController {
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
     private final SettlementWorkflowStarter settlementWorkflows;
     private final ReputationService reputationService;
+    private final TaskRecommenderInvitationRepository recommenderInvitations;
     private final long confirmationWindowSeconds;
     private final long confirmationReminderLeadSeconds;
     private final int supplementCap;
@@ -114,7 +116,8 @@ public class ApplicationController {
                                  @Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
                                  @Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
                                  @Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap,
-                                 TransactionalOperator transactions, ReputationService reputationService) {
+                                 TransactionalOperator transactions, ReputationService reputationService,
+                                 TaskRecommenderInvitationRepository recommenderInvitations) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskAuthorization = taskAuthorization;
@@ -140,6 +143,7 @@ public class ApplicationController {
         this.supplementCap = Math.max(0, supplementCap);
         this.transactions = transactions;
         this.reputationService = reputationService;
+        this.recommenderInvitations = recommenderInvitations;
     }
 
     @PostMapping(value = "/api/tasks/{id}/applications")
@@ -173,9 +177,12 @@ public class ApplicationController {
                                                             .switchIfEmpty(transactions.transactional(
                                                                     apps.create(id, rec.accountId(), note, bountyOrZero(task))
                                                                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
-                                                                            .flatMap(created -> outbox.append(envelope(
-                                                                                    "ApplicationSubmitted", created,
-                                                                                    task.ownerAccountId())).thenReturn(created))))));
+                                                                            .flatMap(created -> recommenderInvitations
+                                                                                    .markApplied(id, rec.accountId())
+                                                                                    .then(outbox.append(envelope(
+                                                                                            "ApplicationSubmitted", created,
+                                                                                            task.ownerAccountId())))
+                                                                                    .thenReturn(created))))));
                         })
                         .map(app -> ResponseEntity.status(HttpStatus.CREATED)
                                 .body(Map.of("success", true, "data", toBody(app)))));

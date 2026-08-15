@@ -16,14 +16,18 @@ import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import MerchantTaskForm from './components/MerchantTaskForm.vue'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
+import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
 import type { CreationEntry } from '../../types/ai-creation'
+import type { NotificationLinkTarget } from '../../types/notification'
 import type {
   FinanceAccount,
   Organization,
   RecommenderProfile,
+  RecommenderMatch,
+  RecommenderRecommendationPage,
   RecommenderReputation,
   Store,
   StoreAccessScope,
@@ -119,6 +123,9 @@ const applicantProfile = ref<Record<string, RecommenderProfile>>({})
 const levelFilter = ref('')
 /** 完成率筛选下限（0-100 百分比；0 = 不限）。 */
 const rateFilterPct = ref(0)
+const recommendations = ref<RecommenderRecommendationPage | null>(null)
+const recommendationsLoading = ref(false)
+const invitingAccountId = ref('')
 /** 已确认履约的 applicationId 集合——评分前置（确认后才显示评分表单）。内存态。 */
 const confirmedAppIds = ref<Set<string>>(new Set())
 
@@ -317,6 +324,9 @@ function resetAccountState(): void {
   levelFilter.value = ''
   rateFilterPct.value = 0
   confirmedAppIds.value = new Set()
+  recommendations.value = null
+  recommendationsLoading.value = false
+  invitingAccountId.value = ''
   feedItems.value = []
   feedCursor.value = ''
   feedHasMore.value = false
@@ -630,13 +640,45 @@ function taskStatusLabel(status: string): string {
 async function selectTask(taskId: string): Promise<void> {
   selectedTaskId.value = taskId
   applications.value = []
+  recommendations.value = null
   // 切任务即清空上一份报名者的声誉/画像与已确认集合——否则筛选会串数据。
   applicantReputation.value = {}
   applicantProfile.value = {}
   confirmedAppIds.value = new Set()
+  const recommendationRequest = side.value === 'merchant'
+    ? loadRecommendations(taskId)
+    : Promise.resolve()
   const list = await grassland.listApplications(taskId)
   if (list) applications.value = list
+  await recommendationRequest
   await loadApplicantProfiles()
+}
+
+async function loadRecommendations(taskId = selectedTaskId.value): Promise<void> {
+  const task = [...tasks.value, ...feedItems.value].find((item) => item.id === taskId)
+  if (!taskId || side.value !== 'merchant' || task?.status !== 'published') {
+    recommendations.value = null
+    return
+  }
+  recommendationsLoading.value = true
+  const page = await grassland.listRecommenderRecommendations(taskId, 50)
+  recommendationsLoading.value = false
+  if (page && selectedTaskId.value === taskId) recommendations.value = page
+}
+
+async function inviteRecommended(match: RecommenderMatch): Promise<void> {
+  if (!selectedTaskId.value || invitingAccountId.value) return
+  invitingAccountId.value = match.accountId
+  const invitation = await grassland.inviteRecommender(selectedTaskId.value, match.accountId)
+  invitingAccountId.value = ''
+  if (!invitation || !recommendations.value) return
+  recommendations.value = {
+    ...recommendations.value,
+    items: recommendations.value.items.map((item) => item.accountId === match.accountId
+      ? { ...item, invitation }
+      : item),
+  }
+  setNotice(invitation.created === false ? '该推荐官已收到过邀请' : '任务邀请已发送到推荐官通知中心')
 }
 
 /**
@@ -913,6 +955,9 @@ watch(side, async (s) => {
  * 同一时刻 DOM 里只有一个同名 id）。
  */
 const grasslandAnchor = inject<Ref<string>>('grasslandAnchor', ref(''))
+const grasslandNavigationTarget = inject<Ref<NotificationLinkTarget | null>>(
+  'grasslandNavigationTarget', ref(null),
+)
 
 // `immediate`：点通知时 App.vue 在同一 tick 内既切 currentView='grassland' 又置锚点，
 // 工作台此刻才挂载——锚点 ref 在 watch 注册前就已是目标值。非 immediate 的 watch 只响应
@@ -924,6 +969,27 @@ watch(grasslandAnchor, async (anchor) => {
   const element = document.getElementById(anchor)
   element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   grasslandAnchor.value = ''
+}, { immediate: true })
+
+/** Task invitations are the only notification route that intentionally selects a role and exact task. */
+watch(grasslandNavigationTarget, async (target) => {
+  if (!target?.taskId || target.side !== 'recommender') return
+  try {
+    if (side.value !== 'recommender') await switchSide('recommender')
+    if (side.value !== 'recommender') return
+    const task = await grassland.getTask(target.taskId)
+    if (!task) {
+      setNotice(grassland.error.value || '邀请任务当前不可查看')
+      return
+    }
+    feedItems.value = [task, ...feedItems.value.filter((item) => item.id !== task.id)]
+    await selectTask(task.id)
+    await nextTick()
+    document.getElementById('gl-task-hall')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setNotice('已打开邀请任务，可直接报名')
+  } finally {
+    grasslandNavigationTarget.value = null
+  }
 }, { immediate: true })
 
 function statusLabel(status: string): string {
@@ -1101,6 +1167,16 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         </ul>
 
         <div v-if="selectedTaskId" class="gl-apps">
+          <RecommenderRecommendations
+            v-if="selectedTask?.status === 'published'"
+            :items="recommendations?.items || []"
+            :eligible-count="recommendations?.eligibleCount || 0"
+            :scoring-version="recommendations?.scoringVersion || 'deterministic-v1'"
+            :loading="recommendationsLoading"
+            :inviting-account-id="invitingAccountId"
+            @refresh="loadRecommendations()"
+            @invite="inviteRecommended"
+          />
           <h4>报名列表</h4>
           <p v-if="applications.length === 0" class="gl-empty">该任务暂无报名</p>
           <template v-else>

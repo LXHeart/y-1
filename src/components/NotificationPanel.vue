@@ -62,7 +62,7 @@ function formatTime(iso: string | null): string {
 
 async function open(item: Notification): Promise<void> {
   if (!item.read) await notifications.markRead([item.id])
-  const target = notifications.resolveLinkTarget(item.linkPath)
+  const target = notifications.resolveLinkTarget(item.linkPath, item.payload)
   if (target) {
     emit('navigate', target)
     emit('close')

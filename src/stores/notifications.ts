@@ -7,6 +7,7 @@ import {
   type NotificationCategory,
   type NotificationLinkTarget,
   type NotificationPage,
+  type NotificationPayload,
   type NotificationQuery,
 } from '../types/notification'
 
@@ -69,8 +70,16 @@ function buildListUrl(query: NotificationQuery): string {
  * 后端 `linkPath` → 应用内落点。未登记的 path 返回 null（**不猜、不拼 URL**）：
  * 通知照样能标已读，只是点了不跳。后端加新 linkPath 时前端表补一行即可。
  */
-export function resolveLinkTarget(linkPath: string | null): NotificationLinkTarget | null {
+export function resolveLinkTarget(
+  linkPath: string | null, payload: NotificationPayload = {},
+): NotificationLinkTarget | null {
   if (!linkPath) return null
+  if (linkPath === '/me/task-invitations') {
+    const taskId = payload.taskId
+    return typeof taskId === 'string' && taskId
+      ? { view: 'grassland', anchor: 'gl-task-hall', side: 'recommender', taskId }
+      : null
+  }
   return NOTIFICATION_LINK_TARGETS[linkPath] ?? null
 }
 

@@ -63,6 +63,10 @@ export interface NotificationLinkTarget {
   view: 'grassland'
   /** 目标卡片的 DOM id（见 `GrasslandWorkbench.vue`）。 */
   anchor: string
+  /** Dedicated task invitations may request the recommender workbench side. */
+  side?: 'recommender'
+  /** Marketplace task carried by the notification payload; never parsed from linkPath text. */
+  taskId?: string
 }
 
 export const NOTIFICATION_LINK_TARGETS: Record<string, NotificationLinkTarget> = {

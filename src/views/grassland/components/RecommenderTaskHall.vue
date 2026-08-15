@@ -1,5 +1,5 @@
 <template>
-  <article class="gl-card gl-card-wide">
+  <article id="gl-task-hall" class="gl-card gl-card-wide">
     <h3>任务大厅</h3>
     <div class="gl-row">
       <input :value="feedFilters.platform" placeholder="平台筛选（可选）" @input="$emit('update:feedFilter', 'platform', ($event.target as HTMLInputElement).value)" />

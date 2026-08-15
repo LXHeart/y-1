@@ -9,6 +9,7 @@ import type {
   RecommenderProfile, UpdateRecommenderProfileInput, RecommenderReputation,
   ReputationPolicy, UpdateReputationPolicyInput, AdminReputation,
   Lv5Admission, UpdateLv5AdmissionInput,
+  RecommenderRecommendationPage, TaskRecommenderInvitation,
   Wallet,
   Task, CreateTaskInput, CreateDraftInput, UpdateTaskInput, ReviseTaskInput,
   TaskApplication, TaskFeedPage, TaskFeedQuery,
@@ -242,6 +243,17 @@ export function useGrasslandMarketplace(run: RunFn) {
     return run(() => request<Task[]>(`/api/tasks?${params}`))
   }
 
+  const getTask = (taskId: string) =>
+    run(() => request<Task>(`/api/tasks/${taskId}`))
+
+  const listRecommenderRecommendations = (taskId: string, limit = 50) =>
+    run(() => request<RecommenderRecommendationPage>(
+      `/api/tasks/${taskId}/recommendations?limit=${Math.max(1, Math.min(limit, 100))}`))
+
+  const inviteRecommender = (taskId: string, accountId: string) =>
+    run(() => request<TaskRecommenderInvitation>(
+      `/api/tasks/${taskId}/recommendations/${accountId}/invite`, { method: 'POST' }))
+
   const createTask = (input: CreateTaskInput) =>
     run(() => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }))
 
@@ -418,7 +430,8 @@ export function useGrasslandMarketplace(run: RunFn) {
     getReputationPolicy, updateReputationPolicy, getAdminReputation, updateLv5Admission,
     rateEngagement, getEngagementRating,
     getMyWallet, withdrawFromWallet,
-    listTasks, createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask,
+    listTasks, getTask, listRecommenderRecommendations, inviteRecommender,
+    createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask,
     closeTask, cancelTask,
     listApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
     withdrawApplication, pollReservation, confirmEngagement, pollSettlement,

@@ -226,4 +226,13 @@ describe('linkPath 落点', () => {
     expect(resolveLinkTarget(null)).toBeNull()
     expect(resolveLinkTarget('/me/unknown')).toBeNull()
   })
+
+  test('任务邀请使用 payload 直达指定任务并切推荐官视角', () => {
+    expect(resolveLinkTarget('/me/task-invitations', {
+      taskId: 'task-1', invitationId: 'invite-1',
+    })).toEqual({
+      view: 'grassland', anchor: 'gl-task-hall', side: 'recommender', taskId: 'task-1',
+    })
+    expect(resolveLinkTarget('/me/task-invitations', {})).toBeNull()
+  })
 })

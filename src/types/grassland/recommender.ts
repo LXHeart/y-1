@@ -127,3 +127,42 @@ export interface UpdateLv5AdmissionInput {
   expectedVersion: number
   note?: string
 }
+
+// ---------- 确定性推荐匹配（marketplace）----------
+
+export interface MatchDimension {
+  key: 'platformFit' | 'level' | 'completionRate' | 'averageRating' | 'responseSpeed' | 'recentActivity'
+  label: string
+  score: number
+  maxScore: number
+  evidence: Record<string, string | number | boolean | null>
+  reason: string
+}
+
+export interface TaskRecommenderInvitation {
+  id: string
+  taskId: string
+  recommenderAccountId: string
+  scoringVersion: string
+  createdAt: string
+  appliedAt: string | null
+  created?: boolean
+}
+
+export interface RecommenderMatch {
+  accountId: string
+  totalScore: number
+  level: RecommenderLevel
+  reputationPolicyVersion: number
+  computedAt: string
+  dimensions: MatchDimension[]
+  reasons: string[]
+  invitation: TaskRecommenderInvitation | null
+}
+
+export interface RecommenderRecommendationPage {
+  scoringVersion: string
+  computedAt: string
+  eligibleCount: number
+  items: RecommenderMatch[]
+}

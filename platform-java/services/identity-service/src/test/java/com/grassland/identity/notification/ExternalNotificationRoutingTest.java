@@ -47,6 +47,26 @@ class ExternalNotificationRoutingTest {
     }
 
     @Test
+    void taskInvitationGoesToRecommenderAndCarriesDedicatedDeepLink() {
+        Map<String, Object> fields = Map.of(
+                "taskId", "task-1", "invitationId", "invite-1",
+                "recommenderAccountId", RECOMMENDER, "taskOwnerId", OWNER);
+
+        assertThat(resolve("TaskRecommenderInvited", fields)).containsExactly(RECOMMENDER);
+        NotificationTemplates.Template template = NotificationTemplates.template(
+                "TaskRecommenderInvited", payload(fields));
+
+        assertThat(template).isNotNull();
+        assertThat(template.category()).isEqualTo(NotificationCategory.ENGAGEMENT);
+        assertThat(template.linkPath()).isEqualTo("/me/task-invitations");
+        assertThat(template.payload())
+                .containsEntry("taskId", "task-1")
+                .containsEntry("invitationId", "invite-1")
+                .doesNotContainKey("recommenderAccountId")
+                .doesNotContainKey("taskOwnerId");
+    }
+
+    @Test
     void bothPartiesNotifiedOnVerificationAndSettlement() {
         for (String eventType : List.of("VerificationChecked", "EngagementSettled", "SettlementHeld", "EngagementRefundedOnCancel")) {
             assertThat(resolve(eventType, Map.of(

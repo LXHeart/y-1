@@ -18,6 +18,7 @@ public final class NotificationTemplates {
     static final String LINK_INVITATIONS = "/me/invitations";
     static final String LINK_PERMISSION = "/me/organizations";
     static final String LINK_ENGAGEMENTS = "/me/engagements";
+    static final String LINK_TASK_INVITATIONS = "/me/task-invitations";
     static final String LINK_DISPUTES = "/me/disputes";
     static final String LINK_WALLET = "/me/wallet";
 
@@ -66,6 +67,9 @@ public final class NotificationTemplates {
             case "ApplicationSubmitted" -> new Template(
                     NotificationCategory.ENGAGEMENT, "有新的报名",
                     "你的任务收到一份新报名，待你处理", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "TaskRecommenderInvited" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "你收到一份任务邀请",
+                    "有商家邀请你参与任务，点击查看并报名", LINK_TASK_INVITATIONS, taskPayload(payload));
             case "ApplicationWithdrawn" -> new Template(
                     NotificationCategory.ENGAGEMENT, "有报名被撤回",
                     "你的任务有一份报名已被撤回", LINK_ENGAGEMENTS, taskPayload(payload));
@@ -156,6 +160,7 @@ public final class NotificationTemplates {
     private static Map<String, Object> taskPayload(JsonNode payload) {
         Map<String, Object> map = new LinkedHashMap<>();
         putIfText(map, payload, "taskId");
+        putIfText(map, payload, "invitationId");
         putIfText(map, payload, "applicationId");
         putIfText(map, payload, "submissionId");
         putIfText(map, payload, "status");

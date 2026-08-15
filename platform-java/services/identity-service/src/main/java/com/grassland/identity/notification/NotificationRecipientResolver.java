@@ -74,6 +74,8 @@ public class NotificationRecipientResolver {
             // 商家侧：报名/撤回/交付进来了，通知任务归属人。
             case "ApplicationSubmitted", "ApplicationWithdrawn", "DeliverableSubmitted" ->
                     accountIds(payload, "taskOwnerId");
+            // 推荐官任务邀请：收件人已由 marketplace 冻结进 payload，identity 不反查任务域。
+            case "TaskRecommenderInvited" -> accountIds(payload, "recommenderAccountId");
             // 推荐官侧：凭证被退回。
             case "DeliverableRejected" -> accountIds(payload, "recommenderAccountId");
             // 双方都关心：核验结果、结算、结算挂起、取消退款（D-03 §5）。

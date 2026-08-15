@@ -368,6 +368,7 @@ const creationEntry = ref<CreationEntry | null>(null)
 const creationHandoff = ref<CreationHandoff | null>(null)
 let creationRevision = Date.now()
 const grasslandAnchor = ref('')
+const grasslandNavigationTarget = ref<NotificationLinkTarget | null>(null)
 const articleInitialTopic = ref('')
 const comedyInitialTopic = ref('')
 const showSettingsModal = ref(false)
@@ -522,10 +523,12 @@ function handleCreateComedyFromTopic(topic: string): void {
 provide('articleInitialTopic', articleInitialTopic)
 provide('comedyInitialTopic', comedyInitialTopic)
 provide('grasslandAnchor', grasslandAnchor)
+provide('grasslandNavigationTarget', grasslandNavigationTarget)
 
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
   router.push({ name: target.view })
   grasslandAnchor.value = target.anchor
+  grasslandNavigationTarget.value = target.taskId ? target : null
 }
 
 function handleSaveSettings(newSettings: AnalysisSettings, newHomepageSettings: HomepageSettings): void {

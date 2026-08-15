@@ -1,5 +1,6 @@
 package com.grassland.marketplace.reputation;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +38,11 @@ public class ReputationService {
 
     /** 多账号共享同一个策略快照，事实和 Lv5 准入也各只发一次批量查询。 */
     public Mono<Map<String, ReputationSnapshot>> snapshots(Collection<String> accountIds) {
+        return snapshots(accountIds, Instant.now());
+    }
+
+    /** Batch evaluation at one caller-supplied instant, so ranking and inactivity rules share a clock edge. */
+    public Mono<Map<String, ReputationSnapshot>> snapshots(Collection<String> accountIds, Instant evaluatedAt) {
         List<String> requested = accountIds.stream().distinct().toList();
         if (requested.isEmpty()) {
             return Mono.just(Map.of());
@@ -51,7 +57,7 @@ public class ReputationService {
                         ReputationStats stats = statsByAccount.getOrDefault(accountId, ReputationStats.empty());
                         Lv5Admission admission = admissionsByAccount.getOrDefault(
                                 accountId, Lv5Admission.none(accountId));
-                        ReputationEvaluation evaluation = policy.evaluate(stats, admission.admitted());
+                        ReputationEvaluation evaluation = policy.evaluate(stats, admission.admitted(), evaluatedAt);
                         snapshots.put(accountId,
                                 new ReputationSnapshot(accountId, stats, policy, admission, evaluation));
                     }
