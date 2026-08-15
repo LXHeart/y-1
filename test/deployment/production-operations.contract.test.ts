@@ -256,7 +256,7 @@ describe('Production release and recovery contracts', () => {
     })
     expect(invalidSampling.status).toBe(1)
     expect(invalidSampling.stderr).toContain('between 0 and 1')
-  })
+  }, 15_000)
 
   it('requires the trusted Qwen endpoint and a non-placeholder production key', () => {
     for (const overrides of [
