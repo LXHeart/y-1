@@ -75,6 +75,20 @@ public class CreditsPurchaseOrderRepository {
                 .all();
     }
 
+    /** admin 全量订单倒序（购买监控）。 */
+    public Flux<PurchaseOrder> listRecent(int limit) {
+        int safeLimit = Math.min(Math.max(limit, 1), 200);
+        return db.sql("""
+                        SELECT id::text, account_id::text, package_id::text, package_version_id::text,
+                               price_cents, credits_amount, status, provider, provider_ref, operation_id
+                        FROM credits_purchase_order
+                        ORDER BY created_at DESC LIMIT :limit
+                        """)
+                .bind("limit", safeLimit)
+                .map(CreditsPurchaseOrderRepository::map)
+                .all();
+    }
+
     public Mono<Void> markPaid(String orderId) {
         return db.sql("UPDATE credits_purchase_order SET status = 'paid', paid_at = now() WHERE id = :id::uuid")
                 .bind("id", orderId)

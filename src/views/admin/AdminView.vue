@@ -33,6 +33,8 @@
         @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'risk'"
         :class="{ active: activeSection === 'risk' }" @click="activeSection = 'risk'">风险调查</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'credits-packages'"
+        :class="{ active: activeSection === 'credits-packages' }" @click="activeSection = 'credits-packages'">积分套餐</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'analytics'"
         :class="{ active: activeSection === 'analytics' }" @click="activeSection = 'analytics'">经营分析</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'commerce'"
@@ -197,6 +199,9 @@
     <div v-else-if="activeSection === 'risk'" class="admin-panel" role="tabpanel">
       <RiskAdminPanel />
     </div>
+    <div v-else-if="activeSection === 'credits-packages'" class="admin-panel" role="tabpanel">
+      <CreditsPackagesPanel />
+    </div>
 
     <div v-else-if="activeSection === 'analytics'" class="admin-panel" role="tabpanel">
       <BusinessAnalyticsPanel admin />
@@ -302,6 +307,7 @@ import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
 import RiskAdminPanel from '../../components/RiskAdminPanel.vue'
+import CreditsPackagesPanel from '../../components/CreditsPackagesPanel.vue'
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
@@ -330,7 +336,7 @@ interface UserItem {
 
 const users = ref<UserItem[]>([])
 const activeSection = ref<
-  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'analytics' | 'commerce' | 'ai-models' | 'audit'
+  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

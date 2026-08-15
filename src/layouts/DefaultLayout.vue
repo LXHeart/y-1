@@ -52,13 +52,14 @@
 
           <NotificationBell v-if="isAuthenticated" @navigate="handleNotificationNavigate" />
 
-          <span v-if="isAuthenticated" class="credits-badge">
+          <button v-if="isAuthenticated" type="button" class="credits-badge" title="积分与套餐"
+            @click="showCreditsModal = true">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
               <path d="M8 4.5v7M5.5 7.5h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
             </svg>
             {{ currentBalance }} 次
-          </span>
+          </button>
 
           <button v-if="isAuthenticated" class="settings-trigger" type="button" @click="handleOpenSettings">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -313,6 +314,13 @@
       @verify-model="handleVerifyModel"
     />
 
+    <CreditsPackagesModal
+      :open="showCreditsModal"
+      :balance="currentBalance"
+      @close="showCreditsModal = false"
+      @balance-refreshed="handleCreditsRefreshed"
+    />
+
     <LoginModal
       v-if="loginModalMounted"
       :visible="showLoginModal"
@@ -334,6 +342,7 @@ import AiCreationCenter from '../views/ai-center/AiCreationCenter.vue'
 import NotificationBell from '../components/NotificationBell.vue'
 
 const AnalysisSettingsModal = defineAsyncComponent(() => import('../components/AnalysisSettingsModal.vue'))
+const CreditsPackagesModal = defineAsyncComponent(() => import('../components/CreditsPackagesModal.vue'))
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
 
 import { useAnalysisSettings } from '../composables/useAnalysisSettings'
@@ -362,6 +371,7 @@ const grasslandAnchor = ref('')
 const articleInitialTopic = ref('')
 const comedyInitialTopic = ref('')
 const showSettingsModal = ref(false)
+const showCreditsModal = ref(false)
 const showLoginModal = ref(false)
 const settingsModalMounted = ref(false)
 const loginModalMounted = ref(false)
@@ -580,6 +590,10 @@ async function handleLogout(): Promise<void> {
   creationHandoff.value = null
   router.push({ name: 'ai-center' })
   authBannerMessage.value = '你已退出登录。'
+}
+
+function handleCreditsRefreshed(): void {
+  void loadCreditBalance()
 }
 
 async function handleOpenSettings(): Promise<void> {

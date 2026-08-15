@@ -28,10 +28,14 @@ import reactor.core.publisher.Mono;
 public class CreditsPackageAdminController {
 
     private final CreditsPackageRepository packages;
+    private final CreditsPurchaseOrderRepository orders;
     private final FinanceCallerResolver callers;
 
-    public CreditsPackageAdminController(CreditsPackageRepository packages, FinanceCallerResolver callers) {
+    public CreditsPackageAdminController(CreditsPackageRepository packages,
+                                         CreditsPurchaseOrderRepository orders,
+                                         FinanceCallerResolver callers) {
         this.packages = packages;
+        this.orders = orders;
         this.callers = callers;
     }
 
@@ -72,6 +76,17 @@ public class CreditsPackageAdminController {
         return callers.requireRole(request, BackendRole.FINANCE, BackendRole.PLATFORM_ADMIN)
                 .then(packages.setStatus(id, body.status()))
                 .map(pkg -> ResponseEntity.ok(Map.of("success", true, "data", body(pkg))));
+    }
+
+    /** 购买订单监控（只读，倒序）。 */
+    @GetMapping("/api/admin/credits-purchase-orders")
+    public Mono<ResponseEntity<Map<String, Object>>> listOrders(
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "50") int limit,
+            ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.FINANCE, BackendRole.PLATFORM_ADMIN)
+                .thenMany(orders.listRecent(limit))
+                .collectList()
+                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
     }
 
     // ---------------- helpers ----------------
