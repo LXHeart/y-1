@@ -89,8 +89,8 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 创作助手 | `/api/creation-assistant/*` | score (SSE), suggest (SSE), guide (SSE), task-coverage (SSE), topic-from-hot (SSE)（intelligence-service，PRD §4.9）|
 | 创作草稿 | `/api/creation-drafts/*` | 列表/新建/读取/保存（乐观锁 PUT，冲突 409）/删除（intelligence-service，§4.9.7）|
 | 任务创作上下文 | `/api/creation-contexts/*` | 创建/读取不可变快照（intelligence-service，PRD §4.12）；Marketplace 内部端点只向 intelligence 返回 accepted 报名的权威任务快照 |
-| 积分 | `/api/credits/*` | balance, history |
-| 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）|
+| 积分 | `/api/credits/*` | balance, history, packages（active 积分包）, purchase-orders（购买/记录，Sandbox 支付即时生效）|
+| 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）; credits-packages + credits-purchase-orders（含 reconciliation 三方对账，需 FINANCE 角色）|
 | 设置 | `/api/settings/*` | analysis (GET/PUT), analysis/models, analysis/verify-model, homepage (GET/PUT)（需登录）|
 | 健康 | `/health` | 健康检查 |
 
