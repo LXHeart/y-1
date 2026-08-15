@@ -101,6 +101,7 @@ public class TaskController {
                                 tasks.acquireOrganizationPublishLock(access.organizationId())
                                         .then(enforcePublishGates(access.organizationId(),
                                                 access.permissionTier(), body.bountyCents()))
+                                        .then(enforceLadderBudget(body.requirements(), body.bountyCents()))
                                         .then(tasks.create(caller.accountId(), access.organizationId(), body.title(),
                                                 body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                 body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
@@ -129,12 +130,14 @@ public class TaskController {
                                                             ServerHttpRequest request) {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTask(id, caller, "draft")
-                        .flatMap(ignored -> transactions.transactional(
-                                tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
+                        .flatMap(current -> transactions.transactional(
+                                enforceLadderBudget(body.requirements() == null
+                                                ? current.requirements() : body.requirements(), body.bountyCents())
+                                        .then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
                                         body.applicationDeadline(), body.minRecommenderLevel(), body.requirements())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                        .flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task)))))
+                                        .flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -146,11 +149,12 @@ public class TaskController {
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "draft")
                         .flatMap(access -> transactions.transactional(
                                 tasks.acquireOrganizationPublishLock(access.task().organizationId())
-                                        .then(enforcePublishGates(access.task().organizationId(),
+                                .then(enforcePublishGates(access.task().organizationId(),
                                                 access.permissionTier(), access.task().bountyCents()))
+                                        .then(enforceLadderBudget(access.task().requirements(), access.task().bountyCents()))
                                         .then(tasks.publish(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                                .flatMap(taskReviewService::submit))))))
+                                                .flatMap(taskReviewService::submit)))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -235,6 +239,8 @@ public class TaskController {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "published")
                         .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents())
+                                .then(enforceLadderBudget(body.requirements() == null
+                                                ? access.task().requirements() : body.requirements(), body.bountyCents()))
                                 .thenReturn(access.task())
                                 .flatMap(v -> transactions.transactional(
                                         tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
@@ -259,6 +265,17 @@ public class TaskController {
         }
         if (bounty > maxTx) {
             return Mono.error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
+        }
+        return Mono.empty();
+    }
+
+    private Mono<Void> enforceLadderBudget(TaskRequirements requirements, Long bountyCents) {
+        if (requirements != null && requirements.commissionLadder() != null) {
+            try {
+                requirements.commissionLadder().validateReserve(bountyCents);
+            } catch (IllegalArgumentException error) {
+                return Mono.error(new MarketplaceException(400, error.getMessage()));
+            }
         }
         return Mono.empty();
     }
@@ -384,6 +401,7 @@ public class TaskController {
                                             tasks.acquireOrganizationPublishLock(task.organizationId())
                                                     .then(enforcePublishGates(task.organizationId(),
                                                             access.permissionTier(), task.bountyCents()))
+                                                    .then(enforceLadderBudget(task.requirements(), task.bountyCents()))
                                                     .then(tasks.reviewApprove(id, body.expectedVersion(), reviewer.accountId())
                                                             .switchIfEmpty(Mono.error(new MarketplaceException(
                                                                     409, "任务已变更，请刷新后重试")))

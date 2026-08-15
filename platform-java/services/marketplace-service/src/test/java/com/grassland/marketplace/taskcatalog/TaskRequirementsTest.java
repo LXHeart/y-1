@@ -34,4 +34,14 @@ class TaskRequirementsTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("发布时间结束不能早于开始时间");
     }
+
+    @Test
+    void carriesVersionedCommissionLadderInTheImmutableRequirementContract() {
+        CommissionLadder ladder = new CommissionLadder("ladder-v1", "video.views",
+                List.of(new CommissionLadder.Tier(1_000, 500), new CommissionLadder.Tier(10_000, 1_500)));
+        TaskRequirements requirements = new TaskRequirements(
+                null, List.of(), List.of(), null, null, List.of(), List.of(), ladder);
+        assertThat(requirements.commissionLadder().policyVersion()).isEqualTo("ladder-v1");
+        assertThat(requirements.commissionLadder().payoutFor(10_000)).isEqualTo(1_500);
+    }
 }

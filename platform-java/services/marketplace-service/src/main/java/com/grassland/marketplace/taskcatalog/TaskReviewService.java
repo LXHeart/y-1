@@ -37,6 +37,13 @@ public class TaskReviewService {
     }
 
     public Mono<Task> approveSystem(Task task, String source, String note) {
+        if (task.requirements().commissionLadder() != null) {
+            try {
+                task.requirements().commissionLadder().validateReserve(task.bountyCents());
+            } catch (IllegalArgumentException error) {
+                return Mono.error(new MarketplaceException(400, error.getMessage()));
+            }
+        }
         return tasks.reviewApprove(task.id(), task.version(), null)
                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务审核状态已变更")))
                 .flatMap(approved -> reviews.append(approved.id(), "approved", null,

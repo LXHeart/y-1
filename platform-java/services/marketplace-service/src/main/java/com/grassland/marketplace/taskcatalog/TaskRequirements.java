@@ -12,7 +12,9 @@ public record TaskRequirements(
         Instant publishStartAt,
         Instant publishEndAt,
         List<String> metricRequirements,
-        List<String> evidenceRequirements) {
+        List<String> evidenceRequirements,
+        /** Optional single-metric D-02 policy; null keeps the fixed-payout contract. */
+        CommissionLadder commissionLadder) {
 
     private static final int MAX_PRODUCT_SERVICE_LENGTH = 2_000;
     private static final int MAX_ITEMS = 20;
@@ -30,7 +32,15 @@ public record TaskRequirements(
     }
 
     public static TaskRequirements empty() {
-        return new TaskRequirements(null, List.of(), List.of(), null, null, List.of(), List.of());
+        return new TaskRequirements(null, List.of(), List.of(), null, null, List.of(), List.of(), null);
+    }
+
+    /** Backward-compatible constructor for callers that do not configure a ladder. */
+    public TaskRequirements(String productServiceInfo, List<String> mustInclude,
+                            List<String> forbiddenContent, Instant publishStartAt, Instant publishEndAt,
+                            List<String> metricRequirements, List<String> evidenceRequirements) {
+        this(productServiceInfo, mustInclude, forbiddenContent, publishStartAt, publishEndAt,
+                metricRequirements, evidenceRequirements, null);
     }
 
     public static TaskRequirements normalize(TaskRequirements value) {
