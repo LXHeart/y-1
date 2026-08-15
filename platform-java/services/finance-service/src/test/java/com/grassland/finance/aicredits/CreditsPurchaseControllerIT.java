@@ -149,6 +149,31 @@ class CreditsPurchaseControllerIT extends FinanceItSupport {
                 .jsonPath("$.data[0].priceCents").isEqualTo(199);
     }
 
+    @Test
+    @DisplayName("对账端点：逐单三方核对（订单×purchase流水×账本平衡），篡改流水后进 inconsistent")
+    void reconciliationDetectsTampering() {
+        String packageId = seedActivePackage("对账包", 590, 5);
+        postPurchase(packageId, "ai-credit-purchase-op-4");
+
+        client().get().uri("/api/admin/credits-purchase-orders/reconciliation")
+                .header(HEADER, signRole("recon-admin", "finance"))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.totalOrders").isEqualTo(1)
+                .jsonPath("$.data.inconsistent.length()").isEqualTo(0);
+
+        // 篡改：删掉 purchase 流水 → 该单必须进 inconsistent
+        db.sql("DELETE FROM credits_transaction WHERE type = 'purchase' AND account_id = :acct::uuid")
+                .bind("acct", BUYER).then().block();
+        client().get().uri("/api/admin/credits-purchase-orders/reconciliation")
+                .header(HEADER, signRole("recon-admin", "finance"))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.totalOrders").isEqualTo(1)
+                .jsonPath("$.data.inconsistent.length()").isEqualTo(1)
+                .jsonPath("$.data.inconsistent[0].reasons").isArray();
+    }
+
     // ---------------- helpers ----------------
 
     @SuppressWarnings("unchecked")

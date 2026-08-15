@@ -89,6 +89,26 @@ public class CreditsPackageAdminController {
                 .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
     }
 
+    /** 三方对账（只读）：订单 × purchase 流水 × AI_CREDIT_PURCHASE 账本平衡。 */
+    @GetMapping("/api/admin/credits-purchase-orders/reconciliation")
+    public Mono<ResponseEntity<Map<String, Object>>> reconciliation(
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "50") int limit,
+            ServerHttpRequest request) {
+        return callers.requireRole(request, BackendRole.FINANCE, BackendRole.PLATFORM_ADMIN)
+                .then(orders.reconcile(limit))
+                .map(rows -> {
+                    long total = rows.size();
+                    java.util.List<Map<String, Object>> inconsistent = rows.stream()
+                            .filter(row -> !Boolean.TRUE.equals(row.get("consistent")))
+                            .toList();
+                    Map<String, Object> data = new java.util.LinkedHashMap<>();
+                    data.put("totalOrders", total);
+                    data.put("consistent", total - inconsistent.size());
+                    data.put("inconsistent", inconsistent);
+                    return ResponseEntity.ok(Map.of("success", true, "data", data));
+                });
+    }
+
     // ---------------- helpers ----------------
 
     private static void requireUuid(String id) {
