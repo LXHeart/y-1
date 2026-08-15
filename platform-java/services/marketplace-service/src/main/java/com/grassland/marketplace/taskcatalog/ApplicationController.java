@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -518,6 +519,7 @@ public class ApplicationController {
      */
     @PostMapping("/api/tasks/{id}/applications/{appId}/confirm")
     public Mono<ResponseEntity<Map<String, Object>>> confirm(@PathVariable String id, @PathVariable String appId,
+                                                             @RequestBody(required = false) ConfirmEngagementRequest body,
                                                              ServerHttpRequest request) {
         return callers.requireUser(request)
                 .flatMap(merchant -> loadManageableTask(id, merchant)
@@ -528,7 +530,9 @@ public class ApplicationController {
                                         // 已由商家/自动路径确认 → 用确定性 workflow id 补启/收敛后幂等 200。
                                         : app.confirmedAt() != null
                                                 ? resumeConfirmedSettlement(task, app)
-                                                : transactions.transactional(confirmWork(id, appId, task))
+                                                : requiredDeclaredMetric(app, body)
+                                                .flatMap(metric -> transactions.transactional(
+                                                        confirmWork(id, appId, task, metric.orElse(null)))
                                                 .flatMap(confirmed -> startSettlementWorkflow(task, confirmed))
                                                 // 商家确认与 auto-confirm 竞态：事务内 guarded write 失败会抛标记异常并回滚；
                                                 // 回读若已确认则幂等 200，否则按原业务错误返回 409。
@@ -536,11 +540,34 @@ public class ApplicationController {
                                                         .filter(current -> "accepted".equals(current.status())
                                                                 && current.confirmedAt() != null)
                                                         .flatMap(current -> resumeConfirmedSettlement(task, current))
-                                                        .switchIfEmpty(fail(409, conflict.getMessage()))))));
+                                                        .switchIfEmpty(fail(409, conflict.getMessage())))))));
     }
 
-    /** 手动确认领域写：submission accepted + application confirmed + MerchantConfirmed outbox，同一事务。 */
-    private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task) {
+    /**
+     * D-02：阶梯佣金任务的手动确认必须携带商家申报的指标达成值（Sandbox 指标事实来源）；
+     * 固定佣金契约（快照无 ladder）无此要求。快照解析失败按损坏处理，阻断确认。
+     */
+    private Mono<Optional<Long>> requiredDeclaredMetric(TaskApplication app, ConfirmEngagementRequest body) {
+        return apps.findTaskContextSnapshot(app.id())
+                .flatMap(snapshot -> Mono.justOrEmpty(CommissionLadders.fromTaskContextSnapshot(snapshot)))
+                .flatMap(ladder -> {
+                    Long declared = body == null ? null : body.confirmedMetricValue();
+                    if (declared == null) {
+                        return Mono.error(new MarketplaceException(400,
+                                "阶梯佣金任务确认时必须申报指标达成值（confirmedMetricValue）"));
+                    }
+                    if (declared < 0) {
+                        return Mono.error(new MarketplaceException(400, "申报指标值不能为负数"));
+                    }
+                    return Mono.just(Optional.of(declared));
+                })
+                .onErrorMap(IllegalArgumentException.class, error ->
+                        new MarketplaceException(409, error.getMessage()))
+                .defaultIfEmpty(Optional.empty());
+    }
+
+    /** 手动确认领域写：submission accepted + application confirmed（含 D-02 申报指标值）+ MerchantConfirmed outbox，同一事务。 */
+    private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task, Long confirmedMetricValue) {
         return submissions.findPending(appId)
                 .switchIfEmpty(Mono.error(new ConfirmationConflict("推荐官尚未提交履约凭证，无法确认")))
                 .flatMap(pending -> verifications.findEffectiveStatus(pending.id())
@@ -557,7 +584,7 @@ public class ApplicationController {
                         }))
                 .flatMap(pending -> submissions.review(pending.id(), SubmissionStatus.ACCEPTED, null))
                 .switchIfEmpty(Mono.error(new ConfirmationConflict("该交付物已处理")))
-                .flatMap(acceptedSubmission -> apps.confirm(appId, taskId)
+                .flatMap(acceptedSubmission -> apps.confirm(appId, taskId, confirmedMetricValue)
                         .switchIfEmpty(Mono.error(new ConfirmationConflict("该报名未接受或已确认"))))
                 .flatMap(confirmed -> outbox
                         .append(envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
@@ -1167,6 +1194,7 @@ public class ApplicationController {
         m.put("settlementDelayDaysAtAccept", app.settlementDelayDaysAtAccept());
         m.put("commissionBonusBpsAtAccept", app.commissionBonusBpsAtAccept());
         m.put("premiumSupportAtAccept", app.premiumSupportAtAccept());
+        m.put("confirmedMetricValue", app.confirmedMetricValue());
         return m;
     }
 

@@ -59,6 +59,8 @@ class SettlementActivityImplTest {
         lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(opsCases.register(anyString(), anyString(), any(), any(), anyString()))
                 .thenReturn(Mono.empty());
+        // D-02：captureOrHold 统一读 accept 冻结快照判阶梯；本测试类只覆盖固定佣金契约。
+        lenient().when(apps.findTaskContextSnapshot(APP_ID)).thenReturn(Mono.empty());
         // gate+capture 钱侧逻辑已抽到 SettlementExecution（D-03）；用真实实例 + 桩 gates 覆盖 captureOrHold 全分支。
         SettlementExecution settlementExecution =
                 new SettlementExecution(outbox, apps, finance, disputes, verification, opsCases, transactions);

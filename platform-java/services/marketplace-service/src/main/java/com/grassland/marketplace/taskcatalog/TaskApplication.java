@@ -45,8 +45,27 @@ public record TaskApplication(
         Long reputationPolicyVersionAtAccept,
         Integer settlementDelayDaysAtAccept,
         Integer commissionBonusBpsAtAccept,
-        Boolean premiumSupportAtAccept
+        Boolean premiumSupportAtAccept,
+        /** D-02：商家手动确认时申报的阶梯指标达成值（与 confirmed_at 同一 guarded UPDATE 冻结）；自动确认保持 null → 结算 hold。 */
+        Long confirmedMetricValue
 ) {
+    /** 兼容 V32（confirmed_metric_value）之前的全参构造调用方（既有测试）；申报指标值为空。 */
+    public TaskApplication(
+            String id, String taskId, String recommenderAccountId, String status, String note,
+            String reviewedByAccountId, Instant decidedAt, Instant createdAt, Instant updatedAt,
+            Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt,
+            Instant merchantRejectedAt, String rejectionReason, String merchantRejectionDisputeId,
+            Instant contestRequestedAt, Instant rejectionWorkflowStartedAt,
+            Integer reputationLevelAtAccept, Long reputationPolicyVersionAtAccept,
+            Integer settlementDelayDaysAtAccept, Integer commissionBonusBpsAtAccept,
+            Boolean premiumSupportAtAccept) {
+        this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
+                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, merchantRejectedAt,
+                rejectionReason, merchantRejectionDisputeId, contestRequestedAt, rejectionWorkflowStartedAt,
+                reputationLevelAtAccept, reputationPolicyVersionAtAccept, settlementDelayDaysAtAccept,
+                commissionBonusBpsAtAccept, premiumSupportAtAccept, null);
+    }
+
     /** 兼容既有测试/调用方的 D-03 core slice 构造器；未发生商家异议时新增字段均为空。 */
     public TaskApplication(
             String id, String taskId, String recommenderAccountId, String status, String note,
@@ -54,7 +73,7 @@ public record TaskApplication(
             Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt) {
         this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
                 confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, null, null, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     public TaskApplication(
@@ -66,6 +85,6 @@ public record TaskApplication(
         this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
                 confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, merchantRejectedAt,
                 rejectionReason, merchantRejectionDisputeId, contestRequestedAt, rejectionWorkflowStartedAt,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 }

@@ -167,9 +167,19 @@ public class FinanceEscrowClient {
 
     /** 捕获（结算确认，Slice 5A）：reserved→captured，无余额变动。镜像 {@link #release} 的状态映射。 */
     public Mono<Void> capture(String orgId, String engagementRef) {
+        return capture(orgId, engagementRef, null);
+    }
+
+    /**
+     * 捕获指定阶梯毛额（D-02）。Finance 会把预留上限与该金额的差额返还商家；
+     * 省略金额时保持固定佣金的全额 capture 语义。
+     */
+    public Mono<Void> capture(String orgId, String engagementRef, Long settlementAmountCents) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/capture", engagementRef)
                 .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(new CaptureRequestPayload(settlementAmountCents))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("capture HTTP {} org={} ref={}", code, orgId, engagementRef);
@@ -191,6 +201,8 @@ public class FinanceEscrowClient {
             long amountCents,
             String payeeAccountId,
             int commissionBonusBps) {}
+
+    private record CaptureRequestPayload(Long settlementAmountCents) {}
 
     private record ReservationData(
             String organizationId,

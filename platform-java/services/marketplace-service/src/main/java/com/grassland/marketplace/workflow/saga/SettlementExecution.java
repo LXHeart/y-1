@@ -4,6 +4,9 @@ import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.ops.OpsCaseRegistrar;
 import com.grassland.marketplace.ops.OpsCaseSource;
+import com.grassland.marketplace.taskcatalog.CommissionLadder;
+import com.grassland.marketplace.taskcatalog.CommissionLadders;
+import com.grassland.marketplace.taskcatalog.CommissionSettlementPlan;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
@@ -57,9 +60,41 @@ public class SettlementExecution {
     /**
      * 执行结算 capture（带 gate）：开放争议 → hold({@code open_dispute})；核验 failed → hold({@code verification_failed})；
      * 否则 finance capture + outbox {@code EngagementSettled} → settled。{@code taskOwnerId} 为通知收件人（任务缺失则 null）。
+     *
+     * <p>D-02 阶梯佣金在此统一接线（手动确认与自动确认两条路径都汇入本方法）：从 accept 时冻结的
+     * {@code task_context_snapshot} 读阶梯策略 + 商家确认时申报的指标值评估结算计划——按实际档位捕获、
+     * 差额由 finance 返还商家、低于首档走 release。快照有 ladder 但无申报值（自动确认未申报）或计划非法
+     * → hold 转运营，<b>绝不按预留上限全额捕获</b>。
      */
     public SettlementOutcome captureOrHold(String organizationId, String applicationId,
                                            TaskApplication app, String taskOwnerId) {
+        CommissionLadder ladder;
+        try {
+            ladder = CommissionLadders.fromTaskContextSnapshot(
+                    applications.findTaskContextSnapshot(applicationId).block());
+        } catch (IllegalArgumentException error) {
+            return hold(organizationId, applicationId, app, "ladder_snapshot_invalid", taskOwnerId);
+        }
+        if (ladder == null) {
+            return captureOrHoldInternal(organizationId, applicationId, app, taskOwnerId, null, false);
+        }
+        Long declaredMetric = app.confirmedMetricValue();  // 商家手动确认时冻结；自动确认保持 null
+        if (declaredMetric == null) {
+            return hold(organizationId, applicationId, app, "ladder_metric_missing", taskOwnerId);
+        }
+        CommissionSettlementPlan plan;
+        try {
+            plan = CommissionSettlementPlan.evaluate(ladder, declaredMetric, app.bountyCents());
+        } catch (IllegalArgumentException error) {
+            return hold(organizationId, applicationId, app, "ladder_plan_invalid", taskOwnerId);
+        }
+        return captureOrHoldInternal(organizationId, applicationId, app, taskOwnerId,
+                plan.settlementAmountCents(), plan.settlementAmountCents() == 0);
+    }
+
+    private SettlementOutcome captureOrHoldInternal(String organizationId, String applicationId,
+                                                    TaskApplication app, String taskOwnerId,
+                                                    Long settlementAmountCents, boolean releaseOnly) {
         // F6 本地最后门闩：controller/Timer 上游重验之后仍可能发生 contest；capture 前必须重新读 marketplace 权威行。
         // 一旦 claim 已提交，即使 trust 案尚未创建或远端读尚不可见，也只能 hold，绝不能调用 finance。
         TaskApplication fresh = applications.findById(applicationId).block();
@@ -76,10 +111,18 @@ public class SettlementExecution {
         if (verification.blocksSettlement(organizationId, applicationId)) {
             return hold(organizationId, applicationId, app, "verification_failed", taskOwnerId);
         }
-        log.info("settlement capture START org={} ref={}", organizationId, applicationId);
-        // finance reserved→captured；409(已终态) 由 client 映射为成功（幂等）；真异常抛出→Temporal 重试
-        finance.capture(organizationId, applicationId).block();
-        outbox.append(envelope("EngagementSettled", app, null, taskOwnerId)).block();
+        log.info("settlement capture START org={} ref={} ladderSettlementCents={}",
+                organizationId, applicationId, settlementAmountCents);
+        // finance reserved→captured；409(已终态) 由 client 映射为成功（幂等）；真异常抛出→Temporal 重试。
+        // 固定佣金保持两参 capture（全额）；阶梯带申报档位金额；0 档（未达首档）release 全额返还商家。
+        if (releaseOnly) {
+            finance.release(organizationId, applicationId).block();
+        } else if (settlementAmountCents == null) {
+            finance.capture(organizationId, applicationId).block();
+        } else {
+            finance.capture(organizationId, applicationId, settlementAmountCents).block();
+        }
+        outbox.append(envelope("EngagementSettled", app, null, taskOwnerId, settlementAmountCents)).block();
         return SettlementOutcome.settled();
     }
 
@@ -100,6 +143,11 @@ public class SettlementExecution {
     }
 
     private EventEnvelope envelope(String eventType, TaskApplication app, String reason, String taskOwnerId) {
+        return envelope(eventType, app, reason, taskOwnerId, null);
+    }
+
+    private EventEnvelope envelope(String eventType, TaskApplication app, String reason, String taskOwnerId,
+                                   Long settlementAmountCents) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
@@ -110,6 +158,9 @@ public class SettlementExecution {
         }
         if (taskOwnerId != null) {
             payload.put("taskOwnerId", taskOwnerId);
+        }
+        if (settlementAmountCents != null) {
+            payload.put("settlementAmountCents", settlementAmountCents);
         }
         String eventId = UUID.nameUUIDFromBytes(
                 (eventType + ":" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();

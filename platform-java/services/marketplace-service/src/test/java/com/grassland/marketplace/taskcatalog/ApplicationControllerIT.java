@@ -574,6 +574,67 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isEqualTo(409);  // 非 accepted
     }
 
+    // ---------- D-02：阶梯佣金（快照冻结 + 商家申报指标值 + 按档捕获） ----------
+
+    /** 阶梯任务手动确认必须申报指标值；申报后结算按实际档位捕获（4000 落 1000 档 → 500），差额由 finance 返还。 */
+    @Test
+    void ladderConfirmRequiresDeclaredMetricThenSettlesAtTier() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishLadderTask(merchant, org, 1_500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(1_500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(1_500L)));
+        when(financeClient.capture(org, app, 500L)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+        submit(recommender, task, app);
+
+        // 无申报值 → 400，confirmed_at 不落
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isBadRequest();
+        assertThat(applicationRepo.findById(app).block().confirmedAt()).isNull();
+
+        // 申报 4000 → 202 settling → settled（按 1000 档捕获 500，而非预留上限 1500）
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("confirmedMetricValue", 4_000))
+                .exchange().expectStatus().isAccepted();
+        awaitSettlement(merchant, task, app, "settled");
+        verify(financeClient).capture(org, app, 500L);
+        verify(financeClient, never()).capture(org, app);
+        assertThat(outboxCount("EngagementSettled", task)).isEqualTo(1);
+    }
+
+    /** 商家确认窗口到期自动确认（无申报值）→ 结算必须 hold 转运营，绝不满额捕获。 */
+    @Test
+    void ladderAutoConfirmWithoutDeclaredMetricHoldsForOps() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishLadderTask(merchant, org, 1_500L);
+        String app = apply(recommender, task);
+        when(financeClient.reserve(eq(org), eq(app), eq(1_500L), anyString()))
+                .thenReturn(Mono.just(ReserveResult.reserved(1_500L)));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+        submit(recommender, task, app);
+        // 不手动确认：窗口到期自动确认 → SettlementExecution 见 ladder 无申报值 → hold
+        awaitSettlement(merchant, task, app, "held");
+        verify(financeClient, never()).capture(eq(org), eq(app));
+        verify(financeClient, never()).capture(eq(org), eq(app), anyLong());
+        verify(financeClient, never()).release(eq(org), eq(app));
+    }
+
     @Test
     void confirmHeldWhenDisputeOpen() {
         String merchant = UUID.randomUUID().toString();
@@ -1938,6 +1999,35 @@ class ApplicationControllerIT extends MarketplaceItSupport {
                 .expectBody(Map.class).returnResult().getResponseBody();
         String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
         markPublished(taskId);
+        return taskId;
+    }
+
+    /** D-02：发布一个阶梯佣金任务（1000→500、10000→1500 两档；bounty 须 ≥ 最高档）。 */
+    @SuppressWarnings("unchecked")
+    private String publishLadderTask(String merchant, String org, long bountyCents) {
+        Map<String, Object> ladder = Map.of(
+                "policyVersion", "ladder-it-v1",
+                "metricKey", "video.views",
+                "tiers", List.of(
+                        Map.of("threshold", 1_000, "payoutCents", 500),
+                        Map.of("threshold", 10_000, "payoutCents", 1_500)));
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("organizationId", org);
+        b.put("title", "阶梯佣金任务");
+        b.put("bountyCents", bountyCents);
+        b.put("requirements", Map.of("commissionLadder", ladder));
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+        markPublished(taskId);
+        // markPublished 跳过真实发布链路（不落 task_version），而 accept 快照触发器读 task_version.requirements——
+        // 补一行与生产发布一致的不可变版本快照，否则冻结快照会缺 ladder。
+        db.sql("INSERT INTO task_version(task_id, version, title, requirements) "
+                        + "SELECT id, version, title, requirements FROM task WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId).then().block();
         return taskId;
     }
 

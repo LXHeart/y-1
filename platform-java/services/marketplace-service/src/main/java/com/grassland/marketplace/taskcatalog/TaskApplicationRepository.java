@@ -29,7 +29,8 @@ public class TaskApplicationRepository {
                     + " merchant_confirm_deadline_at, auto_confirmed_at, merchant_rejected_at, rejection_reason,"
                     + " merchant_rejection_dispute_id::text, contest_requested_at, rejection_workflow_started_at,"
                     + " reputation_level_at_accept, reputation_policy_version_at_accept,"
-                    + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept, premium_support_at_accept";
+                    + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept, premium_support_at_accept,"
+                    + " confirmed_metric_value";
 
     private final DatabaseClient db;
 
@@ -135,8 +136,13 @@ public class TaskApplicationRepository {
      *  <p>D-03：窗口到期自动结算复用本方法（{@code ConfirmationActivityImpl} 调）——条件 {@code confirmed_at IS NULL}
      *  保证「商家先确认 vs 自动结算」竞态只有一方落 confirmed_at，另一方 0 行→abort，无双结算。 */
     public Mono<TaskApplication> confirm(String id, String taskId) {
-        return db.sql("""
-                UPDATE task_application SET confirmed_at = now(), updated_at = now()
+        return confirm(id, taskId, null);
+    }
+
+    /** D-02：商家手动确认可同时冻结申报的阶梯指标达成值（与 confirmed_at 同一 guarded UPDATE，此后不可变）。 */
+    public Mono<TaskApplication> confirm(String id, String taskId, Long confirmedMetricValue) {
+        var spec = db.sql("""
+                UPDATE task_application SET confirmed_at = now(), updated_at = now(), confirmed_metric_value = :metric
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = 'accepted'
@@ -144,8 +150,10 @@ public class TaskApplicationRepository {
                   AND contest_requested_at IS NULL
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("taskId", taskId)
-                .map(TaskApplicationRepository::map).one();
+                .bind("id", id).bind("taskId", taskId);
+        spec = confirmedMetricValue == null
+                ? spec.bindNull("metric", Long.class) : spec.bind("metric", confirmedMetricValue);
+        return spec.map(TaskApplicationRepository::map).one();
     }
 
     /**
@@ -457,7 +465,8 @@ public class TaskApplicationRepository {
                 row.get("reputation_policy_version_at_accept", Long.class),
                 row.get("settlement_delay_days_at_accept", Integer.class),
                 row.get("commission_bonus_bps_at_accept", Integer.class),
-                row.get("premium_support_at_accept", Boolean.class)
+                row.get("premium_support_at_accept", Boolean.class),
+                row.get("confirmed_metric_value", Long.class)
         );
     }
 
