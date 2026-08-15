@@ -70,6 +70,32 @@ public class MembershipRepository {
                 .map(row -> row.get("organization_id", String.class)).all();
     }
 
+    /**
+     * 列账号的组织访问范围（本人视角）：成员表行 + owner_account_id 兜底，角色解析与
+     * {@link OrgAuthorization#roleOfAccount} 同口径（成员表优先）。供 /api/me/organization-scopes。
+     */
+    public Flux<OrganizationAccessScope> findScopesByAccount(String accountId) {
+        return db.sql("""
+                SELECT o.id::text AS organization_id, o.name AS organization_name,
+                       o.status AS organization_status, o.permission_tier,
+                       COALESCE(m.role, CASE WHEN o.owner_account_id = CAST(:acct AS uuid)
+                           THEN 'owner' END) AS role
+                FROM organization o
+                LEFT JOIN organization_membership m
+                    ON m.organization_id = o.id AND m.account_id = CAST(:acct AS uuid)
+                WHERE m.id IS NOT NULL OR o.owner_account_id = CAST(:acct AS uuid)
+                ORDER BY o.created_at
+                """)
+                .bind("acct", accountId)
+                .map((Readable row) -> new OrganizationAccessScope(
+                        row.get("organization_id", String.class),
+                        row.get("organization_name", String.class),
+                        row.get("organization_status", String.class),
+                        row.get("permission_tier", String.class),
+                        row.get("role", String.class)))
+                .all();
+    }
+
     /** 鉴权热路径：返回该账号在 org 的 role，不存在返回空 Mono。 */
     public Mono<String> findRole(String organizationId, String accountId) {
         return db.sql("SELECT role FROM organization_membership"
