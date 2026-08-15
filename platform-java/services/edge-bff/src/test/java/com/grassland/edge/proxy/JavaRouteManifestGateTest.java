@@ -76,6 +76,8 @@ class JavaRouteManifestGateTest {
                 route("GET", "/api/admin/ai/models", "intelligence"),
                 route("GET", "/api/admin/ai/video-reconciliation", "intelligence"),
                 route("GET", "/api/admin/finance/reconciliation", "finance"),
+                route("GET", "/api/admin/credits-packages", "finance"),
+                route("GET", "/api/admin/credits-purchase-orders", "finance"),
                 route("GET", "/api/admin/commerce/orders", "marketplace"),
                 route("GET", "/api/admin/analytics/overview", "marketplace"),
                 route("GET", "/api/admin/tasks/review", "marketplace"),

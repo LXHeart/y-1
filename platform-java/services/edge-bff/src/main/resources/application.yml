@@ -150,6 +150,13 @@ edge:
     - path: /api/admin/finance
       upstream: finance
       enabled: ${EDGE_ROUTE_ADMIN_FINANCE:true}
+    # 积分包 SKU 管理与购买订单监控（AI 套餐 v1）→ finance。用户侧购买端点骑 /api/credits 前缀，零新路由。
+    - path: /api/admin/credits-packages
+      upstream: finance
+      enabled: ${EDGE_ROUTE_ADMIN_CREDITS_PACKAGES_FINANCE:true}
+    - path: /api/admin/credits-purchase-orders
+      upstream: finance
+      enabled: ${EDGE_ROUTE_ADMIN_CREDITS_PURCHASE_ORDERS_FINANCE:true}
     - path: /api/admin/commerce
       upstream: marketplace
       enabled: ${EDGE_ROUTE_ADMIN_COMMERCE_MARKETPLACE:true}
