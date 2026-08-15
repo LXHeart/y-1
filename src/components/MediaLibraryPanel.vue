@@ -8,17 +8,22 @@ import type {
   ContentAssetCategory,
   ContentLibraryType,
   IdentityProfile,
+  OrganizationAccessScope,
   Store,
   StoreAccessScope,
 } from '../types/grassland'
+import type { CreationRecommendationContext } from '../types/ai-creation'
 
 /**
  * 内容素材库面板（PRD §4.8 / Slice 14 Stage 4）。
  *
- * 三个子 tab 对应三类素材库，按身份显隐与分流：
+ * 四个子 tab 对应素材库视图，按身份显隐与分流：
+ * - 智能推荐（recommend）：按任务（applicationId+taskId，服务端拉权威任务上下文）或平台/内容形式
+ *   推荐「本人可访问」素材（个人/被授权商家/本组织/公共），带分数与理由；仅登录用户。
  * - 个人（personal）：任意登录用户，自己的 active 素材，可上传/编辑/删除。
  * - 商家（merchant）：商家身份（有 merchant IdentityProfile + org），本 org 素材 + 授权推荐官。
- *   商家可上传/编辑/删除 + 授权推荐官；推荐官（无商家身份）只看「被授权」的商家素材（只读）。
+ *   org admin/member 粒度：组织级素材管理（上传/删除/授权）仅 org owner/admin；member 只读。
+ *   门店素材管理需门店 MANAGER 范围；推荐官（无商家身份）只看「被授权」的商家素材（只读）。
  * - 公共（public）：全员只读（含未登录），active 未过期；内容审核员可在此看自己上传的 pending（审核端在管理台）。
  *
  * 嵌入 AiCreationCenter 第 4 tab；下载走后端中转签短时 URL，不预渲染。
@@ -28,9 +33,11 @@ const props = withDefaults(defineProps<{
   authenticated: boolean
   selectable?: boolean
   selectedAssetIds?: string[]
+  recommendationContext?: CreationRecommendationContext
 }>(), {
   selectable: false,
   selectedAssetIds: () => [],
+  recommendationContext: undefined,
 })
 const emit = defineEmits<{
   'request-login': []
@@ -40,7 +47,7 @@ const emit = defineEmits<{
 const grassland = useGrassland()
 const auth = useAuth()
 
-type LibraryTab = 'personal' | 'merchant' | 'public'
+type LibraryTab = 'recommend' | 'personal' | 'merchant' | 'public'
 const activeTab = ref<LibraryTab>('personal')
 const identities = ref<IdentityProfile[]>([])
 const assets = ref<ContentAsset[]>([])
@@ -50,10 +57,14 @@ const showUpload = ref(false)
 const grantedView = ref(false)
 const stores = ref<Store[]>([])
 const storeScopes = ref<StoreAccessScope[]>([])
+const organizationScopes = ref<OrganizationAccessScope[]>([])
 const selectedOrganizationId = ref('')
 /** Empty means organization-level merchant assets; otherwise the selected store scope. */
 const selectedStoreId = ref('')
 const selectedIds = ref<string[]>([...props.selectedAssetIds])
+/** 推荐 tab：id → 分数/理由（可解释排序）；query 存服务端实际采用的检索上下文。 */
+const recommendationScores = ref<Record<string, { score: number; reasons: string[] }>>({})
+const recommendationQuery = ref<{ platform: string; contentForm: string; terms: string[]; sourceTitle?: string } | null>(null)
 
 const CATEGORIES: ReadonlyArray<{ id: ContentAssetCategory; label: string }> = [
   { id: 'store', label: '门店' },
@@ -86,12 +97,19 @@ const merchantOrganizations = computed(() => {
 })
 const hasOrganizationManagement = computed(() =>
   merchantIdentity.value?.organizationId === selectedOrganizationId.value)
+/** 当前账号在所选组织的成员角色（identity 权威，owner/admin/member；无成员行时为 null）。 */
+const organizationRole = computed(() =>
+  organizationScopes.value.find((scope) => scope.organizationId === selectedOrganizationId.value)?.role ?? null)
+/** org admin/member 粒度：组织级商家素材的管理（上传/删除/授权）要求 org owner/admin。 */
+const isOrganizationAdmin = computed(() =>
+  hasOrganizationManagement.value
+  && (organizationRole.value === 'owner' || organizationRole.value === 'admin'))
 const canManageCurrentMerchantScope = computed(() => {
   if (!selectedOrganizationId.value || grantedView.value) return false
-  if (!selectedStoreId.value) return hasOrganizationManagement.value
-  return hasOrganizationManagement.value || managerStoreScopes.value.some((scope) =>
+  if (!selectedStoreId.value) return isOrganizationAdmin.value
+  return managerStoreScopes.value.some((scope) =>
     scope.organizationId === selectedOrganizationId.value
-      && scope.storeId === selectedStoreId.value)
+      && scope.storeId === selectedStoreId.value) || isOrganizationAdmin.value
 })
 const canReviewPublic = computed(() => auth.hasBackendRole('content_reviewer'))
 
@@ -119,11 +137,13 @@ function selectTab(tab: LibraryTab): void {
 
 onMounted(async () => {
   if (props.authenticated) {
-    const [list, scopes] = await Promise.all([
+    const [list, scopes, orgScopeList] = await Promise.all([
       grassland.listIdentities(), grassland.listMyStoreScopes(),
+      grassland.listMyOrganizationScopes(),
     ])
     if (list) identities.value = list
     if (Array.isArray(scopes)) storeScopes.value = scopes
+    if (Array.isArray(orgScopeList)) organizationScopes.value = orgScopeList
     selectedOrganizationId.value = merchantIdentity.value?.organizationId
       ?? managerStoreScopes.value[0]?.organizationId ?? ''
     await loadMerchantStores()
@@ -169,6 +189,25 @@ async function changeMerchantOrganization(): Promise<void> {
 async function refresh(): Promise<void> {
   notice.value = ''
   assets.value = []
+  recommendationScores.value = {}
+  recommendationQuery.value = null
+  if (activeTab.value === 'recommend') {
+    const context = props.recommendationContext
+    const result = await grassland.recommendContentAssets({
+      applicationId: context?.applicationId,
+      taskId: context?.taskId,
+      platform: context?.platform,
+      contentForm: context?.contentForm,
+      keywords: context?.keywords,
+    })
+    if (result) {
+      assets.value = result.items
+      recommendationQuery.value = { ...result.query, sourceTitle: result.sourceTitle }
+      recommendationScores.value = Object.fromEntries(
+        result.items.map((item) => [item.id, { score: item.score, reasons: item.reasons }]))
+    }
+    return
+  }
   if (activeTab.value === 'public') {
     const result = await grassland.listContentAssets({ libraryType: 'public' })
     if (result) assets.value = result.items
@@ -180,7 +219,13 @@ async function refresh(): Promise<void> {
       if (result) assets.value = result.items
       return
     }
-    if (canManageCurrentMerchantScope.value) {
+    // 读取粒度：组织级列表 merchant 身份即可（member 只读）；门店列表加显式门店范围。
+    const sameOrgMerchant = hasOrganizationManagement.value
+    const canViewScope = !selectedStoreId.value
+      ? sameOrgMerchant
+      : sameOrgMerchant || managerStoreScopes.value.some((scope) =>
+        scope.organizationId === selectedOrganizationId.value && scope.storeId === selectedStoreId.value)
+    if (canViewScope) {
       const result = await grassland.listContentAssets({
         libraryType: 'merchant',
         organizationId: selectedOrganizationId.value || undefined,
@@ -199,7 +244,8 @@ async function handleUploaded(mediaIds: string[]): Promise<void> {
   if (mediaIds.length === 0) return
   // 上传后立即挂接最后一张（简易：一次挂一张，用户可后续编辑）。
   const mediaId = mediaIds[mediaIds.length - 1]
-  const libraryType: ContentLibraryType = activeTab.value === 'public' ? 'public' : activeTab.value
+  const libraryType: ContentLibraryType =
+    activeTab.value === 'public' ? 'public' : activeTab.value === 'recommend' ? 'personal' : activeTab.value
   const input = activeTab.value === 'public'
     ? {
         libraryType: 'public' as const,
@@ -241,7 +287,6 @@ function canSelect(asset: ContentAsset): boolean {
   if (activeTab.value === 'merchant' && !grantedView.value) return false
   return selectedIds.value.includes(asset.id) || selectedIds.value.length < 50
 }
-
 function toggleSelection(assetId: string): void {
   const next = selectedIds.value.includes(assetId)
     ? selectedIds.value.filter((id) => id !== assetId)
@@ -284,6 +329,8 @@ function formatSize(bytes: number | null | undefined): string {
     </p>
 
     <nav class="lib-tabs" role="tablist">
+      <button v-if="authenticated" type="button" role="tab" :aria-selected="activeTab === 'recommend'"
+        :class="{ active: activeTab === 'recommend' }" @click="selectTab('recommend')">智能推荐</button>
       <button type="button" role="tab" :aria-selected="activeTab === 'personal'"
         :class="{ active: activeTab === 'personal' }" @click="selectTab('personal')">个人素材</button>
       <button v-if="merchantTabVisible" type="button" role="tab" :aria-selected="activeTab === 'merchant'"
@@ -296,7 +343,13 @@ function formatSize(bytes: number | null | undefined): string {
         :class="{ active: activeTab === 'public' }" @click="selectTab('public')">公共素材</button>
     </nav>
 
-    <!-- 上传区（个人/商家/审核员，公共需 content_reviewer） -->
+    <p v-if="activeTab === 'recommend' && recommendationQuery" class="lib-recommend-meta" aria-live="polite">
+      {{ recommendationQuery.sourceTitle ? `按任务「${recommendationQuery.sourceTitle}」` : '按当前创作上下文' }}
+      推荐（{{ recommendationQuery.platform || '未指定平台'
+        }}{{ recommendationQuery.terms.length > 0 ? ` · 关键词：${recommendationQuery.terms.slice(0, 6).join('、')}` : '' }}）
+    </p>
+
+    <!-- 上传区（个人/商家/审核员，公共需 content_reviewer；组织级商家素材仅 org owner/admin） -->
     <div v-if="activeTab === 'personal' || activeTab === 'public' && canReviewPublic
       || activeTab === 'merchant' && canManageCurrentMerchantScope" class="lib-actions">
       <button v-if="!showUpload" type="button" @click="showUpload = true">添加素材</button>
@@ -333,6 +386,12 @@ function formatSize(bytes: number | null | undefined): string {
           {{ asset.mimeType }} · {{ formatSize(asset.sizeBytes) }}
         </p>
         <p v-if="asset.tags.length > 0" class="lib-tags">{{ asset.tags.join('、') }}</p>
+        <template v-if="activeTab === 'recommend' && recommendationScores[asset.id]">
+          <p class="lib-score">匹配度 {{ recommendationScores[asset.id].score }}</p>
+          <p v-if="recommendationScores[asset.id].reasons.length > 0" class="lib-reasons">
+            {{ recommendationScores[asset.id].reasons.join(' · ') }}
+          </p>
+        </template>
         <p v-if="asset.source" class="lib-source">来源：{{ asset.source }}</p>
         <p v-if="asset.storeId" class="lib-source">
           范围：{{ stores.find((store) => store.id === asset.storeId)?.name || '门店素材' }}
@@ -350,7 +409,8 @@ function formatSize(bytes: number | null | undefined): string {
     </ul>
 
     <p v-else class="lib-empty">
-      {{ activeTab === 'public' ? '暂无公共素材。' : '还没有素材，点「添加素材」上传第一份。' }}
+      {{ activeTab === 'recommend' ? '暂无可推荐的素材——先在个人/商家/公共库上传或等待商家授权。'
+        : activeTab === 'public' ? '暂无公共素材。' : '还没有素材，点「添加素材」上传第一份。' }}
     </p>
   </section>
 </template>
@@ -376,6 +436,9 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-title { font-size: 13px; font-weight: 500; word-break: break-all; }
 .lib-cat { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); white-space: nowrap; }
 .lib-meta, .lib-tags, .lib-source { margin: 0; font-size: 11px; opacity: 0.65; word-break: break-all; }
+.lib-recommend-meta { margin: 0; font-size: 12px; color: var(--color-text-secondary); }
+.lib-score { margin: 0; font-size: 11px; font-weight: 600; color: var(--color-accent); }
+.lib-reasons { margin: 0; font-size: 11px; opacity: 0.75; }
 .lib-card-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
 .lib-card-actions button { padding: 3px 10px; font-size: 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; }
 .lib-card-actions button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }

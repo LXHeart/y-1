@@ -4,7 +4,7 @@
 import type { RunFn } from './grassland-http'
 import { request } from './grassland-http'
 import type {
-  IdentityProfile, Organization, StoreAccessScope, IdentityType,
+  IdentityProfile, Organization, StoreAccessScope, OrganizationAccessScope, IdentityType,
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
   Membership, LoginSession, OrgInvitation, MyInvitation,
@@ -21,6 +21,10 @@ export function useGrasslandIdentity(run: RunFn) {
 
   /** 仅列当前账号显式加入的门店，不扩散为同组织的其他门店权限。 */
   const listMyStoreScopes = () => run(() => request<StoreAccessScope[]>('/api/me/store-scopes'))
+
+  /** 当前账号的组织范围与角色（owner/admin/member）；素材库组织级管理入口按 admin 及以上显隐。 */
+  const listMyOrganizationScopes = () =>
+    run(() => request<OrganizationAccessScope[]>('/api/me/organization-scopes'))
 
   const createOrganization = (name: string, industry?: string) =>
     run(() => request<Organization>('/api/organizations', {
@@ -224,7 +228,7 @@ export function useGrasslandIdentity(run: RunFn) {
       `/api/organizations/${orgId}/stores/${storeId}/memberships/${accountId}`, { method: 'DELETE' }))
 
   return {
-    listIdentities, listOrganizations, listMyStoreScopes, createOrganization,
+    listIdentities, listOrganizations, listMyStoreScopes, listMyOrganizationScopes, createOrganization,
     openIdentity, activateIdentity, reauthenticate,
     getQuota, getUsage,
     createPermissionRequest, listPermissionRequests, appealPermissionRequest,

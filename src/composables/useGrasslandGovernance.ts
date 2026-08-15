@@ -12,6 +12,7 @@ import type {
   MediaUploadTicket, MediaMetadata,
   ContentAsset, ContentAssetCategory, ContentAssetGrant, ContentAssetVersion, ContentLibraryType,
   CreateContentAssetInput, UpdateContentAssetInput,
+  ContentAssetRecommendationInput, ContentAssetRecommendationResult,
   WithdrawalAccount, CreateWithdrawalAccountInput,
   StoreProfile, CreateStoreProfileInput,
   KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
@@ -328,6 +329,25 @@ export function useGrasslandGovernance(run: RunFn) {
     return run(() => request<{ items: ContentAsset[] }>(`/api/content-assets?${qs}`))
   }
 
+  /**
+   * 智能素材推荐（PRD §4.8「按任务和平台智能推荐」）。任务模式传 applicationId+taskId
+   * （服务端拉权威任务上下文提词，不信任前端任务 JSON）；独立模式传 platform/contentForm/keywords。
+   * 候选只含本人可访问素材，推荐只重排不越权。
+   */
+  const recommendContentAssets = (input: ContentAssetRecommendationInput) => {
+    const qs = new URLSearchParams()
+    if (input.applicationId) qs.set('applicationId', input.applicationId)
+    if (input.taskId) qs.set('taskId', input.taskId)
+    if (input.platform) qs.set('platform', input.platform)
+    if (input.contentForm) qs.set('contentForm', input.contentForm)
+    if (input.category) qs.set('category', input.category)
+    if (input.keywords?.length) qs.set('keywords', input.keywords.join(','))
+    if (input.limit != null) qs.set('limit', String(input.limit))
+    const suffix = qs.size > 0 ? `?${qs}` : ''
+    return run(() => request<ContentAssetRecommendationResult>(
+      `/api/content-assets/recommendations${suffix}`))
+  }
+
   /** 创建素材条目（挂接已 confirm 的 mediaId）。 */
   const createContentAsset = (input: CreateContentAssetInput) =>
     run(() => request<ContentAsset>('/api/content-assets', {
@@ -523,7 +543,7 @@ export function useGrasslandGovernance(run: RunFn) {
     listOpsPendingVerifications, overrideOpsVerification,
     getMerchantProfile, createMerchantProfile, updateMerchantProfile, submitMerchantProfile,
     listMerchantAttachments, uploadMerchantAttachment, deleteMerchantAttachment,
-    uploadContentAssetFile, listContentAssets, createContentAsset, getContentAsset,
+    uploadContentAssetFile, listContentAssets, recommendContentAssets, createContentAsset, getContentAsset,
     listContentAssetVersions, updateContentAsset, deleteContentAsset, getContentAssetDownloadUrl,
     grantContentAsset, listContentAssetGrants, revokeContentAssetGrant,
     listWithdrawalAccounts, createWithdrawalAccount, updateWithdrawalAccount,

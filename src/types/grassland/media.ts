@@ -117,6 +117,30 @@ export interface ContentAssetGrant {
   releasedAt?: string | null
 }
 
+/** 智能素材推荐条目（PRD §4.8「按任务和平台智能推荐」）：素材 + 分数与可解释理由。 */
+export interface RecommendedContentAsset extends ContentAsset {
+  score: number
+  reasons: string[]
+}
+
+/** 推荐请求：任务模式（applicationId+taskId 成对，服务端拉权威任务上下文）或独立模式显式参数。 */
+export interface ContentAssetRecommendationInput {
+  applicationId?: string
+  taskId?: string
+  platform?: string
+  contentForm?: string
+  category?: ContentAssetCategory
+  keywords?: string[]
+  limit?: number
+}
+
+/** 推荐响应：排序条目 + 服务端实际采用的检索上下文（terms 为分词后的检索词）。 */
+export interface ContentAssetRecommendationResult {
+  items: RecommendedContentAsset[]
+  query: { platform: string; contentForm: string; category: string; terms: string[] }
+  sourceTitle?: string
+}
+
 /** 创建素材请求（POST /api/content-assets）。个人/商家库可省略 source/licenseScope。 */
 export interface CreateContentAssetInput {
   libraryType: ContentLibraryType

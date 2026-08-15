@@ -133,4 +133,98 @@ describe('MediaLibraryPanel', () => {
     expect(merchantRequest).toContain('organizationId=org-1')
     expect(merchantRequest).toContain('storeId=store-1')
   })
+
+  test('org member 只读组织级素材，管理入口仅 org owner/admin 可见', async () => {
+    const identities = [{ id: 'id-1', identityType: 'merchant', organizationId: 'org-9', status: 'active' }]
+    const scopes = (role: string) => [{
+      organizationId: 'org-9', organizationName: '示例组织', organizationStatus: 'active',
+      permissionTier: 'basic_publish', role,
+    }]
+    const asset = {
+      id: 'm1', mediaId: 'md1', libraryType: 'merchant', category: 'store',
+      title: '组织素材', tags: [], status: 'active', version: 1,
+      createdAt: '2026-08-16T00:00:00Z', updatedAt: '2026-08-16T00:00:00Z',
+    }
+
+    // member：能看到组织级列表，但没有上传/管理入口。
+    vi.stubGlobal('fetch', mockFetch({
+      '/api/me/identities': identities,
+      '/api/me/store-scopes': [],
+      '/api/me/organization-scopes': scopes('member'),
+      'libraryType=merchant': { items: [asset] },
+      'libraryType=personal': { items: [] },
+    }))
+    const memberWrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+    await memberWrapper.findAll('button[role="tab"]')
+      .find((button) => button.text().includes('商家素材'))!.trigger('click')
+    await flushPromises()
+    expect(memberWrapper.text()).toContain('组织素材')
+    expect(memberWrapper.text()).not.toContain('添加素材')
+    expect(memberWrapper.text()).not.toContain('授权推荐官')
+
+    // admin：管理入口出现。
+    vi.stubGlobal('fetch', mockFetch({
+      '/api/me/identities': identities,
+      '/api/me/store-scopes': [],
+      '/api/me/organization-scopes': scopes('admin'),
+      'libraryType=merchant': { items: [asset] },
+      'libraryType=personal': { items: [] },
+    }))
+    const adminWrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+    await adminWrapper.findAll('button[role="tab"]')
+      .find((button) => button.text().includes('商家素材'))!.trigger('click')
+    await flushPromises()
+    expect(adminWrapper.text()).toContain('添加素材')
+    expect(adminWrapper.text()).toContain('授权推荐官')
+  })
+
+  test('智能推荐 tab 展示带分数与理由的推荐并可勾选', async () => {
+    const fetchMock = mockFetch({
+      '/api/content-assets/recommendations': {
+        items: [
+          { id: 'r1', mediaId: 'm1', libraryType: 'personal', category: 'store',
+            title: '开业招牌海报', tags: ['开业'], status: 'active', version: 1,
+            createdAt: '2026-08-16T00:00:00Z', updatedAt: '2026-08-16T00:00:00Z',
+            score: 68, reasons: ['标题命中「开业」', '个人素材'] },
+        ],
+        query: { platform: 'xiaohongshu', contentForm: 'graphic', category: 'store', terms: ['开业'] },
+        sourceTitle: '新店开业探店图文',
+      },
+      '/api/me/identities': [],
+      '/api/me/store-scopes': [],
+      '/api/me/organization-scopes': [],
+      'libraryType=personal': { items: [] },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MediaLibraryPanel, {
+      props: {
+        authenticated: true,
+        selectable: true,
+        selectedAssetIds: [],
+        recommendationContext: {
+          applicationId: 'app-1', taskId: 'task-1', platform: 'xiaohongshu', contentForm: 'graphic',
+        },
+      },
+    })
+    await flushPromises()
+    await wrapper.findAll('button[role="tab"]').find((button) => button.text().includes('智能推荐'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('按任务「新店开业探店图文」')
+    expect(wrapper.text()).toContain('开业招牌海报')
+    expect(wrapper.text()).toContain('匹配度 68')
+    expect(wrapper.text()).toContain('标题命中「开业」')
+    const recommendRequest = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .find((url) => url.includes('/api/content-assets/recommendations'))
+    expect(recommendRequest).toContain('applicationId=app-1')
+    expect(recommendRequest).toContain('taskId=task-1')
+    expect(recommendRequest).toContain('platform=xiaohongshu')
+    await wrapper.get('input[aria-label="选择素材：开业招牌海报"]').setValue(true)
+    expect(wrapper.emitted('selection-change')?.[0]?.[0]).toEqual(['r1'])
+  })
 })

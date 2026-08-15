@@ -261,6 +261,7 @@
       :authenticated="props.authenticated"
       :selectable="taskSourceLocked"
       :selected-asset-ids="materialIds"
+      :recommendation-context="recommendationContext"
       @selection-change="setSelectedMaterials"
       @request-login="emit('request-login')"
     />
@@ -291,6 +292,7 @@ import type {
   CreationDraftPrefill,
   CreationEntry,
   CreationHandoff,
+  CreationRecommendationContext,
   CreationSource,
   CreationSourceType,
   VideoCreationWorkflowId,
@@ -377,6 +379,16 @@ const taskRequirements = computed(() => {
   return parts.length ? parts.join('\n') : undefined
 })
 const taskRequirementEntries = computed(() => Object.entries(props.entry?.taskContext?.requirements || {}))
+/** 素材库智能推荐上下文：任务模式带权威任务引用，独立模式带当前平台/内容形式。 */
+const recommendationContext = computed<CreationRecommendationContext>(() => {
+  const source = props.entry?.source
+  return {
+    applicationId: source?.type === 'task' ? source.applicationId : undefined,
+    taskId: source?.type === 'task' ? source.taskId : undefined,
+    platform: platformId.value || undefined,
+    contentForm: contentFormId.value || undefined,
+  }
+})
 const assistantSource = computed<CreationSource | undefined>(() => sourceForHandoff() ?? undefined)
 const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.platformId))
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))

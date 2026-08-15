@@ -220,6 +220,15 @@ export interface StoreAccessScope {
   role: StoreRole
 }
 
+/** 当前账号的组织范围与角色（/api/me/organization-scopes）；角色权威口径同 identity OrgAuthorization。 */
+export interface OrganizationAccessScope {
+  organizationId: string
+  organizationName: string
+  organizationStatus: string
+  permissionTier: PermissionTier
+  role: MembershipRole
+}
+
 // ---------- identity：多设备登录会话（Slice 2I / HLD D-08）----------
 
 /**

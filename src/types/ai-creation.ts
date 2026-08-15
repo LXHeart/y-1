@@ -67,6 +67,18 @@ export interface CreationHandoff extends CreationEntry {
   targetView: CreationTargetView
 }
 
+/**
+ * 素材库智能推荐的创作上下文（PRD §4.8「按任务和平台智能推荐」）：
+ * 任务模式传 applicationId+taskId（服务端拉权威任务上下文提词），独立模式传 platform/contentForm/keywords。
+ */
+export interface CreationRecommendationContext {
+  applicationId?: string
+  taskId?: string
+  platform?: string
+  contentForm?: string
+  keywords?: string[]
+}
+
 export interface CreationWorkflowResolution {
   status: 'available' | 'planned' | 'unsupported'
   workflowId: CreationWorkflowId | null
