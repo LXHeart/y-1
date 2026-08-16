@@ -74,6 +74,9 @@ public class NotificationRecipientResolver {
             // 商家侧：报名/撤回/交付进来了，通知任务归属人。
             case "ApplicationSubmitted", "ApplicationWithdrawn", "DeliverableSubmitted" ->
                     accountIds(payload, "taskOwnerId");
+            // 推荐官侧：报名被接受/被拒绝（#28）。商家是操作者，不通知自己刚做的动作。
+            case "ApplicationAccepted", "ApplicationRejected" ->
+                    accountIds(payload, "recommenderAccountId");
             // 推荐官任务邀请：收件人已由 marketplace 冻结进 payload，identity 不反查任务域。
             case "TaskRecommenderInvited" -> accountIds(payload, "recommenderAccountId");
             // 任务审核结果：只读 marketplace 发出的任务归属人字段，不反查任务域。

@@ -90,6 +90,20 @@ class MailTemplatesTest {
     }
 
     @Test
+    void applicationResultEventsProduceEngagementMailMatchingNotification() {
+        // 报名结果（#28）：ENGAGEMENT 类落入高价值邮件子集，文案与站内通知零漂移。
+        JsonNode p = payload(Map.of("taskId", "t-1", "applicationId", "a-1"));
+        for (String eventType : java.util.List.of("ApplicationAccepted", "ApplicationRejected")) {
+            MailTemplate mail = MailTemplates.mailTemplate(eventType, p);
+            NotificationTemplates.Template notification = NotificationTemplates.template(eventType, p);
+            assertThat(mail).as(eventType).isNotNull();
+            assertThat(mail.category()).as(eventType).isEqualTo("engagement");
+            assertThat(mail.subject()).as(eventType).isEqualTo(notification.title());
+            assertThat(mail.body()).as(eventType).isEqualTo(notification.body());
+        }
+    }
+
+    @Test
     void unknownEventProducesNoMail() {
         assertThat(MailTemplates.mailTemplate("WhateverEvent", payload(Map.of()))).isNull();
     }

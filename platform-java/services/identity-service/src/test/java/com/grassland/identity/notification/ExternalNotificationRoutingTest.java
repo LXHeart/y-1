@@ -47,6 +47,43 @@ class ExternalNotificationRoutingTest {
     }
 
     @Test
+    void applicationResultEventsNotifyRecommenderOnlyWithEngagementTemplate() {
+        // 报名结果（#28）：被接受/被拒绝只通知推荐官——商家是操作者，按约定不通知自己刚做的动作。
+        for (String eventType : List.of("ApplicationAccepted", "ApplicationRejected")) {
+            String status = "ApplicationAccepted".equals(eventType) ? "accepted" : "rejected";
+            Map<String, Object> fields = Map.of(
+                    "taskId", "task-1", "applicationId", "app-1", "status", status,
+                    "taskOwnerId", OWNER, "recommenderAccountId", RECOMMENDER);
+            assertThat(resolve(eventType, fields)).as(eventType).containsExactly(RECOMMENDER);
+
+            NotificationTemplates.Template template = NotificationTemplates.template(eventType, payload(fields));
+            assertThat(template).as(eventType).isNotNull();
+            assertThat(template.category()).as(eventType).isEqualTo(NotificationCategory.ENGAGEMENT);
+            assertThat(template.linkPath()).as(eventType).isEqualTo("/me/engagements");
+            assertThat(template.payload()).as(eventType)
+                    .containsEntry("taskId", "task-1")
+                    .containsEntry("applicationId", "app-1")
+                    .containsEntry("status", status)
+                    .doesNotContainKey("taskOwnerId")
+                    .doesNotContainKey("recommenderAccountId");
+        }
+    }
+
+    @Test
+    void applicationResultWithoutRecommenderFieldYieldsNoRecipient() {
+        // 发射端缺 recommenderAccountId（防御）→ 空收件人，不产生通知也不报错重试。
+        assertThat(resolve("ApplicationAccepted", Map.of("taskId", "task-1", "applicationId", "app-1"))).isEmpty();
+        assertThat(resolve("ApplicationRejected", Map.of("taskId", "task-1", "applicationId", "app-1"))).isEmpty();
+    }
+
+    @Test
+    void acceptanceStartedIntermediateEventProducesNoTemplate() {
+        // 资金型任务 accept 的中间态事件不产生通知——预留成功后的终态 ApplicationAccepted 才通知。
+        assertThat(NotificationTemplates.template("ApplicationAcceptanceStarted", payload(Map.of(
+                "taskId", "task-1", "applicationId", "app-1", "recommenderAccountId", RECOMMENDER)))).isNull();
+    }
+
+    @Test
     void taskInvitationGoesToRecommenderAndCarriesDedicatedDeepLink() {
         Map<String, Object> fields = Map.of(
                 "taskId", "task-1", "invitationId", "invite-1",

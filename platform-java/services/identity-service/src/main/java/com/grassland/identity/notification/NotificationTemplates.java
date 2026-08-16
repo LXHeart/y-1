@@ -77,6 +77,13 @@ public final class NotificationTemplates {
             case "ApplicationWithdrawn" -> new Template(
                     NotificationCategory.ENGAGEMENT, "有报名被撤回",
                     "你的任务有一份报名已被撤回", LINK_ENGAGEMENTS, taskPayload(payload));
+            // marketplace：报名结果只通知推荐官——商家是操作者，不需要被告知自己刚做的动作。
+            case "ApplicationAccepted" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "你的报名已被接受",
+                    "商家已接受你的任务报名，点击查看任务并开始创作", LINK_ENGAGEMENTS, taskPayload(payload));
+            case "ApplicationRejected" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "你的报名未被接受",
+                    "商家未接受你的任务报名，可继续浏览其他任务", LINK_ENGAGEMENTS, taskPayload(payload));
             case "DeliverableSubmitted" -> new Template(
                     NotificationCategory.ENGAGEMENT, "收到交付凭证",
                     "有推荐官提交了履约凭证，待你核验", LINK_ENGAGEMENTS, taskPayload(payload));
