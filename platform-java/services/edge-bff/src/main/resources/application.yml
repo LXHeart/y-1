@@ -118,6 +118,11 @@ edge:
     - path: /api/organizations
       upstream: identity
       enabled: ${EDGE_ROUTE_ORGANIZATIONS_IDENTITY:true}
+    # 门店公开详情页（任务书 #24）→ identity-service。GET /api/stores/{storeId}/public-profile；
+    # 登录即可看、未登录也放行（identity 侧 resolveOptional）；内部批量端点 /internal/** 不进本清单。
+    - path: /api/stores
+      upstream: identity
+      enabled: ${EDGE_ROUTE_STORES_PUBLIC_IDENTITY:true}
     # 活动身份 + 多设备 session + 本人身份审计（/api/me/identity-audit）。
     - path: /api/me
       upstream: identity

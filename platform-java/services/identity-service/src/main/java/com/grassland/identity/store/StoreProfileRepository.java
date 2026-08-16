@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
@@ -216,6 +217,71 @@ public class StoreProfileRepository {
                         value(row.get("longitude", Double.class)),
                         value(row.get("distance_km", Double.class))))
                 .all();
+    }
+
+    // ---- 任务书 #24 Stage 2：门店公开资料白名单读（不含 KYB 审核列/组织内部字段） ----
+
+    private static final String PUBLIC_COLS =
+            "s.id::text AS store_id, s.name AS store_name, sp.address::text AS address, sp.phone, "
+                    + "sp.business_hours::text AS business_hours, sp.description, sp.categories, "
+                    + "sp.signature_items, sp.selling_points, sp.must_emphasize, sp.forbidden_phrases, "
+                    + "sp.allowed_tags, sp.brand_tone, sp.price_range, sp.average_spend_cents, sp.visit_notes";
+
+    /**
+     * 单店公开资料。前置条件：门店 active 且所属组织 active（非 suspended），无资料行/不满足 → 空
+     * （controller 层 404）。不含任何 KYB 审核列。
+     */
+    public Mono<StorePublicProfile> findPublicProfile(String storeId) {
+        return db.sql("""
+                SELECT %s
+                FROM store s
+                INNER JOIN store_profile sp ON sp.store_id = s.id
+                INNER JOIN organization o ON o.id = s.organization_id
+                WHERE s.id = CAST(:id AS uuid) AND s.status = 'active' AND o.status = 'active'
+                """.formatted(PUBLIC_COLS))
+                .bind("id", storeId)
+                .map(StoreProfileRepository::mapPublic).one();
+    }
+
+    /**
+     * 批量公开资料（feed enrichment 用，一次拉整页 storeId）。LEFT JOIN 资料表：无资料的门店
+     * 仍回 storeName（营销字段空）。同样限定门店/组织 active。
+     */
+    public Flux<StorePublicProfile> findPublicProfiles(Collection<String> storeIds) {
+        if (storeIds.isEmpty()) {
+            return Flux.empty();
+        }
+        return db.sql("""
+                SELECT %s
+                FROM store s
+                LEFT JOIN store_profile sp ON sp.store_id = s.id
+                INNER JOIN organization o ON o.id = s.organization_id
+                WHERE s.id = ANY(CAST(:ids AS uuid[])) AND s.status = 'active' AND o.status = 'active'
+                ORDER BY s.id
+                """.formatted(PUBLIC_COLS))
+                .bind("ids", storeIds.toArray(String[]::new))
+                .map(StoreProfileRepository::mapPublic).all();
+    }
+
+    private static StorePublicProfile mapPublic(Readable row) {
+        return new StorePublicProfile(
+                row.get("store_id", String.class),
+                row.get("store_name", String.class),
+                row.get("address", String.class),
+                row.get("phone", String.class),
+                row.get("business_hours", String.class),
+                row.get("description", String.class),
+                toList(row.get("categories", String[].class)),
+                toList(row.get("signature_items", String[].class)),
+                row.get("price_range", String.class),
+                row.get("average_spend_cents", Integer.class),
+                row.get("visit_notes", String.class),
+                toList(row.get("selling_points", String[].class)),
+                row.get("brand_tone", String.class),
+                toList(row.get("must_emphasize", String[].class)),
+                toList(row.get("forbidden_phrases", String[].class)),
+                toList(row.get("allowed_tags", String[].class))
+        );
     }
 
     private static StoreProfile map(Readable row) {

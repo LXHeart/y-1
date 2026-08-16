@@ -24,6 +24,8 @@ class UpstreamResolverTest {
             new RouteProperties(null, "/api/tasks", "marketplace", true),
             // P0-1：身份域非 auth 端点 + finance + trust 全量经 BFF
             new RouteProperties(null, "/api/organizations", "identity", true),
+            // 任务书 #24：门店公开详情页 → identity（内部批量端点不进清单）
+            new RouteProperties(null, "/api/stores", "identity", true),
             new RouteProperties(null, "/api/me", "identity", true),
             new RouteProperties(null, "/api/admin/permission-requests", "identity", true),
             // GL-P3-MERCHANT-001：KYB 审核队列 → identity（同样必须是精确前缀，不能退化为 /api/admin）
@@ -169,6 +171,15 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("GET", "/api/me/identities")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("POST", "/api/me/active-identity")).isEqualTo(IDENTITY);
         assertThat(resolver.resolve("DELETE", "/api/me/sessions/sid-x")).isEqualTo(IDENTITY);
+    }
+
+    @Test
+    void routesStorePublicProfileToIdentity() {
+        // 任务书 #24：/api/stores/{storeId}/public-profile 经 RouteManifest → identity 上游。
+        assertThat(resolver.resolve("GET", "/api/stores/" + ORG_ID + "/public-profile")).isEqualTo(IDENTITY);
+        assertThat(resolver.isInternalUpstream("GET", "/api/stores/" + ORG_ID + "/public-profile")).isTrue();
+        // 内部批量端点不得出现在公共 RouteManifest（fail-closed 404）。
+        assertThat(resolver.resolve("POST", "/internal/identity/stores/public-profiles")).isNull();
     }
 
     @Test

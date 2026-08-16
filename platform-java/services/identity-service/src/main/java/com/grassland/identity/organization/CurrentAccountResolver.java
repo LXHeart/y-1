@@ -60,6 +60,16 @@ public class CurrentAccountResolver {
     }
 
     /**
+     * 可选会话解析（任务书 #24）：登录返回账号，未登录/会话无效返回空。
+     * 供公开读端点用（登录即可看，未登录也放行）；不得用于需鉴权的写路径。
+     */
+    public Mono<AuthUser> resolveOptional(ServerHttpRequest request) {
+        return resolvePrincipal(request)
+                .onErrorResume(IdentityException.class, error -> Mono.empty())
+                .map(SessionPrincipal::user);
+    }
+
+    /**
      * 解析当前会话主体（账号 + sid）。草场身份域 Slice 2I（HLD D-08 per-session：活动身份按 session 隔离，端点需 sid）。
      * cookie → unsign → sid → {@link SessionRepository#findUserId} → {@link UserLookup#findById} → {@link SessionPrincipal}。
      */
