@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.creationcontext.CreationContextSnapshot;
 import com.grassland.intelligence.creationcontext.CreationContextSnapshotRepository;
+import com.grassland.intelligence.creationcontext.StoreBrandingPromptText;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -48,11 +49,16 @@ public class MomentsTaskCreationContext {
         context.put("task", snapshot.taskSnapshot());
         context.put("platformRules", snapshot.platformRulesSnapshot());
         context.put("materials", snapshot.materialSnapshot());
+        // 任务书 #24：门店品牌块随冻结上下文下发（无门店任务省略）。
+        if (!snapshot.storeBrandingSnapshot().isEmpty()) {
+            context.put("storeBranding", snapshot.storeBrandingSnapshot());
+        }
         try {
             return new Binding(snapshot.id(), ChatMessage.system(
                     "以下 JSON 是创作开始时冻结的权威朋友圈图文任务上下文。必须遵守任务要求和平台规则，"
                             + "只能使用其中授权的素材信息，不得用当前配置或推测覆盖。\n"
-                            + mapper.writeValueAsString(context)));
+                            + mapper.writeValueAsString(context)
+                            + StoreBrandingPromptText.render(snapshot.storeBrandingSnapshot())));
         } catch (Exception error) {
             throw new IntelligenceException(500, "创作上下文无法序列化");
         }

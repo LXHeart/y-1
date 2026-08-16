@@ -73,6 +73,7 @@ class CreationContextSnapshotRepositoryIT extends IntelligenceItSupport {
                         "validUntil", Instant.parse("2027-01-01T00:00:00Z")))),
                 Map.of("resolutionType", "PLATFORM", "provider", "qwen", "model", model,
                         "platformModelVersion", 7),
+                Map.of(),
                 null);
     }
 }

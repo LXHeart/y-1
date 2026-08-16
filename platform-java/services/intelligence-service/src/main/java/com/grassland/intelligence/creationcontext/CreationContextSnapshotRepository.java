@@ -20,7 +20,7 @@ public class CreationContextSnapshotRepository {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     private static final String COLS = "id::text, account_id, organization_id, task_id, application_id, "
             + "task_version, platform_id, content_form_id, task_snapshot::text, platform_rules_snapshot::text, "
-            + "material_snapshot::text, ai_config_snapshot::text, created_at";
+            + "material_snapshot::text, ai_config_snapshot::text, store_branding_snapshot::text, created_at";
 
     private final DatabaseClient db;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
@@ -34,10 +34,11 @@ public class CreationContextSnapshotRepository {
                 INSERT INTO creation_context_snapshot(
                     account_id, organization_id, task_id, application_id, task_version,
                     platform_id, content_form_id, task_snapshot, platform_rules_snapshot,
-                    material_snapshot, ai_config_snapshot)
+                    material_snapshot, ai_config_snapshot, store_branding_snapshot)
                 VALUES (:accountId, :organizationId, :taskId, :applicationId, :taskVersion,
                     :platformId, :contentFormId, CAST(:taskSnapshot AS jsonb),
-                    CAST(:platformRules AS jsonb), CAST(:materials AS jsonb), CAST(:aiConfig AS jsonb))
+                    CAST(:platformRules AS jsonb), CAST(:materials AS jsonb), CAST(:aiConfig AS jsonb),
+                    CAST(:storeBranding AS jsonb))
                 ON CONFLICT (account_id, application_id, task_version, platform_id, content_form_id)
                 DO NOTHING
                 """)
@@ -51,7 +52,8 @@ public class CreationContextSnapshotRepository {
                 .bind("taskSnapshot", json(snapshot.taskSnapshot()))
                 .bind("platformRules", json(snapshot.platformRulesSnapshot()))
                 .bind("materials", json(snapshot.materialSnapshot()))
-                .bind("aiConfig", json(snapshot.aiConfigSnapshot()));
+                .bind("aiConfig", json(snapshot.aiConfigSnapshot()))
+                .bind("storeBranding", json(snapshot.storeBrandingSnapshot()));
         return spec.fetch().rowsUpdated()
                 .then(findByKey(snapshot.accountId(), snapshot.applicationId(), snapshot.taskVersion(),
                         snapshot.platformId(), snapshot.contentFormId()));
@@ -88,6 +90,7 @@ public class CreationContextSnapshotRepository {
                 parse(row.get("platform_rules_snapshot", String.class)),
                 parse(row.get("material_snapshot", String.class)),
                 parse(row.get("ai_config_snapshot", String.class)),
+                parse(row.get("store_branding_snapshot", String.class)),
                 instant(row.get("created_at", OffsetDateTime.class)));
     }
 

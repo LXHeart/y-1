@@ -272,6 +272,7 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
                 Map.of("version", "test", "platform", platform, "contentForm", contentForm),
                 Map.of("items", List.of()),
                 Map.of("resolutionType", "PLATFORM", "provider", "qwen", "model", "qwen-plus"),
+                Map.of(),
                 null)).block();
         assert created != null;
         return created.id().toString();

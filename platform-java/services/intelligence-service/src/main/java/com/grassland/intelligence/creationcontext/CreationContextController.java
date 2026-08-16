@@ -62,6 +62,8 @@ public class CreationContextController {
         data.put("platformRulesSnapshot", snapshot.platformRulesSnapshot());
         data.put("materialSnapshot", snapshot.materialSnapshot());
         data.put("aiConfigSnapshot", snapshot.aiConfigSnapshot());
+        // 任务书 #24：门店品牌块（无门店任务为空对象），前端 AI 中心上下文预览展示。
+        data.put("storeBrandingSnapshot", snapshot.storeBrandingSnapshot());
         data.put("createdAt", snapshot.createdAt());
         return data;
     }

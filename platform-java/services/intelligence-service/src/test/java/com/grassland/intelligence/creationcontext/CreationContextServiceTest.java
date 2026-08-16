@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,7 +69,7 @@ class CreationContextServiceTest {
                 "taskId", "task-1", "applicationId", "app-1", "taskVersion", 4,
                 "platform", "小红书", "contentForm", "图文", "title", "接受时标题");
         when(marketplace.fetch("app-1", "task-1", "account-1"))
-                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1")));
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1", java.util.Map.of())));
         when(assets.findForCreation(List.of(second, first), "account-1", "org-1"))
                 .thenReturn(Flux.just(asset(first, "first"), asset(second, "second")));
         when(keys.findByPersonalAndCapability("account-1", "text"))
@@ -82,7 +83,7 @@ class CreationContextServiceTest {
                     UUID.randomUUID(), snapshot.accountId(), snapshot.organizationId(), snapshot.taskId(),
                     snapshot.applicationId(), snapshot.taskVersion(), snapshot.platformId(), snapshot.contentFormId(),
                     snapshot.taskSnapshot(), snapshot.platformRulesSnapshot(), snapshot.materialSnapshot(),
-                    snapshot.aiConfigSnapshot(), Instant.now()));
+                    snapshot.aiConfigSnapshot(), snapshot.storeBrandingSnapshot(), Instant.now()));
         });
 
         CreationContextSnapshot result = service.create("account-1",
@@ -121,7 +122,7 @@ class CreationContextServiceTest {
                 "taskId", "task-video", "applicationId", "app-video", "taskVersion", 2,
                 "platform", "douyin", "contentForm", "video");
         when(marketplace.fetch("app-video", "task-video", "account-1"))
-                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1")));
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1", java.util.Map.of())));
         when(assets.findForCreation(List.of(), "account-1", "org-1")).thenReturn(Flux.empty());
         when(keys.findByPersonalAndCapability("account-1", "text"))
                 .thenReturn(Mono.just(new AiProviderKey(
@@ -140,7 +141,7 @@ class CreationContextServiceTest {
                     UUID.randomUUID(), snapshot.accountId(), snapshot.organizationId(), snapshot.taskId(),
                     snapshot.applicationId(), snapshot.taskVersion(), snapshot.platformId(), snapshot.contentFormId(),
                     snapshot.taskSnapshot(), snapshot.platformRulesSnapshot(), snapshot.materialSnapshot(),
-                    snapshot.aiConfigSnapshot(), Instant.now()));
+                    snapshot.aiConfigSnapshot(), snapshot.storeBrandingSnapshot(), Instant.now()));
         });
 
         CreationContextSnapshot result = service.create("account-1",
@@ -163,7 +164,7 @@ class CreationContextServiceTest {
     void returnsExistingSnapshotWithoutRefetchingMutableDependencies() {
         CreationContextSnapshot existing = new CreationContextSnapshot(
                 UUID.randomUUID(), "account-1", "org-1", "task-1", "app-1", 4,
-                "xiaohongshu", "graphic", Map.of("title", "frozen"), Map.of(), Map.of(), Map.of(), Instant.now());
+                "xiaohongshu", "graphic", Map.of("title", "frozen"), Map.of(), Map.of(), Map.of(), Map.of(), Instant.now());
         when(snapshots.findByKey("account-1", "app-1", 4, "xiaohongshu", "graphic"))
                 .thenReturn(Mono.just(existing));
 
@@ -176,6 +177,55 @@ class CreationContextServiceTest {
         verify(assets, never()).findForCreation(any(), anyString(), anyString());
     }
 
+    /** 任务书 #24：storeBranding 首次创建即冻结；二次创建同幂等键返回同一快照（不可变回归）。 */
+    @Test
+    void freezesStoreBrandingAndSecondCreateReturnsSameSnapshot() {
+        Map<String, Object> task = Map.of(
+                "taskId", "task-9", "applicationId", "app-9", "taskVersion", 2,
+                "platform", "xiaohongshu", "contentForm", "graphic");
+        Map<String, Object> branding = Map.of(
+                "storeName", "旗舰店", "brandTone", "温暖亲切",
+                "mustEmphasize", List.of("锅底现熬"), "forbiddenPhrases", List.of("最好吃"));
+        when(marketplace.fetch("app-9", "task-9", "account-1"))
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(
+                        task, "org-1", branding)));
+        when(assets.findForCreation(List.of(), "account-1", "org-1")).thenReturn(Flux.empty());
+        when(keys.findByPersonalAndCapability("account-1", "text"))
+                .thenReturn(Mono.just(new AiProviderKey(
+                        UUID.randomUUID(), null, "account-1", "text", "qwen",
+                        "https://provider.internal.example", "qwen-plus", "ciphertext", "v7",
+                        "sk-***last", true, Instant.now(), Instant.now())));
+        when(snapshots.create(any())).thenAnswer(invocation -> {
+            CreationContextSnapshot snapshot = invocation.getArgument(0);
+            return Mono.just(new CreationContextSnapshot(
+                    UUID.randomUUID(), snapshot.accountId(), snapshot.organizationId(), snapshot.taskId(),
+                    snapshot.applicationId(), snapshot.taskVersion(), snapshot.platformId(), snapshot.contentFormId(),
+                    snapshot.taskSnapshot(), snapshot.platformRulesSnapshot(), snapshot.materialSnapshot(),
+                    snapshot.aiConfigSnapshot(), snapshot.storeBrandingSnapshot(), Instant.now()));
+        });
+
+        CreationContextSnapshot first = service.create("account-1",
+                new CreationContextService.CreateCreationContextRequest(
+                        "task-9", "app-9", 2, "xiaohongshu", "graphic", List.of())).block();
+        assertThat(first).isNotNull();
+        assertThat(first.storeBrandingSnapshot())
+                .containsEntry("storeName", "旗舰店")
+                .containsEntry("brandTone", "温暖亲切")
+                .containsEntry("mustEmphasize", List.of("锅底现熬"))
+                .containsEntry("forbiddenPhrases", List.of("最好吃"));
+
+        // 二次创建（同幂等键）→ 命中既有快照，不重拉权威上下文（首次创建即不可变）。
+        when(snapshots.findByKey("account-1", "app-9", 2, "xiaohongshu", "graphic"))
+                .thenReturn(Mono.just(first));
+        CreationContextSnapshot second = service.create("account-1",
+                new CreationContextService.CreateCreationContextRequest(
+                        "task-9", "app-9", 2, "xiaohongshu", "graphic", List.of())).block();
+        assertThat(second.id()).isEqualTo(first.id());
+        assertThat(second.storeBrandingSnapshot()).isEqualTo(first.storeBrandingSnapshot());
+        verify(marketplace, times(1)).fetch(anyString(), anyString(), anyString());
+        verify(snapshots, times(1)).create(any());
+    }
+
     @Test
     void rejectsUnauthorizedOrExpiredMaterialSet() {
         UUID requested = UUID.randomUUID();
@@ -183,7 +233,7 @@ class CreationContextServiceTest {
                 "taskId", "task-1", "applicationId", "app-1", "taskVersion", 4,
                 "platform", "xiaohongshu", "contentForm", "graphic");
         when(marketplace.fetch("app-1", "task-1", "account-1"))
-                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1")));
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1", java.util.Map.of())));
         when(assets.findForCreation(List.of(requested), "account-1", "org-1"))
                 .thenReturn(Flux.empty());
 
@@ -202,7 +252,7 @@ class CreationContextServiceTest {
                 "taskId", "task-1", "applicationId", "app-1", "taskVersion", 5,
                 "platform", "douyin", "contentForm", "video");
         when(marketplace.fetch("app-1", "task-1", "account-1"))
-                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1")));
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(task, "org-1", java.util.Map.of())));
 
         assertThatThrownBy(() -> service.create("account-1",
                 new CreationContextService.CreateCreationContextRequest(

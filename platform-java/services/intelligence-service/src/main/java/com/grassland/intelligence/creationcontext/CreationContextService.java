@@ -135,7 +135,9 @@ public class CreationContextService {
                 .map(config -> new CreationContextSnapshot(
                         null, accountId, authoritative.organizationId(),
                         String.valueOf(task.get("taskId")), String.valueOf(task.get("applicationId")),
-                        taskVersion, platform, form, task, rules, materialSnapshot, config, null))
+                        taskVersion, platform, form, task, rules, materialSnapshot, config,
+                        authoritative.storeBranding() == null ? Map.of() : authoritative.storeBranding(),
+                        null))
                 .flatMap(snapshots::create);
     }
 

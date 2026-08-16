@@ -56,11 +56,24 @@ public class MarketplaceCreationContextClient {
                 throw new IllegalStateException("任务上下文响应不合法");
             }
             @SuppressWarnings("unchecked") Map<String, Object> context = (Map<String, Object>) map.get("taskContext");
-            return new AuthoritativeContext(context, map.get("organizationId") == null ? null : String.valueOf(map.get("organizationId")));
+            // 任务书 #24：门店品牌块可选（组织级任务/门店无资料时缺省）。
+            Map<String, Object> storeBranding = map.get("storeBranding") instanceof Map<?, ?> branding
+                    ? cast(branding)
+                    : Map.of();
+            return new AuthoritativeContext(context,
+                    map.get("organizationId") == null ? null : String.valueOf(map.get("organizationId")),
+                    storeBranding);
         } catch (Exception error) {
             throw new IllegalStateException("任务上下文响应不合法", error);
         }
     }
 
-    public record AuthoritativeContext(Map<String, Object> taskContext, String organizationId) {}
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> cast(Map<?, ?> value) {
+        return (Map<String, Object>) value;
+    }
+
+    public record AuthoritativeContext(
+            Map<String, Object> taskContext, String organizationId,
+            Map<String, Object> storeBranding) {}
 }

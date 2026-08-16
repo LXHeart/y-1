@@ -792,7 +792,7 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 "requirements", Map.of("tone", "开业喜庆", "mustInclude", List.of("新店开业")));
         when(marketplaceCreationContext.fetch(applicationId, taskId, recommender))
                 .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(
-                        taskContext, "org-task")));
+                        taskContext, "org-task", Map.of())));
 
         Map<String, Object> response = client().get()
                 .uri("/api/content-assets/recommendations?applicationId=" + applicationId

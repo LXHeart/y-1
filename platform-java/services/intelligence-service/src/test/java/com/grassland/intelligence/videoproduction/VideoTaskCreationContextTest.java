@@ -73,6 +73,45 @@ class VideoTaskCreationContextTest {
                 .hasMessage("请求平台与冻结的创作上下文不一致");
     }
 
+    /** 任务书 #24：品牌语气与禁止表达必须出现在注入的 prompt 文本里。 */
+    @Test
+    void injectsStoreBrandingIntoPromptText() {
+        when(snapshots.findById(any())).thenReturn(Mono.just(new CreationContextSnapshot(
+                UUID.randomUUID(), ACCOUNT, "org-1", "task-1", "app-1", 3,
+                "douyin", "video",
+                Map.of("title", "视频任务"),
+                Map.of("version", "test"),
+                Map.of("items", java.util.List.of()),
+                Map.of("resolutionType", "PLATFORM"),
+                Map.of("storeName", "旗舰店", "brandTone", "温暖亲切",
+                        "mustEmphasize", java.util.List.of("锅底现熬"),
+                        "forbiddenPhrases", java.util.List.of("最好吃"),
+                        "allowedTags", java.util.List.of("#探店")),
+                null)));
+
+        VideoTaskCreationContext.Binding binding = contexts.bind(UUID.randomUUID(), ACCOUNT, "douyin").block();
+        assertThat(binding).isNotNull();
+        String prompt = binding.promptContext().content();
+        assertThat(prompt)
+                .contains("\"storeBranding\"")
+                .contains("品牌语气（风格指令）：温暖亲切")
+                .contains("- 锅底现熬")
+                .contains("- 最好吃")
+                .contains("- #探店");
+    }
+
+    /** 无门店品牌快照时 prompt 不携带品牌约束段（既有形状不变）。 */
+    @Test
+    void promptUnchangedWithoutStoreBranding() {
+        when(snapshots.findById(any())).thenReturn(Mono.just(snapshot("douyin", "video")));
+
+        VideoTaskCreationContext.Binding binding = contexts.bind(UUID.randomUUID(), ACCOUNT, "douyin").block();
+        assertThat(binding).isNotNull();
+        assertThat(binding.promptContext().content())
+                .doesNotContain("storeBranding")
+                .doesNotContain("门店品牌约束");
+    }
+
     private static CreationContextSnapshot snapshot(String platform, String contentForm) {
         return new CreationContextSnapshot(
                 UUID.randomUUID(), ACCOUNT, "org-1", "task-1", "app-1", 3,
@@ -81,6 +120,7 @@ class VideoTaskCreationContextTest {
                 Map.of("version", "test"),
                 Map.of("items", java.util.List.of()),
                 Map.of("resolutionType", "PLATFORM"),
+                Map.of(),
                 null);
     }
 }
