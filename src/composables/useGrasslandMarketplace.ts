@@ -14,6 +14,7 @@ import type {
   Task, CreateTaskInput, CreateDraftInput, UpdateTaskInput, ReviseTaskInput,
   TaskApplication, TaskFeedPage, TaskFeedQuery,
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
+  BatchOperationResponse,
   FinanceAccount,
   AnalyticsQuery, MerchantAnalyticsDashboard,
 } from '../types/grassland'
@@ -335,6 +336,20 @@ export function useGrasslandMarketplace(run: RunFn) {
   const rejectApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reject`, { method: 'POST' }))
 
+  /** 任务书 #27：批量接受报名（1–50 条）。 */
+  const batchAcceptApplications = (taskId: string, applicationIds: string[]) =>
+    run(() => request<BatchOperationResponse>(`/api/tasks/${taskId}/applications/batch-accept`, {
+      method: 'POST',
+      body: JSON.stringify({ applicationIds }),
+    }))
+
+  /** 任务书 #27：批量拒绝报名（1–50 条）。 */
+  const batchRejectApplications = (taskId: string, applicationIds: string[]) =>
+    run(() => request<BatchOperationResponse>(`/api/tasks/${taskId}/applications/batch-reject`, {
+      method: 'POST',
+      body: JSON.stringify({ applicationIds }),
+    }))
+
   /** 商家拒绝系统核实通过的履约，先落 marketplace contest 门闩再转客服。 */
   const contestEngagement = (taskId: string, appId: string, reason: string) =>
     run(() => request<MerchantContestOutcome>(
@@ -434,6 +449,7 @@ export function useGrasslandMarketplace(run: RunFn) {
     createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask,
     closeTask, cancelTask,
     listApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
+    batchAcceptApplications, batchRejectApplications,
     withdrawApplication, pollReservation, confirmEngagement, pollSettlement,
     provisionAccount, getAccount, creditAccount,
   }

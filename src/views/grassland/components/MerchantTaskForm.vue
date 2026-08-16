@@ -43,13 +43,19 @@
           <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}</option>
         </select>
       </label>
+      <label>自动通过
+        <select :value="form.autoAcceptMinLevel" @change="updateField('autoAcceptMinLevel', ($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))">
+          <option value="">关闭</option>
+          <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}+</option>
+        </select>
+      </label>
     </div>
     <div class="gl-row">
       <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
       <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
       <button v-if="editingDraft || revisingTask" type="button" :disabled="loading" @click="$emit('reset-form')">取消编辑</button>
     </div>
-    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
   </article>
 </template>
 
@@ -65,6 +71,7 @@ interface TaskFormData {
   bountyYuan: number
   applicationDeadline: string
   minRecommenderLevel: number
+  autoAcceptMinLevel: number | null
   productServiceInfo: string
   mustInclude: string
   forbiddenContent: string
@@ -87,14 +94,14 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'update:field': [field: string, value: string | number]
+  'update:field': [field: string, value: string | number | null]
   'change-store': [storeId: string]
   publish: []
   'save-draft': []
   'reset-form': []
 }>()
 
-function updateField(field: string, value: string | number): void {
+function updateField(field: string, value: string | number | null): void {
   emit('update:field', field, value)
 }
 </script>

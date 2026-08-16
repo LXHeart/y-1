@@ -24,6 +24,7 @@ import { useGrassland } from '../../composables/useGrassland'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
 import type {
+  BatchItemResult,
   FinanceAccount,
   Organization,
   RecommenderProfile,
@@ -88,7 +89,7 @@ const creditAmountYuan = ref(1000)
 /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
 const taskForm = ref({
   title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
-  applicationDeadline: '', minRecommenderLevel: 1,
+  applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null as number | null,
   productServiceInfo: '', mustInclude: '', forbiddenContent: '',
   publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
 })
@@ -136,6 +137,11 @@ const invitingAccountId = ref('')
 /** 已确认履约的 applicationId 集合——评分前置（确认后才显示评分表单）。内存态。 */
 const confirmedAppIds = ref<Set<string>>(new Set())
 
+/** 任务书 #27：批量操作选中的 applicationId 集合。 */
+const selectedAppIds = ref<Set<string>>(new Set())
+/** 任务书 #27：批量操作进行中。 */
+const batchLoading = ref(false)
+
 /** Lv 字符串 → 序号，用于「等级 ≥」比较。 */
 const LEVEL_ORDER: Record<string, number> = { Lv1: 1, Lv2: 2, Lv3: 3, Lv4: 4, Lv5: 5 }
 
@@ -165,6 +171,22 @@ const filteredApplications = computed<TaskApplication[]>(() => {
     return true
   })
 })
+
+/** 任务书 #27：筛选结果中可操作的 pending 报名。 */
+const pendingFilteredApplications = computed(() =>
+  filteredApplications.value.filter((a) => a.status === 'pending'),
+)
+
+/** 任务书 #27：当前筛选的 pending 是否全部选中。 */
+const allPendingSelected = computed(() =>
+  pendingFilteredApplications.value.length > 0
+  && pendingFilteredApplications.value.every((a) => selectedAppIds.value.has(a.id)),
+)
+
+/** 任务书 #27：批量操作按钮是否禁用。 */
+const batchButtonsDisabled = computed(() =>
+  batchLoading.value || selectedAppIds.value.size === 0 || grassland.loading.value,
+)
 
 function yuanToCents(yuan: number): number {
   return Math.round(yuan * 100)
@@ -331,6 +353,7 @@ function resetAccountState(): void {
   levelFilter.value = ''
   rateFilterPct.value = 0
   confirmedAppIds.value = new Set()
+  selectedAppIds.value = new Set()
   recommendations.value = null
   recommendationsLoading.value = false
   invitingAccountId.value = ''
@@ -438,6 +461,7 @@ async function publishTask(): Promise<void> {
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
     applicationDeadline: deadlineIso(),
     minRecommenderLevel: taskForm.value.minRecommenderLevel,
+    autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
     requirements: taskRequirements(),
   })
   if (!created) return
@@ -487,7 +511,7 @@ function isoToLocalInput(iso: string | null): string {
 
 function resetTaskForm(): void {
   taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
-    applicationDeadline: '', minRecommenderLevel: 1, productServiceInfo: '', mustInclude: '',
+    applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
     forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '' }
   editingDraft.value = null
   revisingTask.value = null
@@ -510,6 +534,7 @@ async function saveDraft(): Promise<void> {
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
+      autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
     if (!revised) return
@@ -530,6 +555,7 @@ async function saveDraft(): Promise<void> {
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
+      autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
     if (!updated) return
@@ -546,6 +572,7 @@ async function saveDraft(): Promise<void> {
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
+      autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
     if (!created) return
@@ -569,6 +596,7 @@ function editDraft(task: Task): void {
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
     minRecommenderLevel: task.minRecommenderLevel ?? 1,
+    autoAcceptMinLevel: task.autoAcceptMinLevel ?? null,
     productServiceInfo: task.requirements?.productServiceInfo || '',
     mustInclude: (task.requirements?.mustInclude || []).join('\n'),
     forbiddenContent: (task.requirements?.forbiddenContent || []).join('\n'),
@@ -596,6 +624,7 @@ function editPublished(task: Task): void {
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
     minRecommenderLevel: task.minRecommenderLevel ?? 1,
+    autoAcceptMinLevel: task.autoAcceptMinLevel ?? null,
     productServiceInfo: task.requirements?.productServiceInfo || '',
     mustInclude: (task.requirements?.mustInclude || []).join('\n'),
     forbiddenContent: (task.requirements?.forbiddenContent || []).join('\n'),
@@ -652,6 +681,7 @@ async function selectTask(taskId: string): Promise<void> {
   applicantReputation.value = {}
   applicantProfile.value = {}
   confirmedAppIds.value = new Set()
+  selectedAppIds.value = new Set()
   // 任务书 #24：切换任务同步拉门店公开资料（与报名列表并行，不阻塞）。
   void loadStorePublicProfile()
   const recommendationRequest = side.value === 'merchant'
@@ -764,6 +794,93 @@ async function reject(app: TaskApplication): Promise<void> {
   if (!rejected) return
   setNotice('已拒绝该报名')
   await selectTask(app.taskId)
+}
+
+// ---------- 任务书 #27：批量操作 ----------
+
+function toggleSelectAll(): void {
+  const pending = pendingFilteredApplications.value
+  if (allPendingSelected.value) {
+    const next = new Set(selectedAppIds.value)
+    for (const a of pending) next.delete(a.id)
+    selectedAppIds.value = next
+  } else {
+    selectedAppIds.value = new Set([...selectedAppIds.value, ...pending.map((a) => a.id)])
+  }
+}
+
+function toggleSelectApp(appId: string): void {
+  const next = new Set(selectedAppIds.value)
+  if (next.has(appId)) next.delete(appId)
+  else next.add(appId)
+  selectedAppIds.value = next
+}
+
+/** 构建批量操作结果汇总文案。 */
+function buildBatchSummary(results: BatchItemResult[], action: 'accept' | 'reject'): string {
+  const succeeded = results.filter((r) => r.outcome === 'accepted' || r.outcome === 'rejected').length
+  const reserving = results.filter((r) => r.outcome === 'reserving').length
+  const failed = results.filter((r) => r.outcome === 'failed')
+  const parts: string[] = []
+  if (succeeded > 0) parts.push(`${succeeded} 条${action === 'accept' ? '已接受' : '已拒绝'}`)
+  if (reserving > 0) parts.push(`${reserving} 条资金预留中`)
+  if (failed.length > 0) {
+    const reasons: Record<string, number> = {}
+    for (const f of failed) reasons[f.reason || '未知'] = (reasons[f.reason || '未知'] || 0) + 1
+    const reasonText = Object.entries(reasons).map(([r, c]) => `${r}×${c}`).join('、')
+    parts.push(`${failed.length} 条失败（${reasonText}）`)
+  }
+  return parts.join('；') || '操作完成'
+}
+
+async function batchAccept(): Promise<void> {
+  if (!selectedTaskId.value || batchButtonsDisabled.value) return
+  batchLoading.value = true
+  try {
+    const ids = filteredApplications.value
+      .filter((a) => a.status === 'pending' && selectedAppIds.value.has(a.id))
+      .map((a) => a.id)
+    const response = await grassland.batchAcceptApplications(selectedTaskId.value, ids)
+    if (response) {
+      // reserving 项逐个轮询
+      for (const r of response.results) {
+        if (r.outcome === 'reserving') {
+          outcomes.value = { ...outcomes.value, [r.applicationId]: '处理中…' }
+          const outcome = await grassland.pollReservation(selectedTaskId.value, r.applicationId)
+          const label = outcome?.status === 'accepted'
+            ? '已接受（资金已预留）'
+            : outcome?.status === 'compensated'
+              ? `未接受：${outcome.reason === 'insufficient_funds' ? '账户余额不足' : outcome.reason || '预留失败'}`
+              : '处理中…'
+          outcomes.value = { ...outcomes.value, [r.applicationId]: label }
+        }
+      }
+      setNotice(`批量接受：${buildBatchSummary(response.results, 'accept')}`)
+    }
+    selectedAppIds.value = new Set()
+    await selectTask(selectedTaskId.value)
+    await refreshAccount()
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+async function batchReject(): Promise<void> {
+  if (!selectedTaskId.value || batchButtonsDisabled.value) return
+  batchLoading.value = true
+  try {
+    const ids = filteredApplications.value
+      .filter((a) => a.status === 'pending' && selectedAppIds.value.has(a.id))
+      .map((a) => a.id)
+    const response = await grassland.batchRejectApplications(selectedTaskId.value, ids)
+    if (response) {
+      setNotice(`批量拒绝：${buildBatchSummary(response.results, 'reject')}`)
+    }
+    selectedAppIds.value = new Set()
+    await selectTask(selectedTaskId.value)
+  } finally {
+    batchLoading.value = false
+  }
 }
 
 /** 系统核实通过后，商家可在确认窗口内拒绝并转客服；后端门闩与确认 Timer 原子决胜。 */
@@ -1060,8 +1177,8 @@ function statusLabel(status: string): string {
   return map[status] || status
 }
 
-function handleTaskFormUpdate(field: string, value: string | number): void {
-  ;(taskForm.value as Record<string, string | number>)[field] = value
+function handleTaskFormUpdate(field: string, value: string | number | null): void {
+  ;(taskForm.value as Record<string, string | number | null>)[field] = value
 }
 
 async function handleTaskFormStoreChange(storeId: string): Promise<void> {
@@ -1213,6 +1330,7 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
             <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
             <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
             <span v-if="t.minRecommenderLevel > 1" class="gl-tag">Lv{{ t.minRecommenderLevel }}+</span>
+            <span v-if="t.autoAcceptMinLevel" class="gl-tag gl-tag-auto-accept">Lv{{ t.autoAcceptMinLevel }}+ 自动通过中</span>
             <span v-if="t.storeId" class="gl-tag">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>
             <!-- 草稿：编辑 / 提交审核 / 取消 -->
             <template v-if="t.status === 'draft'">
@@ -1265,10 +1383,25 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
             </div>
 
             <p v-if="filteredApplications.length === 0" class="gl-empty">无符合筛选条件的报名</p>
-            <table v-else class="gl-table">
-              <thead><tr><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
-              <tbody>
-                <tr v-for="a in filteredApplications" :key="a.id">
+            <template v-else>
+              <!-- 任务书 #27：批量操作栏 -->
+              <div class="gl-batch-bar">
+                <label class="gl-batch-select-all">
+                  <input type="checkbox" :checked="allPendingSelected" @change="toggleSelectAll" />
+                  全选待处理（{{ pendingFilteredApplications.length }}）
+                </label>
+                <button type="button" :disabled="batchButtonsDisabled" @click="batchAccept">批量接受</button>
+                <button type="button" :disabled="batchButtonsDisabled" @click="batchReject">批量拒绝</button>
+                <span v-if="selectedAppIds.size > 0" class="gl-hint">已选 {{ selectedAppIds.size }} 条</span>
+              </div>
+
+              <table class="gl-table">
+                <thead><tr><th class="gl-th-check"><input type="checkbox" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
+                <tbody>
+                  <tr v-for="a in filteredApplications" :key="a.id">
+                    <td>
+                      <input v-if="a.status === 'pending'" type="checkbox" :checked="selectedAppIds.has(a.id)" @change="toggleSelectApp(a.id)" />
+                    </td>
                   <td><code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></td>
                   <td>
                     <RecommenderReputationBadge
@@ -1303,6 +1436,7 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
                 </tr>
               </tbody>
             </table>
+            </template>
 
             <!-- 交付物 + 评分：确认履约前必须有一份待核验的（后端 409 守卫）；评分须先确认履约。 -->
             <template v-for="a in applications" :key="`sub-${a.id}`">
@@ -1470,4 +1604,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-filter { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .gl-filter label { display: flex; align-items: center; gap: 6px; opacity: 0.85; }
 .gl-filter select { padding: 4px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
+.gl-tag-auto-accept { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-accent); }
+.gl-batch-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; font-size: 13px; }
+.gl-batch-select-all { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.gl-th-check { width: 32px; }
 </style>

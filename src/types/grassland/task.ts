@@ -58,6 +58,8 @@ export interface Task {
   store?: TaskStoreBlock
   /** PRD 4.12 structured contract frozen into task_version when published or revised. */
   requirements: TaskRequirements
+  /** 任务书 #27：自动通过最低等级门槛（1–5）；null = 关闭。开启后对存量待处理报名生效。 */
+  autoAcceptMinLevel: number | null
 }
 
 export interface CreateTaskInput {
@@ -73,6 +75,8 @@ export interface CreateTaskInput {
   applicationDeadline?: string
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>
+  /** 任务书 #27：自动通过最低等级门槛（1–5）；null/undefined = 关闭。 */
+  autoAcceptMinLevel?: number | null
 }
 
 /** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
@@ -90,6 +94,7 @@ export interface UpdateTaskInput {
   applicationDeadline?: string
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>
+  autoAcceptMinLevel?: number | null
 }
 
 /**
@@ -109,6 +114,21 @@ export interface ReviseTaskInput {
   applicationDeadline?: string
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>
+  autoAcceptMinLevel?: number | null
+}
+
+/** 任务书 #27：批量操作单项结果。 */
+export interface BatchItemResult {
+  applicationId: string
+  outcome: 'accepted' | 'reserving' | 'rejected' | 'failed' | string
+  commandId?: string
+  workflowId?: string
+  reason?: string
+}
+
+/** 任务书 #27：批量操作响应。 */
+export interface BatchOperationResponse {
+  results: BatchItemResult[]
 }
 
 /** 任务大厅 feed 查询（GL-P1-TASK-001 Stage 2）。 */
