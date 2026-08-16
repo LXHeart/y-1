@@ -83,6 +83,68 @@ public class TaskApplicationRepository {
                 .map(TaskApplicationRepository::map).all();
     }
 
+    /**
+     * 推荐官「我的报名」跨任务列表（任务书 #29+#30 Stage 2）：按 recommender 过滤 + keyset 游标分页，
+     * join {@code task} 取标题/状态（D3：任务标题由前端 join 本端点与 finance byEngagement 拼接）。
+     *
+     * <p>排序 {@code (created_at DESC, id DESC)} 稳定，游标语义同 {@code TaskRepository.findFeed}；
+     * {@code cursorTs} 为 null 时首页（不带 keyset 谓词，避免 null/值混合绑定歧义）。
+     * {@code settledAt} 取该报名最近一条 {@code EngagementSettled} outbox 事件时间（无则 null）。
+     * 仅绑定 SQL 中实际出现的命名参数（r2dbc 对不存在的标识符 bind 会抛 NoSuchElementException）。
+     */
+    public Flux<MyApplicationRow> findMyApplications(String recommenderAccountId, String status,
+                                                     Instant cursorTs, String cursorId, int limit) {
+        boolean firstPage = cursorTs == null;
+        StringBuilder sql = new StringBuilder("""
+                SELECT a.id::text AS application_id, a.task_id::text AS task_id,
+                       t.title AS task_title, t.status AS task_status,
+                       a.status AS application_status, a.bounty_cents,
+                       a.created_at AS applied_at, settled.settled_at
+                FROM task_application a
+                JOIN task t ON t.id = a.task_id
+                LEFT JOIN LATERAL (
+                    SELECT created_at AS settled_at FROM marketplace_outbox
+                    WHERE event_type = 'EngagementSettled' AND aggregate_id = a.id::text
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                ) settled ON true
+                WHERE a.recommender_account_id = CAST(:rec AS uuid)
+                """);
+        if (status != null && !status.isBlank()) {
+            sql.append(" AND a.status = :status");
+        }
+        if (!firstPage) {
+            sql.append(" AND (a.created_at, a.id) < (CAST(:cursorTs AS timestamptz), CAST(:cursorId AS uuid))");
+        }
+        sql.append(" ORDER BY a.created_at DESC, a.id DESC LIMIT :limit");
+        var spec = db.sql(sql.toString())
+                .bind("rec", recommenderAccountId)
+                .bind("limit", Math.max(1, Math.min(limit, 100)));
+        if (status != null && !status.isBlank()) {
+            spec = spec.bind("status", status);
+        }
+        if (!firstPage) {
+            spec = spec.bind("cursorTs", cursorTs.atOffset(java.time.ZoneOffset.UTC)).bind("cursorId", cursorId);
+        }
+        return spec.map(TaskApplicationRepository::mapMyApplication).all();
+    }
+
+    /** 「我的报名」投影行：application + join task 的展示字段 + settledAt。 */
+    public record MyApplicationRow(String applicationId, String taskId, String taskTitle, String taskStatus,
+                                   String applicationStatus, long bountyCents, Instant appliedAt, Instant settledAt) {
+    }
+
+    private static MyApplicationRow mapMyApplication(Readable row) {
+        return new MyApplicationRow(
+                row.get("application_id", String.class),
+                row.get("task_id", String.class),
+                row.get("task_title", String.class),
+                row.get("task_status", String.class),
+                row.get("application_status", String.class),
+                longValue(row.get("bounty_cents", Long.class)),
+                toInstant(row.get("applied_at", OffsetDateTime.class)),
+                toInstant(row.get("settled_at", OffsetDateTime.class)));
+    }
+
     /** Filtered application list for merchant operations; null filters preserve the legacy query semantics. */
     public Flux<TaskApplication> findByTaskId(String taskId, String status, Instant createdAfter,
                                               Instant createdBefore, int limit) {
