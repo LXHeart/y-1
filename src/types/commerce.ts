@@ -10,6 +10,7 @@ export interface CommercePackage {
   priceCents: number
   totalStock: number
   remainingStock: number
+  inventorySlots?: InventorySlot[]
   fixedRedeemDeadline?: string
   validDaysAfterPurchase?: number
   recommenderShareBps: number
@@ -22,7 +23,7 @@ export interface CommercePackage {
 }
 export type ConsumerOrderStatus =
   | 'pending_payment' | 'paid' | 'redeeming' | 'redeemed'
-  | 'refund_pending' | 'refunded' | 'payment_failed' | 'cancelled'
+  | 'refund_pending' | 'partially_refunded' | 'refunded' | 'after_sales_disputed' | 'payment_failed' | 'cancelled'
 
 export interface ConsumerOrder {
   id: string
@@ -37,6 +38,10 @@ export interface ConsumerOrder {
   recommenderAmountCents: number
   merchantAmountCents: number
   platformFeeCents: number
+  refundedAmountCents?: number
+  refundRequestedAmountCents?: number
+  refundReason?: string
+  attributionAllocations?: AttributionAllocation[]
   status: ConsumerOrderStatus
   redeemDeadline: string
   redeemCode?: string
@@ -61,6 +66,30 @@ export interface CommercePackageInput {
   recommenderShareBps: number
   platformFeeBps: number
   policyVersion?: string
+  inventorySlots?: InventorySlotInput[]
+}
+
+export interface InventorySlot {
+  id: string
+  packageVersionId: string
+  storeId?: string
+  slotStart: string
+  slotEnd: string
+  totalStock: number
+  remainingStock: number
+}
+
+export interface InventorySlotInput {
+  storeId?: string
+  slotStart: string
+  slotEnd: string
+  totalStock: number
+}
+
+export interface AttributionAllocation {
+  recommenderAccountId: string
+  shareBps: number
+  amountCents?: number
 }
 
 export interface ConsumerReview {

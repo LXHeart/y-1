@@ -44,14 +44,28 @@ export function useCommerce() {
   }
 
   const getPackage = (id: string) => run(() => request<CommercePackage>(`/api/v2/packages/${encodeURIComponent(id)}`))
-  const createOrder = (packageId: string, recommenderAccountId?: string) => run(() => request<ConsumerOrder>('/api/v2/orders', {
+  const createOrder = (packageId: string, recommenderAccountId?: string, inventorySlotId?: string, allocations?: Array<{ recommenderAccountId: string; shareBps: number }>) => run(() => request<ConsumerOrder>('/api/v2/orders', {
     method: 'POST',
-    body: JSON.stringify({ packageId, ...(recommenderAccountId ? { recommenderAccountId } : {}) }),
+    body: JSON.stringify({ packageId, ...(recommenderAccountId ? { recommenderAccountId } : {}), ...(inventorySlotId ? { inventorySlotId } : {}), ...(allocations?.length ? { allocations } : {}) }),
   }))
   const listOrders = () => run(() => request<ConsumerOrder[]>('/api/v2/orders'))
-  const refundOrder = (id: string, reason = 'consumer_request') => run(() => request<ConsumerOrder>(
+  const refundOrder = (id: string, reason = 'consumer_request', amountCents?: number) => run(() => request<ConsumerOrder>(
     `/api/v2/orders/${encodeURIComponent(id)}/refund`, {
+      method: 'POST', body: JSON.stringify({ reason, ...(amountCents == null ? {} : { amountCents }) }),
+    }))
+  const openAfterSalesDispute = (id: string, reason: string) => run(() => request<ConsumerOrder>(
+    `/api/v2/orders/${encodeURIComponent(id)}/after-sales-dispute`, {
       method: 'POST', body: JSON.stringify({ reason }),
+    }))
+  const rebindAttribution = (id: string, allocations: Array<{ recommenderAccountId: string; shareBps: number }>, reason = 'manual') => run(() => request<ConsumerOrder>(
+    `/api/v2/orders/${encodeURIComponent(id)}/attribution`, {
+      method: 'POST', body: JSON.stringify({ allocations, source: 'manual', reason }),
+    }))
+  const listAttributionAllocations = (id: string) => run(() => request<Array<{ recommenderAccountId: string; shareBps: number; amountCents: number }>>(
+    `/api/v2/orders/${encodeURIComponent(id)}/attribution`))
+  const resolveAfterSalesDispute = (id: string, resolution: 'refund' | 'reject', amountCents?: number, reason = 'reviewed') => run(() => request<ConsumerOrder>(
+    `/api/v2/orders/${encodeURIComponent(id)}/after-sales-dispute/resolve`, {
+      method: 'POST', body: JSON.stringify({ resolution, ...(amountCents == null ? {} : { amountCents }), reason }),
     }))
   const reviewOrder = (id: string, rating: number, comment: string) => run(() => request<ConsumerReview>(
     `/api/v2/orders/${encodeURIComponent(id)}/review`, {
@@ -85,7 +99,7 @@ export function useCommerce() {
 
   return {
     loading, error,
-    getPackage, createOrder, listOrders, refundOrder, reviewOrder,
+    getPackage, createOrder, listOrders, refundOrder, openAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
     listMerchantPackages, createPackage, revisePackage, publishPackage, offSalePackage,
     listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions,
   }

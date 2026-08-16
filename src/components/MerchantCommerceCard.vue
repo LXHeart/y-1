@@ -249,7 +249,7 @@ function localDateTime(value: string): string {
 }
 function yuan(cents: number): string { return (cents / 100).toFixed(2) }
 function statusLabel(status: CommercePackage['status']): string { return ({ draft: '草稿', published: '已上架', off_sale: '已下架' })[status] }
-function orderStatus(status: ConsumerOrder['status']): string { return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '分账中', redeemed: '已核销', refund_pending: '退款中', refunded: '已退款', payment_failed: '支付失败', cancelled: '已取消' })[status] }
+function orderStatus(status: ConsumerOrder['status']): string { return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '分账中', redeemed: '已核销', refund_pending: '退款中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[status] }
 onBeforeUnmount(stopScanner)
 </script>
 

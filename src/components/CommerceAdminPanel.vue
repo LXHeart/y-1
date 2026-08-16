@@ -73,7 +73,7 @@ async function load(): Promise<void> {
 function short(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…` : value }
 function money(cents: number): string { return `¥${(cents / 100).toFixed(2)}` }
 function format(value?: string): string { return value ? new Date(value).toLocaleString() : '—' }
-function statusLabel(value: ConsumerOrder['status']): string { return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '分账中', redeemed: '已核销', refund_pending: '退款中', refunded: '已退款', payment_failed: '支付失败', cancelled: '已取消' })[value] }
+function statusLabel(value: ConsumerOrder['status']): string { return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '分账中', redeemed: '已核销', refund_pending: '退款中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[value] }
 </script>
 
 <style scoped>

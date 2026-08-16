@@ -162,7 +162,7 @@ function validity(value: CommercePackage): string {
 }
 function statusLabel(status: ConsumerOrder['status']): string {
   return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '核销分账中', redeemed: '已核销',
-    refund_pending: '退款处理中', refunded: '已退款', payment_failed: '支付失败', cancelled: '已取消' })[status]
+    refund_pending: '退款处理中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[status]
 }
 </script>
 
