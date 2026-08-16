@@ -6,9 +6,12 @@ import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.payment.PaymentProviderAdapter;
 import com.grassland.finance.provider.ProviderOperation;
 import com.grassland.finance.provider.ProviderOperationRepository;
+import com.grassland.finance.report.MonthParam;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +21,7 @@ import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -27,6 +31,7 @@ import reactor.core.publisher.Mono;
  *
  * <ul>
  *   <li>GET /api/finance/wallets/me — 我的余额 + 最近流水。</li>
+ *   <li>GET /api/finance/wallets/me/statistics — 收入统计（按月汇总 + 按任务明细，任务书 #29+#30）。</li>
  *   <li>POST /api/finance/wallets/me/withdrawals — 提现（sandbox：立即出账，未接真实支付通道）。</li>
  * </ul>
  *
@@ -39,19 +44,25 @@ public class WalletController {
     /** 流水页大小：钱包卡片只做「最近若干条」，完整对账另开分页端点时再说。 */
     private static final int RECENT_ENTRIES = 20;
 
+    /** 收入统计月份跨度上限（任务书 #29+#30 Stage 1）：防止拉全表。 */
+    private static final int MAX_STATISTICS_MONTHS = 12;
+
     private final FinanceCallerResolver callers;
     private final WalletRepository wallets;
+    private final WalletStatisticsRepository statistics;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final LedgerService ledger;
     private final PaymentProviderAdapter provider;
     private final ProviderOperationRepository providerOperations;
 
-    public WalletController(FinanceCallerResolver callers, WalletRepository wallets, OutboxRepository outbox,
+    public WalletController(FinanceCallerResolver callers, WalletRepository wallets,
+                            WalletStatisticsRepository statistics, OutboxRepository outbox,
                             TransactionalOperator transactions, LedgerService ledger,
                             PaymentProviderAdapter provider, ProviderOperationRepository providerOperations) {
         this.callers = callers;
         this.wallets = wallets;
+        this.statistics = statistics;
         this.outbox = outbox;
         this.transactions = transactions;
         this.ledger = ledger;
@@ -68,6 +79,82 @@ public class WalletController {
                         .flatMap(wallet -> wallets.findEntries(accountId, RECENT_ENTRIES).collectList()
                                 .map(entries -> ResponseEntity.ok(Map.of("success", true,
                                         "data", toBody(wallet, entries))))));
+    }
+
+    /**
+     * 推荐官收入统计（任务书 #29+#30 #29）：按月汇总 + 按任务（engagement）明细。
+     *
+     * <p>{@code from}/{@code to} 为含端月份（YYYY-MM），跨度上限 {@value #MAX_STATISTICS_MONTHS} 个月，
+     * 超限 400。月切按北京时间（D2）。self-scoped：accountId 取自断言，orgId 不参与。
+     * 空区间 → 全 0 月份数组，不 404。
+     */
+    @GetMapping("/api/finance/wallets/me/statistics")
+    public Mono<ResponseEntity<Map<String, Object>>> myStatistics(
+            @RequestParam String from, @RequestParam String to, ServerHttpRequest request) {
+        YearMonth fromMonth = MonthParam.parse(from, "from");
+        YearMonth toMonth = MonthParam.parse(to, "to");
+        if (fromMonth.isAfter(toMonth)) {
+            throw new FinanceException(400, "from 不得晚于 to");
+        }
+        long monthCount = fromMonth.until(toMonth, java.time.temporal.ChronoUnit.MONTHS) + 1;
+        if (monthCount > MAX_STATISTICS_MONTHS) {
+            throw new FinanceException(400, "月份跨度不得超过 " + MAX_STATISTICS_MONTHS + " 个月");
+        }
+        Instant start = MonthParam.range(fromMonth).start();
+        Instant end = MonthParam.range(toMonth).end();
+        return requireUser(request)
+                .flatMap(accountId -> statistics.monthly(accountId, start, end).collectList()
+                        .zipWith(statistics.byEngagement(accountId, start, end).collectList())
+                        .map(tuple -> {
+                            List<WalletStatisticsRepository.MonthlyIncome> months = tuple.getT1();
+                            List<WalletStatisticsRepository.EngagementIncome> engagements = tuple.getT2();
+                            Map<String, Object> map = new LinkedHashMap<>();
+                            map.put("from", fromMonth.toString());
+                            map.put("to", toMonth.toString());
+                            map.put("months", fillMonths(fromMonth, toMonth, months)
+                                    .stream().map(WalletController::monthBody).toList());
+                            map.put("byEngagement", engagements.stream()
+                                    .map(WalletController::engagementBody).toList());
+                            return ResponseEntity.ok(Map.of("success", true, "data", map));
+                        }));
+    }
+
+    /** 空月补全 0：SQL 只回有流水的月份，统计面板需要连续月份轴。 */
+    private static List<WalletStatisticsRepository.MonthlyIncome> fillMonths(
+            YearMonth from, YearMonth to, List<WalletStatisticsRepository.MonthlyIncome> found) {
+        Map<String, WalletStatisticsRepository.MonthlyIncome> byMonth = new LinkedHashMap<>();
+        found.forEach(m -> byMonth.put(m.month(), m));
+        List<WalletStatisticsRepository.MonthlyIncome> out = new ArrayList<>();
+        YearMonth cursor = from;
+        while (!cursor.isAfter(to)) {
+            out.add(byMonth.getOrDefault(cursor.toString(),
+                    new WalletStatisticsRepository.MonthlyIncome(cursor.toString(), 0, 0, 0, 0, 0, 0, 0)));
+            cursor = cursor.plusMonths(1);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> monthBody(WalletStatisticsRepository.MonthlyIncome m) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("month", m.month());
+        map.put("taskPayoutCents", m.taskPayoutCents());
+        map.put("commerceCommissionCents", m.commerceCommissionCents());
+        map.put("withdrawalCents", m.withdrawalCents());
+        map.put("clawbackCents", m.clawbackCents());
+        map.put("grossCents", m.grossCents());
+        map.put("feeCents", m.feeCents());
+        map.put("netCents", m.netCents());
+        return map;
+    }
+
+    private static Map<String, Object> engagementBody(WalletStatisticsRepository.EngagementIncome e) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("engagementRef", e.engagementRef());
+        map.put("payoutCents", e.payoutCents());
+        map.put("feeCents", e.feeCents());
+        map.put("count", e.entryCount());
+        map.put("lastAt", e.lastAt() == null ? null : e.lastAt().toString());
+        return map;
     }
 
     @PostMapping("/api/finance/wallets/me/withdrawals")
