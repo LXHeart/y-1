@@ -1,6 +1,7 @@
 package com.grassland.marketplace.commerce;
 
 import com.grassland.identity.assertion.BackendRole;
+import com.grassland.marketplace.commerce.CommerceModels.AfterSalesDispute;
 import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.Order;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
@@ -97,6 +98,14 @@ public class CommerceController {
         return callers.requireUser(request)
                 .flatMap(caller -> commerce.openAfterSalesDispute(caller, id, body == null ? null : body.reason()))
                 .map(order -> ResponseEntity.status(201).body(success(orderBody(order))));
+    }
+
+    @GetMapping("/api/v2/orders/{id}/after-sales-dispute")
+    public Mono<ResponseEntity<Map<String, Object>>> afterSalesDisputeDetail(
+            @PathVariable String id, ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> commerce.afterSalesDispute(caller, id))
+                .map(dispute -> ResponseEntity.ok(success(disputeBody(dispute))));
     }
 
     @PostMapping(value = "/api/v2/orders/{id}/after-sales-dispute/resolve", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -253,9 +262,14 @@ public class CommerceController {
         body.put("refundedAmountCents", order.refundedAmountCents());
         if (order.refundRequestedAmountCents() != null) body.put("refundRequestedAmountCents", order.refundRequestedAmountCents());
         if (order.refundReason() != null) body.put("refundReason", order.refundReason());
-        body.put("status", order.status());
-        body.put("redeemDeadline", order.redeemDeadline());
-        String code = commerce.redeemCode(order);
+                body.put("status", order.status());
+                body.put("redeemDeadline", order.redeemDeadline());
+                if (order.inventorySlotId() != null) {
+                    body.put("inventorySlotId", order.inventorySlotId());
+                    if (order.slotStart() != null) body.put("slotStart", order.slotStart());
+                    if (order.slotEnd() != null) body.put("slotEnd", order.slotEnd());
+                }
+                String code = commerce.redeemCode(order);
         if (code != null) body.put("redeemCode", code);
         if (order.providerRef() != null) body.put("providerRef", order.providerRef());
         if (order.lastError() != null) body.put("lastError", order.lastError());
@@ -263,6 +277,22 @@ public class CommerceController {
         if (order.paidAt() != null) body.put("paidAt", order.paidAt());
         if (order.redeemedAt() != null) body.put("redeemedAt", order.redeemedAt());
         if (order.refundedAt() != null) body.put("refundedAt", order.refundedAt());
+        return body;
+    }
+
+    private Map<String, Object> disputeBody(CommerceModels.AfterSalesDispute dispute) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", dispute.id());
+        body.put("orderId", dispute.orderId());
+        body.put("consumerAccountId", dispute.consumerAccountId());
+        body.put("reason", dispute.reason());
+        body.put("status", dispute.status());
+        if (dispute.resolution() != null) body.put("resolution", dispute.resolution());
+        if (dispute.resolutionAmountCents() != null) body.put("resolutionAmountCents", dispute.resolutionAmountCents());
+        if (dispute.resolutionReason() != null) body.put("resolutionReason", dispute.resolutionReason());
+        if (dispute.refundOperationId() != null) body.put("refundOperationId", dispute.refundOperationId());
+        body.put("createdAt", dispute.createdAt());
+        if (dispute.resolvedAt() != null) body.put("resolvedAt", dispute.resolvedAt());
         return body;
     }
 

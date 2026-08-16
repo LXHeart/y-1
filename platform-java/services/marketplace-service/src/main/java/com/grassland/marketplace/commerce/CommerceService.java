@@ -1,5 +1,6 @@
 package com.grassland.marketplace.commerce;
 
+import com.grassland.marketplace.commerce.CommerceModels.AfterSalesDispute;
 import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.Order;
 import com.grassland.marketplace.commerce.CommerceModels.Review;
@@ -189,8 +190,8 @@ public class CommerceService {
 
     public Mono<Order> rebindAttribution(Caller caller, String orderId, AttributionCommand command) {
         if (command == null || (command.allocations() == null || command.allocations().isEmpty())
-                && (blank(command.recommenderAccountId()) || command.recommenderShareBps() < 0
-                    || command.recommenderShareBps() > 10000)) {
+                && (blank(command.recommenderAccountId()) || command.recommenderShareBps() == null
+                    || command.recommenderShareBps() < 0 || command.recommenderShareBps() > 10000)) {
             return Mono.error(new IllegalArgumentException("推荐官归因参数不合法"));
         }
         return findConsumerOrder(caller, orderId).flatMap(order -> {
@@ -286,6 +287,18 @@ public class CommerceService {
                                     : repository.resolveAfterSalesDispute(order.id(), "refund", amount,
                                         command.reason(), operationId).thenReturn(updated));
                 });
+    }
+
+    /** Dispute detail is visible to the consumer who opened it or to the managing store staff (mirrors resolve). */
+    public Mono<AfterSalesDispute> afterSalesDispute(Caller caller, String orderId) {
+        return repository.findOrder(orderId)
+                .switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
+                .flatMap(order -> caller.accountId().equals(order.consumerAccountId())
+                        ? Mono.just(order)
+                        : authorization.requireScope(caller, order.organizationId(), order.storeId(), "staff")
+                                .thenReturn(order))
+                .flatMap(order -> repository.findAfterSalesDispute(order.id()))
+                .switchIfEmpty(Mono.error(new MarketplaceException(404, "该订单暂无售后争议")));
     }
 
     public Mono<Order> requestRefund(Caller caller, String orderId, Long requestedAmountCents, String reason) {
@@ -495,8 +508,10 @@ public class CommerceService {
 
     public record AllocationCommand(String recommenderAccountId, int shareBps) {}
 
+    /** Optional fields are boxed: Jackson 3 fails requests on absent primitives, and the allocations
+     * path legitimately omits {@code recommenderShareBps}. */
     public record AttributionCommand(
-            String recommenderAccountId, int recommenderShareBps, String source, String reason,
+            String recommenderAccountId, Integer recommenderShareBps, String source, String reason,
             java.util.List<AllocationCommand> allocations) {}
 
     public record DisputeResolutionCommand(String resolution, Long amountCents, String reason) {}

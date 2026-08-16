@@ -35,7 +35,13 @@ public final class CommerceModels {
             String redeemCodeHash, Instant redeemDeadline, String paymentOperationId,
             String refundOperationId, String splitOperationId, String providerRef, String lastError,
             int version, Instant createdAt, Instant paidAt, Instant redeemedAt,
-            Instant refundedAt, Instant updatedAt) {}
+            Instant refundedAt, Instant updatedAt,
+            Instant slotStart, Instant slotEnd) {}
+
+    public record AfterSalesDispute(
+            String id, String orderId, String consumerAccountId, String reason, String status,
+            String resolution, Long resolutionAmountCents, String resolutionReason,
+            String refundOperationId, Instant createdAt, Instant resolvedAt) {}
 
     public record Review(
             String id, String orderId, String consumerAccountId, int rating,

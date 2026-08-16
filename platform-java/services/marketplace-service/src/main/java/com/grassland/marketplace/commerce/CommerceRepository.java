@@ -1,5 +1,6 @@
 package com.grassland.marketplace.commerce;
 
+import com.grassland.marketplace.commerce.CommerceModels.AfterSalesDispute;
 import com.grassland.marketplace.commerce.CommerceModels.Offer;
 import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.OfferVersion;
@@ -37,6 +38,10 @@ public class CommerceRepository {
             + " o.refund_reason, o.inventory_slot_id::text, o.redeem_code_hash, o.redeem_deadline,"
             + " o.payment_operation_id, o.refund_operation_id, o.split_operation_id, o.provider_ref,"
             + " o.last_error, o.version, o.created_at, o.paid_at, o.redeemed_at, o.refunded_at, o.updated_at";
+    /** Read-side enrichment so orders expose the booked time slot without trusting current package versions. */
+    private static final String ORDER_SLOT_COLS = ", s.slot_start AS slot_start, s.slot_end AS slot_end";
+    private static final String ORDER_SLOT_JOIN =
+            " LEFT JOIN commerce_package_inventory_slot s ON s.id = o.inventory_slot_id";
 
     private final DatabaseClient db;
 
@@ -268,41 +273,45 @@ public class CommerceRepository {
     }
 
     public Mono<Order> findOrder(String id) {
-        return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o WHERE o.id = CAST(:id AS uuid)")
-                .bind("id", id).map(CommerceRepository::mapOrder).one();
+        return db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
+                        + " WHERE o.id = CAST(:id AS uuid)")
+                .bind("id", id).map(CommerceRepository::mapOrderWithSlot).one();
     }
 
     public Mono<Order> findOrderByCodeHash(String hash) {
-        return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o WHERE o.redeem_code_hash = :hash")
-                .bind("hash", hash).map(CommerceRepository::mapOrder).one();
+        return db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
+                        + " WHERE o.redeem_code_hash = :hash")
+                .bind("hash", hash).map(CommerceRepository::mapOrderWithSlot).one();
     }
 
     public Flux<Order> listConsumerOrders(String accountId, int limit) {
-        return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o"
+        return db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
                         + " WHERE o.consumer_account_id = CAST(:accountId AS uuid)"
                         + " ORDER BY o.created_at DESC LIMIT :limit")
                 .bind("accountId", accountId).bind("limit", bounded(limit))
-                .map(CommerceRepository::mapOrder).all();
+                .map(CommerceRepository::mapOrderWithSlot).all();
     }
 
     public Flux<Order> listMerchantOrders(String organizationId, String storeId, int limit) {
         String storePredicate = storeId == null || storeId.isBlank()
                 ? "o.store_id IS NULL" : "o.store_id = CAST(:store AS uuid)";
-        GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o"
+        GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o"
+                        + ORDER_SLOT_JOIN
                         + " WHERE o.organization_id = CAST(:org AS uuid) AND " + storePredicate
                         + " ORDER BY o.created_at DESC LIMIT :limit")
                 .bind("org", organizationId).bind("limit", bounded(limit));
         if (storeId != null && !storeId.isBlank()) spec = spec.bind("store", storeId);
-        return spec.map(CommerceRepository::mapOrder).all();
+        return spec.map(CommerceRepository::mapOrderWithSlot).all();
     }
 
     public Flux<Order> listAdminOrders(String status, int limit) {
         String predicate = status == null || status.isBlank() ? "" : " WHERE o.status = :status";
-        GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o" + predicate
+        GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o"
+                        + ORDER_SLOT_JOIN + predicate
                         + " ORDER BY o.created_at DESC LIMIT :limit")
                 .bind("limit", bounded(limit));
         if (!predicate.isEmpty()) spec = spec.bind("status", status);
-        return spec.map(CommerceRepository::mapOrder).all();
+        return spec.map(CommerceRepository::mapOrderWithSlot).all();
     }
 
     public Mono<Order> markPaid(String id, String providerRef) {
@@ -457,12 +466,29 @@ public class CommerceRepository {
                 .bind("consumer", consumerAccountId).bind("reason", reason).then();
     }
 
+    public Mono<AfterSalesDispute> findAfterSalesDispute(String orderId) {
+        return db.sql("""
+                SELECT id::text, order_id::text, consumer_account_id::text, reason, status,
+                       resolution, resolution_amount_cents, resolution_reason, refund_operation_id,
+                       created_at, resolved_at
+                  FROM consumer_order_after_sales_dispute
+                 WHERE order_id = CAST(:orderId AS uuid)
+                """).bind("orderId", orderId).map(row -> new AfterSalesDispute(
+                        row.get("id", String.class), row.get("order_id", String.class),
+                        row.get("consumer_account_id", String.class), row.get("reason", String.class),
+                        row.get("status", String.class), row.get("resolution", String.class),
+                        row.get("resolution_amount_cents", Long.class), row.get("resolution_reason", String.class),
+                        row.get("refund_operation_id", String.class),
+                        instant(row, "created_at"), instant(row, "resolved_at"))).one();
+    }
+
     public Mono<Order> requestDisputeRefund(String id, String operationId, long amountCents, String reason) {
-        return db.sql("UPDATE consumer_order SET status = 'refund_pending', refund_operation_id = :operationId,"
+        return db.sql("UPDATE consumer_order o SET status = 'refund_pending',"
+                        + " refund_operation_id = :operationId,"
                         + " refund_requested_amount_cents = :amount, refund_reason = :reason,"
                         + " version = version + 1, updated_at = now()"
-                        + " WHERE id = CAST(:id AS uuid) AND status = 'after_sales_disputed'"
-                        + " AND refunded_amount_cents + :amount <= price_cents RETURNING " + ORDER_COLS)
+                        + " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed'"
+                        + " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS)
                 .bind("id", id).bind("operationId", operationId).bind("amount", amountCents)
                 .bind("reason", reason).map(CommerceRepository::mapOrder).one();
     }
@@ -540,6 +566,14 @@ public class CommerceRepository {
     }
 
     private static Order mapOrder(Readable row) {
+        return order(row, null, null);
+    }
+
+    private static Order mapOrderWithSlot(Readable row) {
+        return order(row, instant(row, "slot_start"), instant(row, "slot_end"));
+    }
+
+    private static Order order(Readable row, Instant slotStart, Instant slotEnd) {
         return new Order(row.get("id", String.class), row.get("consumer_account_id", String.class),
                 row.get("organization_id", String.class), row.get("store_id", String.class),
                 row.get("task_id", String.class), row.get("package_id", String.class),
@@ -557,7 +591,8 @@ public class CommerceRepository {
                 row.get("refund_operation_id", String.class), row.get("split_operation_id", String.class),
                 row.get("provider_ref", String.class), row.get("last_error", String.class),
                 row.get("version", Integer.class), instant(row, "created_at"), instant(row, "paid_at"),
-                instant(row, "redeemed_at"), instant(row, "refunded_at"), instant(row, "updated_at"));
+                instant(row, "redeemed_at"), instant(row, "refunded_at"), instant(row, "updated_at"),
+                slotStart, slotEnd);
     }
 
     private static Review mapReview(Readable row) {

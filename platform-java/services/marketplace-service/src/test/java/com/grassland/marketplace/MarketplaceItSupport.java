@@ -82,6 +82,9 @@ public abstract class MarketplaceItSupport {
         r.add("marketplace.commerce.dispatcher-enabled", () -> "false");
         r.add("marketplace.settlement.day-seconds", () -> "1");
         r.add("spring.temporal.test-server.enabled", () -> "true");
+        // 让 DefaultErrorWebExceptionHandler 的 4xx 响应携带异常消息（未被 @RestControllerAdvice
+        // 捕获的解码/参数异常只有默认信封），否则集成排障只能盲猜。
+        r.add("server.error.include-message", () -> "always");
     }
 
     protected WebTestClient client() {
