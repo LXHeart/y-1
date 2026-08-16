@@ -62,11 +62,18 @@
             <template v-if="order.slotStart"> · 预约 {{ formatTime(order.slotStart) }} ~ {{ formatTime(order.slotEnd ?? order.slotStart) }}</template>
             <template v-if="(order.refundedAmountCents ?? 0) > 0"> · 已退 ¥{{ yuan(order.refundedAmountCents ?? 0) }}</template>
           </p>
+          <!-- 任务书 #41：待支付单显示支付截止；超时单显示已关闭（last_error=payment_timeout 不再当「处理中」展示） -->
+          <p v-if="order.status === 'pending_payment' && order.paymentDeadline" class="payment-hint">
+            请在 {{ formatTime(order.paymentDeadline) }} 前完成支付，超时订单将自动关闭并释放库存。
+          </p>
+          <p v-if="order.status === 'cancelled'" class="inline-error">
+            订单已超时关闭（未在截止时间前完成支付），占用的库存已释放。
+          </p>
           <div v-if="order.redeemCode" class="redeem-box">
             <img v-if="qrByOrder[order.id]" :src="qrByOrder[order.id]" alt="核销码二维码" />
             <div><small>到店出示核销码</small><code>{{ order.redeemCode }}</code><small>有效至 {{ formatTime(order.redeemDeadline) }}</small></div>
           </div>
-          <p v-if="order.lastError" class="inline-error">处理暂未完成：{{ order.lastError }}</p>
+          <p v-if="order.lastError && order.status !== 'cancelled'" class="inline-error">处理暂未完成：{{ order.lastError }}</p>
 
           <div v-if="disputes[order.id]" class="dispute-box" :class="disputes[order.id].status">
             <p><strong>售后争议 · {{ disputeStatusLabel(disputes[order.id].status) }}</strong></p>
@@ -190,10 +197,14 @@ async function buy(): Promise<void> {
   const order = await commerce.createOrder(
     offer.value.id, recommenderAccountId.value || undefined, selectedSlotId.value || undefined)
   if (!order) return
+  // 先刷新订单与套餐（loadPackage 会清 notice），最后落下单提示——否则提示被冲掉。
+  await Promise.all([loadOrders(), loadPackage()])
+  // 任务书 #41：重试文案只对未过期的失败单出现（新单必然未到截止）；超时单由关单流程收口为 cancelled。
   notice.value = order.status === 'paid'
     ? 'Sandbox 支付成功，核销码已生成。'
-    : '订单已创建，支付正在后台重试。'
-  await Promise.all([loadOrders(), loadPackage()])
+    : order.paymentDeadline
+      ? `订单已创建，支付正在后台重试——请在 ${formatTime(order.paymentDeadline)} 前完成支付，超时将自动关闭。`
+      : '订单已创建，支付正在后台重试。'
 }
 
 async function loadOrders(): Promise<void> {
@@ -306,7 +317,7 @@ function disputeStatusLabel(status: AfterSalesDispute['status']): string {
 }
 function statusLabel(status: ConsumerOrder['status']): string {
   return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '核销分账中', redeemed: '已核销',
-    refund_pending: '退款处理中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[status]
+    refund_pending: '退款处理中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已超时关闭' })[status]
 }
 </script>
 
@@ -336,6 +347,7 @@ dt, small, .meta { font-size: 12px; opacity: .68; } dd { margin: 4px 0 0; font-w
 .buy-box { width: 220px; padding: 16px; display: grid; align-content: center; gap: 10px; border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .status-chip, .order-card header span { display: inline-flex; padding: 3px 8px; margin-left: 8px; border-radius: 999px; font-size: 12px; background: #daf4e7; color: #196644; }
 .notice { margin: 0; padding: 10px 14px; border-radius: 10px; }.notice.error, .inline-error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }.notice.ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
+.payment-hint { margin: 0; font-size: 13px; color: #8a6116; background: color-mix(in srgb, #e0a020 12%, transparent); padding: 8px 12px; border-radius: 8px; }
 .order-list { display: grid; gap: 12px; margin-top: 14px; }
 .order-card { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: 12px; }
 .redeem-box { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 10px; background: #f7fbf8; color: #173b2d; }

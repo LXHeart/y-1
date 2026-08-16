@@ -47,6 +47,8 @@ export interface ConsumerOrder {
   attributionAllocations?: AttributionAllocation[]
   status: ConsumerOrderStatus
   redeemDeadline: string
+  /** 任务书 #41：支付截止（下单时快照）；超时未支付订单会被关单并释放库存。终态/历史行可能为 null。 */
+  paymentDeadline?: string | null
   redeemCode?: string
   providerRef?: string
   lastError?: string

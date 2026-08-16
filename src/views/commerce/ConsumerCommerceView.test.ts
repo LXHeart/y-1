@@ -198,3 +198,81 @@ describe('ConsumerCommerceView D-07 收尾', () => {
     expect(wrapper.text()).toContain('归因已改绑')
   })
 })
+
+/** 任务书 #41：待支付单显示支付截止、超时单显示已关闭、payment_timeout 不再当「处理中」展示。 */
+describe('ConsumerCommerceView TTL 关单展示', () => {
+  it('待支付订单显示支付截止时间提示', async () => {
+    currentUser.value = asUser()
+    stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({
+          status: 'pending_payment',
+          paymentDeadline: '2026-08-17T12:30:00Z',
+          lastError: 'gateway timeout',
+        })]
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('支付处理中')
+    // formatTime 用本地化格式渲染截止时间（12:30Z 在本地时区为 8:30 PM），锁时间部分即可
+    expect(wrapper.get('.payment-hint').text()).toContain('8:30:00')
+    expect(wrapper.get('.payment-hint').text()).toContain('超时订单将自动关闭')
+    // 未超时的失败单仍如实展示后台错误（重试仍在进行）
+    expect(wrapper.text()).toContain('处理暂未完成')
+  })
+
+  it('超时关单订单显示已超时关闭，payment_timeout 不再当处理中展示', async () => {
+    currentUser.value = asUser()
+    stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({
+          status: 'cancelled',
+          paymentDeadline: '2026-08-17T12:30:00Z',
+          lastError: 'payment_timeout',
+        })]
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已超时关闭')
+    expect(wrapper.text()).toContain('占用的库存已释放')
+    expect(wrapper.text()).not.toContain('处理暂未完成')
+    expect(wrapper.find('.payment-hint').exists()).toBe(false)
+  })
+
+  it('下单返回待支付单时 notice 携带支付截止时间', async () => {
+    currentUser.value = asUser()
+    stubFetch((url, init) => {
+      if (url === '/api/v2/packages/pkg-1') {
+        return {
+          id: 'pkg-1', organizationId: 'org-1', status: 'published', version: 1,
+          title: '普通套餐', description: '', priceCents: 5000, totalStock: 3, remainingStock: 3,
+          recommenderShareBps: 1000, platformFeeBps: 500, merchantShareBps: 8500,
+          policyVersion: 'commerce-v1', promotionPath: '', createdAt: '', updatedAt: '',
+        }
+      }
+      if (url === '/api/v2/orders' && !init?.method) return []
+      if (url === '/api/v2/orders' && init?.method === 'POST') {
+        return baseOrder({ status: 'pending_payment', paymentDeadline: '2026-08-17T13:00:00Z' })
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    await wrapper.get('.lookup-row input').setValue('pkg-1')
+    await wrapper.get('.lookup-row button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.buy-box button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('支付正在后台重试')
+    expect(wrapper.text()).toContain('9:00:00')
+    expect(wrapper.text()).toContain('超时将自动关闭')
+  })
+})
