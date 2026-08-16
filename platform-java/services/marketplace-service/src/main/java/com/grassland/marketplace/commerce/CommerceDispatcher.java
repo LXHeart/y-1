@@ -7,7 +7,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-/** Repairs cross-service gaps and triggers automatic refunds for expired unredeemed orders. */
+/**
+ * Repairs cross-service gaps and triggers automatic refunds for expired unredeemed orders.
+ *
+ * <p>任务书 #41（D2）：同时承接未支付订单 TTL 关单——{@code claimPaymentExpired} 在捞单（pendingDispatch）
+ * **之前**执行，过期的 pending_payment 已被置 cancelled（终态）不再被捞出，「到期不再尝试支付」由执行顺序保证；
+ * 未过期的照旧 attemptPayment。与支付成功的竞态由两侧 DB 状态守卫单边胜出（markPaid / claim 条件 UPDATE）。
+ */
 @Component
 @ConditionalOnProperty(name = "marketplace.commerce.dispatcher-enabled", havingValue = "true", matchIfMissing = true)
 public class CommerceDispatcher {
@@ -28,6 +34,7 @@ public class CommerceDispatcher {
         if (!running.compareAndSet(false, true)) return;
         service.claimExpired(batchSize)
                 .flatMap(order -> service.attemptRefund(order, "automatic_expiry"), 4)
+                .thenMany(service.cancelExpired(batchSize))
                 .thenMany(service.pendingDispatch(batchSize))
                 .flatMap(order -> switch (order.status()) {
                     case "pending_payment" -> service.attemptPayment(order);

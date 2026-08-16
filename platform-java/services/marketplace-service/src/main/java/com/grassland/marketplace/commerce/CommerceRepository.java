@@ -36,6 +36,7 @@ public class CommerceRepository {
             + " o.recommender_amount_cents, o.platform_fee_cents, o.merchant_amount_cents,"
             + " o.policy_version, o.status, o.refunded_amount_cents, o.refund_requested_amount_cents,"
             + " o.refund_reason, o.inventory_slot_id::text, o.redeem_code_hash, o.redeem_deadline,"
+            + " o.payment_deadline,"
             + " o.payment_operation_id, o.refund_operation_id, o.split_operation_id, o.provider_ref,"
             + " o.last_error, o.version, o.created_at, o.paid_at, o.redeemed_at, o.refunded_at, o.updated_at";
     /** Read-side enrichment so orders expose the booked time slot without trusting current package versions. */
@@ -221,6 +222,33 @@ public class CommerceRepository {
                 .map(row -> row.get("remaining_stock", Integer.class)).one();
     }
 
+    /**
+     * 任务书 #41（D5）：关单释放库存——与 {@link #reserveInventory(String)} 完全对称的 UPDATE。
+     * {@code remaining_stock < total_stock} 守卫封顶：重复释放（双重关单/补偿重放）返回 0 行被静默吸收，
+     * 不会把库存刷爆到 total 之上。释放成功返回回升后的 remaining_stock。
+     */
+    public Mono<Integer> releaseInventory(String versionId) {
+        return db.sql("""
+                UPDATE commerce_package_inventory
+                   SET remaining_stock = remaining_stock + 1, updated_at = now()
+                 WHERE package_version_id = CAST(:versionId AS uuid) AND remaining_stock < total_stock
+                RETURNING remaining_stock
+                """)
+                .bind("versionId", versionId)
+                .map(row -> row.get("remaining_stock", Integer.class)).one();
+    }
+
+    /** slot 级释放（D5/D6）：按订单快照的 slotId 精确归还，不按当前套餐版本猜。 */
+    public Mono<Integer> releaseInventory(String versionId, String slotId) {
+        if (slotId == null || slotId.isBlank()) return releaseInventory(versionId);
+        return db.sql("""
+                UPDATE commerce_package_inventory_slot SET remaining_stock = remaining_stock + 1, updated_at = now()
+                 WHERE id = CAST(:slotId AS uuid) AND package_version_id = CAST(:versionId AS uuid)
+                   AND remaining_stock < total_stock RETURNING remaining_stock
+                """).bind("slotId", slotId).bind("versionId", versionId)
+                .map(row -> row.get("remaining_stock", Integer.class)).one();
+    }
+
     public Mono<Void> replenishInventory(String versionId) {
         return db.sql("""
                 UPDATE commerce_package_inventory
@@ -246,13 +274,14 @@ public class CommerceRepository {
                     package_version_id, package_version, package_title, recommender_account_id, inventory_slot_id,
                     price_cents, recommender_share_bps, platform_fee_bps, merchant_share_bps,
                     recommender_amount_cents, platform_fee_cents, merchant_amount_cents,
-                    policy_version, status, redeem_code_hash, redeem_deadline, payment_operation_id)
+                    policy_version, status, redeem_code_hash, redeem_deadline, payment_deadline,
+                    payment_operation_id)
                 VALUES (CAST(:id AS uuid), CAST(:consumer AS uuid), CAST(:org AS uuid), CAST(:store AS uuid),
                         CAST(:task AS uuid), CAST(:packageId AS uuid), CAST(:packageVersionId AS uuid),
                         :packageVersion, :packageTitle, CAST(:recommender AS uuid), CAST(:inventorySlot AS uuid), :price,
                         :recommenderBps, :platformBps, :merchantBps, :recommenderAmount,
                         :platformAmount, :merchantAmount, :policyVersion, 'pending_payment',
-                        :codeHash, :deadline, :paymentOperationId)
+                        :codeHash, :deadline, :paymentDeadline, :paymentOperationId)
                 RETURNING %s
                 """.formatted(ORDER_COLS.replace("o.", "")))
                 .bind("id", order.id()).bind("consumer", order.consumerAccountId())
@@ -264,6 +293,7 @@ public class CommerceRepository {
                 .bind("platformAmount", order.platformFeeCents()).bind("merchantAmount", order.merchantAmountCents())
                 .bind("policyVersion", order.policyVersion()).bind("codeHash", order.redeemCodeHash())
                 .bind("deadline", order.redeemDeadline().atOffset(ZoneOffset.UTC))
+                .bind("paymentDeadline", order.paymentDeadline().atOffset(ZoneOffset.UTC))
                 .bind("paymentOperationId", order.paymentOperationId());
         spec = bindUuid(spec, "store", order.storeId());
         spec = bindUuid(spec, "task", order.taskId());
@@ -350,6 +380,29 @@ public class CommerceRepository {
                 UPDATE consumer_order o
                    SET status = 'refund_pending',
                        refund_operation_id = COALESCE(refund_operation_id, 'commerce-refund:' || o.id::text),
+                       version = version + 1, updated_at = now()
+                  FROM candidates WHERE o.id = candidates.id
+                RETURNING %s
+                """.formatted(ORDER_COLS))
+                .bind("limit", bounded(limit)).map(CommerceRepository::mapOrder).all();
+    }
+
+    /**
+     * 任务书 #41（D3）：支付超时关单 claim——条件 UPDATE 守卫迁移
+     * {@code pending_payment → cancelled}（终态），原因 {@code payment_timeout} 写入 last_error（D8）。
+     * 与支付成功路径（markPaid 的 {@code WHERE status='pending_payment'}）由状态机单边胜出：谁先落库谁赢。
+     * {@code payment_deadline IS NOT NULL}：NULL 视为不过期（终态历史行天然免疫，V39 前无此列的语义防御）。
+     */
+    public Flux<Order> claimPaymentExpired(int limit) {
+        return db.sql("""
+                WITH candidates AS (
+                    SELECT id FROM consumer_order
+                     WHERE status = 'pending_payment'
+                       AND payment_deadline IS NOT NULL AND payment_deadline <= now()
+                     ORDER BY payment_deadline FOR UPDATE SKIP LOCKED LIMIT :limit
+                )
+                UPDATE consumer_order o
+                   SET status = 'cancelled', last_error = 'payment_timeout',
                        version = version + 1, updated_at = now()
                   FROM candidates WHERE o.id = candidates.id
                 RETURNING %s
@@ -587,7 +640,8 @@ public class CommerceRepository {
                 row.get("refund_requested_amount_cents", Long.class), row.get("refund_reason", String.class),
                 row.get("inventory_slot_id", String.class),
                 row.get("redeem_code_hash", String.class),
-                instant(row, "redeem_deadline"), row.get("payment_operation_id", String.class),
+                instant(row, "redeem_deadline"), instant(row, "payment_deadline"),
+                row.get("payment_operation_id", String.class),
                 row.get("refund_operation_id", String.class), row.get("split_operation_id", String.class),
                 row.get("provider_ref", String.class), row.get("last_error", String.class),
                 row.get("version", Integer.class), instant(row, "created_at"), instant(row, "paid_at"),
@@ -639,5 +693,6 @@ public class CommerceRepository {
             String recommenderAccountId, long priceCents, int recommenderShareBps, int platformFeeBps,
             int merchantShareBps, long recommenderAmountCents, long platformFeeCents,
             long merchantAmountCents, String policyVersion, String redeemCodeHash,
-            Instant redeemDeadline, String paymentOperationId, String inventorySlotId) {}
+            Instant redeemDeadline, Instant paymentDeadline, String paymentOperationId,
+            String inventorySlotId) {}
 }

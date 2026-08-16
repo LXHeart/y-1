@@ -264,6 +264,8 @@ public class CommerceController {
         if (order.refundReason() != null) body.put("refundReason", order.refundReason());
                 body.put("status", order.status());
                 body.put("redeemDeadline", order.redeemDeadline());
+                // 任务书 #41（D7）：支付截止回显；终态/历史 NULL 行原样 null。
+                if (order.paymentDeadline() != null) body.put("paymentDeadline", order.paymentDeadline());
                 if (order.inventorySlotId() != null) {
                     body.put("inventorySlotId", order.inventorySlotId());
                     if (order.slotStart() != null) body.put("slotStart", order.slotStart());

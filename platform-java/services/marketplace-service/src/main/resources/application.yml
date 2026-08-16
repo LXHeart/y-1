@@ -141,6 +141,8 @@ marketplace:
     dispatcher-enabled: ${MARKETPLACE_COMMERCE_DISPATCHER_ENABLED:true}
     dispatcher-poll-ms: ${MARKETPLACE_COMMERCE_DISPATCHER_POLL_MS:3000}
     dispatcher-batch-size: ${MARKETPLACE_COMMERCE_DISPATCHER_BATCH_SIZE:32}
+    # 任务书 #41：未支付订单支付截止（下单时快照进 payment_deadline，改配置不影响存量订单）。
+    payment-timeout-seconds: ${MARKETPLACE_COMMERCE_PAYMENT_TIMEOUT_SECONDS:900}
   outbox:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}

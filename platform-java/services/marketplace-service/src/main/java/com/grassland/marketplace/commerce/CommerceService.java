@@ -29,17 +29,21 @@ public class CommerceService {
     private final FinanceCommerceClient finance;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final long paymentTimeoutSeconds;
 
     public CommerceService(
             CommerceRepository repository, TaskResourceAuthorization authorization,
             RedeemCodeCodec codes, FinanceCommerceClient finance, OutboxRepository outbox,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds) {
         this.repository = repository;
         this.authorization = authorization;
         this.codes = codes;
         this.finance = finance;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.paymentTimeoutSeconds = Math.max(paymentTimeoutSeconds, 1);
     }
 
     public Mono<OfferDetail> createOffer(Caller caller, OfferCommand command) {
@@ -165,7 +169,9 @@ public class CommerceService {
                     detail.version().version(), detail.version().title(), recommender,
                     detail.version().priceCents(), recommenderBps, detail.version().platformFeeBps(),
                     merchantBps, recommenderAmount, platform, merchant, detail.version().policyVersion(),
-                    codes.hash(codes.codeForOrder(orderId)), deadline, "commerce-payment:" + orderId,
+                    codes.hash(codes.codeForOrder(orderId)), deadline,
+                    // 任务书 #41（D1）：支付截止随下单快照落行——之后改配置不影响存量订单。
+                    now.plusSeconds(paymentTimeoutSeconds), "commerce-payment:" + orderId,
                     blankToNull(command.inventorySlotId()));
             Mono<Order> create = repository.reserveInventory(detail.version().id(), command.inventorySlotId())
                     .switchIfEmpty(Mono.error(new MarketplaceException(409, "套餐已售罄")))
@@ -420,6 +426,22 @@ public class CommerceService {
 
     Flux<Order> claimExpired(int limit) { return repository.claimExpired(limit); }
     Flux<Order> pendingDispatch(int limit) { return repository.pendingDispatch(limit); }
+
+    /**
+     * 任务书 #41（D3）：支付超时关单——claim（pending_payment→cancelled，DB 守卫单边胜出）成功后，
+     * **同一事务**内对称释放下单时占用的库存（带 slot 释放 slot 级，无 slot 释放包级），
+     * 并补发 {@code ConsumerOrderCancelled} 同族事件（D9）。
+     *
+     * <p>幂等：claim 条件 UPDATE 0 行（并发副本/双轮重复/支付已先赢）自然不进链；
+     * release 的封顶守卫吸收任何上游重复释放。释放抛错则整个事务回滚（订单留在
+     * pending_payment，下一轮重新 claim 重试）。
+     */
+    Flux<Order> cancelExpired(int limit) {
+        return transactions.transactional(repository.claimPaymentExpired(limit)
+                .flatMap(order -> repository.releaseInventory(order.packageVersionId(), order.inventorySlotId())
+                        .then(outbox.append(orderEvent("ConsumerOrderCancelled", order)))
+                        .thenReturn(order)));
+    }
 
     public String redeemCode(Order order) {
         return switch (order.status()) {
