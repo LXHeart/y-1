@@ -13,6 +13,10 @@ services:
       PUBLIC_FORWARDED_PROTO: ${PUBLIC_FORWARDED_PROTO:-http}
       # 只信任实际 LB/ingress 网段；默认 loopback 不扩大公网信任面。
       TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-127.0.0.1/32}
+      # CSP 策略模式：默认 report-only 观察违规（/csp-report 收集），确认收敛后设 enforce 切强制。
+      CSP_MODE: ${CSP_MODE:-report-only}
+      # CSP 跨源补充（空格分隔）：presigned MinIO 等图片/连接来源，按 MINIO_PUBLIC_BASE_URL 填。
+      CSP_EXTRA_ORIGINS: ${CSP_EXTRA_ORIGINS:-}
     depends_on:
       edge-bff:
         condition: service_started

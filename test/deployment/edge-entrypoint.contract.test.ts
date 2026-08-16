@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -42,6 +43,21 @@ function nginxLocation(config: string, location: string): string {
   }
 
   throw new Error(`Unclosed nginx location: ${location}`)
+}
+
+/** 提取 `map "..." $name { ... }` 块（策略值里可能含 `}`，不能按首个 `}` 截断）。 */
+function nginxMapBlock(config: string, mapName: string): string {
+  const marker = new RegExp(`map "[^"]+" ${mapName.replace('$', '\\$')} \\{`)
+  const match = marker.exec(config)
+  if (!match || match.index === undefined) {
+    throw new Error(`Missing nginx map: ${mapName}`)
+  }
+  const start = match.index + match[0].length
+  const end = config.indexOf('\n}', start)
+  if (end < 0) {
+    throw new Error(`Unclosed nginx map: ${mapName}`)
+  }
+  return config.slice(start, end)
 }
 
 function composeConfig(): ComposeConfig {
@@ -99,6 +115,45 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(nginxLocation(nginx, '= /api/internal')).toContain('return 404;')
     expect(nginxLocation(nginx, '/api/internal/')).toContain('return 404;')
     expect(readRepositoryFile('Dockerfile.frontend')).toContain('/etc/nginx/templates/default.conf.template')
+  })
+
+  it('ships CSP with a report-only default, an enforce switch, and a hash-pinned inline bootstrap', () => {
+    const nginx = readRepositoryFile('nginx.conf')
+
+    // 两套互斥头：report-only 为 map 默认值，enforce 显式切换；同一份策略内容。
+    const enforcedMap = nginxMapBlock(nginx, '$csp_policy_enforced')
+    const reportOnlyMap = nginxMapBlock(nginx, '$csp_policy_report_only')
+    expect(enforcedMap).toMatch(/default\s+"";/)
+    expect(enforcedMap).toMatch(/"enforce"\s+"default-src 'self';/)
+    expect(reportOnlyMap).toMatch(/default\s+"default-src 'self';/)
+    expect(reportOnlyMap).toMatch(/"enforce"\s+"";/)
+    expect(nginx).toContain('add_header Content-Security-Policy $csp_policy_enforced always;')
+    expect(nginx).toContain('add_header Content-Security-Policy-Report-Only $csp_policy_report_only always;')
+    for (const hardening of ["object-src 'none'", "base-uri 'self'", "form-action 'self'", 'report-uri /csp-report']) {
+      expect(nginx).toContain(hardening)
+    }
+    // script-src 不允许 unsafe-inline；style-src 的 unsafe-inline 是记录在案的折衷。
+    expect(nginx).toContain("script-src 'self' 'sha256-")
+    expect(nginx).not.toContain("script-src 'self' 'unsafe-inline'")
+
+    // index.html 的内联防 FOUC 脚本必须与 nginx hash 严格同步（改一处不改另一处会在 enforce 下被打断）。
+    const indexHtml = readRepositoryFile('index.html')
+    const inline = indexHtml.match(/<script>(.*?)<\/script>/s)
+    expect(inline).not.toBeNull()
+    const hash = createHash('sha256').update(inline![1], 'utf8').digest('base64')
+    expect(nginx).toContain(`'sha256-${hash}'`)
+
+    // 报告端点：只收 POST、反代到 edge、清掉转发链身份头。
+    const reportLocation = nginxLocation(nginx, '= /csp-report')
+    expect(reportLocation).toContain('return 405;')
+    expect(reportLocation).toContain('proxy_pass http://${API_UPSTREAM}/api/csp-report;')
+    expect(reportLocation).toContain('proxy_set_header X-Grassland-Identity "";')
+
+    // Compose 默认 report-only，且保留 enforce 与跨源补充开关。
+    const compose = readRepositoryFile('docker-compose.yml')
+    expect(compose).toContain('CSP_MODE: ${CSP_MODE:-report-only}')
+    expect(compose).toContain('CSP_EXTRA_ORIGINS: ${CSP_EXTRA_ORIGINS:-}')
+    expect(readRepositoryFile('.env.docker.example')).toContain('CSP_MODE=report-only')
   })
 
   it('starts the complete Edge routing graph in the default Compose stack', () => {
