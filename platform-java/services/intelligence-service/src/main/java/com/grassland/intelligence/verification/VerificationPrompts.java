@@ -34,6 +34,44 @@ final class VerificationPrompts {
         return sb.toString();
     }
 
+
+    /**
+     * 互动截图核验 prompt（任务书 #23 R4 / ADR-D13）：判定推荐官上传的截图是否构成有效的互动证据——
+     * ① 截图内容与目标帖子匹配；② 动作状态可见（已赞/已藏/已关注标记）；③ 截图账号与申报的账号标识一致。
+     */
+    static String buildInteraction(String taskTitle, String taskDescription, String platform,
+                                   String targetUrl, String actionType, String platformHandle) {
+        String action = switch (actionType == null ? "" : actionType) {
+            case "like" -> "点赞";
+            case "favorite" -> "收藏";
+            case "follow" -> "关注";
+            default -> "互动";
+        };
+        StringBuilder sb = new StringBuilder();
+        sb.append("你是履约核验助手，负责判断一张截图是否为真实、有效的互动履约证据。\n\n");
+        sb.append("任务标题：").append(nonNull(taskTitle)).append('\n');
+        if (taskDescription != null && !taskDescription.isBlank()) {
+            sb.append("任务要求：").append(taskDescription.trim()).append('\n');
+        }
+        if (platform != null && !platform.isBlank()) {
+            sb.append("目标平台：").append(platform.trim()).append('\n');
+        }
+        sb.append("互动目标链接：").append(nonNull(targetUrl)).append('\n');
+        sb.append("要求的动作：已").append(action).append('\n');
+        sb.append("推荐官申报的平台账号标识：").append(nonNull(platformHandle)).append("\n\n");
+        sb.append("下面附一张推荐官上传的截图。请逐项判断：\n");
+        sb.append("1. 截图内容是否与上述互动目标（帖子/账号）匹配；\n");
+        sb.append("2. 「已").append(action).append("」的动作状态是否在截图中可见（如已点亮的高亮标记）；\n");
+        sb.append("3. 执行动作的账号是否与申报的账号标识一致。\n\n");
+        sb.append("判定标准：\n");
+        sb.append("- passed：三项均成立，截图是真实的已").append(action).append("证据。\n");
+        sb.append("- failed：任一项明显不成立（目标不符、未").append(action).append("、账号不一致，或截图明显造假）。\n");
+        sb.append("- inconclusive：截图模糊、信息不足，或无法确认任一项。\n\n");
+        sb.append("仅返回 JSON，不要多余解释：\n");
+        sb.append("{\"status\": \"passed|failed|inconclusive\", \"detail\": \"20 字以内中文理由\"}");
+        return sb.toString();
+    }
+
     private static String nonNull(String value) {
         return value == null ? "" : value.trim();
     }

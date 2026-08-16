@@ -69,7 +69,19 @@ public class VerificationController {
         String taskTitle = requireString(body, "taskTitle", MAX_TITLE, "taskTitle");
         String taskDescription = optionalString(body, "taskDescription", MAX_DESCRIPTION);
         String platform = optionalString(body, "platform", MAX_PLATFORM);
-        return new VerificationAnalysisRequest(List.copyOf(mediaIds), taskTitle, taskDescription, platform);
+        // 任务书 #23：互动截图核验上下文（可选；mode 默认 visual 保持既有行为零改动）。
+        String mode = optionalString(body, "mode", 32);
+        if (mode != null && !"visual".equals(mode) && !"interaction".equals(mode)) {
+            throw new IllegalArgumentException("mode 仅支持 visual / interaction");
+        }
+        String targetUrl = optionalString(body, "targetUrl", 2048);
+        String actionType = optionalString(body, "actionType", MAX_PLATFORM);
+        String platformHandle = optionalString(body, "platformHandle", 64);
+        if ("interaction".equals(mode) && (targetUrl == null || actionType == null || platformHandle == null)) {
+            throw new IllegalArgumentException("interaction 模式必须提供 targetUrl / actionType / platformHandle");
+        }
+        return new VerificationAnalysisRequest(List.copyOf(mediaIds), taskTitle, taskDescription, platform,
+                mode, targetUrl, actionType, platformHandle);
     }
 
     @SuppressWarnings("unchecked")

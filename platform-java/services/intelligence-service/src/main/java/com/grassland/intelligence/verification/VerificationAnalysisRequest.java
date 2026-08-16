@@ -16,9 +16,26 @@ public record VerificationAnalysisRequest(
         List<UUID> mediaIds,
         String taskTitle,
         String taskDescription,
-        String platform) {
+        String platform,
+        /** 任务书 #23：visual（默认，零改动）| interaction（互动截图核验）。 */
+        String mode,
+        /** interaction 模式上下文：被互动的目标链接 / 动作类型（like|favorite|follow）/ 推荐官平台账号标识。 */
+        String targetUrl,
+        String actionType,
+        String platformHandle) {
 
     public VerificationAnalysisRequest {
         mediaIds = mediaIds == null ? List.of() : List.copyOf(mediaIds);
+        mode = mode == null || mode.isBlank() ? "visual" : mode.trim().toLowerCase();
+    }
+
+    /** 兼容任务书 #23 之前的四参构造调用方（既有测试）；visual 模式。 */
+    public VerificationAnalysisRequest(List<UUID> mediaIds, String taskTitle,
+                                       String taskDescription, String platform) {
+        this(mediaIds, taskTitle, taskDescription, platform, null, null, null, null);
+    }
+
+    public boolean interactionMode() {
+        return "interaction".equals(mode);
     }
 }

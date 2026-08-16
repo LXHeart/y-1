@@ -44,4 +44,45 @@ class VerificationAnalysisServiceTest {
                 .isInstanceOf(IntelligenceException.class)
                 .satisfies(e -> assertThat(((IntelligenceException) e).status()).isEqualTo(400));
     }
+
+    // ---------- 任务书 #23：互动截图核验（mode=interaction） ----------
+
+    @Test
+    @DisplayName("mode 默认 visual（零改动），interaction 显式开启")
+    void modeDefaultsToVisualAndInteractionIsExplicit() {
+        VerificationAnalysisRequest legacy =
+                new VerificationAnalysisRequest(List.of(UUID.randomUUID()), "任务标题", null, "douyin");
+        assertThat(legacy.interactionMode()).isFalse();
+
+        VerificationAnalysisRequest interaction = new VerificationAnalysisRequest(
+                List.of(UUID.randomUUID()), "任务标题", null, "douyin",
+                "interaction", "https://www.xiaohongshu.com/post/1", "like", "@seedhunter");
+        assertThat(interaction.interactionMode()).isTrue();
+    }
+
+    @Test
+    @DisplayName("互动 prompt 携带目标链接/动作类型/账号标识与三项判定标准")
+    void interactionPromptCarriesContextAndCriteria() {
+        String prompt = VerificationPrompts.buildInteraction(
+                "给笔记点赞", null, "xiaohongshu",
+                "https://www.xiaohongshu.com/post/1", "like", "@seedhunter");
+
+        assertThat(prompt).contains("https://www.xiaohongshu.com/post/1");
+        assertThat(prompt).contains("已点赞");
+        assertThat(prompt).contains("@seedhunter");
+        assertThat(prompt).contains("动作状态");
+        assertThat(prompt).contains("账号").contains("一致");
+        assertThat(prompt).contains("passed").contains("failed").contains("inconclusive");
+    }
+
+    @Test
+    @DisplayName("follow/favorite 动作类型映射为中文动作词")
+    void interactionPromptMapsActionTypes() {
+        assertThat(VerificationPrompts.buildInteraction("t", null, null,
+                "https://www.douyin.com/video/1", "follow", "@a"))
+                .contains("已关注");
+        assertThat(VerificationPrompts.buildInteraction("t", null, null,
+                "https://www.douyin.com/video/1", "favorite", "@a"))
+                .contains("已收藏");
+    }
 }

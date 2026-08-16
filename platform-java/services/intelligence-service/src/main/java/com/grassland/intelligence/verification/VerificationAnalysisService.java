@@ -84,8 +84,11 @@ public class VerificationAnalysisService {
         if (!"qwen".equalsIgnoreCase(provider)) {
             return Mono.error(new IntelligenceException(400, UNSUPPORTED));
         }
-        String prompt = VerificationPrompts.build(
-                request.taskTitle(), request.taskDescription(), request.platform());
+        String prompt = request.interactionMode()
+                ? VerificationPrompts.buildInteraction(request.taskTitle(), request.taskDescription(),
+                        request.platform(), request.targetUrl(), request.actionType(), request.platformHandle())
+                : VerificationPrompts.build(
+                        request.taskTitle(), request.taskDescription(), request.platform());
         return Flux.fromIterable(request.mediaIds())
                 .concatMap(mediaId -> verifyOne(mediaId, prompt))
                 .collectList()
