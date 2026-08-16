@@ -99,10 +99,20 @@ public final class NotificationTemplates {
             case "EngagementSettled" -> new Template(
                     NotificationCategory.ENGAGEMENT, "履约已结算",
                     "该履约已完成结算", LINK_ENGAGEMENTS, taskPayload(payload));
-            // marketplace：商家取消任务，未提交凭证的履约预留退还商家（D-03 §5）。
-            case "EngagementRefundedOnCancel" -> new Template(
-                    NotificationCategory.ENGAGEMENT, "任务已取消，履约预留已退还",
-                    "商家取消了任务，未提交凭证的履约预留已退还商家", LINK_ENGAGEMENTS, taskPayload(payload));
+            // marketplace：商家取消任务，未提交凭证的履约预留按资金来源退还（D-03 §5 + ADR-D12 D6）。
+            case "EngagementRefundedOnCancel" -> {
+                String body = "recommender".equals(stringField(payload, "refundDirection"))
+                        ? "商家取消了任务，你的霸王餐押金已全额退还"
+                        : "商家取消了任务，未提交凭证的履约预留已退还商家";
+                yield new Template(
+                        NotificationCategory.ENGAGEMENT, "任务已取消，履约资金已退还", body,
+                        LINK_ENGAGEMENTS, taskPayload(payload));
+            }
+            // marketplace：资金预留失败补偿（如推荐官押金余额不足），通知商家为何未接受成功（ADR-D12 验收 #2）。
+            case "ApplicationReservationFailed" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "接受报名未成功",
+                    "一笔报名的资金预留未成功（如余额不足），报名已回退待处理，请查看原因",
+                    LINK_ENGAGEMENTS, taskPayload(payload));
             case "SettlementHeld" -> new Template(
                     NotificationCategory.ENGAGEMENT, "结算被挂起",
                     "该履约的结算被暂时挂起，待条件满足后继续", LINK_ENGAGEMENTS, taskPayload(payload));
@@ -167,6 +177,17 @@ public final class NotificationTemplates {
             case "AccountCredited" -> new Template(
                     NotificationCategory.WALLET, "账户已充值",
                     "你的组织账户已完成充值", LINK_WALLET, walletPayload(payload));
+            // finance：霸王餐押金（ADR-D12，方向与商家出资 escrow 相反）。
+            case "FreebieReserved" -> new Template(
+                    NotificationCategory.WALLET, "押金已预付托管",
+                    "你的霸王餐押金已从钱包预付进入平台托管，完成任务达标后全额返还",
+                    LINK_WALLET, walletPayload(payload));
+            case "FreebieRefunded" -> new Template(
+                    NotificationCategory.WALLET, "押金已返还",
+                    "你的霸王餐押金已全额返还到钱包", LINK_WALLET, walletPayload(payload));
+            case "FreebieCompensated" -> new Template(
+                    NotificationCategory.ENGAGEMENT, "霸王餐押金已补偿商家",
+                    "该履约未达标终局，推荐官预付的押金已补偿给商家", LINK_ENGAGEMENTS, walletPayload(payload));
             default -> null;
         };
     }

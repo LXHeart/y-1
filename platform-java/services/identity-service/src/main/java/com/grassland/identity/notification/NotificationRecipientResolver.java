@@ -93,6 +93,13 @@ public class NotificationRecipientResolver {
                     accountIds(payload, "taskOwnerId", "recommenderAccountId");
             // 商家拒绝系统核实通过履约（D-03）：转客服裁定，双方知悉。
             case "MerchantContested" -> accountIds(payload, "taskOwnerId", "recommenderAccountId");
+            // 资金预留失败补偿（押金/赏金余额不足）：通知商家（操作者）为何未接受成功（ADR-D12）。
+            case "ApplicationReservationFailed" -> accountIds(payload, "taskOwnerId");
+            // 霸王餐押金（ADR-D12）：预付/返还只通知推荐官（WALLET）；补偿入商家 org，双方知悉（ENGAGEMENT）。
+            case "FreebieReserved", "FreebieRefunded" ->
+                    accountIds(payload, "recommenderAccountId");
+            case "FreebieCompensated" ->
+                    accountIds(payload, "taskOwnerId", "recommenderAccountId");
             // 争议对方通知：marketplace 派生的 EngagementDisputed 携带已解析的对方账号（草场 Slice 12 缺口补全）。
             case "EngagementDisputed" -> accountIds(payload, "counterpartyAccountId");
             // 争议：只有开启人在 trust 本地表内（对方账号缺口见 docs 路线图第 8 项）。

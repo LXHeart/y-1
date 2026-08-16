@@ -312,6 +312,77 @@ class ExternalNotificationRoutingTest {
         }
     }
 
+    // ---------- 霸王餐押金（ADR-D12 / 任务书 #22 Stage B3） ----------
+
+    @Test
+    void freebieReserveAndRefundNotifyRecommenderWithWalletTemplate() {
+        for (String eventType : List.of("FreebieReserved", "FreebieRefunded")) {
+            Map<String, Object> fields = Map.of(
+                    "engagementRef", "eng-1", "amountCents", 600,
+                    "recommenderAccountId", RECOMMENDER, "taskOwnerId", OWNER);
+            assertThat(resolve(eventType, fields)).as(eventType).containsExactly(RECOMMENDER);
+
+            NotificationTemplates.Template template = NotificationTemplates.template(eventType, payload(fields));
+            assertThat(template).as(eventType).isNotNull();
+            assertThat(template.category()).as(eventType).isEqualTo(NotificationCategory.WALLET);
+            assertThat(template.linkPath()).as(eventType).isEqualTo("/me/wallet");
+            assertThat(template.payload()).as(eventType)
+                    .containsEntry("engagementRef", "eng-1")
+                    .containsEntry("amountCents", 600L)
+                    .doesNotContainKey("recommenderAccountId")
+                    .doesNotContainKey("taskOwnerId");
+        }
+    }
+
+    @Test
+    void freebieCompensatedNotifiesBothPartiesWithoutLeakingAccounts() {
+        Map<String, Object> fields = Map.of(
+                "engagementRef", "eng-1", "amountCents", 600,
+                "recommenderAccountId", RECOMMENDER, "taskOwnerId", OWNER);
+        assertThat(resolve("FreebieCompensated", fields)).containsExactlyInAnyOrder(OWNER, RECOMMENDER);
+
+        NotificationTemplates.Template template = NotificationTemplates.template("FreebieCompensated", payload(fields));
+        assertThat(template).isNotNull();
+        assertThat(template.category()).isEqualTo(NotificationCategory.ENGAGEMENT);
+        assertThat(template.linkPath()).isEqualTo("/me/engagements");
+        assertThat(template.payload()).containsEntry("amountCents", 600L)
+                .doesNotContainKey("recommenderAccountId")
+                .doesNotContainKey("taskOwnerId");
+    }
+
+    @Test
+    void acceptanceFailureNotifiesMerchantOnly() {
+        Map<String, Object> fields = Map.of(
+                "taskId", "task-1", "applicationId", "app-1", "reason", "insufficient_funds",
+                "taskOwnerId", OWNER, "recommenderAccountId", RECOMMENDER);
+        assertThat(resolve("ApplicationReservationFailed", fields)).containsExactly(OWNER);
+
+        NotificationTemplates.Template template = NotificationTemplates.template(
+                "ApplicationReservationFailed", payload(fields));
+        assertThat(template).isNotNull();
+        assertThat(template.category()).isEqualTo(NotificationCategory.ENGAGEMENT);
+        assertThat(template.payload()).containsEntry("taskId", "task-1")
+                .containsEntry("reason", "insufficient_funds")
+                .doesNotContainKey("taskOwnerId")
+                .doesNotContainKey("recommenderAccountId");
+    }
+
+    @Test
+    void engagementRefundedOnCancelBodyIsFundingDirectionAware() {
+        NotificationTemplates.Template freebie = NotificationTemplates.template(
+                "EngagementRefundedOnCancel", payload(Map.of(
+                        "taskId", "task-1", "applicationId", "app-1",
+                        "refundDirection", "recommender", "reason", "merchant_cancel")));
+        assertThat(freebie).isNotNull();
+        assertThat(freebie.body()).contains("押金已全额退还");
+
+        NotificationTemplates.Template bounty = NotificationTemplates.template(
+                "EngagementRefundedOnCancel", payload(Map.of(
+                        "taskId", "task-1", "applicationId", "app-1",
+                        "refundDirection", "merchant", "reason", "merchant_cancel")));
+        assertThat(bounty.body()).contains("退还商家");
+    }
+
     // ---- helpers ----
 
     private List<String> resolve(String eventType, Map<String, Object> payload) {
