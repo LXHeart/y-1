@@ -430,4 +430,79 @@ describe('MerchantKybCard 契约展示', () => {
       .toBe('A 店重载地址')
     expect(wrapper.find('.store-status').text()).toContain('草稿')
   })
+
+  test('门店营销字段编辑→保存往返：换行拆行去重、元↔cents（任务书 #24）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/merchant-profile')) return successResponse(null)
+      if (url.endsWith('/merchant-attachments') || url.endsWith('/withdrawal-accounts')) {
+        return successResponse([])
+      }
+      if (url.endsWith('/stores')) {
+        return successResponse([{ id: 'store-1', name: '静安门店' }])
+      }
+      if (url.endsWith('/stores/store-1/profile') && init?.method === 'POST') {
+        // 回显保存结果（同后端 draft 语义）。
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        return successResponse({
+          storeId: 'store-1', address: body.address, phone: null, businessHours: null,
+          description: null, categories: body.categories, signatureItems: body.signatureItems,
+          sellingPoints: body.sellingPoints, mustEmphasize: body.mustEmphasize,
+          forbiddenPhrases: body.forbiddenPhrases, allowedTags: body.allowedTags,
+          brandTone: body.brandTone, priceRange: body.priceRange,
+          averageSpendCents: body.averageSpendCents, visitNotes: body.visitNotes,
+          status: 'draft', submittedAt: null, reviewedAt: null, reviewerAccountId: null,
+          reviewNote: null, createdAt: null,
+        })
+      }
+      if (url.endsWith('/stores/store-1/profile')) {
+        return successResponse({
+          storeId: 'store-1', address: '{"address":"南京西路 1 号"}', phone: '13800000000',
+          businessHours: null, description: null,
+          categories: ['火锅', '川菜'], signatureItems: ['招牌毛肚'], sellingPoints: [],
+          mustEmphasize: ['锅底现熬'], forbiddenPhrases: ['最好吃'], allowedTags: ['#探店'],
+          brandTone: '温暖亲切', priceRange: '¥30–¥80', averageSpendCents: 6500,
+          visitNotes: '地铁直达', status: 'draft', submittedAt: null, reviewedAt: null,
+          reviewerAccountId: null, reviewNote: null, createdAt: null,
+        })
+      }
+      return successResponse(null)
+    }))
+
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '门店资料')!.trigger('click')
+    await flushPromises()
+
+    // 读取映射：列表 → 换行文本；cents → 元。
+    const categories = wrapper.find('textarea[placeholder="每行一项，如：火锅（选填）"]')
+    expect((categories.element as HTMLTextAreaElement).value).toBe('火锅\n川菜')
+    expect((wrapper.find('textarea[placeholder="每行一项（选填）"]').element as HTMLTextAreaElement).value)
+      .toBe('招牌毛肚')
+    expect((wrapper.find('input[placeholder="如：65（选填）"]').element as HTMLInputElement).value)
+      .toBe('65')
+    expect((wrapper.find('input[placeholder="如：¥30–¥80（选填）"]').element as HTMLInputElement).value)
+      .toBe('¥30–¥80')
+
+    // 编辑：换行/空白/重复需归一；人均改 88.88 元。
+    await categories.setValue('火锅\n\n 川菜 \n火锅\n烧烤')
+    await wrapper.find('input[placeholder="如：65（选填）"]').setValue('88.88')
+
+    const spy = vi.mocked(fetch)
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+
+    const save = spy.mock.calls.find(([url, init]) =>
+      String(url).endsWith('/stores/store-1/profile') && (init as RequestInit)?.method === 'POST')
+    expect(save).toBeDefined()
+    const body = JSON.parse(String((save![1] as RequestInit).body)) as Record<string, unknown>
+    expect(body.categories).toEqual(['火锅', '川菜', '烧烤'])
+    expect(body.signatureItems).toEqual(['招牌毛肚'])
+    expect(body.sellingPoints).toEqual([])
+    expect(body.mustEmphasize).toEqual(['锅底现熬'])
+    expect(body.forbiddenPhrases).toEqual(['最好吃'])
+    expect(body.allowedTags).toEqual(['#探店'])
+    expect(body.brandTone).toBe('温暖亲切')
+    expect(body.averageSpendCents).toBe(8888)
+    expect(body.visitNotes).toBe('地铁直达')
+  })
 })

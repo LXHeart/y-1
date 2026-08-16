@@ -77,6 +77,17 @@ const storeForm = ref({
   addressDetail: '',
   phone: '',
   description: '',
+  // 任务书 #24：PRD §2.1 营销字段；列表类用 textarea 换行分隔（与任务表单 lines() 同约定）。
+  categories: '',
+  signatureItems: '',
+  sellingPoints: '',
+  mustEmphasize: '',
+  forbiddenPhrases: '',
+  allowedTags: '',
+  brandTone: '',
+  priceRange: '',
+  averageSpendYuan: '',
+  visitNotes: '',
 })
 
 // 状态映射
@@ -138,7 +149,23 @@ function emptyStoreForm(): typeof storeForm.value {
   return {
     addressProvince: '', addressCity: '', addressDistrict: '', addressDetail: '',
     phone: '', description: '',
+    categories: '', signatureItems: '', sellingPoints: '', mustEmphasize: '',
+    forbiddenPhrases: '', allowedTags: '', brandTone: '', priceRange: '',
+    averageSpendYuan: '', visitNotes: '',
   }
+}
+
+/** 换行分隔约定（同任务表单）：按行拆、trim、去空、去重。 */
+function storeFormLines(value: string): string[] {
+  return [...new Set(value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))]
+}
+
+/** 人均消费元 → cents；非法/空 → undefined（清空）。number 入参兼容 type=number 的 v-model 自动转换。 */
+function averageSpendToCents(value: string | number): number | undefined {
+  const text = String(value ?? '').trim()
+  const yuan = Number(text)
+  if (text === '' || !Number.isFinite(yuan) || yuan < 0) return undefined
+  return Math.round(yuan * 100)
 }
 
 // 方法
@@ -363,6 +390,18 @@ async function loadStoreProfile(): Promise<void> {
         addressDetail: address?.address || '',
         phone: profile.phone || '',
         description: profile.description || '',
+        categories: (profile.categories ?? []).join('\n'),
+        signatureItems: (profile.signatureItems ?? []).join('\n'),
+        sellingPoints: (profile.sellingPoints ?? []).join('\n'),
+        mustEmphasize: (profile.mustEmphasize ?? []).join('\n'),
+        forbiddenPhrases: (profile.forbiddenPhrases ?? []).join('\n'),
+        allowedTags: (profile.allowedTags ?? []).join('\n'),
+        brandTone: profile.brandTone || '',
+        priceRange: profile.priceRange || '',
+        averageSpendYuan: profile.averageSpendCents == null
+          ? ''
+          : String(profile.averageSpendCents / 100),
+        visitNotes: profile.visitNotes || '',
       }
     }
   } catch (error: unknown) {
@@ -387,6 +426,17 @@ async function saveStoreProfile(): Promise<void> {
     address: Object.values(address).some(Boolean) ? JSON.stringify(address) : undefined,
     phone: storeForm.value.phone || undefined,
     description: storeForm.value.description || undefined,
+    // 任务书 #24：营销字段整份覆盖（后端空数组 = 清空），列表按换行拆行。
+    categories: storeFormLines(storeForm.value.categories),
+    signatureItems: storeFormLines(storeForm.value.signatureItems),
+    sellingPoints: storeFormLines(storeForm.value.sellingPoints),
+    mustEmphasize: storeFormLines(storeForm.value.mustEmphasize),
+    forbiddenPhrases: storeFormLines(storeForm.value.forbiddenPhrases),
+    allowedTags: storeFormLines(storeForm.value.allowedTags),
+    brandTone: storeForm.value.brandTone || undefined,
+    priceRange: storeForm.value.priceRange || undefined,
+    averageSpendCents: averageSpendToCents(storeForm.value.averageSpendYuan),
+    visitNotes: storeForm.value.visitNotes || undefined,
   })
   if (result && isCurrentStoreOperation(orgId, version, storeId, operationVersion)) {
     storeProfile.value = result
@@ -734,6 +784,37 @@ watch(() => props.orgId, (orgId) => {
         </div>
         <div class="form-row">
           <label>门店描述 <textarea v-model="storeForm.description" placeholder="请输入门店描述（选填）" rows="3" /></label>
+        </div>
+        <!-- 任务书 #24：PRD §2.1 营销字段（列表类每行一项） -->
+        <div class="form-row">
+          <label>主营品类 <textarea v-model="storeForm.categories" placeholder="每行一项，如：火锅（选填）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>特色产品/服务 <textarea v-model="storeForm.signatureItems" placeholder="每行一项（选填）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>推荐卖点 <textarea v-model="storeForm.sellingPoints" placeholder="每行一项（选填）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>必须强调 <textarea v-model="storeForm.mustEmphasize" placeholder="AI 创作必须逐条体现，每行一项（选填）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>禁止表达 <textarea v-model="storeForm.forbiddenPhrases" placeholder="AI 创作严禁出现，每行一项（选填）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>可使用标签 <textarea v-model="storeForm.allowedTags" placeholder="每行一个标签，如：#探店（选填）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>品牌语气 <textarea v-model="storeForm.brandTone" placeholder="如：温暖亲切（选填，≤500 字）" rows="2" /></label>
+        </div>
+        <div class="form-row">
+          <label>价格区间 <input v-model="storeForm.priceRange" placeholder="如：¥30–¥80（选填）" /></label>
+        </div>
+        <div class="form-row">
+          <label>人均消费（元） <input v-model="storeForm.averageSpendYuan" type="number" min="0" step="0.01" placeholder="如：65（选填）" /></label>
+        </div>
+        <div class="form-row">
+          <label>交通/停车/预约/到店注意 <textarea v-model="storeForm.visitNotes" placeholder="选填，≤1000 字" rows="3" /></label>
         </div>
 
         <div class="form-actions">

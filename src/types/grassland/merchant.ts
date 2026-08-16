@@ -201,6 +201,17 @@ export interface StoreProfile {
   phone: string | null
   businessHours: string | null // JSON: [{dayOfWeek,openTime,closeTime}]
   description: string | null
+  /** 任务书 #24：PRD §2.1 营销字段（列表类后端返回真数组）。 */
+  categories: string[]
+  signatureItems: string[]
+  sellingPoints: string[]
+  mustEmphasize: string[]
+  forbiddenPhrases: string[]
+  allowedTags: string[]
+  brandTone: string | null
+  priceRange: string | null
+  averageSpendCents: number | null
+  visitNotes: string | null
   status: StoreProfileStatus
   submittedAt: string | null
   reviewedAt: string | null
@@ -209,10 +220,55 @@ export interface StoreProfile {
   createdAt: string | null
 }
 
-/** 创建/更新门店资料请求。 */
+/** 创建/更新门店资料请求。营销字段整份覆盖：空数组与不传等价（清空语义）。 */
 export interface CreateStoreProfileInput {
   address?: string // JSON string
   phone?: string
   businessHours?: string // JSON string
   description?: string
+  categories?: string[]
+  signatureItems?: string[]
+  sellingPoints?: string[]
+  mustEmphasize?: string[]
+  forbiddenPhrases?: string[]
+  allowedTags?: string[]
+  brandTone?: string
+  priceRange?: string
+  averageSpendCents?: number
+  visitNotes?: string
+}
+
+/**
+ * 门店公开资料白名单（任务书 #24：GET /api/stores/{storeId}/public-profile）。
+ * 不含 KYB 审核列/组织内部字段；字段与后端白名单一一对齐。
+ */
+export interface StorePublicProfile {
+  storeId: string
+  storeName: string
+  address: string | null // JSON: {province,city,district,address,longitude,latitude}
+  phone: string | null
+  businessHours: string | null // JSON: [{dayOfWeek,openTime,closeTime}]
+  description: string | null
+  categories: string[]
+  signatureItems: string[]
+  priceRange: string | null
+  averageSpendCents: number | null
+  visitNotes: string | null
+  sellingPoints: string[]
+  brandTone: string | null
+  mustEmphasize: string[]
+  forbiddenPhrases: string[]
+  allowedTags: string[]
+}
+
+/** AI 商家上下文：任务创作快照里冻结的门店品牌块（无门店任务无此块）。 */
+export interface StoreBranding {
+  storeName: string | null
+  brandTone: string | null
+  mustEmphasize: string[]
+  forbiddenPhrases: string[]
+  allowedTags: string[]
+  sellingPoints: string[]
+  categories: string[]
+  signatureItems: string[]
 }

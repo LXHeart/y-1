@@ -166,6 +166,39 @@ describe('KYB 请求契约', () => {
     expect((spy.mock.calls[1][1] as RequestInit).method).toBe('POST')
   })
 
+  test('门店营销字段随资料保存整份下发（任务书 #24）', async () => {
+    const spy = mockFetchOk()
+    const { createStoreProfile } = useGrassland()
+
+    await createStoreProfile('org-1', 'store-1', {
+      address: '{"address":"南京西路 1 号"}',
+      categories: ['火锅', '川菜'],
+      mustEmphasize: ['锅底现熬'],
+      forbiddenPhrases: ['最好吃'],
+      allowedTags: ['#探店'],
+      brandTone: '温暖亲切',
+      averageSpendCents: 6500,
+    })
+
+    const body = bodyOf(spy, 0)
+    expect(body.categories).toEqual(['火锅', '川菜'])
+    expect(body.mustEmphasize).toEqual(['锅底现熬'])
+    expect(body.forbiddenPhrases).toEqual(['最好吃'])
+    expect(body.allowedTags).toEqual(['#探店'])
+    expect(body.brandTone).toBe('温暖亲切')
+    expect(body.averageSpendCents).toBe(6500)
+  })
+
+  test('门店公开资料走公开白名单端点（任务书 #24）', async () => {
+    const spy = mockFetchOk()
+    const { getStorePublicProfile } = useGrassland()
+
+    await getStorePublicProfile('store-1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/stores/store-1/public-profile')
+    expect((spy.mock.calls[0][1] as RequestInit | undefined)?.method ?? 'GET').toBe('GET')
+  })
+
   test('商家附件通过 identity 的组织作用域端点申请带类型门禁的 KYB 媒体票据', async () => {
     const ticket = {
       id: 'media-1', objectKey: 'media/merchant_kyb/media-1', uploadUrl: 'http://storage.test/media-1',

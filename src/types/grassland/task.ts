@@ -14,6 +14,13 @@ export interface TaskRequirements {
   evidenceRequirements: string[]
 }
 
+/** 任务书 #24：feed/任务详情行携带的门店公开轻量块（组织级任务无此字段）。 */
+export interface TaskStoreBlock {
+  storeName: string | null
+  city: string | null
+  categories: string[]
+}
+
 export interface Task {
   id: string
   ownerAccountId: string
@@ -47,6 +54,8 @@ export interface Task {
   refundedCount?: number
   /** Present only in a feed response when distance filtering is active. */
   distanceKm?: number
+  /** 任务书 #24：门店公开轻量块（storeName/city/categories），门店任务才有。 */
+  store?: TaskStoreBlock
   /** PRD 4.12 structured contract frozen into task_version when published or revised. */
   requirements: TaskRequirements
 }

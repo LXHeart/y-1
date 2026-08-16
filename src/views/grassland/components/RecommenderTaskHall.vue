@@ -22,13 +22,14 @@
     <p class="gl-hint">大厅只显示已发布且未截止的任务；报名截止后不再接受新报名。</p>
     <p v-if="feedItems.length === 0" class="gl-empty">暂无可报名任务</p>
     <table v-else class="gl-table">
-      <thead><tr><th>任务</th><th>平台</th><th>赏金</th><th>距离</th><th>截止</th><th>操作</th></tr></thead>
+      <thead><tr><th>任务</th><th>门店</th><th>平台</th><th>赏金</th><th>距离</th><th>截止</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-for="t in feedItems" :key="t.id">
           <td>
             <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }"
                     @click="$emit('select-task', t.id)">{{ t.title }}</button>
           </td>
+          <td>{{ t.store ? [t.store.storeName, t.store.city].filter(Boolean).join(' · ') : '—' }}</td>
           <td>{{ t.platform || '—' }}</td>
           <td>{{ t.bountyCents ? `¥${(t.bountyCents / 100).toFixed(2)}` : '无' }}</td>
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)} km` }}</td>

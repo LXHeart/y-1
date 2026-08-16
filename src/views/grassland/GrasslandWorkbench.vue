@@ -17,6 +17,7 @@ import RecommenderReputationBadge from '../../components/RecommenderReputationBa
 import MerchantTaskForm from './components/MerchantTaskForm.vue'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
+import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
@@ -31,6 +32,7 @@ import type {
   RecommenderReputation,
   Store,
   StoreAccessScope,
+  StorePublicProfile,
   Task,
   TaskApplication,
 } from '../../types/grassland'
@@ -112,6 +114,11 @@ const feedFilters = ref({
   latitude: null as number | null, longitude: null as number | null,
 })
 const locating = ref(false)
+
+// ---------- 任务书 #24：任务详情携带门店公开块 ----------
+const storePublicProfile = ref<StorePublicProfile | null>(null)
+const storePublicProfileLoading = ref(false)
+const storePublicProfileError = ref('')
 
 // ---------- 商家筛选报名者（PRD 五等级 + 完成率）----------
 //
@@ -645,6 +652,8 @@ async function selectTask(taskId: string): Promise<void> {
   applicantReputation.value = {}
   applicantProfile.value = {}
   confirmedAppIds.value = new Set()
+  // 任务书 #24：切换任务同步拉门店公开资料（与报名列表并行，不阻塞）。
+  void loadStorePublicProfile()
   const recommendationRequest = side.value === 'merchant'
     ? loadRecommendations(taskId)
     : Promise.resolve()
@@ -652,6 +661,26 @@ async function selectTask(taskId: string): Promise<void> {
   if (list) applications.value = list
   await recommendationRequest
   await loadApplicantProfiles()
+}
+
+/** 任务书 #24：拉选中任务的门店公开资料；组织级任务/404 → 面板空态。 */
+async function loadStorePublicProfile(): Promise<void> {
+  const requested = selectedTask.value?.storeId ?? null
+  storePublicProfile.value = null
+  storePublicProfileError.value = ''
+  if (!requested) return
+  storePublicProfileLoading.value = true
+  try {
+    const profile = await grassland.getStorePublicProfile(requested)
+    // 快速切换任务时丢弃过期响应，避免串到别的任务上。
+    if ((selectedTask.value?.storeId ?? null) !== requested) return
+    storePublicProfile.value = profile
+    if (!profile) storePublicProfileError.value = '该门店暂无公开资料'
+  } finally {
+    if ((selectedTask.value?.storeId ?? null) === requested) {
+      storePublicProfileLoading.value = false
+    }
+  }
 }
 
 async function loadRecommendations(taskId = selectedTaskId.value): Promise<void> {
@@ -1320,6 +1349,14 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         @select-task="selectTask"
         @apply="apply"
         @use-location="useCurrentLocation"
+      />
+
+      <!-- 任务书 #24：选中任务的门店公开详情页（只读白名单） -->
+      <StorePublicProfilePanel
+        :store-id="selectedTask?.storeId ?? null"
+        :profile="storePublicProfile"
+        :loading="storePublicProfileLoading"
+        :error="storePublicProfileError"
       />
 
       <article id="gl-engagements" class="gl-card gl-card-wide">

@@ -8,7 +8,7 @@ import type {
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
   Membership, LoginSession, OrgInvitation, MyInvitation,
-  InvitationAcceptResult, Store, StoreMembership, StoreRole,
+  InvitationAcceptResult, Store, StoreMembership, StoreRole, StorePublicProfile,
 } from '../types/grassland'
 
 export function useGrasslandIdentity(run: RunFn) {
@@ -213,6 +213,13 @@ export function useGrasslandIdentity(run: RunFn) {
       body: JSON.stringify({ name }),
     }))
 
+  /**
+   * 门店公开资料（任务书 #24）：登录即可看、未登录也放行；门店/组织非 active 或无资料 → 后端 404。
+   * 响应白名单不含 KYB 审核列与组织内部字段。
+   */
+  const getStorePublicProfile = (storeId: string) =>
+    run(() => request<StorePublicProfile>(`/api/stores/${storeId}/public-profile`))
+
   /** 列门店成员（需门店 STAFF+；org OWNER/ADMIN 隐式为门店 MANAGER）。 */
   const listStoreMemberships = (orgId: string, storeId: string) =>
     run(() => request<StoreMembership[]>(`/api/organizations/${orgId}/stores/${storeId}/memberships`))
@@ -244,6 +251,7 @@ export function useGrasslandIdentity(run: RunFn) {
     listMySessions, revokeOtherSessions, revokeSession,
     inviteMember, listInvitations, revokeInvitation,
     listMyInvitations, acceptInvitation, declineInvitation,
-    listStores, createStore, listStoreMemberships, addStoreMembership, removeStoreMembership,
+    listStores, createStore, getStorePublicProfile, listStoreMemberships, addStoreMembership,
+    removeStoreMembership,
   }
 }

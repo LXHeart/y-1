@@ -210,12 +210,20 @@
           <div><dt>内容形式</dt><dd>{{ entry.taskContext.contentForm || '未指定' }}</dd></div>
           <div><dt>任务赏金</dt><dd>¥{{ (entry.taskContext.bountyCents / 100).toFixed(2) }}</dd></div>
           <div><dt>接受时间</dt><dd>{{ formatTaskDate(entry.taskContext.acceptedAt) }}</dd></div>
-          <div v-if="entry.taskContext.storeId"><dt>门店范围</dt><dd>{{ entry.taskContext.storeId }}</dd></div>
+          <div v-if="entry.taskContext.storeId"><dt>门店范围</dt>
+            <dd>{{ taskStoreBranding?.storeName || entry.taskContext.storeId }}</dd></div>
         </dl>
         <p v-if="entry.taskContext.description">{{ entry.taskContext.description }}</p>
         <div v-if="taskRequirementEntries.length" class="task-requirements">
           <strong>任务要求</strong>
           <div v-for="item in taskRequirementEntries" :key="item[0]">
+            <span>{{ item[0] }}</span><p>{{ formatRequirement(item[1]) }}</p>
+          </div>
+        </div>
+        <!-- 任务书 #24：AI 商家上下文（品牌语气/必须强调/禁止表达/标签池） -->
+        <div v-if="taskStoreBrandingEntries.length" class="task-requirements">
+          <strong>门店品牌约束</strong>
+          <div v-for="item in taskStoreBrandingEntries" :key="item[0]">
             <span>{{ item[0] }}</span><p>{{ formatRequirement(item[1]) }}</p>
           </div>
         </div>
@@ -285,7 +293,7 @@ import {
 } from '../../config/ai-platform-capabilities'
 import { useGrassland } from '../../composables/useGrassland'
 import { useHomepageHotItems } from '../../composables/useHomepageHotItems'
-import type { Organization, Store, StoreProfile } from '../../types/grassland'
+import type { Organization, Store, StoreProfile, StorePublicProfile } from '../../types/grassland'
 import type {
   AiContentFormId,
   AiPlatformId,
@@ -379,6 +387,30 @@ const taskRequirements = computed(() => {
   return parts.length ? parts.join('\n') : undefined
 })
 const taskRequirementEntries = computed(() => Object.entries(props.entry?.taskContext?.requirements || {}))
+
+/** 任务书 #24：任务模式上下文预览的门店品牌块（按 taskContext.storeId 拉公开白名单）。 */
+const taskStoreBranding = ref<StorePublicProfile | null>(null)
+let taskStoreBrandingEpoch = 0
+watch(() => props.entry?.taskContext?.storeId ?? null, async (nextStoreId) => {
+  const epoch = ++taskStoreBrandingEpoch
+  taskStoreBranding.value = null
+  if (!nextStoreId) return
+  const profile = await grassland.getStorePublicProfile(nextStoreId)
+  if (epoch === taskStoreBrandingEpoch) taskStoreBranding.value = profile
+}, { immediate: true })
+const taskStoreBrandingEntries = computed<Array<[string, unknown]>>(() => {
+  const profile = taskStoreBranding.value
+  if (!profile) return []
+  return [
+    ['品牌语气', profile.brandTone],
+    ['必须强调', profile.mustEmphasize],
+    ['禁止表达', profile.forbiddenPhrases],
+    ['可使用标签', profile.allowedTags],
+    ['推荐卖点', profile.sellingPoints],
+    ['主营品类', profile.categories],
+    ['特色产品/服务', profile.signatureItems],
+  ].filter(([, value]) => Array.isArray(value) ? value.length > 0 : Boolean(value)) as Array<[string, unknown]>
+})
 /** 素材库智能推荐上下文：任务模式带权威任务引用，独立模式带当前平台/内容形式。 */
 const recommendationContext = computed<CreationRecommendationContext>(() => {
   const source = props.entry?.source
