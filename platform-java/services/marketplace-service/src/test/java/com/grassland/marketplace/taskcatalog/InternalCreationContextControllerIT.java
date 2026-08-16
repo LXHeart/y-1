@@ -36,7 +36,7 @@ class InternalCreationContextControllerIT extends MarketplaceItSupport {
                 .isEqualTo(fixture.recommenderAccountId())
                 .jsonPath("$.data.taskContext.taskVersion").isEqualTo(1)
                 .jsonPath("$.data.taskContext.platform").isEqualTo("xiaohongshu")
-                .jsonPath("$.data.taskContext.contentForm").isEqualTo("graphic")
+                .jsonPath("$.data.taskContext.contentForm").isEqualTo("image")
                 .jsonPath("$.data.taskContext.requirements.productServiceInfo").isEqualTo("双人招牌套餐")
                 .jsonPath("$.data.taskContext.requirements.mustInclude[0]").isEqualTo("门店名")
                 .jsonPath("$.data.taskContext.requirements.forbiddenContent[0]").isEqualTo("绝对化功效")
@@ -134,10 +134,10 @@ class InternalCreationContextControllerIT extends MarketplaceItSupport {
         String recommender = UUID.randomUUID().toString();
         db.sql("INSERT INTO task(id, owner_account_id, organization_id, title, description, status,"
                         + " content_form, platform, version) VALUES (CAST(:id AS uuid), CAST(:owner AS uuid),"
-                        + " CAST(:org AS uuid), '组织级任务', '无门店', 'published', 'graphic', 'xiaohongshu', 1)")
+                        + " CAST(:org AS uuid), '组织级任务', '无门店', 'published', 'image', 'xiaohongshu', 1)")
                 .bind("id", taskId).bind("owner", merchant).bind("org", organization).then().block();
         db.sql("INSERT INTO task_version(task_id, version, title, description, content_form, platform, requirements)"
-                        + " VALUES (CAST(:task AS uuid), 1, '组织级任务', '无门店', 'graphic', 'xiaohongshu',"
+                        + " VALUES (CAST(:task AS uuid), 1, '组织级任务', '无门店', 'image', 'xiaohongshu',"
                         + " CAST(:requirements AS jsonb))")
                 .bind("task", taskId).bind("requirements", "{}")
                 .then().block();
@@ -170,13 +170,13 @@ class InternalCreationContextControllerIT extends MarketplaceItSupport {
         String recommender = UUID.randomUUID().toString();
         db.sql("INSERT INTO task(id, owner_account_id, organization_id, title, description, status,"
                         + " content_form, platform, store_id, version) VALUES (CAST(:id AS uuid), CAST(:owner AS uuid),"
-                        + " CAST(:org AS uuid), '任务快照', '接受时描述', 'published', 'graphic',"
+                        + " CAST(:org AS uuid), '任务快照', '接受时描述', 'published', 'image',"
                         + " 'xiaohongshu', CAST(:store AS uuid), 1)")
                 .bind("id", taskId).bind("owner", merchant).bind("org", organization).bind("store", store)
                 .then().block();
         db.sql("INSERT INTO task_version(task_id, version, store_id, title, description, content_form, platform, requirements)"
                         + " VALUES (CAST(:task AS uuid), 1, CAST(:store AS uuid), '任务快照', '接受时描述',"
-                        + " 'graphic', 'xiaohongshu', CAST(:requirements AS jsonb))")
+                        + " 'image', 'xiaohongshu', CAST(:requirements AS jsonb))")
                 .bind("task", taskId).bind("store", store).bind("requirements", """
                         {"productServiceInfo":"双人招牌套餐","mustInclude":["门店名","招牌菜"],
                          "forbiddenContent":["绝对化功效"],"publishStartAt":"2026-08-20T10:00:00Z",

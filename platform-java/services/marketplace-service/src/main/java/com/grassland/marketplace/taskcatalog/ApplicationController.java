@@ -441,11 +441,14 @@ public class ApplicationController {
                                 // D-03 §5：任务已取消 → 不再接受履约提交（已 accept 未提交者已被退款）。
                                 .filter(task -> !"cancelled".equals(task.status()))
                                 .switchIfEmpty(fail(409, "任务已取消，不能提交履约"))
+                                // 任务书 #23 R3：互动任务必填平台账号标识（核验要比对截图账号）。
+                                .flatMap(task -> validateInteractionSubmission(task, body.platformHandle())
                                 // 校验在事务外：逐个 mediaId 经 intelligence 取 metadata，过滤 owner==提交人（IDOR 守卫）。
-                                .flatMap(task -> validateAttachments(task.organizationId(),
-                                                caller.accountId(), appId, body.mediaIds())
+                                .then(validateAttachments(task.organizationId(),
+                                                caller.accountId(), appId, body.mediaIds()))
                                         .flatMap(atts -> workSubmitDeliverable(app, appId, caller,
-                                                        body.contentUrl(), body.note(), atts, task.ownerAccountId())
+                                                        body.contentUrl(), body.note(), atts, task.ownerAccountId(),
+                                                        body.platformHandle())
                                                 .flatMap(created -> startConfirmationWorkflow(task, app, created)
                                                         // DB 提交已成功，Temporal 瞬时失败不把提交回成 5xx；dispatcher 扫未标记行补启。
                                                         .onErrorResume(failure -> {
@@ -1175,6 +1178,7 @@ public class ApplicationController {
         m.put("reviewNote", submission.reviewNote());
         m.put("reviewedAt", submission.reviewedAt() == null ? null : submission.reviewedAt().toString());
         m.put("createdAt", submission.createdAt() == null ? null : submission.createdAt().toString());
+        m.put("platformHandle", submission.platformHandle());
         return m;
     }
 
@@ -1224,6 +1228,15 @@ public class ApplicationController {
                 .collectList();
     }
 
+    /** 任务书 #23 R3：contentForm=interaction 的任务提交必须带 platformHandle（其余任务忽略该字段）。 */
+    private Mono<Void> validateInteractionSubmission(Task task, String platformHandle) {
+        if (TaskRequirements.isInteractionForm(task.contentForm())
+                && (platformHandle == null || platformHandle.isBlank())) {
+            return Mono.error(new MarketplaceException(400, "点赞互动任务必须填写平台账号标识"));
+        }
+        return Mono.empty();
+    }
+
     /**
      * 原子提交交付物（7C 事务）：create + attach + outbox 同一 R2DBC 事务，outbox 挂 attach 之后。
      * 任一内层失败（含附件冲突 empty→409）→ 整事务回滚，零残留（无孤儿 submission/附件/事件）。
@@ -1231,9 +1244,9 @@ public class ApplicationController {
     private Mono<EngagementSubmission> workSubmitDeliverable(TaskApplication app, String appId, Caller caller,
                                                              String contentUrl, String note,
                                                              List<AttachmentInput> attachmentInputs,
-                                                             String taskOwnerId) {
+                                                             String taskOwnerId, String platformHandle) {
         return transactions.transactional(
-                submissions.create(appId, caller.accountId(), contentUrl, note)
+                submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle)
                         .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
                         .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
                         .flatMap(created -> outbox
@@ -1467,17 +1480,71 @@ public class ApplicationController {
     /**
      * 跑自动核验：链接可达性 + AI 视觉核验（附件截图）。链接结论独立给出；AI 检查失败
      * （intelligence 不可用 / 4xx / 5xx）降级为单项 {@code inconclusive}，不拖垮整次核验。无附件 → 跳过 AI，仅 link。
+     *
+     * <p>任务书 #23 R4：互动任务（contentForm=interaction）换检查表——{@code link_reachability}/
+     * {@code platform_identity} 复用零改动（contentUrl=目标链接）；{@code evidence_completeness} 走互动分支
+     * （平台账号标识 + 截图 ≥1）；跳过 {@code ai_visual}（无原创作品），新增 {@code interaction_screenshot}
+     * （多模态识别截图：目标匹配/动作状态可见/账号一致）。图文/视频任务行为零改动。
      */
     private Mono<List<CheckOutcome>> runVerificationChecks(
             Task task, EngagementSubmission submission, List<EngagementSubmissionAttachment> evidence) {
         Mono<CheckOutcome> link = linkChecker.check(submission.contentUrl())
                 .map(r -> new CheckOutcome("link_reachability", r.status(), r.detail(), Instant.now()));
         CheckOutcome platform = platformIdentityCheck(task.platform(), submission.contentUrl());
-        CheckOutcome completeness = new CheckOutcome("evidence_completeness", "passed",
-                evidence.isEmpty() ? "已提交发布链接" : "发布链接 + " + evidence.size() + " 个附件", Instant.now());
-        return link.flatMap(linkOutcome -> aiVisualCheck(task, evidence)
+        boolean interaction = TaskRequirements.isInteractionForm(task.contentForm());
+        CheckOutcome completeness = interaction
+                ? interactionCompletenessCheck(submission, evidence)
+                : new CheckOutcome("evidence_completeness", "passed",
+                        evidence.isEmpty() ? "已提交发布链接" : "发布链接 + " + evidence.size() + " 个附件", Instant.now());
+        Mono<List<CheckOutcome>> ai = interaction
+                ? interactionScreenshotCheck(task, submission, evidence)
+                : aiVisualCheck(task, evidence);
+        return link.flatMap(linkOutcome -> ai
                 .map(aiOutcomes -> Stream.concat(Stream.of(linkOutcome, platform, completeness), aiOutcomes.stream())
                         .filter(java.util.Objects::nonNull).toList()));
+    }
+
+    /** 任务书 #23 R4：互动任务的凭证完整性——平台账号标识非空 + 动作截图 ≥1（核验检查，不在提交时硬拒）。 */
+    private static CheckOutcome interactionCompletenessCheck(
+            EngagementSubmission submission, List<EngagementSubmissionAttachment> evidence) {
+        if (submission.platformHandle() == null || submission.platformHandle().isBlank()) {
+            return new CheckOutcome("evidence_completeness", "failed", "缺平台账号标识", Instant.now());
+        }
+        if (evidence.isEmpty()) {
+            return new CheckOutcome("evidence_completeness", "failed",
+                    "互动任务需至少 1 张动作截图（点赞/收藏/关注界面）", Instant.now());
+        }
+        return new CheckOutcome("evidence_completeness", "passed",
+                "平台账号标识 + " + evidence.size() + " 张动作截图", Instant.now());
+    }
+
+    /**
+     * 互动截图核验（新检查键 {@code interaction_screenshot}）：复用 ai_visual 的 intelligence 多模态通道，
+     * 换互动专用 prompt 与上下文（目标链接/动作类型/账号标识）。无截图 → 跳过（completeness 已 failed）；
+     * intelligence 不可用 → {@code inconclusive} 进人工复核队列（不确定即人工）。
+     */
+    private Mono<List<CheckOutcome>> interactionScreenshotCheck(
+            Task task, EngagementSubmission submission, List<EngagementSubmissionAttachment> evidence) {
+        if (evidence.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        TaskRequirements.Interaction config = task.requirements() == null ? null : task.requirements().interaction();
+        if (config == null) {
+            // 防御：发布契约已拦「interaction 无配置块」，历史脏数据兜底为人工复核。
+            return Mono.just(List.of(new CheckOutcome("interaction_screenshot",
+                    "inconclusive", "任务缺少互动配置，请人工复核", Instant.now())));
+        }
+        List<UUID> mediaIds = evidence.stream()
+                .map(r -> UUID.fromString(r.mediaReferenceId()))
+                .distinct()
+                .toList();
+        return verificationClient.analyzeInteraction(task.organizationId(), mediaIds,
+                        task.title(), task.description(), task.platform(),
+                        config.targetUrl(), config.actionType(), submission.platformHandle())
+                .map(a -> List.of(new CheckOutcome("interaction_screenshot", a.status(),
+                        aiVisualDetail(a), Instant.now())))
+                .onErrorResume(e -> Mono.just(List.of(new CheckOutcome("interaction_screenshot",
+                        "inconclusive", "互动截图核验暂不可用", Instant.now()))));
     }
 
     /**

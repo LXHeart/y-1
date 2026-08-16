@@ -22,7 +22,7 @@ public class SubmissionRepository {
 
     private static final String SELECT_COLS =
             "id::text, application_id::text, recommender_account_id::text, content_url, note, status,"
-                    + " review_note, reviewed_at, created_at, confirmation_workflow_started_at";
+                    + " review_note, reviewed_at, created_at, confirmation_workflow_started_at, platform_handle";
 
     private final DatabaseClient db;
 
@@ -38,7 +38,7 @@ public class SubmissionRepository {
      * cancel 先拿锁→提交醒来见 cancelled 后 0 行，不会发生「已退款又补交」。
      */
     public Mono<EngagementSubmission> create(String applicationId, String recommenderAccountId,
-                                             String contentUrl, String note) {
+                                             String contentUrl, String note, String platformHandle) {
         var spec = db.sql("""
                 WITH eligible AS (
                     SELECT a.id
@@ -50,16 +50,25 @@ public class SubmissionRepository {
                       AND t.status <> 'cancelled'
                     FOR SHARE OF t
                 )
-                INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note)
-                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note
+                INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,
+                                                 platform_handle)
+                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note, :handle
                 FROM eligible
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", UUID.randomUUID().toString())
                 .bind("app", applicationId).bind("rec", recommenderAccountId).bind("url", contentUrl);
         spec = bindNullable(spec, "note", note);
+        spec = bindNullable(spec, "handle", platformHandle);
         return spec.map(SubmissionRepository::map).one()
                 .onErrorResume(DataIntegrityViolationException.class, e -> Mono.empty());
+    }
+
+
+    /** 兼容 V41 之前的两参重载（既有测试）；无平台账号标识。 */
+    public Mono<EngagementSubmission> create(String applicationId, String recommenderAccountId,
+                                             String contentUrl, String note) {
+        return create(applicationId, recommenderAccountId, contentUrl, note, null);
     }
 
     public Mono<EngagementSubmission> findById(String submissionId) {
@@ -136,7 +145,8 @@ public class SubmissionRepository {
                 row.get("review_note", String.class),
                 toInstant(row.get("reviewed_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
-                toInstant(row.get("confirmation_workflow_started_at", OffsetDateTime.class))
+                toInstant(row.get("confirmation_workflow_started_at", OffsetDateTime.class)),
+                row.get("platform_handle", String.class)
         );
     }
 

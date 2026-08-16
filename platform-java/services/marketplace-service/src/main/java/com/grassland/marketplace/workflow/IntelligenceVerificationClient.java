@@ -76,6 +76,33 @@ public class IntelligenceVerificationClient {
                 });
     }
 
+    /**
+     * 互动截图核验（任务书 #23 R4：mode=interaction）：复用同一多模态通道，换互动专用 prompt 与上下文——
+     * 判定截图 ① 内容与目标帖子匹配；② 动作状态可见（已赞/已藏/已关注）；③ 截图账号与 platformHandle 一致。
+     */
+    public Mono<VerificationAnalysis> analyzeInteraction(String orgId, List<UUID> mediaIds,
+                                                         String taskTitle, String taskDescription, String platform,
+                                                         String targetUrl, String actionType, String platformHandle) {
+        Map<String, Object> body = analyzeBody(mediaIds, taskTitle, taskDescription, platform);
+        body.put("mode", "interaction");
+        body.put("targetUrl", targetUrl);
+        body.put("actionType", actionType);
+        body.put("platformHandle", platformHandle);
+        return webClient.post()
+                .uri("/api/verification/analyze")
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    log.info("interaction analyze HTTP {} org={} mediaCount={}", code, orgId, mediaIds.size());
+                    if (code == 200) {
+                        return resp.bodyToMono(ANALYSIS_TYPE).map(Envelope::data);
+                    }
+                    return bodyError(resp, code, "interaction analyze");
+                });
+    }
+
     /** 构造 analyze 请求体：仅下发非空的可选字段（intelligence optionalString 对显式 null 报 400）。 */
     private static Map<String, Object> analyzeBody(List<UUID> mediaIds, String taskTitle,
                                                    String taskDescription, String platform) {
