@@ -150,7 +150,7 @@ public class VideoRecreationController {
             VideoRecreationAdaptationRequest request,
             IntelligenceCallerResolver.Caller caller,
             ServerWebExchange exchange) {
-        if (!request.taskMode()) return adaptation.adapt(request);
+        if (!request.taskMode()) return adaptation.adapt(request, caller.accountId());
         return creationContexts.bind(
                         request.contextSnapshotId(), caller.accountId(), request.targetPlatform())
                 .flatMap(binding -> adaptation.adaptTask(request, binding, exchange));

@@ -2,6 +2,8 @@ package com.grassland.intelligence.videorecreation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -10,6 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
+import com.grassland.intelligence.ai.ChatMessage;
+import com.grassland.intelligence.ai.run.TextCompletionClient;
+import com.grassland.intelligence.ai.run.TextCompletionResult;
 import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
 import com.grassland.intelligence.credits.CreditsClient;
@@ -34,9 +39,13 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
     @MockitoBean
     private CreditsClient credits;
 
+    /** BYOK 改编执行客户端打桩（真 pinned HTTPS 链路由 TextCompletionClient 自测覆盖）。 */
+    @MockitoBean
+    private TextCompletionClient textCompletion;
+
     @BeforeEach
     void setUp() {
-        reset(images, credits);
+        reset(images, credits, textCompletion);
         when(images.generate(any(), any(), eq(MediaPurpose.VIDEO_ASSET))).thenReturn(Mono.just(
                 new GeneratedImageResponse("/api/article-generation/generated-images/abc", "优化后")));
     }
@@ -240,6 +249,92 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(adaptBody("   "))
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("adapt-content 优先使用用户 BYOK（features.video），不触达平台 Qwen、不扣积分")
+    void adaptContentPrefersUserByok() {
+        String accountId = UUID.randomUUID().toString();
+        seedAnalysisByok(accountId, "qwen", "https://byok.example.com/v1", "byok-key", "byok-model");
+        when(textCompletion.completeMessages(
+                eq("https://byok.example.com/v1"), eq("byok-key"), eq("byok-model"),
+                any(), eq(4096), eq(true)))
+                .thenReturn(Mono.just(new TextCompletionResult(
+                        "{\"adapted_summary\":\"BYOK改编摘要\",\"adapted_script\":[],"
+                                + "\"character_sheets\":[],\"scene_cards\":[],\"prop_cards\":[]}",
+                        10, 5)));
+
+        client().post().uri("/api/video-recreation/adapt-content")
+                .header("X-Grassland-Identity", sign(accountId, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(adaptBody("脚本内容"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.adaptedSummary").isEqualTo("BYOK改编摘要");
+
+        verify(textCompletion).completeMessages(
+                eq("https://byok.example.com/v1"), eq("byok-key"), eq("byok-model"),
+                argThat(messages -> messages.stream().allMatch(ChatMessage::multimodal)),
+                eq(4096), eq(true));
+        verify(credits, never()).consume(any(), any());
+    }
+
+    @Test
+    @DisplayName("adapt-content BYOK 未配齐时回落平台 Qwen，BYOK 客户端不参与")
+    void adaptContentFallsBackToPlatformWithoutByok() {
+        stubQwenAdapt();
+        String accountId = UUID.randomUUID().toString();
+        // 无 analysis 行 → 空配置 → 平台路径。
+        client().post().uri("/api/video-recreation/adapt-content")
+                .header("X-Grassland-Identity", sign(accountId, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(adaptBody("脚本内容"))
+                .exchange().expectStatus().isOk();
+        verify(textCompletion, never()).completeMessages(any(), any(), any(), any(), anyInt(), anyBoolean());
+
+        // 配置了 provider=coze（独立协议，改编不支持）→ 400 引导切换，不回落。
+        seedAnalysisByok(accountId, "coze", "https://byok.example.com/v1", "byok-key", null);
+        client().post().uri("/api/video-recreation/adapt-content")
+                .header("X-Grassland-Identity", sign(accountId, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(adaptBody("脚本内容"))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    private void seedAnalysisByok(
+            String accountId, String provider, String baseUrl, String apiKey, String model) {
+        db.sql("""
+                INSERT INTO app_users (id, email, password_hash)
+                VALUES (CAST(:uid AS uuid), :email, 'test-hash')
+                ON CONFLICT (id) DO NOTHING
+                """)
+                .bind("uid", UUID.fromString(accountId))
+                .bind("email", accountId + "@test.local")
+                .then().block();
+        Map<String, Object> video = new LinkedHashMap<>();
+        video.put("provider", provider);
+        video.put("baseUrl", baseUrl);
+        if (apiKey != null) {
+            video.put("apiKey", apiKey);
+        }
+        if (model != null) {
+            video.put("model", model);
+        }
+        Map<String, Object> settings = Map.of("features", Map.of("video", video));
+        try {
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(settings);
+            db.sql("""
+                    INSERT INTO user_settings (id, user_id, settings_type, settings_json)
+                    VALUES (:id, CAST(:uid AS uuid), 'analysis', CAST(:json AS jsonb))
+                    ON CONFLICT (user_id, settings_type)
+                        DO UPDATE SET settings_json = excluded.settings_json
+                    """)
+                    .bind("id", UUID.randomUUID())
+                    .bind("uid", UUID.fromString(accountId))
+                    .bind("json", json)
+                    .then().block();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void stubQwenAdapt() {
