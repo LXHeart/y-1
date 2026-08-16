@@ -34,7 +34,7 @@ public class TaskRepository {
             "id::text, owner_account_id::text, organization_id::text, store_id::text, title, description, status,"
                     + " content_form, platform, max_slots, bounty_cents, created_at, updated_at,"
                     + " version, application_deadline, published_at, cancelled_at, min_recommender_level,"
-                    + " requirements::text";
+                    + " requirements::text, auto_accept_min_level";
 
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -56,21 +56,29 @@ public class TaskRepository {
                              String description, String contentForm, String platform, Integer maxSlots,
                              Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel) {
         return create(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
-                bountyCents, applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty());
+                bountyCents, applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty(), null);
     }
 
     public Mono<Task> create(String ownerAccountId, String organizationId, String title,
                              String description, String contentForm, String platform, Integer maxSlots,
                              Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
                              String storeId, TaskRequirements requirements) {
+        return create(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+                bountyCents, applicationDeadline, minRecommenderLevel, storeId, requirements, null);
+    }
+
+    public Mono<Task> create(String ownerAccountId, String organizationId, String title,
+                             String description, String contentForm, String platform, Integer maxSlots,
+                             Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
+                             String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
                 INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
                                  content_form, platform, max_slots, bounty_cents, application_deadline,
-                                 min_recommender_level, requirements)
+                                 min_recommender_level, requirements, auto_accept_min_level)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
                         :desc, 'pending_review', :contentForm, :platform, :maxSlots, :bountyCents,
-                        :deadline, :minLevel, CAST(:requirements AS jsonb))
+                        :deadline, :minLevel, CAST(:requirements AS jsonb), :autoAcceptMinLevel)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
@@ -83,6 +91,7 @@ public class TaskRepository {
         spec = bindNullable(spec, "store", storeId);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
         spec = spec.bind("requirements", json(TaskRequirements.normalize(requirements)));
+        spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
         return spec.map(TaskRepository::map).one();
     }
 
@@ -91,21 +100,29 @@ public class TaskRepository {
                                   String description, String contentForm, String platform, Integer maxSlots,
                                   Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel) {
         return createDraft(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
-                bountyCents, applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty());
+                bountyCents, applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty(), null);
     }
 
     public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title,
                                   String description, String contentForm, String platform, Integer maxSlots,
                                   Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
                                   String storeId, TaskRequirements requirements) {
+        return createDraft(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+                bountyCents, applicationDeadline, minRecommenderLevel, storeId, requirements, null);
+    }
+
+    public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title,
+                                  String description, String contentForm, String platform, Integer maxSlots,
+                                  Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
+                                  String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
                 INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
                                  content_form, platform, max_slots, bounty_cents, version, application_deadline,
-                                 min_recommender_level, requirements)
+                                 min_recommender_level, requirements, auto_accept_min_level)
                 VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
                         :desc, 'draft', :contentForm, :platform, :maxSlots, :bountyCents, 0, :deadline, :minLevel,
-                        CAST(:requirements AS jsonb))
+                        CAST(:requirements AS jsonb), :autoAcceptMinLevel)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId).bind("title", title);
@@ -118,6 +135,7 @@ public class TaskRepository {
         spec = bindNullable(spec, "store", storeId);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
         spec = spec.bind("requirements", json(TaskRequirements.normalize(requirements)));
+        spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
         return spec.map(TaskRepository::map).one();
     }
 
@@ -126,11 +144,20 @@ public class TaskRepository {
                                   String contentForm, String platform, Integer maxSlots, Long bountyCents,
                                   Instant applicationDeadline, Integer minRecommenderLevel,
                                   TaskRequirements requirements) {
+        return updateDraft(id, expectedVersion, title, description, contentForm, platform, maxSlots,
+                bountyCents, applicationDeadline, minRecommenderLevel, requirements, null);
+    }
+
+    public Mono<Task> updateDraft(String id, int expectedVersion, String title, String description,
+                                  String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                                  Instant applicationDeadline, Integer minRecommenderLevel,
+                                  TaskRequirements requirements, Integer autoAcceptMinLevel) {
         var spec = db.sql("""
                 UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
                                 platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
                                 application_deadline = :deadline, min_recommender_level = :minLevel,
                                 requirements = COALESCE(CAST(:requirements AS jsonb), requirements),
+                                auto_accept_min_level = :autoAcceptMinLevel,
                                 version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'draft' AND version = :expected
                 RETURNING %s
@@ -144,6 +171,7 @@ public class TaskRepository {
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
         spec = bindNullable(spec, "requirements", requirements == null ? null : json(requirements));
+        spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
         return spec.map(TaskRepository::map).one();
     }
 
@@ -179,11 +207,21 @@ public class TaskRepository {
                                       String contentForm, String platform, Integer maxSlots, Long bountyCents,
                                       Instant applicationDeadline, Integer minRecommenderLevel,
                                       TaskRequirements requirements, String revisedBy) {
+        return revisePublished(id, expectedVersion, title, description, contentForm, platform, maxSlots,
+                bountyCents, applicationDeadline, minRecommenderLevel, requirements, revisedBy, null);
+    }
+
+    public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
+                                      String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                                      Instant applicationDeadline, Integer minRecommenderLevel,
+                                      TaskRequirements requirements, String revisedBy,
+                                      Integer autoAcceptMinLevel) {
         var spec = db.sql("""
                 UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
                                 platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
                                 application_deadline = :deadline, min_recommender_level = :minLevel,
                                 requirements = COALESCE(CAST(:requirements AS jsonb), requirements),
+                                auto_accept_min_level = :autoAcceptMinLevel,
                                 version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
                 RETURNING %s
@@ -197,6 +235,7 @@ public class TaskRepository {
         spec = bindNullableDeadline(spec, "deadline", applicationDeadline);
         spec = spec.bind("minLevel", normalizeMinimumLevel(minRecommenderLevel));
         spec = bindNullable(spec, "requirements", requirements == null ? null : json(requirements));
+        spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
         return spec.map(TaskRepository::map).one()
                 .flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
     }
@@ -353,6 +392,16 @@ public class TaskRepository {
         return spec.map(TaskRepository::map).all();
     }
 
+    /** 任务书 #27：查找已发布且开启了自动通过门槛的任务（未截止、未关闭）。dispatcher 每轮扫描用。 */
+    public Flux<Task> findAutoAcceptEnabled(int limit) {
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM task WHERE status = 'published' AND auto_accept_min_level IS NOT NULL"
+                        + " AND (application_deadline IS NULL OR application_deadline > now())"
+                        + " ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED")
+                .bind("limit", Math.max(1, Math.min(limit, 200)))
+                .map(TaskRepository::map).all();
+    }
+
     /** 某 org 当前 published 的任务数——发布限额执行用（Stage 1：只 published 算活跃，draft/cancelled 不占）。 */
     public Mono<Integer> countActiveByOrganization(String organizationId) {
         return db.sql("SELECT COUNT(*)::int AS c FROM task"
@@ -437,7 +486,8 @@ public class TaskRepository {
                 toInstant(row.get("cancelled_at", OffsetDateTime.class)),
                 value(row.get("min_recommender_level", Integer.class), 1),
                 row.get("store_id", String.class),
-                requirements(row.get("requirements", String.class))
+                requirements(row.get("requirements", String.class)),
+                row.get("auto_accept_min_level", Integer.class)
         );
     }
 

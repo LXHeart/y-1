@@ -108,7 +108,7 @@ public class TaskController {
                                         .then(tasks.create(caller.accountId(), access.organizationId(), body.title(),
                                                 body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                 body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                                access.storeId(), body.requirements()))
+                                                access.storeId(), body.requirements(), body.autoAcceptMinLevel()))
                                         .flatMap(taskReviewService::submit))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
@@ -123,7 +123,7 @@ public class TaskController {
                             tasks.createDraft(caller.accountId(), access.organizationId(), body.title(),
                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                     body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                    access.storeId(), body.requirements()))))
+                                    access.storeId(), body.requirements(), body.autoAcceptMinLevel()))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -138,7 +138,8 @@ public class TaskController {
                                                 ? current.requirements() : body.requirements(), body.bountyCents())
                                         .then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-                                        body.applicationDeadline(), body.minRecommenderLevel(), body.requirements())
+                                        body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
+                                        body.autoAcceptMinLevel())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                         .flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -249,7 +250,7 @@ public class TaskController {
                                         tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
                                                 body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
                                                 body.applicationDeadline(), body.minRecommenderLevel(),
-                                                body.requirements(), caller.accountId())
+                                                body.requirements(), caller.accountId(), body.autoAcceptMinLevel())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                                 .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -763,6 +764,7 @@ public class TaskController {
         m.put("requirements", task.requirements());
         m.put("version", task.version());
         m.put("applicationDeadline", task.applicationDeadline() == null ? null : task.applicationDeadline().toString());
+        m.put("autoAcceptMinLevel", task.autoAcceptMinLevel());
         m.put("publishedAt", task.publishedAt() == null ? null : task.publishedAt().toString());
         m.put("cancelledAt", task.cancelledAt() == null ? null : task.cancelledAt().toString());
         m.put("createdAt", task.createdAt() == null ? null : task.createdAt().toString());

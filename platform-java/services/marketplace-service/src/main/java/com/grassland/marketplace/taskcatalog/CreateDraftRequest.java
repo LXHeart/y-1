@@ -19,13 +19,14 @@ public record CreateDraftRequest(
         Instant applicationDeadline,
         Integer minRecommenderLevel,
         String storeId,
-        TaskRequirements requirements
+        TaskRequirements requirements,
+        Integer autoAcceptMinLevel
 ) {
     public CreateDraftRequest(String organizationId, String title, String description, String contentForm,
                               String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
                               Integer minRecommenderLevel) {
         this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents,
-                applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty());
+                applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty(), null);
     }
 
     public CreateDraftRequest {
@@ -43,6 +44,9 @@ public record CreateDraftRequest(
         }
         if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
             throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
+        }
+        if (autoAcceptMinLevel != null && (autoAcceptMinLevel < 1 || autoAcceptMinLevel > 5)) {
+            throw new IllegalArgumentException("autoAcceptMinLevel must be between 1 and 5");
         }
         requirements = TaskRequirements.normalize(requirements);
     }

@@ -316,7 +316,70 @@ public class ApplicationController {
                 || failure instanceof R2dbcDataIntegrityViolationException;
     }
 
+    /**
+     * 任务书 #27：dispatcher 调用的共享 accept 内核（D6）。无 Caller（系统操作），reviewed_by 置 null。
+     * 返回 outcome 字符串：accepted / reserving / slots_full / compensated。
+     */
+    public Mono<String> acceptForDispatcher(Task task, TaskApplication app, ReputationSnapshot snapshot) {
+        ReputationEntitlementSnapshot entitlement = entitlementSnapshot(snapshot);
+        String idempotencyKey = "auto-accept:" + app.id();
+        Caller systemCaller = new Caller(null, null, null, null, null, "system", null, null);
+        // 幂等检查：dispatcher 重启重跑时复用既有结局
+        return acceptanceCommands.findByActorAndKey(null, idempotencyKey)
+                .flatMap(existing -> switch (existing.status()) {
+                    case "pending_dispatch", "started" -> Mono.just(isMonetary(task) ? "reserving" : "accepted");
+                    case "accepted" -> Mono.just("accepted");
+                    case "compensated" -> Mono.just("compensated");
+                    case "aborted" -> Mono.just("aborted");
+                    default -> Mono.just("unknown");
+                })
+                .switchIfEmpty(claimAcceptance(task, app, systemCaller, idempotencyKey, entitlement)
+                        .map(claim -> isMonetary(task) ? "reserving" : "accepted"))
+                .onErrorResume(MarketplaceException.class, e -> {
+                    if (e.status() == 409 && "名额已满".equals(e.getMessage())) {
+                        return Mono.just("slots_full");
+                    }
+                    return Mono.error(e);
+                });
+    }
+
     private record AcceptanceClaim(AcceptanceCommand command, TaskApplication application) {}
+
+    /** 任务书 #27：批量操作请求（1–50 条）。 */
+    public record BatchOperationRequest(List<String> applicationIds) {
+        public BatchOperationRequest {
+            if (applicationIds == null || applicationIds.isEmpty()) {
+                throw new IllegalArgumentException("applicationIds is required");
+            }
+            if (applicationIds.size() > 50) {
+                throw new IllegalArgumentException("applicationIds must not exceed 50");
+            }
+        }
+    }
+
+    /** 任务书 #27：批量操作逐项结果。 */
+    private record BatchItemResult(String applicationId, String outcome, String commandId,
+                                   String workflowId, String reason) {
+        static BatchItemResult ofOutcome(String appId, String outcome, AcceptanceClaim claim) {
+            return new BatchItemResult(appId, outcome, claim.command().id(),
+                    claim.command().workflowId(), null);
+        }
+        static BatchItemResult ofOutcome(String appId, String outcome) {
+            return new BatchItemResult(appId, outcome, null, null, null);
+        }
+        static BatchItemResult failed(String appId, String reason) {
+            return new BatchItemResult(appId, "failed", null, null, reason);
+        }
+        Map<String, Object> toBody() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("applicationId", applicationId);
+            m.put("outcome", outcome);
+            if (commandId != null) m.put("commandId", commandId);
+            if (workflowId != null) m.put("workflowId", workflowId);
+            if (reason != null) m.put("reason", reason);
+            return m;
+        }
+    }
 
     @GetMapping("/api/tasks/{id}/applications/{appId}/reservation")
     public Mono<ResponseEntity<Map<String, Object>>> reservation(@PathVariable String id, @PathVariable String appId,
@@ -805,6 +868,93 @@ public class ApplicationController {
                                         .append(envelope("ApplicationRejected", app, task.ownerAccountId()))
                                         .thenReturn(app)))
                         .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
+    }
+
+    /**
+     * 任务书 #27：批量接受报名（1–50 条）。逐项独立处理，允许部分成功（D2）；批内按传入顺序占名额（D3）。
+     * 复用单条 accept 的共享内核 {@link #claimAcceptance}（D6）；单项失败不中断后续项。
+     */
+    @PostMapping("/api/tasks/{id}/applications/batch-accept")
+    public Mono<ResponseEntity<Map<String, Object>>> batchAccept(
+            @PathVariable String id, @RequestBody BatchOperationRequest body, ServerHttpRequest request) {
+        String baseKey = acceptanceIdempotencyKey(request);
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
+                        .flatMap(task -> Flux.fromIterable(body.applicationIds())
+                                .concatMap(appId -> {
+                                    String itemKey = baseKey + ":" + appId;
+                                    return acceptanceCommands.findByActorAndKey(merchant.accountId(), itemKey)
+                                            .flatMap(existing -> replayBatchAccept(existing, id, appId))
+                                            .switchIfEmpty(claimAcceptance(task, appId, merchant, itemKey)
+                                                    .map(response -> {
+                                                        String outcome = isMonetary(task) ? "reserving" : "accepted";
+                                                        @SuppressWarnings("unchecked")
+                                                        Map<String, Object> data = response.getBody() != null
+                                                                ? (Map<String, Object>) response.getBody().get("data") : null;
+                                                        String cmdId = data != null ? (String) data.get("commandId") : null;
+                                                        String wfId = data != null ? (String) data.get("workflowId") : null;
+                                                        return new BatchItemResult(appId, outcome, cmdId, wfId, null);
+                                                    })
+                                                    .onErrorResume(MarketplaceException.class,
+                                                            e -> Mono.just(BatchItemResult.failed(appId, e.getMessage())))
+                                                    .onErrorResume(e -> Mono.just(
+                                                            BatchItemResult.failed(appId, "处理失败"))));
+                                })
+                                .collectList())
+                        .map(results -> {
+                            List<Map<String, Object>> items = results.stream()
+                                    .map(BatchItemResult::toBody).toList();
+                            return ResponseEntity.ok(Map.of("success", true,
+                                    "data", Map.of("results", items)));
+                        }));
+    }
+
+    private Mono<BatchItemResult> replayBatchAccept(AcceptanceCommand command, String taskId, String appId) {
+        if (!command.taskId().equals(taskId) || !command.applicationId().equals(appId)) {
+            return Mono.just(BatchItemResult.failed(appId, "Idempotency-Key 已用于其他接受请求"));
+        }
+        return switch (command.status()) {
+            case "pending_dispatch", "started" ->
+                    Mono.just(new BatchItemResult(appId, "reserving", command.id(), command.workflowId(), null));
+            case "accepted" -> Mono.just(BatchItemResult.ofOutcome(appId, "accepted"));
+            case "compensated", "aborted" ->
+                    Mono.just(new BatchItemResult(appId, command.status(), command.id(), command.workflowId(),
+                            command.failureReason()));
+            default -> Mono.just(BatchItemResult.failed(appId, "接受请求状态无效"));
+        };
+    }
+
+    /**
+     * 任务书 #27：批量拒绝报名（1–50 条）。逐项独立，允许部分成功。
+     * 复用单条 reject 的共享逻辑（D6）；仅 pending 可处理。
+     */
+    @PostMapping("/api/tasks/{id}/applications/batch-reject")
+    public Mono<ResponseEntity<Map<String, Object>>> batchReject(
+            @PathVariable String id, @RequestBody BatchOperationRequest body, ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(merchant -> loadManageableTask(id, merchant)
+                        .flatMap(task -> Flux.fromIterable(body.applicationIds())
+                                .concatMap(appId -> apps.findById(appId)
+                                        .filter(app -> app.taskId().equals(id))
+                                        .filter(app -> ApplicationStatus.PENDING.dbValue().equals(app.status()))
+                                        .flatMap(app -> apps.reject(appId, id, merchant.accountId())
+                                                .flatMap(rejected -> outbox.append(
+                                                                envelope("ApplicationRejected", rejected, task.ownerAccountId()))
+                                                        .thenReturn(BatchItemResult.ofOutcome(appId, "rejected")))
+                                                .switchIfEmpty(Mono.just(BatchItemResult.failed(appId, "该报名已处理"))))
+                                        .switchIfEmpty(Mono.defer(() -> apps.findById(appId)
+                                                .filter(app -> app.taskId().equals(id))
+                                                .flatMap(app -> Mono.just(
+                                                        BatchItemResult.failed(appId, "该报名已处理")))
+                                                .switchIfEmpty(Mono.just(
+                                                        BatchItemResult.failed(appId, "报名不存在"))))))
+                                .collectList())
+                        .map(results -> {
+                            List<Map<String, Object>> items = results.stream()
+                                    .map(BatchItemResult::toBody).toList();
+                            return ResponseEntity.ok(Map.of("success", true,
+                                    "data", Map.of("results", items)));
+                        }));
     }
 
     @PostMapping("/api/tasks/{id}/applications/{appId}/withdraw")

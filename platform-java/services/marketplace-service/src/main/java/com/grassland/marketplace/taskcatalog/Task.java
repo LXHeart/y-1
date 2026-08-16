@@ -37,7 +37,8 @@ public record Task(
         Instant cancelledAt,
         int minRecommenderLevel,
         String storeId,
-        TaskRequirements requirements
+        TaskRequirements requirements,
+        Integer autoAcceptMinLevel
 ) {
     public Task {
         requirements = TaskRequirements.normalize(requirements);
@@ -49,7 +50,7 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                1, null, TaskRequirements.empty());
+                1, null, TaskRequirements.empty(), null);
     }
 
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
@@ -58,7 +59,7 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt, int minRecommenderLevel) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                minRecommenderLevel, null, TaskRequirements.empty());
+                minRecommenderLevel, null, TaskRequirements.empty(), null);
     }
 
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
@@ -67,6 +68,6 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt, int minRecommenderLevel, String storeId) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                minRecommenderLevel, storeId, TaskRequirements.empty());
+                minRecommenderLevel, storeId, TaskRequirements.empty(), null);
     }
 }

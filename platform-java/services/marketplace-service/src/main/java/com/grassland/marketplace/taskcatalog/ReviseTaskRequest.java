@@ -22,7 +22,8 @@ public record ReviseTaskRequest(
         Long bountyCents,
         Instant applicationDeadline,
         Integer minRecommenderLevel,
-        TaskRequirements requirements
+        TaskRequirements requirements,
+        Integer autoAcceptMinLevel
 ) {
     public ReviseTaskRequest {
         if (title == null || title.isBlank()) {
@@ -36,6 +37,9 @@ public record ReviseTaskRequest(
         }
         if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
             throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
+        }
+        if (autoAcceptMinLevel != null && (autoAcceptMinLevel < 1 || autoAcceptMinLevel > 5)) {
+            throw new IllegalArgumentException("autoAcceptMinLevel must be between 1 and 5");
         }
     }
 }
