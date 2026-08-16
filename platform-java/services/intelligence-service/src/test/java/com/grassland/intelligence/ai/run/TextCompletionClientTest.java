@@ -14,9 +14,6 @@ import com.grassland.intelligence.ai.DnsPinningResolver;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
-import io.netty.util.concurrent.DefaultEventExecutor;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -111,28 +108,6 @@ class TextCompletionClientTest {
                 {"choices":[{"message":{"content":"ok"}}],
                  "usage":{"prompt_tokens":9223372036854775807,"completion_tokens":2}}
                 """);
-    }
-
-    @Test
-    @DisplayName("BYOK Netty resolver 把原 hostname 映射到固定 IP 并拒绝其他 host")
-    void pinnedResolverUsesOnlyApprovedAddress() throws Exception {
-        InetAddress approved = InetAddress.getByName("8.8.8.8");
-        var group = new TextCompletionClient.PinnedAddressResolverGroup(
-                "api.example.com", List.of(approved));
-        var executor = new DefaultEventExecutor();
-        try {
-            var resolver = group.getResolver(executor);
-            InetSocketAddress resolved = resolver.resolve(
-                    InetSocketAddress.createUnresolved("api.example.com", 443)).get();
-            assertThat(resolved.getAddress().getHostAddress()).isEqualTo("8.8.8.8");
-
-            assertThatThrownBy(() -> resolver.resolve(
-                    InetSocketAddress.createUnresolved("other.example.com", 443)).get())
-                    .hasCauseInstanceOf(SecurityException.class);
-        } finally {
-            group.close();
-            executor.shutdownGracefully().sync();
-        }
     }
 
     private void assertInvalidUsage(String responseBody) {

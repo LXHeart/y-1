@@ -2,31 +2,21 @@ package com.grassland.intelligence.ai.run;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.ProviderUrlGuard;
+import com.grassland.intelligence.ai.PinnedByokClients;
 import com.grassland.intelligence.ai.DnsPinningResolver;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
 import com.grassland.intelligence.security.IntelligenceException;
-import io.netty.resolver.AbstractAddressResolver;
-import io.netty.resolver.AddressResolver;
-import io.netty.resolver.AddressResolverGroup;
-import io.netty.util.concurrent.EventExecutor;
-import io.netty.util.concurrent.Promise;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -115,22 +105,7 @@ public class TextCompletionClient {
     }
 
     private WebClient pinnedByokClient(String baseUrl) {
-        java.net.URI target = ProviderUrlGuard.validateByokForExecution(baseUrl, dnsPinning);
-        List<InetAddress> pinnedAddresses = dnsPinning.getPinnedAddresses(target.getHost()).stream()
-                .sorted(Comparator.comparing(InetAddress::getHostAddress))
-                .toList();
-        if (pinnedAddresses.isEmpty()) {
-            throw new IllegalArgumentException("BYOK provider 没有可用的固定地址");
-        }
-
-        // URI 仍保留原始 hostname（Host header / TLS SNI），只替换 Netty 的地址解析结果，
-        // 确保校验后的请求不会再次走系统 DNS，关闭 DNS rebinding 的 TOCTOU 窗口。
-        HttpClient httpClient = HttpClient.create()
-                .resolver(new PinnedAddressResolverGroup(target.getHost(), pinnedAddresses));
-        return WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .baseUrl(withTrailingSlash(baseUrl))
-                .build();
+        return PinnedByokClients.forBaseUrl(baseUrl, dnsPinning);
     }
 
     private TextCompletionResult parse(String json) {
@@ -169,59 +144,5 @@ public class TextCompletionClient {
 
     private static String withTrailingSlash(String url) {
         return url.endsWith("/") ? url : url + "/";
-    }
-
-    static final class PinnedAddressResolverGroup extends AddressResolverGroup<InetSocketAddress> {
-        private final String expectedHost;
-        private final List<InetAddress> addresses;
-
-        PinnedAddressResolverGroup(String expectedHost, List<InetAddress> addresses) {
-            this.expectedHost = expectedHost;
-            this.addresses = List.copyOf(addresses);
-        }
-
-        @Override
-        protected AddressResolver<InetSocketAddress> newResolver(EventExecutor executor) {
-            return new AbstractAddressResolver<>(executor, InetSocketAddress.class) {
-                @Override
-                protected boolean doIsResolved(InetSocketAddress address) {
-                    return false;
-                }
-
-                @Override
-                protected void doResolve(InetSocketAddress unresolved, Promise<InetSocketAddress> promise) {
-                    try {
-                        promise.setSuccess(resolveOne(unresolved));
-                    } catch (RuntimeException error) {
-                        promise.setFailure(error);
-                    }
-                }
-
-                @Override
-                protected void doResolveAll(
-                        InetSocketAddress unresolved, Promise<List<InetSocketAddress>> promise) {
-                    try {
-                        validateHost(unresolved);
-                        List<InetSocketAddress> resolved = addresses.stream()
-                                .map(address -> new InetSocketAddress(address, unresolved.getPort()))
-                                .toList();
-                        promise.setSuccess(resolved);
-                    } catch (RuntimeException error) {
-                        promise.setFailure(error);
-                    }
-                }
-
-                private InetSocketAddress resolveOne(InetSocketAddress unresolved) {
-                    validateHost(unresolved);
-                    return new InetSocketAddress(addresses.getFirst(), unresolved.getPort());
-                }
-
-                private void validateHost(InetSocketAddress unresolved) {
-                    if (!expectedHost.equalsIgnoreCase(unresolved.getHostString())) {
-                        throw new SecurityException("Unexpected outbound host");
-                    }
-                }
-            };
-        }
     }
 }
