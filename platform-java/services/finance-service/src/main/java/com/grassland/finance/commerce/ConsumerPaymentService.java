@@ -12,6 +12,8 @@ import com.grassland.finance.wallet.WalletRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -74,41 +76,105 @@ public class ConsumerPaymentService {
         if (command.amountCents() <= 0 || blank(command.operationId())) {
             return Mono.error(new IllegalArgumentException("退款金额和幂等键不能为空"));
         }
+        return payments.findRefundByOperation(command.operationId())
+                .switchIfEmpty(Mono.defer(() -> refundFresh(orderRef, command)));
+    }
+
+    private Mono<ConsumerPaymentRepository.Refund> refundFresh(String orderRef, RefundCommand command) {
         return payments.findPayment(orderRef)
                 .switchIfEmpty(Mono.error(new FinanceException(404, "支付不存在")))
                 .flatMap(payment -> {
                     if (!payment.organizationId().equals(command.organizationId())
-                            || payment.amountCents() != command.amountCents()) {
+                            || command.amountCents() > payment.amountCents()
+                            || command.amountCents() <= 0) {
                         return Mono.error(new FinanceException(409, "退款范围与原支付不一致"));
                     }
-                    if ("refunded".equals(payment.status())) {
-                        return payments.findRefund(orderRef);
-                    }
-                    return payments.findSplit(orderRef).hasElement().flatMap(splitExists -> {
-                        if (splitExists) {
-                            return Mono.error(new FinanceException(409, "已分账订单不能走未核销退款"));
+                    return payments.findSplit(orderRef).flatMap(split -> {
+                        if ("completed".equals(split.status())) {
+                            return refundAfterSplit(payment, split, orderRef, command);
                         }
-                        String providerRef = provider.channel() + ":refund:" + orderRef;
-                        Mono<ConsumerPaymentRepository.Refund> work = payments.insertRefund(
-                                        orderRef, command.amountCents(), command.reason(),
-                                        command.operationId(), providerRef)
-                                .flatMap(refund -> ledger.postConsumerRefund(
-                                                payment.organizationId(), orderRef, refund.amountCents())
-                                        .then(providerOperations.register(
-                                                payment.channel(), refund.operationId(), "refund", orderRef,
-                                                refund.amountCents(), payment.currency(), refund.providerRef()))
-                                        .then(payments.markPaymentRefunded(orderRef))
-                                        .then(outbox.append(event("ConsumerPaymentRefunded", orderRef, Map.of(
-                                                "orderRef", orderRef,
-                                                "organizationId", payment.organizationId(),
-                                                "consumerAccountId", payment.consumerAccountId(),
-                                                "amountCents", refund.amountCents(),
-                                                "providerRef", refund.providerRef()))))
-                                        .thenReturn(refund))
-                                .switchIfEmpty(payments.findRefund(orderRef));
+                        return Mono.error(new FinanceException(409, "订单分账处理中，暂不能退款"));
+                    }).switchIfEmpty(Mono.defer(() -> {
+                        String providerRef = provider.channel() + ":refund:" + command.operationId();
+                        Mono<ConsumerPaymentRepository.Refund> work = payments.reserveRefund(
+                                        orderRef, command.amountCents(), command.operationId())
+                                .switchIfEmpty(Mono.error(new FinanceException(409, "退款金额超过可退余额或支付状态不可退款")))
+                                .flatMap(reserved -> payments.insertRefund(
+                                                orderRef, command.amountCents(), command.reason(),
+                                                command.operationId(), providerRef)
+                                        .flatMap(refund -> ledger.postConsumerRefund(
+                                                        reserved.organizationId(), orderRef, refund.amountCents(),
+                                                        "consumer-refund:" + refund.operationId())
+                                                .then(providerOperations.register(
+                                                        reserved.channel(), refund.operationId(), "refund", orderRef,
+                                                        refund.amountCents(), reserved.currency(), refund.providerRef()))
+                                                .then(outbox.append(event("ConsumerPaymentRefunded", orderRef, Map.of(
+                                                        "orderRef", orderRef,
+                                                        "organizationId", reserved.organizationId(),
+                                                        "consumerAccountId", reserved.consumerAccountId(),
+                                                        "amountCents", refund.amountCents(),
+                                                        "refundedAmountCents", reserved.refundedAmountCents(),
+                                                        "paymentStatus", reserved.status(),
+                                                        "providerRef", refund.providerRef()))))
+                                                .thenReturn(refund)))
+                                .switchIfEmpty(payments.findRefundByOperation(command.operationId()));
                         return transactions.transactional(work);
-                    });
+                    }));
                 });
+    }
+
+    private Mono<ConsumerPaymentRepository.Refund> refundAfterSplit(
+            ConsumerPaymentRepository.Payment payment, ConsumerPaymentRepository.Split split,
+            String orderRef, RefundCommand command) {
+        String providerRef = provider.channel() + ":refund:" + command.operationId();
+        Mono<ConsumerPaymentRepository.Refund> work = payments.reserveRefund(
+                        orderRef, command.amountCents(), command.operationId())
+                .switchIfEmpty(Mono.error(new FinanceException(409, "退款金额超过可退余额或支付状态不可退款")))
+                .flatMap(reserved -> payments.findSplitAllocations(orderRef).collectList()
+                        .flatMap(rows -> {
+                            List<ConsumerPaymentRepository.SplitAllocation> source = rows.isEmpty()
+                                    ? (split.recommenderAmountCents() == 0 ? List.of() : List.of(
+                                        new ConsumerPaymentRepository.SplitAllocation(
+                                            split.recommenderAccountId(), split.recommenderAmountCents()))) : rows;
+                            long amount = command.amountCents();
+                            List<ConsumerPaymentRepository.SplitAllocation> refunds = new ArrayList<>();
+                            long recommenderRefund = 0;
+                            for (ConsumerPaymentRepository.SplitAllocation row : source) {
+                                long value = Math.min(row.amountCents(), amount * row.amountCents() / payment.amountCents());
+                                refunds.add(new ConsumerPaymentRepository.SplitAllocation(row.recommenderAccountId(), value));
+                                recommenderRefund += value;
+                            }
+                            long merchantRefund = Math.min(split.merchantAmountCents(),
+                                    amount * split.merchantAmountCents() / payment.amountCents());
+                            long platformRefund = amount - recommenderRefund - merchantRefund;
+                            if (platformRefund > split.platformFeeCents()) {
+                                long overflow = platformRefund - split.platformFeeCents();
+                                merchantRefund = Math.min(split.merchantAmountCents(), merchantRefund + overflow);
+                                platformRefund = amount - recommenderRefund - merchantRefund;
+                            }
+                            Mono<Void> walletsDebit = reactor.core.publisher.Flux.fromIterable(refunds)
+                                    .filter(r -> r.amountCents() > 0)
+                                    .flatMap(r -> wallets.debit(r.recommenderAccountId(), r.amountCents())
+                                            .switchIfEmpty(Mono.error(new FinanceException(409, "推荐官余额不足，无法完成售后退款"))))
+                                    .then();
+                            Mono<Void> merchantDebit = merchantRefund == 0 ? Mono.empty()
+                                    : accounts.decrement(payment.organizationId(), merchantRefund)
+                                        .switchIfEmpty(Mono.error(new FinanceException(409, "商家余额不足，无法完成售后退款"))).then();
+                            return walletsDebit.then(merchantDebit)
+                                    .then(ledger.postConsumerSplitRefund(payment.organizationId(), orderRef, amount,
+                                            refunds.stream().map(r -> new LedgerService.ConsumerSplitAllocation(
+                                                    r.recommenderAccountId(), r.amountCents())).toList(),
+                                            merchantRefund, platformRefund, "consumer-refund:" + command.operationId()))
+                                    .then(payments.insertRefund(orderRef, amount, command.reason(), command.operationId(), providerRef))
+                                    .flatMap(refund -> providerOperations.register(payment.channel(), refund.operationId(), "refund",
+                                            orderRef, refund.amountCents(), payment.currency(), refund.providerRef())
+                                            .then(outbox.append(event("ConsumerPaymentRefunded", orderRef, Map.of(
+                                                    "orderRef", orderRef, "organizationId", payment.organizationId(),
+                                                    "consumerAccountId", payment.consumerAccountId(), "amountCents", refund.amountCents(),
+                                                    "refundedAmountCents", reserved.refundedAmountCents(), "paymentStatus", reserved.status(),
+                                                    "providerRef", refund.providerRef())))).thenReturn(refund));
+                        }));
+        return transactions.transactional(work);
     }
 
     public Mono<ConsumerPaymentRepository.Split> split(String orderRef, SplitCommand command) {
@@ -121,14 +187,29 @@ public class ConsumerPaymentService {
                             || !"succeeded".equals(payment.status())) {
                         return Mono.error(new FinanceException(409, "分账范围或支付状态不匹配"));
                     }
+                    long allocationTotal = command.allocations() == null ? command.recommenderAmountCents()
+                            : command.allocations().stream().mapToLong(SplitAllocationCommand::amountCents).sum();
+                    if (allocationTotal != command.recommenderAmountCents()) {
+                        return Mono.error(new FinanceException(409, "推荐官分配合计不匹配"));
+                    }
+                    List<ConsumerPaymentRepository.SplitAllocation> allocations = command.allocations() == null
+                            ? List.of()
+                            : command.allocations().stream().map(a -> new ConsumerPaymentRepository.SplitAllocation(
+                                    a.recommenderAccountId(), a.amountCents())).toList();
                     Mono<ConsumerPaymentRepository.Split> work = payments.insertSplit(
                                     orderRef, command.recommenderAccountId(), command.recommenderAmountCents(),
                                     command.merchantAmountCents(), command.platformFeeCents(), command.operationId())
-                            .flatMap(split -> applySplitProjections(payment, split)
-                                    .then(ledger.postConsumerSplit(
-                                            payment.organizationId(), orderRef, payment.amountCents(),
-                                            split.recommenderAccountId(), split.recommenderAmountCents(),
-                                            split.merchantAmountCents(), split.platformFeeCents()))
+                            .flatMap(split -> applySplitProjections(payment, split, allocations)
+                                    .then(allocations.isEmpty()
+                                            ? ledger.postConsumerSplit(payment.organizationId(), orderRef, payment.amountCents(),
+                                                split.recommenderAccountId(), split.recommenderAmountCents(),
+                                                split.merchantAmountCents(), split.platformFeeCents())
+                                            : ledger.postConsumerSplit(payment.organizationId(), orderRef, payment.amountCents(),
+                                                allocations.stream().map(a -> new LedgerService.ConsumerSplitAllocation(
+                                                        a.recommenderAccountId(), a.amountCents())).toList(),
+                                                split.merchantAmountCents(), split.platformFeeCents(),
+                                                "consumer-split:" + orderRef))
+                                    .then(payments.insertSplitAllocations(orderRef, split.operationId(), allocations))
                                     .then(payments.completeSplit(orderRef))
                                     .flatMap(completed -> providerOperations.register(
                                                     payment.channel(), completed.operationId(), "split", orderRef,
@@ -145,18 +226,21 @@ public class ConsumerPaymentService {
     }
 
     private Mono<Void> applySplitProjections(
-            ConsumerPaymentRepository.Payment payment, ConsumerPaymentRepository.Split split) {
+            ConsumerPaymentRepository.Payment payment, ConsumerPaymentRepository.Split split,
+            List<ConsumerPaymentRepository.SplitAllocation> allocations) {
         Mono<Void> merchant = split.merchantAmountCents() == 0
                 ? Mono.empty()
                 : accounts.creditOrCreate(payment.organizationId(), split.merchantAmountCents()).then();
-        Mono<Void> recommender = split.recommenderAmountCents() == 0
+        Mono<Void> recommender = allocations.isEmpty() && split.recommenderAmountCents() == 0
                 ? Mono.empty()
-                : wallets.credit(split.recommenderAccountId(), split.recommenderAmountCents())
-                        .then(wallets.appendEntry(
-                                split.recommenderAccountId(), WalletEntryType.COMMERCE_COMMISSION,
-                                split.recommenderAmountCents(), split.platformFeeCents(), orderRef(payment),
-                                "消费订单核销佣金"))
-                        .then();
+                : allocations.isEmpty()
+                    ? wallets.credit(split.recommenderAccountId(), split.recommenderAmountCents())
+                            .then(wallets.appendEntry(split.recommenderAccountId(), WalletEntryType.COMMERCE_COMMISSION,
+                                    split.recommenderAmountCents(), split.platformFeeCents(), orderRef(payment), "消费订单核销佣金")).then()
+                    : reactor.core.publisher.Flux.fromIterable(allocations)
+                            .flatMap(a -> wallets.credit(a.recommenderAccountId(), a.amountCents())
+                                    .then(wallets.appendEntry(a.recommenderAccountId(), WalletEntryType.COMMERCE_COMMISSION,
+                                            a.amountCents(), 0, orderRef(payment), "消费订单多推荐官佣金"))).then();
         return merchant.then(recommender);
     }
 
@@ -197,7 +281,10 @@ public class ConsumerPaymentService {
         if (command.totalAmountCents() <= 0 || command.recommenderAmountCents() < 0
                 || command.merchantAmountCents() < 0 || command.platformFeeCents() < 0
                 || sum != command.totalAmountCents() || blank(command.operationId())
-                || (command.recommenderAmountCents() > 0 && blank(command.recommenderAccountId()))) {
+                || (command.recommenderAmountCents() > 0 && blank(command.recommenderAccountId())
+                    && (command.allocations() == null || command.allocations().isEmpty()))
+                || (command.allocations() != null && command.allocations().stream().anyMatch(a ->
+                    blank(a.recommenderAccountId()) || a.amountCents() <= 0))) {
             throw new IllegalArgumentException("分账金额不合法");
         }
     }
@@ -236,5 +323,7 @@ public class ConsumerPaymentService {
     public record SplitCommand(
             String organizationId, long totalAmountCents, String recommenderAccountId,
             long recommenderAmountCents, long merchantAmountCents, long platformFeeCents,
-            String operationId) {}
+            String operationId, List<SplitAllocationCommand> allocations) {}
+
+    public record SplitAllocationCommand(String recommenderAccountId, long amountCents) {}
 }

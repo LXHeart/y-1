@@ -149,11 +149,16 @@ public class LedgerService {
 
     /** 未核销退款：Dr CONSUMER_ESCROW / Cr EXTERNAL。 */
     public Mono<Void> postConsumerRefund(String orgId, String orderRef, long amount) {
+        return postConsumerRefund(orgId, orderRef, amount, "consumer-refund:" + orderRef);
+    }
+
+    /** 部分退款使用每笔退款独立的 operationId，避免不同退款被账本幂等键合并。 */
+    public Mono<Void> postConsumerRefund(String orgId, String orderRef, long amount, String operationId) {
         List<Posting> postings = List.of(
                 Posting.debit(LedgerAccount.consumerEscrow(orderRef), amount),
                 Posting.credit(LedgerAccount.external(psp.channel()), amount));
         return psp.recordExternalMovement(ExternalMovement.out(amount, CURRENCY, orderRef, "consumer refund"))
-                .then(post(JournalEntry.Type.CONSUMER_REFUND, "consumer-refund:" + orderRef,
+                .then(post(JournalEntry.Type.CONSUMER_REFUND, operationId,
                         orgId, orderRef, "consumer refund " + orderRef, postings));
     }
 
@@ -190,6 +195,51 @@ public class LedgerService {
         assertBalanced(postings);
         return post(JournalEntry.Type.CONSUMER_SPLIT, "consumer-split:" + orderRef,
                 orgId, orderRef, "consumer split " + orderRef, postings);
+    }
+
+    /** 多推荐官分账：每个钱包一条 credit posting，仍与商家和平台费保持单笔平衡 journal。 */
+    public Mono<Void> postConsumerSplit(
+            String orgId, String orderRef, long total,
+            java.util.List<ConsumerSplitAllocation> allocations,
+            long merchantAmount, long platformFee, String operationId) {
+        if (total <= 0 || merchantAmount < 0 || platformFee < 0 || allocations == null
+                || allocations.stream().anyMatch(a -> a.amountCents() <= 0 || a.accountId() == null)
+                || allocations.stream().mapToLong(ConsumerSplitAllocation::amountCents).sum()
+                    + merchantAmount + platformFee != total) {
+            throw new IllegalArgumentException("invalid consumer split allocations");
+        }
+        java.util.List<Posting> postings = new java.util.ArrayList<>();
+        postings.add(Posting.debit(LedgerAccount.consumerEscrow(orderRef), total));
+        allocations.forEach(a -> postings.add(Posting.credit(LedgerAccount.wallet(a.accountId()), a.amountCents())));
+        if (merchantAmount > 0) postings.add(Posting.credit(LedgerAccount.escrow(orgId), merchantAmount));
+        if (platformFee > 0) postings.add(Posting.credit(LedgerAccount.fee(), platformFee));
+        assertBalanced(postings);
+        return post(JournalEntry.Type.CONSUMER_SPLIT, operationId, orgId, orderRef,
+                "consumer split " + orderRef, postings);
+    }
+
+    public record ConsumerSplitAllocation(String accountId, long amountCents) {}
+
+    /** 已分账售后退款：按裁定金额反向冲销推荐官、商家和平台费。 */
+    public Mono<Void> postConsumerSplitRefund(String orgId, String orderRef, long total,
+                                               java.util.List<ConsumerSplitAllocation> allocations,
+                                               long merchantAmount, long platformFee, String operationId) {
+        if (total <= 0 || merchantAmount < 0 || platformFee < 0 || allocations == null
+                || allocations.stream().anyMatch(a -> a.amountCents() < 0 || a.accountId() == null)
+                || allocations.stream().mapToLong(ConsumerSplitAllocation::amountCents).sum()
+                    + merchantAmount + platformFee != total) {
+            throw new IllegalArgumentException("invalid consumer split refund amounts");
+        }
+        java.util.List<Posting> postings = new java.util.ArrayList<>();
+        allocations.forEach(a -> { if (a.amountCents() > 0) postings.add(
+                Posting.debit(LedgerAccount.wallet(a.accountId()), a.amountCents())); });
+        if (merchantAmount > 0) postings.add(Posting.debit(LedgerAccount.escrow(orgId), merchantAmount));
+        if (platformFee > 0) postings.add(Posting.debit(LedgerAccount.fee(), platformFee));
+        postings.add(Posting.credit(LedgerAccount.external(psp.channel()), total));
+        assertBalanced(postings);
+        return psp.recordExternalMovement(ExternalMovement.out(total, CURRENCY, orderRef, "consumer split refund"))
+                .then(post(JournalEntry.Type.CONSUMER_REFUND, operationId, orgId, orderRef,
+                        "consumer split refund " + orderRef, postings));
     }
 
     private Mono<Void> post(JournalEntry.Type type, String operationId, String orgId,
