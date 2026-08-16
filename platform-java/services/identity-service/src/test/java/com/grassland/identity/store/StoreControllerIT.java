@@ -335,4 +335,112 @@ class StoreControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isUnauthorized();
     }
 
+    // ---- 任务书 #24：门店营销字段（PRD §2.1） ----
+
+    @Test
+    void marketingFieldsRoundTripAndKeepKybDraftSemantics() {
+        var owner = seedAccount("store-profile-marketing@example.com");
+        String orgId = createOrg(owner.cookie(), "门店营销字段主体");
+        String storeId = createStore(orgId, owner.cookie(), "营销字段门店");
+        String uri = "/api/organizations/" + orgId + "/stores/" + storeId + "/profile";
+        String cookie = "y1.sid=" + owner.cookie();
+
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("address", "{\"address\":\"南京西路 1 号\",\"city\":\"上海\"}");
+        body.put("phone", "13800000000");
+        body.put("description", "老字号火锅");
+        body.put("categories", java.util.List.of("火锅", "川菜"));
+        body.put("signatureItems", java.util.List.of("招牌毛肚"));
+        body.put("sellingPoints", java.util.List.of("现切牛肉"));
+        body.put("mustEmphasize", java.util.List.of("锅底现熬"));
+        body.put("forbiddenPhrases", java.util.List.of("最好吃"));
+        body.put("allowedTags", java.util.List.of("#探店"));
+        body.put("brandTone", "温暖亲切");
+        body.put("priceRange", "¥30–¥80");
+        body.put("averageSpendCents", 6500);
+        body.put("visitNotes", "地铁 2 号线直达");
+
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(body)
+                .exchange().expectStatus().isOk().expectBody()
+                // V22 KYB 审核语义不变：编辑仍落 draft，审核列空。
+                .jsonPath("$.data.status").isEqualTo("draft")
+                .jsonPath("$.data.submittedAt").isEmpty()
+                .jsonPath("$.data.categories[0]").isEqualTo("火锅")
+                .jsonPath("$.data.categories[1]").isEqualTo("川菜")
+                .jsonPath("$.data.signatureItems[0]").isEqualTo("招牌毛肚")
+                .jsonPath("$.data.sellingPoints[0]").isEqualTo("现切牛肉")
+                .jsonPath("$.data.mustEmphasize[0]").isEqualTo("锅底现熬")
+                .jsonPath("$.data.forbiddenPhrases[0]").isEqualTo("最好吃")
+                .jsonPath("$.data.allowedTags[0]").isEqualTo("#探店")
+                .jsonPath("$.data.brandTone").isEqualTo("温暖亲切")
+                .jsonPath("$.data.priceRange").isEqualTo("¥30–¥80")
+                .jsonPath("$.data.averageSpendCents").isEqualTo(6500)
+                .jsonPath("$.data.visitNotes").isEqualTo("地铁 2 号线直达");
+
+        // 读回端点同样往返。
+        client().get().uri(uri).header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.categories.length()").isEqualTo(2)
+                .jsonPath("$.data.averageSpendCents").isEqualTo(6500);
+
+        // 空数组与不传等价（清空语义）：重提不带营销字段 → 全部清空。
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", "{\"address\":\"南京西路 1 号\"}"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.categories.length()").isEqualTo(0)
+                .jsonPath("$.data.brandTone").isEmpty()
+                .jsonPath("$.data.averageSpendCents").isEmpty()
+                .jsonPath("$.data.address").isEqualTo("{\"address\": \"南京西路 1 号\"}");
+    }
+
+    @Test
+    void marketingFieldCapsAreEnforced() {
+        var owner = seedAccount("store-profile-marketing-caps@example.com");
+        String orgId = createOrg(owner.cookie(), "门店营销帽主体");
+        String storeId = createStore(orgId, owner.cookie(), "营销帽门店");
+        String uri = "/api/organizations/" + orgId + "/stores/" + storeId + "/profile";
+        String cookie = "y1.sid=" + owner.cookie();
+        String address = "{\"address\":\"南京西路 1 号\"}";
+
+        // 21 项超帽。
+        java.util.List<String> tooMany = new java.util.ArrayList<>();
+        for (int i = 0; i < 21; i++) {
+            tooMany.add("品类" + i);
+        }
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", address, "categories", tooMany))
+                .exchange().expectStatus().isBadRequest();
+
+        // 单项超 300 字。
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", address, "sellingPoints", java.util.List.of("字".repeat(301))))
+                .exchange().expectStatus().isBadRequest();
+
+        // 品牌语气超 500 字。
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", address, "brandTone", "字".repeat(501)))
+                .exchange().expectStatus().isBadRequest();
+
+        // 价格区间超 50 字。
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", address, "priceRange", "字".repeat(51)))
+                .exchange().expectStatus().isBadRequest();
+
+        // 到店提示超 1000 字。
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", address, "visitNotes", "字".repeat(1001)))
+                .exchange().expectStatus().isBadRequest();
+
+        // 人均消费负数。
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of("address", address, "averageSpendCents", -1))
+                .exchange().expectStatus().isBadRequest();
+
+        // 违规不产生写入。
+        client().get().uri(uri).header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .json("{\"success\":true,\"data\":null}");
+    }
+
 }

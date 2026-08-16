@@ -4,6 +4,8 @@ import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.List;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.stereotype.Component;
@@ -18,8 +20,18 @@ import reactor.core.publisher.Mono;
 public class StoreProfileRepository {
 
     private static final String SELECT_COLS =
-            "store_id::text, address::text, phone, business_hours::text, description, status, "
+            "store_id::text, address::text, phone, business_hours::text, description, "
+                    + "categories, signature_items, selling_points, must_emphasize, forbidden_phrases, "
+                    + "allowed_tags, brand_tone, price_range, average_spend_cents, visit_notes, status, "
                     + "submitted_at, reviewed_at, reviewer_account_id::text, review_note, created_at, updated_at";
+
+    /** 同 {@link #SELECT_COLS}，带 {@code sp.} 前缀（join 查询/RETURNING 用）。 */
+    private static final String SELECT_COLS_SP =
+            "sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text, sp.description, "
+                    + "sp.categories, sp.signature_items, sp.selling_points, sp.must_emphasize, sp.forbidden_phrases, "
+                    + "sp.allowed_tags, sp.brand_tone, sp.price_range, sp.average_spend_cents, sp.visit_notes, "
+                    + "sp.status, sp.submitted_at, sp.reviewed_at, sp.reviewer_account_id::text, sp.review_note, "
+                    + "sp.created_at, sp.updated_at";
 
     private final DatabaseClient db;
 
@@ -27,12 +39,16 @@ public class StoreProfileRepository {
         this.db = db;
     }
 
-    /** 创建或更新门店资料（upsert，基于 store_id）。*/
-    public Mono<StoreProfile> upsertDraft(String organizationId, String storeId, String address, String phone,
-                                         String businessHours, String description) {
+    /** 创建或更新门店资料（upsert，基于 store_id）。任务书 #24：营销字段整份覆盖，空数组/null 即清空；
+     *  V22 KYB 审核语义不变（编辑重置 draft、清审核事实）。 */
+    public Mono<StoreProfile> upsertDraft(String organizationId, String storeId, StoreProfileDraft draft) {
         var spec = db.sql("""
-                INSERT INTO store_profile(store_id, address, phone, business_hours, description, status)
-                SELECT s.id, CAST(:addr AS jsonb), :phone, CAST(:hours AS jsonb), :desc, 'draft'
+                INSERT INTO store_profile(store_id, address, phone, business_hours, description,
+                    categories, signature_items, selling_points, must_emphasize, forbidden_phrases,
+                    allowed_tags, brand_tone, price_range, average_spend_cents, visit_notes, status)
+                SELECT s.id, CAST(:addr AS jsonb), :phone, CAST(:hours AS jsonb), :desc,
+                    :categories, :signatureItems, :sellingPoints, :mustEmphasize, :forbiddenPhrases,
+                    :allowedTags, :brandTone, :priceRange, :avgSpend, :visitNotes, 'draft'
                 FROM store s
                 WHERE s.id = CAST(:id AS uuid) AND s.organization_id = CAST(:org AS uuid)
                 ON CONFLICT (store_id) DO UPDATE SET
@@ -40,6 +56,16 @@ public class StoreProfileRepository {
                     phone = EXCLUDED.phone,
                     business_hours = EXCLUDED.business_hours,
                     description = EXCLUDED.description,
+                    categories = EXCLUDED.categories,
+                    signature_items = EXCLUDED.signature_items,
+                    selling_points = EXCLUDED.selling_points,
+                    must_emphasize = EXCLUDED.must_emphasize,
+                    forbidden_phrases = EXCLUDED.forbidden_phrases,
+                    allowed_tags = EXCLUDED.allowed_tags,
+                    brand_tone = EXCLUDED.brand_tone,
+                    price_range = EXCLUDED.price_range,
+                    average_spend_cents = EXCLUDED.average_spend_cents,
+                    visit_notes = EXCLUDED.visit_notes,
                     status = 'draft',
                     submitted_at = NULL,
                     reviewed_at = NULL,
@@ -49,24 +75,34 @@ public class StoreProfileRepository {
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", storeId)
-                .bind("org", organizationId);
-        spec = bindNullable(spec, "addr", address);
-        spec = bindNullable(spec, "phone", phone);
-        spec = bindNullable(spec, "hours", businessHours);
-        spec = bindNullable(spec, "desc", description);
+                .bind("org", organizationId)
+                .bind("categories", draft.categories().toArray(String[]::new))
+                .bind("signatureItems", draft.signatureItems().toArray(String[]::new))
+                .bind("sellingPoints", draft.sellingPoints().toArray(String[]::new))
+                .bind("mustEmphasize", draft.mustEmphasize().toArray(String[]::new))
+                .bind("forbiddenPhrases", draft.forbiddenPhrases().toArray(String[]::new))
+                .bind("allowedTags", draft.allowedTags().toArray(String[]::new));
+        spec = bindNullable(spec, "addr", draft.address());
+        spec = bindNullable(spec, "phone", draft.phone());
+        spec = bindNullable(spec, "hours", draft.businessHours());
+        spec = bindNullable(spec, "desc", draft.description());
+        spec = bindNullable(spec, "brandTone", draft.brandTone());
+        spec = bindNullable(spec, "priceRange", draft.priceRange());
+        spec = bindNullable(spec, "visitNotes", draft.visitNotes());
+        spec = draft.averageSpendCents() == null
+                ? spec.bindNull("avgSpend", Integer.class)
+                : spec.bind("avgSpend", draft.averageSpendCents());
         return spec.map(StoreProfileRepository::map).one();
     }
 
     /** 查询门店资料。*/
     public Mono<StoreProfile> findByOrganizationAndId(String organizationId, String storeId) {
         return db.sql("""
-                SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                       sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
-                       sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
+                SELECT %s
                 FROM store_profile sp
                 INNER JOIN store s ON s.id = sp.store_id
                 WHERE s.organization_id = CAST(:org AS uuid) AND sp.store_id = CAST(:id AS uuid)
-                """)
+                """.formatted(SELECT_COLS_SP))
                 .bind("org", organizationId)
                 .bind("id", storeId)
                 .map(StoreProfileRepository::map).one();
@@ -75,14 +111,12 @@ public class StoreProfileRepository {
     /** 按组织和门店锁定资料行，串行化编辑、提交与审核。 */
     public Mono<StoreProfile> findByOrganizationAndIdForUpdate(String organizationId, String storeId) {
         return db.sql("""
-                SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                       sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
-                       sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
+                SELECT %s
                 FROM store_profile sp
                 INNER JOIN store s ON s.id = sp.store_id
                 WHERE s.organization_id = CAST(:org AS uuid) AND sp.store_id = CAST(:id AS uuid)
                 FOR UPDATE OF sp
-                """)
+                """.formatted(SELECT_COLS_SP))
                 .bind("org", organizationId)
                 .bind("id", storeId)
                 .map(StoreProfileRepository::map).one();
@@ -96,10 +130,8 @@ public class StoreProfileRepository {
                 FROM store s
                 WHERE sp.store_id = s.id AND s.organization_id = CAST(:org AS uuid)
                   AND sp.store_id = CAST(:id AS uuid) AND sp.status IN ('draft', 'rejected')
-                RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                          sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
-                          sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
-                """)
+                RETURNING %s
+                """.formatted(SELECT_COLS_SP))
                 .bind("org", organizationId).bind("id", storeId)
                 .bind("submitted", submittedAt.atOffset(ZoneOffset.UTC))
                 .map(StoreProfileRepository::map).one();
@@ -114,10 +146,8 @@ public class StoreProfileRepository {
                 FROM store s
                 WHERE sp.store_id = s.id AND s.organization_id = CAST(:org AS uuid)
                   AND sp.store_id = CAST(:id AS uuid) AND sp.status IN ('pending', 'under_review')
-                RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                          sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
-                          sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
-                """)
+                RETURNING %s
+                """.formatted(SELECT_COLS_SP))
                 .bind("org", organizationId).bind("id", storeId).bind("status", status)
                 .bind("reviewed", reviewedAt.atOffset(ZoneOffset.UTC)).bind("reviewer", reviewerAccountId);
         spec = bindNullable(spec, "note", reviewNote);
@@ -133,10 +163,8 @@ public class StoreProfileRepository {
                 WHERE sp.store_id = s.id
                   AND s.organization_id = CAST(:org AS uuid)
                   AND sp.store_id = CAST(:id AS uuid)
-                RETURNING sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                          sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
-                          sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
-                """)
+                RETURNING %s
+                """.formatted(SELECT_COLS_SP))
                 .bind("org", organizationId)
                 .bind("id", storeId)
                 .map(StoreProfileRepository::map).one();
@@ -145,13 +173,11 @@ public class StoreProfileRepository {
     /** 列出组织下所有门店资料。*/
     public Flux<StoreProfile> findByOrganization(String organizationId) {
         return db.sql("""
-                SELECT sp.store_id::text, sp.address::text, sp.phone, sp.business_hours::text,
-                       sp.description, sp.status, sp.submitted_at, sp.reviewed_at,
-                       sp.reviewer_account_id::text, sp.review_note, sp.created_at, sp.updated_at
+                SELECT %s
                 FROM store_profile sp
                 INNER JOIN store s ON s.id = sp.store_id
                 WHERE s.organization_id = CAST(:org AS uuid) ORDER BY sp.created_at
-                """)
+                """.formatted(SELECT_COLS_SP))
                 .bind("org", organizationId)
                 .map(StoreProfileRepository::map).all();
     }
@@ -199,6 +225,16 @@ public class StoreProfileRepository {
                 row.get("phone", String.class),
                 row.get("business_hours", String.class),
                 row.get("description", String.class),
+                toList(row.get("categories", String[].class)),
+                toList(row.get("signature_items", String[].class)),
+                toList(row.get("selling_points", String[].class)),
+                toList(row.get("must_emphasize", String[].class)),
+                toList(row.get("forbidden_phrases", String[].class)),
+                toList(row.get("allowed_tags", String[].class)),
+                row.get("brand_tone", String.class),
+                row.get("price_range", String.class),
+                row.get("average_spend_cents", Integer.class),
+                row.get("visit_notes", String.class),
                 row.get("status", String.class),
                 toInstant(row.get("submitted_at", OffsetDateTime.class)),
                 toInstant(row.get("reviewed_at", OffsetDateTime.class)),
@@ -207,6 +243,12 @@ public class StoreProfileRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );
+    }
+
+    /** text[] 读出：null 与空白项滤掉，统一成不可变列表（同 recommender_profile 惯例）。 */
+    private static List<String> toList(String[] values) {
+        return values == null ? List.of()
+                : Arrays.stream(values).filter(v -> v != null && !v.isBlank()).toList();
     }
 
     private static Instant toInstant(OffsetDateTime value) {

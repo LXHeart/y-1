@@ -118,13 +118,34 @@ public class StoreController {
                                                                     @RequestBody CreateStoreProfileRequest body,
                                                                     ServerHttpRequest request) {
         return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER)
-                .flatMap(account -> transactions.transactional(
-                        storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
-                                .flatMap(existing -> requireEditable(existing).thenReturn(existing))
-                                .then(storeProfiles.upsertDraft(orgId, storeId,
-                                        requireAddress(body.address()), body.phone(),
-                                        requireBusinessHours(body.businessHours()), body.description()))))
+                .flatMap(account -> {
+                    StoreProfileDraft draft = draftFrom(body);
+                    return transactions.transactional(
+                            storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                    .flatMap(existing -> requireEditable(existing).thenReturn(existing))
+                                    .then(storeProfiles.upsertDraft(orgId, storeId, draft)));
+                })
                 .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))));
+    }
+
+    /** 任务书 #24：写前归一化营销字段（帽与 trim/去重；blank → null；空数组 = 清空）。 */
+    private StoreProfileDraft draftFrom(CreateStoreProfileRequest body) {
+        return new StoreProfileDraft(
+                requireAddress(body.address()), body.phone(),
+                requireBusinessHours(body.businessHours()), body.description(),
+                StoreMarketingFields.items(body.categories(), "主营品类"),
+                StoreMarketingFields.items(body.signatureItems(), "特色产品/服务"),
+                StoreMarketingFields.items(body.sellingPoints(), "推荐卖点"),
+                StoreMarketingFields.items(body.mustEmphasize(), "必须强调内容"),
+                StoreMarketingFields.items(body.forbiddenPhrases(), "禁止表达"),
+                StoreMarketingFields.items(body.allowedTags(), "可使用标签"),
+                StoreMarketingFields.optional(body.brandTone(),
+                        StoreMarketingFields.MAX_BRAND_TONE_LENGTH, "品牌语气"),
+                StoreMarketingFields.optional(body.priceRange(),
+                        StoreMarketingFields.MAX_PRICE_RANGE_LENGTH, "价格区间"),
+                StoreMarketingFields.averageSpend(body.averageSpendCents()),
+                StoreMarketingFields.optional(body.visitNotes(),
+                        StoreMarketingFields.MAX_VISIT_NOTES_LENGTH, "到店提示"));
     }
 
     @PostMapping("/{storeId}/profile/submit")
@@ -309,6 +330,16 @@ public class StoreController {
         m.put("phone", profile.phone());
         m.put("businessHours", profile.businessHours());
         m.put("description", profile.description());
+        m.put("categories", profile.categories());
+        m.put("signatureItems", profile.signatureItems());
+        m.put("sellingPoints", profile.sellingPoints());
+        m.put("mustEmphasize", profile.mustEmphasize());
+        m.put("forbiddenPhrases", profile.forbiddenPhrases());
+        m.put("allowedTags", profile.allowedTags());
+        m.put("brandTone", profile.brandTone());
+        m.put("priceRange", profile.priceRange());
+        m.put("averageSpendCents", profile.averageSpendCents());
+        m.put("visitNotes", profile.visitNotes());
         m.put("status", profile.status());
         m.put("submittedAt", profile.submittedAt() == null ? null : profile.submittedAt().toString());
         m.put("reviewedAt", profile.reviewedAt() == null ? null : profile.reviewedAt().toString());
@@ -318,10 +349,24 @@ public class StoreController {
         return m;
     }
 
+    /**
+     * 门店资料写请求。任务书 #24：新增营销字段全用包装类型/可空（Jackson 3 record 缺失
+     * primitive 会直接 400）；营销字段整份覆盖，空数组与不传等价（清空语义）。
+     */
     public record CreateStoreProfileRequest(
             String address,
             String phone,
             String businessHours,
-            String description
+            String description,
+            List<String> categories,
+            List<String> signatureItems,
+            List<String> sellingPoints,
+            List<String> mustEmphasize,
+            List<String> forbiddenPhrases,
+            List<String> allowedTags,
+            String brandTone,
+            String priceRange,
+            Integer averageSpendCents,
+            String visitNotes
     ) {}
 }
