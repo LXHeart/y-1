@@ -12,6 +12,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.grassland.identity.kyb.KybMediaClient;
 import com.grassland.identity.kyb.KybMediaMetadata;
 import com.grassland.identity.kyb.KybMediaRetentionReceipt;
+import com.grassland.identity.recommenderprofile.AvatarMediaClient;
+import com.grassland.identity.recommenderprofile.AvatarMediaDownload;
+import com.grassland.identity.recommenderprofile.AvatarMediaMetadata;
+import java.net.URI;
 import java.time.Instant;
 import reactor.core.publisher.Mono;
 
@@ -48,6 +52,9 @@ public abstract class IdentityItSupport {
 
     @MockitoBean
     protected KybMediaClient kybMediaClient;
+
+    @MockitoBean
+    protected AvatarMediaClient avatarMediaClient;
 
     @MockitoBean
     protected FinanceCreditsAdminClient financeCreditsAdminClient;
@@ -124,6 +131,22 @@ public abstract class IdentityItSupport {
             return Mono.just(new KybMediaMetadata(mediaId, accountId, organizationId,
                     "merchant_kyb", "merchant_kyb", organizationId, "active",
                     "image/png", 4096L, null));
+        });
+    }
+
+    /** 头像媒体默认替身（任务书 #29+#30 D6）：复验放行 + 下发假 presigned URL，避免打真 intelligence。 */
+    @BeforeEach
+    void stubAvatarMedia() {
+        when(avatarMediaClient.requireUsable(any(), any())).thenAnswer(invocation -> {
+            UUID mediaId = invocation.getArgument(0);
+            String accountId = invocation.getArgument(1);
+            return Mono.just(new AvatarMediaMetadata(mediaId, accountId, "avatar", "active",
+                    "image/png", 4096L, null));
+        });
+        when(avatarMediaClient.issueDownloadUrl(any())).thenAnswer(invocation -> {
+            UUID mediaId = invocation.getArgument(0);
+            return Mono.just(new AvatarMediaDownload(
+                    URI.create("https://cdn.example.com/avatar/" + mediaId), null));
         });
     }
 

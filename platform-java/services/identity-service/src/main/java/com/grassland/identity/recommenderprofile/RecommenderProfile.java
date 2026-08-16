@@ -17,10 +17,16 @@ public record RecommenderProfile(
         List<String> contentTags,
         List<String> domainTags,
         List<SocialAccount> socialAccounts,
+        String residentCity,
+        List<String> serviceRegions,
+        String contentPreferences,
+        List<WorkSample> workSamples,
+        String avatarMediaId,
         Instant updatedAt
 ) {
     /** 从未维护过画像的账号：返回空画像而不是 404——对商家而言「这人没填资料」才是事实。 */
     public static RecommenderProfile empty(String accountId) {
-        return new RecommenderProfile(accountId, null, null, List.of(), List.of(), List.of(), null);
+        return new RecommenderProfile(accountId, null, null, List.of(), List.of(), List.of(),
+                null, List.of(), null, List.of(), null, null);
     }
 }

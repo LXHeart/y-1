@@ -23,9 +23,12 @@ public class RecommenderProfileRepository {
 
     private static final String SELECT_COLS =
             "account_id::text, display_name, bio, content_tags, domain_tags,"
-                    + " social_accounts::text AS social_accounts, updated_at";
+                    + " social_accounts::text AS social_accounts, resident_city, service_regions,"
+                    + " content_preferences, work_samples::text AS work_samples,"
+                    + " avatar_media_id::text AS avatar_media_id, updated_at";
 
     private static final TypeReference<List<SocialAccount>> SOCIAL_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<WorkSample>> WORK_SAMPLE_LIST = new TypeReference<>() {};
 
     private final DatabaseClient db;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -42,13 +45,19 @@ public class RecommenderProfileRepository {
 
     /** 整份覆盖（PUT 语义），首次维护时懒创建。 */
     public Mono<RecommenderProfile> upsert(String accountId, UpdateRecommenderProfileRequest body) {
-        String socialJson = writeSocial(body.socialAccounts());
-        return db.sql("""
-                INSERT INTO recommender_profile(account_id, display_name, bio, content_tags, domain_tags, social_accounts)
-                VALUES (CAST(:acct AS uuid), :name, :bio, :content, :domain, CAST(:social AS jsonb))
+        String socialJson = writeJson(body.socialAccounts());
+        String workSamplesJson = writeJson(body.workSamples());
+        var spec = db.sql("""
+                INSERT INTO recommender_profile(account_id, display_name, bio, content_tags, domain_tags,
+                    social_accounts, resident_city, service_regions, content_preferences, work_samples, avatar_media_id)
+                VALUES (CAST(:acct AS uuid), :name, :bio, :content, :domain,
+                    CAST(:social AS jsonb), :city, :regions, :prefs, CAST(:samples AS jsonb), CAST(:avatar AS uuid))
                 ON CONFLICT (account_id) DO UPDATE
                   SET display_name = :name, bio = :bio, content_tags = :content,
-                      domain_tags = :domain, social_accounts = CAST(:social AS jsonb), updated_at = now()
+                      domain_tags = :domain, social_accounts = CAST(:social AS jsonb),
+                      resident_city = :city, service_regions = :regions, content_preferences = :prefs,
+                      work_samples = CAST(:samples AS jsonb), avatar_media_id = CAST(:avatar AS uuid),
+                      updated_at = now()
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("acct", accountId)
@@ -57,7 +66,14 @@ public class RecommenderProfileRepository {
                 .bind("content", body.contentTags().toArray(String[]::new))
                 .bind("domain", body.domainTags().toArray(String[]::new))
                 .bind("social", socialJson)
-                .map(this::map).one();
+                .bind("city", body.residentCity() == null ? "" : body.residentCity())
+                .bind("regions", body.serviceRegions().toArray(String[]::new))
+                .bind("prefs", body.contentPreferences() == null ? "" : body.contentPreferences())
+                .bind("samples", workSamplesJson);
+        spec = body.avatarMediaId() == null
+                ? spec.bindNull("avatar", String.class)
+                : spec.bind("avatar", body.avatarMediaId());
+        return spec.map(this::map).one();
     }
 
     private RecommenderProfile map(Readable row) {
@@ -67,26 +83,31 @@ public class RecommenderProfileRepository {
                 emptyToNull(row.get("bio", String.class)),
                 toList(row.get("content_tags", String[].class)),
                 toList(row.get("domain_tags", String[].class)),
-                readSocial(row.get("social_accounts", String.class)),
+                readList(row.get("social_accounts", String.class), SOCIAL_LIST),
+                emptyToNull(row.get("resident_city", String.class)),
+                toList(row.get("service_regions", String[].class)),
+                emptyToNull(row.get("content_preferences", String.class)),
+                readList(row.get("work_samples", String.class), WORK_SAMPLE_LIST),
+                emptyToNull(row.get("avatar_media_id", String.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
         );
     }
 
-    private String writeSocial(List<SocialAccount> accounts) {
+    private String writeJson(Object value) {
         try {
-            return mapper.writeValueAsString(accounts == null ? List.of() : accounts);
+            return mapper.writeValueAsString(value == null ? List.of() : value);
         } catch (Exception error) {
-            throw new IllegalArgumentException("invalid social accounts", error);
+            throw new IllegalArgumentException("invalid profile json field", error);
         }
     }
 
     /** 坏 JSON 返回空列表：画像是展示数据，不该因为一行脏数据让整个报名列表打不开。 */
-    private List<SocialAccount> readSocial(String json) {
+    private <T> List<T> readList(String json, TypeReference<List<T>> type) {
         if (json == null || json.isBlank()) {
             return List.of();
         }
         try {
-            return mapper.readValue(json, SOCIAL_LIST);
+            return mapper.readValue(json, type);
         } catch (Exception error) {
             return List.of();
         }
