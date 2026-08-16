@@ -315,7 +315,7 @@ export interface StoreMembership {
 // ---------- finance：推荐官钱包 ----------
 
 /** 钱包流水类型。金额符号由类型决定：入账为正，提现/冲正为负。 */
-export type WalletEntryType = 'task_payout' | 'withdrawal' | 'clawback'
+export type WalletEntryType = 'task_payout' | 'commerce_commission' | 'withdrawal' | 'clawback'
 
 /**
  * 钱包流水行。
@@ -339,4 +339,53 @@ export interface Wallet {
   balanceCents: number
   updatedAt: string | null
   entries: WalletEntry[]
+}
+
+// ---------- finance：收入统计 + 月度账单（任务书 #29+#30）----------
+
+/**
+ * 单月收入聚合。金额单位分；`netCents` = SUM(amount_cents) 带符号。
+ * `grossCents` = 入账类的 amount+fee（毛额），`feeCents` 为平台抽成。
+ */
+export interface WalletMonthlyIncome {
+  month: string
+  taskPayoutCents: number
+  commerceCommissionCents: number
+  withdrawalCents: number
+  clawbackCents: number
+  grossCents: number
+  feeCents: number
+  netCents: number
+}
+
+/** 按任务（engagement）聚合的收入明细，供前端 join my-applications 出任务标题。 */
+export interface WalletEngagementIncome {
+  engagementRef: string
+  payoutCents: number
+  feeCents: number
+  count: number
+  lastAt: string | null
+}
+
+/** 推荐官收入统计响应（from/to 为含端月份 YYYY-MM）。 */
+export interface WalletStatistics {
+  from: string
+  to: string
+  months: WalletMonthlyIncome[]
+  byEngagement: WalletEngagementIncome[]
+}
+
+/** 商家月度账单的单类资金流水。`label` 为中文科目名（后端给出，前端直接渲染）。 */
+export interface MonthlyBillFlow {
+  type: string
+  label: string
+  amountCents: number
+}
+
+/** 商家月度账单响应。`netEscrowDeltaCents` = Σ flows（托管余额净变动）。 */
+export interface MerchantMonthlyBill {
+  month: string
+  flows: MonthlyBillFlow[]
+  platformFeeCents: number
+  netEscrowDeltaCents: number
 }

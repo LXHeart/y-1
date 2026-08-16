@@ -138,3 +138,81 @@ describe('MyRecommenderProfileCard 保存', () => {
     expect(JSON.parse(put.body!).socialAccounts).toEqual([{ platform: '小红书', handle: 'xhs', followers: null }])
   })
 })
+
+/** 任务书 #29+#30 #29 新增资料字段：城市/地区/内容偏好/作品样本/头像。 */
+describe('MyRecommenderProfileCard 新字段往返', () => {
+  const FULL_PROFILE = {
+    ...PROFILE,
+    residentCity: '上海',
+    serviceRegions: ['上海', '杭州'],
+    contentPreferences: '美食探店、城市漫步',
+    workSamples: [
+      { platform: '小红书', title: '探店合集', url: 'https://xhslink.com/abc' },
+      { platform: '抖音', title: null, url: 'https://v.douyin.com/xyz' },
+    ],
+    avatarUrl: 'https://cdn.example.com/avatar/m1',
+    avatarMediaId: 'media-uuid-1',
+  }
+
+  test('加载时灌入新字段：地区换行串、作品样本行、头像 mediaId', async () => {
+    const { wrapper } = await mountLoggedIn({
+      '/api/me/recommender-profile': FULL_PROFILE,
+      '/api/reputation/acct-1': REP,
+    })
+    // 常驻城市
+    expect((wrapper.findAll('input').find((i) =>
+      (i.element as HTMLInputElement).placeholder.includes('上海'))!.element as HTMLInputElement).value)
+      .toBe('上海')
+    // 可接任务地区：数组 → 换行串
+    const regionsTextarea = wrapper.findAll('textarea').find((t) =>
+      (t.element as HTMLTextAreaElement).placeholder.includes('每行一个'))!
+    expect((regionsTextarea.element as HTMLTextAreaElement).value).toBe('上海\n杭州')
+    // 作品样本两行
+    expect(wrapper.findAll('input[placeholder*="标题（可空）"]').length).toBe(2)
+  })
+
+  test('保存把新字段拆成数组并发（地区换行去重、样本丢空行、带头像 mediaId）', async () => {
+    const { wrapper, calls } = await mountLoggedIn({
+      '/api/me/recommender-profile': FULL_PROFILE,
+      '/api/reputation/acct-1': REP,
+      PUT: FULL_PROFILE,
+    })
+
+    // 改地区为含重复的换行串
+    const regionsTextarea = wrapper.findAll('textarea').find((t) =>
+      (t.element as HTMLTextAreaElement).placeholder.includes('每行一个'))!
+    await regionsTextarea.setValue('上海\n杭州\n上海')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const put = calls.find((c) => c.method === 'PUT')!
+    const body = JSON.parse(put.body!)
+    expect(body.residentCity).toBe('上海')
+    expect(body.serviceRegions).toEqual(['上海', '杭州'])   // 换行拆分 + 去重
+    expect(body.contentPreferences).toBe('美食探店、城市漫步')
+    expect(body.workSamples).toEqual([
+      { platform: '小红书', title: '探店合集', url: 'https://xhslink.com/abc' },
+      { platform: '抖音', title: null, url: 'https://v.douyin.com/xyz' },
+    ])
+    expect(body.avatarMediaId).toBe('media-uuid-1')
+  })
+
+  /** 作品样本全空行丢弃；只填平台不填 url 的行也不发。 */
+  test('作品样本丢弃缺 platform 或 url 的行', async () => {
+    const { wrapper, calls } = await mountLoggedIn({
+      '/api/me/recommender-profile': { ...PROFILE, workSamples: [] },
+      '/api/reputation/acct-1': REP,
+      PUT: PROFILE,
+    })
+
+    await wrapper.findAll('button').find((b) => b.text() === '+ 添加作品样本')!.trigger('click')
+    await wrapper.findAll('button').find((b) => b.text() === '+ 添加作品样本')!.trigger('click')
+    // 第一行只填平台、不填 url（应被丢弃）；第二行全空（丢弃）
+    await wrapper.findAll('input[placeholder*="平台，如 小红书"]')[0].setValue('小红书')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const put = calls.find((c) => c.method === 'PUT')!
+    expect(JSON.parse(put.body!).workSamples).toEqual([])
+  })
+})

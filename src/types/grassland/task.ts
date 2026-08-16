@@ -151,6 +151,28 @@ export interface TaskFeedPage {
 }
 
 /**
+ * 推荐官「我的报名」行（任务书 #29+#30 Stage 2）：application + join task 的展示字段。
+ * `bountyCents` 取报名时冻结的赏金快照；`settledAt` 为该报名最近一次结算（EngagementSettled）时间，未结算为 null。
+ */
+export interface MyApplication {
+  applicationId: string
+  taskId: string
+  taskTitle: string | null
+  taskStatus: string | null
+  applicationStatus: ApplicationStatus
+  bountyCents: number
+  appliedAt: string | null
+  settledAt: string | null
+}
+
+/** 「我的报名」分页响应（形状同 feed）。 */
+export interface MyApplicationsPage {
+  items: MyApplication[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+/**
  * 报名状态。`reserving` 是资金型任务 accept 后的中间态——
  * 商家点接受返回 202，资金预留 Saga 异步执行，需轮询 reservation 端点确认最终结果。
  */

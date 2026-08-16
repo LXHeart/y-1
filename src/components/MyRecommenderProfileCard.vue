@@ -2,17 +2,20 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
+import { compressImageToFile } from '../composables/compress-image'
 import RecommenderReputationBadge from './RecommenderReputationBadge.vue'
-import type { RecommenderProfile, RecommenderReputation, SocialAccount } from '../types/grassland'
+import type { RecommenderProfile, RecommenderReputation, SocialAccount, WorkSample } from '../types/grassland'
 
 /**
- * 推荐官「我的主页」——画像编辑 + 自己的声誉一览（PRD 六「基础信息 / 标签 / 社交平台」的编辑侧）。
+ * 推荐官「我的主页」——画像编辑 + 自己的声誉一览（PRD 六；任务书 #29+#30 #29 扩资料字段 + 头像）。
  *
  * PUT 是**整份覆盖**语义：没提交的字段等于清空，不是「不改」。所以表单状态在加载时就用
  * 后端现值初始化，保存时一次性把整份发回，不存在「局部 patch」。
  *
- * 标签与社交账号收的是**数组**：输入框里逗号分隔只是录入便利，拆/合只在此组件做一次，
- * 传给后端与徽章组件的都是数组（避免前后端各拆一次、口径漂移）。
+ * 标签收**数组**（逗号分隔只是录入便利，拆/合只在此组件做一次）；可接任务地区用换行分隔的
+ * textarea（列表类换行约定）；作品样本是行编辑器（平台+标题+链接，url 必须 http(s)）。
+ *
+ * 头像（D6）：压缩 → 三步上传得 mediaId → 随整份 PUT 落库；后端会复验 owner/purpose/active。
  */
 
 const grassland = useGrassland()
@@ -20,6 +23,9 @@ const { currentUser } = useAuth()
 
 const reputation = ref<RecommenderReputation | null>(null)
 const notice = ref('')
+/** 头像本地预览（选中文件时即时反馈；保存/刷新后换成后端 avatarUrl）。 */
+const avatarPreview = ref<string | null>(null)
+const avatarUploading = ref(false)
 
 /** 表单状态——独立于加载的画像，加载后整体赋值，保存后用返回值再整体赋值（不可变替换）。 */
 const form = reactive({
@@ -28,12 +34,21 @@ const form = reactive({
   contentTags: '',
   domainTags: '',
   socials: [] as SocialAccount[],
+  residentCity: '',
+  serviceRegions: '',
+  contentPreferences: '',
+  samples: [] as WorkSample[],
+  avatarMediaId: null as string | null,
 })
 
 const canSave = computed(() =>
   form.displayName.trim().length > 0 || form.bio.trim().length > 0
   || form.contentTags.trim().length > 0 || form.domainTags.trim().length > 0
-  || form.socials.some((s) => s.platform.trim() || (s.handle ?? '').trim()))
+  || form.residentCity.trim().length > 0 || form.serviceRegions.trim().length > 0
+  || form.contentPreferences.trim().length > 0
+  || form.socials.some((s) => s.platform.trim() || (s.handle ?? '').trim())
+  || form.samples.some((s) => s.platform.trim() || s.url.trim())
+  || !!form.avatarMediaId)
 
 /** 逗号串 → 去空白去重的数组。后端要数组，拆分只此一处。 */
 function splitTags(raw: string): string[] {
@@ -41,13 +56,25 @@ function splitTags(raw: string): string[] {
     raw.split(/[,，]/).map((t) => t.trim()).filter((t) => t.length > 0)))
 }
 
-/** 把加载到的画像灌进表单（数组 → 逗号串以便编辑）。 */
+/** 换行串 → 去空白去重的数组（可接任务地区，列表类换行约定）。 */
+function splitLines(raw: string): string[] {
+  return Array.from(new Set(
+    raw.split(/\r?\n/).map((t) => t.trim()).filter((t) => t.length > 0)))
+}
+
+/** 把加载到的画像灌进表单（数组 → 分隔串以便编辑）。 */
 function hydrate(profile: RecommenderProfile): void {
   form.displayName = profile.displayName || ''
   form.bio = profile.bio || ''
   form.contentTags = (profile.contentTags || []).join(', ')
   form.domainTags = (profile.domainTags || []).join(', ')
   form.socials = (profile.socialAccounts || []).map((s) => ({ ...s }))
+  form.residentCity = profile.residentCity || ''
+  form.serviceRegions = (profile.serviceRegions || []).join('\n')
+  form.contentPreferences = profile.contentPreferences || ''
+  form.samples = (profile.workSamples || []).map((s) => ({ ...s }))
+  form.avatarMediaId = profile.avatarMediaId ?? null
+  avatarPreview.value = profile.avatarUrl || null
 }
 
 async function refresh(): Promise<void> {
@@ -74,6 +101,39 @@ function removeSocial(index: number): void {
   form.socials = form.socials.filter((_, i) => i !== index)
 }
 
+function addSample(): void {
+  form.samples = [...form.samples, { platform: '', title: null, url: '' }]
+}
+
+function removeSample(index: number): void {
+  form.samples = form.samples.filter((_, i) => i !== index)
+}
+
+/** 头像选择：压缩到 ≤1MB（后端帽 5MB）→ 三步上传 → 记 mediaId 随整份保存。 */
+async function onAvatarChange(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  notice.value = ''
+  avatarUploading.value = true
+  try {
+    const compressed = file.size > 1024 * 1024 ? await compressImageToFile(file, 1024 * 1024) : file
+    const mediaId = await grassland.uploadAvatar(compressed)
+    if (!mediaId) return   // 错误已由 grassland.error 呈现
+    form.avatarMediaId = mediaId
+    avatarPreview.value = URL.createObjectURL(compressed)
+    notice.value = '头像已上传，点「保存资料」后生效'
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
+function clearAvatar(): void {
+  form.avatarMediaId = null
+  avatarPreview.value = null
+}
+
 async function save(): Promise<void> {
   if (!canSave.value) return
   notice.value = ''
@@ -90,6 +150,18 @@ async function save(): Promise<void> {
         handle: (s.handle ?? '').trim() || null,
         followers: s.followers === null || s.followers === undefined ? null : Number(s.followers),
       })),
+    residentCity: form.residentCity.trim() || undefined,
+    serviceRegions: splitLines(form.serviceRegions),
+    contentPreferences: form.contentPreferences.trim() || undefined,
+    // 作品样本：platform 与 url 均非空才算一行；url 合法性由后端校验（必须 http(s)）。
+    workSamples: form.samples
+      .filter((s) => s.platform.trim() && s.url.trim())
+      .map((s) => ({
+        platform: s.platform.trim(),
+        title: (s.title ?? '').trim() || null,
+        url: s.url.trim(),
+      })),
+    avatarMediaId: form.avatarMediaId,
   })
   if (!updated) return
   hydrate(updated)
@@ -110,6 +182,19 @@ async function save(): Promise<void> {
     <RecommenderReputationBadge :reputation="reputation" />
 
     <div class="prof-field">
+      <label>头像</label>
+      <div class="prof-avatar">
+        <img v-if="avatarPreview" :src="avatarPreview" alt="头像预览" class="prof-avatar-img" />
+        <div v-else class="prof-avatar-empty">无</div>
+        <label class="prof-avatar-pick">
+          <input type="file" accept="image/jpeg,image/png,image/webp" :disabled="avatarUploading" @change="onAvatarChange" />
+          <span>{{ avatarUploading ? '上传中…' : '选择图片' }}</span>
+        </label>
+        <button v-if="form.avatarMediaId || avatarPreview" type="button" class="prof-x" @click="clearAvatar">移除</button>
+      </div>
+    </div>
+
+    <div class="prof-field">
       <label>昵称</label>
       <input v-model="form.displayName" placeholder="展示给商家的名称" />
     </div>
@@ -118,12 +203,24 @@ async function save(): Promise<void> {
       <textarea v-model="form.bio" rows="2" placeholder="一句话介绍自己的内容方向"></textarea>
     </div>
     <div class="prof-field">
+      <label>常驻城市</label>
+      <input v-model="form.residentCity" placeholder="如 上海" />
+    </div>
+    <div class="prof-field">
+      <label>可接任务地区<span class="prof-hint">（每行一个城市）</span></label>
+      <textarea v-model="form.serviceRegions" rows="2" placeholder="每行一个，如&#10;上海&#10;杭州"></textarea>
+    </div>
+    <div class="prof-field">
       <label>内容标签</label>
       <input v-model="form.contentTags" placeholder="逗号分隔，如 美食, 探店" />
     </div>
     <div class="prof-field">
       <label>领域标签</label>
       <input v-model="form.domainTags" placeholder="逗号分隔，如 餐饮, 零售" />
+    </div>
+    <div class="prof-field">
+      <label>内容偏好</label>
+      <textarea v-model="form.contentPreferences" rows="2" placeholder="偏好的内容方向 / 风格"></textarea>
     </div>
 
     <div class="prof-field">
@@ -137,6 +234,19 @@ async function save(): Promise<void> {
         </li>
       </ul>
       <button type="button" class="prof-add" :disabled="grassland.loading.value" @click="addSocial">+ 添加社交账号</button>
+    </div>
+
+    <div class="prof-field">
+      <label>近期作品样本<span class="prof-hint">（链接须为 http/https）</span></label>
+      <ul class="prof-socials">
+        <li v-for="(s, i) in form.samples" :key="i" class="prof-social-row">
+          <input v-model="s.platform" placeholder="平台，如 小红书" />
+          <input v-model="s.title" placeholder="标题（可空）" />
+          <input v-model="s.url" placeholder="https://…" />
+          <button type="button" class="prof-x" :disabled="grassland.loading.value" @click="removeSample(i)">删除</button>
+        </li>
+      </ul>
+      <button type="button" class="prof-add" :disabled="grassland.loading.value" @click="addSample">+ 添加作品样本</button>
     </div>
 
     <div class="prof-actions">
@@ -155,6 +265,18 @@ async function save(): Promise<void> {
 .prof-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .prof-field { display: flex; flex-direction: column; gap: 4px; }
 .prof-field label { font-size: 12px; opacity: 0.7; }
+.prof-avatar { display: flex; align-items: center; gap: 10px; }
+.prof-avatar-img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 1px solid var(--color-border); }
+.prof-avatar-empty {
+  width: 56px; height: 56px; border-radius: 50%; border: 1px dashed var(--color-border);
+  display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0.5;
+}
+.prof-avatar-pick { position: relative; display: inline-flex; }
+.prof-avatar-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.prof-avatar-pick span {
+  padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 6px;
+  font-size: 13px; color: var(--color-text); cursor: pointer;
+}
 input, textarea { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; font-family: inherit; }
 textarea { resize: vertical; }
 .prof-socials { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

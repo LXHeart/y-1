@@ -20,6 +20,7 @@ const withdrawYuan = ref(0)
 
 const ENTRY_LABEL: Record<WalletEntryType, string> = {
   task_payout: '任务结算入账',
+  commerce_commission: '到店推荐佣金',
   withdrawal: '提现',
   clawback: '争议冲正扣回',
 }

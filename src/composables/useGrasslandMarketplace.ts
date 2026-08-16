@@ -10,9 +10,10 @@ import type {
   ReputationPolicy, UpdateReputationPolicyInput, AdminReputation,
   Lv5Admission, UpdateLv5AdmissionInput,
   RecommenderRecommendationPage, TaskRecommenderInvitation,
-  Wallet,
+  Wallet, WalletStatistics, MerchantMonthlyBill,
   Task, CreateTaskInput, CreateDraftInput, UpdateTaskInput, ReviseTaskInput,
   TaskApplication, TaskFeedPage, TaskFeedQuery,
+  MyApplicationsPage,
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
   BatchOperationResponse,
   FinanceAccount,
@@ -142,6 +143,26 @@ export function useGrasslandMarketplace(run: RunFn) {
     })
 
   /**
+   * 头像三步上传（任务书 #29+#30 D6）：申请凭据（purpose=avatar，仅图片 MIME）→ 直传 → confirm，
+   * 返回可写入画像 `avatarMediaId` 的 mediaId。后端开票即拒非图片 MIME 与超大文件。
+   */
+  const uploadAvatar = (file: File) =>
+    run(async () => {
+      const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          contentType: file.type || 'application/octet-stream',
+          purpose: 'avatar',
+          sizeBytes: file.size,
+        }),
+      })
+      await putToPresignedUrl(ticket, file)
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      return confirmed.id
+    })
+
+  /**
    * 附件下载 URL（商家与提交人均可取）。
    *
    * marketplace 先证该 media 确实挂在这条交付物上（防跨履约越权），再经服务断言向 intelligence 换签名 URL——
@@ -236,6 +257,21 @@ export function useGrasslandMarketplace(run: RunFn) {
       body: JSON.stringify({ amountCents }),
     }))
 
+  /**
+   * 推荐官收入统计（任务书 #29+#30 #29）：按月汇总 + 按任务明细。from/to 为含端月份 YYYY-MM，
+   * 跨度上限 12 个月（超限后端 400）。月切按北京时间。self-scoped，只能读自己的。
+   */
+  const getWalletStatistics = (from: string, to: string) =>
+    run(() => request<WalletStatistics>(
+      `/api/finance/wallets/me/statistics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`))
+
+  /**
+   * 商家月度账单（任务书 #29+#30 #30）：按月汇总资金流水。org-scoped，跨 org 后端 404。
+   */
+  const getMonthlyBill = (orgId: string, month: string) =>
+    run(() => request<MerchantMonthlyBill>(
+      `/api/finance/organizations/${encodeURIComponent(orgId)}/monthly-bill?month=${encodeURIComponent(month)}`))
+
   // ---------- marketplace：任务 + 报名 ----------
 
   const listTasks = (organizationId: string, status = 'published', storeId?: string) => {
@@ -314,6 +350,20 @@ export function useGrasslandMarketplace(run: RunFn) {
       method: 'POST',
       body: JSON.stringify(note ? { note } : {}),
     }))
+
+  /**
+   * 推荐官「我的报名」历史列表（任务书 #29+#30 Stage 2）：跨任务、keyset 分页、join 任务标题/状态/赏金。
+   * self-scoped（只能读自己的）。status 可选过滤（ApplicationStatus 值域）；cursor 翻页。
+   * 用途：推荐官主页历史任务表 + 前端 join finance byEngagement 出任务标题。
+   */
+  const listMyApplications = (status?: string, cursor?: string, limit?: number) => {
+    const qs = new URLSearchParams()
+    if (status) qs.set('status', status)
+    if (cursor) qs.set('cursor', cursor)
+    if (limit) qs.set('limit', String(limit))
+    const suffix = qs.toString() ? `?${qs}` : ''
+    return run(() => request<MyApplicationsPage>(`/api/tasks/my-applications${suffix}`))
+  }
 
   /**
    * 商家接受报名。**资金型任务返回 202**（预留 Saga 异步执行），非资金型直接 200。
@@ -440,15 +490,16 @@ export function useGrasslandMarketplace(run: RunFn) {
     getMerchantAnalytics,
     submitDeliverable, listDeliverables, rejectDeliverable, runVerificationChecks,
     getTaskContext, createCreationContext, listVerificationRuns,
-    createMediaUploadTicket, confirmMediaUpload, uploadEngagementAttachment, getAttachmentDownloadUrl,
+    createMediaUploadTicket, confirmMediaUpload, uploadEngagementAttachment, uploadAvatar,
+    getAttachmentDownloadUrl,
     getMyRecommenderProfile, updateMyRecommenderProfile, getRecommenderProfile, getReputation,
     getReputationPolicy, updateReputationPolicy, getAdminReputation, updateLv5Admission,
     rateEngagement, getEngagementRating,
-    getMyWallet, withdrawFromWallet,
+    getMyWallet, withdrawFromWallet, getWalletStatistics, getMonthlyBill,
     listTasks, getTask, listRecommenderRecommendations, inviteRecommender,
     createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask,
     closeTask, cancelTask,
-    listApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
+    listApplications, listMyApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
     batchAcceptApplications, batchRejectApplications,
     withdrawApplication, pollReservation, confirmEngagement, pollSettlement,
     provisionAccount, getAccount, creditAccount,

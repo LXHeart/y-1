@@ -13,8 +13,20 @@ export interface SocialAccount {
 }
 
 /**
+ * 近期作品样本（任务书 #29+#30 #29）：自报的站外作品链接。url 必须 http(s)，后端入库前校验。
+ */
+export interface WorkSample {
+  platform: string
+  title: string | null
+  url: string
+}
+
+/**
  * 推荐官画像（identity 域）。没填过资料时后端返回**空画像而非 404**——
  * 「这人没填」本身就是商家要的事实。
+ *
+ * <p>`avatarUrl` 是短 TTL presigned GET（公开/自己读都有）；`avatarMediaId` 仅 self 读时回，
+ * 供编辑表单回填，公开端点不外泄。收入统计/账单是私有数据，永不进画像响应（D7）。
  */
 export interface RecommenderProfile {
   accountId: string
@@ -23,6 +35,12 @@ export interface RecommenderProfile {
   contentTags: string[]
   domainTags: string[]
   socialAccounts: SocialAccount[]
+  residentCity: string | null
+  serviceRegions: string[]
+  contentPreferences: string | null
+  workSamples: WorkSample[]
+  avatarUrl: string | null
+  avatarMediaId?: string | null
   updatedAt: string | null
 }
 
@@ -33,6 +51,11 @@ export interface UpdateRecommenderProfileInput {
   contentTags: string[]
   domainTags: string[]
   socialAccounts: SocialAccount[]
+  residentCity?: string
+  serviceRegions?: string[]
+  contentPreferences?: string
+  workSamples?: WorkSample[]
+  avatarMediaId?: string | null
 }
 
 /** 等级（PRD 五）。Lv5 是邀请制，后端策略永不自动授予。 */

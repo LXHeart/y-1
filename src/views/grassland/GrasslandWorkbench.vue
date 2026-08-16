@@ -6,10 +6,13 @@ import EngagementSubmissionPanel from '../../components/EngagementSubmissionPane
 import MerchantKybCard from '../../components/MerchantKybCard.vue'
 import MerchantCommerceCard from '../../components/MerchantCommerceCard.vue'
 import MerchantPermissionCard from '../../components/MerchantPermissionCard.vue'
+import MerchantMonthlyBillCard from '../../components/MerchantMonthlyBillCard.vue'
 import MyInvitationsCard from '../../components/MyInvitationsCard.vue'
 import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.vue'
 import MySessionsCard from '../../components/MySessionsCard.vue'
 import MyWalletCard from '../../components/MyWalletCard.vue'
+import RecommenderHistoryCard from '../../components/RecommenderHistoryCard.vue'
+import RecommenderIncomeStatsCard from '../../components/RecommenderIncomeStatsCard.vue'
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import OrgTeamCard from '../../components/OrgTeamCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
@@ -1292,6 +1295,9 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         </div>
       </article>
 
+      <!-- 任务书 #29+#30 #30：商家月度账单（按月汇总资金流水） -->
+      <MerchantMonthlyBillCard v-if="activeOrgId" :organization-id="activeOrgId" />
+
       <MerchantCommerceCard
         v-if="activeOrgId"
         :organization-id="activeOrgId"
@@ -1466,6 +1472,14 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
       <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
       <article id="gl-wallet" class="gl-card gl-card-wide">
         <MyWalletCard />
+      </article>
+
+      <!-- 任务书 #29+#30 #29：收入统计（按月/按任务）+ 历史任务 -->
+      <article class="gl-card gl-card-wide">
+        <RecommenderIncomeStatsCard />
+      </article>
+      <article class="gl-card gl-card-wide">
+        <RecommenderHistoryCard />
       </article>
 
       <RecommenderTaskHall

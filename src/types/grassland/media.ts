@@ -3,7 +3,8 @@
 // ---------- intelligence：media 直传（三步上传）----------
 
 /** 附件用途。履约附件是唯一允许 marketplace 跨账号读的 purpose（服务间断点的放行条件）。 */
-export type MediaPurpose = 'engagement_attachment' | 'merchant_kyb' | 'video_asset' | 'user_upload'
+export type MediaPurpose =
+  'engagement_attachment' | 'merchant_kyb' | 'video_asset' | 'user_upload' | 'avatar'
 
 /**
  * 上传凭据（第一步 `POST /api/media/upload-tickets` 的响应）。
