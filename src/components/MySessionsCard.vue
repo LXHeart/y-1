@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
 import type { IdentityType, LoginSession } from '../types/grassland'
@@ -23,6 +23,11 @@ const sessions = ref<LoginSession[]>([])
 const notice = ref('')
 /** 待确认撤销的本机 session——撤销自己会登出，不做二次确认太容易误点。 */
 const confirmingSelf = ref('')
+/** 待确认的「登出其它所有设备」——影响面大，同样需要二次确认。 */
+const confirmingOthers = ref(false)
+
+/** 其它设备（非本机）的会话数——「一键登出其它」只在确有其它设备时出现。 */
+const otherSessions = computed(() => sessions.value.filter((s) => !s.current))
 
 const IDENTITY_LABEL: Record<IdentityType, string> = {
   merchant: '商家',
@@ -31,6 +36,14 @@ const IDENTITY_LABEL: Record<IdentityType, string> = {
 
 function identityLabel(type: IdentityType | null): string {
   return type ? IDENTITY_LABEL[type] || type : '消费者'
+}
+
+/** 登录会话的过期时刻用绝对日期：它回答「我哪天会被登出」，相对时间没有意义。 */
+function expiryLabel(iso: string | null): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return `有效期至 ${date.toLocaleDateString()}`
 }
 
 /** 只给相对时间，绝对时刻对「这是不是我刚才那次登录」没有帮助。 */
@@ -48,7 +61,8 @@ function lastSeenLabel(iso: string | null): string {
 
 async function refresh(): Promise<void> {
   const list = await grassland.listMySessions()
-  if (list) sessions.value = list
+  // Array.isArray 防御：测试/降级路径的桩可能回非数组信封，进 filter 会炸渲染。
+  if (Array.isArray(list)) sessions.value = list
 }
 
 // 与 MyInvitationsCard 同理：卡片在未登录时也已挂载，只在 mounted 拉一次会停在空列表。
@@ -56,8 +70,24 @@ watch(() => currentUser.value?.id, (accountId) => {
   sessions.value = []
   notice.value = ''
   confirmingSelf.value = ''
+  confirmingOthers.value = false
   if (accountId) refresh()
 }, { immediate: true })
+
+async function revokeOthers(): Promise<void> {
+  if (!confirmingOthers.value) {
+    confirmingOthers.value = true
+    return
+  }
+  notice.value = ''
+  confirmingOthers.value = false
+  const result = await grassland.revokeOtherSessions()
+  if (!result) return
+  notice.value = result.revoked > 0
+    ? `已登出其它 ${result.revoked} 台设备`
+    : '没有其它设备在线'
+  await refresh()
+}
 
 async function revoke(session: LoginSession): Promise<void> {
   if (session.current && confirmingSelf.value !== session.sessionToken) {
@@ -84,7 +114,16 @@ async function revoke(session: LoginSession): Promise<void> {
   <article class="sess">
     <header class="sess-head">
       <h3>登录设备<span v-if="sessions.length" class="sess-count">{{ sessions.length }}</span></h3>
-      <button type="button" class="sess-quiet" :disabled="grassland.loading.value" @click="refresh">刷新</button>
+      <div class="sess-head-actions">
+        <button
+          v-if="otherSessions.length > 0"
+          type="button"
+          :class="confirmingOthers ? 'sess-danger' : 'sess-quiet'"
+          :disabled="grassland.loading.value"
+          @click="revokeOthers"
+        >{{ confirmingOthers ? `确认登出其它 ${otherSessions.length} 台设备` : '登出其它设备' }}</button>
+        <button type="button" class="sess-quiet" :disabled="grassland.loading.value" @click="refresh">刷新</button>
+      </div>
     </header>
 
     <p v-if="grassland.error.value" class="sess-alert sess-err" role="alert">{{ grassland.error.value }}</p>
@@ -100,7 +139,8 @@ async function revoke(session: LoginSession): Promise<void> {
           </span>
           <span class="sess-meta">
             {{ identityLabel(s.activeIdentityType) }} · {{ s.ipAddress || '未知 IP' }} ·
-            最近活动 {{ lastSeenLabel(s.lastSeenAt) }}
+            最近活动 {{ lastSeenLabel(s.lastSeenAt) }}<template v-if="expiryLabel(s.expiresAt)">
+              · {{ expiryLabel(s.expiresAt) }}</template>
           </span>
         </div>
         <button
@@ -113,8 +153,8 @@ async function revoke(session: LoginSession): Promise<void> {
     </ul>
 
     <p class="sess-hint">
-      撤销会让那台设备<strong>立即登出</strong>。列表为本账号当前有效的登录会话；
-      从未切换过身份的设备显示为「消费者」，设备信息可能为未知。
+      撤销会让那台设备<strong>立即登出</strong>；「有效期至」是该设备登录态的自然过期日。
+      列表为本账号当前有效的登录会话；从未切换过身份的设备显示为「消费者」，设备信息可能为未知。
     </p>
   </article>
 </template>
@@ -134,6 +174,7 @@ async function revoke(session: LoginSession): Promise<void> {
 .sess-name { font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .sess-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-accent); color: #fff; }
 .sess-meta { font-size: 12px; opacity: 0.62; }
+.sess-head-actions { display: flex; align-items: center; gap: 6px; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }

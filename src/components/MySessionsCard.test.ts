@@ -35,6 +35,7 @@ const THIS_DEVICE = {
   deviceLabel: null,
   ipAddress: '10.0.0.1',
   lastSeenAt: new Date().toISOString(),
+  expiresAt: new Date(Date.now() + 7 * 86400_000).toISOString(),
   current: true,
 }
 
@@ -46,11 +47,17 @@ function stubFetch(devices: unknown[]): { calls: { url: string; method: string }
   const calls: { url: string; method: string }[] = []
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method || 'GET' })
-    const isList = url === '/api/me/sessions' && (init?.method || 'GET') === 'GET'
+    const method = init?.method || 'GET'
+    const isList = url === '/api/me/sessions' && method === 'GET'
+    const isRevokeOthers = url === '/api/me/sessions' && method === 'DELETE'
     return {
       ok: true,
       headers: { get: () => 'application/json' },
-      json: async () => (isList ? { success: true, data: devices } : { success: true }),
+      json: async () => (isList
+        ? { success: true, data: devices }
+        : isRevokeOthers
+          ? { success: true, data: { revoked: devices.filter((d) => !((d as { current: boolean }).current)).length } }
+          : { success: true }),
     }
   }))
   return { calls }
@@ -151,6 +158,48 @@ describe('MySessionsCard 撤销', () => {
 
     expect(calls.length).toBe(before)
     expect(wrapper.text()).toContain('确认登出本机')
+  })
+
+  test('列表展示登录会话的自然过期日', async () => {
+    const { calls } = stubFetch([THIS_DEVICE])
+    void calls
+    const wrapper = mount(MySessionsCard)
+    currentUser.value = asUser('acct-1', 'a@test.local')
+    await flushPromises()
+
+    const expected = new Date(THIS_DEVICE.expiresAt as string).toLocaleDateString()
+    expect(wrapper.text()).toContain(`有效期至 ${expected}`)
+  })
+
+  test('一键登出其它设备：二次确认后发 DELETE 集合端点且本机保留', async () => {
+    const { calls } = stubFetch([THIS_DEVICE, OTHER_DEVICE])
+    const wrapper = mount(MySessionsCard)
+    currentUser.value = asUser('acct-1', 'a@test.local')
+    await flushPromises()
+
+    const bulkButton = wrapper.findAll('button').find((b) => b.text().includes('登出其它设备'))!
+    await bulkButton.trigger('click')   // 第一次：进入确认态，不发请求
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/me/sessions' && c.method === 'DELETE')).toBe(false)
+
+    const confirmButton = wrapper.findAll('button').find((b) => b.text().includes('确认登出其它'))!
+    await confirmButton.trigger('click')
+    await flushPromises()
+
+    expect(calls).toContainEqual({ url: '/api/me/sessions', method: 'DELETE' })
+    expect(wrapper.text()).toContain('已登出其它 1 台设备')
+    // 本机不被登出：没有 logout、没有 loggedOut 事件。
+    expect(calls.some((c) => c.url === '/api/auth/logout')).toBe(false)
+    expect(wrapper.emitted('loggedOut')).toBeUndefined()
+    expect(currentUser.value).not.toBeNull()
+  })
+
+  test('仅一台设备时不显示「登出其它设备」入口', async () => {
+    stubFetch([THIS_DEVICE])
+    const wrapper = mount(MySessionsCard)
+    currentUser.value = asUser('acct-1', 'a@test.local')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('登出其它设备')
   })
 
   test('确认后撤销本机：发 DELETE 并同步清掉前端登录态 + 抛 loggedOut', async () => {

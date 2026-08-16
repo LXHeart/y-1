@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   InvitationStatus,
@@ -44,6 +44,9 @@ const newMemberRole = ref<'admin' | 'member'>('member')
 const newStoreName = ref('')
 const newStoreMemberAccount = ref('')
 const newStoreMemberRole = ref<StoreRole>('staff')
+const newStoreMemberEmail = ref('')
+/** 邀请记录里的门店名（storeId → name），列表渲染用。 */
+const storeNameById = computed(() => new Map(stores.value.map((store) => [store.id, store.name])))
 
 const ROLE_LABEL: Record<MembershipRole, string> = {
   owner: '所有者',
@@ -54,6 +57,11 @@ const ROLE_LABEL: Record<MembershipRole, string> = {
 const STORE_ROLE_LABEL: Record<StoreRole, string> = {
   manager: '店长',
   staff: '店员',
+}
+
+/** 邀请角色标签：组织级 admin/member 与门店级 staff/manager 并存，逐档回退。 */
+function invitationRoleLabel(role: OrgInvitation['role']): string {
+  return ROLE_LABEL[role as MembershipRole] || STORE_ROLE_LABEL[role as StoreRole] || role
 }
 
 const INVITATION_STATUS_LABEL: Record<InvitationStatus, string> = {
@@ -112,6 +120,18 @@ async function sendInvite(): Promise<void> {
   await reloadInvitations()
 }
 
+/** 复制「邀请直达」链接：对方打开后落到草场工作台的「我的邀请」（链接不含邀请 id，见 DefaultLayout 注释）。 */
+async function copyInviteLink(): Promise<void> {
+  const url = new URL(window.location.origin + window.location.pathname)
+  url.searchParams.set('invite', '1')
+  try {
+    await navigator.clipboard.writeText(url.toString())
+    notice.value = '邀请链接已复制——对方打开后会直达「我的邀请」'
+  } catch {
+    notice.value = `邀请链接：${url.toString()}`
+  }
+}
+
 async function revokeInvite(invitation: OrgInvitation): Promise<void> {
   notice.value = ''
   const revoked = await grassland.revokeInvitation(props.orgId, invitation.id)
@@ -145,6 +165,19 @@ async function selectStore(storeId: string): Promise<void> {
   storeMembers.value = []
   const list = await grassland.listStoreMemberships(props.orgId, storeId)
   if (list) storeMembers.value = list
+}
+
+async function sendStoreInvite(): Promise<void> {
+  const email = newStoreMemberEmail.value.trim()
+  if (!email || !selectedStoreId.value) return
+  notice.value = ''
+  const created = await grassland.inviteMember(props.orgId, email, newStoreMemberRole.value, selectedStoreId.value)
+  if (!created) return
+  newStoreMemberEmail.value = ''
+  notice.value = created.emailSent
+    ? `已向 ${created.email} 发出${STORE_ROLE_LABEL[newStoreMemberRole.value]}邀请邮件`
+    : `已记录对 ${created.email} 的${STORE_ROLE_LABEL[newStoreMemberRole.value]}邀请（未配置邮件服务，请自行通知对方登录后接受）`
+  await reloadInvitations()
 }
 
 async function addStoreMember(): Promise<void> {
@@ -237,18 +270,27 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
         <tbody>
           <tr v-for="i in invitations" :key="i.id">
             <td>{{ i.email }}</td>
-            <td>{{ ROLE_LABEL[i.role] || i.role }}</td>
+            <td>
+              <span v-if="i.storeId" class="team-tag">{{ storeNameById.get(i.storeId) || '门店' }}</span>
+              {{ invitationRoleLabel(i.role) }}
+            </td>
             <td>
               {{ INVITATION_STATUS_LABEL[i.status] || i.status }}
               <span v-if="i.expired" class="team-tag">已过期</span>
             </td>
             <td>
-              <button
-                v-if="i.status === 'pending'"
-                type="button" class="team-quiet"
-                :disabled="grassland.loading.value"
-                @click="revokeInvite(i)"
-              >撤销</button>
+              <template v-if="i.status === 'pending'">
+                <button
+                  type="button" class="team-quiet"
+                  :disabled="grassland.loading.value"
+                  @click="copyInviteLink"
+                >复制链接</button>
+                <button
+                  type="button" class="team-quiet"
+                  :disabled="grassland.loading.value"
+                  @click="revokeInvite(i)"
+                >撤销</button>
+              </template>
             </td>
           </tr>
         </tbody>
@@ -301,20 +343,34 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
       </table>
 
       <div class="team-row">
-        <input v-model="newStoreMemberAccount" placeholder="账号 ID（UUID）" />
+        <input v-model="newStoreMemberEmail" type="email" placeholder="对方邮箱" @keyup.enter="sendStoreInvite" />
         <select v-model="newStoreMemberRole">
           <option value="staff">店员</option>
           <option value="manager">店长</option>
         </select>
         <button
           type="button"
-          :disabled="grassland.loading.value || !newStoreMemberAccount.trim()"
-          @click="addStoreMember"
-        >添加</button>
+          :disabled="grassland.loading.value || !newStoreMemberEmail.trim()"
+          @click="sendStoreInvite"
+        >发出邀请</button>
       </div>
       <p class="team-hint">
-        加店员需本店店长及以上；任命店长需组织管理员及以上。不可移除本店唯一店长。
+        邀请店员需本店店长及以上；邀请店长需组织管理员及以上。对方登录后在「我的邀请」接受，
+        直接成为本店成员（不占组织成员席位）。系统不会透露该邮箱是否已注册。
       </p>
+
+      <details class="team-adv">
+        <summary>已知账号 ID？直接添加</summary>
+        <div class="team-row">
+          <input v-model="newStoreMemberAccount" placeholder="账号 ID（UUID）" />
+          <button
+            type="button"
+            :disabled="grassland.loading.value || !newStoreMemberAccount.trim()"
+            @click="addStoreMember"
+          >直接添加</button>
+        </div>
+        <p class="team-hint">跳过邀请直接入店；角色取上方下拉框的选择。</p>
+      </details>
     </section>
   </article>
 </template>

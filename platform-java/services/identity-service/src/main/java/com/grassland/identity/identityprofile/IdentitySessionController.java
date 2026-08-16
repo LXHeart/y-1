@@ -22,6 +22,8 @@ import reactor.core.publisher.Mono;
  *       并用 {@code current} 标出发起本次请求的那台设备（前端据此提示「撤销自己会登出」）。</li>
  *   <li>DELETE /api/me/sessions/{sessionToken} — 撤销该 session：清活动身份 + <b>删除登录会话（该设备真正登出）</b>
  *       + 审计 {@code revoke_session}；撤销他人 session → 403；不存在 → 404。</li>
+ *   <li>DELETE /api/me/sessions — 一键登出**其它所有设备**（本机保留）：逐台走同一撤销顺序并审计，
+ *       返回撤销数量。响应含 {@code expiresAt}（登录会话过期时刻，DB 时区换算后的绝对时间）。</li>
  * </ul>
  *
  * <p>设备清单以 legacy {@code session} 表（登录即有行）为准，左连 {@code identity_session} 补活动身份/设备信息——
@@ -52,6 +54,25 @@ public class IdentitySessionController {
                                 "data", list.stream()
                                         .map(s -> toBody(s, s.sessionToken().equals(principal.sid())))
                                         .toList()))));
+    }
+
+    /** 一键登出其它所有设备：撤销除本机外的全部登录会话（顺序与单条撤销一致），返回撤销数量。 */
+    @DeleteMapping("/api/me/sessions")
+    public Mono<ResponseEntity<Map<String, Object>>> revokeOthers(ServerHttpRequest request) {
+        DeviceFingerprint fp = DeviceFingerprint.from(request);
+        return accounts.resolvePrincipal(request)
+                .flatMap(principal -> sessions.findLoginSessionsByAccount(principal.user().id())
+                        .filter(s -> !s.sessionToken().equals(principal.sid()))
+                        .concatMap(target -> sessions.deleteByToken(target.sessionToken())
+                                .then(loginSessions.deleteSession(target.sessionToken()))
+                                .then(audit.append(IdentityAuditAction.REVOKE_SESSION, principal.user().id(),
+                                        target.activeIdentityType(), null, target.sessionToken(),
+                                        fp.deviceId(), fp.ipAddress(), fp.userAgent()))
+                                // then(voidMono) 完成时不发射元素——不 thenReturn 的话 count() 恒为 0。
+                                .thenReturn(target))
+                        .count()
+                        .map(count -> ResponseEntity.ok(Map.of("success", true,
+                                "data", Map.of("revoked", count)))));
     }
 
     @DeleteMapping("/api/me/sessions/{sessionToken}")
@@ -87,6 +108,7 @@ public class IdentitySessionController {
         m.put("deviceLabel", s.deviceLabel());
         m.put("ipAddress", s.ipAddress());
         m.put("lastSeenAt", s.lastSeenAt() == null ? null : s.lastSeenAt().toString());
+        m.put("expiresAt", s.expiresAt() == null ? null : s.expiresAt().toString());
         m.put("current", current);
         return m;
     }

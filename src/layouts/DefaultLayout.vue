@@ -439,6 +439,12 @@ onMounted(() => {
       router.replace('/commerce')
     }
   }
+  // 邀请直达深链：邮件/口头转发的站内链接（不携带邀请 id——被邀请人登录后按自己邮箱看到全部待接受邀请，
+  // 带裸 id 反而会成为存在性探测面）。落到草场工作台的「我的邀请」卡片。
+  if (query.has('invite')) {
+    router.push({ name: 'grassland' })
+    grasslandAnchor.value = 'gl-invitations'
+  }
   void loadCurrentUser().then(() => {
     if (isAuthenticated.value) void loadCreditBalance()
   })

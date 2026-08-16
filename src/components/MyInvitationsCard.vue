@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
-import type { MembershipRole, MyInvitation } from '../types/grassland'
+import type { MembershipRole, MyInvitation, StoreRole } from '../types/grassland'
 
 /**
  * 「我的邀请」——被邀请人侧入口（`/api/me/invitations`）。
@@ -24,6 +24,23 @@ const notice = ref('')
 const ROLE_LABEL: Record<Exclude<MembershipRole, 'owner'>, string> = {
   admin: '管理员',
   member: '成员',
+}
+const STORE_ROLE_LABEL: Record<StoreRole, string> = {
+  manager: '店长',
+  staff: '店员',
+}
+
+/** 邀请角色标签：组织级与门店级并存，逐档回退。 */
+function roleLabel(role: MyInvitation['role']): string {
+  return ROLE_LABEL[role as Exclude<MembershipRole, 'owner'>]
+    || STORE_ROLE_LABEL[role as StoreRole] || role
+}
+
+/** 邀请范围的展示名：门店级「组织 · 门店」，组织级只显示组织名。 */
+function scopeLabel(invitation: MyInvitation): string {
+  return invitation.storeId
+    ? `${invitation.organizationName} · ${invitation.storeName || '门店'}`
+    : invitation.organizationName
 }
 
 async function refresh(): Promise<void> {
@@ -53,8 +70,8 @@ async function accept(invitation: MyInvitation): Promise<void> {
   if (!result) return
   // alreadyMember：本就是成员时后端不报错（幂等消费邀请），如实告知而不是假装刚加入
   notice.value = result.alreadyMember
-    ? `你本来就是「${invitation.organizationName}」的成员，邀请已关闭`
-    : `已加入「${invitation.organizationName}」（${ROLE_LABEL[invitation.role] || invitation.role}）`
+    ? `你本来就是「${scopeLabel(invitation)}」的成员，邀请已关闭`
+    : `已加入「${scopeLabel(invitation)}」（${roleLabel(invitation.role)}）`
   await refresh()
   emit('joined', invitation.organizationId)
 }
@@ -63,7 +80,7 @@ async function decline(invitation: MyInvitation): Promise<void> {
   notice.value = ''
   const declined = await grassland.declineInvitation(invitation.id)
   if (declined === null) return  // 已过期/已处理等由 error 条呈现
-  notice.value = `已谢绝「${invitation.organizationName}」的邀请`
+  notice.value = `已谢绝「${scopeLabel(invitation)}」的邀请`
   await refresh()
 }
 </script>
@@ -79,13 +96,14 @@ async function decline(invitation: MyInvitation): Promise<void> {
     <p v-if="notice" class="inv-alert inv-ok">{{ notice }}</p>
 
     <p v-if="invitations.length === 0" class="inv-hint">
-      暂无待接受的邀请。组织所有者用你的注册邮箱发出邀请后，这里会出现。
+      暂无待接受的邀请。组织或门店用你的注册邮箱发出邀请后，这里会出现。
     </p>
     <ul v-else class="inv-list">
       <li v-for="i in invitations" :key="i.id">
         <div class="inv-main">
-          <strong>{{ i.organizationName }}</strong>
-          <span class="inv-tag">{{ ROLE_LABEL[i.role] || i.role }}</span>
+          <strong>{{ scopeLabel(i) }}</strong>
+          <span class="inv-tag">{{ i.storeId ? '门店' : '组织' }}</span>
+          <span class="inv-tag">{{ roleLabel(i.role) }}</span>
         </div>
         <div class="inv-actions">
           <button type="button" :disabled="grassland.loading.value" @click="accept(i)">接受</button>

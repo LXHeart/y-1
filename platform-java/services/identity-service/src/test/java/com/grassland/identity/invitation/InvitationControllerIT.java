@@ -1,5 +1,7 @@
 package com.grassland.identity.invitation;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.grassland.identity.IdentityItSupport;
 import java.util.List;
 import java.util.Map;
@@ -203,7 +205,138 @@ class InvitationControllerIT extends IdentityItSupport {
         client().get().uri("/api/me/invitations").exchange().expectStatus().isUnauthorized();
     }
 
+    // ---------- 门店粒度邀请（体验小项：按门店粒度邀请） ----------
+
+    @Test
+    void storeInvitationAcceptLandsStoreMembershipNotOrgMembership() {
+        var owner = seedAccount("inv-store-owner@example.com");
+        String orgId = createOrg(owner.cookie(), "门店邀请主体");
+        String storeId = createStore(orgId, owner.cookie(), "徐汇店");
+        var invitee = seedAccount("inv-store-staff@example.com");
+
+        // org OWNER 对门店隐式 MANAGER：可直接发门店 staff 邀请（响应带 storeId）。
+        inviteStore(orgId, storeId, owner.cookie(), "inv-store-staff@example.com", "staff")
+                .expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.role").isEqualTo("staff")
+                .jsonPath("$.data.storeId").isEqualTo(storeId);
+
+        // 被邀请人看到门店名。
+        client().get().uri("/api/me/invitations")
+                .header("Cookie", "y1.sid=" + invitee.cookie()).exchange()
+                .expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].organizationName").isEqualTo("门店邀请主体")
+                .jsonPath("$.data[0].storeName").isEqualTo("徐汇店")
+                .jsonPath("$.data[0].storeId").isEqualTo(storeId)
+                .jsonPath("$.data[0].role").isEqualTo("staff");
+
+        client().post().uri("/api/me/invitations/" + firstInvitationId(invitee.cookie()) + "/accept")
+                .header("Cookie", "y1.sid=" + invitee.cookie()).exchange()
+                .expectStatus().isOk().expectBody()
+                .jsonPath("$.data.storeId").isEqualTo(storeId)
+                .jsonPath("$.data.role").isEqualTo("staff")
+                .jsonPath("$.data.alreadyMember").isEqualTo(false);
+
+        // 落 store_membership，且**不**产生组织成员行（店铺员工不占组织席位）。
+        Integer storeMembers = db.sql(
+                        "SELECT COUNT(*)::int AS c FROM store_membership"
+                                + " WHERE store_id = CAST(:store AS uuid) AND account_id = CAST(:acct AS uuid)")
+                .bind("store", storeId).bind("acct", invitee.accountId())
+                .map(r -> r.get("c", Integer.class)).one().block();
+        assertThat(storeMembers).isEqualTo(1);
+        client().get().uri("/api/organizations/" + orgId + "/memberships")
+                .header("Cookie", "y1.sid=" + owner.cookie()).exchange()
+                .expectStatus().isOk().expectBody().jsonPath("$.data.length()").isEqualTo(1);
+
+        // 再发一次同店邀请：已被消费（终态不占位）→ 新 pending 成立；接受时已是店员 → alreadyMember。
+        inviteStore(orgId, storeId, owner.cookie(), "inv-store-staff@example.com", "staff")
+                .expectStatus().isCreated();
+        client().post().uri("/api/me/invitations/" + firstInvitationId(invitee.cookie()) + "/accept")
+                .header("Cookie", "y1.sid=" + invitee.cookie()).exchange()
+                .expectStatus().isOk().expectBody()
+                .jsonPath("$.data.alreadyMember").isEqualTo(true);
+    }
+
+    @Test
+    void storeInvitationGatesMirrorStoreMembershipGates() {
+        var owner = seedAccount("inv-gate-owner@example.com");
+        String orgId = createOrg(owner.cookie(), "邀请门禁主体");
+        String storeId = createStore(orgId, owner.cookie(), "门禁店");
+        // 任命纯门店经理（org ADMIN+ 才能任命 manager；owner 隐式）。
+        var manager = seedAccount("inv-gate-manager@example.com");
+        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue(Map.of("accountId", manager.accountId(), "role", "manager"))
+                .exchange().expectStatus().isCreated();
+        var member = seedAccount("inv-gate-member@example.com");
+        addMember(orgId, owner.cookie(), member.accountId(), "member");
+
+        // 纯门店经理可发本店 staff 邀请。
+        inviteStore(orgId, storeId, manager.cookie(), "someone-a@example.com", "staff")
+                .expectStatus().isCreated();
+        // 纯门店经理不能发本店 manager 邀请（任命 manager 属 org ADMIN+）。
+        inviteStore(orgId, storeId, manager.cookie(), "someone-b@example.com", "manager")
+                .expectStatus().isForbidden();
+        // org member（非 admin/owner）不能发组织级邀请（既有行为保持）。
+        invite(orgId, member.cookie(), "someone-c@example.com", "member")
+                .expectStatus().isForbidden();
+        // org owner 可发本店 manager 邀请（org ADMIN 对门店隐式 MANAGER）。
+        inviteStore(orgId, storeId, owner.cookie(), "someone-d@example.com", "manager")
+                .expectStatus().isCreated();
+
+        // 跨 org 门店 → 404（ensureStoreInOrg 隔离）。
+        var otherOwner = seedAccount("inv-gate-other@example.com");
+        String otherOrg = createOrg(otherOwner.cookie(), "别家主体");
+        String otherStore = createStore(otherOrg, otherOwner.cookie(), "别家店");
+        inviteStore(orgId, otherStore, owner.cookie(), "someone-e@example.com", "staff")
+                .expectStatus().isNotFound();
+
+        // 同 org 同邮箱已有 pending（门店级占位后组织级再来）→ 409。
+        invite(orgId, owner.cookie(), "someone-d@example.com", "member")
+                .expectStatus().isEqualTo(409);
+
+        // 门店经理可撤销本店邀请；org member 不可撤销。
+        String pendingId = lastInvitationId(orgId, owner.cookie());
+        client().delete().uri("/api/organizations/" + orgId + "/invitations/" + pendingId)
+                .header("Cookie", "y1.sid=" + member.cookie()).exchange()
+                .expectStatus().isForbidden();
+        client().delete().uri("/api/organizations/" + orgId + "/invitations/" + pendingId)
+                .header("Cookie", "y1.sid=" + manager.cookie()).exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void storeInvitationRejectsInvalidRoleAndStoreId() {
+        var owner = seedAccount("inv-bad-store@example.com");
+        String orgId = createOrg(owner.cookie(), "非法门店入参主体");
+        String storeId = createStore(orgId, owner.cookie(), "入参店");
+
+        inviteStore(orgId, storeId, owner.cookie(), "someone@example.com", "owner")
+                .expectStatus().isBadRequest();
+        inviteStore(orgId, "not-a-uuid", owner.cookie(), "someone@example.com", "staff")
+                .expectStatus().isBadRequest();
+        inviteStore(orgId, storeId, owner.cookie(), "someone@example.com", "member")
+                .expectStatus().isBadRequest();
+    }
+
     // ---------- helpers ----------
+
+    private WebTestClient.ResponseSpec inviteStore(String orgId, String storeId, String cookie,
+                                                   String email, String role) {
+        return client().post().uri("/api/organizations/" + orgId + "/invitations")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+                .bodyValue(Map.of("email", email, "role", role, "storeId", storeId))
+                .exchange();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String lastInvitationId(String orgId, String cookie) {
+        Map<String, Object> body = client().get().uri("/api/organizations/" + orgId + "/invitations")
+                .header("Cookie", "y1.sid=" + cookie)
+                .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> list = (List<Map<String, Object>>) body.get("data");
+        return (String) list.get(0).get("id");
+    }
 
     private WebTestClient.ResponseSpec invite(String orgId, String cookie, String email, String role) {
         return client().post().uri("/api/organizations/" + orgId + "/invitations")

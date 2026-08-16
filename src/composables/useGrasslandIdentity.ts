@@ -157,6 +157,10 @@ export function useGrasslandIdentity(run: RunFn) {
   const revokeSession = (sessionToken: string) =>
     run(() => request<unknown>(`/api/me/sessions/${encodeURIComponent(sessionToken)}`, { method: 'DELETE' }))
 
+  /** 一键登出其它所有设备（本机保留）；返回被撤销的设备数。 */
+  const revokeOtherSessions = () =>
+    run(() => request<{ revoked: number }>('/api/me/sessions', { method: 'DELETE' }))
+
   // ---------- identity：按邮箱邀请成员 ----------
 
   /**
@@ -168,10 +172,12 @@ export function useGrasslandIdentity(run: RunFn) {
    * 后端**不回答该邮箱是否已注册**——存在与否都返回 201（防账号枚举）。
    * 响应的 `emailSent` 表示是否真的发出了通知邮件（本地未配 SMTP 时为 false，需邀请人自行告知对方）。
    */
-  const inviteMember = (orgId: string, email: string, role: 'admin' | 'member') =>
+  /** 门店级邀请传 storeId（角色为 staff/manager）；缺省为组织级邀请（admin/member）。 */
+  const inviteMember = (orgId: string, email: string, role: 'admin' | 'member' | 'staff' | 'manager',
+    storeId?: string) =>
     run(() => request<OrgInvitation>(`/api/organizations/${orgId}/invitations`, {
       method: 'POST',
-      body: JSON.stringify({ email, role }),
+      body: JSON.stringify({ email, role, ...(storeId ? { storeId } : {}) }),
     }))
 
   /** 列本组织的邀请（含终态，需 org MEMBER+）。列表项**不带** `emailSent`。 */
@@ -235,7 +241,7 @@ export function useGrasslandIdentity(run: RunFn) {
     listPendingPermissionRequests, claimPermissionRequest, listPermissionRequestAudit,
     reviewPermissionRequest,
     listMemberships, addMembership, removeMembership,
-    listMySessions, revokeSession,
+    listMySessions, revokeOtherSessions, revokeSession,
     inviteMember, listInvitations, revokeInvitation,
     listMyInvitations, acceptInvitation, declineInvitation,
     listStores, createStore, listStoreMemberships, addStoreMembership, removeStoreMembership,

@@ -20,7 +20,7 @@ import reactor.core.publisher.Mono;
 public class InvitationRepository {
 
     private static final String SELECT_COLS =
-            "id::text, organization_id::text, email, role, status,"
+            "id::text, organization_id::text, store_id::text, email, role, status,"
             + " invited_by_account_id::text, accepted_by_account_id::text, expires_at, created_at";
 
     private final DatabaseClient db;
@@ -29,20 +29,26 @@ public class InvitationRepository {
         this.db = db;
     }
 
-    /** 新建待接受邀请。同 org 同邮箱已有 pending 时触发 partial unique 冲突（由调用方转 409）。 */
-    public Mono<Invitation> create(String organizationId, String email, String role,
+    /**
+     * 新建待接受邀请（storeId 为 null = 组织级；非 null = 门店级，role 为 staff/manager）。
+     * 同 org 同邮箱已有 pending 时触发 partial unique 冲突（由调用方转 409）。
+     */
+    public Mono<Invitation> create(String organizationId, String storeId, String email, String role,
                                    String invitedByAccountId, Duration ttl) {
         String id = UUID.randomUUID().toString();
-        return db.sql("""
+        var spec = db.sql("""
                 INSERT INTO organization_invitation(
-                    id, organization_id, email, role, status, invited_by_account_id, expires_at)
-                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), :email, :role, 'pending',
+                    id, organization_id, store_id, email, role, status, invited_by_account_id, expires_at)
+                VALUES (CAST(:id AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :email, :role, 'pending',
                         CAST(:inviter AS uuid), now() + make_interval(secs => :ttl))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("org", organizationId).bind("email", email).bind("role", role)
-                .bind("inviter", invitedByAccountId).bind("ttl", (double) ttl.toSeconds())
-                .map(InvitationRepository::map).one();
+                .bind("inviter", invitedByAccountId).bind("ttl", (double) ttl.toSeconds());
+        spec = storeId == null
+                ? spec.bindNull("store", java.util.UUID.class)
+                : spec.bind("store", java.util.UUID.fromString(storeId));
+        return spec.map(InvitationRepository::map).one();
     }
 
     /** 组织侧列表：全部邀请（含终态），新的在前。 */
@@ -71,9 +77,11 @@ public class InvitationRepository {
     public Flux<PendingInvitationView> findPendingForEmail(String email) {
         return db.sql("""
                 SELECT i.id::text AS id, i.organization_id::text AS organization_id, o.name AS organization_name,
+                       i.store_id::text AS store_id, s.name AS store_name,
                        i.role, i.expires_at, i.created_at
                 FROM organization_invitation i
                 JOIN organization o ON o.id = i.organization_id
+                LEFT JOIN store s ON s.id = i.store_id
                 WHERE i.email = :email AND i.status = 'pending' AND i.expires_at > now()
                 ORDER BY i.created_at DESC
                 """)
@@ -82,6 +90,8 @@ public class InvitationRepository {
                         row.get("id", String.class),
                         row.get("organization_id", String.class),
                         row.get("organization_name", String.class),
+                        row.get("store_id", String.class),
+                        row.get("store_name", String.class),
                         row.get("role", String.class),
                         toInstant(row.get("expires_at", OffsetDateTime.class)),
                         toInstant(row.get("created_at", OffsetDateTime.class))))
@@ -109,6 +119,7 @@ public class InvitationRepository {
         return new Invitation(
                 row.get("id", String.class),
                 row.get("organization_id", String.class),
+                row.get("store_id", String.class),
                 row.get("email", String.class),
                 row.get("role", String.class),
                 row.get("status", String.class),

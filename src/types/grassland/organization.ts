@@ -248,6 +248,8 @@ export interface LoginSession {
   deviceLabel: string | null
   ipAddress: string | null
   lastSeenAt: string | null
+  /** 登录会话过期时刻（DB 时区换算后的绝对时间）；legacy expire 列为无时区 timestamp，写读同 DB 时区。 */
+  expiresAt: string | null
   /** 是否就是当前这台设备——撤销它等于把自己登出。 */
   current: boolean
 }
@@ -267,7 +269,9 @@ export interface OrgInvitation {
   id: string
   organizationId: string
   email: string
-  role: Exclude<MembershipRole, 'owner'>
+  /** 门店级邀请的目标门店；组织级邀请（缺省）为空。 */
+  storeId?: string
+  role: Exclude<MembershipRole, 'owner'> | StoreRole
   status: InvitationStatus
   expiresAt: string | null
   createdAt: string | null
@@ -282,7 +286,10 @@ export interface MyInvitation {
   id: string
   organizationId: string
   organizationName: string
-  role: Exclude<MembershipRole, 'owner'>
+  /** 门店级邀请的目标门店（含名称）；组织级邀请两个字段都缺省。 */
+  storeId?: string
+  storeName?: string
+  role: Exclude<MembershipRole, 'owner'> | StoreRole
   expiresAt: string | null
   createdAt: string | null
 }
@@ -290,7 +297,9 @@ export interface MyInvitation {
 /** 接受邀请的结果。alreadyMember=true 表示本就是成员（幂等成功，非报错）。 */
 export interface InvitationAcceptResult {
   organizationId: string
-  role: Exclude<MembershipRole, 'owner'>
+  /** 门店级邀请的接受结果带目标门店。 */
+  storeId?: string
+  role: Exclude<MembershipRole, 'owner'> | StoreRole
   alreadyMember: boolean
 }
 

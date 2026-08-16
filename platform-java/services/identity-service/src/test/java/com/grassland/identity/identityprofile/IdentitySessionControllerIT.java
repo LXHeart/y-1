@@ -240,6 +240,53 @@ class IdentitySessionControllerIT extends IdentityItSupport {
         client().get().uri("/api/me/sessions").exchange().expectStatus().isUnauthorized();
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void listSessionsExposesLoginExpiry() {
+        var acc = seedAccount("is-expiry@example.com");
+
+        Map<String, Object> body = client().get().uri("/api/me/sessions")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
+        assertThat(data).hasSize(1);
+        // expire 是无时区 timestamp（connect-pg-simple 遗产），经 DB TimeZone 换算成绝对时刻下发；
+        // 写入侧 now()+7d，读到的一定在未来且形状可解析。
+        String expiresAt = (String) data.get(0).get("expiresAt");
+        assertThat(expiresAt).isNotBlank();
+        assertThat(java.time.Instant.parse(expiresAt)).isAfter(java.time.Instant.now());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void revokeOthersLogsOutEveryDeviceButCurrent() {
+        var acc = seedAccount("is-bulk@example.com"); // 本机（设备1）
+        String device2 = cookieFor(acc.accountId());  // 设备2
+        String device3 = cookieFor(acc.accountId());  // 设备3
+
+        Map<String, Object> body = client().delete().uri("/api/me/sessions")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        assertThat(((Number) ((Map<String, Object>) body.get("data")).get("revoked")).longValue())
+                .isEqualTo(2);
+
+        // 设备2/3 真的登出；本机仍有效且只剩一行。
+        client().get().uri("/api/me/sessions").header("Cookie", "y1.sid=" + device2)
+                .exchange().expectStatus().isUnauthorized();
+        client().get().uri("/api/me/sessions").header("Cookie", "y1.sid=" + device3)
+                .exchange().expectStatus().isUnauthorized();
+        Map<String, Object> mine = client().get().uri("/api/me/sessions")
+                .header("Cookie", "y1.sid=" + acc.cookie()).exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        assertThat((List<?>) mine.get("data")).hasSize(1);
+
+        // 每台被撤销的设备各留一条审计。
+        Long revoked = db.sql("SELECT COUNT(*)::int AS c FROM identity_audit_log"
+                        + " WHERE account_id = CAST(:acct AS uuid) AND action = 'revoke_session'")
+                .bind("acct", acc.accountId()).map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(revoked).isEqualTo(2);
+    }
+
     /** 激活 recommender：identity_session 行是懒创建的，不激活就不会出现在设备列表里。 */
     private void activate(String cookie) {
         client().post().uri("/api/me/active-identity")

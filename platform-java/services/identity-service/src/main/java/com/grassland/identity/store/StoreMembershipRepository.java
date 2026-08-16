@@ -25,6 +25,19 @@ public class StoreMembershipRepository {
         this.db = db;
     }
 
+    /** 幂等插入（ON CONFLICT DO NOTHING）：已是门店成员返回空（邀请接受视为幂等成功，不降级既有角色）。 */
+    public Mono<StoreMembership> createIfAbsent(String storeId, String accountId, String role) {
+        String id = UUID.randomUUID().toString();
+        return db.sql("""
+                INSERT INTO store_membership(id, store_id, account_id, role)
+                VALUES (CAST(:id AS uuid), CAST(:store AS uuid), CAST(:acct AS uuid), :role)
+                ON CONFLICT (store_id, account_id) DO NOTHING
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("store", storeId).bind("acct", accountId).bind("role", role)
+                .map(StoreMembershipRepository::map).one();
+    }
+
     public Mono<StoreMembership> create(String storeId, String accountId, String role) {
         String id = UUID.randomUUID().toString();
         return db.sql("""

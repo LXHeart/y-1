@@ -11,6 +11,7 @@ import java.time.Instant;
 public record Invitation(
         String id,
         String organizationId,
+        String storeId,
         String email,
         String role,
         String status,

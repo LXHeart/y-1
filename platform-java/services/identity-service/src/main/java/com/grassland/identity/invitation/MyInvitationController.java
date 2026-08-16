@@ -5,6 +5,7 @@ import com.grassland.identity.event.EventEnvelope;
 import com.grassland.identity.event.OutboxRepository;
 import com.grassland.identity.membership.MembershipRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
+import com.grassland.identity.store.StoreMembershipRepository;
 import com.grassland.identity.user.AuthUser;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -49,15 +50,17 @@ public class MyInvitationController {
     private final CurrentAccountResolver accounts;
     private final InvitationRepository invitations;
     private final MembershipRepository memberships;
+    private final StoreMembershipRepository storeMemberships;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
 
     public MyInvitationController(CurrentAccountResolver accounts, InvitationRepository invitations,
-                                  MembershipRepository memberships, OutboxRepository outbox,
-                                  TransactionalOperator transactions) {
+                                  MembershipRepository memberships, StoreMembershipRepository storeMemberships,
+                                  OutboxRepository outbox, TransactionalOperator transactions) {
         this.accounts = accounts;
         this.invitations = invitations;
         this.memberships = memberships;
+        this.storeMemberships = storeMemberships;
         this.outbox = outbox;
         this.transactions = transactions;
     }
@@ -120,12 +123,34 @@ public class MyInvitationController {
                 });
     }
 
-    /** 落成员关系 + 事件。已是成员（{@code createIfAbsent} 空结果）视为幂等成功，用 alreadyMember 如实告知前端。 */
+    /**
+     * 落成员关系 + 事件。组织级 → organization_membership；门店级 → store_membership（已是成员视为
+     * 幂等成功，用 alreadyMember 如实告知前端）。已经是本店店员又被邀为店长时邀请照样消费、
+     * 既有角色不降级不升级（与组织级语义一致，改档走成员管理端点）。
+     */
     private Mono<ResponseEntity<Map<String, Object>>> joinOrganization(Invitation invitation, AuthUser account) {
-        Map<String, Object> payload = Map.of(
-                "organizationId", invitation.organizationId(),
-                "accountId", account.id(),
-                "role", invitation.role());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("organizationId", invitation.organizationId());
+        if (invitation.storeId() != null) {
+            payload.put("storeId", invitation.storeId());
+        }
+        payload.put("accountId", account.id());
+        payload.put("role", invitation.role());
+        if (invitation.storeId() != null) {
+            return storeMemberships.createIfAbsent(invitation.storeId(), account.id(), invitation.role())
+                    .flatMap(membership -> outbox.append(new EventEnvelope(
+                            UUID.randomUUID().toString(), "StoreMembershipGranted", "StoreMembership",
+                            membership.id(), 1, Instant.now(), null, payload))
+                            .thenReturn(false))
+                    .switchIfEmpty(Mono.just(true))
+                    .flatMap(alreadyMember -> outbox
+                            .append(event("MembershipInvitationAccepted", invitation, payload))
+                            .thenReturn(ResponseEntity.ok(Map.<String, Object>of("success", true, "data", Map.of(
+                                    "organizationId", invitation.organizationId(),
+                                    "storeId", invitation.storeId(),
+                                    "role", invitation.role(),
+                                    "alreadyMember", alreadyMember)))));
+        }
         return memberships.createIfAbsent(invitation.organizationId(), account.id(), invitation.role())
                 .flatMap(membership -> outbox.append(new EventEnvelope(
                         UUID.randomUUID().toString(), "MembershipGranted", "Membership",
@@ -159,6 +184,10 @@ public class MyInvitationController {
         map.put("id", view.id());
         map.put("organizationId", view.organizationId());
         map.put("organizationName", view.organizationName());
+        if (view.storeId() != null) {
+            map.put("storeId", view.storeId());
+            map.put("storeName", view.storeName());
+        }
         map.put("role", view.role());
         map.put("expiresAt", view.expiresAt() == null ? null : view.expiresAt().toString());
         map.put("createdAt", view.createdAt() == null ? null : view.createdAt().toString());

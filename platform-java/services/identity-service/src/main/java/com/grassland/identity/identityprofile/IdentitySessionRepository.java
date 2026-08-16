@@ -83,6 +83,7 @@ public class IdentitySessionRepository {
                        :acct AS account_id,
                        i.active_identity_type, i.device_id, i.device_label, i.ip_address, i.user_agent,
                        i.issued_at, i.last_seen_at,
+                       (s.expire AT TIME ZONE current_setting('TimeZone')) AS login_expires_at,
                        i.reauthenticated_at, i.auth_strength
                 FROM session s
                 LEFT JOIN identity_session i ON i.session_token = s.sid
@@ -199,7 +200,9 @@ public class IdentitySessionRepository {
                 row.get("user_agent", String.class),
                 toInstant(row.get("issued_at", OffsetDateTime.class)),
                 toInstant(row.get("last_seen_at", OffsetDateTime.class)),
-                null,
+                // expire 是无时区 timestamp（connect-pg-simple 遗产，写入与比较都在 DB 会话时区），
+                // 用 DB 自己的 TimeZone 设置换算成 timestamptz——写读两侧同一时区，换算无损。
+                toInstant(row.get("login_expires_at", OffsetDateTime.class)),
                 toInstant(row.get("reauthenticated_at", OffsetDateTime.class)),
                 row.get("auth_strength", String.class)
         );

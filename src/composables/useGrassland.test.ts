@@ -366,6 +366,29 @@ describe('成员邀请请求契约', () => {
     expect(body.role).toBe('admin')
     // 与 addMembership 的请求体不同——写成 accountId 后端会 400
     expect(body).not.toHaveProperty('accountId')
+    // 组织级邀请不带 storeId
+    expect(body).not.toHaveProperty('storeId')
+  })
+
+  test('门店级邀请携带 storeId 且角色为 staff/manager', async () => {
+    const spy = mockFetchData({})
+    const { inviteMember } = useGrassland()
+
+    await inviteMember('org-1', 'staff-member@example.com', 'staff', 'store-1')
+
+    const body = bodyOf(spy)
+    expect(body).toEqual({ email: 'staff-member@example.com', role: 'staff', storeId: 'store-1' })
+  })
+
+  test('revokeOtherSessions 打集合 DELETE 端点', async () => {
+    const spy = mockFetchData({ revoked: 2 })
+    const { revokeOtherSessions } = useGrassland()
+
+    const result = await revokeOtherSessions()
+
+    expect(spy.mock.calls[0][0]).toBe('/api/me/sessions')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('DELETE')
+    expect(result).toEqual({ revoked: 2 })
   })
 
   test('accept / decline 打到 /api/me/invitations 且不带请求体', async () => {
