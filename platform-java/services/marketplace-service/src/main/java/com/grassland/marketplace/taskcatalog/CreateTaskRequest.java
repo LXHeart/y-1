@@ -24,13 +24,14 @@ public record CreateTaskRequest(
         Integer minRecommenderLevel,
         String storeId,
         TaskRequirements requirements,
-        Integer autoAcceptMinLevel
+        Integer autoAcceptMinLevel,
+        Long freebieDepositCents
 ) {
     public CreateTaskRequest(String organizationId, String title, String description, String contentForm,
                              String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
                              Integer minRecommenderLevel) {
         this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents,
-                applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty(), null);
+                applicationDeadline, minRecommenderLevel, null, TaskRequirements.empty(), null, null);
     }
 
     public CreateTaskRequest {
@@ -46,6 +47,10 @@ public record CreateTaskRequest(
         if (bountyCents != null && bountyCents < 0) {
             throw new IllegalArgumentException("bountyCents must be >= 0");
         }
+        if (freebieDepositCents != null && freebieDepositCents < 0) {
+            throw new IllegalArgumentException("freebieDepositCents must be >= 0");
+        }
+        TaskCatalogFundingXor.validate(bountyCents, freebieDepositCents);
         if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
             throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
         }

@@ -103,12 +103,14 @@ public class TaskController {
                         .flatMap(access -> transactions.transactional(
                                 tasks.acquireOrganizationPublishLock(access.organizationId())
                                         .then(enforcePublishGates(access.organizationId(),
-                                                access.permissionTier(), body.bountyCents()))
+                                                access.permissionTier(), body.bountyCents(),
+                                                body.freebieDepositCents()))
                                         .then(enforceLadderBudget(body.requirements(), body.bountyCents()))
                                         .then(tasks.create(caller.accountId(), access.organizationId(), body.title(),
                                                 body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                                 body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                                access.storeId(), body.requirements(), body.autoAcceptMinLevel()))
+                                                access.storeId(), body.requirements(), body.autoAcceptMinLevel(),
+                                                body.freebieDepositCents()))
                                         .flatMap(taskReviewService::submit))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
@@ -123,7 +125,8 @@ public class TaskController {
                             tasks.createDraft(caller.accountId(), access.organizationId(), body.title(),
                                     body.description(), body.contentForm(), body.platform(), body.maxSlots(),
                                     body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
-                                    access.storeId(), body.requirements(), body.autoAcceptMinLevel()))))
+                                    access.storeId(), body.requirements(), body.autoAcceptMinLevel(),
+                                    body.freebieDepositCents()))))
                 .map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -139,7 +142,7 @@ public class TaskController {
                                         .then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
                                         body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
-                                        body.autoAcceptMinLevel())
+                                        body.autoAcceptMinLevel(), body.freebieDepositCents())
                                         .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                         .flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
@@ -154,7 +157,8 @@ public class TaskController {
                         .flatMap(access -> transactions.transactional(
                                 tasks.acquireOrganizationPublishLock(access.task().organizationId())
                                 .then(enforcePublishGates(access.task().organizationId(),
-                                                access.permissionTier(), access.task().bountyCents()))
+                                                access.permissionTier(), access.task().bountyCents(),
+                                                access.task().freebieDepositCents()))
                                         .then(enforceLadderBudget(access.task().requirements(), access.task().bountyCents()))
                                         .then(tasks.publish(id, body.expectedVersion())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
@@ -212,22 +216,30 @@ public class TaskController {
     }
 
     /**
-     * 退还本任务「已 accept 未提交凭证」的 engagement（D-03 §5）：逐条 finance release（全额返商家）+
-     * outbox {@code EngagementRefundedOnCancel}（违约信号 + 双方通知）。失败向上抛；cancel 重试会再次执行（两侧幂等）。
+     * 退还本任务「已 accept 未提交凭证」的 engagement（D-03 §5），按资金来源分支（ADR-D12 D6 关键差异行）：
+     * bounty 履约 → finance release（全额返<b>商家</b>）；freebie 履约 → finance freebie refund（押金退<b>推荐官</b>——
+     * 商家取消不是推荐官的失败）。两条路径都置终态 {@code refunded} + outbox {@code EngagementRefundedOnCancel}
+     * （违约信号供 trust 消费 + 双方通知，payload.refundDirection 标记资金去向）。失败向上抛；cancel 重试会再次执行（两侧幂等）。
      *
-     * <p>release 幂等（404/409 视作成功）后必须把 application 置终态 {@code refunded}：留在 accepted 会让推荐官
-     * 侧一直显示「进行中且可提交」（提交已被 cancelled 校验拒），且每次 cancel 重试都重复 release + 重复通知。
+     * <p>退款幂等（404/409 视作成功）后必须把 application 置终态 {@code refunded}：留在 accepted 会让推荐官
+     * 侧一直显示「进行中且可提交」（提交已被 cancelled 校验拒），且每次 cancel 重试都重复退款 + 重复通知。
      * 状态流转与 outbox append 同事务，保证「已退款 ⇔ 已通知」。
      */
     private Mono<Integer> refundAcceptedWithoutSubmission(Task task) {
         return apps.findAcceptedByTaskWithoutSubmission(task.id())
-                .concatMap(app -> finance.release(task.organizationId(), app.id())
+                .concatMap(app -> refundOnCancel(task, app)
                         .then(transactions.transactional(
                                 apps.markRefunded(app.id(), task.id())
                                         .flatMap(refunded -> outbox.append(engagementRefundedEnvelope(task, refunded))
                                                 .thenReturn(1))))
                         .defaultIfEmpty(0))
                 .reduce(0, Integer::sum);
+    }
+
+    private Mono<Void> refundOnCancel(Task task, TaskApplication app) {
+        return app.freebieDepositCents() > 0
+                ? finance.freebieRefund(task.organizationId(), app.id())
+                : finance.release(task.organizationId(), app.id());
     }
 
     /**
@@ -242,7 +254,8 @@ public class TaskController {
                                                             ServerHttpRequest request) {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "published")
-                        .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents())
+                        .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
+                                        body.freebieDepositCents())
                                 .then(enforceLadderBudget(body.requirements() == null
                                                 ? access.task().requirements() : body.requirements(), body.bountyCents()))
                                 .thenReturn(access.task())
@@ -250,25 +263,31 @@ public class TaskController {
                                         tasks.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
                                                 body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
                                                 body.applicationDeadline(), body.minRecommenderLevel(),
-                                                body.requirements(), caller.accountId(), body.autoAcceptMinLevel())
+                                                body.requirements(), caller.accountId(), body.autoAcceptMinLevel(),
+                                                body.freebieDepositCents())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
                                                 .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
     /**
-     * 修订赏金的 tier 闸门：资金型（bounty&gt;0）须有交易权限；赏金 ≤ 本组织单笔上限。与发布同口径，
-     * 但<b>不算 active/monthly 额度</b>——修订不是新发布，任务已在额度内。防止商家借修订把赏金抬到 tier 之上。
+     * 修订资金型字段的 tier 闸门：赏金或押金任一 &gt;0 都须有交易权限且 ≤ 本组织单笔上限（ADR-D12 D5：
+     * 押金涉及托管与商家收款，与 bounty 同一 funding 闸门）。与发布同口径，但<b>不算 active/monthly 额度</b>——
+     * 修订不是新发布，任务已在额度内。防止商家借修订把资金字段抬到 tier 之上。
      */
-    private Mono<Void> enforceBountyTierGate(String permissionTier, Long bountyCents) {
+    private Mono<Void> enforceBountyTierGate(String permissionTier, Long bountyCents, Long freebieDepositCents) {
         MerchantTier tier = MerchantTier.fromDb(permissionTier);
         long bounty = bountyCents == null ? 0L : bountyCents;
+        long deposit = freebieDepositCents == null ? 0L : freebieDepositCents;
         long maxTx = PublishQuotaPolicy.maxTxAmountCents(tier);
-        if (bounty > 0 && maxTx == 0) {
+        if ((bounty > 0 || deposit > 0) && maxTx == 0) {
             return Mono.error(new MarketplaceException(403, "当前等级不可发布资金型任务"));
         }
         if (bounty > maxTx) {
             return Mono.error(new MarketplaceException(409, "赏金超出本组织单笔上限"));
+        }
+        if (deposit > maxTx) {
+            return Mono.error(new MarketplaceException(409, "押金超出本组织单笔上限"));
         }
         return Mono.empty();
     }
@@ -404,7 +423,8 @@ public class TaskController {
                                     .flatMap(access -> transactions.transactional(
                                             tasks.acquireOrganizationPublishLock(task.organizationId())
                                                     .then(enforcePublishGates(task.organizationId(),
-                                                            access.permissionTier(), task.bountyCents()))
+                                                            access.permissionTier(), task.bountyCents(),
+                                                            task.freebieDepositCents()))
                                                     .then(enforceLadderBudget(task.requirements(), task.bountyCents()))
                                                     .then(tasks.reviewApprove(id, body.expectedVersion(), reviewer.accountId())
                                                             .switchIfEmpty(Mono.error(new MarketplaceException(
@@ -637,8 +657,9 @@ public class TaskController {
      * 发布闸门 2-5（tier / 资金权限 / 单笔上限 / 活跃额度 / 月度额度）。immediate-create 内联同款；draft→publish 复用。
      * 闸门 1（org 归属）由 {@link #loadOwnedTask} 隐含（owner 必属该 org）。
      */
-    private Mono<Void> enforcePublishGates(String organizationId, String permissionTier, Long bountyCents) {
-        return publishGate.enforce(organizationId, permissionTier, bountyCents);
+    private Mono<Void> enforcePublishGates(String organizationId, String permissionTier, Long bountyCents,
+                                           Long freebieDepositCents) {
+        return publishGate.enforce(organizationId, permissionTier, bountyCents, freebieDepositCents);
     }
 
     /** 组织级任务沿用 owner 管理；门店任务允许该店 MANAGER 管理。 */
@@ -699,7 +720,8 @@ public class TaskController {
     }
 
     /**
-     * D-03 §5 cancel 退款事件：商家取消任务，已 accept 未提交凭证的 engagement 全额返还商家。
+     * D-03 §5 cancel 退款事件：商家取消任务，已 accept 未提交凭证的 engagement 按资金来源退款（ADR-D12 D6）：
+     * {@code refundDirection=merchant}（bounty，返商家）/{@code recommender}（freebie 押金，退推荐官）。
      * 确定性 eventId（type-3 {@code EngagementRefundedOnCancel:<appId>}）保证重跑 exactly-once；
      * reason={@code merchant_cancel} 供 trust 声誉消费（违约计数，D-05）。双方收件（identity 通知中心）。
      */
@@ -711,6 +733,7 @@ public class TaskController {
         payload.put("recommenderAccountId", app.recommenderAccountId());
         payload.put("taskOwnerId", task.ownerAccountId());
         payload.put("reason", "merchant_cancel");
+        payload.put("refundDirection", app.freebieDepositCents() > 0 ? "recommender" : "merchant");
         String eventId = UUID.nameUUIDFromBytes(
                 ("EngagementRefundedOnCancel:" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(eventId, "EngagementRefundedOnCancel", "TaskApplication",
@@ -760,6 +783,7 @@ public class TaskController {
         m.put("platform", task.platform());
         m.put("maxSlots", task.maxSlots());
         m.put("bountyCents", task.bountyCents());
+        m.put("freebieDepositCents", task.freebieDepositCents());
         m.put("minRecommenderLevel", task.minRecommenderLevel());
         m.put("requirements", task.requirements());
         m.put("version", task.version());

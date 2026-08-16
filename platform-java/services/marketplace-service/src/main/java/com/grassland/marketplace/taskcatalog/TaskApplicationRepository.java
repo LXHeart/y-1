@@ -30,7 +30,7 @@ public class TaskApplicationRepository {
                     + " merchant_rejection_dispute_id::text, contest_requested_at, rejection_workflow_started_at,"
                     + " reputation_level_at_accept, reputation_policy_version_at_accept,"
                     + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept, premium_support_at_accept,"
-                    + " confirmed_metric_value";
+                    + " confirmed_metric_value, freebie_deposit_cents";
 
     private final DatabaseClient db;
 
@@ -39,17 +39,21 @@ public class TaskApplicationRepository {
     }
 
     /**
-     * 报名（status=pending）。note 可空。{@code bountyCents} = 报名时 task 赏金（provisional；accept 时才冻结）。
-     * UNIQUE(task,recommender) 违例 → empty（调用方判 409「已报名」）。
+     * 报名（status=pending）。note 可空。{@code bountyCents} = 报名时 task 赏金（provisional；accept 时才冻结）；
+     * {@code freebieDepositCents} 同为 provisional 押金快照（ADR-D12）。UNIQUE(task,recommender) 违例 → empty（调用方判 409「已报名」）。
      */
-    public Mono<TaskApplication> create(String taskId, String recommenderAccountId, String note, long bountyCents) {
+    public Mono<TaskApplication> create(String taskId, String recommenderAccountId, String note,
+                                        long bountyCents, long freebieDepositCents) {
         String id = UUID.randomUUID().toString();
         var spec = db.sql("""
-                INSERT INTO task_application(id, task_id, recommender_account_id, status, note, bounty_cents)
-                VALUES (CAST(:id AS uuid), CAST(:taskId AS uuid), CAST(:rec AS uuid), 'pending', :note, :bounty)
+                INSERT INTO task_application(id, task_id, recommender_account_id, status, note, bounty_cents,
+                                             freebie_deposit_cents)
+                VALUES (CAST(:id AS uuid), CAST(:taskId AS uuid), CAST(:rec AS uuid), 'pending', :note, :bounty,
+                        :freebieDeposit)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
-                .bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId).bind("bounty", bountyCents);
+                .bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId)
+                .bind("bounty", bountyCents).bind("freebieDeposit", freebieDepositCents);
         spec = bindNullable(spec, "note", note);
         return spec.map(TaskApplicationRepository::map).one()
                 .onErrorResume(R2dbcDataIntegrityViolationException.class, e -> Mono.empty());
@@ -321,7 +325,35 @@ public class TaskApplicationRepository {
                 reviewerAccountId);
     }
 
-    /** 开始接受（Slice 4F Saga beginAcceptance）：pending → reserving，记录操作商家 + decided_at。0 行 → empty。 */
+    /** 开始接受（Slice 4F Saga beginAcceptance）：pending → reserving，记录操作商家 + decided_at。
+     *  同时以 claim 时金额刷新 provisional 快照（ADR-D12：apply 时写入的值可能已被修订覆盖，claim-time 权威；
+     *  activateEngagement 按 refresh 后的行值冻结，规避 claim→Saga 窗口内的模式翻转竞态）。0 行 → empty。 */
+    public Mono<TaskApplication> beginAcceptance(String id, String taskId, String reviewerAccountId,
+                                                 ReputationEntitlementSnapshot entitlement,
+                                                 long bountyCents, long freebieDepositCents) {
+        return db.sql("""
+                UPDATE task_application
+                SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid), decided_at = now(),
+                    bounty_cents = :bounty, freebie_deposit_cents = :freebieDeposit,
+                    reputation_level_at_accept = :level,
+                    reputation_policy_version_at_accept = :policyVersion,
+                    settlement_delay_days_at_accept = :settlementDays,
+                    commission_bonus_bps_at_accept = :commissionBps,
+                    premium_support_at_accept = :premiumSupport,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND task_id = CAST(:taskId AS uuid) AND status = :from
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("taskId", taskId).bind("from", ApplicationStatus.PENDING.dbValue())
+                .bind("status", ApplicationStatus.RESERVING.dbValue()).bind("reviewer", reviewerAccountId)
+                .bind("bounty", bountyCents).bind("freebieDeposit", freebieDepositCents)
+                .bind("level", entitlement.level()).bind("policyVersion", entitlement.policyVersion())
+                .bind("settlementDays", entitlement.settlementDelayDays())
+                .bind("commissionBps", entitlement.commissionBonusBps())
+                .bind("premiumSupport", entitlement.premiumSupport())
+                .map(TaskApplicationRepository::map).one();
+    }
+
     public Mono<TaskApplication> beginAcceptance(String id, String taskId, String reviewerAccountId,
                                                  ReputationEntitlementSnapshot entitlement) {
         return db.sql("""
@@ -389,11 +421,13 @@ public class TaskApplicationRepository {
                 .map(TaskApplicationRepository::map).one();
     }
 
-    /** 激活（Slice 4F Saga activate）：reserving → accepted，<b>冻结 accept 时赏金</b>（snapshot-pinning）。
+    /** 激活（Slice 4F Saga activate）：reserving → accepted，<b>冻结 accept 时赏金与押金</b>（snapshot-pinning，ADR-D12 D7）。
      *  不重写 reviewer/decided_at（beginAcceptance 已记录）。0 行（非 reserving）→ empty（幂等：重试或已变迁）。 */
-    public Mono<TaskApplication> acceptFromReserving(String id, String taskId, long bountyCents) {
+    public Mono<TaskApplication> acceptFromReserving(String id, String taskId, long bountyCents,
+                                                     long freebieDepositCents) {
         return db.sql("""
-                UPDATE task_application SET status = :status, bounty_cents = :bounty, updated_at = now()
+                UPDATE task_application SET status = :status, bounty_cents = :bounty,
+                        freebie_deposit_cents = :freebieDeposit, updated_at = now()
                 WHERE id = CAST(:id AS uuid)
                   AND task_id = CAST(:taskId AS uuid)
                   AND status = :from
@@ -405,6 +439,7 @@ public class TaskApplicationRepository {
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("taskId", taskId).bind("bounty", bountyCents)
+                .bind("freebieDeposit", freebieDepositCents)
                 .bind("from", ApplicationStatus.RESERVING.dbValue())
                 .bind("status", ApplicationStatus.ACCEPTED.dbValue())
                 .map(TaskApplicationRepository::map).one();
@@ -528,7 +563,8 @@ public class TaskApplicationRepository {
                 row.get("settlement_delay_days_at_accept", Integer.class),
                 row.get("commission_bonus_bps_at_accept", Integer.class),
                 row.get("premium_support_at_accept", Boolean.class),
-                row.get("confirmed_metric_value", Long.class)
+                row.get("confirmed_metric_value", Long.class),
+                longValue(row.get("freebie_deposit_cents", Long.class))
         );
     }
 

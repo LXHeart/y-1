@@ -102,16 +102,29 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     public ReserveResult reserveFunds(AcceptanceInput input) {
         log.info("reserveFunds START org={} ref={} amount={}", input.organizationId(), input.applicationId(), input.amountCents());
         try {
-            // 收款人从报名记录现查，而不是加进 AcceptanceInput——workflow 入参变更会影响在途实例的反序列化，
-            // 而这里本来就要读库，多取一个字段是零成本。
-            TaskApplication payeeApp = apps.findById(input.applicationId()).block();
-            String payee = payeeApp == null ? null : payeeApp.recommenderAccountId();
-            int commissionBonusBps = payeeApp == null || payeeApp.commissionBonusBpsAtAccept() == null
-                    ? 0 : payeeApp.commissionBonusBpsAtAccept();
-            ReserveResult r = commissionBonusBps == 0
-                    ? finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee).block()
-                    : finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee,
-                            commissionBonusBps).block();
+            // 收款/出资方从报名记录现查，而不是加进 AcceptanceInput——workflow 入参变更会影响在途实例的反序列化，
+            // 而这里本来就要读库，多取一个字段是零成本。beginAcceptance 已按 claim 时金额刷新快照（ADR-D12）。
+            TaskApplication app = apps.findById(input.applicationId()).block();
+            if (app == null) {
+                throw new IllegalStateException("报名不存在: " + input.applicationId());
+            }
+            ReserveResult r;
+            if (app.freebieDepositCents() > 0) {
+                // ADR-D12：霸王餐押金方向——从推荐官钱包预付托管（金额取 input.amountCents = claim 时押金）。
+                // taskOwner 供 finance Compensated 双方通知；任务缺失时置 null（finance 端可空防御）。
+                Task task = tasks.findById(input.taskId()).block();
+                String taskOwner = task == null ? null : task.ownerAccountId();
+                r = finance.freebieReserve(input.organizationId(), input.applicationId(),
+                        input.amountCents(), app.recommenderAccountId(), taskOwner).block();
+            } else {
+                String payee = app.recommenderAccountId();
+                int commissionBonusBps = app.commissionBonusBpsAtAccept() == null
+                        ? 0 : app.commissionBonusBpsAtAccept();
+                r = commissionBonusBps == 0
+                        ? finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee).block()
+                        : finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee,
+                                commissionBonusBps).block();
+            }
             log.info("reserveFunds RESULT {}", r);
             return r;
         } catch (RuntimeException e) {
@@ -132,10 +145,11 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         if (!ApplicationStatus.RESERVING.dbValue().equals(app.status())) {
             return;  // 已补偿回 pending 或其他——无可激活
         }
-        // 领域写（reserving→accepted）+ outbox 同事务。冻结 accept 时赏金（input.amountCents = accept 时 task 赏金）：
-        // 此后结算读 app.bountyCents() 而非可变 task 行——accept 后改 task 赏金不再影响本履约。
+        // 领域写（reserving→accepted）+ outbox 同事务。冻结 claim 时资金快照（beginAcceptance 已按 claim 时
+        // task 行刷新本行的 bounty/deposit 列，此处按行值冻结——accept 后改 task 只影响新报名，D7 pinning）。
         TaskApplication activated = transactions.transactional(
-                apps.acceptFromReserving(input.applicationId(), input.taskId(), input.amountCents())
+                apps.acceptFromReserving(input.applicationId(), input.taskId(),
+                                app.bountyCents(), app.freebieDepositCents())
                         .flatMap(a -> markCommandAccepted(input)
                                 .then(outbox.append(envelope("ApplicationAccepted", a, null, input.commandId())))
                                 .thenReturn(a))
@@ -148,15 +162,24 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     @Override
     public void compensateAcceptance(AcceptanceInput input, ReserveResult reserve, String reason) {
         if (reserve.reserved()) {
-            // release idempotent：已释放(409)/不存在(404) 由 client 映射为成功；瞬态失败抛异常→Temporal 重试本 activity。
-            // 跨服务调用，不进本地事务（与本地 revertReserving+outbox 原子性正交）。
-            finance.release(input.organizationId(), input.applicationId()).block();
+            // 生命周期端点幂等：已终态(409)/不存在(404) 由 client 映射为成功；瞬态失败抛异常→Temporal 重试本 activity。
+            // 跨服务调用，不进本地事务（与本地 revertReserving+outbox 原子性正交）。按资金来源分支退还（ADR-D12）：
+            // freebie 押金退回推荐官钱包（激活失败不是推荐官的失败），bounty 走既有 release 退商家。
+            TaskApplication escrowApp = apps.findById(input.applicationId()).block();
+            if (escrowApp != null && escrowApp.freebieDepositCents() > 0) {
+                finance.freebieRefund(input.organizationId(), input.applicationId()).block();
+            } else {
+                finance.release(input.organizationId(), input.applicationId()).block();
+            }
         }
         TaskApplication app = apps.findById(input.applicationId()).block();
         if (app == null || !ApplicationStatus.RESERVING.dbValue().equals(app.status())) {
             return;  // 已回退/不在 reserving（幂等）
         }
-        // 领域写（reserving→pending）+ outbox 同事务。
+        // 领域写（reserving→pending）+ outbox 同事务。ApplicationReservationFailed 带 taskOwnerId
+        //（余额不足等补偿时通知商家——商家不是操作者却需要知道为何没接受成功，ADR-D12 验收 #2）。
+        Task task = tasks.findById(input.taskId()).block();
+        String taskOwnerId = task == null ? null : task.ownerAccountId();
         TaskApplication reverted = transactions.transactional(
                 apps.revertReserving(input.applicationId(), input.taskId())
                         .flatMap(r -> counters.release(input.taskId())
@@ -164,7 +187,7 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
                                 .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
                                 .then(markCommandCompensated(input, reason))
                                 .then(outbox.append(envelope(
-                                        "ApplicationReservationFailed", r, reason, input.commandId())))
+                                        "ApplicationReservationFailed", r, reason, input.commandId(), taskOwnerId)))
                                 .thenReturn(r))
         ).block();
         if (reverted == null) {
@@ -173,10 +196,15 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     }
 
     private EventEnvelope envelope(String eventType, TaskApplication app, String reason) {
-        return envelope(eventType, app, reason, null);
+        return envelope(eventType, app, reason, null, null);
     }
 
     private EventEnvelope envelope(String eventType, TaskApplication app, String reason, String commandId) {
+        return envelope(eventType, app, reason, commandId, null);
+    }
+
+    private EventEnvelope envelope(String eventType, TaskApplication app, String reason,
+                                   String commandId, String taskOwnerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
@@ -185,6 +213,9 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         payload.put("reviewedByAccountId", app.reviewedByAccountId());
         if (reason != null) {
             payload.put("reason", reason);
+        }
+        if (taskOwnerId != null) {
+            payload.put("taskOwnerId", taskOwnerId);
         }
         // 确定性 event_id（type-3 UUID from eventType:applicationId）——activity 重试时 ON CONFLICT 去重
         String eventId = UUID.nameUUIDFromBytes((eventType + ":" + app.id()

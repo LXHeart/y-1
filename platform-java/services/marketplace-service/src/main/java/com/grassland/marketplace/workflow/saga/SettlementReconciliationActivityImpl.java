@@ -99,9 +99,11 @@ public class SettlementReconciliationActivityImpl implements SettlementReconcili
             return block(input, organizationId, "trust_mismatch");
         }
 
-        // 2. 非资金型任务：按 **app 冻结的赏金** 判 fund/非 fund 分支（snapshot-pinning），不读可变 task 行。
+        // 2. 非资金型任务：按 **app 冻结的资金快照** 判 fund/非 fund 分支（snapshot-pinning），不读可变 task 行。
         //    读 task.bountyCents() 会让「accept 后改 task 赏金」把 fund 任务误判成非 fund、跳过 finance 对账。
-        if (app.bountyCents() <= 0) {
+        //    ADR-D12：freebie 履约（deposit>0）虽 bounty=0 也是资金型——finance reconcile 端点内部按
+        //    funds_reservation 缺失回落 freebie_escrow 反向对账（for_merchant 补偿商家 / for_recommender 退推荐官）。
+        if (app.bountyCents() <= 0 && app.freebieDepositCents() <= 0) {
             return complete(input, app, input.finalDecision(), task.ownerAccountId());
         }
 

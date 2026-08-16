@@ -9,6 +9,9 @@ import java.time.Instant;
  * （跨服务无 FK，HLD database-per-service）；{@code status}/{@code contentForm}/{@code platform} 存小写字符串。
  * {@code maxSlots} 为名额上限（null=不限，Slice 4B）。
  *
+ * <p>{@code freebieDepositCents} = 霸王餐押金（ADR-D12；null/0=无）。与 {@code bountyCents} 互斥（XOR）：
+ * 押金由推荐官钱包预付、达标全额退还，资金方向与商家出资的 bounty 相反；accept/结算读 application 快照。
+ *
  * <p>Stage 1 生命周期字段：
  * <ul>
  *   <li>{@code version} 乐观锁计数器（draft 编辑 / publish / close / cancel 每次 +1）；</li>
@@ -38,10 +41,16 @@ public record Task(
         int minRecommenderLevel,
         String storeId,
         TaskRequirements requirements,
-        Integer autoAcceptMinLevel
+        Integer autoAcceptMinLevel,
+        Long freebieDepositCents
 ) {
     public Task {
         requirements = TaskRequirements.normalize(requirements);
+    }
+
+    /** 是否霸王餐押金任务（ADR-D12：deposit &gt; 0 即押金型；与 bounty XOR）。 */
+    public boolean isFreebie() {
+        return freebieDepositCents != null && freebieDepositCents > 0;
     }
 
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
@@ -50,7 +59,7 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                1, null, TaskRequirements.empty(), null);
+                1, null, TaskRequirements.empty(), null, null);
     }
 
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
@@ -59,7 +68,7 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt, int minRecommenderLevel) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                minRecommenderLevel, null, TaskRequirements.empty(), null);
+                minRecommenderLevel, null, TaskRequirements.empty(), null, null);
     }
 
     public Task(String id, String ownerAccountId, String organizationId, String title, String description,
@@ -68,6 +77,16 @@ public record Task(
                 Instant publishedAt, Instant cancelledAt, int minRecommenderLevel, String storeId) {
         this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
                 bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
-                minRecommenderLevel, storeId, TaskRequirements.empty(), null);
+                minRecommenderLevel, storeId, TaskRequirements.empty(), null, null);
+    }
+
+    public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+                String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
+                Instant publishedAt, Instant cancelledAt, int minRecommenderLevel, String storeId,
+                TaskRequirements requirements, Integer autoAcceptMinLevel) {
+        this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+                minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, null);
     }
 }

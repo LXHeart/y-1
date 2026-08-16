@@ -113,6 +113,13 @@ public class SettlementExecution {
         }
         log.info("settlement capture START org={} ref={} ladderSettlementCents={}",
                 organizationId, applicationId, settlementAmountCents);
+        // ADR-D12 D9（唯一钱侧入口按资金来源分支）：freebie 履约达标 → 押金全额退还推荐官（无平台费），
+        // 不走 capture。幂等：404/409 由 client 映射为成功；真异常抛出→Temporal 重试。
+        if (app.freebieDepositCents() > 0) {
+            finance.freebieRefund(organizationId, applicationId).block();
+            outbox.append(envelope("EngagementSettled", app, null, taskOwnerId, settlementAmountCents)).block();
+            return SettlementOutcome.settled();
+        }
         // finance reserved→captured；409(已终态) 由 client 映射为成功（幂等）；真异常抛出→Temporal 重试。
         // 固定佣金保持两参 capture（全额）；阶梯带申报档位金额；0 档（未达首档）release 全额返还商家。
         if (releaseOnly) {

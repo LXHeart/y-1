@@ -47,8 +47,31 @@ public record TaskApplication(
         Integer commissionBonusBpsAtAccept,
         Boolean premiumSupportAtAccept,
         /** D-02：商家手动确认时申报的阶梯指标达成值（与 confirmed_at 同一 guarded UPDATE 冻结）；自动确认保持 null → 结算 hold。 */
-        Long confirmedMetricValue
+        Long confirmedMetricValue,
+        /** ADR-D12：accept 时冻结的霸王餐押金快照（镜像 bounty 快照；非押金任务为 0）。结算/取消按它分支资金方向。 */
+        long freebieDepositCents
 ) {
+    /** 兼容 V40（freebie_deposit_cents）之前的全参构造调用方（既有测试）；押金为 0。 */
+    public TaskApplication(
+            String id, String taskId, String recommenderAccountId, String status, String note,
+            String reviewedByAccountId, Instant decidedAt, Instant createdAt, Instant updatedAt,
+            Instant confirmedAt, long bountyCents, Instant merchantConfirmDeadlineAt, Instant autoConfirmedAt,
+            Instant merchantRejectedAt, String rejectionReason, String merchantRejectionDisputeId,
+            Instant contestRequestedAt, Instant rejectionWorkflowStartedAt,
+            Integer reputationLevelAtAccept, Long reputationPolicyVersionAtAccept,
+            Integer settlementDelayDaysAtAccept, Integer commissionBonusBpsAtAccept,
+            Boolean premiumSupportAtAccept, Long confirmedMetricValue) {
+        this(id, taskId, recommenderAccountId, status, note, reviewedByAccountId, decidedAt, createdAt, updatedAt,
+                confirmedAt, bountyCents, merchantConfirmDeadlineAt, autoConfirmedAt, merchantRejectedAt,
+                rejectionReason, merchantRejectionDisputeId, contestRequestedAt, rejectionWorkflowStartedAt,
+                reputationLevelAtAccept, reputationPolicyVersionAtAccept, settlementDelayDaysAtAccept,
+                commissionBonusBpsAtAccept, premiumSupportAtAccept, confirmedMetricValue, 0L);
+    }
+
+    /** 是否霸王餐押金履约（ADR-D12：按冻结快照判资金方向，不读可变 task 行）。 */
+    public boolean isFreebie() {
+        return freebieDepositCents > 0;
+    }
     /** 兼容 V32（confirmed_metric_value）之前的全参构造调用方（既有测试）；申报指标值为空。 */
     public TaskApplication(
             String id, String taskId, String recommenderAccountId, String status, String note,

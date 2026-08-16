@@ -192,6 +192,69 @@ public class FinanceEscrowClient {
                 });
     }
 
+    // ---------------- 霸王餐押金（ADR-D12，方向与 bounty 相反：出资方=推荐官钱包） ----------------
+
+    /**
+     * 预付押金进托管（accept Saga 分支）：扣推荐官钱包、建 freebie_escrow 行。
+     * 2xx→Reserved；409「钱包余额不足」→InsufficientFunds（镜像商家 reserve 语义，Saga 补偿回 pending）；其余→抛异常。
+     */
+    public Mono<ReserveResult> freebieReserve(String orgId, String engagementRef, long amountCents,
+                                              String recommenderAccountId, String taskOwnerAccountId) {
+        return webClient.post()
+                .uri("/internal/freebie/reserve")
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(new FreebieReservePayload(
+                        engagementRef, recommenderAccountId, taskOwnerAccountId, orgId, amountCents))
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    log.info("freebie reserve HTTP {} org={} ref={}", code, orgId, engagementRef);
+                    return switch (code) {
+                        case 200, 201 -> resp.bodyToMono(String.class).defaultIfEmpty("")
+                                .then(Mono.just(ReserveResult.reserved(amountCents)));
+                        case 409 -> resp.bodyToMono(ERROR_TYPE)
+                                .switchIfEmpty(Mono.error(new FinanceEscrowException(
+                                        "freebie reserve failed: HTTP 409: empty response")))
+                                .flatMap(envelope -> "钱包余额不足".equals(envelope.error())
+                                        ? Mono.just(ReserveResult.insufficientFunds())
+                                        : Mono.<ReserveResult>error(new FinanceEscrowException(
+                                                "freebie reserve failed: HTTP 409: " + envelope.error())))
+                                .onErrorMap(error -> error instanceof FinanceEscrowException ? error
+                                        : new FinanceEscrowException(
+                                                "freebie reserve failed: invalid 409 response: " + error.getMessage()));
+                        default -> resp.bodyToMono(String.class).defaultIfEmpty("")
+                                .flatMap(body -> Mono.<ReserveResult>error(
+                                        new FinanceEscrowException("freebie reserve failed: HTTP " + code + ": " + body)));
+                    };
+                });
+    }
+
+    /** 押金退还推荐官（达标/取消/补偿回滚）。2xx/404/409 → 成功（幂等：已终态/不存在视作成功）。 */
+    public Mono<Void> freebieRefund(String orgId, String engagementRef) {
+        return postFreebieLifecycle(orgId, engagementRef, "refund");
+    }
+
+    /** 押金补偿商家 org（未达标/商家获判）。幂等语义同 refund。 */
+    public Mono<Void> freebieCompensate(String orgId, String engagementRef) {
+        return postFreebieLifecycle(orgId, engagementRef, "compensate");
+    }
+
+    private Mono<Void> postFreebieLifecycle(String orgId, String engagementRef, String action) {
+        return webClient.post()
+                .uri("/internal/freebie/{ref}/" + action, engagementRef)
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    log.info("freebie {} HTTP {} org={} ref={}", action, code, orgId, engagementRef);
+                    if (code == 200 || code == 404 || code == 409) {
+                        return Mono.<Void>empty();  // 成功 / 不存在 / 已终态 → 幂等成功
+                    }
+                    return resp.bodyToMono(String.class).defaultIfEmpty("")
+                            .flatMap(b -> Mono.<Void>error(
+                                    new FinanceEscrowException("freebie " + action + " failed: HTTP " + code + ": " + b)));
+                });
+    }
+
     private record Envelope<T>(Boolean success, T data) {}
 
     private record ErrorEnvelope(Boolean success, String error) {}
@@ -201,6 +264,13 @@ public class FinanceEscrowClient {
             long amountCents,
             String payeeAccountId,
             int commissionBonusBps) {}
+
+    private record FreebieReservePayload(
+            String engagementRef,
+            String recommenderAccountId,
+            String taskOwnerAccountId,
+            String organizationId,
+            long amountCents) {}
 
     private record CaptureRequestPayload(Long settlementAmountCents) {}
 

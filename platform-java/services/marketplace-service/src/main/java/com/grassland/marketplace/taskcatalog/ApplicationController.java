@@ -176,7 +176,8 @@ public class ApplicationController {
                                                             .<TaskApplication>flatMap(existing -> Mono.error(
                                                                     new MarketplaceException(409, "已报名该任务")))
                                                             .switchIfEmpty(transactions.transactional(
-                                                                    apps.create(id, rec.accountId(), note, bountyOrZero(task))
+                                                                    apps.create(id, rec.accountId(), note,
+                                                                            bountyOrZero(task), freebieDepositOrZero(task))
                                                                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
                                                                             .flatMap(created -> recommenderInvitations
                                                                                     .markApplied(id, rec.accountId())
@@ -200,14 +201,24 @@ public class ApplicationController {
                                 .switchIfEmpty(claimAcceptance(task, appId, merchant, idempotencyKey))));
     }
 
-    /** 资金型任务（Slice 4F）：bounty_cents 非 null 且 &gt;0。 */
+    /** 资金型任务（Slice 4F + ADR-D12）：bounty &gt;0（商家出资赏金）或 freebie deposit &gt;0（推荐官押金）。 */
     private boolean isMonetary(Task task) {
-        return task.bountyCents() != null && task.bountyCents() > 0;
+        return (task.bountyCents() != null && task.bountyCents() > 0) || task.isFreebie();
     }
 
     /** task.bountyCents 归一为 long（null → 0）。accept/create 冻结赏金快照用。 */
     private static long bountyOrZero(Task task) {
         return task.bountyCents() == null ? 0L : task.bountyCents();
+    }
+
+    /** task.freebieDepositCents 归一为 long（null → 0，ADR-D12）。 */
+    private static long freebieDepositOrZero(Task task) {
+        return task.freebieDepositCents() == null ? 0L : task.freebieDepositCents();
+    }
+
+    /** Saga 金额（XOR 保证至多一边 &gt;0）：bounty 优先，否则押金。AcceptanceCommand.amountCents / AcceptanceInput 同源。 */
+    private static long fundsOrZero(Task task) {
+        return bountyOrZero(task) > 0 ? bountyOrZero(task) : freebieDepositOrZero(task);
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> claimAcceptance(
@@ -235,14 +246,16 @@ public class ApplicationController {
         String workflowId = monetary ? "accept-" + app.id() + "-" + commandId : null;
         AcceptanceCommand proposed = new AcceptanceCommand(
                 commandId, merchant.accountId(), idempotencyKey, task.id(), app.id(), workflowId,
-                task.ownerAccountId(), task.organizationId(), bountyOrZero(task),
+                task.ownerAccountId(), task.organizationId(), fundsOrZero(task),
                 monetary ? "pending_dispatch" : "accepted", null, null, null, null, null);
 
         Mono<AcceptanceClaim> write = acceptanceCommands.create(proposed)
                 .flatMap(command -> acceptanceCounters.claim(task.id())
                         .switchIfEmpty(fail(409, "名额已满"))
                         .then(monetary
-                                ? apps.beginAcceptance(app.id(), task.id(), merchant.accountId(), entitlement)
+                                // claim 时刷新 provisional 金额快照（claim-time 权威；apply 时写入的值可能已被修订覆盖）
+                                ? apps.beginAcceptance(app.id(), task.id(), merchant.accountId(), entitlement,
+                                        bountyOrZero(task), freebieDepositOrZero(task))
                                 : apps.accept(app.id(), task.id(), merchant.accountId(),
                                         bountyOrZero(task), entitlement))
                         .switchIfEmpty(fail(409, "该报名已处理"))

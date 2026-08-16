@@ -180,6 +180,29 @@ class SettlementReconciliationActivityImplTest {
         verify(trust, never()).resolve(any(), any());
     }
 
+    @Test
+    void freebieAppStaysFundBranchEvenWithZeroBounty() {
+        // ADR-D12 D6：freebie 履约 bounty=0 但押金>0——必须仍走 finance 对账（反向矩阵在 finance 端分支），
+        // 不能被「非资金型」捷径跳过（否则争议终局押金永远停在托管）。
+        when(reconciliations.findBySourceEventId(SOURCE)).thenReturn(Mono.just(row("started")));
+        when(apps.findById(APP)).thenReturn(Mono.just(
+                new TaskApplication(APP, TASK_ID, "rec", "accepted", null, "own", Instant.now(), Instant.now(),
+                        Instant.now(), Instant.now(), 0L, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, 100L)));  // bounty=0 + 押金 100 冻结
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(
+                new Task(TASK_ID, "own", ORG, "title", "desc", "published", "any", "any", null, 0L,
+                        Instant.now(), Instant.now(), 1, null, null, null)));
+        trustFinal("for_merchant");
+        when(finance.reconcile(ORG, APP, "for_merchant")).thenReturn(Mono.just(
+                new FinanceReconciliationClient.Result("repaired", "compensated")));
+
+        SettlementReconciliationWorkflow.ReconciliationOutcome outcome = activity.reconcile(
+                new SettlementReconciliationWorkflow.ReconciliationInput(SOURCE, DISPUTE, APP, "for_merchant"));
+
+        assertThat(outcome.status()).isEqualTo("reconciled");
+        verify(finance).reconcile(ORG, APP, "for_merchant");  // 押金行也走 finance 对账
+    }
+
     private void acceptedMonetaryApp() {
         acceptedApp(500L);
     }

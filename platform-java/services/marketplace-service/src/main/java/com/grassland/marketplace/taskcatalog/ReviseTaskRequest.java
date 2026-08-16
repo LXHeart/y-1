@@ -23,7 +23,8 @@ public record ReviseTaskRequest(
         Instant applicationDeadline,
         Integer minRecommenderLevel,
         TaskRequirements requirements,
-        Integer autoAcceptMinLevel
+        Integer autoAcceptMinLevel,
+        Long freebieDepositCents
 ) {
     public ReviseTaskRequest {
         if (title == null || title.isBlank()) {
@@ -35,6 +36,10 @@ public record ReviseTaskRequest(
         if (bountyCents != null && bountyCents < 0) {
             throw new IllegalArgumentException("bountyCents must be >= 0");
         }
+        if (freebieDepositCents != null && freebieDepositCents < 0) {
+            throw new IllegalArgumentException("freebieDepositCents must be >= 0");
+        }
+        TaskCatalogFundingXor.validate(bountyCents, freebieDepositCents);
         if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
             throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
         }

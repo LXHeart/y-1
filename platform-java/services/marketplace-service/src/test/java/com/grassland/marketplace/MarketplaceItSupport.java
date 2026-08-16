@@ -32,7 +32,10 @@ import reactor.core.publisher.Mono;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class MarketplaceItSupport {
 
-    public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    // 每个缓存 Spring 上下文一个 R2DBC 池（默认 10 连接），加上迁移测试直开的 JDBC 连接，
+    // 全量套件连接总数会贴着容器默认 max_connections=100 触发 "too many clients"（随机测试阵亡）。
+    public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
+            .withCommand("postgres", "-c", "max_connections=300");
 
     static {
         POSTGRES.start();

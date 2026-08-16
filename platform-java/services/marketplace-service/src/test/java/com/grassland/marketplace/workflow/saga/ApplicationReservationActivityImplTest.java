@@ -153,12 +153,12 @@ class ApplicationReservationActivityImplTest {
     @Test
     void activateEngagement_reservingToAccepted() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
-        when(apps.acceptFromReserving(APP_ID, TASK_ID, 500L)).thenReturn(Mono.just(app("accepted")));
+        when(apps.acceptFromReserving(APP_ID, TASK_ID, 0L, 0L)).thenReturn(Mono.just(app("accepted")));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         activity.activateEngagement(input);
 
-        verify(apps).acceptFromReserving(APP_ID, TASK_ID, 500L);
+        verify(apps).acceptFromReserving(APP_ID, TASK_ID, 0L, 0L);
     }
 
     @Test
@@ -167,12 +167,13 @@ class ApplicationReservationActivityImplTest {
 
         activity.activateEngagement(input);
 
-        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong());
+        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong());
     }
 
     @Test
     void compensate_releasesAndRevertsWhenReserved() {
         when(finance.release(ORG, APP_ID)).thenReturn(Mono.empty());
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(1)));  // 事件 payload 的 taskOwnerId 现查
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
         when(apps.revertReserving(APP_ID, TASK_ID)).thenReturn(Mono.just(app("pending")));
         when(outbox.append(any())).thenReturn(Mono.empty());
@@ -185,6 +186,7 @@ class ApplicationReservationActivityImplTest {
 
     @Test
     void compensate_skipsReleaseWhenInsufficient() {
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(1)));
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
         when(apps.revertReserving(APP_ID, TASK_ID)).thenReturn(Mono.just(app("pending")));
         when(outbox.append(any())).thenReturn(Mono.empty());

@@ -140,7 +140,7 @@ class ReputationEntitlementMigrationTest extends MarketplaceItSupport {
             var repository = new TaskApplicationRepository(DatabaseClient.create(
                     ConnectionFactories.get(r2dbcUrl(schema))));
 
-            assertThat(repository.acceptFromReserving(applicationId, taskId, 900L).block()).isNull();
+            assertThat(repository.acceptFromReserving(applicationId, taskId, 900L, 0L).block()).isNull();
 
             try (var connection = DriverManager.getConnection(
                     POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
