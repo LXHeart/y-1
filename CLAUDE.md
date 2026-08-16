@@ -57,7 +57,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 
 - `services/edge-bff` — Java Edge 路由、鉴权与 fail-closed 门禁
 - `services/identity-service` — 账号、会话、组织与权限
-- `services/marketplace-service` — 任务撮合、履约、运营处置与消费套餐订单（未支付订单 TTL 关单并释放库存）
+- `services/marketplace-service` — 任务撮合、履约、运营处置与消费套餐订单（未支付订单 TTL 关单并释放库存）。任务类型四选一：图文/视频/文章/点赞互动（content_form 受控值集 + `TaskRequirements.interaction` 配置块，ADR-D13；互动核验 = 既有 link/platform/evidence 分支 + interaction_screenshot 多模态截图判定，复用 `/api/verification/analyze` mode=interaction）
 - `services/finance-service` — 钱包、积分、订单与资金对账；霸王餐押金走反向资金流（`/internal/freebie/**`，推荐官钱包预付托管 → 达标 FREEBIE_REFUND 全额退推荐官 / 未达标 FREEBIE_COMPENSATE 补偿商家，ADR-D12；既有 `reservations/{ref}/reconcile` 对无商家预留的行自动回落 freebie 对账）
 - `services/trust-service` — 争议、审判与客服终审
 - `services/intelligence-service` — AI、媒体、创作上下文与素材
