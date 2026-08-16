@@ -746,6 +746,62 @@ class MediaControllerIT {
                 .exchange().expectStatus().isEqualTo(403);
     }
 
+    /** 任务书 #29+#30 D6：头像票据只收图片 MIME；放行 avatar 用途（不在 ARTICLE_GENERATED/MERCHANT_KYB 黑名单）。 */
+    @Test
+    void avatarTicketAllowsImageOnly() {
+        String owner = "acct-" + UUID.randomUUID();
+        // 图片 MIME → 开票成功
+        client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign(owner, null))
+                .bodyValue(Map.of("contentType", "image/png", "purpose", "avatar", "sizeBytes", PNG.length))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.id").exists();
+        // 非图片 MIME → 400
+        client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign(owner, null))
+                .bodyValue(Map.of("contentType", "application/pdf", "purpose", "avatar", "sizeBytes", PNG.length))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    /** 头像元数据/下载端点：仅 identity 服务 principal 可调，放行 purpose=avatar + active + 未过期。 */
+    @Test
+    void avatarMetadataAndDownloadScopedToIdentityAndUsable() {
+        String owner = "acct-" + UUID.randomUUID();
+        UUID live = insertMedia(owner, null, "avatar", MediaStatus.ACTIVE, null, null, null);
+
+        // identity principal → 元数据与下载 URL 均可得
+        Map<String, Object> envelope = client().get().uri("/api/media/{id}/avatar-metadata", live)
+                .header("X-Grassland-Identity", signService(null, "identity"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+        assertThat(data).containsEntry("ownerAccountId", owner)
+                .containsEntry("purpose", "avatar")
+                .containsEntry("status", "active");
+        client().get().uri("/api/media/{id}/avatar-download-url", live)
+                .header("X-Grassland-Identity", signService(null, "identity"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.downloadUrl").exists();
+
+        // 非 identity 服务 / 终端用户 → 403
+        client().get().uri("/api/media/{id}/avatar-metadata", live)
+                .header("X-Grassland-Identity", signService(null, "marketplace"))
+                .exchange().expectStatus().isForbidden();
+        client().get().uri("/api/media/{id}/avatar-metadata", live)
+                .header("X-Grassland-Identity", sign(owner, null))
+                .exchange().expectStatus().isForbidden();
+
+        // 非 avatar / pending / 已过期 → 404
+        for (UUID unusable : List.of(
+                insertMedia(owner, null, "user_upload", MediaStatus.ACTIVE, null, null, null),
+                insertMedia(owner, null, "avatar", MediaStatus.PENDING, null, null, null),
+                insertMedia(owner, null, "avatar", MediaStatus.ACTIVE, Instant.now().minusSeconds(30), null, null))) {
+            client().get().uri("/api/media/{id}/avatar-metadata", unusable)
+                    .header("X-Grassland-Identity", signService(null, "identity"))
+                    .exchange().expectStatus().isNotFound();
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> createTicket(String owner, int sizeBytes) {
         Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")

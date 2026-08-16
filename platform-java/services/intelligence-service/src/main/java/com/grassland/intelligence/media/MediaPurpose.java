@@ -12,6 +12,7 @@ import java.util.Locale;
  *   <li>{@link #VIDEO_ASSET} — 视频改编出图等素材（Slice 9 地基）。</li>
  *   <li>{@link #USER_UPLOAD} — 通用用户上传资产。</li>
  *   <li>{@link #CONTENT_ASSET} — 内容素材库资产（Slice 14 / PRD §4.8，三类素材库的物理资产）。</li>
+ *   <li>{@link #AVATAR} — 推荐官头像（任务书 #29+#30 D6）；账号级资产，仅图片 MIME。</li>
  * </ul>
  */
 public enum MediaPurpose {
@@ -20,7 +21,8 @@ public enum MediaPurpose {
     MERCHANT_KYB("merchant_kyb"),
     VIDEO_ASSET("video_asset"),
     USER_UPLOAD("user_upload"),
-    CONTENT_ASSET("content_asset");
+    CONTENT_ASSET("content_asset"),
+    AVATAR("avatar");
 
     private final String db;
 

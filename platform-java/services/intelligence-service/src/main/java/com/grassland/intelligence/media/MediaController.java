@@ -70,6 +70,10 @@ public class MediaController {
     /** 服务间断点唯一放行的用途（履约附件）；其余用途经此路径一律 404，缩小暴露面。 */
     private static final String SERVICE_ATTACHMENT_PURPOSE = MediaPurpose.ENGAGEMENT_ATTACHMENT.db();
     private static final String KYB_PURPOSE = MediaPurpose.MERCHANT_KYB.db();
+    /** 推荐官头像用途（任务书 #29+#30 D6）：账号级资产，仅图片 MIME + 独立大小帽。 */
+    private static final String AVATAR_PURPOSE = MediaPurpose.AVATAR.db();
+    private static final Set<String> AVATAR_MIME_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
+    private static final long AVATAR_MAX_BYTES = 5L * 1024 * 1024;
     private static final long MIN_ASSET_TTL_SECONDS = 60;
     private static final long MAX_ASSET_TTL_SECONDS = 30L * 24 * 60 * 60;
     private static final long MIN_KYB_LEASE_SECONDS = 60;
@@ -275,6 +279,32 @@ public class MediaController {
                 .map(MediaController::success);
     }
 
+    /**
+     * identity 专用头像元数据端点（任务书 #29+#30 D6）：返回复验所需字段，归属判断仍由 identity 执行。
+     * 头像是账号级资产（无 org 维度），放行条件仅 purpose=avatar + active + 未过期；不符/不存在统一 404。
+     */
+    @GetMapping("/{id}/avatar-metadata")
+    public Mono<Map<String, Object>> avatarMetadata(@PathVariable String id, ServerWebExchange exchange) {
+        UUID mediaId = parseId(id);
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
+                .flatMap(caller -> avatarAsset(mediaId))
+                .map(MediaController::toAvatarMetadata)
+                .map(MediaController::success);
+    }
+
+    /** identity 专用头像下载：公开/自己读头像时换短 TTL presigned GET（与元数据端点共用放行过滤）。 */
+    @GetMapping("/{id}/avatar-download-url")
+    public Mono<Map<String, Object>> avatarDownloadUrl(@PathVariable String id, ServerWebExchange exchange) {
+        UUID mediaId = parseId(id);
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
+                .flatMap(caller -> avatarAsset(mediaId))
+                .map(ref -> new MediaServiceDownloadResponse(
+                        storage.presignDownload(
+                                ref.objectKey(), downloadTtl(ref, Instant.now()), downloadDisposition(ref)),
+                        ref.expiresAt()))
+                .map(MediaController::success);
+    }
+
     private Mono<UploadTicketResponse> createPending(
             String ownerAccountId, String organizationId, UploadSpec spec) {
         UUID id = UUID.randomUUID();
@@ -466,6 +496,15 @@ public class MediaController {
                 .switchIfEmpty(notFound());
     }
 
+    /** 头像放行过滤：purpose=avatar + active + 未过期（账号级资产，无 org/domain 维度）。 */
+    private Mono<MediaReference> avatarAsset(UUID id) {
+        return mediaRefs.findById(id)
+                .filter(ref -> AVATAR_PURPOSE.equals(ref.purpose()))
+                .filter(ref -> ref.status() == MediaStatus.ACTIVE)
+                .filter(ref -> !isExpired(ref, Instant.now()))
+                .switchIfEmpty(notFound());
+    }
+
     private Mono<KybMediaRetentionRepository.Retention> applyKybRetention(
             UUID mediaId, String organizationId, UUID referenceId, UpsertKybRetentionRequest body) {
         if (body == null) {
@@ -540,6 +579,15 @@ public class MediaController {
         if (purpose == null || purpose == MediaPurpose.ARTICLE_GENERATED
                 || purpose == MediaPurpose.MERCHANT_KYB) {
             throw new IllegalArgumentException("媒体用途无效");
+        }
+        if (purpose == MediaPurpose.AVATAR) {
+            // 头像仅图片（D6）：白名单外的 MIME 与超大文件在开票时就拒，不落 pending。
+            if (!AVATAR_MIME_TYPES.contains(contentType)) {
+                throw new IllegalArgumentException("头像仅支持 JPEG、PNG 或 WebP 图片");
+            }
+            if (body.sizeBytes() != null && body.sizeBytes() > AVATAR_MAX_BYTES) {
+                throw new IllegalArgumentException("头像大小不得超过 " + AVATAR_MAX_BYTES + " 字节");
+            }
         }
         String domainType = optional(body.domainType(), 64, "domainType");
         String domainId = optional(body.domainId(), 200, "domainId");
@@ -658,6 +706,12 @@ public class MediaController {
                 ref.sizeBytes(), ref.expiresAt());
     }
 
+    private static MediaAvatarMetadataResponse toAvatarMetadata(MediaReference ref) {
+        return new MediaAvatarMetadataResponse(
+                ref.id(), ref.ownerAccountId(), ref.purpose(), ref.status().db(),
+                ref.mimeType(), ref.sizeBytes(), ref.expiresAt());
+    }
+
     public record CreateUploadTicketRequest(
             String contentType, String purpose, String domainType,
             String domainId, Long sizeBytes, Long ttlSeconds) {}
@@ -695,6 +749,11 @@ public class MediaController {
             UUID id, String ownerAccountId, String organizationId, String purpose,
             String domainType, String domainId, String status, String mimeType,
             long sizeBytes, Instant expiresAt) {}
+
+    /** identity 复验推荐官头像所需的最小权威元数据视图（账号级，无 org/domain 维度）。 */
+    public record MediaAvatarMetadataResponse(
+            UUID id, String ownerAccountId, String purpose, String status,
+            String mimeType, long sizeBytes, Instant expiresAt) {}
 
     /** 服务间断点（Slice 11 Stage 1）附件下载 URL 响应。{@code expiresAt} 为媒体资产 TTL，非 URL 过期时间。 */
     public record MediaServiceDownloadResponse(URI downloadUrl, Instant expiresAt) {}
