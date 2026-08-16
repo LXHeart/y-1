@@ -36,6 +36,11 @@ export interface Task {
   maxSlots: number | null
   /** 赏金（分）；null/0 = 非资金型任务（accept 走直连，不经资金 Saga）。 */
   bountyCents: number | null
+  /**
+   * 霸王餐押金（分，任务书 #22 / ADR-D12）；null/0 = 无。与赏金互斥（XOR，v1 单资金模式）：
+   * 推荐官报名被接受时从钱包预付进平台托管，达标（核实+商家确认）全额返还，未达标补偿商家。
+   */
+  freebieDepositCents: number | null
   /** Minimum effective recommender level required to see and apply for this task. */
   minRecommenderLevel: number
   createdAt: string | null
@@ -71,6 +76,8 @@ export interface CreateTaskInput {
   platform?: string
   maxSlots?: number
   bountyCents?: number
+  /** 霸王餐押金（分）；与 bountyCents 互斥（同时 >0 后端 400）。 */
+  freebieDepositCents?: number
   /** 报名截止时间（ISO）；可空 = 无时间截止。 */
   applicationDeadline?: string
   minRecommenderLevel?: number
@@ -91,6 +98,7 @@ export interface UpdateTaskInput {
   platform?: string
   maxSlots?: number
   bountyCents?: number
+  freebieDepositCents?: number
   applicationDeadline?: string
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>
@@ -111,6 +119,7 @@ export interface ReviseTaskInput {
   platform?: string
   maxSlots?: number
   bountyCents?: number
+  freebieDepositCents?: number
   applicationDeadline?: string
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>

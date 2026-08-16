@@ -23,6 +23,8 @@ const ENTRY_LABEL: Record<WalletEntryType, string> = {
   commerce_commission: '到店推荐佣金',
   withdrawal: '提现',
   clawback: '争议冲正扣回',
+  freebie_reserve: '霸王餐押金预付',
+  freebie_refund: '霸王餐押金返还',
 }
 
 const balanceYuan = computed(() =>

@@ -31,7 +31,17 @@
           </td>
           <td>{{ t.store ? [t.store.storeName, t.store.city].filter(Boolean).join(' · ') : '—' }}</td>
           <td>{{ t.platform || '—' }}</td>
-          <td>{{ t.bountyCents ? `¥${(t.bountyCents / 100).toFixed(2)}` : '无' }}</td>
+          <td>
+            <span v-if="t.freebieDepositCents" class="gl-tag gl-tag-freebie"
+                  :title="`报名被接受时从钱包预付 ¥${(t.freebieDepositCents / 100).toFixed(2)}，达标全额返还`">
+              霸王餐 · 需预付 ¥{{ (t.freebieDepositCents / 100).toFixed(2) }} · 达标全额返还
+            </span>
+            <template v-else>{{ t.bountyCents ? `¥${(t.bountyCents / 100).toFixed(2)}` : '无' }}</template>
+            <p v-if="t.freebieDepositCents && walletBalanceCents != null && t.freebieDepositCents > walletBalanceCents"
+               class="gl-hint gl-freebie-warn">
+              押金超过钱包余额 ¥{{ (walletBalanceCents / 100).toFixed(2) }}，被接受时会因余额不足退回
+            </p>
+          </td>
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)} km` }}</td>
           <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
           <td>
@@ -59,6 +69,8 @@ defineProps<{
   selectedTaskId: string
   loading: boolean
   locating: boolean
+  /** 推荐官钱包余额（分，任务书 #22 软检查）；null = 未登录/未加载，不做余额提示。 */
+  walletBalanceCents: number | null
 }>()
 
 defineEmits<{
@@ -81,5 +93,21 @@ select {
   padding: 0 8px;
   font: inherit;
   letter-spacing: 0;
+}
+
+.gl-tag-freebie {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-warning, #d97706) 16%, transparent);
+  color: var(--color-warning, #d97706);
+  white-space: nowrap;
+}
+
+.gl-freebie-warn {
+  margin: 4px 0 0;
+  color: var(--color-danger, #dc2626);
+  font-size: 12px;
 }
 </style>

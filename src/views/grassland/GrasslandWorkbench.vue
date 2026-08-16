@@ -91,7 +91,7 @@ const newOrgName = ref('')
 const creditAmountYuan = ref(1000)
 /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
 const taskForm = ref({
-  title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
+  title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
   applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null as number | null,
   productServiceInfo: '', mustInclude: '', forbiddenContent: '',
   publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
@@ -118,6 +118,8 @@ const feedFilters = ref({
   latitude: null as number | null, longitude: null as number | null,
 })
 const locating = ref(false)
+/** 推荐官钱包余额（分，任务书 #22：霸王餐押金任务的报名软提示）；null = 未加载。 */
+const walletBalanceCents = ref<number | null>(null)
 
 // ---------- 任务书 #24：任务详情携带门店公开块 ----------
 const storePublicProfile = ref<StorePublicProfile | null>(null)
@@ -330,6 +332,13 @@ async function initForAccount(): Promise<void> {
     Array.isArray(organizations) ? organizations : [],
     Array.isArray(scopes) ? scopes : [],
   )
+  // 任务书 #22：推荐官侧加载钱包余额，供任务大厅对霸王餐押金任务做报名软提示（不阻断）。
+  walletBalanceCents.value = null
+  if (identities.some((identity) => identity.identityType === 'recommender')) {
+    void grassland.getMyWallet().then((wallet) => {
+      walletBalanceCents.value = wallet ? wallet.balanceCents : 0
+    })
+  }
 }
 
 /** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
@@ -453,6 +462,7 @@ async function refreshTasks(): Promise<void> {
 async function publishTask(): Promise<void> {
   if (!activeOrgId.value || !taskForm.value.title.trim()) return
   const bountyCents = yuanToCents(taskForm.value.bountyYuan)
+  const freebieDepositCents = yuanToCents(taskForm.value.freebieDepositYuan)
   const created = await grassland.createTask({
     organizationId: activeOrgId.value,
     storeId: selectedStoreId.value || undefined,
@@ -462,6 +472,7 @@ async function publishTask(): Promise<void> {
     contentForm: taskForm.value.contentForm.trim() || undefined,
     maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
+    freebieDepositCents: freebieDepositCents > 0 ? freebieDepositCents : undefined,
     applicationDeadline: deadlineIso(),
     minRecommenderLevel: taskForm.value.minRecommenderLevel,
     autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
@@ -513,7 +524,7 @@ function isoToLocalInput(iso: string | null): string {
 }
 
 function resetTaskForm(): void {
-  taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0,
+  taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
     applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
     forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '' }
   editingDraft.value = null
@@ -524,6 +535,7 @@ function resetTaskForm(): void {
 async function saveDraft(): Promise<void> {
   if (!activeOrgId.value || !taskForm.value.title.trim()) return
   const bountyCents = yuanToCents(taskForm.value.bountyYuan)
+  const freebieDepositCents = yuanToCents(taskForm.value.freebieDepositYuan)
   const revising = revisingTask.value
   if (revising) {
     // 全字段修订：accept/结算读 app 的 bounty 快照（snapshot-pinning），改 task 赏金只影响新报名。
@@ -535,6 +547,7 @@ async function saveDraft(): Promise<void> {
       contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
+    freebieDepositCents: freebieDepositCents > 0 ? freebieDepositCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
@@ -556,6 +569,7 @@ async function saveDraft(): Promise<void> {
       contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
+    freebieDepositCents: freebieDepositCents > 0 ? freebieDepositCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
@@ -573,6 +587,7 @@ async function saveDraft(): Promise<void> {
       contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
+    freebieDepositCents: freebieDepositCents > 0 ? freebieDepositCents : undefined,
       applicationDeadline: deadlineIso(),
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
@@ -597,6 +612,7 @@ function editDraft(task: Task): void {
     contentForm: task.contentForm || '',
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
+    freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
     minRecommenderLevel: task.minRecommenderLevel ?? 1,
     autoAcceptMinLevel: task.autoAcceptMinLevel ?? null,
@@ -625,6 +641,7 @@ function editPublished(task: Task): void {
     contentForm: task.contentForm || '',
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
+    freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
     applicationDeadline: isoToLocalInput(task.applicationDeadline),
     minRecommenderLevel: task.minRecommenderLevel ?? 1,
     autoAcceptMinLevel: task.autoAcceptMinLevel ?? null,
@@ -1491,6 +1508,7 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         :selected-task-id="selectedTaskId"
         :loading="grassland.loading.value"
         :locating="locating"
+        :wallet-balance-cents="walletBalanceCents"
         @update:feed-filter="handleFeedFilterUpdate"
         @load-feed="loadFeed"
         @update:apply-note="applyNote = $event"

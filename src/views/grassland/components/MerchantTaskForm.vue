@@ -36,7 +36,8 @@
     </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>赏金 ¥<input :value="form.bountyYuan" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>赏金 ¥<input :value="form.bountyYuan" type="number" min="0" :disabled="freebieActive || !canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>霸王餐押金 ¥<input :value="form.freebieDepositYuan" type="number" min="0" :disabled="bountyActive || !canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>报名截止 <input :value="form.applicationDeadline" type="datetime-local" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
       <label>最低等级
         <select :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
@@ -50,16 +51,20 @@
         </select>
       </label>
     </div>
+    <p v-if="bountyActive || freebieActive" class="gl-hint">
+      {{ fundingHint }}
+    </p>
     <div class="gl-row">
       <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
       <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
       <button v-if="editingDraft || revisingTask" type="button" :disabled="loading" @click="$emit('reset-form')">取消编辑</button>
     </div>
-    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。霸王餐押金与赏金<b>二选一</b>：押金任务由推荐官报名被接受时从钱包预付进平台托管，达标（核实+确认）全额返还推荐官，未达标补偿商家。</p>
   </article>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Store } from '../../../types/grassland'
 
 interface TaskFormData {
@@ -69,6 +74,7 @@ interface TaskFormData {
   contentForm: string
   maxSlots: number
   bountyYuan: number
+  freebieDepositYuan: number
   applicationDeadline: string
   minRecommenderLevel: number
   autoAcceptMinLevel: number | null
@@ -81,7 +87,7 @@ interface TaskFormData {
   evidenceRequirements: string
 }
 
-defineProps<{
+const props = defineProps<{
   form: TaskFormData
   editingDraft: { id: string; version: number } | null
   revisingTask: { id: string; version: number } | null
@@ -92,6 +98,13 @@ defineProps<{
   canPublishBounty: boolean
   loading: boolean
 }>()
+
+/** XOR 交互（任务书 #22 B4）：其一 >0 时另一输入禁用，避免同时填导致后端 400。 */
+const bountyActive = computed(() => props.form.bountyYuan > 0)
+const freebieActive = computed(() => props.form.freebieDepositYuan > 0)
+const fundingHint = computed(() => freebieActive.value
+  ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ¥${props.form.freebieDepositYuan}，达标全额返还（与赏金互斥）`
+  : '赏金模式：商家出资托管，结算时打给推荐官（与霸王餐押金互斥）')
 
 const emit = defineEmits<{
   'update:field': [field: string, value: string | number | null]
