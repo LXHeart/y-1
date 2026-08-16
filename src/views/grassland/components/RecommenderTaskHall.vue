@@ -32,6 +32,7 @@
           <td>{{ t.store ? [t.store.storeName, t.store.city].filter(Boolean).join(' · ') : '—' }}</td>
           <td>{{ t.platform || '—' }}</td>
           <td>
+            <span v-if="t.contentForm === 'interaction'" class="gl-tag gl-tag-freebie">点赞互动</span>
             <span v-if="t.freebieDepositCents" class="gl-tag gl-tag-freebie"
                   :title="`报名被接受时从钱包预付 ¥${(t.freebieDepositCents / 100).toFixed(2)}，达标全额返还`">
               霸王餐 · 需预付 ¥{{ (t.freebieDepositCents / 100).toFixed(2) }} · 达标全额返还
@@ -57,7 +58,7 @@
 <script setup lang="ts">
 import type { Task } from '../../../types/grassland'
 
-defineProps<{
+withDefaults(defineProps<{
   feedItems: Task[]
   feedHasMore: boolean
   feedLoading: boolean
@@ -69,9 +70,9 @@ defineProps<{
   selectedTaskId: string
   loading: boolean
   locating: boolean
-  /** 推荐官钱包余额（分，任务书 #22 软检查）；null = 未登录/未加载，不做余额提示。 */
-  walletBalanceCents: number | null
-}>()
+  /** 推荐官钱包余额（分，任务书 #22 软检查）；null/缺省 = 未加载，不做余额提示。 */
+  walletBalanceCents?: number | null
+}>(), { walletBalanceCents: null })
 
 defineEmits<{
   'update:feedFilter': [field: string, value: string | number]

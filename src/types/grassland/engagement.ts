@@ -14,8 +14,10 @@ export interface EngagementSubmission {
   id: string
   applicationId: string
   recommenderAccountId: string
-  /** 发布链接，核实的主证据。后端要求 http(s)，非链接会 400。 */
+  /** 发布链接，核实的主证据。后端要求 http(s)，非链接会 400。互动任务=被互动的目标链接（任务书 #23）。 */
   contentUrl: string
+  /** 互动任务的推荐官平台账号标识（任务书 #23）；其余任务为 null。 */
+  platformHandle?: string | null
   note: string | null
   status: SubmissionStatus
   /** 商家退回原因。 */

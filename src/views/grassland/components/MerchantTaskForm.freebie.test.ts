@@ -11,6 +11,7 @@ import type { Task } from '../../../types/grassland'
 
 const baseForm = {
   title: '霸王餐任务', description: '', platform: '', contentForm: '', maxSlots: 1,
+  interactionTargetUrl: '', interactionActionType: 'like',
   bountyYuan: 0, freebieDepositYuan: 0, applicationDeadline: '', minRecommenderLevel: 1,
   autoAcceptMinLevel: null as number | null, productServiceInfo: '', mustInclude: '',
   forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '',

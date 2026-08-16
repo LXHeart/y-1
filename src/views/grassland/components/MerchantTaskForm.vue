@@ -10,7 +10,25 @@
       </label>
       <input :value="form.title" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
       <input :value="form.platform" placeholder="平台（可选）" @input="updateField('platform', ($event.target as HTMLInputElement).value)" />
-      <input :value="form.contentForm" placeholder="内容形式（可选）" @input="updateField('contentForm', ($event.target as HTMLInputElement).value)" />
+      <label>内容形式
+        <select :value="form.contentForm" @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)">
+          <option value="">未指定</option>
+          <option value="image">图文种草</option>
+          <option value="video">视频种草</option>
+          <option value="article">文章</option>
+          <option value="interaction">点赞互动</option>
+        </select>
+      </label>
+    </div>
+    <div v-if="interactionForm" class="gl-row">
+      <input :value="form.interactionTargetUrl" placeholder="互动目标链接（https://…，必填）" @input="updateField('interactionTargetUrl', ($event.target as HTMLInputElement).value)" />
+      <label>动作类型
+        <select :value="form.interactionActionType" @change="updateField('interactionActionType', ($event.target as HTMLSelectElement).value)">
+          <option value="like">点赞</option>
+          <option value="favorite">收藏</option>
+          <option value="follow">关注</option>
+        </select>
+      </label>
     </div>
     <div class="gl-row">
       <input :value="form.description" placeholder="任务描述（可选）" @input="updateField('description', ($event.target as HTMLInputElement).value)" />
@@ -72,6 +90,9 @@ interface TaskFormData {
   description: string
   platform: string
   contentForm: string
+  /** 任务书 #23：互动任务条件字段（contentForm=interaction 时展示、必填）。 */
+  interactionTargetUrl: string
+  interactionActionType: string
   maxSlots: number
   bountyYuan: number
   freebieDepositYuan: number
@@ -100,6 +121,8 @@ const props = defineProps<{
 }>()
 
 /** XOR 交互（任务书 #22 B4）：其一 >0 时另一输入禁用，避免同时填导致后端 400。 */
+/** 任务书 #23 R6：contentForm=interaction 时展示目标链接 + 动作类型两个必填字段。 */
+const interactionForm = computed(() => props.form.contentForm === 'interaction')
 const bountyActive = computed(() => props.form.bountyYuan > 0)
 const freebieActive = computed(() => props.form.freebieDepositYuan > 0)
 const fundingHint = computed(() => freebieActive.value

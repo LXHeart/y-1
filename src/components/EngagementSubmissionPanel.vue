@@ -25,6 +25,8 @@ const props = defineProps<{
   taskId: string
   applicationId: string
   role: 'merchant' | 'recommender'
+  /** 任务书 #23：互动任务（contentForm=interaction）展示平台账号标识输入与截图提示。 */
+  taskContentForm?: string | null
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
@@ -46,6 +48,7 @@ interface StagedAttachment {
 const submissions = ref<EngagementSubmission[]>([])
 const notice = ref('')
 const contentUrl = ref('')
+const platformHandle = ref('')
 const note = ref('')
 const rejectNote = ref('')
 const staged = ref<StagedAttachment[]>([])
@@ -72,11 +75,14 @@ const CHECK_TYPE_LABEL: Record<string, string> = {
   platform_identity: '发布平台',
   evidence_completeness: '凭证完整性',
   ai_visual: 'AI 视觉',
+  interaction_screenshot: '互动截图核验',
 }
 
 const pending = computed(() => submissions.value.find((s) => s.status === 'submitted') || null)
+const interactionTask = computed(() => props.taskContentForm === 'interaction')
 const canSubmit = computed(
-  () => !pending.value && !uploading.value && contentUrl.value.trim().length > 0)
+  () => !pending.value && !uploading.value && contentUrl.value.trim().length > 0
+    && (!interactionTask.value || platformHandle.value.trim().length > 0))
 const stagedFull = computed(() => staged.value.length >= MAX_ATTACHMENTS)
 
 function formatSize(bytes: number | null): string {
@@ -179,10 +185,12 @@ async function submit(): Promise<void> {
   const created = await grassland.submitDeliverable(
     props.taskId, props.applicationId, contentUrl.value.trim(),
     note.value.trim() || undefined,
-    staged.value.map((item) => item.mediaId))
+    staged.value.map((item) => item.mediaId),
+    interactionTask.value ? platformHandle.value.trim() : undefined)
   if (!created) return
   contentUrl.value = ''
   note.value = ''
+  platformHandle.value = ''
   staged.value = []
   notice.value = '已提交，等待商家核验'
   await refresh()
@@ -266,7 +274,9 @@ async function reject(submission: EngagementSubmission): Promise<void> {
 
     <div v-if="role === 'recommender'" class="sub-form">
       <div class="sub-row">
-        <input v-model="contentUrl" placeholder="发布链接（https://…）" />
+        <input v-model="contentUrl" :placeholder="interactionTask
+          ? '互动目标链接（https://…）' : '发布链接（https://…）'" />
+        <input v-if="interactionTask" v-model="platformHandle" placeholder="平台账号标识（必填，如 @xxx）" />
       </div>
 
       <ul v-if="staged.length > 0" class="sub-atts">
@@ -298,6 +308,10 @@ async function reject(submission: EngagementSubmission): Promise<void> {
       <p class="sub-hint">
         <span v-if="pending">已有一份待商家核验，等核验结果或被退回后才能重新提交。</span>
         <span v-else-if="stagedFull">附件已满（{{ MAX_ATTACHMENTS }} 个上限），移除一个才能再加。</span>
+        <span v-else-if="interactionTask">
+          互动任务请上传动作截图（展示你的账号已完成点赞/收藏/关注操作的界面，至少 1 张）；
+          截图与账号标识会被 AI 核验。
+        </span>
         <span v-else>
           链接须为 http(s)；附件单个不超过 {{ formatSize(MAX_ATTACHMENT_BYTES) }}，选中即上传，提交时一并带上。
         </span>

@@ -91,7 +91,7 @@ const newOrgName = ref('')
 const creditAmountYuan = ref(1000)
 /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
 const taskForm = ref({
-  title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
+  title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
   applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null as number | null,
   productServiceInfo: '', mustInclude: '', forbiddenContent: '',
   publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
@@ -205,6 +205,11 @@ async function openAcceptedTaskCreation(application: TaskApplication): Promise<v
   const task = selectedTask.value
   if (!task || application.status !== 'accepted' || application.taskId !== task.id
       || taskContextLoadingAppId.value) return
+  // 任务书 #23 R6：点赞互动任务无内容交付，「围绕任务创作」入口隐藏。
+  if (task.contentForm === 'interaction') {
+    setNotice('点赞互动任务无需内容创作，直接在下方提交互动截图即可')
+    return
+  }
   taskContextLoadingAppId.value = application.id
   const snapshot = await grassland.getTaskContext(task.id, application.id)
   taskContextLoadingAppId.value = ''
@@ -511,6 +516,13 @@ function taskRequirements() {
     publishEndAt: localDateTimeIso(taskForm.value.publishEndAt),
     metricRequirements: lines(taskForm.value.metricRequirements),
     evidenceRequirements: lines(taskForm.value.evidenceRequirements),
+    // 任务书 #23：仅互动任务带块（后端交叉校验：contentForm=interaction ⇔ interaction 非空）。
+    ...(taskForm.value.contentForm === 'interaction' && taskForm.value.interactionTargetUrl.trim()
+      ? { interaction: {
+          targetUrl: taskForm.value.interactionTargetUrl.trim(),
+          actionType: taskForm.value.interactionActionType,
+        } }
+      : {}),
   }
 }
 
@@ -524,7 +536,7 @@ function isoToLocalInput(iso: string | null): string {
 }
 
 function resetTaskForm(): void {
-  taskForm.value = { title: '', description: '', platform: '', contentForm: '', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
+  taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
     applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
     forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '' }
   editingDraft.value = null
@@ -610,6 +622,8 @@ function editDraft(task: Task): void {
     description: task.description || '',
     platform: task.platform || '',
     contentForm: task.contentForm || '',
+    interactionTargetUrl: task.requirements?.interaction?.targetUrl || '',
+    interactionActionType: task.requirements?.interaction?.actionType || 'like',
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
@@ -639,6 +653,8 @@ function editPublished(task: Task): void {
     description: task.description || '',
     platform: task.platform || '',
     contentForm: task.contentForm || '',
+    interactionTargetUrl: task.requirements?.interaction?.targetUrl || '',
+    interactionActionType: task.requirements?.interaction?.actionType || 'like',
     maxSlots: task.maxSlots ?? 1,
     bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
     freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
@@ -1467,6 +1483,7 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
                 <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
                 <EngagementSubmissionPanel
                   :task-id="selectedTaskId" :application-id="a.id" role="merchant"
+                  :task-content-form="selectedTask?.contentForm ?? null"
                 />
                 <EngagementRatingPanel
                   :task-id="selectedTaskId" :application-id="a.id" role="merchant"
@@ -1557,6 +1574,7 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
             <h5>提交履约 · <code>{{ a.id.slice(0, 8) }}…</code></h5>
             <EngagementSubmissionPanel
               :task-id="selectedTaskId" :application-id="a.id" role="recommender"
+              :task-content-form="selectedTask?.contentForm ?? null"
             />
             <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
             <EngagementRatingPanel

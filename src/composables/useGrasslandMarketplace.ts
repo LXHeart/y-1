@@ -37,6 +37,7 @@ export function useGrasslandMarketplace(run: RunFn) {
    */
   const submitDeliverable = (
     taskId: string, applicationId: string, contentUrl: string, note?: string, mediaIds?: string[],
+    platformHandle?: string,
   ) =>
     run(() => request<EngagementSubmission>(
       `/api/tasks/${taskId}/applications/${applicationId}/submissions`, {
@@ -46,6 +47,8 @@ export function useGrasslandMarketplace(run: RunFn) {
           ...(note ? { note } : {}),
           // 空数组也不发：后端 mediaIds 省略与 [] 等价，少发一个字段少一处 400 风险。
           ...(mediaIds && mediaIds.length > 0 ? { mediaIds } : {}),
+          // 任务书 #23：互动任务必填（后端分支校验），其余任务省略。
+          ...(platformHandle ? { platformHandle } : {}),
         }),
       }))
 

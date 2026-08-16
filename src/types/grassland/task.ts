@@ -12,7 +12,21 @@ export interface TaskRequirements {
   publishEndAt?: string | null
   metricRequirements: string[]
   evidenceRequirements: string[]
+  /**
+   * 任务书 #23 / ADR-D13：点赞互动配置块。仅 contentForm=interaction 的任务非空（后端交叉校验），
+   * 自动随 task_version / task_context 快照冻结。
+   */
+  interaction?: TaskInteraction | null
 }
+
+/** 点赞互动配置（任务书 #23）：被互动的目标链接 + 动作类型（like|favorite|follow，评论后置）。 */
+export interface TaskInteraction {
+  targetUrl: string
+  actionType: 'like' | 'favorite' | 'follow' | string
+}
+
+/** content_form 受控值集（任务书 #23 R1）；null = 未指定。 */
+export type TaskContentForm = 'image' | 'video' | 'article' | 'interaction' | null | string
 
 /** 任务书 #24：feed/任务详情行携带的门店公开轻量块（组织级任务无此字段）。 */
 export interface TaskStoreBlock {
@@ -30,7 +44,7 @@ export interface Task {
   title: string
   description: string | null
   status: TaskStatus
-  contentForm: string | null
+  contentForm: TaskContentForm
   platform: string | null
   /** 名额上限；null = 不限。 */
   maxSlots: number | null
