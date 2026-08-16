@@ -63,6 +63,8 @@ public class ApplicationAutoAcceptDispatcher {
     }
 
     Mono<Integer> processTasks() {
+        // 开关守卫放这里（而非只在 dispatch）：保证任何调用路径（含测试/运维手动触发）都 fail-safe。
+        if (!enabled) return Mono.just(0);
         return tasks.findAutoAcceptEnabled(scanLimit)
                 .concatMap(this::processTask)
                 .reduce(0, Integer::sum);
@@ -123,19 +125,15 @@ public class ApplicationAutoAcceptDispatcher {
                                 }
                                 return outcome;
                             })
-                            .flatMap(outcome -> {
-                                // 名额满 → 停该任务本轮
-                                if ("slots_full".equals(outcome)) {
-                                    return Mono.<String>error(
-                                            new RuntimeException("名额已满，停止该任务本轮"));
-                                }
-                                return Mono.just(outcome);
-                            })
+                            // 单条失败只跳过该条，不终止同任务其它报名。
                             .onErrorResume(e -> {
                                 log.warn("auto-accept app={} failed reason={}", app.id(), e.getMessage());
                                 return Mono.empty();
                             });
                 })
+                // 名额满 → 停止该任务本轮（takeUntil：发出 slots_full 后完成流，
+                // 剩余 pending 不再空转 claim；下轮扫描名额释放后自然恢复）。
+                .takeUntil(outcome -> "slots_full".equals(outcome))
                 .collectList()
                 .map(List::size);
     }
