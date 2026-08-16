@@ -11,9 +11,16 @@ import type {
 
 interface Props {
   orgId: string
+  /** 独立门店经理模式：只显示门店资料 tab（STAFF 读/MANAGER 写的后端语义），不拉组织级商家资料/收款账户。 */
+  storeOnly?: boolean
+  /** 外部注入门店列表（纯门店经理无组织成员身份，listStores 会被 403，改由工作台用 manager scopes 注入）。 */
+  stores?: Array<{ id: string; name: string }>
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  storeOnly: false,
+  stores: undefined,
+})
 const emit = defineEmits<{
   changed: []
 }>()
@@ -28,7 +35,7 @@ let storeOperationVersion = 0
 
 // 当前标签页
 type KybTab = 'merchant' | 'withdrawal' | 'store'
-const activeTab = ref<KybTab>('merchant')
+const activeTab = ref<KybTab>(props.storeOnly ? 'store' : 'merchant')
 
 // 商家资料
 const merchantProfile = ref<MerchantProfile | null>(null)
@@ -314,6 +321,15 @@ async function deleteWithdrawalAccount(accountId: string): Promise<void> {
 
 // 门店资料
 async function loadStores(orgId: string, version: number): Promise<void> {
+  if (Array.isArray(props.stores)) {
+    if (isCurrentOrganization(orgId, version)) {
+      stores.value = [...props.stores]
+      if (stores.value.length > 0 && !selectedStoreId.value) {
+        selectedStoreId.value = stores.value[0].id
+      }
+    }
+    return
+  }
   const list = await grassland.listStores(orgId)
   if (list && isCurrentOrganization(orgId, version)) {
     stores.value = list
@@ -400,7 +416,7 @@ watch(selectedStoreId, () => {
 
 function resetOrganizationState(): void {
   storeOperationVersion += 1
-  activeTab.value = 'merchant'
+  activeTab.value = props.storeOnly ? 'store' : 'merchant'
   merchantProfile.value = null
   merchantAttachments.value = []
   merchantReadError.value = ''
@@ -426,6 +442,11 @@ function resetOrganizationState(): void {
 watch(() => props.orgId, (orgId) => {
   const version = ++organizationLoadVersion
   resetOrganizationState()
+  if (props.storeOnly) {
+    // 独立门店经理：不触碰组织级商家资料/收款账户端点（403），只载入门店列表与资料。
+    void loadStores(orgId, version)
+    return
+  }
   void Promise.all([
     loadMerchantProfile(orgId, version),
     loadMerchantAttachments(orgId, version),
@@ -437,16 +458,18 @@ watch(() => props.orgId, (orgId) => {
 
 <template>
   <div class="merchant-kyb-card">
-    <h3>商家 KYB 资料</h3>
+    <h3>{{ storeOnly ? '门店 KYB 资料' : '商家 KYB 资料' }}</h3>
 
     <!-- 标签切换 -->
     <div class="kyb-tabs">
       <button
+        v-if="!storeOnly"
         type="button"
         :class="{ active: activeTab === 'merchant' }"
         @click="activeTab = 'merchant'"
       >商家资料</button>
       <button
+        v-if="!storeOnly"
         type="button"
         :class="{ active: activeTab === 'withdrawal' }"
         @click="activeTab = 'withdrawal'"

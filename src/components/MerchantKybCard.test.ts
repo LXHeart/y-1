@@ -80,6 +80,30 @@ afterEach(() => {
 })
 
 describe('MerchantKybCard 契约展示', () => {
+  test('独立门店经理模式：只渲染门店 tab、不触碰组织级端点', async () => {
+    const spy = stubKybFetch()
+    const wrapper = mount(MerchantKybCard, {
+      props: {
+        orgId: 'org-1',
+        storeOnly: true,
+        stores: [{ id: 'store-1', name: '静安门店' }],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('门店 KYB 资料')
+    expect(wrapper.text()).not.toContain('商家资料')
+    expect(wrapper.text()).not.toContain('收款账户')
+    // 组织级端点（merchant-profile/attachments/withdrawal/listStores）不应被调用。
+    const calledUrls = spy.mock.calls.map(([url]) => String(url))
+    expect(calledUrls.some((url) => url.includes('/merchant-profile'))).toBe(false)
+    expect(calledUrls.some((url) => url.includes('/merchant-attachments'))).toBe(false)
+    expect(calledUrls.some((url) => url.includes('/withdrawal-accounts'))).toBe(false)
+    expect(calledUrls.some((url) => url.endsWith('/stores') || url.includes('/stores?'))).toBe(false)
+    // 注入的门店列表可用，门店资料照常加载。
+    expect(wrapper.text()).toContain('静安门店')
+    expect(wrapper.text()).toContain('草稿')
+  })
   test('切换组织后忽略前一组织的迟到响应', async () => {
     let resolveFirstProfile!: (response: unknown) => void
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {

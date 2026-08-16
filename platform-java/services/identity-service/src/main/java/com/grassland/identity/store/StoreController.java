@@ -42,16 +42,22 @@ import org.springframework.web.bind.annotation.DeleteMapping;
  *   <li>GET — 列 org 下门店，需 MEMBER 及以上。</li>
  *   <li>GET /{storeId} — 单查，需 MEMBER 及以上；跨 org 或不存在返回 404。</li>
  *   <li>GL-P3-MERCHANT-001 新增：</li>
- *   <li>POST /{storeId}/profile — 创建/更新门店详细资料，需 ADMIN 及以上。</li>
- *   <li>GET /{storeId}/profile — 查询门店详细资料，需 MEMBER 及以上。</li>
- *   <li>DELETE /{storeId}/profile — 删除门店详细资料，需 ADMIN 及以上。</li>
+ *   <li>POST /{storeId}/profile — 创建/更新门店详细资料（独立门店 KYB：门店 MANAGER，org OWNER/ADMIN 隐式）。</li>
+ *   <li>GET /{storeId}/profile — 查询门店详细资料（门店 STAFF 或 org MEMBER 及以上）。</li>
+ *   <li>POST /{storeId}/profile/submit — 提交门店资料审核（门店 MANAGER，org OWNER/ADMIN 隐式）。</li>
+ *   <li>DELETE /{storeId}/profile — 停用门店详细资料（门店 MANAGER，org OWNER/ADMIN 隐式）。</li>
  * </ul>
+ *
+ * <p>独立门店 KYB 状态机（2026-08-16）：资料端点从组织级 ADMIN 门槛收敛为门店粒度 STAFF 读 / MANAGER 写
+ * （{@link StoreAuthorization#requireStoreRole}，org OWNER/ADMIN 隐式 MANAGER 不回归）——纯门店经理
+ * 无需 merchant identity 或组织成员身份即可走完 draft→pending→approved/rejected 生命周期。
  */
 @RestController
 @RequestMapping("/api/organizations/{orgId}/stores")
 public class StoreController {
 
     private final OrgAuthorization authz;
+    private final StoreAuthorization storeAuthz;
     private final StoreRepository stores;
     private final StoreProfileRepository storeProfiles;
     private final KybSubmissionService submissions;
@@ -59,10 +65,11 @@ public class StoreController {
     private final TransactionalOperator transactions;
     private final ObjectMapper json = new ObjectMapper();
 
-    public StoreController(OrgAuthorization authz, StoreRepository stores, StoreProfileRepository storeProfiles,
-                           KybSubmissionService submissions, OutboxRepository outbox,
-                           TransactionalOperator transactions) {
+    public StoreController(OrgAuthorization authz, StoreAuthorization storeAuthz, StoreRepository stores,
+                           StoreProfileRepository storeProfiles, KybSubmissionService submissions,
+                           OutboxRepository outbox, TransactionalOperator transactions) {
         this.authz = authz;
+        this.storeAuthz = storeAuthz;
         this.stores = stores;
         this.storeProfiles = storeProfiles;
         this.submissions = submissions;
@@ -110,65 +117,61 @@ public class StoreController {
                                                                     @PathVariable String storeId,
                                                                     @RequestBody CreateStoreProfileRequest body,
                                                                     ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
-                        .then(transactions.transactional(
-                                storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
-                                        .flatMap(existing -> requireEditable(existing).thenReturn(existing))
-                                        .then(storeProfiles.upsertDraft(orgId, storeId,
-                                                requireAddress(body.address()), body.phone(),
-                                                requireBusinessHours(body.businessHours()), body.description()))))
-                        .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile)))));
+        return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER)
+                .flatMap(account -> transactions.transactional(
+                        storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                .flatMap(existing -> requireEditable(existing).thenReturn(existing))
+                                .then(storeProfiles.upsertDraft(orgId, storeId,
+                                        requireAddress(body.address()), body.phone(),
+                                        requireBusinessHours(body.businessHours()), body.description()))))
+                .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))));
     }
 
     @PostMapping("/{storeId}/profile/submit")
     public Mono<ResponseEntity<Map<String, Object>>> submitProfile(@PathVariable String orgId,
                                                                     @PathVariable String storeId,
                                                                     ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
-                        .then(transactions.transactional(
-                                storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
-                                        .switchIfEmpty(Mono.error(new IdentityException(404, "门店资料不存在")))
-                                        .flatMap(profile -> requireSubmittable(profile).thenReturn(profile))
-                                        .flatMap(profile -> storeProfiles.submit(orgId, storeId, Instant.now())
-                                                .switchIfEmpty(Mono.error(new IdentityException(409, "门店资料状态已变化"))))
-                                        .flatMap(updated -> submissions.enqueue(
-                                                        KybVerificationType.STORE_PROFILE, orgId,
-                                                        UUID.fromString(storeId), account.id(), List.of())
-                                                .flatMap(review -> outbox.append(submittedEvent(
-                                                                orgId, storeId, review))
-                                                        .thenReturn(updated)))))
-                        .map(profile -> ResponseEntity.status(201)
-                                .body(Map.of("success", true, "data", toBody(profile)))));
+        return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER)
+                .flatMap(account -> transactions.transactional(
+                        storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                .switchIfEmpty(Mono.error(new IdentityException(404, "门店资料不存在")))
+                                .flatMap(profile -> requireSubmittable(profile).thenReturn(profile))
+                                .flatMap(profile -> storeProfiles.submit(orgId, storeId, Instant.now())
+                                        .switchIfEmpty(Mono.error(new IdentityException(409, "门店资料状态已变化"))))
+                                .flatMap(updated -> submissions.enqueue(
+                                                KybVerificationType.STORE_PROFILE, orgId,
+                                                UUID.fromString(storeId), account.id(), List.of())
+                                        .flatMap(review -> outbox.append(submittedEvent(
+                                                        orgId, storeId, review))
+                                                .thenReturn(updated)))))
+                .map(profile -> ResponseEntity.status(201)
+                        .body(Map.of("success", true, "data", toBody(profile))));
     }
 
     @GetMapping("/{storeId}/profile")
     public Mono<ResponseEntity<Map<String, Object>>> getProfile(@PathVariable String orgId,
                                                                  @PathVariable String storeId,
                                                                  ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.MEMBER)
-                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
-                        .then(storeProfiles.findByOrganizationAndId(orgId, storeId))
-                        .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))))
-                        .defaultIfEmpty(ResponseEntity.ok(envelope(null))));
+        return requireStoreProfileReadable(request, orgId, storeId)
+                .then(storeProfiles.findByOrganizationAndId(orgId, storeId))
+                .map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))))
+                .defaultIfEmpty(ResponseEntity.ok(envelope(null)));
     }
 
     @DeleteMapping("/{storeId}/profile")
     public Mono<ResponseEntity<Map<String, Object>>> deleteProfile(@PathVariable String orgId,
                                                                     @PathVariable String storeId,
                                                                     ServerHttpRequest request) {
-        return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-                .flatMap(account -> requireStoreInOrganization(orgId, storeId)
-                        .then(transactions.transactional(
-                                storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
-                                        .switchIfEmpty(Mono.error(new IdentityException(404, "门店资料不存在")))
-                                        .flatMap(existing -> requireEditable(existing)
-                                                .then(storeProfiles.deactivate(orgId, storeId)))
-                                        .switchIfEmpty(Mono.error(new IdentityException(
-                                                404, "门店资料不存在")))))
-                        .map(profile -> ResponseEntity.ok(Map.of(
-                                "success", true, "data", Map.of("deleted", true)))));
+        return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.MANAGER)
+                .flatMap(account -> transactions.transactional(
+                        storeProfiles.findByOrganizationAndIdForUpdate(orgId, storeId)
+                                .switchIfEmpty(Mono.error(new IdentityException(404, "门店资料不存在")))
+                                .flatMap(existing -> requireEditable(existing)
+                                        .then(storeProfiles.deactivate(orgId, storeId)))
+                                .switchIfEmpty(Mono.error(new IdentityException(
+                                        404, "门店资料不存在")))))
+                .map(profile -> ResponseEntity.ok(Map.of(
+                        "success", true, "data", Map.of("deleted", true))));
     }
 
     @ExceptionHandler(IdentityException.class)
@@ -190,6 +193,18 @@ public class StoreController {
         return stores.findByOrganizationAndId(orgId, storeId)
                 .switchIfEmpty(Mono.error(new IdentityException(404, "门店不存在")))
                 .then();
+    }
+
+    /**
+     * 门店资料读取：门店任意角色（STAFF 及以上）放行；无门店角色时回落 org MEMBER
+     * （保持组织成员既有可见性不回归）。跨 org 由 {@link StoreAuthorization} 内部的门店归属校验 404。
+     */
+    private Mono<Void> requireStoreProfileReadable(ServerHttpRequest request, String orgId, String storeId) {
+        return storeAuthz.resolveStoreRole(request, orgId, storeId)
+                .hasElement()
+                .flatMap(hasStoreRole -> hasStoreRole
+                        ? Mono.empty()
+                        : authz.requireRole(request, orgId, MembershipRole.MEMBER).then());
     }
 
     private Mono<Void> requireEditable(StoreProfile profile) {

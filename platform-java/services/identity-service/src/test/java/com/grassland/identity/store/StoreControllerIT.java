@@ -243,6 +243,86 @@ class StoreControllerIT extends IdentityItSupport {
     }
 
     @Test
+    void independentStoreManagerWalksKybLifecycleWithoutOrgMembership() {
+        var owner = seedAccount("store-kyb-owner@example.com");
+        String orgId = createOrg(owner.cookie(), "独立门店KYB主体");
+        String storeId = createStore(orgId, owner.cookie(), "独立门店");
+        var manager = seedAccount("store-kyb-manager@example.com");
+        var staff = seedAccount("store-kyb-staff@example.com");
+        addStoreMember(owner.cookie(), orgId, storeId, manager.accountId(), "manager");
+        addStoreMember(owner.cookie(), orgId, storeId, staff.accountId(), "staff");
+        String uri = "/api/organizations/" + orgId + "/stores/" + storeId + "/profile";
+        String managerCookie = "y1.sid=" + manager.cookie();
+
+        // 纯门店经理（无组织成员行、无 merchant identity）可创建并提交门店资料审核。
+        client().post().uri(uri)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", managerCookie)
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"经理填写地址\\\"}\",\"phone\":\"13900000000\"}")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("draft");
+
+        client().post().uri(uri + "/submit")
+                .header("Cookie", managerCookie)
+                .exchange().expectStatus().isCreated()
+                .expectBody().jsonPath("$.data.status").isEqualTo("pending");
+
+        // 门店 STAFF：可读（200），不可写/不可提交（403）。
+        String staffCookie = "y1.sid=" + staff.cookie();
+        client().get().uri(uri).header("Cookie", staffCookie)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("pending");
+        client().post().uri(uri)
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", staffCookie)
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"店员越权\\\"}\"}")
+                .exchange().expectStatus().isForbidden();
+        client().post().uri(uri + "/submit").header("Cookie", staffCookie)
+                .exchange().expectStatus().isForbidden();
+
+        // 组织普通成员（无门店角色）：读可见（回落 MEMBER），写 403。
+        var orgMember = seedAccount("store-kyb-org-member@example.com");
+        client().post().uri("/api/organizations/" + orgId + "/memberships")
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountId", orgMember.accountId(), "role", "member"))
+                .exchange().expectStatus().isCreated();
+        String memberCookie = "y1.sid=" + orgMember.cookie();
+        client().get().uri(uri).header("Cookie", memberCookie)
+                .exchange().expectStatus().isOk();
+        client().post().uri(uri)
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", memberCookie)
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"成员越权\\\"}\"}")
+                .exchange().expectStatus().isForbidden();
+
+        // 其他组织的门店 MANAGER 跨 org 仍 404（不泄露存在性）。
+        var otherOwner = seedAccount("store-kyb-other@example.com");
+        String otherOrg = createOrg(otherOwner.cookie(), "他组织");
+        var otherManager = seedAccount("store-kyb-other-manager@example.com");
+        String otherStore = createStore(otherOrg, otherOwner.cookie(), "他店");
+        addStoreMember(otherOwner.cookie(), otherOrg, otherStore, otherManager.accountId(), "manager");
+        client().post().uri("/api/organizations/" + otherOrg + "/stores/" + storeId + "/profile")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + otherManager.cookie())
+                .bodyValue("{\"address\":\"{\\\"address\\\":\\\"跨店越权\\\"}\"}")
+                .exchange().expectStatus().isNotFound();
+
+        // KYB 请求已入队（STORE_PROFILE 目标）。
+        Long queued = db.sql("SELECT COUNT(*)::int AS c FROM kyb_verification_request"
+                        + " WHERE verification_type = 'store_profile' AND target_id = CAST(:id AS uuid)")
+                .bind("id", storeId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(queued).isEqualTo(1);
+    }
+
+    private void addStoreMember(String cookie, String orgId, String storeId, String accountId, String role) {
+        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
+                .header("Cookie", "y1.sid=" + cookie)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("accountId", accountId, "role", role))
+                .exchange().expectStatus().isCreated();
+    }
+
+    @Test
     void rejectsRequestsWithoutSessionCookie() {
         var owner = seedAccount("store-noauth@example.com");
         String orgId = createOrg(owner.cookie(), "无鉴权主体");

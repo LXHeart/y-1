@@ -1119,6 +1119,19 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         <MerchantKybCard :org-id="activeOrg.id" @changed="() => loadOrganizations()" />
       </article>
 
+      <!-- 独立门店 KYB：纯门店 MANAGER（无组织成员身份）也能维护自己门店的资料并走审核状态机。 -->
+      <article
+        v-else-if="activeOrg && managerStoreScopes.some((scope) => scope.organizationId === activeOrgId)"
+        class="gl-card gl-card-wide"
+      >
+        <MerchantKybCard
+          :org-id="activeOrgId"
+          store-only
+          :stores="stores.map((store) => ({ id: store.id, name: store.name }))"
+          @changed="() => loadOrganizations()"
+        />
+      </article>
+
       <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
       <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
         id="gl-wallet" class="gl-card">

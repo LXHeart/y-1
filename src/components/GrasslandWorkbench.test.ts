@@ -181,7 +181,9 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(wrapper.text()).not.toContain('资金账户')
     expect(wrapper.text()).not.toContain('权限升级')
     expect(calls.some(([url]) => url === '/api/me/active-identity')).toBe(false)
-    expect(calls.some(([url]) => url.includes('/stores'))).toBe(false)
+    // 组织级门店列表（要求 org MEMBER）不可达；门店资料读取（STAFF 放行）是独立门店 KYB 的合法调用。
+    expect(calls.some(([url]) => /\/stores(\?|$)/.test(url))).toBe(false)
+    expect(calls.some(([url]) => url.includes('/stores/store-managed/profile'))).toBe(true)
     const taskUrls = calls.filter(([url]) => url.startsWith('/api/tasks?')).map(([url]) => url)
     expect(taskUrls).toHaveLength(5)
     expect(taskUrls.every((url) => url.includes('storeId=store-managed'))).toBe(true)
