@@ -951,4 +951,156 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
         return new IdentityStoreAuthorizationClient.Authorization(
                 true, accountId, organizationId, storeId, role, "store", "basic_publish");
     }
+
+    // ---- 组织级 legacy 素材批量门店迁移（Slice 14 收尾）----
+
+    /** 放行 org admin + 目标门店 manager（org OWNER/ADMIN 对门店隐式 MANAGER 的常驻路径）。 */
+    private void allowMigration(String account, String org, String storeId) {
+        allowOrgAdmin(account, org);
+        when(storeAuthorization.require(account, org, storeId, "manager")).thenReturn(Mono.empty());
+    }
+
+    @Test
+    void orgAdminBatchMigratesLegacyAssetsToStoreWithSnapshotAndEvent() {
+        String org = "org-mig";
+        String store = UUID.randomUUID().toString();
+        allowMigration("merchant-mig", org, store);
+        String first = createMerchantAsset("merchant-mig", org, seedMedia("merchant-mig"), "门头照");
+        String second = createMerchantAsset("merchant-mig", org, seedMedia("merchant-mig"), "菜单图");
+        allowOrgAdmin("merchant-other", "org-other");
+        String foreign = createMerchantAsset("merchant-other", "org-other", seedMedia("merchant-other"), "别家素材");
+        String personal = createAsset("user-plain", seedMedia("user-plain"), "个人素材");
+        String otherStore = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize("merchant-mig", org, otherStore, "manager"))
+                .thenReturn(Mono.just(storeAccess("merchant-mig", org, otherStore, "manager")));
+        String storeAsset = createStoreAsset("merchant-mig", org, otherStore,
+                seedMedia("merchant-mig"), "已在门店");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-mig", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("storeId", store, "assetIds", List.of(first, second, foreign, personal, storeAsset)))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        assertThat(((Number) data.get("moved")).longValue()).isEqualTo(2L);
+
+        // 两份组织级素材已迁为门店素材（version+1，storeId 落定）——DB 直查（消费者身份读商家素材按授权口径 404）。
+        java.util.List<Object[]> migratedRows = db.sql(
+                        "SELECT store_id::text, version FROM content_asset WHERE id = CAST(:id AS uuid)")
+                .bind("id", first)
+                .map((row, meta) -> new Object[] { row.get(0, String.class), row.get(1, Integer.class) })
+                .all().collectList().block();
+        assertThat(migratedRows).hasSize(1);
+        assertThat(migratedRows.get(0)[0]).isEqualTo(store);
+        assertThat(migratedRows.get(0)[1]).isEqualTo(2);
+        // 组织级形态留档：v1 快照 storeId 为空（「更新不覆盖历史快照」不变式）。
+        Integer snapshottedStore = db.sql(
+                        "SELECT (store_id IS NULL)::int FROM content_asset_version"
+                                + " WHERE asset_id = CAST(:asset AS uuid) AND version = 1")
+                .bind("asset", first)
+                .map((row, meta) -> row.get(0, Integer.class)).one().block();
+        assertThat(snapshottedStore).isEqualTo(1);
+        // 非组织级项（别家 org/个人库/已在门店）一律 moved:false，且行未被改写。
+        assertThat(getAsset(personal, "user-plain").get("storeId")).isNull();
+        String storeAfterMigration = db.sql(
+                        "SELECT store_id::text FROM content_asset WHERE id = CAST(:id AS uuid)")
+                .bind("id", storeAsset)
+                .map((row, meta) -> row.get(0, String.class)).one().block();
+        assertThat(storeAfterMigration).isEqualTo(otherStore);
+        // 迁移事件（无既有消费者，新类型安全）。
+        Integer events = db.sql(
+                        "SELECT COUNT(*) FROM intelligence_outbox WHERE event_type = 'ContentAssetStoreMigrated'")
+                .map((row, meta) -> row.get(0, Integer.class)).one().block();
+        assertThat(events).isEqualTo(2);
+    }
+
+    @Test
+    void migrationIsIdempotentOnRetry() {
+        String org = "org-mig-idem";
+        String store = UUID.randomUUID().toString();
+        allowMigration("merchant-idem", org, store);
+        String asset = createMerchantAsset("merchant-idem", org, seedMedia("merchant-idem"), "重试素材");
+
+        Map<String, Object> body = Map.of("storeId", store, "assetIds", List.of(asset));
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-idem", org))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.moved").isEqualTo(1);
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-idem", org))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.moved").isEqualTo(0);
+        // 第二次不产生新版本（守卫挡住已迁移行）。
+        Integer versionAfterRetry = db.sql(
+                        "SELECT version FROM content_asset WHERE id = CAST(:id AS uuid)")
+                .bind("id", asset)
+                .map((row, meta) -> row.get(0, Integer.class)).one().block();
+        assertThat(versionAfterRetry).isEqualTo(2);
+    }
+
+    @Test
+    void migrationRequiresOrgAdminNotPlainMember() {
+        String org = "org-mig-member";
+        String store = UUID.randomUUID().toString();
+        denyOrgAdmin("merchant-member", org);
+        when(storeAuthorization.require("merchant-member", org, store, "manager")).thenReturn(Mono.empty());
+
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-member", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("storeId", store, "assetIds", List.of(UUID.randomUUID().toString())))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void pureStoreManagerCannotPullOrgAssetsIntoStore() {
+        String org = "org-mig-storemgr";
+        String store = UUID.randomUUID().toString();
+        allowOrgAdmin("merchant-owner", org);
+        String asset = createMerchantAsset("merchant-owner", org, seedMedia("merchant-owner"), "组织素材");
+        // 纯门店经理：目标门店 MANAGER 放行，但源（组织级素材管理）无 org admin。
+        denyOrgAdmin("manager-only", org);
+        when(storeAuthorization.require("manager-only", org, store, "manager")).thenReturn(Mono.empty());
+
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("manager-only", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("storeId", store, "assetIds", List.of(asset)))
+                .exchange().expectStatus().isForbidden();
+        Integer stillOrgLevel = db.sql(
+                        "SELECT (store_id IS NULL)::int FROM content_asset WHERE id = CAST(:id AS uuid)")
+                .bind("id", asset)
+                .map((row, meta) -> row.get(0, Integer.class)).one().block();
+        assertThat(stillOrgLevel).isEqualTo(1);
+    }
+
+    @Test
+    void migrationRejectsCrossOrgTargetStoreAndMissingInput() {
+        String org = "org-mig-cross";
+        String crossStore = UUID.randomUUID().toString();
+        allowOrgAdmin("merchant-cross", org);
+        when(storeAuthorization.require("merchant-cross", org, crossStore, "manager"))
+                .thenReturn(Mono.error(new IntelligenceException(404, "门店不存在")));
+
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-cross", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("storeId", crossStore, "assetIds", List.of(UUID.randomUUID().toString())))
+                .exchange().expectStatus().isNotFound();
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-cross", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("assetIds", List.of(UUID.randomUUID().toString())))
+                .exchange().expectStatus().isBadRequest();
+        client().post().uri("/api/content-assets/store-migration")
+                .header(header(), signWithOrg("merchant-cross", org))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("storeId", UUID.randomUUID().toString()))
+                .exchange().expectStatus().isBadRequest();
+    }
 }

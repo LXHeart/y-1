@@ -227,4 +227,74 @@ describe('MediaLibraryPanel', () => {
     await wrapper.get('input[aria-label="选择素材：开业招牌海报"]').setValue(true)
     expect(wrapper.emitted('selection-change')?.[0]?.[0]).toEqual(['r1'])
   })
+
+  test('org admin 可把组织级素材批量迁移到门店，member 无迁移入口', async () => {
+    const identities = [{ id: 'id-1', identityType: 'merchant', organizationId: 'org-m', status: 'active' }]
+    const orgScopes = (role: string) => [{
+      organizationId: 'org-m', organizationName: '示例组织', organizationStatus: 'active',
+      permissionTier: 'basic_publish', role,
+    }]
+    const stores = [
+      { id: 'store-1', organizationId: 'org-m', name: '一号门店', status: 'active', createdAt: null },
+    ]
+    const orgAssets = { items: [
+      { id: 'a1', mediaId: 'md1', libraryType: 'merchant', category: 'store',
+        title: '门头照', tags: [], status: 'active', version: 1,
+        createdAt: '2026-08-16T00:00:00Z', updatedAt: '2026-08-16T00:00:00Z' },
+    ] }
+    const routes = (role: string) => ({
+      '/api/me/identities': identities,
+      '/api/me/store-scopes': [],
+      '/api/me/organization-scopes': orgScopes(role),
+      '/api/organizations/org-m/stores': stores,
+      'libraryType=merchant': orgAssets,
+      'libraryType=personal': { items: [] },
+    })
+    const migrationRoute = '/api/content-assets/store-migration'
+
+    // member：无迁移入口。
+    vi.stubGlobal('fetch', mockFetch(routes('member')))
+    const memberWrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+    await memberWrapper.findAll('button[role="tab"]')
+      .find((button) => button.text().includes('商家素材'))!.trigger('click')
+    await flushPromises()
+    expect(memberWrapper.text()).not.toContain('迁移组织素材到门店')
+
+    // admin：进入迁移模式 → 勾选 → 选目标门店 → 提交体锁死契约。
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const path = typeof url === 'string' ? url : url.pathname + url.search
+      if (path.includes(migrationRoute)) {
+        return envelope({ moved: 1, items: [{ id: 'a1', moved: true }] })
+      }
+      for (const [key, data] of Object.entries(routes('admin'))) {
+        if (path.includes(key)) return envelope(data)
+      }
+      return envelope(null)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const adminWrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+    await adminWrapper.findAll('button[role="tab"]')
+      .find((button) => button.text().includes('商家素材'))!.trigger('click')
+    await flushPromises()
+
+    await adminWrapper.get('.lib-migrate > button').trigger('click')
+    await adminWrapper.get('input[aria-label="迁移素材到门店：门头照"]').setValue(true)
+    const migrateButtons = adminWrapper.findAll('.lib-migrate-row button')
+    const submit = migrateButtons.find((button) => button.text().includes('执行迁移'))!
+    expect(submit.attributes('disabled')).toBeDefined()
+    await adminWrapper.get('.lib-migrate-row select').setValue('store-1')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    await submit.trigger('click')
+    await flushPromises()
+
+    const migrationCall = fetchMock.mock.calls.find(([url]) => String(url).includes(migrationRoute))
+    expect(migrationCall).toBeDefined()
+    expect((migrationCall?.[1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((migrationCall?.[1] as RequestInit).body as string)).toEqual({
+      storeId: 'store-1', assetIds: ['a1'],
+    })
+    expect(adminWrapper.text()).toContain('已迁移 1 项素材到门店')
+  })
 })

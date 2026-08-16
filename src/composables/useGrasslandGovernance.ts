@@ -395,6 +395,17 @@ export function useGrasslandGovernance(run: RunFn) {
     run(() => request<{ revoked: boolean }>(
       `/api/content-assets/${id}/grants/${granteeAccountId}`, { method: 'DELETE' }))
 
+  /**
+   * 组织级 legacy 素材批量迁移到门店（Slice 14 收尾）。响应含 moved 计数与逐项结果；
+   * 非 movable 项（别家 org/个人库/已在门店）统一 moved:false，服务端不区分原因。
+   */
+  const migrateContentAssetsToStore = (input: { storeId: string; assetIds: string[] }) =>
+    run(() => request<{ moved: number; items: Array<{ id: string; moved: boolean }> }>(
+      '/api/content-assets/store-migration', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }))
+
   // ---------- KYB：收款账户 ----------
 
   /** 列出本组织的收款账户。 */
@@ -545,7 +556,7 @@ export function useGrasslandGovernance(run: RunFn) {
     listMerchantAttachments, uploadMerchantAttachment, deleteMerchantAttachment,
     uploadContentAssetFile, listContentAssets, recommendContentAssets, createContentAsset, getContentAsset,
     listContentAssetVersions, updateContentAsset, deleteContentAsset, getContentAssetDownloadUrl,
-    grantContentAsset, listContentAssetGrants, revokeContentAssetGrant,
+    grantContentAsset, listContentAssetGrants, revokeContentAssetGrant, migrateContentAssetsToStore,
     listWithdrawalAccounts, createWithdrawalAccount, updateWithdrawalAccount,
     submitWithdrawalAccount, setDefaultWithdrawalAccount, deleteWithdrawalAccount,
     getStoreProfile, createStoreProfile, submitStoreProfile,

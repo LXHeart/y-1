@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -51,6 +52,8 @@ public class ContentAssetController {
     private static final long DOWNLOAD_URL_TTL_SECONDS = 300;
     private static final int MAX_TAGS = 20;
     private static final int MAX_TITLE_LENGTH = 120;
+    /** 批量门店迁移单次上限（去重后截断），防一次请求拖垮事务链。 */
+    private static final int MAX_MIGRATION_ITEMS = 100;
 
     private final IntelligenceCallerResolver callers;
     private final ContentAssetRepository assets;
@@ -343,6 +346,71 @@ public class ContentAssetController {
                                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "授权不存在或已撤销")))
                                 .thenReturn(Map.<String, Object>of("revoked", true))))
                 .map(ContentAssetController::success);
+    }
+
+    /**
+     * 组织级 legacy 素材批量迁移到门店（Slice 14 收尾）。逐项处理：先 appendVersion（组织级形态留档，
+     * 遵循「更新不覆盖历史快照」不变式）再 guarded UPDATE 迁移 + outbox，各自独立事务——一条坏 id
+     * 不阻塞其余。非 movable 项统一 {@code moved:false}，不区分原因（防跨 org/跨库存在性探测）。
+     *
+     * <p>授权双闸：源是组织级素材（管理要求 org ADMIN/OWNER）+ 目标是门店素材（管理要求门店 MANAGER；
+     * org OWNER/ADMIN 对门店隐式 MANAGER，同一人即可完成迁移，纯门店经理不能抽走组织资产）。
+     */
+    @PostMapping("/api/content-assets/store-migration")
+    public Mono<ResponseEntity<Map<String, Object>>> migrateToStore(
+            @RequestBody StoreMigrationRequest body, ServerWebExchange exchange) {
+        if (body == null || body.storeId() == null || body.storeId().isBlank()
+                || body.assetIds() == null || body.assetIds().isEmpty()) {
+            return Mono.error(new IntelligenceException(400, "storeId 与 assetIds 不能为空"));
+        }
+        List<String> assetIds = body.assetIds().stream().distinct().limit(MAX_MIGRATION_ITEMS).toList();
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> {
+                    String storeId = body.storeId().trim();
+                    String organizationId = caller.organizationId();
+                    if (!caller.isMerchant() || organizationId == null) {
+                        return Mono.error(new IntelligenceException(403, "需要商家组织身份"));
+                    }
+                    // 源闸：组织级素材管理口径（org ADMIN/OWNER）。
+                    return orgAuthorization.require(caller.accountId(), organizationId, "admin")
+                            // 目标闸：门店素材管理口径（MANAGER；跨 org 门店在此 404）。
+                            .then(storeAuthorization.require(caller.accountId(), organizationId, storeId, "manager"))
+                            .then(Mono.defer(() -> Flux.fromIterable(assetIds)
+                                    .flatMap(assetId -> migrateOne(assetId, organizationId, storeId,
+                                            caller.accountId()))
+                                    .collectList()
+                                    .map(results -> {
+                                        List<Map<String, Object>> items = results.stream()
+                                                .map(result -> Map.<String, Object>of(
+                                                        "id", result.id(), "moved", result.moved()))
+                                                .toList();
+                                        return Map.<String, Object>of(
+                                                "moved", results.stream().filter(MigrationOutcome::moved).count(),
+                                                "items", items);
+                                    })));
+                })
+                .map(ContentAssetController::success);
+    }
+
+    private record MigrationOutcome(String id, boolean moved) {}
+
+    private Mono<MigrationOutcome> migrateOne(String assetIdRaw, String organizationId, String storeId,
+                                              String actorAccountId) {
+        UUID assetId = parseUuid(assetIdRaw, "assetIds");
+        return assets.findById(assetId)
+                // 内存预检：只对「本 org 的组织级商家素材」做 appendVersion，防止给别家/别库行留档。
+                .filter(asset -> asset.deletedAt() == null
+                        && asset.libraryType() == LibraryType.MERCHANT
+                        && organizationId.equals(asset.organizationId())
+                        && asset.storeId() == null)
+                .flatMap(current -> assets.appendVersion(current, actorAccountId)
+                        .then(assets.migrateToStore(assetId, organizationId, storeId))
+                        .flatMap(migrated -> outbox.append(assetEvent(
+                                        "ContentAssetStoreMigrated", migrated, actorAccountId, null, null))
+                                .thenReturn(migrated))
+                        .as(transactions::transactional)
+                        .map(migrated -> new MigrationOutcome(assetIdRaw, true)))
+                .defaultIfEmpty(new MigrationOutcome(assetIdRaw, false));
     }
 
     // ---- 创建（个人/商家库共用编排）----
@@ -768,6 +836,9 @@ public class ContentAssetController {
 
     /** 商家授权推荐官请求。 */
     public record GrantRequest(String granteeAccountId) {}
+
+    /** 批量迁移请求：目标门店 + 组织级素材 id 列表（List 可空性由 controller 校验）。 */
+    public record StoreMigrationRequest(String storeId, java.util.List<String> assetIds) {}
 
     /** 公共库审核请求（乐观锁 + 驳回备注）。 */
 }

@@ -112,6 +112,14 @@ const canManageCurrentMerchantScope = computed(() => {
       && scope.storeId === selectedStoreId.value) || isOrganizationAdmin.value
 })
 const canReviewPublic = computed(() => auth.hasBackendRole('content_reviewer'))
+/** 组织级素材批量迁移入口：商家 tab 管理视角 + 组织级范围 + org admin + 本 org 有可选门店。 */
+const canMigrateOrgAssets = computed(() =>
+  activeTab.value === 'merchant' && !grantedView.value
+  && !selectedStoreId.value && isOrganizationAdmin.value
+  && selectedOrganizationId.value !== '' && stores.value.length > 0)
+const migrationActive = ref(false)
+const migrationTargetStoreId = ref('')
+const migrationIds = ref<string[]>([])
 
 watch(() => props.selectedAssetIds, (ids) => {
   selectedIds.value = [...ids]
@@ -308,6 +316,33 @@ async function grant(asset: ContentAsset): Promise<void> {
   if (result) notice.value = `已授权给 ${grantee.trim()}`
 }
 
+function toggleMigrationSelection(assetId: string): void {
+  migrationIds.value = migrationIds.value.includes(assetId)
+    ? migrationIds.value.filter((id) => id !== assetId)
+    : [...migrationIds.value, assetId]
+}
+
+function resetMigration(): void {
+  migrationActive.value = false
+  migrationTargetStoreId.value = ''
+  migrationIds.value = []
+}
+
+async function runMigration(): Promise<void> {
+  const result = await grassland.migrateContentAssetsToStore({
+    storeId: migrationTargetStoreId.value,
+    assetIds: [...migrationIds.value],
+  })
+  if (!result) return
+  const failed = result.items.filter((item) => !item.moved).length
+  resetMigration()
+  await refresh()
+  // refresh() 开头会清 notice，迁移结果必须在其后再写入，否则用户永远看不到。
+  notice.value = failed === 0
+    ? `已迁移 ${result.moved} 项素材到门店`
+    : `已迁移 ${result.moved} 项，${failed} 项不可迁移（可能已在门店或状态已变化）`
+}
+
 function categoryLabel(category: ContentAssetCategory): string {
   return CATEGORIES.find((c) => c.id === category)?.label || category
 }
@@ -371,6 +406,28 @@ function formatSize(bytes: number | null | undefined): string {
       </label>
     </div>
 
+    <!-- 组织级 legacy 素材批量迁移到门店（Slice 14 收尾）：仅 org admin 在组织级范围可见。 -->
+    <div v-if="canMigrateOrgAssets" class="lib-migrate">
+      <button v-if="!migrationActive" type="button" @click="migrationActive = true">迁移组织素材到门店</button>
+      <template v-else>
+        <p class="lib-migrate-hint">
+          勾选要迁移的组织级素材，选择目标门店——迁移生成新版本快照（组织级形态留档），门店素材改由门店 MANAGER 管理。
+        </p>
+        <div class="lib-migrate-row">
+          <label>目标门店
+            <select v-model="migrationTargetStoreId">
+              <option value="" disabled>选择门店</option>
+              <option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option>
+            </select>
+          </label>
+          <span class="lib-migrate-count">已选 {{ migrationIds.length }} 项</span>
+          <button type="button" :disabled="!migrationTargetStoreId || migrationIds.length === 0
+            || grassland.loading.value" @click="runMigration">执行迁移</button>
+          <button type="button" @click="resetMigration">取消</button>
+        </div>
+      </template>
+    </div>
+
     <ul v-if="assets.length > 0" class="lib-grid">
       <li v-for="asset in assets" :key="asset.id" class="lib-card">
         <div class="lib-card-head">
@@ -396,6 +453,11 @@ function formatSize(bytes: number | null | undefined): string {
         <p v-if="asset.storeId" class="lib-source">
           范围：{{ stores.find((store) => store.id === asset.storeId)?.name || '门店素材' }}
         </p>
+        <label v-if="migrationActive && !asset.storeId" class="lib-select lib-migrate-check">
+          <input type="checkbox" :checked="migrationIds.includes(asset.id)"
+            :aria-label="`迁移素材到门店：${asset.title}`" @change="toggleMigrationSelection(asset.id)" />
+          <span>迁移此项</span>
+        </label>
         <div class="lib-card-actions">
           <button type="button" :disabled="grassland.loading.value" @click="download(asset)">下载</button>
           <template v-if="activeTab === 'merchant' && canManageCurrentMerchantScope">
@@ -427,6 +489,15 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-actions { display: flex; gap: 8px; }
 .lib-scope { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .lib-scope select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text); }
+.lib-migrate { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px dashed var(--color-border); border-radius: 8px; }
+.lib-migrate-hint { margin: 0; font-size: 11px; opacity: 0.7; }
+.lib-migrate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.lib-migrate-row select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text); }
+.lib-migrate-row button { padding: 5px 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.lib-migrate-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.lib-migrate-count { opacity: 0.7; }
+.lib-migrate-check { margin-top: 2px; font-size: 12px; opacity: 0.85; }
+.lib-migrate-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--color-accent); }
 .lib-actions button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
 .lib-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .lib-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }

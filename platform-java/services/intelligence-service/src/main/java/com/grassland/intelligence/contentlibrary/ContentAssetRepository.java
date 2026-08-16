@@ -279,6 +279,29 @@ public class ContentAssetRepository {
         return spec.map(ContentAssetRepository::map).one();
     }
 
+    /**
+     * 组织级 legacy 素材迁移到门店（Slice 14 收尾）。守卫是**状态**而非 expectedVersion：
+     * 范围迁移是状态迁移（组织级→门店），逐项乐观锁对批量调用方不可用；守卫保证只有
+     * 「本 org 的未软删组织级商家素材」会被改写，已在门店/别家 org/其它库类型一律 empty。
+     * 调用链同 update：先 appendVersion（组织级形态留档）再本方法，同一事务。
+     */
+    public Mono<ContentAsset> migrateToStore(UUID id, String organizationId, String storeId) {
+        return db.sql("""
+                UPDATE content_asset SET
+                    store_id=CAST(:storeId AS uuid), version=version+1, updated_at=now()
+                WHERE id=CAST(:id AS uuid)
+                  AND organization_id=:organizationId
+                  AND store_id IS NULL
+                  AND library_type='merchant'
+                  AND deleted_at IS NULL
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id.toString())
+                .bind("organizationId", organizationId)
+                .bind("storeId", storeId)
+                .map(ContentAssetRepository::map).one();
+    }
+
     /** 软删素材。guarded：仅当 id 匹配 + 未软删时置 deleted_at。返回是否命中。 */
     public Mono<Boolean> softDelete(UUID id) {
         return db.sql("""
