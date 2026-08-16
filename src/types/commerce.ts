@@ -41,6 +41,9 @@ export interface ConsumerOrder {
   refundedAmountCents?: number
   refundRequestedAmountCents?: number
   refundReason?: string
+  inventorySlotId?: string
+  slotStart?: string
+  slotEnd?: string
   attributionAllocations?: AttributionAllocation[]
   status: ConsumerOrderStatus
   redeemDeadline: string
@@ -90,6 +93,20 @@ export interface AttributionAllocation {
   recommenderAccountId: string
   shareBps: number
   amountCents?: number
+}
+
+export interface AfterSalesDispute {
+  id: string
+  orderId: string
+  consumerAccountId: string
+  reason: string
+  status: 'open' | 'resolved' | 'rejected'
+  resolution?: 'refund' | 'reject'
+  resolutionAmountCents?: number
+  resolutionReason?: string
+  refundOperationId?: string
+  createdAt: string
+  resolvedAt?: string
 }
 
 export interface ConsumerReview {

@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type {
+  AfterSalesDispute,
   CommercePackage,
   CommercePackageInput,
   ConsumerOrder,
@@ -57,6 +58,8 @@ export function useCommerce() {
     `/api/v2/orders/${encodeURIComponent(id)}/after-sales-dispute`, {
       method: 'POST', body: JSON.stringify({ reason }),
     }))
+  const getAfterSalesDispute = (id: string) => run(() => request<AfterSalesDispute>(
+    `/api/v2/orders/${encodeURIComponent(id)}/after-sales-dispute`))
   const rebindAttribution = (id: string, allocations: Array<{ recommenderAccountId: string; shareBps: number }>, reason = 'manual') => run(() => request<ConsumerOrder>(
     `/api/v2/orders/${encodeURIComponent(id)}/attribution`, {
       method: 'POST', body: JSON.stringify({ allocations, source: 'manual', reason }),
@@ -99,7 +102,7 @@ export function useCommerce() {
 
   return {
     loading, error,
-    getPackage, createOrder, listOrders, refundOrder, openAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
+    getPackage, createOrder, listOrders, refundOrder, openAfterSalesDispute, getAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
     listMerchantPackages, createPackage, revisePackage, publishPackage, offSalePackage,
     listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions,
   }

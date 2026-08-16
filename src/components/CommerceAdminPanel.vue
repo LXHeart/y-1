@@ -9,7 +9,9 @@
         <option value="">全部状态</option><option value="pending_payment">支付处理中</option>
         <option value="paid">待核销</option><option value="redeeming">分账中</option>
         <option value="redeemed">已核销</option><option value="refund_pending">退款中</option>
-        <option value="refunded">已退款</option>
+        <option value="partially_refunded">部分退款</option>
+        <option value="refunded">已退款</option><option value="after_sales_disputed">售后争议</option>
+        <option value="payment_failed">支付失败</option><option value="cancelled">已取消</option>
       </select>
       <span>共 {{ orders.length }} 笔</span>
     </div>
@@ -19,10 +21,10 @@
         <thead><tr><th>订单/套餐</th><th>消费者</th><th>组织/门店</th><th>金额</th><th>状态</th><th>支付/核销时间</th><th>异常</th></tr></thead>
         <tbody>
           <tr v-for="order in orders" :key="order.id">
-            <td><strong>{{ order.packageTitle }}</strong><code>{{ short(order.id) }} · v{{ order.packageVersion }}</code></td>
+            <td><strong>{{ order.packageTitle }}</strong><code>{{ short(order.id) }} · v{{ order.packageVersion }}{{ order.slotStart ? ` · 时段 ${format(order.slotStart)}` : '' }}</code></td>
             <td><code>{{ short(order.consumerAccountId) }}</code></td>
             <td><code>{{ short(order.organizationId) }}</code><small>{{ order.storeId ? short(order.storeId) : '组织级' }}</small></td>
-            <td>¥{{ (order.priceCents / 100).toFixed(2) }}<small>推 {{ money(order.recommenderAmountCents) }} / 商 {{ money(order.merchantAmountCents) }} / 平 {{ money(order.platformFeeCents) }}</small></td>
+            <td>¥{{ (order.priceCents / 100).toFixed(2) }}<small v-if="(order.refundedAmountCents ?? 0) > 0">已退 {{ money(order.refundedAmountCents ?? 0) }}</small><small>推 {{ money(order.recommenderAmountCents) }} / 商 {{ money(order.merchantAmountCents) }} / 平 {{ money(order.platformFeeCents) }}</small></td>
             <td><span :class="['status', order.status]">{{ statusLabel(order.status) }}</span></td>
             <td><small>支付 {{ format(order.paidAt) }}</small><small>核销 {{ format(order.redeemedAt) }}</small></td>
             <td :class="{ problem: order.lastError }">{{ order.lastError || '—' }}</td>
