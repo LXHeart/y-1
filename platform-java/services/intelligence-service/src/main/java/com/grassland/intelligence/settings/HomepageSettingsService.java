@@ -28,6 +28,8 @@ public class HomepageSettingsService {
     public Mono<Map<String, Object>> get(String accountId) {
         return repo.findByAccountAndType(accountId, SETTINGS_TYPE)
                 .map(this::parseJson)
+                .map(json -> SettingsSchemaGuard.normalize(SETTINGS_TYPE, json))
+                .filter(normalized -> !normalized.isEmpty())
                 .defaultIfEmpty(defaultHomepageSettings())
                 .map(HomepageSettingsService::maskAlapiToken);
     }
@@ -35,10 +37,15 @@ public class HomepageSettingsService {
     public Mono<Map<String, Object>> update(String accountId, Map<String, Object> partial) {
         return repo.findByAccountAndType(accountId, SETTINGS_TYPE)
                 .map(this::parseJson)
+                .map(json -> SettingsSchemaGuard.normalize(SETTINGS_TYPE, json))
+                .filter(normalized -> !normalized.isEmpty())
                 .defaultIfEmpty(defaultHomepageSettings())
                 .flatMap(current -> {
-                    Map<String, Object> merged = mergeHomepageSettings(current, partial);
-                    return repo.upsert(accountId, SETTINGS_TYPE, toJson(merged))
+                    Map<String, Object> merged = SettingsSchemaGuard.normalize(
+                            SETTINGS_TYPE, mergeHomepageSettings(current, partial));
+                    String serialized = toJson(merged);
+                    SettingsSchemaGuard.validate(SETTINGS_TYPE, merged, serialized);
+                    return repo.upsert(accountId, SETTINGS_TYPE, serialized)
                             .thenReturn(maskAlapiToken(merged));
                 });
     }

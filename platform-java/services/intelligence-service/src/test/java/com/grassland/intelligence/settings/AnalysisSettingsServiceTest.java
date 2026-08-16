@@ -69,6 +69,60 @@ class AnalysisSettingsServiceTest {
         assertThat(video.get("provider")).isEqualTo("qwen");
     }
 
+    // ---------- schema 守卫（settings 存量 jsonb 归一） ----------
+
+    @Test
+    void normalizeDropsUnknownSectionsKeysAndNonStringValues() {
+        Map<String, Object> legacy = new LinkedHashMap<>();
+        legacy.put("features", mutable(Map.of(
+                "video", mutable(Map.of(
+                        "provider", "qwen", "baseUrl", "https://api.example.com/v1",
+                        "evilKey", "junk", "blankKey", "  ", "numberKey", 42)),
+                "unknownFeature", mutable(Map.of("apiKey", "sk-x")))));
+        legacy.put("integrations", mutable(Map.of(
+                "feishu", mutable(Map.of("appId", "cli_x", "extra", "junk")),
+                "notFeishu", Map.of("a", "b"))));
+        legacy.put("topLevelJunk", "drop me");
+
+        Map<String, Object> normalized = SettingsSchemaGuard.normalize("analysis", legacy);
+
+        Map<String, Object> video = feature(normalized, "video");
+        assertThat(video).containsOnlyKeys("provider", "baseUrl");
+        assertThat(normalized.get("features")).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .doesNotContainKey("unknownFeature");
+        assertThat(normalized).doesNotContainKey("topLevelJunk");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> feishu = (Map<String, Object>) ((Map<String, Object>) normalized.get("integrations")).get("feishu");
+        assertThat(feishu).containsOnlyKeys("appId");
+    }
+
+    @Test
+    void validateRejectsBadProviderEnumOversizedValuesAndBadBaseUrl() {
+        Map<String, Object> badProvider = settingsWithVideoApiKey("sk-x");
+        feature(badProvider, "video").put("provider", "openai");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
+                        "analysis", SettingsSchemaGuard.normalize("analysis", badProvider), "{}"))
+                .isInstanceOf(com.grassland.intelligence.security.IntelligenceException.class)
+                .hasMessageContaining("provider");
+
+        Map<String, Object> oversize = settingsWithVideoApiKey("x".repeat(513));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
+                        "analysis", SettingsSchemaGuard.normalize("analysis", oversize), "{}"))
+                .hasMessageContaining("过长");
+
+        Map<String, Object> privateUrl = settingsWithVideoApiKey("sk-x");
+        feature(privateUrl, "video").put("baseUrl", "http://127.0.0.1:8080/v1");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
+                        "analysis", SettingsSchemaGuard.normalize("analysis", privateUrl), "{}"))
+                .hasMessageContaining("内网");
+
+        Map<String, Object> homepage = new LinkedHashMap<>();
+        homepage.put("hotItems", mutable(Map.of("provider", "bogus")));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
+                        "homepage", SettingsSchemaGuard.normalize("homepage", homepage), "{}"))
+                .hasMessageContaining("provider");
+    }
+
     // ---------- helpers ----------
 
     private static Map<String, Object> settingsWithVideoApiKey(String apiKey) {

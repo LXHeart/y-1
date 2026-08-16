@@ -34,22 +34,29 @@ public class AnalysisSettingsService {
         this.repo = repo;
     }
 
-    /** 读设置（无记录返回默认）→ mask 密钥。 */
+    /** 读设置（无记录或存量脏数据归一后为空 → 默认）→ mask 密钥。读路径过 schema 守卫，legacy 脏键不出响应。 */
     public Mono<Map<String, Object>> get(String accountId) {
         return repo.findByAccountAndType(accountId, SETTINGS_TYPE)
                 .map(this::parseJson)
+                .map(json -> SettingsSchemaGuard.normalize(SETTINGS_TYPE, json))
+                .filter(normalized -> !normalized.isEmpty())
                 .defaultIfEmpty(defaultAnalysisSettings())
                 .map(AnalysisSettingsService::maskSecrets);
     }
 
-    /** 读当前 → mask 感知 merge → 写 DB → 返回 masked。 */
+    /** 读当前（归一）→ mask 感知 merge → 归一 + schema 校验 → 写 DB → 返回 masked。 */
     public Mono<Map<String, Object>> update(String accountId, Map<String, Object> partial) {
         return repo.findByAccountAndType(accountId, SETTINGS_TYPE)
                 .map(this::parseJson)
+                .map(json -> SettingsSchemaGuard.normalize(SETTINGS_TYPE, json))
+                .filter(normalized -> !normalized.isEmpty())
                 .defaultIfEmpty(defaultAnalysisSettings())
                 .flatMap(current -> {
-                    Map<String, Object> merged = mergeAnalysisSettings(current, partial);
-                    return repo.upsert(accountId, SETTINGS_TYPE, toJson(merged))
+                    Map<String, Object> merged = SettingsSchemaGuard.normalize(
+                            SETTINGS_TYPE, mergeAnalysisSettings(current, partial));
+                    String serialized = toJson(merged);
+                    SettingsSchemaGuard.validate(SETTINGS_TYPE, merged, serialized);
+                    return repo.upsert(accountId, SETTINGS_TYPE, serialized)
                             .thenReturn(maskSecrets(merged));
                 });
     }
