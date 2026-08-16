@@ -53,6 +53,7 @@ public class CommerceService {
                                     scope.storeId(), blankToNull(command.taskId()))
                             .then(repository.insertVersion(versionId, packageId, 1, input, caller.accountId()))
                             .then(repository.insertInventory(versionId, input.totalStock()))
+                            .then(repository.insertInventorySlots(versionId, input.inventorySlots()))
                             .then(outbox.append(event("CommercePackageCreated", "CommercePackage", packageId,
                                     Map.of("packageId", packageId, "organizationId", scope.organizationId(),
                                             "version", 1))))
@@ -69,6 +70,7 @@ public class CommerceService {
             Mono<OfferDetail> work = repository.insertVersion(
                             versionId, packageId, nextVersion, input, caller.accountId())
                     .then(repository.insertInventory(versionId, input.totalStock()))
+                    .then(repository.insertInventorySlots(versionId, input.inventorySlots()))
                     .then(repository.setCurrentVersion(packageId, current.offer().currentVersion(), nextVersion)
                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "套餐版本已变化，请刷新后重试"))))
                     .then(outbox.append(event("CommercePackageRevised", "CommercePackage", packageId,
@@ -122,12 +124,39 @@ public class CommerceService {
                 return Mono.error(new MarketplaceException(409, "套餐已过有效期"));
             }
             String orderId = UUID.randomUUID().toString();
-            String recommender = blankToNull(command.recommenderAccountId());
+            java.util.List<AllocationCommand> requestedAllocations = command.allocations() == null
+                    ? java.util.List.of() : command.allocations();
+            String recommender = requestedAllocations.isEmpty()
+                    ? blankToNull(command.recommenderAccountId()) : blankToNull(requestedAllocations.get(0).recommenderAccountId());
             long platform = basisPoints(detail.version().priceCents(), detail.version().platformFeeBps());
-            long recommenderAmount = recommender == null ? 0
-                    : basisPoints(detail.version().priceCents(), detail.version().recommenderShareBps());
+            int requestedShareBps = requestedAllocations.isEmpty() ? detail.version().recommenderShareBps()
+                    : requestedAllocations.stream().mapToInt(AllocationCommand::shareBps).sum();
+            if (requestedShareBps < 0 || requestedShareBps + detail.version().platformFeeBps() > 10000
+                    || requestedAllocations.stream().anyMatch(a -> blank(a.recommenderAccountId()) || a.shareBps() <= 0)
+                    || requestedAllocations.stream().map(AllocationCommand::recommenderAccountId).distinct().count()
+                        != requestedAllocations.size()) {
+                return Mono.error(new MarketplaceException(409, "推荐官分配比例不合法"));
+            }
+            java.util.List<CommerceRepository.AttributionAllocationInput> allocations = recommender == null
+                    ? new java.util.ArrayList<>()
+                    : requestedAllocations.isEmpty()
+                        ? new java.util.ArrayList<>(java.util.List.of(new CommerceRepository.AttributionAllocationInput(
+                                recommender, requestedShareBps, basisPoints(detail.version().priceCents(), requestedShareBps))))
+                        : new java.util.ArrayList<>(requestedAllocations.stream().map(a -> new CommerceRepository.AttributionAllocationInput(
+                                a.recommenderAccountId(), a.shareBps(), basisPoints(detail.version().priceCents(), a.shareBps())))
+                                .toList());
+            long recommenderAmount = allocations.stream().mapToLong(CommerceRepository.AttributionAllocationInput::amountCents).sum();
+            if (!allocations.isEmpty()) {
+                long residual = basisPoints(detail.version().priceCents(), requestedShareBps) - recommenderAmount;
+                if (residual != 0) {
+                    CommerceRepository.AttributionAllocationInput last = allocations.remove(allocations.size() - 1);
+                    allocations.add(new CommerceRepository.AttributionAllocationInput(last.recommenderAccountId(),
+                            last.shareBps(), last.amountCents() + residual));
+                    recommenderAmount += residual;
+                }
+            }
             long merchant = detail.version().priceCents() - platform - recommenderAmount;
-            int recommenderBps = recommender == null ? 0 : detail.version().recommenderShareBps();
+            int recommenderBps = recommender == null ? 0 : requestedShareBps;
             int merchantBps = 10_000 - detail.version().platformFeeBps() - recommenderBps;
             CommerceRepository.NewOrder newOrder = new CommerceRepository.NewOrder(
                     orderId, caller.accountId(), detail.offer().organizationId(), detail.offer().storeId(),
@@ -135,10 +164,13 @@ public class CommerceService {
                     detail.version().version(), detail.version().title(), recommender,
                     detail.version().priceCents(), recommenderBps, detail.version().platformFeeBps(),
                     merchantBps, recommenderAmount, platform, merchant, detail.version().policyVersion(),
-                    codes.hash(codes.codeForOrder(orderId)), deadline, "commerce-payment:" + orderId);
-            Mono<Order> create = repository.reserveInventory(detail.version().id())
+                    codes.hash(codes.codeForOrder(orderId)), deadline, "commerce-payment:" + orderId,
+                    blankToNull(command.inventorySlotId()));
+            Mono<Order> create = repository.reserveInventory(detail.version().id(), command.inventorySlotId())
                     .switchIfEmpty(Mono.error(new MarketplaceException(409, "套餐已售罄")))
                     .then(repository.insertOrder(newOrder))
+                    .flatMap(order -> repository.replaceAttributionAllocations(order.id(), allocations, "order_create")
+                            .thenReturn(order))
                     .flatMap(order -> outbox.append(orderEvent("ConsumerOrderCreated", order)).thenReturn(order));
             return transactions.transactional(create).flatMap(this::attemptPayment);
         });
@@ -155,14 +187,123 @@ public class CommerceService {
         return repository.listConsumerOrders(caller.accountId(), limit);
     }
 
-    public Mono<Order> requestRefund(Caller caller, String orderId, String reason) {
+    public Mono<Order> rebindAttribution(Caller caller, String orderId, AttributionCommand command) {
+        if (command == null || (command.allocations() == null || command.allocations().isEmpty())
+                && (blank(command.recommenderAccountId()) || command.recommenderShareBps() < 0
+                    || command.recommenderShareBps() > 10000)) {
+            return Mono.error(new IllegalArgumentException("推荐官归因参数不合法"));
+        }
+        return findConsumerOrder(caller, orderId).flatMap(order -> {
+            java.util.List<AllocationCommand> allocations = command.allocations() == null
+                    || command.allocations().isEmpty()
+                    ? java.util.List.of(new AllocationCommand(command.recommenderAccountId(), command.recommenderShareBps()))
+                    : command.allocations();
+            int totalBps = allocations.stream().mapToInt(AllocationCommand::shareBps).sum();
+            if (allocations.stream().anyMatch(a -> blank(a.recommenderAccountId()) || a.shareBps() <= 0)
+                    || allocations.stream().map(AllocationCommand::recommenderAccountId).distinct().count()
+                        != allocations.size() || totalBps + order.platformFeeBps() > 10000) {
+                return Mono.error(new MarketplaceException(409, "推荐官分配比例超过可分配范围"));
+            }
+            if (!"paid".equals(order.status()) && !"partially_refunded".equals(order.status())) {
+                return Mono.error(new MarketplaceException(409, "已核销或已结束订单不能换绑归因"));
+            }
+            java.util.List<CommerceRepository.AttributionAllocationInput> allocationInputs = new java.util.ArrayList<>(allocations.stream()
+                    .map(a -> new CommerceRepository.AttributionAllocationInput(a.recommenderAccountId(), a.shareBps(),
+                            basisPoints(order.priceCents(), a.shareBps()))).toList());
+            long allocated = allocationInputs.stream().mapToLong(CommerceRepository.AttributionAllocationInput::amountCents).sum();
+            long target = basisPoints(order.priceCents(), totalBps);
+            if (!allocationInputs.isEmpty() && allocated != target) {
+                CommerceRepository.AttributionAllocationInput last = allocationInputs.remove(allocationInputs.size() - 1);
+                allocationInputs.add(new CommerceRepository.AttributionAllocationInput(last.recommenderAccountId(),
+                        last.shareBps(), last.amountCents() + target - allocated));
+            }
+            Mono<Order> work = repository.rebindAttribution(
+                            order.id(), allocations.get(0).recommenderAccountId(), totalBps)
+                    .switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
+                    .delayUntil(updated -> repository.insertAttribution(
+                            updated.id(), updated.recommenderAccountId(), updated.recommenderShareBps(),
+                            blankToNull(command.source()) == null ? "manual" : command.source(),
+                            blankToNull(command.reason()), caller.accountId())
+                            .then(repository.replaceAttributionAllocations(updated.id(), allocationInputs,
+                                    blank(command.source()) ? "manual" : command.source())))
+                    .flatMap(updated -> outbox.append(orderEvent("ConsumerOrderAttributionRebound", updated))
+                            .thenReturn(updated));
+            return transactions.transactional(work);
+        });
+    }
+
+    public Flux<CommerceRepository.AttributionAllocation> attributionAllocations(Caller caller, String orderId) {
+        return findConsumerOrder(caller, orderId).flatMapMany(order -> repository.findAttributionAllocations(order.id()));
+    }
+
+    public Mono<Order> openAfterSalesDispute(Caller caller, String orderId, String reason) {
+        if (blank(reason)) return Mono.error(new IllegalArgumentException("争议原因不能为空"));
+        return findConsumerOrder(caller, orderId).flatMap(order -> {
+            Mono<Order> work = repository.openAfterSalesDispute(order.id(), caller.accountId(), reason.trim())
+                    .switchIfEmpty(Mono.error(new MarketplaceException(409, "当前订单不可发起售后争议")))
+                    .delayUntil(updated -> repository.insertAfterSalesDispute(
+                            updated.id(), caller.accountId(), reason.trim()))
+                    .flatMap(updated -> outbox.append(orderEvent("ConsumerOrderAfterSalesDisputeOpened", updated))
+                            .thenReturn(updated));
+            return transactions.transactional(work);
+        });
+    }
+
+    public Mono<Order> resolveAfterSalesDispute(
+            Caller caller, String orderId, DisputeResolutionCommand command) {
+        if (command == null || blank(command.resolution())
+                || (!"refund".equals(command.resolution()) && !"reject".equals(command.resolution()))) {
+            return Mono.error(new IllegalArgumentException("争议裁定类型不合法"));
+        }
+        return repository.findOrder(orderId)
+                .switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
+                .flatMap(order -> authorization.requireScope(caller, order.organizationId(), order.storeId(), "staff")
+                        .thenReturn(order))
+                .flatMap(order -> {
+                    if (!"after_sales_disputed".equals(order.status())) {
+                        return Mono.error(new MarketplaceException(409, "争议不在处理中"));
+                    }
+                    if ("reject".equals(command.resolution())) {
+                        return transactions.transactional(repository.rejectAfterSalesDispute(order.id())
+                                .flatMap(updated -> repository.resolveAfterSalesDispute(order.id(), "reject", 0,
+                                        command.reason(), null).then(outbox.append(orderEvent(
+                                                "ConsumerOrderAfterSalesDisputeRejected", updated)).thenReturn(updated))));
+                    }
+                    long amount = command.amountCents() == null ? order.priceCents() - order.refundedAmountCents()
+                            : command.amountCents();
+                    if (amount <= 0 || amount > order.priceCents() - order.refundedAmountCents()) {
+                        return Mono.error(new MarketplaceException(409, "裁定退款金额超过可退余额"));
+                    }
+                    String operationId = "commerce-dispute-refund:" + order.id() + ":" + UUID.randomUUID();
+                    return transactions.transactional(repository.requestDisputeRefund(
+                                    order.id(), operationId, amount, command.reason())
+                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "争议状态已变化")))
+                            .flatMap(updated -> outbox.append(orderEvent("ConsumerOrderDisputeRefundRequested", updated))
+                                    .thenReturn(updated)))
+                            .flatMap(updated -> attemptRefund(updated, command.reason()))
+                            .flatMap(updated -> "refund_pending".equals(updated.status())
+                                    ? Mono.error(new MarketplaceException(409, "退款尚未完成，争议保持处理中"))
+                                    : repository.resolveAfterSalesDispute(order.id(), "refund", amount,
+                                        command.reason(), operationId).thenReturn(updated));
+                });
+    }
+
+    public Mono<Order> requestRefund(Caller caller, String orderId, Long requestedAmountCents, String reason) {
         return findConsumerOrder(caller, orderId).flatMap(order -> {
             if ("refund_pending".equals(order.status())) return attemptRefund(order, reason);
-            if (!"paid".equals(order.status())) {
+            if (!"paid".equals(order.status()) && !"partially_refunded".equals(order.status())) {
                 return Mono.error(new MarketplaceException(409, "当前订单状态不可退款"));
             }
-            String operationId = "commerce-refund:" + order.id();
-            Mono<Order> request = repository.requestRefund(order.id(), operationId)
+            long amount = requestedAmountCents == null ? order.priceCents() - order.refundedAmountCents()
+                    : requestedAmountCents;
+            if (amount <= 0 || amount > order.priceCents() - order.refundedAmountCents()) {
+                return Mono.error(new MarketplaceException(409, "退款金额超过可退余额"));
+            }
+            String operationId = amount == order.priceCents() - order.refundedAmountCents()
+                    && order.refundedAmountCents() == 0
+                    ? "commerce-refund:" + order.id()
+                    : "commerce-refund:" + order.id() + ":" + UUID.randomUUID();
+            Mono<Order> request = repository.requestRefund(order.id(), operationId, amount, reason)
                     .switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
                     .flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRefundRequested", updated))
                             .thenReturn(updated));
@@ -241,9 +382,12 @@ public class CommerceService {
         if (!"refund_pending".equals(order.status())) return Mono.just(order);
         return finance.refund(order, reason == null ? "consumer_request" : reason)
                 .then(transactions.transactional(repository.markRefunded(order.id())
-                        .flatMap(updated -> repository.replenishInventory(updated.packageVersionId())
-                                .then(outbox.append(orderEvent("ConsumerOrderRefunded", updated)))
-                                .thenReturn(updated))
+                        .flatMap(updated -> {
+                            Mono<Void> replenish = "refunded".equals(updated.status()) && order.redeemedAt() == null
+                                    ? repository.replenishInventory(updated.packageVersionId(), updated.inventorySlotId()) : Mono.empty();
+                            return replenish.then(outbox.append(orderEvent("ConsumerOrderRefunded", updated)))
+                                    .thenReturn(updated);
+                        })
                         .switchIfEmpty(repository.findOrder(order.id()))))
                 .onErrorResume(error -> repository.recordError(order.id(), "refund_pending", error.getMessage())
                         .then(repository.findOrder(order.id())));
@@ -251,7 +395,8 @@ public class CommerceService {
 
     Mono<Order> attemptSplit(Order order) {
         if (!"redeeming".equals(order.status())) return Mono.just(order);
-        return finance.split(order)
+        return repository.findAttributionAllocations(order.id()).collectList()
+                .flatMap(allocations -> finance.split(order, allocations))
                 .then(transactions.transactional(repository.markRedeemed(order.id())
                         .flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRedeemed", updated))
                                 .thenReturn(updated))
@@ -298,7 +443,8 @@ public class CommerceService {
                 command.title().trim(), blankToNull(command.description()), command.priceCents(),
                 command.totalStock(), command.fixedRedeemDeadline(), command.validDaysAfterPurchase(),
                 recommender, platform, 10_000 - recommender - platform,
-                blank(command.policyVersion()) ? "commerce-v1" : command.policyVersion().trim());
+                blank(command.policyVersion()) ? "commerce-v1" : command.policyVersion().trim(),
+                command.inventorySlots() == null ? java.util.List.of() : command.inventorySlots());
     }
 
     private static Instant redeemDeadline(OfferDetail detail, Instant purchasedAt) {
@@ -342,7 +488,17 @@ public class CommerceService {
             String organizationId, String storeId, String taskId, String title, String description,
             long priceCents, int totalStock, Instant fixedRedeemDeadline,
             Integer validDaysAfterPurchase, int recommenderShareBps,
-            int platformFeeBps, String policyVersion) {}
-    public record CreateOrderCommand(String packageId, String recommenderAccountId) {}
+            int platformFeeBps, String policyVersion,
+            java.util.List<CommerceRepository.InventorySlotInput> inventorySlots) {}
+    public record CreateOrderCommand(String packageId, String recommenderAccountId, String inventorySlotId,
+                                     java.util.List<AllocationCommand> allocations) {}
+
+    public record AllocationCommand(String recommenderAccountId, int shareBps) {}
+
+    public record AttributionCommand(
+            String recommenderAccountId, int recommenderShareBps, String source, String reason,
+            java.util.List<AllocationCommand> allocations) {}
+
+    public record DisputeResolutionCommand(String resolution, Long amountCents, String reason) {}
     public record ReviewCommand(int rating, String comment) {}
 }

@@ -5,6 +5,7 @@ import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.OfferVersion;
 import com.grassland.marketplace.commerce.CommerceModels.Order;
 import com.grassland.marketplace.commerce.CommerceModels.Review;
+import com.grassland.marketplace.commerce.CommerceModels.InventorySlot;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -32,7 +33,8 @@ public class CommerceRepository {
             + " o.package_version, o.package_title, o.recommender_account_id::text, o.price_cents,"
             + " o.recommender_share_bps, o.platform_fee_bps, o.merchant_share_bps,"
             + " o.recommender_amount_cents, o.platform_fee_cents, o.merchant_amount_cents,"
-            + " o.policy_version, o.status, o.redeem_code_hash, o.redeem_deadline,"
+            + " o.policy_version, o.status, o.refunded_amount_cents, o.refund_requested_amount_cents,"
+            + " o.refund_reason, o.inventory_slot_id::text, o.redeem_code_hash, o.redeem_deadline,"
             + " o.payment_operation_id, o.refund_operation_id, o.split_operation_id, o.provider_ref,"
             + " o.last_error, o.version, o.created_at, o.paid_at, o.redeemed_at, o.refunded_at, o.updated_at";
 
@@ -96,6 +98,36 @@ public class CommerceRepository {
                 .bind("versionId", versionId).bind("stock", totalStock).then();
     }
 
+    public Mono<Void> insertInventorySlots(String versionId, java.util.List<InventorySlotInput> slots) {
+        if (slots == null || slots.isEmpty()) return Mono.empty();
+        return Flux.fromIterable(slots).flatMap(slot -> {
+            GenericExecuteSpec spec = db.sql("""
+                    INSERT INTO commerce_package_inventory_slot(
+                        id, package_version_id, store_id, slot_start, slot_end, total_stock, remaining_stock)
+                    VALUES (CAST(:id AS uuid), CAST(:versionId AS uuid), CAST(:store AS uuid),
+                            :slotStart, :slotEnd, :stock, :stock)
+                    """)
+                    .bind("id", UUID.randomUUID().toString()).bind("versionId", versionId)
+                    .bind("slotStart", slot.slotStart().atOffset(ZoneOffset.UTC))
+                    .bind("slotEnd", slot.slotEnd().atOffset(ZoneOffset.UTC))
+                    .bind("stock", slot.totalStock());
+            spec = bindUuid(spec, "store", slot.storeId());
+            return spec.then();
+        }).then();
+    }
+
+    public Flux<InventorySlot> slots(String versionId) {
+        return db.sql("""
+                SELECT id::text, package_version_id::text, store_id::text, slot_start, slot_end,
+                       total_stock, remaining_stock
+                  FROM commerce_package_inventory_slot
+                 WHERE package_version_id = CAST(:versionId AS uuid) ORDER BY slot_start
+                """).bind("versionId", versionId).map(row -> new InventorySlot(
+                        row.get("id", String.class), row.get("package_version_id", String.class),
+                        row.get("store_id", String.class), instant(row, "slot_start"), instant(row, "slot_end"),
+                        row.get("total_stock", Integer.class), row.get("remaining_stock", Integer.class))).all();
+    }
+
     public Mono<Offer> setCurrentVersion(String packageId, int expectedVersion, int nextVersion) {
         return db.sql("""
                 UPDATE commerce_package
@@ -121,7 +153,9 @@ public class CommerceRepository {
                         + " JOIN commerce_package_version v ON v.package_id = p.id AND v.version = p.current_version"
                         + " JOIN commerce_package_inventory i ON i.package_version_id = v.id"
                         + " WHERE p.id = CAST(:id AS uuid)")
-                .bind("id", id).map(CommerceRepository::mapDetail).one();
+                .bind("id", id).map(CommerceRepository::mapDetail).one()
+                .flatMap(detail -> slots(detail.version().id()).collectList()
+                        .map(values -> new OfferDetail(detail.offer(), detail.version(), detail.remainingStock(), values)));
     }
 
     public Flux<OfferDetail> listOffers(String organizationId, String storeId) {
@@ -135,7 +169,9 @@ public class CommerceRepository {
                         + " ORDER BY p.updated_at DESC")
                 .bind("org", organizationId);
         if (storeId != null && !storeId.isBlank()) spec = spec.bind("store", storeId);
-        return spec.map(CommerceRepository::mapDetail).all();
+        return spec.map(CommerceRepository::mapDetail).all()
+                .flatMap(detail -> slots(detail.version().id()).collectList()
+                        .map(values -> new OfferDetail(detail.offer(), detail.version(), detail.remainingStock(), values)));
     }
 
     public Mono<Offer> publish(String id) {
@@ -170,6 +206,16 @@ public class CommerceRepository {
                 .map(row -> row.get("remaining_stock", Integer.class)).one();
     }
 
+    public Mono<Integer> reserveInventory(String versionId, String slotId) {
+        if (slotId == null || slotId.isBlank()) return reserveInventory(versionId);
+        return db.sql("""
+                UPDATE commerce_package_inventory_slot SET remaining_stock = remaining_stock - 1, updated_at = now()
+                 WHERE id = CAST(:slotId AS uuid) AND package_version_id = CAST(:versionId AS uuid)
+                   AND remaining_stock > 0 RETURNING remaining_stock
+                """).bind("slotId", slotId).bind("versionId", versionId)
+                .map(row -> row.get("remaining_stock", Integer.class)).one();
+    }
+
     public Mono<Void> replenishInventory(String versionId) {
         return db.sql("""
                 UPDATE commerce_package_inventory
@@ -179,17 +225,26 @@ public class CommerceRepository {
                 .bind("versionId", versionId).then();
     }
 
+    public Mono<Void> replenishInventory(String versionId, String slotId) {
+        if (slotId == null || slotId.isBlank()) return replenishInventory(versionId);
+        return db.sql("""
+                UPDATE commerce_package_inventory_slot
+                   SET remaining_stock = LEAST(total_stock, remaining_stock + 1), updated_at = now()
+                 WHERE id = CAST(:slotId AS uuid) AND package_version_id = CAST(:versionId AS uuid)
+                """).bind("slotId", slotId).bind("versionId", versionId).then();
+    }
+
     public Mono<Order> insertOrder(NewOrder order) {
         GenericExecuteSpec spec = db.sql("""
                 INSERT INTO consumer_order(
                     id, consumer_account_id, organization_id, store_id, task_id, package_id,
-                    package_version_id, package_version, package_title, recommender_account_id,
+                    package_version_id, package_version, package_title, recommender_account_id, inventory_slot_id,
                     price_cents, recommender_share_bps, platform_fee_bps, merchant_share_bps,
                     recommender_amount_cents, platform_fee_cents, merchant_amount_cents,
                     policy_version, status, redeem_code_hash, redeem_deadline, payment_operation_id)
                 VALUES (CAST(:id AS uuid), CAST(:consumer AS uuid), CAST(:org AS uuid), CAST(:store AS uuid),
                         CAST(:task AS uuid), CAST(:packageId AS uuid), CAST(:packageVersionId AS uuid),
-                        :packageVersion, :packageTitle, CAST(:recommender AS uuid), :price,
+                        :packageVersion, :packageTitle, CAST(:recommender AS uuid), CAST(:inventorySlot AS uuid), :price,
                         :recommenderBps, :platformBps, :merchantBps, :recommenderAmount,
                         :platformAmount, :merchantAmount, :policyVersion, 'pending_payment',
                         :codeHash, :deadline, :paymentOperationId)
@@ -208,6 +263,7 @@ public class CommerceRepository {
         spec = bindUuid(spec, "store", order.storeId());
         spec = bindUuid(spec, "task", order.taskId());
         spec = bindUuid(spec, "recommender", order.recommenderAccountId());
+        spec = bindUuid(spec, "inventorySlot", order.inventorySlotId());
         return spec.map(CommerceRepository::mapOrder).one();
     }
 
@@ -264,12 +320,15 @@ public class CommerceRepository {
                 .bind("message", truncate(message)).then();
     }
 
-    public Mono<Order> requestRefund(String id, String operationId) {
-        return db.sql("UPDATE consumer_order o SET status = 'refund_pending', refund_operation_id = :operationId,"
+    public Mono<Order> requestRefund(String id, String operationId, long amountCents, String reason) {
+        GenericExecuteSpec spec = db.sql("UPDATE consumer_order o SET status = 'refund_pending', refund_operation_id = :operationId,"
+                        + " refund_requested_amount_cents = :amount, refund_reason = :reason,"
                         + " last_error = NULL, version = version + 1, updated_at = now()"
-                        + " WHERE o.id = CAST(:id AS uuid) AND o.status = 'paid' RETURNING " + ORDER_COLS)
-                .bind("id", id).bind("operationId", operationId)
-                .map(CommerceRepository::mapOrder).one();
+                        + " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
+                        + " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS)
+                .bind("id", id).bind("operationId", operationId).bind("amount", amountCents);
+        spec = bindText(spec, "reason", reason);
+        return spec.map(CommerceRepository::mapOrder).one();
     }
 
     public Flux<Order> claimExpired(int limit) {
@@ -290,9 +349,15 @@ public class CommerceRepository {
     }
 
     public Mono<Order> markRefunded(String id) {
-        return db.sql("UPDATE consumer_order o SET status = 'refunded', refunded_at = now(),"
-                        + " last_error = NULL, version = version + 1, updated_at = now()"
-                        + " WHERE o.id = CAST(:id AS uuid) AND o.status = 'refund_pending' RETURNING " + ORDER_COLS)
+        return db.sql("UPDATE consumer_order o SET status = CASE"
+                        + " WHEN o.refunded_amount_cents + o.refund_requested_amount_cents = o.price_cents"
+                        + " THEN 'refunded' ELSE 'partially_refunded' END,"
+                        + " refunded_amount_cents = o.refunded_amount_cents + o.refund_requested_amount_cents,"
+                        + " refunded_at = CASE WHEN o.refunded_amount_cents + o.refund_requested_amount_cents = o.price_cents"
+                        + " THEN now() ELSE o.refunded_at END, refund_requested_amount_cents = NULL,"
+                        + " refund_operation_id = NULL, last_error = NULL, version = version + 1, updated_at = now()"
+                        + " WHERE o.id = CAST(:id AS uuid) AND o.status = 'refund_pending'"
+                        + " AND o.refund_requested_amount_cents IS NOT NULL RETURNING " + ORDER_COLS)
                 .bind("id", id).map(CommerceRepository::mapOrder).one();
     }
 
@@ -305,10 +370,120 @@ public class CommerceRepository {
                 .map(CommerceRepository::mapOrder).one();
     }
 
+    public Mono<Order> rebindAttribution(String id, String recommenderAccountId, int recommenderShareBps) {
+        return db.sql("UPDATE consumer_order o SET recommender_account_id = CAST(:recommender AS uuid),"
+                        + " recommender_share_bps = :recommenderBps,"
+                        + " recommender_amount_cents = (o.price_cents * :recommenderBps) / 10000,"
+                        + " merchant_share_bps = 10000 - o.platform_fee_bps - :recommenderBps,"
+                        + " merchant_amount_cents = o.price_cents - o.platform_fee_cents"
+                        + " - ((o.price_cents * :recommenderBps) / 10000),"
+                        + " version = version + 1, updated_at = now()"
+                        + " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
+                        + " RETURNING " + ORDER_COLS)
+                .bind("id", id).bind("recommender", recommenderAccountId)
+                .bind("recommenderBps", recommenderShareBps)
+                .map(CommerceRepository::mapOrder).one();
+    }
+
+    public Mono<Void> insertAttribution(
+            String orderId, String recommenderAccountId, int recommenderShareBps,
+            String source, String reason, String actorAccountId) {
+        GenericExecuteSpec spec = db.sql("""
+                INSERT INTO consumer_order_attribution(
+                    id, order_id, recommender_account_id, recommender_share_bps,
+                    source, reason, actor_account_id)
+                VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:recommender AS uuid),
+                        :recommenderBps, :source, :reason, CAST(:actor AS uuid))
+                """)
+                .bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
+                .bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderShareBps)
+                .bind("source", source).bind("actor", actorAccountId);
+        spec = bindText(spec, "reason", reason);
+        return spec.then();
+    }
+
+    public Flux<AttributionAllocation> findAttributionAllocations(String orderId) {
+        return db.sql("""
+                SELECT recommender_account_id::text, share_bps, amount_cents
+                  FROM consumer_order_attribution_allocation
+                 WHERE order_id = CAST(:orderId AS uuid)
+                 ORDER BY created_at, id
+                """).bind("orderId", orderId).map(row -> new AttributionAllocation(
+                        row.get("recommender_account_id", String.class),
+                        row.get("share_bps", Integer.class), row.get("amount_cents", Long.class))).all();
+    }
+
+    public Mono<Void> replaceAttributionAllocations(
+            String orderId, java.util.List<AttributionAllocationInput> allocations, String source) {
+        return db.sql("DELETE FROM consumer_order_attribution_allocation WHERE order_id = CAST(:orderId AS uuid)")
+                .bind("orderId", orderId).then()
+                .thenMany(Flux.fromIterable(allocations == null ? java.util.List.<AttributionAllocationInput>of() : allocations)
+                        .flatMap(allocation -> db.sql("""
+                                INSERT INTO consumer_order_attribution_allocation(
+                                    id, order_id, recommender_account_id, share_bps, amount_cents, source)
+                                VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:account AS uuid),
+                                        :shareBps, :amount, :source)
+                                """)
+                                .bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
+                                .bind("account", allocation.recommenderAccountId())
+                                .bind("shareBps", allocation.shareBps()).bind("amount", allocation.amountCents())
+                                .bind("source", source == null ? "manual" : source).then()))
+                .then();
+    }
+
     public Mono<Order> markRedeemed(String id) {
         return db.sql("UPDATE consumer_order o SET status = 'redeemed', redeemed_at = now(),"
                         + " last_error = NULL, version = version + 1, updated_at = now()"
                         + " WHERE o.id = CAST(:id AS uuid) AND o.status = 'redeeming' RETURNING " + ORDER_COLS)
+                .bind("id", id).map(CommerceRepository::mapOrder).one();
+    }
+
+    public Mono<Order> openAfterSalesDispute(String id, String consumerAccountId, String reason) {
+        return db.sql("UPDATE consumer_order o SET status = 'after_sales_disputed',"
+                        + " last_error = NULL, version = version + 1, updated_at = now()"
+                        + " WHERE o.id = CAST(:id AS uuid) AND o.consumer_account_id = CAST(:consumer AS uuid)"
+                        + " AND o.status IN ('redeemed', 'partially_refunded') RETURNING " + ORDER_COLS)
+                .bind("id", id).bind("consumer", consumerAccountId)
+                .map(CommerceRepository::mapOrder).one();
+    }
+
+    public Mono<Void> insertAfterSalesDispute(String orderId, String consumerAccountId, String reason) {
+        return db.sql("""
+                INSERT INTO consumer_order_after_sales_dispute(id, order_id, consumer_account_id, reason)
+                VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:consumer AS uuid), :reason)
+                ON CONFLICT (order_id) DO NOTHING
+                """)
+                .bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
+                .bind("consumer", consumerAccountId).bind("reason", reason).then();
+    }
+
+    public Mono<Order> requestDisputeRefund(String id, String operationId, long amountCents, String reason) {
+        return db.sql("UPDATE consumer_order SET status = 'refund_pending', refund_operation_id = :operationId,"
+                        + " refund_requested_amount_cents = :amount, refund_reason = :reason,"
+                        + " version = version + 1, updated_at = now()"
+                        + " WHERE id = CAST(:id AS uuid) AND status = 'after_sales_disputed'"
+                        + " AND refunded_amount_cents + :amount <= price_cents RETURNING " + ORDER_COLS)
+                .bind("id", id).bind("operationId", operationId).bind("amount", amountCents)
+                .bind("reason", reason).map(CommerceRepository::mapOrder).one();
+    }
+
+    public Mono<Void> resolveAfterSalesDispute(
+            String orderId, String resolution, long amountCents, String resolutionReason, String refundOperationId) {
+        GenericExecuteSpec spec = db.sql("UPDATE consumer_order_after_sales_dispute SET status = :status, resolution = :resolution,"
+                        + " resolution_amount_cents = :amount, resolution_reason = :reason,"
+                        + " refund_operation_id = :refundOperationId, resolved_at = now()"
+                        + " WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'")
+                .bind("orderId", orderId).bind("status", "refund".equals(resolution) ? "resolved" : "rejected")
+                .bind("resolution", resolution).bind("amount", amountCents);
+        spec = bindText(spec, "reason", resolutionReason);
+        spec = bindText(spec, "refundOperationId", refundOperationId);
+        return spec.then();
+    }
+
+    public Mono<Order> rejectAfterSalesDispute(String id) {
+        return db.sql("UPDATE consumer_order SET status = CASE WHEN refunded_amount_cents > 0"
+                        + " THEN 'partially_refunded' ELSE 'redeemed' END, version = version + 1, updated_at = now()"
+                        + " WHERE id = CAST(:id AS uuid) AND status = 'after_sales_disputed' RETURNING " + ORDER_COLS)
                 .bind("id", id).map(CommerceRepository::mapOrder).one();
     }
 
@@ -339,7 +514,8 @@ public class CommerceRepository {
     }
 
     private static OfferDetail mapDetail(Readable row) {
-        return new OfferDetail(mapOffer(row), mapVersion(row), row.get("remaining_stock", Integer.class));
+        return new OfferDetail(mapOffer(row), mapVersion(row), row.get("remaining_stock", Integer.class),
+                java.util.List.<InventorySlot>of());
     }
 
     private static Offer mapOffer(Readable row) {
@@ -373,7 +549,10 @@ public class CommerceRepository {
                 row.get("platform_fee_bps", Integer.class), row.get("merchant_share_bps", Integer.class),
                 row.get("recommender_amount_cents", Long.class), row.get("platform_fee_cents", Long.class),
                 row.get("merchant_amount_cents", Long.class), row.get("policy_version", String.class),
-                row.get("status", String.class), row.get("redeem_code_hash", String.class),
+                row.get("status", String.class), row.get("refunded_amount_cents", Long.class),
+                row.get("refund_requested_amount_cents", Long.class), row.get("refund_reason", String.class),
+                row.get("inventory_slot_id", String.class),
+                row.get("redeem_code_hash", String.class),
                 instant(row, "redeem_deadline"), row.get("payment_operation_id", String.class),
                 row.get("refund_operation_id", String.class), row.get("split_operation_id", String.class),
                 row.get("provider_ref", String.class), row.get("last_error", String.class),
@@ -412,7 +591,12 @@ public class CommerceRepository {
             String title, String description, long priceCents, int totalStock,
             Instant fixedRedeemDeadline, Integer validDaysAfterPurchase,
             int recommenderShareBps, int platformFeeBps, int merchantShareBps,
-            String policyVersion) {}
+            String policyVersion, java.util.List<InventorySlotInput> inventorySlots) {}
+
+    public record InventorySlotInput(String storeId, Instant slotStart, Instant slotEnd, int totalStock) {}
+
+    public record AttributionAllocation(String recommenderAccountId, int shareBps, long amountCents) {}
+    public record AttributionAllocationInput(String recommenderAccountId, int shareBps, long amountCents) {}
 
     public record NewOrder(
             String id, String consumerAccountId, String organizationId, String storeId, String taskId,
@@ -420,5 +604,5 @@ public class CommerceRepository {
             String recommenderAccountId, long priceCents, int recommenderShareBps, int platformFeeBps,
             int merchantShareBps, long recommenderAmountCents, long platformFeeCents,
             long merchantAmountCents, String policyVersion, String redeemCodeHash,
-            Instant redeemDeadline, String paymentOperationId) {}
+            Instant redeemDeadline, String paymentOperationId, String inventorySlotId) {}
 }

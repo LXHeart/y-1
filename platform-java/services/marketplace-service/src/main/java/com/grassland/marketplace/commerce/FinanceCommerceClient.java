@@ -40,7 +40,8 @@ public class FinanceCommerceClient {
     public Mono<Void> refund(CommerceModels.Order order, String reason) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("organizationId", order.organizationId());
-        body.put("amountCents", order.priceCents());
+        body.put("amountCents", order.refundRequestedAmountCents() == null
+                ? order.priceCents() - order.refundedAmountCents() : order.refundRequestedAmountCents());
         body.put("operationId", order.refundOperationId());
         body.put("reason", reason);
         return post("/internal/commerce/payments/" + order.id() + "/refund",
@@ -48,6 +49,11 @@ public class FinanceCommerceClient {
     }
 
     public Mono<Void> split(CommerceModels.Order order) {
+        return split(order, java.util.List.of());
+    }
+
+    public Mono<Void> split(CommerceModels.Order order,
+                            java.util.List<CommerceRepository.AttributionAllocation> allocations) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("organizationId", order.organizationId());
         body.put("totalAmountCents", order.priceCents());
@@ -57,6 +63,10 @@ public class FinanceCommerceClient {
         body.put("recommenderAmountCents", order.recommenderAmountCents());
         body.put("merchantAmountCents", order.merchantAmountCents());
         body.put("platformFeeCents", order.platformFeeCents());
+        if (allocations != null && !allocations.isEmpty()) {
+            body.put("allocations", allocations.stream().map(a -> Map.of(
+                    "recommenderAccountId", a.recommenderAccountId(), "amountCents", a.amountCents())).toList());
+        }
         body.put("operationId", order.splitOperationId());
         return post("/internal/commerce/payments/" + order.id() + "/split",
                 order.organizationId(), body).then();

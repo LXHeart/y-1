@@ -67,9 +67,44 @@ public class CommerceController {
     public Mono<ResponseEntity<Map<String, Object>>> refund(
             @PathVariable String id, @RequestBody(required = false) RefundRequest body,
             ServerHttpRequest request) {
-        String reason = body == null ? "consumer_request" : body.reason();
+        String reason = body == null || body.reason() == null ? "consumer_request" : body.reason();
+        Long amount = body == null ? null : body.amountCents();
         return callers.requireUser(request)
-                .flatMap(caller -> commerce.requestRefund(caller, id, reason))
+                .flatMap(caller -> commerce.requestRefund(caller, id, amount, reason))
+                .map(order -> ResponseEntity.ok(success(orderBody(order))));
+    }
+
+    @PostMapping(value = "/api/v2/orders/{id}/attribution", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> rebindAttribution(
+            @PathVariable String id, @RequestBody CommerceService.AttributionCommand body,
+            ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> commerce.rebindAttribution(caller, id, body))
+                .map(order -> ResponseEntity.ok(success(orderBody(order))));
+    }
+
+    @GetMapping("/api/v2/orders/{id}/attribution")
+    public Mono<ResponseEntity<Map<String, Object>>> attribution(
+            @PathVariable String id, ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> commerce.attributionAllocations(caller, id).collectList())
+                .map(values -> ResponseEntity.ok(success(values)));
+    }
+
+    @PostMapping(value = "/api/v2/orders/{id}/after-sales-dispute", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> afterSalesDispute(
+            @PathVariable String id, @RequestBody DisputeRequest body, ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> commerce.openAfterSalesDispute(caller, id, body == null ? null : body.reason()))
+                .map(order -> ResponseEntity.status(201).body(success(orderBody(order))));
+    }
+
+    @PostMapping(value = "/api/v2/orders/{id}/after-sales-dispute/resolve", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<Map<String, Object>>> resolveAfterSalesDispute(
+            @PathVariable String id, @RequestBody CommerceService.DisputeResolutionCommand body,
+            ServerHttpRequest request) {
+        return callers.requireUser(request)
+                .flatMap(caller -> commerce.resolveAfterSalesDispute(caller, id, body))
                 .map(order -> ResponseEntity.ok(success(orderBody(order))));
     }
 
@@ -184,6 +219,7 @@ public class CommerceController {
         body.put("priceCents", detail.version().priceCents());
         body.put("totalStock", detail.version().totalStock());
         body.put("remainingStock", detail.remainingStock());
+        if (!detail.inventorySlots().isEmpty()) body.put("inventorySlots", detail.inventorySlots());
         if (detail.version().fixedRedeemDeadline() != null) {
             body.put("fixedRedeemDeadline", detail.version().fixedRedeemDeadline());
         }
@@ -214,6 +250,9 @@ public class CommerceController {
         body.put("recommenderAmountCents", order.recommenderAmountCents());
         body.put("merchantAmountCents", order.merchantAmountCents());
         body.put("platformFeeCents", order.platformFeeCents());
+        body.put("refundedAmountCents", order.refundedAmountCents());
+        if (order.refundRequestedAmountCents() != null) body.put("refundRequestedAmountCents", order.refundRequestedAmountCents());
+        if (order.refundReason() != null) body.put("refundReason", order.refundReason());
         body.put("status", order.status());
         body.put("redeemDeadline", order.redeemDeadline());
         String code = commerce.redeemCode(order);
@@ -231,6 +270,7 @@ public class CommerceController {
         return Map.of("success", true, "data", data);
     }
 
-    public record RefundRequest(String reason) {}
+    public record RefundRequest(Long amountCents, String reason) {}
+    public record DisputeRequest(String reason) {}
     public record RedemptionRequest(String code) {}
 }

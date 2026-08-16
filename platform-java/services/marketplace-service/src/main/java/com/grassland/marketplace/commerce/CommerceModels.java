@@ -17,7 +17,12 @@ public final class CommerceModels {
             Integer validDaysAfterPurchase, int recommenderShareBps, int platformFeeBps,
             int merchantShareBps, String policyVersion, String createdBy, Instant createdAt) {}
 
-    public record OfferDetail(Offer offer, OfferVersion version, int remainingStock) {}
+    public record InventorySlot(
+            String id, String packageVersionId, String storeId, Instant slotStart, Instant slotEnd,
+            int totalStock, int remainingStock) {}
+
+    public record OfferDetail(Offer offer, OfferVersion version, int remainingStock,
+                              java.util.List<InventorySlot> inventorySlots) {}
 
     public record Order(
             String id, String consumerAccountId, String organizationId, String storeId, String taskId,
@@ -25,6 +30,8 @@ public final class CommerceModels {
             String recommenderAccountId, long priceCents, int recommenderShareBps,
             int platformFeeBps, int merchantShareBps, long recommenderAmountCents,
             long platformFeeCents, long merchantAmountCents, String policyVersion, String status,
+            long refundedAmountCents, Long refundRequestedAmountCents, String refundReason,
+            String inventorySlotId,
             String redeemCodeHash, Instant redeemDeadline, String paymentOperationId,
             String refundOperationId, String splitOperationId, String providerRef, String lastError,
             int version, Instant createdAt, Instant paidAt, Instant redeemedAt,

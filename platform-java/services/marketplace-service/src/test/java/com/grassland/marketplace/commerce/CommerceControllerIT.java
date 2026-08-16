@@ -2,6 +2,7 @@ package com.grassland.marketplace.commerce;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -30,6 +31,7 @@ class CommerceControllerIT extends MarketplaceItSupport {
         });
         when(finance.refund(any(Order.class), anyString())).thenReturn(Mono.empty());
         when(finance.split(any(Order.class))).thenReturn(Mono.empty());
+        when(finance.split(any(Order.class), anyList())).thenReturn(Mono.empty());
     }
 
     @Test
