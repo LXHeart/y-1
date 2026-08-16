@@ -137,8 +137,10 @@ public class TaskController {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTask(id, caller, "draft")
                         .flatMap(current -> transactions.transactional(
-                                enforceLadderBudget(body.requirements() == null
-                                                ? current.requirements() : body.requirements(), body.bountyCents())
+                                enforceInteractionBinding(body.contentForm(),
+                                                body.requirements() == null ? current.requirements() : body.requirements())
+                                        .then(enforceLadderBudget(body.requirements() == null
+                                                ? current.requirements() : body.requirements(), body.bountyCents()))
                                         .then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
                                         body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
                                         body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
@@ -256,6 +258,8 @@ public class TaskController {
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "published")
                         .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
                                         body.freebieDepositCents())
+                                .then(enforceInteractionBinding(body.contentForm(),
+                                                body.requirements() == null ? access.task().requirements() : body.requirements()))
                                 .then(enforceLadderBudget(body.requirements() == null
                                                 ? access.task().requirements() : body.requirements(), body.bountyCents()))
                                 .thenReturn(access.task())
@@ -299,6 +303,20 @@ public class TaskController {
             } catch (IllegalArgumentException error) {
                 return Mono.error(new MarketplaceException(400, error.getMessage()));
             }
+        }
+        return Mono.empty();
+    }
+
+    /**
+     * 任务书 #23 R2 交叉校验（update/revise 用合并视图）：requirements=null 表示「保留现值」，
+     * contentForm=null 表示「清空内容形式」，须与现行 requirements 合并后再判
+     * {@code contentForm=interaction ⇔ requirements.interaction 非空}。
+     */
+    private Mono<Void> enforceInteractionBinding(String contentForm, TaskRequirements mergedRequirements) {
+        try {
+            TaskRequirements.validateInteractionBinding(contentForm, mergedRequirements);
+        } catch (IllegalArgumentException error) {
+            return Mono.error(new MarketplaceException(400, error.getMessage()));
         }
         return Mono.empty();
     }

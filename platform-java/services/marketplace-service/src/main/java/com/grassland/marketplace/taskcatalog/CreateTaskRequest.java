@@ -51,12 +51,16 @@ public record CreateTaskRequest(
             throw new IllegalArgumentException("freebieDepositCents must be >= 0");
         }
         TaskCatalogFundingXor.validate(bountyCents, freebieDepositCents);
+        if (!TaskRequirements.isValidContentForm(contentForm)) {
+            throw new IllegalArgumentException("内容形式必须是 image / video / article / interaction");
+        }
+        TaskRequirements.validateInteractionBinding(contentForm, requirements);
+        requirements = TaskRequirements.normalize(requirements);
         if (minRecommenderLevel != null && (minRecommenderLevel < 1 || minRecommenderLevel > 5)) {
             throw new IllegalArgumentException("minRecommenderLevel must be between 1 and 5");
         }
         if (autoAcceptMinLevel != null && (autoAcceptMinLevel < 1 || autoAcceptMinLevel > 5)) {
             throw new IllegalArgumentException("autoAcceptMinLevel must be between 1 and 5");
         }
-        requirements = TaskRequirements.normalize(requirements);
     }
 }
