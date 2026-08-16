@@ -44,10 +44,12 @@ public class DataSourceConfig {
      * {@code baseline-on-migrate} + {@code baseline-version=0} 兼容已有 legacy 表（app_users/session）的非空库。
      */
     @Bean(initMethod = "migrate")
-    Flyway flyway(DataSource dataSource) {
+    Flyway flyway(DataSource dataSource, Environment env) {
         return Flyway.configure()
                 .dataSource(dataSource)
-                .locations("classpath:db/migration")
+                // locations 可覆盖：跨服务 e2e 的 JVM classpath 上可能同时存在多个服务的迁移 jar
+                //（同路径 db/migration 会版本冲突），测试改用 filesystem location 指向隔离目录。生产默认不变。
+                .locations(env.getProperty("identity.flyway.locations", "classpath:db/migration"))
                 .baselineOnMigrate(true)
                 .baselineVersion("0")
                 .load();

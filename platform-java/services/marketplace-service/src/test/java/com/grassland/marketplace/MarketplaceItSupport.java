@@ -82,9 +82,27 @@ public abstract class MarketplaceItSupport {
         r.add("marketplace.commerce.dispatcher-enabled", () -> "false");
         r.add("marketplace.settlement.day-seconds", () -> "1");
         r.add("spring.temporal.test-server.enabled", () -> "true");
+        // marketplace 测试 classpath 上还有 identity-service plain jar（VerificationNotificationCrossKafkaIT
+        // 的跨服务 e2e 依赖），其 db/migration 与本模块同路径会 Flyway 版本冲突——统一钉到本模块
+        // resources 的实体目录，classpath 扫描不再看见外部迁移。
+        r.add("marketplace.flyway.locations", () -> "filesystem:" + marketplaceMigrationDir());
         // 让 DefaultErrorWebExceptionHandler 的 4xx 响应携带异常消息（未被 @RestControllerAdvice
         // 捕获的解码/参数异常只有默认信封），否则集成排障只能盲猜。
         r.add("server.error.include-message", () -> "always");
+    }
+
+    /** 本模块迁移在本模块 build/resources 目录（classpath 实体路径），直接取父目录。 */
+    public static String marketplaceMigrationDir() {
+        try {
+            java.net.URL resource = MarketplaceItSupport.class
+                    .getClassLoader().getResource("db/migration/V1__init_task.sql");
+            if (resource == null) {
+                throw new IllegalStateException("marketplace migrations not on classpath");
+            }
+            return new java.io.File(resource.toURI()).getParent();
+        } catch (java.net.URISyntaxException e) {
+            throw new IllegalStateException("invalid marketplace migration location", e);
+        }
     }
 
     protected WebTestClient client() {

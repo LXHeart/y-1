@@ -206,7 +206,7 @@ class ReputationEntitlementMigrationTest extends MarketplaceItSupport {
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
                 .schemas(schema).defaultSchema(schema).table("history")
-                .locations("classpath:db/migration");
+                .locations("filesystem:" + MarketplaceItSupport.marketplaceMigrationDir());
         if (target != null) {
             configuration.target(target);
         }

@@ -51,7 +51,11 @@ tasks.test {
 }
 
 tasks.jar {
-    enabled = false
+    // 恢复 plain jar（classifier 与 bootJar 的 identity-service.jar 并存，Docker/发布清单不受影响）：
+    // marketplace 的 VerificationNotificationCrossKafkaIT 需要跨项目消费 identity main 类做双上下文 e2e，
+    // jar 被 disable 时 project 依赖解析到空产物。
+    enabled = true
+    archiveClassifier = "plain"
 }
 
 tasks.bootJar {

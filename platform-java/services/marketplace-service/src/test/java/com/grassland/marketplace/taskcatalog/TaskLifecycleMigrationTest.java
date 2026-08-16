@@ -75,7 +75,7 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                 .defaultSchema(schema)
                 .schemas(schema)
                 .table("task_v11_history")
-                .locations("classpath:db/migration")
+                .locations("filesystem:" + MarketplaceItSupport.marketplaceMigrationDir())
                 .baselineOnMigrate(true)
                 .baselineVersion("10")
                 .load()

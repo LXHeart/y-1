@@ -1,6 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.mockito.ArgumentMatchers;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -35,7 +36,7 @@ class TaskReviewSlaDispatcherTest {
         when(publishGate.enforce("org-1", "finance_transaction", 500L)).thenReturn(Mono.empty());
         when(reviews.approveSystem(task, "sla_timeout", "review SLA exceeded after 24h"))
                 .thenReturn(Mono.just(approved));
-        when(transactions.transactional(any(Mono.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(transactions.transactional(ArgumentMatchers.<Mono<Object>>any())).thenAnswer(invocation -> invocation.getArgument(0));
         TaskReviewSlaDispatcher dispatcher = dispatcher(true);
 
         assertThat(dispatcher.processBatch().block()).isEqualTo(1);

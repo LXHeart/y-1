@@ -37,6 +37,13 @@ dependencies {
     testImplementation(libs.testcontainers.kafka)
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.postgresql:postgresql:42.7.12")
+    // VerificationNotificationCrossKafkaIT：同 JVM 手动启动 identity 完整上下文做跨服务通知 e2e。
+    // implementation 依赖不跨模块传递，identity 启动所需但本模块没有的库在此补齐（mail/crypto/bcrypt/bouncycastle）。
+    testImplementation(project(":services:identity-service"))
+    testImplementation("org.springframework.boot:spring-boot-starter-mail")
+    testImplementation(project(":platform-crypto"))
+    testImplementation(libs.bcrypt)
+    testImplementation(libs.bouncycastle)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

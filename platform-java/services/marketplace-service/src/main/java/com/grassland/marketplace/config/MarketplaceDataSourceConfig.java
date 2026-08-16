@@ -44,11 +44,13 @@ public class MarketplaceDataSourceConfig {
      * {@code table=marketplace_flyway_schema} 与 identity 历史隔离。
      */
     @Bean(initMethod = "migrate")
-    Flyway flyway(DataSource dataSource) {
+    Flyway flyway(DataSource dataSource, org.springframework.core.env.Environment env) {
         return Flyway.configure()
                 .dataSource(dataSource)
                 .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
-                .locations("classpath:db/migration")
+                // locations 可覆盖：跨服务 e2e 的 JVM classpath 上可能同时存在多个服务的迁移 jar
+                //（同路径 db/migration 会版本冲突），测试改用 filesystem location 指向隔离目录。生产默认不变。
+                .locations(env.getProperty("marketplace.flyway.locations", "classpath:db/migration"))
                 .table("marketplace_flyway_schema")
                 .baselineOnMigrate(true)
                 .baselineVersion("0")
