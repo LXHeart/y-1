@@ -40,6 +40,12 @@ public record JournalEntry(
         CONSUMER_SPLIT,
         /** AI 积分包购买入账（AI 套餐 v1）。 */
         AI_CREDIT_PURCHASE,
+        /** 霸王餐押金预付（推荐官钱包 → 托管，ADR-D12；方向与 RESERVE 相反）。 */
+        FREEBIE_RESERVE,
+        /** 霸王餐押金退还（托管 → 推荐官钱包，全额无费）。 */
+        FREEBIE_REFUND,
+        /** 霸王餐押金补偿（托管 → 商家 org 账户）。 */
+        FREEBIE_COMPENSATE,
         /** 迁移期回填存量余额。 */
         OPENING;
 

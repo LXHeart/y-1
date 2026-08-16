@@ -3,6 +3,7 @@ package com.grassland.finance.escrow;
 import com.grassland.finance.account.AccountRepository;
 import com.grassland.finance.event.EventEnvelope;
 import com.grassland.finance.event.OutboxRepository;
+import com.grassland.finance.freebie.FreebieEscrowLifecycleService;
 import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.security.FinanceException;
 import com.grassland.finance.wallet.PlatformFeePolicy;
@@ -27,6 +28,7 @@ public class EscrowLifecycleService {
     private final PlatformFeePolicy fees;
     private final TransactionalOperator transactions;
     private final LedgerService ledger;
+    private final FreebieEscrowLifecycleService freebies;
 
     public EscrowLifecycleService(
             ReservationRepository reservations,
@@ -35,7 +37,8 @@ public class EscrowLifecycleService {
             OutboxRepository outbox,
             PlatformFeePolicy fees,
             TransactionalOperator transactions,
-            LedgerService ledger) {
+            LedgerService ledger,
+            FreebieEscrowLifecycleService freebies) {
         this.reservations = reservations;
         this.accounts = accounts;
         this.wallets = wallets;
@@ -43,6 +46,7 @@ public class EscrowLifecycleService {
         this.fees = fees;
         this.transactions = transactions;
         this.ledger = ledger;
+        this.freebies = freebies;
     }
 
     public Mono<FundsReservation> release(FundsReservation reservation) {
@@ -75,8 +79,14 @@ public class EscrowLifecycleService {
                         default -> Mono.error(new FinanceException(400, "未知终局判决"));
                     };
                 })
-                .defaultIfEmpty(new ReconciliationResult(
-                        "missing", "reservation_missing", null));
+                // ADR-D12：无 funds_reservation 时回落到霸王餐押金对账（freebie 任务没有商家预留，
+                // 归因矩阵反向：for_merchant → 补偿商家、for_recommender → 退推荐官）。调用方零改动。
+                // 两表皆缺保持既有契约 reason=reservation_missing（ReservationReconciliationIT 锁定）。
+                .switchIfEmpty(Mono.defer(() -> freebies.reconcile(
+                                organizationId, engagementRef, finalDecision))
+                        .map(outcome -> "missing".equals(outcome.outcome())
+                                ? new ReconciliationResult("missing", "reservation_missing", null)
+                                : new ReconciliationResult(outcome.outcome(), outcome.reason(), null)));
     }
 
     private Mono<ReconciliationResult> reconcileForMerchant(FundsReservation reservation) {

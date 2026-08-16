@@ -50,6 +50,11 @@ public record LedgerAccount(Type type, String owner, String ref) {
         return new LedgerAccount(Type.RESERVE, orgId, engagementRef);
     }
 
+    /** 霸王餐押金 earmark 池（ADR-D12）：owner=出资推荐官（非 org），ref=engagementRef。 */
+    public static LedgerAccount freebieReserve(String recommenderAccountId, String engagementRef) {
+        return new LedgerAccount(Type.RESERVE, recommenderAccountId, engagementRef);
+    }
+
     public static LedgerAccount consumerEscrow(String orderRef) {
         return new LedgerAccount(Type.CONSUMER_ESCROW, orderRef, null);
     }

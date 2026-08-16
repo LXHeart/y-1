@@ -137,6 +137,37 @@ public class LedgerService {
                 .then(post(JournalEntry.Type.WITHDRAW, null, null, null, "withdraw", postings));
     }
 
+    /**
+     * 霸王餐押金预付（ADR-D12，方向与 {@link #postReserve} 相反）：Dr WALLET(推荐官) / Cr RESERVE(推荐官出资池)。
+     * 与钱包 debit + freebie_escrow 行同事务；operationId 幂等吸收 Saga 重试。
+     */
+    public Mono<Void> postFreebieReserve(String recommenderAccountId, String engagementRef, long amount) {
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.wallet(recommenderAccountId), amount),
+                Posting.credit(LedgerAccount.freebieReserve(recommenderAccountId, engagementRef), amount));
+        return post(JournalEntry.Type.FREEBIE_RESERVE, "freebie-reserve:" + engagementRef, null,
+                engagementRef, "freebie reserve " + engagementRef, postings);
+    }
+
+    /** 霸王餐押金退还（达标，全额无费）：Dr RESERVE(推荐官出资池) / Cr WALLET(推荐官)。 */
+    public Mono<Void> postFreebieRefund(String recommenderAccountId, String engagementRef, long amount) {
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.freebieReserve(recommenderAccountId, engagementRef), amount),
+                Posting.credit(LedgerAccount.wallet(recommenderAccountId), amount));
+        return post(JournalEntry.Type.FREEBIE_REFUND, "freebie-refund:" + engagementRef, null,
+                engagementRef, "freebie refund " + engagementRef, postings);
+    }
+
+    /** 霸王餐押金补偿（未达标，托管 → 商家）：Dr RESERVE(推荐官出资池) / Cr ESCROW(商家 org)。 */
+    public Mono<Void> postFreebieCompensate(String recommenderAccountId, String organizationId,
+                                            String engagementRef, long amount) {
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.freebieReserve(recommenderAccountId, engagementRef), amount),
+                Posting.credit(LedgerAccount.escrow(organizationId), amount));
+        return post(JournalEntry.Type.FREEBIE_COMPENSATE, "freebie-compensate:" + engagementRef,
+                organizationId, engagementRef, "freebie compensate " + engagementRef, postings);
+    }
+
     /** 消费者支付：Dr EXTERNAL / Cr CONSUMER_ESCROW(orderRef)。 */
     public Mono<Void> postConsumerPayment(String orgId, String orderRef, long amount) {
         List<Posting> postings = List.of(

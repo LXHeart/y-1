@@ -11,7 +11,11 @@ public enum WalletEntryType {
     /** 提现出账。 */
     WITHDRAWAL("withdrawal"),
     /** 争议冲正扣回（D-06：已分账后判商家胜诉）。 */
-    CLAWBACK("clawback");
+    CLAWBACK("clawback"),
+    /** 霸王餐押金预付出账（ADR-D12：报名被接受时进平台托管，负）。 */
+    FREEBIE_RESERVE("freebie_reserve"),
+    /** 霸王餐押金退收入账（ADR-D12：达标全额返还，正，无平台费）。 */
+    FREEBIE_REFUND("freebie_refund");
 
     private final String dbValue;
 
