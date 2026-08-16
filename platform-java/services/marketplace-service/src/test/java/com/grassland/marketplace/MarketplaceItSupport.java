@@ -59,6 +59,10 @@ public abstract class MarketplaceItSupport {
                             true, invocation.getArgument(0), invocation.getArgument(1), storeId,
                             "manager", storeId == null ? "organization" : "store", "finance_transaction"));
                 });
+        // 任务书 #24：门店公开块批量拉默认回空（需要品牌数据的用例自行覆写 stub）；
+        // 不 stub 时 Mockito 回 null Mono → enrichment 链路 NPE。
+        lenient().when(storeAuthorization.publicProfiles(any()))
+                .thenReturn(Mono.just(java.util.List.of()));
     }
 
     @DynamicPropertySource

@@ -1,10 +1,16 @@
 package com.grassland.marketplace.taskcatalog;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import reactor.core.publisher.Mono;
 
 /** Internal authoritative handoff for PRD §4.12 creation-context snapshots. */
 class InternalCreationContextControllerIT extends MarketplaceItSupport {
@@ -81,6 +87,78 @@ class InternalCreationContextControllerIT extends MarketplaceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("taskId", taskId, "recommenderAccountId", recommender))
                 .exchange().expectStatus().isEqualTo(409);
+    }
+
+    /** 任务书 #24：accepted 任务快照响应携带 storeBranding（品牌语气/必须强调/禁止表达等）。 */
+    @Test
+    void acceptedTaskContextCarriesStoreBranding() {
+        Fixture fixture = acceptedFixture();
+        when(storeAuthorization.publicProfiles(any())).thenReturn(Mono.just(List.of(
+                new IdentityStoreAuthorizationClient.StorePublicProfile(
+                        fixture.storeId(), "旗舰店", null, null, null, null,
+                        List.of("火锅"), List.of("招牌毛肚"), null, null, null,
+                        List.of("现切牛肉"), "温暖亲切", List.of("锅底现熬"),
+                        List.of("最好吃"), List.of("#探店")))));
+
+        client().post().uri("/internal/marketplace/engagements/" + fixture.applicationId()
+                        + "/creation-context")
+                .header("X-Grassland-Identity", signService("intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("taskId", fixture.taskId(),
+                        "recommenderAccountId", fixture.recommenderAccountId()))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                // accepted-only 守卫与既有快照字段不变。
+                .jsonPath("$.data.organizationId").isEqualTo(fixture.organizationId())
+                .jsonPath("$.data.taskContext.taskId").isEqualTo(fixture.taskId())
+                .jsonPath("$.data.taskContext.taskVersion").isEqualTo(1)
+                // storeBranding 块：字段集与任务书约定一致。
+                .jsonPath("$.data.storeBranding.storeName").isEqualTo("旗舰店")
+                .jsonPath("$.data.storeBranding.brandTone").isEqualTo("温暖亲切")
+                .jsonPath("$.data.storeBranding.mustEmphasize[0]").isEqualTo("锅底现熬")
+                .jsonPath("$.data.storeBranding.forbiddenPhrases[0]").isEqualTo("最好吃")
+                .jsonPath("$.data.storeBranding.allowedTags[0]").isEqualTo("#探店")
+                .jsonPath("$.data.storeBranding.sellingPoints[0]").isEqualTo("现切牛肉")
+                .jsonPath("$.data.storeBranding.categories[0]").isEqualTo("火锅")
+                .jsonPath("$.data.storeBranding.signatureItems[0]").isEqualTo("招牌毛肚");
+    }
+
+    /** 组织级任务（无 storeId）不带 storeBranding 键；identity 无资料时同样不带。 */
+    @Test
+    void orgLevelTaskContextOmitsStoreBranding() {
+        String taskId = UUID.randomUUID().toString();
+        String appId = UUID.randomUUID().toString();
+        String merchant = UUID.randomUUID().toString();
+        String organization = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        db.sql("INSERT INTO task(id, owner_account_id, organization_id, title, description, status,"
+                        + " content_form, platform, version) VALUES (CAST(:id AS uuid), CAST(:owner AS uuid),"
+                        + " CAST(:org AS uuid), '组织级任务', '无门店', 'published', 'graphic', 'xiaohongshu', 1)")
+                .bind("id", taskId).bind("owner", merchant).bind("org", organization).then().block();
+        db.sql("INSERT INTO task_version(task_id, version, title, description, content_form, platform, requirements)"
+                        + " VALUES (CAST(:task AS uuid), 1, '组织级任务', '无门店', 'graphic', 'xiaohongshu',"
+                        + " CAST(:requirements AS jsonb))")
+                .bind("task", taskId).bind("requirements", "{}")
+                .then().block();
+        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents) "
+                        + "VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'pending', 0)")
+                .bind("id", appId).bind("task", taskId).bind("rec", recommender).then().block();
+        db.sql("UPDATE task_application SET status='accepted', decided_at=now(),"
+                        + " reputation_level_at_accept=1, reputation_policy_version_at_accept=1,"
+                        + " settlement_delay_days_at_accept=2, commission_bonus_bps_at_accept=0,"
+                        + " premium_support_at_accept=false WHERE id=CAST(:id AS uuid)")
+                .bind("id", appId).then().block();
+
+        client().post().uri("/internal/marketplace/engagements/" + appId + "/creation-context")
+                .header("X-Grassland-Identity", signService("intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("taskId", taskId, "recommenderAccountId", recommender))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.taskContext.taskId").isEqualTo(taskId)
+                .jsonPath("$.data.storeBranding").doesNotExist();
     }
 
     private Fixture acceptedFixture() {

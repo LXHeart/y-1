@@ -67,6 +67,7 @@ public class TaskController {
     private final TaskMetricsRepository metrics;
     private final AnalyticsRepository analytics;
     private final IdentityStoreAuthorizationClient identityStores;
+    private final TaskStoreEnrichment storeEnrichment;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
@@ -75,7 +76,8 @@ public class TaskController {
                           TransactionalOperator transactions, ReputationService reputationService,
                           TaskResourceAuthorization taskAuthorization,
                           TaskMetricsRepository metrics, AnalyticsRepository analytics,
-                          IdentityStoreAuthorizationClient identityStores) {
+                          IdentityStoreAuthorizationClient identityStores,
+                          TaskStoreEnrichment storeEnrichment) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -90,6 +92,7 @@ public class TaskController {
         this.metrics = metrics;
         this.analytics = analytics;
         this.identityStores = identityStores;
+        this.storeEnrichment = storeEnrichment;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -474,7 +477,7 @@ public class TaskController {
                     return Mono.zip(visibleRecommenderLevel(caller), nearby).flatMap(tuple -> {
                         List<IdentityStoreAuthorizationClient.NearbyStore> nearbyStores = tuple.getT2();
                         if (anyDistance && nearbyStores.isEmpty()) {
-                            return Mono.just(feedBody(List.of(), safeLimit, Map.of()));
+                            return Mono.just(feedBody(List.of(), safeLimit, Map.of(), Map.of()));
                         }
                         List<String> storeIds = anyDistance
                                 ? nearbyStores.stream().map(IdentityStoreAuthorizationClient.NearbyStore::storeId).toList()
@@ -490,14 +493,30 @@ public class TaskController {
                         return tasks.findFeed(filter,
                                         decoded == null ? null : decoded.ts(),
                                         decoded == null ? null : decoded.id(), safeLimit + 1)
-                                .collectList().map(rows -> feedBody(rows, safeLimit, distances));
+                                .collectList()
+                                .flatMap(rows -> enrichFeed(rows, safeLimit, distances));
                     });
                 });
     }
 
+    /**
+     * 任务书 #24：feed 门店块增强。keyset 分页每页最多 limit+1 行，只对页内去重后的 storeId
+     * 一次批量拉 identity（不逐行）；distanceKm 逻辑不动。
+     */
+    private Mono<ResponseEntity<Map<String, Object>>> enrichFeed(
+            List<Task> rows, int limit, Map<String, Double> distances) {
+        boolean hasMore = rows.size() > limit;
+        List<Task> page = hasMore ? rows.subList(0, limit) : rows;
+        List<String> pageStoreIds = page.stream().map(Task::storeId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        return storeEnrichment.loadStoreBlocks(pageStoreIds)
+                .map(stores -> feedBody(rows, limit, distances, stores));
+    }
+
     /** 组装 feed 分页体：取 limit+1 判 hasMore，nextCursor 为本页最后一行的 (created_at, id)。 */
     private ResponseEntity<Map<String, Object>> feedBody(
-            List<Task> rows, int limit, Map<String, Double> distances) {
+            List<Task> rows, int limit, Map<String, Double> distances,
+            Map<String, Map<String, Object>> stores) {
         boolean hasMore = rows.size() > limit;
         List<Task> page = hasMore ? rows.subList(0, limit) : rows;
         String nextCursor = hasMore && !page.isEmpty() ? FeedCursor.encode(page.get(page.size() - 1)) : null;
@@ -506,6 +525,9 @@ public class TaskController {
             Map<String, Object> body = toBody(task);
             if (task.storeId() != null && distances.containsKey(task.storeId())) {
                 body.put("distanceKm", Math.round(distances.get(task.storeId()) * 10d) / 10d);
+            }
+            if (task.storeId() != null && stores.containsKey(task.storeId())) {
+                body.put("store", stores.get(task.storeId()));
             }
             return body;
         }).toList());
@@ -574,20 +596,35 @@ public class TaskController {
                             if (!publicVisible && task.storeId() != null) {
                                 return taskAuthorization.requireScope(caller, task.organizationId(),
                                                 task.storeId(), "staff")
-                                        .thenReturn(ResponseEntity.ok(Map.of(
-                                                "success", true, "data", toBody(task))));
+                                        .then(okWithStore(task));
                             }
                             if (owner && task.storeId() == null) {
-                                return Mono.just(ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+                                return okWithStore(task);
                             }
                             if (!publicVisible) {
                                 return Mono.error(new MarketplaceException(404, "任务不存在"));
                             }
                             return visibleRecommenderLevel(caller)
                                     .filter(level -> level >= task.minRecommenderLevel())
-                                    .map(level -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))))
+                                    .flatMap(level -> okWithStore(task))
                                     .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在")));
                         }));
+    }
+
+    /** 任务书 #24：任务详情携带门店公开块（storeName/city/categories）；无门店/降级时不带 store 键。 */
+    private Mono<ResponseEntity<Map<String, Object>>> okWithStore(Task task) {
+        Map<String, Object> body = toBody(task);
+        if (task.storeId() == null) {
+            return Mono.just(ResponseEntity.ok(Map.of("success", true, "data", body)));
+        }
+        return storeEnrichment.loadStoreBlocks(List.of(task.storeId()))
+                .map(stores -> {
+                    Map<String, Object> block = stores.get(task.storeId());
+                    if (block != null) {
+                        body.put("store", block);
+                    }
+                    return ResponseEntity.ok(Map.of("success", true, "data", body));
+                });
     }
 
     private Mono<Integer> visibleRecommenderLevel(Caller caller) {

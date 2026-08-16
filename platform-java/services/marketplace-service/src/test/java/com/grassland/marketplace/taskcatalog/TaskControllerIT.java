@@ -1,13 +1,17 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import com.grassland.marketplace.security.MarketplaceException;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -875,6 +880,76 @@ class TaskControllerIT extends MarketplaceItSupport {
         assertThat(items).hasSize(1);
         assertThat(items.get(0)).containsEntry("id", nearTask.get("id")).containsEntry("distanceKm", 1.2);
         assertThat(dataOf(response).get("hasMore")).isEqualTo(false);
+    }
+
+    /** 任务书 #24：feed 行携带门店公开块；页内去重后的 storeId 只批量拉一次（不逐行）。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void feedItemsCarryStoreBlockFromBatchEnrichment() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        String platform = "st" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
+        String taskId = null;
+        for (int i = 0; i < 2; i++) {
+            Map<String, Object> b = body(org, "门店块任务" + i, platform, null);
+            b.put("storeId", store);
+            Map<String, Object> task = (Map<String, Object>) client().post().uri("/api/tasks")
+                    .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                    .contentType(MediaType.APPLICATION_JSON).bodyValue(b).exchange().expectStatus().isCreated()
+                    .expectBody(Map.class).returnResult().getResponseBody().get("data");
+            taskId = approveTask(task);
+        }
+        when(storeAuthorization.publicProfiles(any())).thenReturn(Mono.just(List.of(
+                new IdentityStoreAuthorizationClient.StorePublicProfile(
+                        store, "旗舰店", "{\"city\":\"上海\",\"address\":\"南京西路 1 号\"}",
+                        null, null, null, List.of("火锅"), List.of(), null, null, null,
+                        List.of(), null, List.of(), List.of(), List.of()))));
+
+        List<Map<String, Object>> items = itemsOf(feedPage(null, 20, platform));
+        assertThat(items).hasSize(2).allSatisfy(item -> {
+            Map<String, Object> block = (Map<String, Object>) item.get("store");
+            assertThat(block).containsEntry("storeName", "旗舰店").containsEntry("city", "上海");
+            assertThat((List<String>) block.get("categories")).containsExactly("火锅");
+        });
+        // 两条任务同一门店 → 页内去重后批量端点只调一次。
+        ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(storeAuthorization, atLeastOnce()).publicProfiles(captor.capture());
+        assertThat(captor.getAllValues()).allSatisfy(ids -> assertThat(ids).containsExactly(store));
+
+        // 任务详情同样携带门店块。
+        client().get().uri("/api/tasks/" + taskId)
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.store.storeName").isEqualTo("旗舰店")
+                .jsonPath("$.data.store.city").isEqualTo("上海")
+                .jsonPath("$.data.store.categories[0]").isEqualTo("火锅");
+    }
+
+    /** 任务书 #24：identity 批量拉失败时 feed 降级（无 store 键但行照常返回）。 */
+    @Test
+    void feedDegradesWhenStoreEnrichmentFails() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        String platform = "dg" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
+        Map<String, Object> b = body(org, "降级任务", platform, null);
+        b.put("storeId", store);
+        Map<String, Object> task = (Map<String, Object>) client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b).exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        String taskId = approveTask(task);
+        when(storeAuthorization.publicProfiles(any()))
+                .thenReturn(Mono.error(new IllegalStateException("identity down")));
+
+        List<Map<String, Object>> items = itemsOf(feedPage(null, 20, platform));
+        assertThat(items).extracting(item -> item.get("id")).contains(taskId);
+        assertThat(items).allSatisfy(item -> assertThat(item).doesNotContainKey("store"));
     }
 
     @Test

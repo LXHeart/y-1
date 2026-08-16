@@ -75,14 +75,48 @@ public class IdentityStoreAuthorizationClient {
                 });
     }
 
+    /**
+     * 任务书 #24：批量拉门店公开资料白名单（feed enrichment / storeBranding 快照用）。
+     * 一次拉整页 storeId，不要逐行调；空入参直接回空不发请求。
+     */
+    public Mono<List<StorePublicProfile>> publicProfiles(java.util.Collection<String> storeIds) {
+        if (storeIds == null || storeIds.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        return webClient.post()
+                .uri("/internal/identity/stores/public-profiles")
+                .header(headerName, issuer.issueForOrg(null, "grassland-identity"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("storeIds", java.util.List.copyOf(storeIds)))
+                .exchangeToMono(response -> {
+                    int status = response.statusCode().value();
+                    if (status == 200) {
+                        return response.bodyToMono(PublicProfileEnvelope.class)
+                                .map(envelope -> envelope.data() == null ? List.of() : envelope.data());
+                    }
+                    return response.bodyToMono(String.class).defaultIfEmpty("")
+                            .flatMap(error -> Mono.error(new IllegalStateException(
+                                    "identity store public profiles failed: HTTP " + status + ": " + error)));
+                });
+    }
+
     public record Authorization(
             boolean authorized, String accountId, String organizationId, String storeId,
             String role, String scope, String permissionTier) {}
 
     public record NearbyStore(String storeId, double latitude, double longitude, double distanceKm) {}
 
+    /** identity 公开白名单回包（与 identity {@code StorePublicProfile} 字段对齐）。 */
+    public record StorePublicProfile(
+            String storeId, String storeName, String address, String phone, String businessHours,
+            String description, List<String> categories, List<String> signatureItems,
+            String priceRange, Integer averageSpendCents, String visitNotes,
+            List<String> sellingPoints, String brandTone, List<String> mustEmphasize,
+            List<String> forbiddenPhrases, List<String> allowedTags) {}
+
     private record Envelope(boolean success, Authorization data) {}
     private record NearbyEnvelope(boolean success, List<NearbyStore> data) {}
+    private record PublicProfileEnvelope(boolean success, List<StorePublicProfile> data) {}
 
     private static RuntimeException mapError(int status, String body) {
         if (status == 400 || status == 403 || status == 404) {
