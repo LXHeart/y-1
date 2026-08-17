@@ -725,10 +725,9 @@ public class TaskController {
                 taskEventPayload(task, false));
     }
 
+    /** #26：payload/envelope 构造抽到 {@link TaskFullAutoCloser}，与满员自动关闭路径共用（两条路径 payload 键完全一致，D13）。 */
     private EventEnvelope taskClosedEnvelope(Task task) {
-        return new EventEnvelope(UUID.randomUUID().toString(), "TaskClosed", "Task",
-                task.id(), task.version(), Instant.now(), null,
-                taskEventPayload(task, false));
+        return TaskFullAutoCloser.taskClosedEnvelope(task, "manual");
     }
 
     private EventEnvelope taskCancelledEnvelope(Task task) {

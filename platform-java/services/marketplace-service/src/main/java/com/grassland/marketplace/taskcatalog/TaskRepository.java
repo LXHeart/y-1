@@ -228,6 +228,22 @@ public class TaskRepository {
     }
 
     /**
+     * #26 满员自动关闭（D3）：accepted 计数达到 max_slots 时 published→closed。无版本守卫（系统迁移不参与
+     * 用户乐观锁）；0 行 = 无操作（无上限/未满/已非 published——可能被并发手动 close 或 cancel 抢先），绝不报错。
+     */
+    public Mono<Task> closeIfFull(String taskId) {
+        return db.sql("""
+                UPDATE task SET status = 'closed', version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'published' AND max_slots IS NOT NULL
+                  AND (SELECT count(*) FROM task_application a
+                       WHERE a.task_id = task.id AND a.status = 'accepted') >= task.max_slots
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", taskId)
+                .map(TaskRepository::map).one();
+    }
+
+    /**
      * 修订已发布任务（GL-P1-TASK-001：编辑出新版本，全字段）。
      *
      * <p>全字段可改——accept/结算已读 {@code task_application.bounty_cents} 快照（V14 snapshot-pinning），故修订 task

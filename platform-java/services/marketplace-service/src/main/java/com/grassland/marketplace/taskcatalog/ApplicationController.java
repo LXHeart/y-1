@@ -90,6 +90,7 @@ public class ApplicationController {
     private final SettlementWorkflowStarter settlementWorkflows;
     private final ReputationService reputationService;
     private final TaskRecommenderInvitationRepository recommenderInvitations;
+    private final TaskFullAutoCloser taskFullAutoCloser;
     private final long confirmationWindowSeconds;
     private final long confirmationReminderLeadSeconds;
     private final int supplementCap;
@@ -118,7 +119,8 @@ public class ApplicationController {
                                  @Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
                                  @Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap,
                                  TransactionalOperator transactions, ReputationService reputationService,
-                                 TaskRecommenderInvitationRepository recommenderInvitations) {
+                                 TaskRecommenderInvitationRepository recommenderInvitations,
+                                 TaskFullAutoCloser taskFullAutoCloser) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskAuthorization = taskAuthorization;
@@ -145,6 +147,7 @@ public class ApplicationController {
         this.transactions = transactions;
         this.reputationService = reputationService;
         this.recommenderInvitations = recommenderInvitations;
+        this.taskFullAutoCloser = taskFullAutoCloser;
     }
 
     @PostMapping(value = "/api/tasks/{id}/applications")
@@ -262,7 +265,14 @@ public class ApplicationController {
                         .flatMap(accepted -> outbox.append(envelope(
                                         monetary ? "ApplicationAcceptanceStarted" : "ApplicationAccepted",
                                         accepted, task.ownerAccountId()))
-                                .thenReturn(new AcceptanceClaim(command, accepted))));
+                                .thenReturn(accepted))
+                        // #26 满员自动关闭（D2/D4）：仅非资金型在接受落定后同事务判定关闭；
+                        // 资金型 claim→reserving 阶段不判定（预留失败会释放名额，误关不可收口），
+                        // 由 saga activateEngagement（reserving→accepted 落定）再判。
+                        .flatMap(accepted -> monetary
+                                ? Mono.just(accepted)
+                                : taskFullAutoCloser.closeIfFull(task.id()).thenReturn(accepted))
+                        .map(accepted -> new AcceptanceClaim(command, accepted)));
 
         return transactions.transactional(write)
                 .flatMap(claim -> monetary
