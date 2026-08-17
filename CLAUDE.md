@@ -94,6 +94,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 报名批量处理 | `/api/tasks/{id}/applications/batch-accept`、`/api/tasks/{id}/applications/batch-reject` | 任务书 #27：商家批量接受/拒绝报名（1–50 条，逐项独立，允许部分成功）；同任务可设 `autoAcceptMinLevel` 等级门槛，dispatcher 定时扫描自动通过达标报名 |
 | 推荐官收入统计 | `/api/finance/wallets/me/statistics?from=&to=` | 任务书 #29+#30：`wallet_ledger` 权威表按月（北京时间 `date_trunc`）+ 按 engagement 聚合，含毛/抽成/净；跨度≤12 月，self-scoped；前端按任务标题经 my-applications join |
 | 商家月度账单 | `/api/finance/organizations/{orgId}/monthly-bill?month=` | 任务书 #29+#30：journal/posting 双录按 `journal_type` 聚合 + FEE 腿单列，flow=ESCROW 腿净额；org-scoped 自查跨 org 404，月切北京时间 |
+| 游客试用 | `/api/guest-trial/{capability}`、`/api/guest-trial/quota` | 任务书 #36 / ADR-D14：未登录匿名放行（gtid httpOnly cookie + IP 双层限流 + 每能力 3 次/天，成功才计次）；不进 finance credits/ai_run，审计只存 IP 截断哈希；edge flag `EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE` 可整体关闭 |
 | 推荐官我的报名 | `/api/tasks/my-applications?status=&cursor=&limit=` | 任务书 #29+#30：跨任务 keyset 分页列当前推荐官报名，join task 标题/状态/赏金 + settledAt；复用 `/api/tasks/**` 前缀不新增公网路由 |
 | 积分 | `/api/credits/*` | balance, history, packages（active 积分包）, purchase-orders（购买/记录，Sandbox 支付即时生效）|
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）; credits-packages + credits-purchase-orders（含 reconciliation 三方对账，需 FINANCE 角色）|
