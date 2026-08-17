@@ -141,8 +141,7 @@ edge:
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_RECOMMENDER_IDENTITY:true}
     # 平台 AI 控制面（GL-P3-AI-001）→ intelligence-service。
-    # /api/ai 前缀：BYOK 密钥管理（/api/ai/keys，Phase 1 已交付）+ 控制面 Run（/api/ai/runs）。
-    # /api/ai/keys 与 /api/ai/runs 统一由 intelligence 承载。
+    # /api/ai 前缀：BYOK 密钥、控制面 Run 与组织 AI 预算统一由 intelligence 承载。
     - path: /api/ai
       upstream: intelligence
       enabled: ${EDGE_ROUTE_AI_INTELLIGENCE:true}

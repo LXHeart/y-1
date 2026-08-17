@@ -15,6 +15,7 @@ import RecommenderHistoryCard from '../../components/RecommenderHistoryCard.vue'
 import RecommenderIncomeStatsCard from '../../components/RecommenderIncomeStatsCard.vue'
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import OrgTeamCard from '../../components/OrgTeamCard.vue'
+import AiOrgBudgetPanel from '../../components/AiOrgBudgetPanel.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import MerchantTaskForm from './components/MerchantTaskForm.vue'
@@ -30,6 +31,8 @@ import type {
   BatchItemResult,
   FinanceAccount,
   Organization,
+  OrganizationAccessScope,
+  MembershipRole,
   RecommenderProfile,
   RecommenderMatch,
   RecommenderRecommendationPage,
@@ -67,6 +70,7 @@ const orgs = ref<Organization[]>([])
 const stores = ref<Store[]>([])
 const storeScopes = ref<StoreAccessScope[]>([])
 const organizationAccessIds = ref<Set<string>>(new Set())
+const organizationRoles = ref<Map<string, MembershipRole>>(new Map())
 const hasMerchantIdentity = ref(false)
 const activeOrgId = ref('')
 /** Empty means legacy organization-level task scope; otherwise the selected store. */
@@ -153,6 +157,10 @@ const LEVEL_ORDER: Record<string, number> = { Lv1: 1, Lv2: 2, Lv3: 3, Lv4: 4, Lv
 const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.value) || null)
 const managerStoreScopes = computed(() => storeScopes.value.filter((scope) => scope.role === 'manager'))
 const activeOrgHasOrganizationAccess = computed(() => organizationAccessIds.value.has(activeOrgId.value))
+const activeOrganizationRole = computed(() => organizationRoles.value.get(activeOrgId.value) ?? null)
+const canManageAiBudget = computed(() =>
+  activeOrganizationRole.value === 'owner' || activeOrganizationRole.value === 'admin',
+)
 const canPublishBounty = computed(() => activeOrg.value?.permissionTier === 'finance_transaction')
 const balanceYuan = computed(() =>
   account.value ? (account.value.balanceCents / 100).toFixed(2) : '—')
@@ -239,16 +247,22 @@ async function openAcceptedTaskCreation(application: TaskApplication): Promise<v
 
 async function loadOrganizations(
   knownOrganizations?: Organization[], knownStoreScopes?: StoreAccessScope[],
+  knownOrganizationScopes?: OrganizationAccessScope[],
 ): Promise<void> {
-  const [organizationResult, scopeResult] = await Promise.all([
+  const [organizationResult, scopeResult, organizationScopeResult] = await Promise.all([
     knownOrganizations ?? grassland.listOrganizations(),
     knownStoreScopes ?? grassland.listMyStoreScopes(),
+    knownOrganizationScopes ?? grassland.listMyOrganizationScopes(),
   ])
-  if (organizationResult === null && scopeResult === null) return
+  if (organizationResult === null && scopeResult === null && organizationScopeResult === null) return
 
   const organizationList = Array.isArray(organizationResult) ? organizationResult : []
   storeScopes.value = Array.isArray(scopeResult) ? scopeResult : []
   organizationAccessIds.value = new Set(organizationList.map((organization) => organization.id))
+  const organizationScopes = Array.isArray(organizationScopeResult) ? organizationScopeResult : []
+  organizationRoles.value = new Map(
+    organizationScopes.map((scope) => [scope.organizationId, scope.role]),
+  )
 
   const merged = [...organizationList]
   for (const scope of storeScopes.value.filter((item) => item.role === 'manager')) {
@@ -310,10 +324,11 @@ async function loadActiveOrganizationStores(): Promise<void> {
 async function initForAccount(): Promise<void> {
   // 只激活已开通的身份：推荐官-only 账号不应因默认 merchant 视图收到可预期的 409。
   // merchant 优先保留双身份账号的既有工作台入口；无身份则留在 merchant onboarding，但不暗中开户/激活。
-  const [identities, organizations, scopes] = await Promise.all([
+  const [identities, organizations, scopes, organizationScopes] = await Promise.all([
     grassland.listIdentities(),
     grassland.listOrganizations(),
     grassland.listMyStoreScopes(),
+    grassland.listMyOrganizationScopes(),
   ])
   if (identities === null) return
 
@@ -336,6 +351,7 @@ async function initForAccount(): Promise<void> {
   await loadOrganizations(
     Array.isArray(organizations) ? organizations : [],
     Array.isArray(scopes) ? scopes : [],
+    Array.isArray(organizationScopes) ? organizationScopes : [],
   )
   // 任务书 #22：推荐官侧加载钱包余额，供任务大厅对霸王餐押金任务做报名软提示（不阻断）。
   walletBalanceCents.value = null
@@ -354,6 +370,7 @@ function resetAccountState(): void {
   stores.value = []
   storeScopes.value = []
   organizationAccessIds.value = new Set()
+  organizationRoles.value = new Map()
   hasMerchantIdentity.value = false
   activeOrgId.value = ''
   selectedStoreId.value = ''
@@ -1294,6 +1311,11 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
       <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
       <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
         <OrgTeamCard :org-id="activeOrg.id" />
+      </article>
+
+      <!-- 组织 AI 预算仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
+      <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
+        <AiOrgBudgetPanel :organization-id="activeOrg.id" />
       </article>
 
       <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->

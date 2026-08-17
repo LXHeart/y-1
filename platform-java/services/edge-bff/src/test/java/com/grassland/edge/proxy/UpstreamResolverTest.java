@@ -243,6 +243,7 @@ class UpstreamResolverTest {
         assertThat(resolver.resolve("GET", "/api/ai/keys")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/ai/runs")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("GET", "/api/ai/runs/" + java.util.UUID.randomUUID())).isEqualTo(INTELLIGENCE);
+        assertThat(resolver.resolve("GET", "/api/ai/organizations/org-37/budget")).isEqualTo(INTELLIGENCE);
         // 平台模型配置 admin CRUD → intelligence
         assertThat(resolver.resolve("GET", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);
         assertThat(resolver.resolve("POST", "/api/admin/ai/models")).isEqualTo(INTELLIGENCE);

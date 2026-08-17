@@ -38,6 +38,37 @@ export interface Organization {
   createdAt: string | null
 }
 
+// ---------- intelligence：组织 AI 预算（任务书 #37）----------
+
+export interface AiOrgBudgetUsage {
+  measured: boolean
+  dailyTokens: number | null
+  dailyCents: number | null
+  monthlyTokens: number | null
+  monthlyCents: number | null
+}
+
+export interface AiOrgBudgetLimits {
+  maxTokensPerRun: number | null
+  maxTokensDaily: number | null
+  maxTokensMonthly: number | null
+  maxCentsPerRun: number | null
+  maxCentsDaily: number | null
+  maxCentsMonthly: number | null
+}
+
+export interface AiOrgBudget extends AiOrgBudgetLimits {
+  configured: boolean
+  version: number
+  usage: AiOrgBudgetUsage
+  overCurrentUsage: boolean
+  updatedAt: string | null
+}
+
+export interface UpdateAiOrgBudgetInput extends AiOrgBudgetLimits {
+  expectedVersion: number
+}
+
 /**
  * 额度策略（identity 暴露**上限**；执行在 marketplace/finance）。
  *

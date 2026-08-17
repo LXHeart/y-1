@@ -113,6 +113,7 @@ public class VideoGenerationService {
             var budget = ModelBudgetService.BudgetCheckResult.allowed(
                     job.budgetId(), job.budgetReservationDate(), 0,
                     job.reservedCostCents() == null ? 0 : job.reservedCostCents());
+            // provider 提交前取消：handleFailure 释放预留而非记为消耗，因此不会继续占用组织预算。
             var ctx = new AiExecutionService.ExecutionContext(
                     job.runId(), job.organizationId(), job.accountId(), "video_generation",
                     provider, budget, job.id(), null, CreditFeature.VIDEO_PRODUCTION_VIDEO,

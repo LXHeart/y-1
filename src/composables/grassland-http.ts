@@ -7,6 +7,14 @@ import type { GrasslandResponse, MediaUploadTicket } from '../types/grassland'
 export const POLL_MAX_ATTEMPTS = 30
 export const POLL_INTERVAL_MS = 1000
 
+/** 保留 HTTP 状态，供乐观锁冲突等需要按状态分支的交互使用。 */
+export class GrasslandHttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+    this.name = 'GrasslandHttpError'
+  }
+}
+
 export async function readError(response: Response, fallback: string): Promise<string> {
   const contentType = response.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
@@ -28,7 +36,10 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
   })
 
   if (!response.ok) {
-    throw new Error(await readError(response, `请求失败（${response.status}）`))
+    throw new GrasslandHttpError(
+      response.status,
+      await readError(response, `请求失败（${response.status}）`),
+    )
   }
 
   const body = await response.json() as GrasslandResponse<T>

@@ -36,6 +36,17 @@ function dataFor(url: string): unknown {
     return [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
   }
   if (url === '/api/organizations') return [ORG]
+  if (url === '/api/me/organization-scopes') return [{
+    organizationId: 'org-1', organizationName: '示例商家', organizationStatus: 'active',
+    permissionTier: 'finance_transaction', role: 'owner',
+  }]
+  if (url === '/api/ai/organizations/org-1/budget') return {
+    configured: false, version: 0,
+    maxTokensPerRun: null, maxTokensDaily: null, maxTokensMonthly: null,
+    maxCentsPerRun: null, maxCentsDaily: null, maxCentsMonthly: null,
+    usage: { measured: false, dailyTokens: null, dailyCents: null, monthlyTokens: null, monthlyCents: null },
+    overCurrentUsage: false, updatedAt: null,
+  }
   if (url.includes('/stores')) return []
   if (url === '/api/me/store-scopes') return []
   if (url === '/api/me/sessions') return []
@@ -96,6 +107,33 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(urls).toContain('/api/me/active-identity')
     expect(urls).toContain('/api/organizations')
     expect(wrapper.text()).toContain('示例商家')
+  })
+
+  test('AI 预算入口仅对组织 owner/admin 可见', async () => {
+    const owner = stubFetch()
+    const ownerWrapper = mount(GrasslandWorkbench)
+    currentUser.value = asUser('acct-owner', 'owner@test.local')
+    await flushPromises()
+    expect(ownerWrapper.text()).toContain('AI 预算')
+    expect(owner.urls).toContain('/api/ai/organizations/org-1/budget')
+    ownerWrapper.unmount()
+
+    currentUser.value = null
+    const memberUrls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      memberUrls.push(url)
+      const data = url === '/api/me/organization-scopes'
+        ? [{ organizationId: 'org-1', organizationName: '示例商家', organizationStatus: 'active',
+            permissionTier: 'finance_transaction', role: 'member' }]
+        : dataFor(url)
+      return { ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data }) }
+    }))
+    const memberWrapper = mount(GrasslandWorkbench)
+    currentUser.value = asUser('acct-member', 'member@test.local')
+    await flushPromises()
+    expect(memberWrapper.text()).not.toContain('AI 预算')
+    expect(memberUrls).not.toContain('/api/ai/organizations/org-1/budget')
   })
 
   /**

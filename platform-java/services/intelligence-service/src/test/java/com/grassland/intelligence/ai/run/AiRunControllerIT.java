@@ -484,6 +484,29 @@ class AiRunControllerIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("组织全局月度金额预算优先并在执行前硬停")
+    void organizationMonthlyCentsBudgetBlocksRun() {
+        stubQwenOk();
+        db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, "
+                        + "max_cents_monthly, enabled) VALUES (:org, '*', '*', 0, true)")
+                .bind("org", ORG).then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange().expectStatus().isEqualTo(402);
+
+        Long runs = db.sql("SELECT COUNT(*) AS n FROM ai_run")
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(runs).isZero();
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+        QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+    }
+
+    @Test
     @DisplayName("BYOK 执行只使用解析后的 provider 预算")
     void byokRunUsesResolvedProviderBudget() {
         db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_per_run, enabled) "

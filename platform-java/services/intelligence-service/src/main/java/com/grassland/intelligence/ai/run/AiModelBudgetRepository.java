@@ -17,12 +17,15 @@ import reactor.core.publisher.Mono;
 @Component
 public class AiModelBudgetRepository {
 
+    public static final String ORGANIZATION_CAPABILITY = "*";
+    public static final String ORGANIZATION_PROVIDER = "*";
+
     private static final String SELECT_COLS =
             "id::text, organization_id::text, capability, provider, "
             + "max_tokens_per_run, max_tokens_daily, max_tokens_monthly, "
             + "max_cents_per_run, max_cents_daily, max_cents_monthly, "
             + "current_daily_tokens, current_daily_cents, current_monthly_tokens, current_monthly_cents, "
-            + "last_reset_date, enabled, created_at, updated_at";
+            + "last_reset_date, version, enabled, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -63,23 +66,120 @@ public class AiModelBudgetRepository {
                 .map(UUID::fromString);
     }
 
-    /** 按组织+能力+解析后的 provider 查询预算配置。 */
+    /** 组织全局预算优先；未配置时回退既有能力/provider 精确预算。 */
     public Mono<AiModelBudget> findByOrganizationAndCapability(
             String organizationId, String capability, String provider) {
         // 普通字符串拼接：text block 会吃掉行尾空格，SELECT/列/FROM 会粘连成坏 SQL。
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM ai_model_budget"
                 + " WHERE organization_id = :orgId"
-                + " AND capability = :capability"
-                + " AND provider = :provider"
+                + " AND ((capability = :organizationCapability AND provider = :organizationProvider)"
+                + " OR (capability = :capability AND provider = :provider))"
                 + " AND enabled = true"
-                + " ORDER BY created_at DESC"
+                + " ORDER BY CASE WHEN capability = :organizationCapability"
+                + " AND provider = :organizationProvider THEN 0 ELSE 1 END, created_at DESC"
                 + " LIMIT 1")
                 .bind("orgId", organizationId)
+                .bind("organizationCapability", ORGANIZATION_CAPABILITY)
+                .bind("organizationProvider", ORGANIZATION_PROVIDER)
                 .bind("capability", capability)
                 .bind("provider", provider)
                 .map(AiModelBudgetRepository::map)
                 .one();
+    }
+
+    /** 读取组织管理入口维护的全局预算行。 */
+    public Mono<AiModelBudget> findOrganizationBudget(String organizationId) {
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM ai_model_budget"
+                        + " WHERE organization_id=:orgId AND capability=:capability"
+                        + " AND provider=:provider AND enabled=true")
+                .bind("orgId", organizationId)
+                .bind("capability", ORGANIZATION_CAPABILITY)
+                .bind("provider", ORGANIZATION_PROVIDER)
+                .map(AiModelBudgetRepository::map)
+                .one();
+    }
+
+    /** expectedVersion=0 时创建；并发创建由唯一键 + DO NOTHING 转成 empty。 */
+    public Mono<AiModelBudget> createOrganizationBudget(
+            String organizationId,
+            Integer maxTokensPerRun, Long maxTokensDaily, Long maxTokensMonthly,
+            Integer maxCentsPerRun, Long maxCentsDaily, Long maxCentsMonthly) {
+        return db.sql("""
+                INSERT INTO ai_model_budget(
+                    organization_id, capability, provider,
+                    max_tokens_per_run, max_tokens_daily, max_tokens_monthly,
+                    max_cents_per_run, max_cents_daily, max_cents_monthly,
+                    current_daily_tokens, current_daily_cents,
+                    current_monthly_tokens, current_monthly_cents,
+                    last_reset_date, version, enabled)
+                VALUES (
+                    :orgId, :capability, :provider,
+                    :maxTokensRun, :maxTokensDaily, :maxTokensMonthly,
+                    :maxCentsRun, :maxCentsDaily, :maxCentsMonthly,
+                    0, 0, 0, 0, CURRENT_DATE, 1, true)
+                ON CONFLICT (organization_id, capability, provider) DO NOTHING
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("orgId", organizationId)
+                .bind("capability", ORGANIZATION_CAPABILITY)
+                .bind("provider", ORGANIZATION_PROVIDER)
+                .bind("maxTokensRun", nullable(maxTokensPerRun, Integer.class))
+                .bind("maxTokensDaily", nullable(maxTokensDaily, Long.class))
+                .bind("maxTokensMonthly", nullable(maxTokensMonthly, Long.class))
+                .bind("maxCentsRun", nullable(maxCentsPerRun, Integer.class))
+                .bind("maxCentsDaily", nullable(maxCentsDaily, Long.class))
+                .bind("maxCentsMonthly", nullable(maxCentsMonthly, Long.class))
+                .map(AiModelBudgetRepository::map)
+                .one();
+    }
+
+    /** 乐观锁更新全局预算；真实用量计数保持不变。 */
+    public Mono<AiModelBudget> updateOrganizationBudget(
+            String organizationId, long expectedVersion,
+            Integer maxTokensPerRun, Long maxTokensDaily, Long maxTokensMonthly,
+            Integer maxCentsPerRun, Long maxCentsDaily, Long maxCentsMonthly) {
+        return db.sql("""
+                UPDATE ai_model_budget SET
+                    max_tokens_per_run=:maxTokensRun,
+                    max_tokens_daily=:maxTokensDaily,
+                    max_tokens_monthly=:maxTokensMonthly,
+                    max_cents_per_run=:maxCentsRun,
+                    max_cents_daily=:maxCentsDaily,
+                    max_cents_monthly=:maxCentsMonthly,
+                    version=version+1,
+                    updated_at=now()
+                WHERE organization_id=:orgId AND capability=:capability AND provider=:provider
+                  AND enabled=true AND version=:expectedVersion
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("orgId", organizationId)
+                .bind("capability", ORGANIZATION_CAPABILITY)
+                .bind("provider", ORGANIZATION_PROVIDER)
+                .bind("expectedVersion", expectedVersion)
+                .bind("maxTokensRun", nullable(maxTokensPerRun, Integer.class))
+                .bind("maxTokensDaily", nullable(maxTokensDaily, Long.class))
+                .bind("maxTokensMonthly", nullable(maxTokensMonthly, Long.class))
+                .bind("maxCentsRun", nullable(maxCentsPerRun, Integer.class))
+                .bind("maxCentsDaily", nullable(maxCentsDaily, Long.class))
+                .bind("maxCentsMonthly", nullable(maxCentsMonthly, Long.class))
+                .map(AiModelBudgetRepository::map)
+                .one();
+    }
+
+    /** 清空全部上限时删除全局行；expectedVersion 不匹配返回 false。 */
+    public Mono<Boolean> deleteOrganizationBudget(String organizationId, long expectedVersion) {
+        return db.sql("""
+                DELETE FROM ai_model_budget
+                WHERE organization_id=:orgId AND capability=:capability AND provider=:provider
+                  AND version=:expectedVersion
+                """)
+                .bind("orgId", organizationId)
+                .bind("capability", ORGANIZATION_CAPABILITY)
+                .bind("provider", ORGANIZATION_PROVIDER)
+                .bind("expectedVersion", expectedVersion)
+                .fetch().rowsUpdated().map(count -> count > 0).defaultIfEmpty(false);
     }
 
     /** Atomically resets elapsed windows and reserves capacity under all configured limits. */
@@ -243,6 +343,7 @@ public class AiModelBudgetRepository {
                 row.get("current_monthly_tokens", Long.class),
                 row.get("current_monthly_cents", Long.class),
                 row.get("last_reset_date", LocalDate.class),
+                longValue(row.get("version", Long.class), 1L),
                 row.get("enabled", Boolean.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
@@ -251,6 +352,10 @@ public class AiModelBudgetRepository {
 
     private static UUID uuidFromString(String value) {
         return value == null ? null : UUID.fromString(value);
+    }
+
+    private static long longValue(Long value, long fallback) {
+        return value == null ? fallback : value;
     }
 
     private static Instant toInstant(OffsetDateTime value) {

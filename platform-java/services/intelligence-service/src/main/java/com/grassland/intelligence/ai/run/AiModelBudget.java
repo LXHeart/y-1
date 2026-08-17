@@ -29,6 +29,7 @@ public record AiModelBudget(
     Long currentMonthlyCents,
     LocalDate lastResetDate,
 
+    long version,
     boolean enabled,
     Instant createdAt,
     Instant updatedAt
@@ -61,6 +62,7 @@ public record AiModelBudget(
             0L,   // currentMonthlyTokens
             0L,   // currentMonthlyCents
             LocalDate.now(),
+            1L,
             true,
             null,  // createdAt 由数据库默认
             null   // updatedAt 由数据库默认
@@ -138,6 +140,7 @@ public record AiModelBudget(
             currentMonthlyTokens,  // 不变
             currentMonthlyCents,   // 不变
             LocalDate.now(),
+            version,
             enabled,
             createdAt,
             Instant.now()
@@ -162,6 +165,7 @@ public record AiModelBudget(
             0L,   // reset
             0L,   // reset
             LocalDate.now(),
+            version,
             enabled,
             createdAt,
             Instant.now()
@@ -186,6 +190,7 @@ public record AiModelBudget(
             (currentMonthlyTokens != null ? currentMonthlyTokens : 0) + addedTokens,
             (currentMonthlyCents != null ? currentMonthlyCents : 0) + addedCents,
             LocalDate.now(),
+            version,
             enabled,
             createdAt,
             Instant.now()
