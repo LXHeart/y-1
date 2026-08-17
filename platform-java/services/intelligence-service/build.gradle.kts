@@ -22,6 +22,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    // 任务书 #36：游客试用 IP 限流（ReactiveStringRedisTemplate；经 platform-identity-assertion 已传递，此处显式声明）
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
     implementation(libs.r2dbc.postgresql)
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("org.jsoup:jsoup:1.21.1")

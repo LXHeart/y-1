@@ -6,6 +6,10 @@ spring:
   http:
     codecs:
       max-in-memory-size: 10MB
+  # 任务书 #36：游客试用 IP 限流（ReactiveStringRedisTemplate 自动配置由此激活；无 Redis 时 fail-closed 拒绝）。
+  data:
+    redis:
+      url: ${GUEST_TRIAL_REDIS_URL:redis://localhost:6379}
   webflux:
     multipart:
       # generate-image 最多 4 张；image-analysis/analyze 等最多 6 张图片 + 8 文本字段 = 14 parts。大文件落临时盘，controller 再按字节严格校验。
@@ -158,6 +162,16 @@ identity:
 # 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
 # intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。
 ai:
+  # 任务书 #36 / ADR-D14：游客有限体验（未登录可试用 3 项白名单能力；总开关生产可关）。
+  guest-trial:
+    enabled: ${AI_GUEST_TRIAL_ENABLED:true}
+    capabilities: ${AI_GUEST_TRIAL_CAPABILITIES:article-titles,content-score,image-review}
+    daily-limit-per-capability: ${AI_GUEST_TRIAL_DAILY_LIMIT:3}
+    ip-daily-limit: ${AI_GUEST_TRIAL_IP_DAILY_LIMIT:30}
+    ip-burst-per-minute: ${AI_GUEST_TRIAL_IP_BURST:10}
+    cookie-secure: ${GUEST_TRIAL_COOKIE_SECURE:false}
+    rate-limit-key-prefix: ${GUEST_TRIAL_RATE_LIMIT_KEY_PREFIX:grassland:guest-trial:}
+    signup-bonus-credits: ${GUEST_TRIAL_SIGNUP_BONUS_CREDITS:50}
   video-generation:
     mode: ${VIDEO_GENERATION_MODE:sandbox}
     base-url: ${VIDEO_GENERATION_BASE_URL:}
