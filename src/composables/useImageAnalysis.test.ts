@@ -176,6 +176,7 @@ describe('useImageAnalysis', () => {
       { type: 'progress', stage: 'draft', message: '正在分析图片并生成初稿（第 1 / 8 步）', attempt: 1, totalAttempts: 8, startedAt: '2026-04-24T00:00:01.000Z' },
       { type: 'progress', stage: 'draft', message: '正在分析图片并生成初稿（第 1 / 8 步）', attempt: 1, totalAttempts: 8, startedAt: '2026-04-24T00:00:01.000Z', completedAt: '2026-04-24T00:00:03.500Z', durationMs: 2500 },
       { type: 'result', data: { review: 'done', imageCount: 1 } },
+      { type: 'safety', safety: { findings: [{ category: 'absolute_claims', severity: 'medium', match: '最好', index: 0, advice: '改为具体描述', deep: false }], lexiconVersion: 'lexicon-v1', deepCheck: false } },
     ]))
     globalThis.fetch = fetchMock as typeof fetch
 
@@ -186,6 +187,7 @@ describe('useImageAnalysis', () => {
     await analysis.startGeneration()
 
     expect(analysis.result.value).toEqual({ review: 'done', imageCount: 1 })
+    expect(analysis.safetyReport.value?.lexiconVersion).toBe('lexicon-v1')
     expect(analysis.progressEvents.value).toEqual([
       {
         type: 'progress',

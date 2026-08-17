@@ -9,6 +9,8 @@ import type {
   ImageSearchResult,
 } from '../types/article-creation'
 import type { AiPlatformId } from '../types/ai-creation'
+import { parseSafetyFrame } from './useContentSafety'
+import type { SafetyReport } from './useContentSafety'
 
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
@@ -18,6 +20,7 @@ export function useArticleCreation() {
   const selectedTitle = ref('')
   const outline = ref('')
   const content = ref('')
+  const safetyReport = ref<SafetyReport | null>(null)
 
   const titlesLoading = ref(false)
   const outlineLoading = ref(false)
@@ -58,6 +61,7 @@ export function useArticleCreation() {
   async function consumeSSEStream(
     response: Response,
     onChunk: (text: string) => void,
+    onSafety?: (report: SafetyReport) => void,
     signal?: AbortSignal,
   ): Promise<void> {
     const reader = response.body?.getReader()
@@ -85,8 +89,10 @@ export function useArticleCreation() {
         if (payload === '[DONE]') return
 
         try {
-          const parsed = JSON.parse(payload) as { content?: string; error?: string }
+          const parsed = JSON.parse(payload) as Record<string, unknown> & { content?: string; error?: string }
           if (parsed.error) throw new Error(parsed.error)
+          const report = parseSafetyFrame(parsed)
+          if (report) onSafety?.(report)
           if (parsed.content) onChunk(parsed.content)
         } catch (err: unknown) {
           if (err instanceof Error && err.message !== 'Unexpected end of JSON input') {
@@ -112,6 +118,7 @@ export function useArticleCreation() {
     error.value = ''
     titles.value = []
     selectedTitle.value = ''
+    safetyReport.value = null
 
     try {
       const response = await fetch('/api/article-generation/titles', {
@@ -121,13 +128,18 @@ export function useArticleCreation() {
         signal: controller.signal,
       })
 
-      const body = await response.json() as { success?: boolean; data?: { titles: ArticleTitleOption[] }; error?: string }
+      const body = await response.json() as {
+        success?: boolean
+        data?: { titles: ArticleTitleOption[]; safety?: SafetyReport }
+        error?: string
+      }
 
       if (!response.ok || !body.success || !body.data?.titles) {
         throw new Error(body.error || '标题生成失败')
       }
 
       titles.value = body.data.titles
+      safetyReport.value = parseSafetyFrame({ safety: body.data.safety })
       stage.value = 'titles'
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -171,7 +183,7 @@ export function useArticleCreation() {
 
       await consumeSSEStream(response, (chunk) => {
         outline.value += chunk
-      }, controller.signal)
+      }, undefined, controller.signal)
 
       stage.value = 'outline'
     } catch (err: unknown) {
@@ -191,6 +203,7 @@ export function useArticleCreation() {
     contentLoading.value = true
     error.value = ''
     content.value = ''
+    safetyReport.value = null
     stage.value = 'content'
 
     try {
@@ -214,6 +227,8 @@ export function useArticleCreation() {
 
       await consumeSSEStream(response, (chunk) => {
         content.value += chunk
+      }, (report) => {
+        safetyReport.value = report
       }, controller.signal)
 
       stage.value = 'images'
@@ -245,6 +260,7 @@ export function useArticleCreation() {
   function goToOutline(): void {
     contentController?.abort()
     content.value = ''
+    safetyReport.value = null
     contentLoading.value = false
     error.value = ''
     stage.value = 'outline'
@@ -444,6 +460,7 @@ export function useArticleCreation() {
     selectedTitle.value = ''
     outline.value = ''
     content.value = ''
+    safetyReport.value = null
     titlesLoading.value = false
     outlineLoading.value = false
     contentLoading.value = false
@@ -485,7 +502,7 @@ export function useArticleCreation() {
   }
 
   return {
-    stage, topic, platform, titles, selectedTitle, outline, content,
+    stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
     titlesLoading, outlineLoading, contentLoading, error,
     imageSlots, imageRecommendations, loadingRecommendations, completed,
     fetchTitles, streamOutline, streamContent,

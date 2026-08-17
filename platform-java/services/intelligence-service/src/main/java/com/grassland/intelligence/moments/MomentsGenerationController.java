@@ -38,15 +38,18 @@ public class MomentsGenerationController {
 
     private final IntelligenceCallerResolver callers;
     private final MomentsGenerationService service;
+    private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
     private final CreditsClient credits;
     private final MomentsTaskCreationContext contexts;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public MomentsGenerationController(
             IntelligenceCallerResolver callers, MomentsGenerationService service,
-            CreditsClient credits, MomentsTaskCreationContext contexts) {
+            CreditsClient credits, MomentsTaskCreationContext contexts,
+            com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
         this.callers = callers;
         this.service = service;
+        this.safety = safety;
         this.credits = credits;
         this.contexts = contexts;
     }
@@ -60,9 +63,9 @@ public class MomentsGenerationController {
                     .flatMap(caller -> contexts.bind(body.contextSnapshotId(), caller.accountId()))
                     .flatMap(binding -> validatedImages(body)
                             .map(dataUrls -> sseEntity(
-                                    service.generateTask(dataUrls, style, body.topic(), body.feelings(),
-                                                    binding, exchange)
-                                            .onErrorResume(e -> Flux.just(errorFrame())),
+                                    withSafety(exchange, service.generateTask(dataUrls, style, body.topic(),
+                                                    body.feelings(), binding, exchange)
+                                            .onErrorResume(e -> Flux.just(errorFrame()))),
                                     exchange)))
                     .onErrorMap(error -> error instanceof IntelligenceException
                             ? error : new IntelligenceException(502, ERROR_MESSAGE));
@@ -71,11 +74,17 @@ public class MomentsGenerationController {
                 .flatMap(dataUrls -> callers.resolve(exchange.getRequest())
                         .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.MOMENTS_GENERATION))
                         .map(charge -> sseEntity(
-                                service.generate(dataUrls, style, body.topic(), body.feelings())
+                                withSafety(exchange, service.generate(dataUrls, style, body.topic(), body.feelings())
                                         // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
                                         .onErrorResume(e -> credits.refund(charge, "朋友圈内容生成失败自动退回")
-                                                .thenMany(Flux.just(errorFrame()))),
+                                                .thenMany(Flux.just(errorFrame())))),
                                 exchange)));
+    }
+
+    /** 任务书 #34 D8：朋友圈文案流尾追加安全检查帧（检查文本=result 帧 copy）。 */
+    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+        return safety.appendSafetyFrame(exchange, frames,
+                com.grassland.intelligence.contentsafety.ContentSafetyService.momentsCopyExtractor());
     }
 
     /** 素材图 base64 解码与 magic 校验留在 boundedElastic（解码 9×5MB 不占事件循环）。 */

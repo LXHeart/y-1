@@ -75,6 +75,7 @@ class JavaRouteManifestGateTest {
                 route("POST", "/api/ai/runs", "intelligence"),
                 // 任务书 #36：游客试用窄面（flag on 时路由、off 时 fail-closed 404，见 flagOff 测试）。
                 route("POST", "/api/guest-trial/article-titles", "intelligence"),
+                route("POST", "/api/content-safety/check", "intelligence"),
                 route("GET", "/api/guest-trial/quota", "intelligence"),
                 route("GET", "/api/admin/ai/models", "intelligence"),
                 route("GET", "/api/admin/ai/video-reconciliation", "intelligence"),

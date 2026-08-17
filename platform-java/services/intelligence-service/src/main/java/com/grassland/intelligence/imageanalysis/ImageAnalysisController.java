@@ -65,11 +65,13 @@ public class ImageAnalysisController {
     private final CreditsClient credits;
     private final GraphicTaskCreationContext creationContexts;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
 
     public ImageAnalysisController(IntelligenceCallerResolver callers, ImageAnalysisService analysis,
                                    StylePreferencesService styles, FeishuExportService feishuExport,
                                    FeishuCredentialsRepository feishuCreds, CreditsClient credits,
-                                   GraphicTaskCreationContext creationContexts) {
+                                   GraphicTaskCreationContext creationContexts,
+            com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
         this.callers = callers;
         this.analysis = analysis;
         this.styles = styles;
@@ -77,6 +79,7 @@ public class ImageAnalysisController {
         this.feishuCreds = feishuCreds;
         this.credits = credits;
         this.creationContexts = creationContexts;
+        this.safety = safety;
     }
 
     // ---------------- SSE 生成端点 ----------------
@@ -92,8 +95,9 @@ public class ImageAnalysisController {
                                     images, binding.input(), binding.binding(), exchange)
                                     .onErrorResume(error -> Flux.just(
                                             errorFrame(error, ANALYZE_FALLBACK))))
-                            .flatMap(events -> sseResponse(exchange, events))
-                    : sseResponse(exchange, analyzeEvents(exchange, input.input(), images)));
+                            .flatMap(events -> sseResponse(exchange, withSafety(exchange, events)))
+                    : sseResponse(exchange, withSafety(exchange,
+                            analyzeEvents(exchange, input.input(), images))));
         }).doFinally(s -> releaseParts(form)));
     }
 
@@ -108,9 +112,16 @@ public class ImageAnalysisController {
                                     images, binding.input(), binding.binding(), exchange)
                                     .onErrorResume(error -> Flux.just(
                                             errorFrame(error, DRAFT_FALLBACK))))
-                            .flatMap(events -> sseResponse(exchange, events))
-                    : sseResponse(exchange, draftEvents(exchange, input.input(), images)));
+                            .flatMap(events -> sseResponse(exchange, withSafety(exchange, events)))
+                    : sseResponse(exchange, withSafety(exchange,
+                            draftEvents(exchange, input.input(), images))));
         }).doFinally(s -> releaseParts(form)));
+    }
+
+    /** 任务书 #34 D8：图片评价文案流尾追加安全检查帧（检查文本=result 帧 data.review）。 */
+    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+        return safety.appendSafetyFrame(exchange, frames,
+                com.grassland.intelligence.contentsafety.ContentSafetyService.reviewExtractor());
     }
 
     private Flux<String> analyzeEvents(ServerWebExchange exchange, ImageReviewInput baseInput, List<UploadedImage> images) {

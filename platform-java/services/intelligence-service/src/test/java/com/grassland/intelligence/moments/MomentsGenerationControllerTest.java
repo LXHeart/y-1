@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,12 +52,17 @@ class MomentsGenerationControllerTest {
     private MomentsGenerationService service;
     @Mock
     private MomentsTaskCreationContext contexts;
+    @Mock
+    private com.grassland.intelligence.contentsafety.ContentSafetyService safety;
 
     private MomentsGenerationController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new MomentsGenerationController(callers, service, credits, contexts);
+        controller = new MomentsGenerationController(callers, service, credits, contexts, safety);
+        // 任务书 #34：safety 追加帧默认透传（mock 服务只回灌入帧）
+        lenient().when(safety.appendSafetyFrame(any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(1));
     }
 
     @Test

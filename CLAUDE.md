@@ -24,6 +24,7 @@
 - **爆款文章创作**：主题 → 平台（微信公众号/知乎/小红书/抖音图集短文案）→ 标题 → 大纲 → 正文 → 按段落配图，SSE 流式输出，附只读平台规范提示
 - **脱口秀/风格化脚本**：六种抽象风格模板（不模仿特定在世创作者），SSE 流式输出
 - **朋友圈创作**：图片+文字（专用轻量流程：主题/四风格/素材图 → 精简文案+九宫格顺序建议+每图配文，一次多模态 SSE）与视频+文字（路由到视频制作，脚本 prompt 注入朋友圈熟人分享适配）
+- **内容安全检查**：任务书 #34+#33a / ADR-D16。版本化服务端词库 L1 每次生成必跑；长文本可经控制面 `content_safety` capability 做平台资助的 L2 语境深检，未配置或失败降级为 L1。五条文本创作流返回结构化 safety findings，前端可编辑后手动复查，提醒为 advisory、不自动发布或硬阻断
 - **图片生成**：素材生成定位：独立图片生成，支持参考图上传和 @mention
 - **视频内容改编**：将视频分析结果转为分镜脚本，支持用户自定义指令和图片上传
 - **视频制作**：上传素材图片 / 粘贴参考视频链接（内嵌抖音/B站参考提取）/ 从热点选主题 + 店铺信息 → AI 脚本生成（SSE 流式）→ 异步视频生成（Sandbox 已可用，Seedance/MiniMax 真实渠道待联调）
@@ -95,6 +96,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 推荐官收入统计 | `/api/finance/wallets/me/statistics?from=&to=` | 任务书 #29+#30：`wallet_ledger` 权威表按月（北京时间 `date_trunc`）+ 按 engagement 聚合，含毛/抽成/净；跨度≤12 月，self-scoped；前端按任务标题经 my-applications join |
 | 商家月度账单 | `/api/finance/organizations/{orgId}/monthly-bill?month=` | 任务书 #29+#30：journal/posting 双录按 `journal_type` 聚合 + FEE 腿单列，flow=ESCROW 腿净额；org-scoped 自查跨 org 404，月切北京时间 |
 | 游客试用 | `/api/guest-trial/{capability}`、`/api/guest-trial/quota` | 任务书 #36 / ADR-D14：未登录匿名放行（gtid httpOnly cookie + IP 双层限流 + 每能力 3 次/天，成功才计次）；不进 finance credits/ai_run，审计只存 IP 截断哈希；edge flag `EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE` 可整体关闭 |
+| 内容安全复查 | `/api/content-safety/check` | 登录用户对编辑后的文本重新检查；返回版本化 findings。Edge flag `EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE` 关闭时 fail-closed 404；词库不下发前端 |
 | 推荐官我的报名 | `/api/tasks/my-applications?status=&cursor=&limit=` | 任务书 #29+#30：跨任务 keyset 分页列当前推荐官报名，join task 标题/状态/赏金 + settledAt；复用 `/api/tasks/**` 前缀不新增公网路由 |
 | 积分 | `/api/credits/*` | balance, history, packages（active 积分包）, purchase-orders（购买/记录，Sandbox 支付即时生效）|
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）; credits-packages + credits-purchase-orders（含 reconciliation 三方对账，需 FINANCE 角色）|
@@ -128,6 +130,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - identity-service **没有全局 `SecurityWebFilterChain`**，授权是逐 controller 约定：平台 admin 端点用 `CurrentAccountResolver.requireAdmin`，组织内端点用 `OrgAuthorization.requireRole`。新增端点漏掉这一行就是完全无鉴权（`/api/admin/kyb-requests` 曾如此）。仓储层的跨租户守卫是第二道闸：改删组织资源的 SQL 必须带 `organization_id` 条件，只按 id 定位等于放开跨租户写
 - 移动端 token 认证由**请求头 `X-Device-Info` 单点切换**（GL-P3-IDENTITY-001）：带该头 → `LoginController` 走 token 分支，签 access/refresh token 且**不建 session 行、不发 Set-Cookie**；不带 → Web cookie 路径逐字节不变。`IDENTITY_ACCESS_TOKEN_SECRET` 未配时移动端 503（fail-closed），Web 不受影响。refresh token 只以 SHA-256 落 `refresh_token` 表，**v1 刻意不轮换**（刷新只 touch `last_used_at` + 重签 access token）；access token 的 `session_token` claim = refresh_token 行 id，`identity_session` 与设备撤销都按它定位。edge-bff 的 `AccessTokenFilter` 在公网边界验签并复查 refresh-token 撤销状态，随后由 `InternalAssertionFilter` 换发目标服务断言；原始 access token 不向 Java 上游扩散，非法/撤销/非 Bearer 凭据直接 401，refresh/revoke 例外透传。Argon2 hash/rehash 必须 `subscribeOn(Schedulers.boundedElastic())` —— 64MB/3 轮的重操作留在 Netty 事件循环上会拖垮整个服务
 - AI 控制面（GL-P3-AI-001，intelligence `ai/controlplane/` + `ai/run/`）：平台模型配置（`platform_model_config`，主备 + 版本化，V1 雏形已在 V7 重建）admin CRUD 在 `/api/admin/ai/models`，**全部经 `IntelligenceCallerResolver.requireAdmin`**（断言 `role=admin`；intelligence 之前**没有任何 admin 门闩**，`Caller` 连 `role` 都不带——这是本轮新加的）。`ByokRoutingService` 平台分支查控制面；**BYOK→平台回退须 `allowFallback` 显式授权**（HLD §12.3 硬规则），否则返回 `DENIED(fallback_not_authorized)` 不静默扣平台额度。`AiExecutionService` 是执行闭环唯一编排：平台 run 先 `credits.consume` 且用 `charge.operationId()` 作 run `operation_id` 保退款幂等、BYOK run **不扣分**（D-11）并解密 key（明文只活在 `ExecutionContext`，不入日志/响应/outbox，无 KEK→503）；失败提交后 best-effort `credits.refund`（不在 DB 事务内做 HTTP），`AiRunCompleted/Failed` 经 `intelligenceTransactionalOperator` 同事务 append outbox。`TaskContext`（`ai_run` 的 `price_table_version`/`platform_model_version`/`fallback_authorized`，V8）在 Run 起始冻结。`/api/ai`（keys + runs）+ `/api/admin/ai` 经 edge 路由到 intelligence（`EDGE_ROUTE_AI_INTELLIGENCE`/`EDGE_ROUTE_ADMIN_AI_INTELLIGENCE`，精确前缀不抢 legacy `/api/admin/users`）；此前 `/api/ai/keys` 落 legacy 隐性 404、本轮才首次可达。真实 provider 调用经 `TextCompletionClient`；BYOK 地址保存/执行时校验全部公网 DNS，执行连接使用固定地址 resolver 保留原 hostname/SNI 并关闭 DNS rebinding TOCTOU 窗口，平台地址由 `PlatformProviderPolicy` 限制受信 origin
+- 内容安全（ADR-D16）保持两层语义：L1 `ContentSafetyChecker` 是不可降级底线；L2 必须以 `capability=content_safety` 进入 `AiExecutionService`，不得旁路自建模型调用。该 capability 不开放 BYOK，使用 `feature=null` 的既有免费执行分支实现平台资助零积分（原因见 ADR-D16 D5），但仍落 ai_run、预算和并发机器。流尾 safety 帧失败只能降级 `deepCheck:false`，不能覆盖已成功的生成结果；词库版本随创作上下文快照落档，完整词库只留服务端
 - 环境变量定义在 `.env.example`、`.env.docker.example` 及各 Java 服务 `application.yml`，是运行时配置的来源
 - API 表描述逻辑契约；实际 upstream 由 edge-bff RouteManifest 与对应 flag 决定，未启用的路由返回 404
 

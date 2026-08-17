@@ -50,10 +50,41 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
                 transactions.transactional(repository.create(seed, "system")).block(BLOCK);
                 logger.info("Seeded platform model config text/primary from ai.qwen.* env defaults");
             }
+            // 任务书 #34 / ADR-D16 D1：content_safety 深检模型**可选** seed——env 显式提供时才种
+            // （AI_CONTENT_SAFETY_MODEL 缺省不配置 → 控制面无该 capability → 深检降级为仅 L1）。
+            seedContentSafety();
         } catch (Exception e) {
             // best-effort：seed 失败（启动期 DB 不可达 / 测试用占位 DB）不阻断上下文启动；
             // admin 可经 CRUD 手动配置。生产 DB 真不可达时 Flyway 等会更早失败。
             logger.warn("Platform model config seed skipped (best-effort): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * content_safety 可选 seed：{@code ai.platform-model.content-safety.model} 提供时按 env 种一行
+     * primary（默认复用 ai.qwen.* 的 base-url/api-key 经 provider 解析）。缺省不种——生产默认 L1-only，
+     * 运营经 admin CRUD 配置即开 L2 深检（ADR-D16 D1 降级路径）。
+     */
+    private void seedContentSafety() {
+        try {
+            String model = System.getenv("AI_CONTENT_SAFETY_MODEL");
+            if (model == null || model.isBlank()) {
+                return;
+            }
+            boolean exists = repository.findCurrent("content_safety",
+                            PlatformModelConfig.ROLE_PRIMARY)
+                    .hasElement().block(BLOCK);
+            if (Boolean.TRUE.equals(exists)) {
+                return;
+            }
+            PlatformModelConfig seed = new PlatformModelConfig(
+                    null, "content_safety", PlatformModelConfig.ROLE_PRIMARY, "qwen",
+                    model, envDefaults.baseUrl(), null,
+                    PlatformModelConfig.HEALTH_HEALTHY, true, 1, null, null, null);
+            transactions.transactional(repository.create(seed, "system")).block(BLOCK);
+            logger.info("Seeded platform model config content_safety/primary (model={})", model);
+        } catch (Exception e) {
+            logger.warn("content_safety seed skipped (best-effort): {}", e.getMessage());
         }
     }
 }

@@ -260,6 +260,13 @@
             <p class="result-text">{{ result.review }}</p>
           </div>
 
+          <SafetyFindingsPanel
+            v-if="safetyReport"
+            :report="safetyReport"
+            :text="isEditing ? editReview : result.review"
+            @updated="safetyReport = $event"
+          />
+
           <div v-if="!isEditing" class="step-actions">
             <div v-if="generationStage === 'draft-review'" class="step-nav">
               <button class="btn-primary" @click="proceedToOptimize">下一步：润色优化</button>
@@ -384,6 +391,13 @@
             <p class="result-text">{{ result.review }}</p>
           </div>
 
+          <SafetyFindingsPanel
+            v-if="safetyReport"
+            :report="safetyReport"
+            :text="isEditing ? editReview : result.review"
+            @updated="safetyReport = $event"
+          />
+
           <section v-if="showGenerationSteps && hasGenerationSteps" class="result-steps">
             <div class="result-steps-head">
               <p class="result-label">本次生成步骤</p>
@@ -482,6 +496,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useImageAnalysis } from '../../composables/useImageAnalysis'
+import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { GenerationStage, ImageAnalysisProgressEvent, ImageAnalysisProgressStage, ImageAnalysisResult } from '../../types/image-analysis'
 import ImageLightbox from './components/ImageLightbox.vue'
@@ -497,6 +512,7 @@ const props = defineProps<{
 const {
   images,
   result,
+  safetyReport,
   reviewLength,
   feelings,
   platform,

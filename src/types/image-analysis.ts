@@ -40,7 +40,8 @@ export interface ImageAnalysisStreamErrorEvent {
   error: string
 }
 
-export type ImageAnalysisStreamEvent = ImageAnalysisStreamProgressEvent | ImageAnalysisStreamResultEvent | ImageAnalysisStreamErrorEvent
+export type ImageAnalysisStreamEvent = ImageAnalysisStreamProgressEvent | ImageAnalysisStreamResultEvent
+  | ImageAnalysisStreamErrorEvent | import('./content-safety').ContentSafetyStreamFrame
 
 export interface FeishuExportResponse {
   success: boolean

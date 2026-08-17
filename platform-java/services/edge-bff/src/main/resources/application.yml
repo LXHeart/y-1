@@ -146,6 +146,10 @@ edge:
     - path: /api/ai
       upstream: intelligence
       enabled: ${EDGE_ROUTE_AI_INTELLIGENCE:true}
+    # 内容安全手动复查（任务书 #34 / ADR-D16）：编辑后复查入口（findings advisory）。
+    - path: /api/content-safety
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE:true}
     # 游客有限体验（任务书 #36 / ADR-D14）：未登录可用的 AI 试用窄面（3 项白名单 + gtid 额度 + IP 限流，
     # 智能化侧匿名放行）。生产可经 flag 整体关闭；fail-closed：不注册即 404。
     - path: /api/guest-trial

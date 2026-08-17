@@ -46,14 +46,17 @@ public class ArticleController {
     private final CreditsClient credits;
     private final FrozenTextExecutionService frozenText;
     private final ArticleCreationContext creationContexts;
+    private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
 
     public ArticleController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits,
-                             FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts) {
+                             FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts,
+                             com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
         this.frozenText = frozenText;
         this.creationContexts = creationContexts;
+        this.safety = safety;
     }
 
     // ---------- titles：扣积分 + 聚合流式 → 解析 JSON ----------
@@ -71,8 +74,7 @@ public class ArticleController {
                                     binding.promptContext(), ArticlePrompts.titlesUser(body.topic())),
                             1024, CreditFeature.ARTICLE_GENERATION,
                             completion -> parseTitles(completion.content())))
-                    .map(titles -> Map.<String, Object>of(
-                            "success", true, "data", Map.of("titles", titles)));
+                    .flatMap(titles -> titlesBody(titles));
         }
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.ARTICLE_GENERATION))
@@ -85,7 +87,19 @@ public class ArticleController {
                         // 上游失败：退回已扣积分后仍抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "标题生成失败自动退回")
                                 .then(Mono.error(error))))
-                .map(titles -> Map.<String, Object>of("success", true, "data", Map.of("titles", titles)));
+                .flatMap(this::titlesBody);
+    }
+
+    /** titles 响应：data 内嵌 safety 块（标题为短文本仅 L1；任务书 #34 D8）。 */
+    private Mono<Map<String, Object>> titlesBody(List<Title> titles) {
+        String joined = titles.stream()
+                .map(Title::title)
+                .reduce("", (a, b) -> a + " " + b);
+        return Mono.just(Map.<String, Object>of(
+                "success", true,
+                "data", Map.of(
+                        "titles", titles,
+                        "safety", safety.reportBody(safety.checkShallow(joined)))));
     }
 
     // ---------- outline：免费 SSE ----------
@@ -96,7 +110,7 @@ public class ArticleController {
         if (body.isTaskMode()) {
             return taskStream(exchange, body.contextSnapshotId(), body.platform(), binding -> List.of(
                     ArticlePrompts.outlineSystem(binding.platform()), binding.promptContext(),
-                    ArticlePrompts.outlineUser(body.topic(), body.title())), 2048, "大纲生成失败");
+                    ArticlePrompts.outlineUser(body.topic(), body.title())), 2048, "大纲生成失败", false);
         }
         return callers.resolve(exchange.getRequest()).map(caller -> {
             Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
@@ -116,7 +130,7 @@ public class ArticleController {
         if (body.isTaskMode()) {
             return taskStream(exchange, body.contextSnapshotId(), body.platform(), binding -> List.of(
                     ArticlePrompts.contentSystem(binding.platform()), binding.promptContext(),
-                    ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())), 4096, "正文生成失败");
+                    ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())), 4096, "正文生成失败", true);
         }
         return callers.resolve(exchange.getRequest()).map(caller -> {
             Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
@@ -124,7 +138,10 @@ public class ArticleController {
                     ArticlePrompts.contentUser(body.topic(), body.title(), body.outline()))))
                     .map(chunk -> frame(Map.of("content", chunk.content())))
                     .onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))));
-            return sseEntity(payloads, exchange);
+            // 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
+            return sseEntity(safety.appendSafetyFrame(exchange, payloads,
+                    com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor()),
+                    exchange);
         });
     }
 
@@ -133,13 +150,20 @@ public class ArticleController {
     private Mono<ResponseEntity<Flux<DataBuffer>>> taskStream(
             ServerWebExchange exchange, UUID snapshotId, String platform,
             java.util.function.Function<ArticleCreationContext.Binding, List<com.grassland.intelligence.ai.ChatMessage>> messages,
-            int maxTokens, String failureMessage) {
+            int maxTokens, String failureMessage, boolean appendSafety) {
         return callers.requireUser(exchange.getRequest())
                 .flatMap(caller -> creationContexts.bind(snapshotId, caller.accountId(), platform))
                 .flatMap(binding -> frozenText.execute(
                         exchange, snapshotId, messages.apply(binding), maxTokens, null,
                         completion -> completion.content()))
-                .map(content -> sseEntity(Flux.just(frame(Map.of("content", content))), exchange))
+                .map(content -> {
+                    Flux<String> frames = Flux.just(frame(Map.of("content", content)));
+                    if (appendSafety) {
+                        frames = safety.appendSafetyFrame(exchange, frames,
+                                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor());
+                    }
+                    return sseEntity(frames, exchange);
+                })
                 .onErrorMap(error -> error instanceof IntelligenceException
                         ? error : new IntelligenceException(502, failureMessage));
     }

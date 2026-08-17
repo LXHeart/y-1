@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import { getPlatformFormatRule } from '../../config/platform-format-rules'
 import { MOMENTS_STYLES, useMomentsCreation } from '../../composables/useMomentsCreation'
+import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 
 /**
  * 朋友圈「图片+文字」创作视图（PRD §4.4）。
@@ -14,7 +15,7 @@ const props = defineProps<{
 }>()
 
 const {
-  topic, style, feelings, images, result, generating, progressMessage, error, canGenerate,
+  topic, style, feelings, images, result, safetyReport, generating, progressMessage, error, canGenerate,
   bindCreationContext, addImages, removeImage, generate, cancel, reset,
 } = useMomentsCreation()
 
@@ -170,6 +171,13 @@ async function copyResult(): Promise<void> {
           {{ copied ? '已复制' : '复制' }}
         </button>
       </div>
+
+      <SafetyFindingsPanel
+        v-if="safetyReport"
+        :report="safetyReport"
+        :text="result.copy"
+        @updated="safetyReport = $event"
+      />
 
       <div v-if="result.imageOrder.length" data-test="moments-order" class="order-block">
         <h3>发布顺序建议</h3>

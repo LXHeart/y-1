@@ -119,6 +119,8 @@ public class CreationContextService {
         task.putIfAbsent("organizationId", authoritative.organizationId());
         int taskVersion = taskVersion(task);
         Map<String, Object> rules = PlatformCreationRuleCatalog.snapshot(platform, form);
+        // 任务书 #34 / ADR-D16 D2：词库版本随创作上下文快照冻结（规则更新不改变历史生成记录的检查结论）。
+        rules.put("safetyLexiconVersion", com.grassland.intelligence.contentsafety.ContentSafetyLexicon.version());
         Map<String, Object> materialSnapshot = new LinkedHashMap<>();
         materialSnapshot.put("items", found.stream().map(CreationContextService::assetSnapshot).toList());
         return aiConfig(accountId)

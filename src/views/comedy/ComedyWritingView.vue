@@ -76,6 +76,12 @@
         </button>
       </div>
       <pre class="script-content">{{ script }}</pre>
+      <SafetyFindingsPanel
+        v-if="safetyReport"
+        :report="safetyReport"
+        :text="script"
+        @updated="safetyReport = $event"
+      />
     </div>
   </section>
 </template>
@@ -84,6 +90,9 @@
 import { computed, inject, onActivated, ref, type Ref, watch } from 'vue'
 import { getStyleTemplate, STYLE_TEMPLATES, type StyleTemplateId } from '../../config/style-templates'
 import type { CreationHandoff } from '../../types/ai-creation'
+import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
+import { parseSafetyFrame } from '../../composables/useContentSafety'
+import type { SafetyReport } from '../../composables/useContentSafety'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -96,6 +105,7 @@ const duration = ref(60)
 const styleId = ref<StyleTemplateId>('light-comedy')
 const styleTemplates = STYLE_TEMPLATES
 const script = ref('')
+const safetyReport = ref<SafetyReport | null>(null)
 const generating = ref(false)
 const error = ref('')
 const copied = ref(false)
@@ -138,6 +148,7 @@ watch(() => props.creationHandoff, (handoff) => {
   targetPlatform.value = handoff.platformId
   topic.value = handoff.prefill?.topic || ''
   script.value = ''
+  safetyReport.value = null
   error.value = ''
 }, { immediate: true })
 
@@ -150,7 +161,10 @@ function copyScript(): void {
   }).catch(() => {})
 }
 
-function readSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncIterable<string> {
+function readSSEStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onSafety: (report: SafetyReport) => void,
+): AsyncIterable<string> {
   const decoder = new TextDecoder()
   let buffer = ''
   const pendingLines: string[] = []
@@ -172,6 +186,11 @@ function readSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncIt
                 const parsed = JSON.parse(payload) as Record<string, unknown>
                 if (typeof parsed.error === 'string') {
                   throw new Error(parsed.error)
+                }
+                const report = parseSafetyFrame(parsed)
+                if (report) {
+                  onSafety(report)
+                  continue
                 }
                 if (typeof parsed.content === 'string') {
                   return { done: false, value: parsed.content }
@@ -213,6 +232,7 @@ async function handleGenerate(): Promise<void> {
   const trimmed = topic.value.trim()
   error.value = ''
   script.value = ''
+  safetyReport.value = null
   generating.value = true
 
   try {
@@ -243,7 +263,9 @@ async function handleGenerate(): Promise<void> {
       return
     }
 
-    const stream = readSSEStream(reader)
+    const stream = readSSEStream(reader, (report) => {
+      safetyReport.value = report
+    })
     for await (const chunk of stream) {
       script.value += chunk
     }

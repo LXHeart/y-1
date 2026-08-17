@@ -26,6 +26,13 @@
       @reset="reset"
     />
 
+    <SafetyFindingsPanel
+      v-if="completed && safetyReport"
+      :report="safetyReport"
+      :text="content"
+      @updated="safetyReport = $event"
+    />
+
     <template v-else>
     <section v-if="stage === 'topic'" class="stage-card glass-card fade-in">
       <header class="card-head">
@@ -146,6 +153,12 @@
           {{ outlineLoading ? '生成中…' : '生成大纲' }}
         </button>
       </div>
+      <SafetyFindingsPanel
+        v-if="safetyReport"
+        :report="safetyReport"
+        :text="selectedTitle || titles.map((item) => item.title).join('\n')"
+        @updated="safetyReport = $event"
+      />
     </section>
 
     <section v-if="stage === 'outline'" class="stage-card glass-card fade-in">
@@ -251,6 +264,13 @@
           取消
         </button>
       </div>
+
+      <SafetyFindingsPanel
+        v-if="safetyReport"
+        :report="safetyReport"
+        :text="content"
+        @updated="safetyReport = $event"
+      />
     </section>
 
     <ArticleImageSlots
@@ -269,6 +289,13 @@
       @open-lightbox="openLightbox"
     />
 
+    <SafetyFindingsPanel
+      v-if="stage === 'images' && safetyReport"
+      :report="safetyReport"
+      :text="content"
+      @updated="safetyReport = $event"
+    />
+
     <section v-if="error" class="error-card glass-card fade-in">
       <p class="error-title">生成失败</p>
       <p class="error-text">{{ error }}</p>
@@ -281,6 +308,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, type Ref, watch } from 'vue'
 import { useArticleCreation } from '../../composables/useArticleCreation'
+import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { useArticleFormatRule } from './composables/useArticleFormatRule'
 import ArticleCompletedView from './components/ArticleCompletedView.vue'
 import ArticleImageSlots from './components/ArticleImageSlots.vue'
@@ -292,7 +320,7 @@ const props = defineProps<{
 }>()
 
 const {
-  stage, topic, platform, titles, selectedTitle, outline, content,
+  stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
   titlesLoading, outlineLoading, contentLoading, error,
   imageSlots, imageRecommendations, loadingRecommendations, completed,
   fetchTitles, streamOutline, streamContent,

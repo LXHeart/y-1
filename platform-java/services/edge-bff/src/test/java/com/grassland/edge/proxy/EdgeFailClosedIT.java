@@ -12,7 +12,8 @@ import org.springframework.test.web.reactive.server.WebTestClient;
         "BILIBILI_PROXY_TOKEN_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         "DOUYIN_PROXY_TOKEN_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         "EDGE_ROUTE_AUTH_ME_IDENTITY=false",
-        "EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE=false"
+        "EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE=false",
+        "EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE=false"
 })
 class EdgeFailClosedIT {
 
@@ -47,6 +48,15 @@ class EdgeFailClosedIT {
                 .expectStatus().isNotFound();
         WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
                 .get().uri("/api/guest-trial/quota")
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    /** 任务书 #34：内容安全 flag 关闭 → /api/content-safety/* fail-closed 404。 */
+    @Test
+    void contentSafetyFlagOffFailsClosed() {
+        WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
+                .post().uri("/api/content-safety/check")
                 .exchange()
                 .expectStatus().isNotFound();
     }

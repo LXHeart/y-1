@@ -1,4 +1,6 @@
 import { computed, ref } from 'vue'
+import { parseSafetyFrame } from './useContentSafety'
+import type { SafetyReport } from './useContentSafety'
 
 /**
  * 朋友圈「图片+文字」创作（PRD §4.4）。
@@ -46,6 +48,7 @@ interface MomentsFrame {
   imageOrder?: MomentsOrderSuggestion[]
   captions?: MomentsCaption[]
   error?: string
+  safety?: SafetyReport
 }
 
 const MAX_IMAGES = 9
@@ -69,6 +72,7 @@ export function useMomentsCreation() {
   const feelings = ref('')
   const images = ref<MomentsImage[]>([])
   const result = ref<MomentsResult | null>(null)
+  const safetyReport = ref<SafetyReport | null>(null)
   const generating = ref(false)
   const progressMessage = ref('')
   const error = ref('')
@@ -134,6 +138,7 @@ export function useMomentsCreation() {
     error.value = ''
     progressMessage.value = ''
     result.value = null
+    safetyReport.value = null
 
     try {
       const response = await fetch('/api/moments-generation/generate', {
@@ -214,6 +219,11 @@ export function useMomentsCreation() {
             imageOrder: Array.isArray(frame.imageOrder) ? frame.imageOrder : [],
             captions: Array.isArray(frame.captions) ? frame.captions : [],
           }
+          continue
+        }
+        const report = parseSafetyFrame(frame)
+        if (report) {
+          safetyReport.value = report
         }
       }
     }
@@ -234,6 +244,7 @@ export function useMomentsCreation() {
     feelings.value = ''
     images.value = []
     result.value = null
+    safetyReport.value = null
     generating.value = false
     progressMessage.value = ''
     error.value = ''
@@ -242,7 +253,7 @@ export function useMomentsCreation() {
   }
 
   return {
-    topic, style, feelings, images, result, generating, progressMessage, error, canGenerate,
+    topic, style, feelings, images, result, safetyReport, generating, progressMessage, error, canGenerate,
     bindCreationContext, addImages, removeImage, generate, cancel, reset,
   }
 }

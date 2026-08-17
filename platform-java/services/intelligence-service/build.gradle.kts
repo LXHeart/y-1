@@ -60,6 +60,10 @@ tasks.processResources {
     from(rootProject.file("../contracts/platform-format-rules.json")) {
         into("contracts")
     }
+    // 任务书 #34 / ADR-D16：内容安全词库契约（版本化，镜像 platform-format-rules 机制）。
+    from(rootProject.file("../contracts/content-safety-lexicon.json")) {
+        into("contracts")
+    }
 }
 
 // Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.

@@ -298,3 +298,41 @@ describe('VideoProductionView 任务上下文快照', () => {
       .toBe(true)
   })
 })
+
+describe('VideoProductionView 内容安全', () => {
+  test('脚本流尾 safety 帧展示在可编辑脚本下方', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/video-production/capabilities') {
+        return jsonResponse({ available: false, reason: '测试环境不生成视频' })
+      }
+      const frames = [
+        { content: '视频推广脚本' },
+        { type: 'safety', safety: {
+          findings: [{ category: 'diversion', severity: 'low', match: '私信我', index: 2, advice: '使用平台组件', deep: false }],
+          lexiconVersion: 'lexicon-v1', deepCheck: false,
+        } },
+      ]
+      const lines = frames.flatMap((frame) => [`data: ${JSON.stringify(frame)}`, ''])
+      lines.push('data: [DONE]', '')
+      return new Response(lines.join('\n'), {
+        status: 200, headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }))
+    const wrapper = mount(VideoProductionView)
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      images: Array<{ id: string; dataUrl: string; name: string }>
+      form: { shopName: string; targetPlatform: string }
+      generateScript: () => Promise<void>
+    }
+    vm.images = [{ id: 'img-1', dataUrl: 'data:image/png;base64,AAAA', name: 'a.png' }]
+    vm.form.shopName = '测试门店'
+    vm.form.targetPlatform = 'douyin'
+
+    await vm.generateScript()
+    await flushPromises()
+
+    expect(wrapper.get('.stream-textarea').element).toHaveProperty('value', '视频推广脚本')
+    expect(wrapper.get('[aria-label="内容安全检查"]').text()).toContain('使用平台组件')
+  })
+})

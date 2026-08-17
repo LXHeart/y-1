@@ -1,6 +1,8 @@
 import { ref, computed, onMounted } from 'vue'
 import type { VideoProductionStage, VideoProductionImage, VideoProductionForm } from '../types/video-production'
 import { compressImageToFile } from './compress-image'
+import { parseSafetyFrame } from './useContentSafety'
+import type { SafetyReport } from './useContentSafety'
 
 function generateId(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -35,6 +37,7 @@ export function useVideoProduction() {
     customPrompt: '',
   })
   const script = ref('')
+  const safetyReport = ref<SafetyReport | null>(null)
   const scriptLoading = ref(false)
   const videoUrl = ref('')
   const videoLoading = ref(false)
@@ -110,6 +113,7 @@ export function useVideoProduction() {
     scriptLoading.value = true
     error.value = ''
     script.value = ''
+    safetyReport.value = null
     stage.value = 'script'
 
     try {
@@ -142,6 +146,8 @@ export function useVideoProduction() {
 
       await consumeSSEStream(response, (chunk) => {
         script.value += chunk
+      }, (report) => {
+        safetyReport.value = report
       }, controller.signal)
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -248,6 +254,7 @@ export function useVideoProduction() {
   function goBackToUpload(): void {
     scriptController?.abort()
     script.value = ''
+    safetyReport.value = null
     scriptLoading.value = false
     error.value = ''
     stage.value = 'upload'
@@ -280,6 +287,7 @@ export function useVideoProduction() {
       customPrompt: '',
     }
     script.value = ''
+    safetyReport.value = null
     scriptLoading.value = false
     videoUrl.value = ''
     videoLoading.value = false
@@ -295,6 +303,7 @@ export function useVideoProduction() {
   async function consumeSSEStream(
     response: Response,
     onChunk: (text: string) => void,
+    onSafety?: (report: SafetyReport) => void,
     signal?: AbortSignal,
   ): Promise<void> {
     const reader = response.body?.getReader()
@@ -322,8 +331,10 @@ export function useVideoProduction() {
         if (payload === '[DONE]') return
 
         try {
-          const parsed = JSON.parse(payload) as { content?: string; error?: string }
+          const parsed = JSON.parse(payload) as Record<string, unknown> & { content?: string; error?: string }
           if (parsed.error) throw new Error(parsed.error)
+          const report = parseSafetyFrame(parsed)
+          if (report) onSafety?.(report)
           if (parsed.content) onChunk(parsed.content)
         } catch (err: unknown) {
           if (err instanceof Error && err.message !== 'Unexpected end of JSON input') {
@@ -335,7 +346,7 @@ export function useVideoProduction() {
   }
 
   return {
-    stage, images, form, script, videoUrl,
+    stage, images, form, script, safetyReport, videoUrl,
     scriptLoading, videoLoading, videoProgress, error,
     canProceedToScript,
     videoGenerationAvailable, videoGenerationReason,

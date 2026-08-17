@@ -13,6 +13,8 @@ import type {
   UpdateStylePreferencesResponse,
 } from '../types/image-analysis'
 import { compressImageToFile } from './compress-image'
+import { parseSafetyFrame } from './useContentSafety'
+import type { SafetyReport } from './useContentSafety'
 
 const MAX_IMAGES = 6
 const MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -105,6 +107,7 @@ export async function consumeImageAnalysisStream(
 export function useImageAnalysis() {
   const images = ref<SelectedImage[]>([])
   const result = ref<ImageAnalysisResult | null>(null)
+  const safetyReport = ref<SafetyReport | null>(null)
   const reviewLength = ref(DEFAULT_REVIEW_LENGTH)
   const feelings = ref('')
   const platform = ref<ReviewPlatform>('taobao')
@@ -223,6 +226,7 @@ export function useImageAnalysis() {
     revokeAllPreviews()
     images.value = []
     result.value = null
+    safetyReport.value = null
     reviewLength.value = DEFAULT_REVIEW_LENGTH
     feelings.value = ''
     platform.value = 'taobao'
@@ -315,6 +319,7 @@ export function useImageAnalysis() {
     generationStage.value = 'drafting'
     error.value = ''
     result.value = null
+    safetyReport.value = null
     progressEvents.value = []
     currentProgress.value = null
     exportError.value = ''
@@ -357,6 +362,11 @@ export function useImageAnalysis() {
         if (event.type === 'result') {
           finalResult = event.data
           result.value = event.data
+          return
+        }
+        if (event.type === 'safety') {
+          const report = parseSafetyFrame(event)
+          if (report) safetyReport.value = report
           return
         }
         throw new Error(event.error || '初稿生成失败，请稍后重试')
@@ -741,6 +751,7 @@ export function useImageAnalysis() {
   return {
     images,
     result,
+    safetyReport,
     reviewLength,
     feelings,
     platform,

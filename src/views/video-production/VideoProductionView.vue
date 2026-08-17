@@ -203,6 +203,13 @@
 
       <div v-if="error" class="error-hint">{{ error }}</div>
 
+      <SafetyFindingsPanel
+        v-if="safetyReport"
+        :report="safetyReport"
+        :text="script"
+        @updated="safetyReport = $event"
+      />
+
       <div class="action-row">
         <button
           class="btn-secondary"
@@ -290,6 +297,7 @@ import { useBilibiliVideoAnalysis } from '../../composables/useBilibiliVideoAnal
 import { useDouyinParse } from '../../composables/useDouyinParse'
 import { useDouyinVideoAnalysis } from '../../composables/useDouyinVideoAnalysis'
 import { useVideoProduction } from '../../composables/useVideoProduction'
+import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { buildVideoAnalysisDisplayCards } from '../../types/video-recreation'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../../types/video-production'
@@ -299,7 +307,7 @@ const props = defineProps<{
 }>()
 
 const {
-  stage, images, form, script, videoUrl,
+  stage, images, form, script, safetyReport, videoUrl,
   scriptLoading, videoLoading, videoProgress, error,
   canProceedToScript,
   videoGenerationAvailable, videoGenerationReason,

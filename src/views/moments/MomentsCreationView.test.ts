@@ -85,6 +85,7 @@ describe('MomentsCreationView 生成流程', () => {
         imageOrder: [{ index: 1, reason: '封面招牌' }],
         captions: [{ index: 1, text: '门店招牌' }],
       },
+      { type: 'safety', safety: { findings: [{ category: 'absolute_claims', severity: 'medium', match: '最好', index: 0, advice: '改为具体描述', deep: false }], lexiconVersion: 'lexicon-v1', deepCheck: false } },
     ]))
     const wrapper = mountView()
     await wrapper.find('input[data-test="moments-topic"]').setValue('新店开业')
@@ -103,6 +104,7 @@ describe('MomentsCreationView 生成流程', () => {
     expect((wrapper.find('[data-test="moments-copy"]').element as HTMLTextAreaElement).value)
       .toBe('开业大吉，周末来店里坐坐☕')
     expect(wrapper.find('[data-test="moments-order"]').text()).toContain('封面招牌')
+    expect(wrapper.get('[aria-label="内容安全检查"]').text()).toContain('改为具体描述')
     expect(wrapper.text()).toContain('复制')
   })
 

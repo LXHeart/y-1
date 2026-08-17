@@ -127,6 +127,27 @@ describe('ComedyWritingView 风格模板选择', () => {
 })
 
 describe('ComedyWritingView 生成交互', () => {
+  test('生成成功后消费流尾 safety 帧并展示提醒', async () => {
+    const frames = [
+      { content: '这是生成的文稿' },
+      { type: 'safety', safety: { findings: [{ category: 'absolute_claims', severity: 'medium', match: '最好', index: 0, advice: '改为具体描述', deep: false }], lexiconVersion: 'lexicon-v1', deepCheck: false } },
+    ]
+    const lines = frames.flatMap((frame) => [`data: ${JSON.stringify(frame)}`, ''])
+    lines.push('data: [DONE]', '')
+    stubFetch(() => new Response(lines.join('\n'), {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+    const wrapper = mountView()
+
+    await wrapper.find('textarea.topic-input').setValue('上班摸鱼')
+    await wrapper.get('button.gen-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.script-content').text()).toBe('这是生成的文稿')
+    expect(wrapper.get('[aria-label="内容安全检查"]').text()).toContain('广告法极限词')
+  })
+
   test('点击开始创作：POST 正确的 URL 与 payload', async () => {
     stubFetch(() => ({
       ok: false,

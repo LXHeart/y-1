@@ -44,16 +44,19 @@ public class ComedyController {
     private final IntelligenceCallerResolver callers;
     private final AiCapabilityAdapter ai;
     private final CreditsClient credits;
+    private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
     private final FrozenTextExecutionService frozenText;
     private final ComedyTaskCreationContext creationContexts;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public ComedyController(
             IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits,
-            FrozenTextExecutionService frozenText, ComedyTaskCreationContext creationContexts) {
+            FrozenTextExecutionService frozenText, ComedyTaskCreationContext creationContexts,
+            com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
+        this.safety = safety;
         this.frozenText = frozenText;
         this.creationContexts = creationContexts;
     }
@@ -71,7 +74,8 @@ public class ComedyController {
                                     ComedyPrompts.user(body.topic())),
                             2048, CreditFeature.COMEDY_GENERATION,
                             completion -> completion.content()))
-                    .map(content -> sseEntity(Flux.just(frame(Map.of("content", content))), exchange))
+                    .map(content -> sseEntity(withSafety(exchange,
+                            Flux.just(frame(Map.of("content", content)))), exchange))
                     .onErrorMap(error -> error instanceof IntelligenceException
                             ? error : new IntelligenceException(502, ERROR_MESSAGE));
         }
@@ -85,8 +89,14 @@ public class ComedyController {
                             // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
                             .onErrorResume(e -> credits.refund(charge, "脱口秀文稿生成失败自动退回")
                                     .thenMany(Flux.just(frame(Map.of("error", ERROR_MESSAGE)))));
-                    return sseEntity(payloads, exchange);
+                    return sseEntity(withSafety(exchange, payloads), exchange);
                 });
+    }
+
+    /** 任务书 #34 D8：喜剧脚本流尾追加安全检查帧（脚本=长文本，L2 已配置时深检）。 */
+    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+        return safety.appendSafetyFrame(exchange, frames,
+                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor());
     }
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {

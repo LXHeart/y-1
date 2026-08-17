@@ -99,6 +99,7 @@ describe('ArticleCreationView 标题生成交互', () => {
             { title: '候选标题一', hook: 'hook-1' },
             { title: '候选标题二', hook: '' },
           ],
+          safety: { findings: [{ category: 'absolute_claims', severity: 'medium', match: '最好', index: 0, advice: '改为具体描述', deep: false }], lexiconVersion: 'lexicon-v1', deepCheck: false },
         },
       }),
     }))
@@ -118,6 +119,7 @@ describe('ArticleCreationView 标题生成交互', () => {
     expect(wrapper.get('.card-title').text()).toBe('从候选标题里选一个方向')
     expect(wrapper.findAll('.title-item')).toHaveLength(2)
     expect(wrapper.find('#custom-title').exists()).toBe(true)
+    expect(wrapper.get('[aria-label="内容安全检查"]').text()).toContain('广告法极限词')
     const outlineBtn = wrapper.get('.action-row .btn-primary')
     expect(outlineBtn.text()).toBe('生成大纲')
     // selectedTitle 为空时「生成大纲」禁用

@@ -58,6 +58,7 @@ public class VideoProductionController {
     private final MediaReferenceRepository mediaRefs;
     private final ObjectProvider<ObjectStorageAdapter> storageProvider;
     private final long downloadUrlTtlSeconds;
+    private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public VideoProductionController(
@@ -66,13 +67,15 @@ public class VideoProductionController {
             FrozenTextExecutionService frozenText, VideoTaskCreationContext creationContexts,
             VideoGenerationJobRepository jobs, MediaReferenceRepository mediaRefs,
             ObjectProvider<ObjectStorageAdapter> storageProvider,
-            @Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds) {
+            @Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
+            com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
         this.video = video;
         this.videoProperties = videoProperties;
         this.frozenText = frozenText;
+        this.safety = safety;
         this.creationContexts = creationContexts;
         this.jobs = jobs;
         this.mediaRefs = mediaRefs;
@@ -171,7 +174,8 @@ public class VideoProductionController {
                                     binding.promptContext(), VideoScriptPrompts.user(body)),
                             2048, CreditFeature.VIDEO_PRODUCTION_SCRIPT,
                             completion -> completion.content()))
-                    .map(content -> sseEntity(Flux.just(frame(Map.of("content", content))), exchange))
+                    .map(content -> sseEntity(withSafety(exchange,
+                            Flux.just(frame(Map.of("content", content)))), exchange))
                     .onErrorMap(error -> error instanceof com.grassland.intelligence.security.IntelligenceException
                             ? error : new com.grassland.intelligence.security.IntelligenceException(502, ERROR_MESSAGE));
         }
@@ -185,13 +189,20 @@ public class VideoProductionController {
                             // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
                             .onErrorResume(error -> credits.refund(charge, "视频脚本生成失败自动退回")
                                     .thenMany(Flux.just(frame(Map.of("error", ERROR_MESSAGE)))));
-                    Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
+                    Flux<DataBuffer> sseBody = Sse.stream(withSafety(exchange, payloads),
+                            exchange.getResponse().bufferFactory());
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.TEXT_EVENT_STREAM);
                     headers.set("X-Accel-Buffering", "no");
                     headers.setCacheControl("no-cache");
                     return new ResponseEntity<>(sseBody, headers, HttpStatus.OK);
                 });
+    }
+
+    /** 任务书 #34 D8：视频脚本流尾追加安全检查帧（脚本=长文本，L2 已配置时深检）。 */
+    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+        return safety.appendSafetyFrame(exchange, frames,
+                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor());
     }
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(

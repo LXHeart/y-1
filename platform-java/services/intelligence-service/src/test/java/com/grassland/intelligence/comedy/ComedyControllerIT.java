@@ -113,6 +113,8 @@ class ComedyControllerIT extends IntelligenceItSupport {
         assertThat(new String(body, UTF_8)).isEqualTo(
                 "data: {\"content\":\"【铺垫】\"}\n\n"
                 + "data: {\"content\":\"【爆点】\"}\n\n"
+                + "data: {\"type\":\"safety\",\"safety\":{\"findings\":[],"
+                + "\"lexiconVersion\":\"lexicon-v1\",\"deepCheck\":false}}\n\n"
                 + "data: [DONE]\n\n");
 
         // 扣的是脱口秀功能键
