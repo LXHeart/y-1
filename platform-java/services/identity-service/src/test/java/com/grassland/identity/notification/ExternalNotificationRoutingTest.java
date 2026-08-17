@@ -312,6 +312,28 @@ class ExternalNotificationRoutingTest {
         }
     }
 
+
+    // ---------- 审判官激励（任务书 #31 / ADR-D15 D7） ----------
+
+    @Test
+    void judgeVoteRewardedNotifiesVotingJudgeWithDisputeTemplate() {
+        Map<String, Object> fields = Map.of(
+                "disputeId", "d-1", "round", 2,
+                "judgeAccountId", RECOMMENDER, "credits", 20);
+        assertThat(resolve("JudgeVoteRewarded", fields)).containsExactly(RECOMMENDER);
+
+        NotificationTemplates.Template template = NotificationTemplates.template(
+                "JudgeVoteRewarded", payload(fields));
+        assertThat(template).isNotNull();
+        assertThat(template.category()).isEqualTo(NotificationCategory.DISPUTE);
+        assertThat(template.linkPath()).isEqualTo("/me/disputes");
+        assertThat(template.body()).contains("投票奖励");
+        assertThat(template.payload()).containsEntry("disputeId", "d-1")
+                .containsEntry("round", 2L)
+                .containsEntry("credits", 20L)
+                .doesNotContainKey("judgeAccountId");   // 不泄露账号进渲染 payload
+    }
+
     // ---------- 霸王餐押金（ADR-D12 / 任务书 #22 Stage B3） ----------
 
     @Test

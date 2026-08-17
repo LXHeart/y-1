@@ -106,6 +106,8 @@ public class NotificationRecipientResolver {
             case "DisputeAssigned", "AdjudicationReopened", "DisputeDecided",
                     "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized" ->
                     accountIds(payload, "openedByAccountId");
+            // 审判官投票奖励（任务书 #31 / ADR-D15）：收件人 = 投票审判官（payload 直读，不反查）。
+            case "JudgeVoteRewarded" -> accountIds(payload, "judgeAccountId");
             // 资金：payeeAccountId 是用户账号（不是 finance ledger account）。
             case "FundsReserved", "FundsCaptured", "FundsReleased", "FundsReversed", "AccountCredited" ->
                     accountIds(payload, "payeeAccountId");

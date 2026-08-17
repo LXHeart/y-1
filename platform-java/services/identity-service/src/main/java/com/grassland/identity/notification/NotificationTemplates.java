@@ -161,6 +161,10 @@ public final class NotificationTemplates {
             case "DisputeFinalized" -> new Template(
                     NotificationCategory.DISPUTE, "争议已终裁",
                     "你参与的争议已出终裁结果", LINK_DISPUTES, disputePayload(payload));
+            // 任务书 #31 / ADR-D15 D7：审判官投票奖励（DISPUTE 类，收件人=judgeAccountId payload 直读）。
+            case "JudgeVoteRewarded" -> new Template(
+                    NotificationCategory.DISPUTE, "审判奖励已到账",
+                    "你参与的一轮审判已终局，投票奖励积分已发放到你的账户", LINK_DISPUTES, judgeRewardPayload(payload));
             // ---------- finance：钱包与资金 ----------
             case "FundsReserved" -> new Template(
                     NotificationCategory.WALLET, "任务报酬已托管",
@@ -212,6 +216,15 @@ public final class NotificationTemplates {
         putIfText(map, payload, "status");
         putIfText(map, payload, "decision");
         putIfText(map, payload, "finalDecision");
+        return map;
+    }
+
+    /** 审判奖励 payload：争议定位 + 积分数；不泄露其他审判官账号（D7）。 */
+    private static Map<String, Object> judgeRewardPayload(JsonNode payload) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        putIfText(map, payload, "disputeId");
+        putIfNumber(map, payload, "round");
+        putIfNumber(map, payload, "credits");
         return map;
     }
 
