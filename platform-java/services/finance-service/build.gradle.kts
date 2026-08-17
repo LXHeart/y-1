@@ -30,6 +30,9 @@ dependencies {
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.r2dbc)
+    // 任务书 #31：审判奖励消费者真 broker IT（镜像 identity NotificationKafkaTestcontainersIT）
+    testImplementation(libs.testcontainers.kafka)
+    testImplementation("org.awaitility:awaitility:4.3.0")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.postgresql:postgresql:42.7.12")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

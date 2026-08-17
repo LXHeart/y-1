@@ -58,6 +58,12 @@ management:
 
 # DB 地基（Epic 4 Slice 4D）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 finance_flyway_schema。
 finance:
+  # 任务书 #31 / ADR-D15：审判官激励事件消费（trust JudgeVoteRewarded → credits 入账）。
+  # 默认不启用（本地/测试无 Kafka）；compose 置 true。
+  judge-reward-consumer:
+    enabled: ${FINANCE_JUDGE_REWARD_CONSUMER_ENABLED:false}
+    topic: ${FINANCE_JUDGE_REWARD_CONSUMER_TOPIC:grassland.trust.events}
+    group-id: ${FINANCE_JUDGE_REWARD_CONSUMER_GROUP_ID:finance-judge-reward-consumer}
   datasource:
     from-database-url: ${FINANCE_DATASOURCE_FROM_DATABASE_URL:false}
   # PSP/存管 adapter 模式（ADR-D01）：sandbox = stub（只写内部账本，不真动钱）。

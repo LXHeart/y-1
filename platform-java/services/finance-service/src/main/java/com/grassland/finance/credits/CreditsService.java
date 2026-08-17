@@ -125,12 +125,28 @@ public class CreditsService {
 
     /** 赠送积分（reward，注册赠送 / admin 正向调整）。operationId 可空（一次性动作不参与幂等）。 */
     public Mono<MutationResult> award(String accountId, int amount, String note, String operationId) {
+        return award(accountId, amount, note, operationId, "reward");
+    }
+
+    /**
+     * 任务书 #31 / ADR-D15：审判官投票奖励（type=judge_reward，与注册赠送/运营调账区分对账口径）。
+     * 账务语义同 award（deltaBalance/deltaEarned 同增）；operationId 必填
+     * （{@code judge-reward:{disputeId}:{round}:{judgeAccountId}}，唯一索引吸收 Kafka at-least-once 重放）。
+     */
+    public Mono<MutationResult> awardJudgeReward(String accountId, int amount, String note, String operationId) {
+        if (operationId == null || operationId.isBlank()) {
+            return Mono.error(new FinanceException(400, "审判奖励 operationId 必填"));
+        }
+        return award(accountId, amount, note, operationId, "judge_reward");
+    }
+
+    private Mono<MutationResult> award(String accountId, int amount, String note, String operationId, String type) {
         if (amount <= 0) {
             return Mono.error(new FinanceException(400, "赠送金额必须为正"));
         }
         // deltaBalance=+amount, deltaEarned=+amount, deltaSpent=0 —— 镜像 legacy awardFreeCredits。
         return idempotent(accountId, operationId,
-                () -> mutate(accountId, amount, amount, 0, "reward", null, note, operationId));
+                () -> mutate(accountId, amount, amount, 0, type, null, note, operationId));
     }
 
     /**
