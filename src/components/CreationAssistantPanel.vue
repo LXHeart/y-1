@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useCreationAssistant } from '../composables/useCreationAssistant'
 import { useCreationDraft } from '../composables/useCreationDraft'
-import type { CreationDraft } from '../types/creation-assistant'
+import CreationDraftVersionHistory from './CreationDraftVersionHistory.vue'
+import type { CreationDraft, CreationDraftVersion } from '../types/creation-assistant'
 import type { CreationSource } from '../types/ai-creation'
 
 /**
@@ -37,6 +38,7 @@ const activeTab = ref<AssistantTab>('draft')
 const newDraftTitle = ref('')
 const chatInput = ref('')
 const contentDraft = ref('')
+const historyOpen = ref(false)
 
 const MIN_SCORE_LENGTH = 10
 
@@ -59,7 +61,10 @@ const autosaveLabel = computed(() => {
 /** 打开草稿时把正文灌进编辑框；切换草稿要跟着换，否则会把上一份的正文存到新草稿上。 */
 watch(current, (draft, previous) => {
   contentDraft.value = draft?.content ?? ''
-  if (draft?.id !== previous?.id) assistant.resetAssessments()
+  if (draft?.id !== previous?.id) {
+    historyOpen.value = false
+    assistant.resetAssessments()
+  }
 })
 
 function onContentInput(): void {
@@ -71,6 +76,30 @@ function onContentInput(): void {
 async function reloadForConflict(): Promise<void> {
   const reloaded = await draftStore.reloadForConflict()
   if (reloaded) assistant.resetAssessments()
+}
+
+async function openVersionHistory(): Promise<void> {
+  if (draftStore.autosaveState.value === 'conflict') return
+  if (!await draftStore.flush()) return
+  historyOpen.value = true
+}
+
+async function restoreVersion(snapshot: CreationDraftVersion): Promise<void> {
+  if (draftStore.autosaveState.value === 'conflict') return
+  contentDraft.value = snapshot.content ?? ''
+  assistant.resetAssessments()
+  historyOpen.value = false
+  draftStore.queueSave({
+    title: snapshot.title,
+    topic: snapshot.topic ?? null,
+    articleTitle: snapshot.articleTitle ?? null,
+    outline: snapshot.outline ?? null,
+    content: snapshot.content ?? null,
+    platform: snapshot.platform ?? null,
+    contentForm: snapshot.contentForm ?? null,
+    status: snapshot.status,
+  })
+  await draftStore.flush()
 }
 
 async function createDraft(): Promise<void> {
@@ -218,7 +247,15 @@ onBeforeUnmount(() => {
       <div v-if="current" class="as-editor">
         <header class="as-editor-head">
           <span class="as-editor-title">{{ current.title }}</span>
-          <span :class="['as-save', draftStore.autosaveState.value]">{{ autosaveLabel }}</span>
+          <div class="as-editor-actions">
+            <button
+              type="button"
+              class="as-history-btn"
+              :disabled="draftStore.autosaveState.value === 'conflict'"
+              @click="openVersionHistory"
+            >版本历史</button>
+            <span :class="['as-save', draftStore.autosaveState.value]">{{ autosaveLabel }}</span>
+          </div>
         </header>
 
         <p v-if="draftStore.autosaveState.value === 'conflict'" class="as-conflict">
@@ -231,8 +268,15 @@ onBeforeUnmount(() => {
           class="as-textarea"
           rows="10"
           placeholder="在这里写正文，停止输入后自动保存"
-          :disabled="draftStore.loading.value"
+          :disabled="draftStore.loading.value || historyOpen"
           @input="onContentInput"
+        />
+
+        <CreationDraftVersionHistory
+          v-if="historyOpen"
+          :draft="current"
+          @close="historyOpen = false"
+          @restore="restoreVersion"
         />
       </div>
     </div>
@@ -414,6 +458,12 @@ onBeforeUnmount(() => {
 .as-item-del { background: none; border: none; color: #b91c1c; cursor: pointer; font-size: 12px; }
 .as-editor { display: flex; flex-direction: column; gap: 8px; }
 .as-editor-head { display: flex; justify-content: space-between; align-items: center; }
+.as-editor-actions { display: flex; align-items: center; gap: 10px; }
+.as-history-btn {
+  padding: 4px 8px; border: 1px solid var(--border-color, #d0d7de); border-radius: 5px;
+  background: transparent; color: inherit; cursor: pointer; font-size: 12px;
+}
+.as-history-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .as-editor-title { font-size: 14px; font-weight: 500; opacity: 1; }
 .as-save { font-size: 12px; opacity: 0.75; }
 .as-save.saved { color: #15803d; }

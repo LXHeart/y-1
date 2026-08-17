@@ -29,6 +29,36 @@ export interface CreationDraft {
   storeId?: string
 }
 
+/** 版本历史列表项；createdAt 对历史快照是快照时间，对当前版本是最后保存时间。 */
+export interface CreationDraftVersionSummary {
+  version: number
+  createdAt: string
+  title: string
+}
+
+/** 指定版本的完整只读内容。source 关联字段在版本间通常不变，但仍用于完整比较。 */
+export interface CreationDraftVersion {
+  version: number
+  createdAt: string
+  title: string
+  sourceType: DraftSourceType
+  status: DraftStatus
+  topic?: string
+  articleTitle?: string
+  outline?: string
+  content?: string
+  platform?: string
+  contentForm?: string
+  taskId?: string
+  taskVersion?: number
+  storeId?: string
+}
+
+export interface CreationDraftVersionPage {
+  items: CreationDraftVersionSummary[]
+  nextCursor: string | null
+}
+
 export interface CreateDraftInput {
   title?: string
   sourceType: DraftSourceType
@@ -44,12 +74,12 @@ export interface CreateDraftInput {
 export interface SaveDraftInput {
   expectedVersion: number
   title?: string
-  topic?: string
-  articleTitle?: string
-  outline?: string
-  content?: string
-  platform?: string
-  contentForm?: string
+  topic?: string | null
+  articleTitle?: string | null
+  outline?: string | null
+  content?: string | null
+  platform?: string | null
+  contentForm?: string | null
   status?: DraftStatus
 }
 

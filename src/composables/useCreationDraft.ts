@@ -93,12 +93,12 @@ export function useCreationDraft() {
     return {
       ...saved,
       ...(pendingPatch.title !== undefined ? { title: pendingPatch.title } : {}),
-      ...(pendingPatch.topic !== undefined ? { topic: pendingPatch.topic } : {}),
-      ...(pendingPatch.articleTitle !== undefined ? { articleTitle: pendingPatch.articleTitle } : {}),
-      ...(pendingPatch.outline !== undefined ? { outline: pendingPatch.outline } : {}),
-      ...(pendingPatch.content !== undefined ? { content: pendingPatch.content } : {}),
-      ...(pendingPatch.platform !== undefined ? { platform: pendingPatch.platform } : {}),
-      ...(pendingPatch.contentForm !== undefined ? { contentForm: pendingPatch.contentForm } : {}),
+      ...(pendingPatch.topic !== undefined ? { topic: pendingPatch.topic ?? undefined } : {}),
+      ...(pendingPatch.articleTitle !== undefined ? { articleTitle: pendingPatch.articleTitle ?? undefined } : {}),
+      ...(pendingPatch.outline !== undefined ? { outline: pendingPatch.outline ?? undefined } : {}),
+      ...(pendingPatch.content !== undefined ? { content: pendingPatch.content ?? undefined } : {}),
+      ...(pendingPatch.platform !== undefined ? { platform: pendingPatch.platform ?? undefined } : {}),
+      ...(pendingPatch.contentForm !== undefined ? { contentForm: pendingPatch.contentForm ?? undefined } : {}),
       ...(pendingPatch.status !== undefined ? { status: pendingPatch.status } : {}),
     }
   }
@@ -171,12 +171,12 @@ export function useCreationDraft() {
           expectedVersion: current.version,
           // 未变更字段回传当前值：后端 save 是整行覆盖，只发 patch 会把其余字段清空。
           title: patch.title ?? current.title,
-          topic: patch.topic ?? current.topic,
-          articleTitle: patch.articleTitle ?? current.articleTitle,
-          outline: patch.outline ?? current.outline,
-          content: patch.content ?? current.content,
-          platform: patch.platform ?? current.platform,
-          contentForm: patch.contentForm ?? current.contentForm,
+          topic: patch.topic !== undefined ? patch.topic : current.topic,
+          articleTitle: patch.articleTitle !== undefined ? patch.articleTitle : current.articleTitle,
+          outline: patch.outline !== undefined ? patch.outline : current.outline,
+          content: patch.content !== undefined ? patch.content : current.content,
+          platform: patch.platform !== undefined ? patch.platform : current.platform,
+          contentForm: patch.contentForm !== undefined ? patch.contentForm : current.contentForm,
           status: patch.status ?? current.status,
         } satisfies SaveDraftInput),
       })

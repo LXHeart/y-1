@@ -58,6 +58,98 @@ describe('CreationAssistantPanel', () => {
       .toBe('这是一段足够长的正文内容')
   })
 
+  test('版本历史默认比较最新两版并标出变化字段', async () => {
+    const current = { ...draft, version: 3, title: '当前标题', content: '第三版正文' }
+    const versions = [
+      { version: 3, createdAt: '2026-08-17T03:00:00Z', title: '当前标题' },
+      { version: 2, createdAt: '2026-08-17T02:00:00Z', title: '旧标题' },
+      { version: 1, createdAt: '2026-08-17T01:00:00Z', title: '初始标题' },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/versions?limit=20')) return envelope({ items: versions, nextCursor: null })
+      if (url.endsWith('/versions/3')) return envelope({
+        ...current, createdAt: versions[0].createdAt,
+      })
+      if (url.endsWith('/versions/2')) return envelope({
+        ...current, version: 2, createdAt: versions[1].createdAt, title: '旧标题', content: '第二版正文',
+      })
+      if (url.endsWith('/d-1')) return envelope(current)
+      return envelope({ items: [current] })
+    }))
+
+    const wrapper = mount(CreationAssistantPanel, { props: { authenticated: true } })
+    await flushPromises()
+    await wrapper.find('.as-item-open').trigger('click')
+    await flushPromises()
+    await wrapper.find('.as-history-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.version-history').text()).toContain('当前版本')
+    expect(wrapper.findAll('.vh-column-head')).toHaveLength(2)
+    expect(wrapper.findAll('.vh-changed').length).toBeGreaterThan(0)
+    expect(wrapper.text()).toContain('第三版正文')
+    expect(wrapper.text()).toContain('第二版正文')
+  })
+
+  test('版本历史可改选任意两版并载入旧版走原 PUT 保存路径', async () => {
+    const current = { ...draft, version: 3, title: '当前标题', content: '第三版正文', outline: '当前大纲' }
+    const versions = [3, 2, 1].map(version => ({
+      version, createdAt: `2026-08-17T0${version}:00:00Z`, title: `标题 v${version}`,
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string)
+        return envelope({ ...current, ...body, outline: body.outline ?? undefined, version: 4 })
+      }
+      if (url.endsWith('/versions?limit=20')) return envelope({ items: versions, nextCursor: null })
+      const match = url.match(/\/versions\/(\d+)$/)
+      if (match) {
+        const version = Number(match[1])
+        return envelope({
+          ...current,
+          version,
+          createdAt: `2026-08-17T0${version}:00:00Z`,
+          title: `标题 v${version}`,
+          content: `正文 v${version}`,
+          ...(version === 1 ? { outline: undefined } : {}),
+        })
+      }
+      if (url.endsWith('/d-1')) return envelope(current)
+      return envelope({ items: [current] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(CreationAssistantPanel, { props: { authenticated: true } })
+    await flushPromises()
+    await wrapper.find('.as-item-open').trigger('click')
+    await flushPromises()
+    await wrapper.find('.as-history-btn').trigger('click')
+    await flushPromises()
+
+    const checkboxes = wrapper.findAll<HTMLInputElement>('.vh-item input')
+    await checkboxes[1].setValue(false)
+    await checkboxes[2].setValue(true)
+    await flushPromises()
+    expect(wrapper.text()).toContain('正文 v1')
+
+    const restore = wrapper.findAll('.vh-restore').find(button =>
+      button.element.closest('.vh-column-head')?.textContent?.includes('v1'))
+    expect(restore).toBeDefined()
+    await restore!.trigger('click')
+    await flushPromises()
+
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+    expect(put).toBeDefined()
+    expect(JSON.parse((put![1] as RequestInit).body as string)).toMatchObject({
+      expectedVersion: 3,
+      title: '标题 v1',
+      content: '正文 v1',
+      outline: null,
+    })
+    expect(wrapper.find<HTMLTextAreaElement>('.as-textarea').element.value).toBe('正文 v1')
+    expect(wrapper.find('.version-history').exists()).toBe(false)
+  })
+
   test.each([
     {
       label: '任务',
@@ -364,6 +456,7 @@ describe('CreationAssistantPanel', () => {
 
     expect(wrapper.text()).toContain('版本冲突')
     expect(wrapper.text()).toContain('重新载入')
+    expect(wrapper.get<HTMLButtonElement>('.as-history-btn').element.disabled).toBe(true)
     await wrapper.find('.as-conflict .as-link').trigger('click')
     await vi.advanceTimersByTimeAsync(0)
     expect(wrapper.text()).not.toContain('版本冲突')

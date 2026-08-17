@@ -26,6 +26,20 @@ public class CreationDraftRepository {
             created_at, updated_at, deleted_at
             """;
 
+    private static final String VERSION_UNION = """
+            SELECT draft_id::text, version, title, source_type, task_id, task_version, store_id,
+                   platform, content_form, topic, article_title, outline, content, status,
+                   snapshotted_at AS created_at
+            FROM creation_draft_version
+            WHERE draft_id=CAST(:draftId AS uuid)
+            UNION ALL
+            SELECT id::text AS draft_id, version, title, source_type, task_id, task_version, store_id,
+                   platform, content_form, topic, article_title, outline, content, status,
+                   updated_at AS created_at
+            FROM creation_draft
+            WHERE id=CAST(:draftId AS uuid) AND deleted_at IS NULL
+            """;
+
     private final DatabaseClient db;
 
     public CreationDraftRepository(DatabaseClient db) {
@@ -148,6 +162,29 @@ public class CreationDraftRepository {
         return spec.then();
     }
 
+    /**
+     * 版本历史按版本号倒序做 keyset 分页。当前版本尚未进入快照表，因此与历史快照合并返回。
+     */
+    public Flux<CreationDraftVersion> listVersions(UUID draftId, Integer beforeVersion, int fetchLimit) {
+        String cursorClause = beforeVersion == null ? "" : " WHERE version < :beforeVersion";
+        DatabaseClient.GenericExecuteSpec spec = db.sql("SELECT * FROM (" + VERSION_UNION + ") versions"
+                        + cursorClause + " ORDER BY version DESC LIMIT :fetchLimit")
+                .bind("draftId", draftId.toString())
+                .bind("fetchLimit", fetchLimit);
+        if (beforeVersion != null) {
+            spec = spec.bind("beforeVersion", beforeVersion);
+        }
+        return spec.map(CreationDraftRepository::mapVersion).all();
+    }
+
+    /** 读取指定版本；历史版本来自快照，当前版本来自当前草稿行。 */
+    public Mono<CreationDraftVersion> findVersion(UUID draftId, int version) {
+        return db.sql("SELECT * FROM (" + VERSION_UNION + ") versions WHERE version=:version")
+                .bind("draftId", draftId.toString())
+                .bind("version", version)
+                .map(CreationDraftRepository::mapVersion).one();
+    }
+
     private static CreationDraft map(Readable row) {
         return new CreationDraft(
                 UUID.fromString(row.get("id", String.class)),
@@ -169,6 +206,25 @@ public class CreationDraftRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
                 toInstant(row.get("deleted_at", OffsetDateTime.class)));
+    }
+
+    private static CreationDraftVersion mapVersion(Readable row) {
+        return new CreationDraftVersion(
+                UUID.fromString(row.get("draft_id", String.class)),
+                intValue(row.get("version", Integer.class), 1),
+                row.get("title", String.class),
+                DraftSourceType.fromRequest(row.get("source_type", String.class)),
+                row.get("task_id", String.class),
+                row.get("task_version", Integer.class),
+                row.get("store_id", String.class),
+                row.get("platform", String.class),
+                row.get("content_form", String.class),
+                row.get("topic", String.class),
+                row.get("article_title", String.class),
+                row.get("outline", String.class),
+                row.get("content", String.class),
+                DraftStatus.fromDb(row.get("status", String.class)),
+                toInstant(row.get("created_at", OffsetDateTime.class)));
     }
 
     private static Instant toInstant(OffsetDateTime value) {

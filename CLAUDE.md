@@ -88,7 +88,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 视频制作 | `/api/video-production/*` | `capabilities`、`generate-video`、`jobs` 查询/取消已由 intelligence 提供异步 Sandbox 闭环；Seedance/MiniMax 真实渠道待联调 |
 | 视频改编 | `/api/video-recreation/*` | adapt-content, generate-asset-image, generate-all-asset-images, generate-scene-image, generate-all-scene-images |
 | 创作助手 | `/api/creation-assistant/*` | score (SSE), suggest (SSE), guide (SSE), task-coverage (SSE), topic-from-hot (SSE)（intelligence-service，PRD §4.9）|
-| 创作草稿 | `/api/creation-drafts/*` | 列表/新建/读取/保存（乐观锁 PUT，冲突 409）/删除（intelligence-service，§4.9.7）|
+| 创作草稿 | `/api/creation-drafts/*` | 列表/新建/读取/保存（乐观锁 PUT，冲突 409）/删除；`GET /{id}/versions` 版本历史（version DESC keyset）、`GET /{id}/versions/{version}` 版本快照（intelligence-service，§4.9.7）|
 | 任务创作上下文 | `/api/creation-contexts/*` | 创建/读取不可变快照（intelligence-service，PRD §4.12）；Marketplace 内部端点只向 intelligence 返回 accepted 报名的权威任务快照（含 storeBranding 门店品牌块，任务书 #24） |
 | 门店公开资料 | `/api/stores/{storeId}/public-profile` | identity 只读白名单（GET，任务书 #24）：未登录也放行（resolveOptional），只回 PRD §2.1 公开字段（不含 KYB 审核列/org 内部字段），门店/组织非 active → 404；edge flag `EDGE_ROUTE_STORES_PUBLIC_IDENTITY`。内部批量端点 `/internal/identity/stores/public-profiles` 仅 marketplace 服务断言可调，不进 edge |
 | 推荐官匹配 | `/api/tasks/{id}/recommendations*` | marketplace 从报名/任务/履约/评分/声誉事实确定性计算六维排序；商家邀请经 outbox 进入通知中心，推荐官仍走原报名规则 |

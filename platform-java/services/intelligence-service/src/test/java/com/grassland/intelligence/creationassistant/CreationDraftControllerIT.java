@@ -193,6 +193,91 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
         assertThat(getDraft(draftId, "user-snap")).containsEntry("content", "第二版正文");
     }
 
+    @Test
+    void versionsIncludeCurrentAndPaginateByVersionDescending() {
+        String draftId = createDraft("user-history", "independent", "版本历史");
+        save(draftId, "user-history", 1, "第一版正文");
+        save(draftId, "user-history", 2, "第二版正文");
+
+        Map<String, Object> first = versionList(draftId, "user-history", 2, null);
+        List<Map<String, Object>> firstItems = (List<Map<String, Object>>) first.get("items");
+        assertThat(firstItems).extracting(item -> item.get("version")).containsExactly(3, 2);
+        assertThat(firstItems).allSatisfy(item -> assertThat(item).containsKeys("createdAt", "title"));
+        assertThat(first.get("nextCursor")).isEqualTo("2");
+
+        Map<String, Object> second = versionList(draftId, "user-history", 2, "2");
+        List<Map<String, Object>> secondItems = (List<Map<String, Object>>) second.get("items");
+        assertThat(secondItems).extracting(item -> item.get("version")).containsExactly(1);
+        assertThat(second.get("nextCursor")).isNull();
+    }
+
+    @Test
+    void versionDetailReturnsCompleteHistoricalSnapshot() {
+        String draftId = createDraft("user-detail", "independent", "旧标题");
+        client().put().uri("/api/creation-drafts/" + draftId)
+                .header(header(), sign("user-detail", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "title", "新标题", "topic", "新主题",
+                        "articleTitle", "新文章标题", "outline", "新大纲", "content", "新正文",
+                        "platform", "wechat", "contentForm", "graphic", "status", "in_progress"))
+                .exchange().expectStatus().isOk();
+
+        Map<String, Object> oldVersion = versionDetail(draftId, "user-detail", 1);
+        assertThat(oldVersion).containsEntry("version", 1)
+                .containsEntry("title", "旧标题")
+                .containsEntry("sourceType", "independent")
+                .containsEntry("status", "draft")
+                .containsEntry("topic", "测试主题")
+                .containsKey("createdAt");
+        assertThat(oldVersion).doesNotContainKeys("content", "articleTitle", "outline");
+
+        Map<String, Object> currentVersion = versionDetail(draftId, "user-detail", 2);
+        assertThat(currentVersion).containsEntry("title", "新标题")
+                .containsEntry("topic", "新主题")
+                .containsEntry("articleTitle", "新文章标题")
+                .containsEntry("outline", "新大纲")
+                .containsEntry("content", "新正文")
+                .containsEntry("platform", "wechat")
+                .containsEntry("contentForm", "graphic")
+                .containsEntry("status", "in_progress");
+    }
+
+    @Test
+    void versionsHideOtherOwnersAndMissingVersions() {
+        String draftId = createDraft("user-version-owner", "independent", "私有历史");
+
+        client().get().uri("/api/creation-drafts/" + draftId + "/versions")
+                .header(header(), sign("user-version-stranger", null))
+                .exchange().expectStatus().isNotFound();
+        client().get().uri("/api/creation-drafts/" + draftId + "/versions/99")
+                .header(header(), sign("user-version-owner", null))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void historicalVersionsExposeNoWriteRoute() {
+        String draftId = createDraft("user-version-readonly", "independent", "只读历史");
+        client().put().uri("/api/creation-drafts/" + draftId + "/versions/1")
+                .header(header(), sign("user-version-readonly", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("title", "不得修改"))
+                .exchange().expectStatus().isEqualTo(405);
+        client().delete().uri("/api/creation-drafts/" + draftId + "/versions/1")
+                .header(header(), sign("user-version-readonly", null))
+                .exchange().expectStatus().isEqualTo(405);
+    }
+
+    @Test
+    void versionsRejectInvalidPagination() {
+        String draftId = createDraft("user-version-page", "independent", "分页参数");
+        client().get().uri("/api/creation-drafts/" + draftId + "/versions?limit=101")
+                .header(header(), sign("user-version-page", null))
+                .exchange().expectStatus().isBadRequest();
+        client().get().uri("/api/creation-drafts/" + draftId + "/versions?cursor=0")
+                .header(header(), sign("user-version-page", null))
+                .exchange().expectStatus().isBadRequest();
+    }
+
     /**
      * 并发自动保存（跨设备 / debounce 抖动）：两个 PUT 带同一 expectedVersion，
      * 一个 200 一个 409 —— 不能因 creation_draft_version 主键冲突漏成 500。
@@ -243,6 +328,28 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of("expectedVersion", expectedVersion, "title", "快照测试", "content", content))
                 .exchange()
                 .expectStatus().isOk();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> versionList(
+            String draftId, String account, int limit, String cursor) {
+        String uri = "/api/creation-drafts/" + draftId + "/versions?limit=" + limit
+                + (cursor == null ? "" : "&cursor=" + cursor);
+        Map<String, Object> response = client().get().uri(uri)
+                .header(header(), sign(account, null))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (Map<String, Object>) response.get("data");
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> versionDetail(String draftId, String account, int version) {
+        Map<String, Object> response = client().get()
+                .uri("/api/creation-drafts/" + draftId + "/versions/" + version)
+                .header(header(), sign(account, null))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (Map<String, Object>) response.get("data");
     }
 
     /** 发一个 PUT 只取状态码（并发测试用，不 expectStatus 免得先失败）。 */

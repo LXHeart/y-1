@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -35,6 +36,8 @@ public class CreationDraftController {
     private static final int MAX_TITLE_LENGTH = 120;
     /** platform / content_form 在 V19 是 varchar(32)；不在此拦就会漏成 Postgres 22001 → 500。 */
     private static final int MAX_ENUM_LENGTH = 32;
+    private static final int DEFAULT_VERSION_LIMIT = 20;
+    private static final int MAX_VERSION_LIMIT = 100;
 
     private final IntelligenceCallerResolver callers;
     private final CreationDraftRepository drafts;
@@ -73,6 +76,42 @@ public class CreationDraftController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> loadOwned(id, caller.accountId()))
                 .map(draft -> success(toResponse(draft)));
+    }
+
+    /** 版本历史（含当前版本），按 version 倒序做 keyset 分页。 */
+    @GetMapping("/{id}/versions")
+    public Mono<ResponseEntity<Map<String, Object>>> versions(
+            @PathVariable String id,
+            @RequestParam(defaultValue = "" + DEFAULT_VERSION_LIMIT) int limit,
+            @RequestParam(required = false) Integer cursor,
+            ServerWebExchange exchange) {
+        if (limit < 1 || limit > MAX_VERSION_LIMIT) {
+            return Mono.error(new IntelligenceException(400, "limit 必须在 1 到 100 之间"));
+        }
+        if (cursor != null && cursor < 1) {
+            return Mono.error(new IntelligenceException(400, "cursor 必须是正版本号"));
+        }
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> loadOwned(id, caller.accountId()))
+                .flatMap(draft -> drafts.listVersions(draft.id(), cursor, limit + 1).collectList())
+                .map(items -> versionPage(items, limit))
+                .map(CreationDraftController::success);
+    }
+
+    /** 指定版本的完整只读快照（owner 校验，跨账号 404）。 */
+    @GetMapping("/{id}/versions/{version}")
+    public Mono<ResponseEntity<Map<String, Object>>> version(
+            @PathVariable String id, @PathVariable int version, ServerWebExchange exchange) {
+        if (version < 1) {
+            return Mono.error(new IntelligenceException(404, "草稿版本不存在"));
+        }
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> loadOwned(id, caller.accountId()))
+                .flatMap(draft -> drafts.findVersion(draft.id(), version))
+                .switchIfEmpty(Mono.defer(() ->
+                        Mono.error(new IntelligenceException(404, "草稿版本不存在"))))
+                .map(CreationDraftController::toVersionResponse)
+                .map(CreationDraftController::success);
     }
 
     /**
@@ -188,6 +227,38 @@ public class CreationDraftController {
         if (d.taskId() != null) map.put("taskId", d.taskId());
         if (d.taskVersion() != null) map.put("taskVersion", d.taskVersion());
         if (d.storeId() != null) map.put("storeId", d.storeId());
+        return map;
+    }
+
+    private static Map<String, Object> versionPage(java.util.List<CreationDraftVersion> fetched, int limit) {
+        boolean hasMore = fetched.size() > limit;
+        java.util.List<CreationDraftVersion> page = hasMore ? fetched.subList(0, limit) : fetched;
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("items", page.stream().map(version -> Map.<String, Object>of(
+                "version", version.version(),
+                "createdAt", version.createdAt(),
+                "title", version.title())).toList());
+        data.put("nextCursor", hasMore && !page.isEmpty()
+                ? Integer.toString(page.get(page.size() - 1).version()) : null);
+        return data;
+    }
+
+    private static Map<String, Object> toVersionResponse(CreationDraftVersion version) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("version", version.version());
+        map.put("createdAt", version.createdAt());
+        map.put("title", version.title());
+        map.put("sourceType", version.sourceType().db());
+        map.put("status", version.status().db());
+        if (version.taskId() != null) map.put("taskId", version.taskId());
+        if (version.taskVersion() != null) map.put("taskVersion", version.taskVersion());
+        if (version.storeId() != null) map.put("storeId", version.storeId());
+        if (version.platform() != null) map.put("platform", version.platform());
+        if (version.contentForm() != null) map.put("contentForm", version.contentForm());
+        if (version.topic() != null) map.put("topic", version.topic());
+        if (version.articleTitle() != null) map.put("articleTitle", version.articleTitle());
+        if (version.outline() != null) map.put("outline", version.outline());
+        if (version.content() != null) map.put("content", version.content());
         return map;
     }
 
