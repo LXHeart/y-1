@@ -1,6 +1,7 @@
 package com.grassland.intelligence.homepage;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.grassland.intelligence.hottopic.HotTopicTaxonomyMetadata;
 import java.time.Instant;
 import java.util.List;
 
@@ -14,14 +15,17 @@ public record HotItemsResult(
         String provider,
         List<HotItem> items,
         List<HotItemGroup> groups,
-        String fetchedAt) {
+        String fetchedAt,
+        HotTopicTaxonomyMetadata taxonomy) {
 
-    public static HotItemsResult of60s(List<HotItemGroup> groups, Instant fetchedAt) {
-        return new HotItemsResult("60s", List.of(), groups, iso(fetchedAt));
+    public static HotItemsResult of60s(
+            List<HotItemGroup> groups, Instant fetchedAt, HotTopicTaxonomyMetadata taxonomy) {
+        return new HotItemsResult("60s", List.of(), groups, iso(fetchedAt), taxonomy);
     }
 
-    public static HotItemsResult ofAlapi(List<HotItem> items, Instant fetchedAt) {
-        return new HotItemsResult("alapi", items, null, iso(fetchedAt));
+    public static HotItemsResult ofAlapi(
+            List<HotItem> items, Instant fetchedAt, HotTopicTaxonomyMetadata taxonomy) {
+        return new HotItemsResult("alapi", items, null, iso(fetchedAt), taxonomy);
     }
 
     private static String iso(Instant value) {

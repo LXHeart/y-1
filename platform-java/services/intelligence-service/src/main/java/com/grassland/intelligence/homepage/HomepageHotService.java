@@ -2,6 +2,8 @@ package com.grassland.intelligence.homepage;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.intelligence.hottopic.HotTopicClassifier;
+import com.grassland.intelligence.hottopic.HotTopicFilter;
 import com.grassland.intelligence.settings.HomepageSettingsService;
 import com.grassland.intelligence.settings.UserSettingsRepository;
 import java.time.Duration;
@@ -10,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import com.grassland.intelligence.security.IntelligenceException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -33,6 +36,11 @@ public class HomepageHotService {
     private final HotItems60sService sixtyS;
     private final HotItemsAlapiService alapi;
     private final HotTopicsCacheRepository cacheRepo;
+    private final HotTopicClassifier classifier;
+    @Value("${homepage.hot-items.validity-hours.60s:24}")
+    private long sixtySValidityHours = 24;
+    @Value("${homepage.hot-items.validity-hours.alapi:6}")
+    private long alapiValidityHours = 6;
     /** 服务内自持（本服务未注册 ObjectMapper bean）。 */
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -44,21 +52,29 @@ public class HomepageHotService {
             UserSettingsRepository settingsRepo,
             HotItems60sService sixtyS,
             HotItemsAlapiService alapi,
-            HotTopicsCacheRepository cacheRepo) {
+            HotTopicsCacheRepository cacheRepo,
+            HotTopicClassifier classifier) {
         this.homepageSettings = homepageSettings;
         this.settingsRepo = settingsRepo;
         this.sixtyS = sixtyS;
         this.alapi = alapi;
         this.cacheRepo = cacheRepo;
+        this.classifier = classifier;
     }
 
     /** accountId 可为 null（未登录）→ 用平台默认 settings（provider=60s）。 */
     public Mono<HotItemsResult> loadHotItems(String accountId) {
+        return loadHotItems(accountId, HotTopicFilter.DEFAULT);
+    }
+
+    /** 筛选只作用于缓存结果：维度内 OR、跨维度 AND，且默认隐藏超过源级有效期的条目。 */
+    public Mono<HotItemsResult> loadHotItems(String accountId, HotTopicFilter filter) {
+        HotTopicFilter effectiveFilter = filter == null ? HotTopicFilter.DEFAULT : filter;
         return homepageSettings.getOrDefault(accountId)
                 .map(HomepageHotService::providerOf)
                 .flatMap(provider -> "alapi".equals(provider)
-                        ? loadAlapi(accountId)
-                        : load60s());
+                        ? loadAlapi(accountId, effectiveFilter)
+                        : load60s(effectiveFilter));
     }
 
     @SuppressWarnings("unchecked")
@@ -72,45 +88,47 @@ public class HomepageHotService {
 
     // ---------- 60s ----------
 
-    private Mono<HotItemsResult> load60s() {
+    private Mono<HotItemsResult> load60s(HotTopicFilter filter) {
         return cacheRepo.readLatest()
                 .flatMap(entry -> {
                     List<HotItemGroup> cached = parseGroups(entry.itemsJson());
                     boolean fresh = entry.fetchedAt() != null
-                            && Duration.between(entry.fetchedAt(), Instant.now()).compareTo(SIXTY_S_CACHE_TTL) < 0;
+                            && Duration.between(entry.fetchedAt(), Instant.now()).compareTo(SIXTY_S_CACHE_TTL) < 0
+                            && usesCurrentTaxonomy(cached);
                     if (fresh && !cached.isEmpty()) {
-                        return Mono.just(HotItemsResult.of60s(cached, entry.fetchedAt()));
+                        return Mono.just(build60s(cached, entry.fetchedAt(), filter));
                     }
-                    // 过期：刷新，失败降级到旧缓存
-                    return refresh60s()
+                    // TTL 过期或 taxonomy 版本变化：刷新；失败仍降级旧缓存。
+                    return refresh60s(filter)
                             .onErrorResume(e -> cached.isEmpty()
                                     ? Mono.error(e)
-                                    : Mono.just(HotItemsResult.of60s(cached, entry.fetchedAt())));
+                                    : Mono.just(build60s(cached, entry.fetchedAt(), filter)));
                 })
-                .switchIfEmpty(Mono.defer(this::refresh60s));
+                .switchIfEmpty(Mono.defer(() -> refresh60s(filter)));
     }
 
-    private Mono<HotItemsResult> refresh60s() {
+    private Mono<HotItemsResult> refresh60s(HotTopicFilter filter) {
         Instant fetchedAt = Instant.now();
         return sixtyS.loadGroups()
                 .flatMap(groups -> {
                     if (groups.isEmpty()) {
                         return Mono.error(new IntelligenceException(502, "获取全网热点失败，请稍后再试"));
                     }
-                    return cacheRepo.persist(toJson(groups))
+                    List<HotItemGroup> classified = classifyGroups(groups);
+                    return cacheRepo.persist(toJson(classified))
                             .onErrorResume(e -> Mono.empty()) // 缓存写失败不影响响应
-                            .thenReturn(HotItemsResult.of60s(groups, fetchedAt));
+                            .thenReturn(build60s(classified, fetchedAt, filter));
                 });
     }
 
     // ---------- ALAPI ----------
 
-    private Mono<HotItemsResult> loadAlapi(String accountId) {
+    private Mono<HotItemsResult> loadAlapi(String accountId, HotTopicFilter filter) {
         return resolveAlapiToken(accountId)
                 .flatMap(token -> {
                     AlapiCacheEntry cached = alapiCache.get(token);
                     if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
-                        return Mono.just(HotItemsResult.ofAlapi(cached.items(), cached.fetchedAt()));
+                        return Mono.just(buildAlapi(cached.items(), cached.fetchedAt(), filter));
                     }
                     Instant fetchedAt = Instant.now();
                     return alapi.loadItems(token)
@@ -118,11 +136,62 @@ public class HomepageHotService {
                                 if (items.isEmpty()) {
                                     return Mono.error(new IntelligenceException(502, "获取全网热点失败，请检查 ALAPI 配置"));
                                 }
+                                List<HotItem> classified = classifyItems(items);
                                 alapiCache.put(token,
-                                        new AlapiCacheEntry(items, fetchedAt, fetchedAt.plus(ALAPI_CACHE_TTL)));
-                                return Mono.just(HotItemsResult.ofAlapi(items, fetchedAt));
+                                        new AlapiCacheEntry(classified, fetchedAt, fetchedAt.plus(ALAPI_CACHE_TTL)));
+                                return Mono.just(buildAlapi(classified, fetchedAt, filter));
                             });
                 });
+    }
+
+    // ---------- classify / filter / validity ----------
+
+    private List<HotItemGroup> classifyGroups(List<HotItemGroup> groups) {
+        return groups.stream()
+                .map(group -> new HotItemGroup(group.platform(), group.label(), classifyItems(group.items())))
+                .toList();
+    }
+
+    private List<HotItem> classifyItems(List<HotItem> items) {
+        return items.stream()
+                .map(item -> item.withTags(classifier.classify(item.title())))
+                .toList();
+    }
+
+    private boolean usesCurrentTaxonomy(List<HotItemGroup> groups) {
+        return groups.stream()
+                .flatMap(group -> group.items().stream())
+                .allMatch(item -> item.tags() != null
+                        && classifier.taxonomy().version().equals(item.tags().taxonomyVersion()));
+    }
+
+    private HotItemsResult build60s(List<HotItemGroup> groups, Instant fetchedAt, HotTopicFilter filter) {
+        Instant effectiveFetchedAt = fetchedAt == null ? Instant.now() : fetchedAt;
+        Instant validUntil = effectiveFetchedAt.plus(Duration.ofHours(Math.max(1, sixtySValidityHours)));
+        List<HotItemGroup> filtered = groups.stream()
+                .map(group -> new HotItemGroup(
+                        group.platform(), group.label(), filterItems(group.items(), validUntil, filter)))
+                .filter(group -> !group.items().isEmpty())
+                .toList();
+        return HotItemsResult.of60s(filtered, effectiveFetchedAt, classifier.taxonomy().metadata());
+    }
+
+    private HotItemsResult buildAlapi(List<HotItem> items, Instant fetchedAt, HotTopicFilter filter) {
+        Instant effectiveFetchedAt = fetchedAt == null ? Instant.now() : fetchedAt;
+        Instant validUntil = effectiveFetchedAt.plus(Duration.ofHours(Math.max(1, alapiValidityHours)));
+        return HotItemsResult.ofAlapi(
+                filterItems(items, validUntil, filter),
+                effectiveFetchedAt,
+                classifier.taxonomy().metadata());
+    }
+
+    private List<HotItem> filterItems(List<HotItem> items, Instant validUntil, HotTopicFilter filter) {
+        boolean expired = !validUntil.isAfter(Instant.now());
+        return items.stream()
+                .filter(item -> filter.matches(item.tags()))
+                .filter(item -> filter.includeExpired() || !expired)
+                .map(item -> item.withValidity(validUntil.toString(), expired))
+                .toList();
     }
 
     /** 读未掩码 token（不能走 HomepageSettingsService.get，那会掩码）。 */

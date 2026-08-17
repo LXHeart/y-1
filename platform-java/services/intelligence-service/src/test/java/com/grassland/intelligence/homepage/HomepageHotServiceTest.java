@@ -9,13 +9,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.intelligence.hottopic.HotTopicClassifier;
+import com.grassland.intelligence.hottopic.HotTopicFilter;
+import com.grassland.intelligence.hottopic.HotTopicTaxonomy;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.settings.HomepageSettingsService;
 import com.grassland.intelligence.settings.UserSettingsRepository;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -33,6 +38,7 @@ class HomepageHotServiceTest {
     private HotItems60sService sixtyS;
     private HotItemsAlapiService alapi;
     private HotTopicsCacheRepository cacheRepo;
+    private HotTopicClassifier classifier;
     private HomepageHotService service;
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -44,7 +50,8 @@ class HomepageHotServiceTest {
         sixtyS = mock(HotItems60sService.class);
         alapi = mock(HotItemsAlapiService.class);
         cacheRepo = mock(HotTopicsCacheRepository.class);
-        service = new HomepageHotService(homepageSettings, settingsRepo, sixtyS, alapi, cacheRepo);
+        classifier = new HotTopicClassifier(new HotTopicTaxonomy());
+        service = new HomepageHotService(homepageSettings, settingsRepo, sixtyS, alapi, cacheRepo, classifier);
     }
 
     @Test
@@ -58,6 +65,9 @@ class HomepageHotServiceTest {
                     assertThat(result.provider()).isEqualTo("60s");
                     assertThat(result.groups()).hasSize(1);
                     assertThat(result.items()).isEmpty();
+                    assertThat(result.taxonomy().version()).isEqualTo("hot-taxonomy-v1");
+                    assertThat(result.groups().getFirst().items().getFirst().validUntil()).isNotBlank();
+                    assertThat(result.groups().getFirst().items().getFirst().expired()).isFalse();
                 })
                 .verifyComplete();
 
@@ -74,7 +84,11 @@ class HomepageHotServiceTest {
         when(cacheRepo.persist(anyString())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.loadHotItems(ACCOUNT))
-                .assertNext(result -> assertThat(result.groups().getFirst().platform()).isEqualTo("weibo"))
+                .assertNext(result -> {
+                    assertThat(result.groups().getFirst().platform()).isEqualTo("weibo");
+                    assertThat(result.groups().getFirst().items().getFirst().tags().taxonomyVersion())
+                            .isEqualTo("hot-taxonomy-v1");
+                })
                 .verifyComplete();
 
         verify(cacheRepo).persist(anyString());
@@ -132,6 +146,12 @@ class HomepageHotServiceTest {
                     assertThat(result.provider()).isEqualTo("alapi");
                     assertThat(result.items()).hasSize(1);
                     assertThat(result.groups()).isNull();
+                    HotItem item = result.items().getFirst();
+                    assertThat(Duration.between(
+                            Instant.parse(result.fetchedAt()), Instant.parse(item.validUntil())))
+                            .isEqualTo(Duration.ofHours(6));
+                    assertThat(item.expired()).isFalse();
+                    assertThat(item.tags().taxonomyVersion()).isEqualTo("hot-taxonomy-v1");
                 })
                 .verifyComplete();
     }
@@ -149,6 +169,69 @@ class HomepageHotServiceTest {
                 .verifyComplete();
     }
 
+    @Test
+    void filterUsesOrWithinDimensionAndAndAcrossDimensions() throws Exception {
+        stubProvider("60s");
+        List<HotItem> tagged = List.of(
+                tagged(1, "上海AI火锅发布会"),
+                tagged(2, "上海美妆明星活动"),
+                tagged(3, "北京AI火锅发布会"));
+        when(cacheRepo.readLatest()).thenReturn(Mono.just(new HotTopicsCacheRepository.CachedEntry(
+                mapper.writeValueAsString(List.of(new HotItemGroup("douyin", "抖音", tagged))), Instant.now())));
+
+        HotTopicFilter filter = new HotTopicFilter(
+                Set.of("catering", "retail"), Set.of("上海"), Set.of("tech"), false);
+        StepVerifier.create(service.loadHotItems(ACCOUNT, filter))
+                .assertNext(result -> assertThat(result.groups().getFirst().items())
+                        .extracting(HotItem::title)
+                        .containsExactly("上海AI火锅发布会"))
+                .verifyComplete();
+
+        verify(sixtyS, never()).loadGroups();
+    }
+
+    @Test
+    void expiredCacheIsHiddenByDefaultAndIncludedOnDemand() throws Exception {
+        stubProvider("60s");
+        Instant fetchedAt = Instant.now().minus(25, ChronoUnit.HOURS);
+        when(cacheRepo.readLatest()).thenReturn(Mono.just(new HotTopicsCacheRepository.CachedEntry(
+                groupsJson(), fetchedAt)));
+        when(sixtyS.loadGroups()).thenReturn(Mono.error(new IllegalStateException("upstream down")));
+
+        StepVerifier.create(service.loadHotItems(ACCOUNT))
+                .assertNext(result -> assertThat(result.groups()).isEmpty())
+                .verifyComplete();
+
+        StepVerifier.create(service.loadHotItems(
+                        ACCOUNT, new HotTopicFilter(Set.of(), Set.of(), Set.of(), true)))
+                .assertNext(result -> {
+                    HotItem item = result.groups().getFirst().items().getFirst();
+                    assertThat(item.expired()).isTrue();
+                    assertThat(item.validUntil()).isEqualTo(fetchedAt.plus(24, ChronoUnit.HOURS).toString());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void cacheWithoutTaxonomyTagsRefreshesEvenInsideTtl() throws Exception {
+        stubProvider("60s");
+        String legacyJson = mapper.writeValueAsString(List.of(new HotItemGroup(
+                "douyin", "抖音", List.of(new HotItem(1, "旧热点", null, null, null, "抖音")))));
+        when(cacheRepo.readLatest()).thenReturn(Mono.just(new HotTopicsCacheRepository.CachedEntry(
+                legacyJson, Instant.now().minus(10, ChronoUnit.MINUTES))));
+        when(sixtyS.loadGroups()).thenReturn(Mono.just(List.of(new HotItemGroup(
+                "douyin", "抖音", List.of(new HotItem(1, "上海火锅", null, null, null, "抖音"))))));
+        when(cacheRepo.persist(anyString())).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.loadHotItems(ACCOUNT))
+                .assertNext(result -> assertThat(result.groups().getFirst().items().getFirst().tags().city())
+                        .isEqualTo("上海"))
+                .verifyComplete();
+
+        verify(sixtyS).loadGroups();
+        verify(cacheRepo).persist(anyString());
+    }
+
     private void stubProvider(String provider) {
         when(homepageSettings.getOrDefault(any()))
                 .thenReturn(Mono.just(Map.of("hotItems", Map.of("provider", provider))));
@@ -156,6 +239,11 @@ class HomepageHotServiceTest {
 
     private String groupsJson() throws Exception {
         return mapper.writeValueAsString(List.of(new HotItemGroup(
-                "douyin", "抖音", List.of(new HotItem(1, "旧热点", "100万", null, null, "抖音")))));
+                "douyin", "抖音", List.of(tagged(1, "旧热点")))));
+    }
+
+    private HotItem tagged(int rank, String title) {
+        return new HotItem(rank, title, "100万", null, null, "抖音")
+                .withTags(classifier.classify(title));
     }
 }

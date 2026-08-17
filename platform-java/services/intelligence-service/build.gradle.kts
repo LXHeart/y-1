@@ -64,6 +64,10 @@ tasks.processResources {
     from(rootProject.file("../contracts/content-safety-lexicon.json")) {
         into("contracts")
     }
+    // 任务书 #35：热点行业/城市/内容类型确定性分类词表。
+    from(rootProject.file("../contracts/hot-topic-taxonomy.json")) {
+        into("contracts")
+    }
 }
 
 // Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.

@@ -1,12 +1,15 @@
 package com.grassland.intelligence.homepage;
 
+import com.grassland.intelligence.hottopic.HotTopicFilter;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -27,11 +30,17 @@ public class HomepageController {
     }
 
     @GetMapping("/api/homepage/hot-items")
-    public Mono<ResponseEntity<Map<String, Object>>> hotItems(ServerHttpRequest request) {
+    public Mono<ResponseEntity<Map<String, Object>>> hotItems(
+            ServerHttpRequest request,
+            @RequestParam(name = "industry", required = false) List<String> industries,
+            @RequestParam(name = "city", required = false) List<String> cities,
+            @RequestParam(name = "contentType", required = false) List<String> contentTypes,
+            @RequestParam(name = "includeExpired", defaultValue = "false") boolean includeExpired) {
+        HotTopicFilter filter = HotTopicFilter.from(industries, cities, contentTypes, includeExpired);
         return callers.resolveOptional(request)
                 .map(IntelligenceCallerResolver.Caller::accountId)
                 .defaultIfEmpty("")
-                .flatMap(accountId -> hotService.loadHotItems(accountId.isBlank() ? null : accountId))
+                .flatMap(accountId -> hotService.loadHotItems(accountId.isBlank() ? null : accountId, filter))
                 .map(result -> ResponseEntity.ok(Map.of("success", true, "data", result)));
     }
 
