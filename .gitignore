@@ -25,6 +25,9 @@ test-artifacts
 .claude/worktrees/
 .claude/plans/
 
+# Codex / Superpowers isolated development worktrees (local only)
+.worktrees/
+
 # ZCode 会话产物（计划草稿等），不入库
 .zcode/
 
