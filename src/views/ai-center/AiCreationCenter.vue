@@ -21,6 +21,8 @@
     </nav>
 
     <template v-if="activeSection === 'create'">
+      <!-- 任务书 #36 / ADR-D14：未登录游客的免费体验入口（登录用户不显示，功能面不变） -->
+      <GuestTrialPanel v-if="!props.authenticated" @request-login="emit('request-login')" />
       <div class="platform-grid" role="list" aria-label="发布平台">
         <button
           v-for="platform in AI_PLATFORM_DEFINITIONS"
@@ -285,6 +287,7 @@ import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
+import GuestTrialPanel from '../../components/GuestTrialPanel.vue'
 import {
   AI_PLATFORM_CAPABILITY_VERSION,
   AI_PLATFORM_DEFINITIONS,

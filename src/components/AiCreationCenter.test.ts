@@ -8,6 +8,17 @@ import type { CreationEntry } from '../types/ai-creation'
 enableAutoUnmount(afterEach)
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    // 任务书 #36：未登录渲染的游客体验面板会拉额度——默认 stub 给合法体（面板内部行为由其自身测试覆盖）。
+    if (url === '/api/guest-trial/quota') {
+      return new Response(JSON.stringify({ success: true, data: {
+        capabilities: {
+          'article-titles': { used: 0, limit: 3, remaining: 3 },
+          'content-score': { used: 0, limit: 3, remaining: 3 },
+          'image-review': { used: 0, limit: 3, remaining: 3 },
+        },
+        signupBonusCredits: 50,
+      } }), { headers: { 'Content-Type': 'application/json' } })
+    }
     const data = url === '/api/homepage/hot-items'
       ? { provider: '60s', items: [], groups: [], fetchedAt: '2026-08-13T00:00:00Z' }
       : []
@@ -75,7 +86,9 @@ describe('AI 内容创作中心', () => {
     const wrapper = mount(AiCreationCenter, {
       props: { authenticated: false, entry: null },
       global: {
+        // 任务书 #36：未登录时创作区顶部挂游客体验面板；既有用例不测其内部（独立测试覆盖），以占位隔离。
         stubs: {
+          GuestTrialPanel: { template: '<div data-testid="guest-trial-panel" />' },
           AiRunHistoryPanel: { template: '<div data-testid="run-history-panel" />' },
           AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel" />' },
         },
@@ -184,7 +197,8 @@ describe('AI 内容创作中心', () => {
   test('未登录选择任务或门店来源时请求登录，不请求业务数据', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null },
+      global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
 
     await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')
@@ -836,7 +850,8 @@ describe('AI 内容创作中心', () => {
         data: { provider: '60s', items: [{ rank: 1, title: '重试后的热点' }] },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }))
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null },
+      global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
     await wrapper.get('[data-platform-id="zhihu"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')
     await choiceButton(wrapper, '创作来源', '从热点创作').trigger('click')
@@ -986,7 +1001,8 @@ describe('AI 内容创作中心', () => {
       contentFormId: 'video',
       source: { type: 'store', organizationId: 'org-old', storeId: 'store-old' },
     }
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: storeEntry } })
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: storeEntry },
+      global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
     await flushPromises()
 
     await wrapper.setProps({
