@@ -21,7 +21,9 @@ import org.springframework.test.context.DynamicPropertySource;
         "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:5432/test",
         "management.server.port=0",
         "trust.evidence.pseudonym-secret=test-trust-evidence-pseudonym-secret-32-chars",
-        "spring.temporal.test-server.enabled=true"
+        "spring.temporal.test-server.enabled=true",
+        // marketplace 声誉消费者指向真 broker——冒烟无 Kafka，关闭（镜像 TrustItSupport）。
+        "trust.marketplace-consumer.enabled=false"
 })
 class TrustServiceApplicationTest {
     @DynamicPropertySource

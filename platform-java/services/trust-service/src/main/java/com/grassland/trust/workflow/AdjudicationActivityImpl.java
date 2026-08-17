@@ -162,8 +162,10 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
         if (result.decided()) {
             return disputes.recordDecision(dispute.id(), result.winner())
                     .switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
-                    .flatMap(updated -> outbox.append(
-                            envelope("DisputeDecided", updated, round, null)).thenReturn(result));
+                    // ADR-D15 D2：与 DisputeDecided 同事务逐审判官 append 发奖事件（回滚即都不发）。
+                    .flatMap(updated -> appendVoteRewards(dispute, round)
+                            .then(outbox.append(
+                                    envelope("DisputeDecided", updated, round, null)).thenReturn(result)));
         }
         if (finalRound) {
             return disputes.markEscalated(dispute.id())
@@ -192,9 +194,11 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
     @Override
     public void recordDecision(String disputeId, String winner) {
         // 领域写（voting→decided）+ outbox 同事务：outbox 失败则回滚状态迁移。
+        // ADR-D15 D2：发奖事件同事务（当前轮实际投票者逐人；客服终审无投票行 → 天然不发）。
         DisputeCase updated = transactions.transactional(
                 disputes.recordDecision(disputeId, winner)
-                        .flatMap(u -> outbox.append(envelope("DisputeDecided", u, u.round(), null)).thenReturn(u))
+                        .flatMap(u -> appendVoteRewards(u, u.round())
+                                .then(outbox.append(envelope("DisputeDecided", u, u.round(), null)).thenReturn(u)))
         ).block();
         if (updated == null) {
             return;  // 非 voting（已判决/终局）→ 幂等跳过（empty Mono，无写无事件）
@@ -272,6 +276,34 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
             return;
         }
         outbox.append(envelope("DisputeFinalized", d, d.round(), null)).block();
+    }
+
+    /**
+     * ADR-D15：对该轮实际投票的审判官逐人 append {@code JudgeVoteRewarded}（与轮终局状态变更同事务）。
+     * 平坦 credits-per-vote（D3）；0/负 = 关闭发奖（不发事件）。确定性 event_id
+     * {@code JudgeVoteRewarded:disputeId:round:judgeId}——activity 重试时 outbox ON CONFLICT 去重，
+     * 重开轮（round 递增）天然各自计发。
+     */
+    private Mono<Void> appendVoteRewards(DisputeCase dispute, int round) {
+        int credits = props.judgeRewardCreditsPerVote();
+        if (credits <= 0) {
+            return Mono.empty();
+        }
+        return judges.findVoterAccountIds(dispute.id(), round)
+                .flatMap(judgeAccountId -> outbox.append(rewardEnvelope(dispute, round, judgeAccountId, credits)))
+                .then();
+    }
+
+    private EventEnvelope rewardEnvelope(DisputeCase dispute, int round, String judgeAccountId, int credits) {
+        String eventId = UUID.nameUUIDFromBytes(("JudgeVoteRewarded:" + dispute.id() + ":" + round
+                + ":" + judgeAccountId).getBytes(StandardCharsets.UTF_8)).toString();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("disputeId", dispute.id());
+        payload.put("round", round);
+        payload.put("judgeAccountId", judgeAccountId);
+        payload.put("credits", credits);
+        return new EventEnvelope(eventId, "JudgeVoteRewarded", "DisputeCase",
+                dispute.id(), dispute.version(), Instant.now(), null, payload);
     }
 
     /** {@code openedByAccountId}/{@code openedByRole} 供 identity 通知中心解析收件人（Slice 12 Stage 3）。 */

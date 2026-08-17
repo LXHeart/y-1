@@ -37,7 +37,9 @@ public record AdjudicationProperties(
         /** 审判启动窗口秒级覆盖（>0 时优先于 {@code adjudicationWindowHours}）。dev/e2e 用。 */
         long adjudicationWindowSeconds,
         /** 争议冷却期秒级覆盖（>0 时优先于 {@code disputeCooldownHours}）。dev/e2e 用（T5 恢复 DisputeCooldownIT）。 */
-        long disputeCooldownSeconds) {
+        long disputeCooldownSeconds,
+        /** 任务书 #31 / ADR-D15：每张计入裁决的投票发放的 AI 积分（平坦，默认 20；0=关闭发奖）。 */
+        int judgeRewardCreditsPerVote) {
 
     public AdjudicationProperties {
         if (panelSize <= 0) {
@@ -87,6 +89,10 @@ public record AdjudicationProperties(
         // 故"生产默认启用"由 application.yml 的 adjudication-window-enabled:1 兜底，本守卫只防显式垃圾值。
         if (adjudicationWindowEnabled != 0 && adjudicationWindowEnabled != 1) {
             adjudicationWindowEnabled = 1;
+        }
+        // ADR-D15：奖励积分为 0/负 = 关闭发奖（不发事件）；默认 20。
+        if (judgeRewardCreditsPerVote < 0) {
+            judgeRewardCreditsPerVote = 0;
         }
     }
 

@@ -50,7 +50,7 @@ class AdjudicationActivityImplTest {
     private final TransactionalOperator transactions = mock(TransactionalOperator.class);
     private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(
             disputes, judges, judgeEligibility, outbox,
-            new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0),  // 末参=秒级覆盖，0=用小时值
+            new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0),  // 秒级覆盖与发奖积分=0（关闭），用小时值
             finance, transactions);
 
     @BeforeEach
@@ -253,6 +253,76 @@ class AdjudicationActivityImplTest {
     private DisputeCase finalDispute(String id, String decision) {
         return new DisputeCase(id, "eng-" + id, "org-1", UUID.randomUUID().toString(), "merchant",
                 "final", "未履约", decision, null, null, null, 1, 2L, "none", decision, null, null, "standard");
+    }
+
+
+    // ---------- 任务书 #31 / ADR-D15：审判官投票奖励事件 ----------
+
+    @Test
+    void tallyVotesEmitsPerVoterRewardsWithDeterministicEventIds() {
+        // credits=20 开发奖：多数票终局 → 已投 3 名审判官各发一条 JudgeVoteRewarded（同事务链内），
+        // 事件与 DisputeDecided 都经 outbox（回滚即都不发）。
+        AdjudicationActivityImpl rewarding = new AdjudicationActivityImpl(
+                disputes, judges, judgeEligibility, outbox,
+                new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20),
+                finance, transactions);
+        DisputeCase voting = dispute("d1", "voting");
+        DisputeCase decided = dispute("d1", "decided");
+        when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
+        when(judges.tallyVotes("d1", 1)).thenReturn(Mono.just(new VoteTally(5, 2, 0, 7)));
+        when(disputes.recordDecision("d1", "for_merchant")).thenReturn(Mono.just(decided));
+        when(judges.findVoterAccountIds("d1", 1)).thenReturn(Flux.just("j-1", "j-2", "j-3"));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        assertThat(rewarding.tallyVotes("d1", 1)).isEqualTo(
+                TallyResult.decided(5, 2, 0, 7, "for_merchant"));
+
+        java.util.List<com.grassland.trust.event.EventEnvelope> appended = new java.util.ArrayList<>();
+        when(outbox.append(any())).thenAnswer(inv -> {
+            appended.add(inv.getArgument(0));
+            return Mono.empty();
+        });
+        rewarding.tallyVotes("d1", 1);
+        long rewards = appended.stream()
+                .filter(e -> "JudgeVoteRewarded".equals(e.eventType())).count();
+        assertThat(rewards).isEqualTo(3);
+        assertThat(appended.stream().anyMatch(e -> "DisputeDecided".equals(e.eventType()))).isTrue();
+        com.grassland.trust.event.EventEnvelope reward = appended.stream()
+                .filter(e -> "JudgeVoteRewarded".equals(e.eventType())).findFirst().orElseThrow();
+        assertThat(reward.payload().get("credits")).isEqualTo(20);
+        assertThat(reward.payload().get("round")).isEqualTo(1);
+        assertThat(reward.payload().get("judgeAccountId")).isIn("j-1", "j-2", "j-3");
+        assertThat(reward.payload().get("disputeId")).isEqualTo("d1");
+    }
+
+    @Test
+    void rewardsDisabledWhenCreditsZeroAndUnvotedRoundsGetNoEvents() {
+        // credits=0（默认关闭）：不发任何奖励事件；未投票轮（voters 空）也零事件。
+        DisputeCase voting = dispute("d1", "voting");
+        when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
+        when(judges.tallyVotes("d1", 1)).thenReturn(Mono.just(new VoteTally(5, 2, 0, 7)));
+        when(disputes.recordDecision("d1", "for_merchant")).thenReturn(Mono.just(dispute("d1", "decided")));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        activity.tallyVotes("d1", 1);
+        verify(outbox, org.mockito.Mockito.times(1)).append(any());  // 只有 DisputeDecided
+    }
+
+    @Test
+    void recordDecisionEmitsRewardsForCurrentRoundVoters() {
+        // recordDecision（投票窗到期终局路径）同口径：该轮实际投票者获奖。
+        AdjudicationActivityImpl rewarding = new AdjudicationActivityImpl(
+                disputes, judges, judgeEligibility, outbox,
+                new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20),
+                finance, transactions);
+        DisputeCase decided = dispute("d1", "decided");
+        when(disputes.recordDecision("d1", "for_recommender")).thenReturn(Mono.just(decided));
+        when(judges.findVoterAccountIds("d1", decided.round())).thenReturn(Flux.just("j-9"));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        rewarding.recordDecision("d1", "for_recommender");
+
+        verify(outbox, org.mockito.Mockito.times(2)).append(any());  // 1 奖励 + 1 DisputeDecided
     }
 
     private DisputeCase dispute(String id, String status) {

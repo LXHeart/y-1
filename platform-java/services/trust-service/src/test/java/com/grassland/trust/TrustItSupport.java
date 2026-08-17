@@ -103,6 +103,9 @@ public abstract class TrustItSupport {
         r.add("trust.adjudication.adjudication-window-enabled", () -> "0");
         // GL-P2-TRUST-001：测试环境禁用争议冷却期（7天），避免测试等待
         r.add("trust.adjudication.dispute-cooldown-hours", () -> "0");
+        // marketplace 声誉消费者（01d5756）默认启用且指向真 broker——IT 无 Kafka，关闭
+        // （真 broker 集成由其专测覆盖；处理器路由已有单测 MarketplaceReputationEventConsumerTest）。
+        r.add("trust.marketplace-consumer.enabled", () -> "false");
     }
 
     protected WebTestClient client() {

@@ -276,6 +276,20 @@ public class JudgeRepository {
                 .map(JudgeRepository::mapVote).one();
     }
 
+    /**
+     * 任务书 #31 / ADR-D15 D2：该轮**实际投出**（含弃权）的审判官账号——奖励对象。
+     * 早结论未投票者不在 dispute_vote 中，天然无奖励；客服终审轮无投票行，同样天然不发。
+     */
+    public Flux<String> findVoterAccountIds(String disputeId, int round) {
+        return db.sql("""
+                        SELECT DISTINCT judge_account_id::text FROM dispute_vote
+                        WHERE dispute_id = CAST(:d AS uuid) AND round = :round
+                        ORDER BY judge_account_id::text
+                        """)
+                .bind("d", disputeId).bind("round", round)
+                .map(r -> r.get(0, String.class)).all();
+    }
+
     /** 计票：按 choice 聚合 + 实际面板人数（多数决阈值见 {@link VoteTally}）。无投票 → 全 0。 */
     public Mono<VoteTally> tallyVotes(String disputeId, int round) {
         return db.sql("""

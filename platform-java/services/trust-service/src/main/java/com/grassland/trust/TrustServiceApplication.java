@@ -30,4 +30,16 @@ public class TrustServiceApplication {
     TransactionalOperator trustTransactionalOperator(ReactiveTransactionManager transactionManager) {
         return TransactionalOperator.create(transactionManager);
     }
+
+    /**
+     * 可覆写的 ObjectMapper bean：{@code MarketplaceReputationEventConsumer} 构造注入需要，
+     * 而 trust 此前各处持服务本地实例、无全局 bean（01d5756 引入消费者后 Spring 上下文在无该 bean 时
+     * 启动失败）。默认 Jackson 自动配置同款；需要定制时以同类型 bean 覆盖（@ConditionalOnMissingBean）。
+     */
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(
+            com.fasterxml.jackson.databind.ObjectMapper.class)
+    com.fasterxml.jackson.databind.ObjectMapper trustObjectMapper() {
+        return new com.fasterxml.jackson.databind.ObjectMapper();
+    }
 }
