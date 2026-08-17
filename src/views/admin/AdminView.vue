@@ -400,6 +400,8 @@ const JOURNAL_TYPE_LABELS: Record<string, string> = {
   DEPOSIT: '充值', RESERVE: '预留', RELEASE: '释放',
   CAPTURE: '结算', REVERSE: '冲正', WITHDRAW: '提现', OPENING: '期初',
   CONSUMER_PAYMENT: '消费支付', CONSUMER_REFUND: '消费退款', CONSUMER_SPLIT: '核销分账',
+  FREEBIE_RESERVE: '霸王餐押金预付', FREEBIE_REFUND: '霸王餐押金返还',
+  FREEBIE_COMPENSATE: '霸王餐押金补偿',
 }
 
 async function loadReviewTasks(): Promise<void> {
