@@ -30,7 +30,7 @@
 - **视频制作**：上传素材图片 / 粘贴参考视频链接（内嵌抖音/B站参考提取）/ 从热点选主题 + 店铺信息 → AI 脚本生成（SSE 流式）→ 异步视频生成（Sandbox 已可用，Seedance/MiniMax 真实渠道待联调）
 - **账号系统**：邮箱注册（图形验证码 + 邮箱验证码，注册事务内创建商家/推荐官初始身份档案）、登录、按用户隔离设置
 - **积分系统**：功能使用扣积分，管理员可调整
-- **创作灵感**（原首页/热点聚合）：多平台热点（抖音/微博/知乎），支持 60s API 和 ALAPI 两种数据源，定位为创作选题与灵感来源
+- **创作灵感**（原首页/热点聚合）：多平台热点（抖音/微博/知乎），支持 60s API 和 ALAPI 两种数据源；版本化 taxonomy 在缓存刷新时确定性标注行业/城市/内容类型，前端可组合筛选，源级有效期默认隐藏过期趋势
 
 ## Commands
 
@@ -78,7 +78,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 模块 | 路由前缀 | 说明 |
 |------|----------|------|
 | 认证 | `/api/auth/*` | login, register, captcha, send-code, logout, me |
-| 首页 | `/api/homepage/hot-items` | 热点数据 |
+| 首页 | `/api/homepage/hot-items` | 匿名热点数据；支持 `industry/city/contentType/includeExpired` 筛选，响应含 taxonomy、标签与有效期 |
 | 抖音 | `/api/douyin/*` | extract, analyze, analysis-media, proxy, download, audio, session(GET/POST), session/start, session/poll, session/logout, hot-items |
 | Bilibili | `/api/bilibili/*` | extract, analyze, analysis-media, proxy, download |
 | 图片评价 | `/api/image-analysis/*` | analyze (SSE), export-feishu, save-style-memory, style-preferences (GET/PUT), style-preferences/optimize, step/draft, step/optimize, step/style-refine |
@@ -131,6 +131,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - 移动端 token 认证由**请求头 `X-Device-Info` 单点切换**（GL-P3-IDENTITY-001）：带该头 → `LoginController` 走 token 分支，签 access/refresh token 且**不建 session 行、不发 Set-Cookie**；不带 → Web cookie 路径逐字节不变。`IDENTITY_ACCESS_TOKEN_SECRET` 未配时移动端 503（fail-closed），Web 不受影响。refresh token 只以 SHA-256 落 `refresh_token` 表，**v1 刻意不轮换**（刷新只 touch `last_used_at` + 重签 access token）；access token 的 `session_token` claim = refresh_token 行 id，`identity_session` 与设备撤销都按它定位。edge-bff 的 `AccessTokenFilter` 在公网边界验签并复查 refresh-token 撤销状态，随后由 `InternalAssertionFilter` 换发目标服务断言；原始 access token 不向 Java 上游扩散，非法/撤销/非 Bearer 凭据直接 401，refresh/revoke 例外透传。Argon2 hash/rehash 必须 `subscribeOn(Schedulers.boundedElastic())` —— 64MB/3 轮的重操作留在 Netty 事件循环上会拖垮整个服务
 - AI 控制面（GL-P3-AI-001，intelligence `ai/controlplane/` + `ai/run/`）：平台模型配置（`platform_model_config`，主备 + 版本化，V1 雏形已在 V7 重建）admin CRUD 在 `/api/admin/ai/models`，**全部经 `IntelligenceCallerResolver.requireAdmin`**（断言 `role=admin`；intelligence 之前**没有任何 admin 门闩**，`Caller` 连 `role` 都不带——这是本轮新加的）。`ByokRoutingService` 平台分支查控制面；**BYOK→平台回退须 `allowFallback` 显式授权**（HLD §12.3 硬规则），否则返回 `DENIED(fallback_not_authorized)` 不静默扣平台额度。`AiExecutionService` 是执行闭环唯一编排：平台 run 先 `credits.consume` 且用 `charge.operationId()` 作 run `operation_id` 保退款幂等、BYOK run **不扣分**（D-11）并解密 key（明文只活在 `ExecutionContext`，不入日志/响应/outbox，无 KEK→503）；失败提交后 best-effort `credits.refund`（不在 DB 事务内做 HTTP），`AiRunCompleted/Failed` 经 `intelligenceTransactionalOperator` 同事务 append outbox。`TaskContext`（`ai_run` 的 `price_table_version`/`platform_model_version`/`fallback_authorized`，V8）在 Run 起始冻结。`/api/ai`（keys + runs）+ `/api/admin/ai` 经 edge 路由到 intelligence（`EDGE_ROUTE_AI_INTELLIGENCE`/`EDGE_ROUTE_ADMIN_AI_INTELLIGENCE`，精确前缀不抢 legacy `/api/admin/users`）；此前 `/api/ai/keys` 落 legacy 隐性 404、本轮才首次可达。真实 provider 调用经 `TextCompletionClient`；BYOK 地址保存/执行时校验全部公网 DNS，执行连接使用固定地址 resolver 保留原 hostname/SNI 并关闭 DNS rebinding TOCTOU 窗口，平台地址由 `PlatformProviderPolicy` 限制受信 origin
 - 内容安全（ADR-D16）保持两层语义：L1 `ContentSafetyChecker` 是不可降级底线；L2 必须以 `capability=content_safety` 进入 `AiExecutionService`，不得旁路自建模型调用。该 capability 不开放 BYOK，使用 `feature=null` 的既有免费执行分支实现平台资助零积分（原因见 ADR-D16 D5），但仍落 ai_run、预算和并发机器。流尾 safety 帧失败只能降级 `deepCheck:false`，不能覆盖已成功的生成结果；词库版本随创作上下文快照落档，完整词库只留服务端
+- 热点 taxonomy（任务书 #35）是服务端运营资产：`contracts/hot-topic-taxonomy.json` 的行业键必须与 identity `Industry.dbValue` 全集一致；分类只在 60s/ALAPI 缓存刷新时执行，同一缓存窗口标签稳定。缓存 TTL 决定何时拉上游，`homepage.hot-items.validity-hours.*` 决定趋势是否默认展示，两者不得混用；请求期只做维度内 OR、跨维度 AND 过滤
 - 环境变量定义在 `.env.example`、`.env.docker.example` 及各 Java 服务 `application.yml`，是运行时配置的来源
 - API 表描述逻辑契约；实际 upstream 由 edge-bff RouteManifest 与对应 flag 决定，未启用的路由返回 404
 
@@ -147,7 +148,7 @@ Priority tests by area:
 - 文章：`article-generation-dispatch.service.test.ts`
 - 图片评价：`image-analysis.controller.test.ts`
 - 认证：`auth.controller.test.ts`, `auth.test.ts`
-- 热点：`hot-topics-60s.service.test.ts`, `homepage-hot.service.test.ts`
+- 热点：`HomepageHotServiceTest`, `HomepageControllerTest`, `HotTopicClassifierTest`, `useHomepageHotItems.test.ts`, `HotTopicPicker.test.ts`
 - 设置：`settings.controller.test.ts`, `analysis-settings.service.test.ts`
 
 ## Working conventions
