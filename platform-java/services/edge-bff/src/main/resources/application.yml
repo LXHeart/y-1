@@ -146,6 +146,11 @@ edge:
     - path: /api/ai
       upstream: intelligence
       enabled: ${EDGE_ROUTE_AI_INTELLIGENCE:true}
+    # 游客有限体验（任务书 #36 / ADR-D14）：未登录可用的 AI 试用窄面（3 项白名单 + gtid 额度 + IP 限流，
+    # 智能化侧匿名放行）。生产可经 flag 整体关闭；fail-closed：不注册即 404。
+    - path: /api/guest-trial
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE:true}
     # 平台模型配置 admin CRUD（/api/admin/ai/models）。⚠️ 精确前缀 /api/admin/ai——
     # 不抢其它 /api/admin/* 路由（同 kyb-requests 口径）。
     - path: /api/admin/ai
