@@ -48,7 +48,7 @@
           </div>
           <div class="hot-refresh-group">
             <span v-if="hotFetchedNote" class="hot-fetched-note">{{ hotFetchedNote }}</span>
-            <button class="btn-secondary btn-sm" type="button" :disabled="loading" @click="loadHotItems">
+            <button class="btn-secondary btn-sm" type="button" :disabled="loading" @click="loadHotItems()">
               {{ loading ? '刷新中…' : '刷新' }}
             </button>
           </div>

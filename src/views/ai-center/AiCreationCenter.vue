@@ -135,6 +135,8 @@
         :groups="hotGroups"
         :provider="hotProvider"
         :fetched-at="hotFetchedAt"
+        :taxonomy="hotTaxonomy"
+        :filters="hotFilters"
         :loading="hotLoading"
         :error="hotError"
         :selected-title="topic"
@@ -143,6 +145,7 @@
         :topic-error="assistant.topicError.value"
         :structured-topic="assistant.structuredTopic.value"
         @refresh="refreshHotItems"
+        @filter="applyHotFilters"
         @pick="pickHotTopic"
         @refine="refineHotTopic"
       />
@@ -297,6 +300,7 @@ import {
 import { useGrassland } from '../../composables/useGrassland'
 import { useHomepageHotItems } from '../../composables/useHomepageHotItems'
 import type { Organization, Store, StoreProfile, StorePublicProfile } from '../../types/grassland'
+import type { HomepageHotFilters } from '../../types/homepage-hot'
 import type {
   AiContentFormId,
   AiPlatformId,
@@ -578,6 +582,8 @@ const {
   groups: hotGroups,
   provider: hotProvider,
   fetchedAt: hotFetchedAt,
+  taxonomy: hotTaxonomy,
+  filters: hotFilters,
   loading: hotLoading,
   error: hotError,
   loadHotItems: fetchHotItems,
@@ -597,7 +603,12 @@ async function ensureHotItemsLoaded(): Promise<void> {
 
 async function refreshHotItems(): Promise<void> {
   await fetchHotItems()
-  hotLoaded.value = true
+  hotLoaded.value = !hotError.value
+}
+
+async function applyHotFilters(filters: HomepageHotFilters): Promise<void> {
+  await fetchHotItems(filters)
+  hotLoaded.value = !hotError.value
 }
 
 function pickHotTopic(title: string): void {
