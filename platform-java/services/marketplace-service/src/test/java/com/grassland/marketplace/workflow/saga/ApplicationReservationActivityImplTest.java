@@ -1,6 +1,7 @@
 package com.grassland.marketplace.workflow.saga;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -16,6 +17,7 @@ import com.grassland.marketplace.taskcatalog.AcceptanceCommandRepository;
 import com.grassland.marketplace.taskcatalog.TaskAcceptanceCounterRepository;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskFullAutoCloser;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +54,7 @@ class ApplicationReservationActivityImplTest {
     @Mock private OutboxRepository outbox;
     @Mock private FinanceEscrowClient finance;
     @Mock private TransactionalOperator transactions;
+    @Mock private TaskFullAutoCloser taskFullAutoCloser;
 
     private ApplicationReservationActivityImpl activity;
     private AcceptanceInput input;
@@ -62,8 +65,10 @@ class ApplicationReservationActivityImplTest {
         lenient().when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(counters.claim(TASK_ID)).thenReturn(Mono.just(1));
         lenient().when(counters.release(TASK_ID)).thenReturn(Mono.just(true));
+        // #26：激活落定后同事务判定关闭；默认未满/无上限 → empty（thenReturn 照常透传激活结果）。
+        lenient().when(taskFullAutoCloser.closeIfFull(TASK_ID)).thenReturn(Mono.empty());
         activity = new ApplicationReservationActivityImpl(
-                apps, counters, commands, tasks, outbox, finance, transactions);
+                apps, counters, commands, tasks, outbox, finance, transactions, taskFullAutoCloser);
         input = new AcceptanceInput(APP_ID, TASK_ID, MERCHANT, ORG, 500L);
     }
 
@@ -159,6 +164,22 @@ class ApplicationReservationActivityImplTest {
         activity.activateEngagement(input);
 
         verify(apps).acceptFromReserving(APP_ID, TASK_ID, 0L, 0L);
+        // #26（D2/D4）：激活落定后同事务判定满员关闭
+        verify(taskFullAutoCloser).closeIfFull(TASK_ID);
+    }
+
+    /** #26：关闭判定失败不吞——抛出让事务回滚、Temporal 重试本 activity（未满时 empty 则照常完成）。 */
+    @Test
+    void activateEngagement_closeFailurePropagatesForRetry() {
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
+        when(apps.acceptFromReserving(APP_ID, TASK_ID, 0L, 0L)).thenReturn(Mono.just(app("accepted")));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+        when(taskFullAutoCloser.closeIfFull(TASK_ID))
+                .thenReturn(Mono.error(new IllegalStateException("close if full failed")));
+
+        assertThatThrownBy(() -> activity.activateEngagement(input))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("close if full failed");
     }
 
     @Test
@@ -168,6 +189,8 @@ class ApplicationReservationActivityImplTest {
         activity.activateEngagement(input);
 
         verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong());
+        // 重试幂等：已激活则不重复判定关闭（关闭与激活同事务，激活已提交则关闭也已提交）
+        verify(taskFullAutoCloser, never()).closeIfFull(anyString());
     }
 
     @Test
@@ -182,6 +205,8 @@ class ApplicationReservationActivityImplTest {
 
         verify(finance).release(ORG, APP_ID);
         verify(apps).revertReserving(APP_ID, TASK_ID);
+        // #26（D4 护栏）：补偿路径绝不关闭——预留失败回退名额，误关不可收口
+        verify(taskFullAutoCloser, never()).closeIfFull(anyString());
     }
 
     @Test
@@ -195,6 +220,7 @@ class ApplicationReservationActivityImplTest {
 
         verify(finance, never()).release(anyString(), anyString());
         verify(apps).revertReserving(APP_ID, TASK_ID);
+        verify(taskFullAutoCloser, never()).closeIfFull(anyString());  // #26（D4 护栏）
     }
 
     private Task task(Integer maxSlots) {

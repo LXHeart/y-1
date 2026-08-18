@@ -9,6 +9,7 @@ import com.grassland.marketplace.taskcatalog.Task;
 import com.grassland.marketplace.taskcatalog.TaskAcceptanceCounterRepository;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
+import com.grassland.marketplace.taskcatalog.TaskFullAutoCloser;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import io.temporal.spring.boot.ActivityImpl;
@@ -47,13 +48,15 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     private final OutboxRepository outbox;
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
+    private final TaskFullAutoCloser taskFullAutoCloser;
 
     public ApplicationReservationActivityImpl(TaskApplicationRepository apps,
                                               TaskAcceptanceCounterRepository counters,
                                               AcceptanceCommandRepository commands,
                                               TaskRepository tasks,
                                               OutboxRepository outbox, FinanceEscrowClient finance,
-                                              TransactionalOperator transactions) {
+                                              TransactionalOperator transactions,
+                                              TaskFullAutoCloser taskFullAutoCloser) {
         this.apps = apps;
         this.counters = counters;
         this.commands = commands;
@@ -61,6 +64,7 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         this.outbox = outbox;
         this.finance = finance;
         this.transactions = transactions;
+        this.taskFullAutoCloser = taskFullAutoCloser;
     }
 
     @Override
@@ -147,12 +151,16 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         }
         // 领域写（reserving→accepted）+ outbox 同事务。冻结 claim 时资金快照（beginAcceptance 已按 claim 时
         // task 行刷新本行的 bounty/deposit 列，此处按行值冻结——accept 后改 task 只影响新报名，D7 pinning）。
+        // #26 满员自动关闭（D2/D4）：激活落定的同一事务内判定 accepted 计数 ≥ max_slots，命中即 published→closed
+        // + 同事务 TaskClosed(slots_full)。未满/无上限/已非 published 时 closeIfFull 为 empty，thenReturn 照常
+        // 透传激活结果；关闭失败（DB 异常）整体回滚，Temporal 重试本 activity。
         TaskApplication activated = transactions.transactional(
                 apps.acceptFromReserving(input.applicationId(), input.taskId(),
                                 app.bountyCents(), app.freebieDepositCents())
                         .flatMap(a -> markCommandAccepted(input)
                                 .then(outbox.append(envelope("ApplicationAccepted", a, null, input.commandId())))
                                 .thenReturn(a))
+                        .flatMap(a -> taskFullAutoCloser.closeIfFull(input.taskId()).thenReturn(a))
         ).block();
         if (activated == null) {
             return;  // 竞态：已变迁（empty Mono，无写无事件）
