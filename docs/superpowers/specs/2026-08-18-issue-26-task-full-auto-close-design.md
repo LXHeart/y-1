@@ -1,7 +1,7 @@
 # Issue #26 任务满员自动关闭 设计
 
 - 日期：2026-08-18
-- 状态：已定稿，待实现（计划见 `docs/superpowers/plans/2026-08-18-issue-26-task-full-auto-close.md`）
+- 状态：已实现（2026-08-18；计划见 `docs/superpowers/plans/2026-08-18-issue-26-task-full-auto-close.md`，测试证据见进度指南横向缺口 #26 行）
 - 范围：marketplace-service（核心）+ identity-service 通知模板 + 前端操作文案
 - 登记：进度指南横向缺口 #26（PRD §2.2「报名人数满自动截止」）；推荐执行顺序第一批第 3 项
 - 取代关系：worktree `feat/issues-26-32` 中未提交的 `TaskCapacityDispatcher` 轮询方案作废（理由见 D2），仅作设计参考，不合并不沿用
