@@ -54,7 +54,7 @@ public class ByokRoutingService {
 
         return byokLookup
                 .map(key -> ProviderResolution.byok(
-                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey()))
+                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey(), key.keyVersion()))
                 .switchIfEmpty(Mono.defer(() -> {
                     if (!allowFallback) {
                         logger.info("No BYOK for capability={} and fallback not authorized → deny", capability);
@@ -81,27 +81,29 @@ public class ByokRoutingService {
             String baseUrl,
             String model,
             String encryptedKey,        // BYOK 密文（platform/denied 时为 null）
+            String keyVersion,          // BYOK 路由版本（platform/denied 时为 null）
             boolean chargesPlatformFee, // 是否收平台 AI 费（仅平台模型）
             int platformModelVersion,   // 平台配置版本（TaskContext 冻结用）；非平台为 0
             UUID platformConfigId,
             Integer maxConcurrency,
             String denialReason         // DENIED 时的原因；其余为 null
     ) {
-        public static ProviderResolution byok(String provider, String baseUrl, String model, String encryptedKey) {
+        public static ProviderResolution byok(
+                String provider, String baseUrl, String model, String encryptedKey, String keyVersion) {
             return new ProviderResolution(ResolutionType.BYOK, provider, baseUrl, model, encryptedKey,
-                    false, 0, null, null, null);
+                    keyVersion, false, 0, null, null, null);
         }
 
         public static ProviderResolution platform(
                 UUID configId, String provider, String baseUrl, String model,
                 int version, Integer maxConcurrency) {
             return new ProviderResolution(ResolutionType.PLATFORM, provider, baseUrl, model, null,
-                    true, version, configId, maxConcurrency, null);
+                    null, true, version, configId, maxConcurrency, null);
         }
 
         public static ProviderResolution denied(String reason) {
             return new ProviderResolution(
-                    ResolutionType.DENIED, null, null, null, null, false, 0, null, null, reason);
+                    ResolutionType.DENIED, null, null, null, null, null, false, 0, null, null, reason);
         }
 
         public boolean isByok() {
@@ -119,6 +121,16 @@ public class ByokRoutingService {
         /** BYOK 是否需要解密（有密文）。 */
         public boolean needsKeyDecryption() {
             return isByok() && encryptedKey != null;
+        }
+
+        public String modelVersionKey() {
+            if (isPlatform()) {
+                return "platform:" + platformModelVersion;
+            }
+            if (isByok()) {
+                return "byok:" + keyVersion;
+            }
+            throw new IllegalStateException("拒绝结果没有模型版本");
         }
     }
 

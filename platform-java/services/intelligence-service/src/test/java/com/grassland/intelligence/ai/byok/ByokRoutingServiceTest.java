@@ -45,6 +45,7 @@ class ByokRoutingServiceTest {
         assertThat(r.isByok()).isTrue();
         assertThat(r.needsKeyDecryption()).isTrue();
         assertThat(r.encryptedKey()).isEqualTo("ciphertext");
+        assertThat(r.modelVersionKey()).isEqualTo("byok:v1");
         assertThat(r.chargesPlatformFee()).isFalse();
         verify(keyRepository).findByPersonalAndCapability("acct", "text");
         verifyNoMoreInteractions(keyRepository);
@@ -63,6 +64,7 @@ class ByokRoutingServiceTest {
         assertThat(r.isPlatform()).isTrue();
         assertThat(r.chargesPlatformFee()).isTrue();
         assertThat(r.platformModelVersion()).isEqualTo(1);
+        assertThat(r.modelVersionKey()).isEqualTo("platform:1");
         assertThat(r.model()).isEqualTo("qwen-plus");
         assertThat(r.maxConcurrency()).isEqualTo(4);
     }

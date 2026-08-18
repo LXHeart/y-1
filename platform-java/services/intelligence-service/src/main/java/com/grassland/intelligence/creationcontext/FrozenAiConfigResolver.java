@@ -61,7 +61,7 @@ public class FrozenAiConfigResolver {
                 .filter(key -> equalsText(config, "keyVersion", key.keyVersion()))
                 .filter(key -> matchesInstant(config.get("configUpdatedAt"), key.updatedAt()))
                 .map(key -> ProviderResolution.byok(
-                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey()))
+                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey(), key.keyVersion()))
                 .switchIfEmpty(Mono.error(new IntelligenceException(
                         409, "创作开始时冻结的 BYOK 配置已变化或不可用")));
     }

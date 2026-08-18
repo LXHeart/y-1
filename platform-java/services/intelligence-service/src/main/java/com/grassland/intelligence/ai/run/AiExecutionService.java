@@ -111,32 +111,45 @@ public class AiExecutionService {
             UUID contextSnapshotId) {
 
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> {
-                    String orgId = caller.organizationId();
-                    String accountId = caller.accountId();
-                    UUID budgetOpId = UUID.randomUUID();
-                    Mono<ProviderResolution> providerResolution = contextSnapshotId == null
-                            ? routingService.resolveProvider(orgId, accountId, capability, allowFallback)
-                            : frozenAiConfigs.resolve(contextSnapshotId, accountId, capability)
-                                    .map(FrozenAiConfigResolver.ResolvedSnapshot::provider);
-                    return providerResolution
-                            .flatMap(provider -> {
-                                if (provider.isDenied()) {
-                                    return Mono.just(ExecutionResult.denied(provider.denialReason()));
-                                }
-                                String decryptedKey = decryptIfNeeded(provider);
-                                int estimatedTokens = Math.addExact(estimatedInputTokens, estimatedOutputTokens);
-                                Integer estimatedCents = estimateForProvider(
-                                        provider, estimatedInputTokens, estimatedOutputTokens);
-                                if (estimatedCents == null) {
-                                    return Mono.just(ExecutionResult.denied("unpriced_model"));
-                                }
-                                return reserveCreateAndCharge(
-                                        provider, orgId, accountId, capability, feature,
-                                        allowFallback, budgetOpId, decryptedKey,
-                                        estimatedInputTokens, estimatedOutputTokens,
-                                        estimatedTokens, estimatedCents, "sync", "v1", contextSnapshotId);
-                            });
+                .flatMap(caller -> prepareExecution(
+                        caller.accountId(), caller.organizationId(), capability, feature,
+                        estimatedInputTokens, estimatedOutputTokens, allowFallback, contextSnapshotId));
+    }
+
+    /** Worker entry point with explicit ownership; no HTTP exchange or caller resolution is required. */
+    public Mono<ExecutionResult> prepareExecution(
+            String accountId, String organizationId, String capability, CreditFeature feature,
+            int estimatedInputTokens, int estimatedOutputTokens, boolean allowFallback) {
+        return prepareExecution(accountId, organizationId, capability, feature,
+                estimatedInputTokens, estimatedOutputTokens, allowFallback, null);
+    }
+
+    private Mono<ExecutionResult> prepareExecution(
+            String accountId, String organizationId, String capability, CreditFeature feature,
+            int estimatedInputTokens, int estimatedOutputTokens, boolean allowFallback,
+            UUID contextSnapshotId) {
+        UUID budgetOpId = UUID.randomUUID();
+        Mono<ProviderResolution> providerResolution = contextSnapshotId == null
+                ? routingService.resolveProvider(organizationId, accountId, capability, allowFallback)
+                : frozenAiConfigs.resolve(contextSnapshotId, accountId, capability)
+                        .map(FrozenAiConfigResolver.ResolvedSnapshot::provider);
+        return providerResolution
+                .flatMap(provider -> {
+                    if (provider.isDenied()) {
+                        return Mono.just(ExecutionResult.denied(provider.denialReason()));
+                    }
+                    String decryptedKey = decryptIfNeeded(provider);
+                    int estimatedTokens = Math.addExact(estimatedInputTokens, estimatedOutputTokens);
+                    Integer estimatedCents = estimateForProvider(
+                            provider, estimatedInputTokens, estimatedOutputTokens);
+                    if (estimatedCents == null) {
+                        return Mono.just(ExecutionResult.denied("unpriced_model"));
+                    }
+                    return reserveCreateAndCharge(
+                            provider, organizationId, accountId, capability, feature,
+                            allowFallback, budgetOpId, decryptedKey,
+                            estimatedInputTokens, estimatedOutputTokens,
+                            estimatedTokens, estimatedCents, "sync", "v1", contextSnapshotId);
                 })
                 .onErrorResume(InsufficientCreditsException.class,
                         e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
