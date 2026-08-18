@@ -250,7 +250,9 @@ public class ApplicationController {
                 .onErrorResume(this::isAcceptanceConstraintConflict,
                         failure -> acceptanceCommands.findByActorAndKey(merchant.accountId(), idempotencyKey)
                                 .flatMap(existing -> replayAcceptance(existing, task.id(), applicationId)
-                                        .map(response -> new AcceptanceOutcome(response, false)))
+                                        // 与 replayBatchAccept 一致：重放时接受事务早已落定，关闭事实以任务现状为准
+                                        .flatMap(response -> taskClosed(task.id())
+                                                .map(closed -> new AcceptanceOutcome(response, closed))))
                                 .switchIfEmpty(fail(409, "该报名正在被其他请求处理")));
     }
 
@@ -411,10 +413,6 @@ public class ApplicationController {
     /** 任务书 #27：批量操作逐项结果。#26 D12：{@code taskClosed} = 该项接受是否同事务触发满员自动关闭。 */
     private record BatchItemResult(String applicationId, String outcome, String commandId,
                                    String workflowId, String reason, boolean taskClosed) {
-        static BatchItemResult ofOutcome(String appId, String outcome, AcceptanceClaim claim) {
-            return new BatchItemResult(appId, outcome, claim.command().id(),
-                    claim.command().workflowId(), null, claim.taskClosed());
-        }
         static BatchItemResult ofOutcome(String appId, String outcome) {
             return new BatchItemResult(appId, outcome, null, null, null, false);
         }

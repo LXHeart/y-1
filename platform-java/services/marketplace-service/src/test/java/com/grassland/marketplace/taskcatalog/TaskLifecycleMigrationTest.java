@@ -32,6 +32,11 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
         String fullTask = UUID.randomUUID().toString();
         String fullRecommender = UUID.randomUUID().toString();
         String fullApp = UUID.randomUUID().toString();
+        // #26 V42 负对照：max_slots=2、仅 1 条 accepted（未满）的历史任务——重放后必须保持 published
+        //（防「设了 max_slots 即关」回归：V42 口径是 accepted 计数 ≥ max_slots，不是有上限就关）。
+        String partialTask = UUID.randomUUID().toString();
+        String partialRecommender = UUID.randomUUID().toString();
+        String partialApp = UUID.randomUUID().toString();
 
         try (var connection = DriverManager.getConnection(
                         POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -79,6 +84,13 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
             statement.execute("INSERT INTO " + schema
                     + ".task_application(id, task_id, recommender_account_id, status) VALUES ('"
                     + fullApp + "', '" + fullTask + "', '" + fullRecommender + "', 'accepted')");
+            // V42 负对照行：max_slots=2、1 条 accepted（未满）。
+            statement.execute("INSERT INTO " + schema
+                    + ".task(id, owner_account_id, organization_id, title, status, max_slots) "
+                    + "VALUES ('" + partialTask + "', '" + owner + "', '" + org + "', '历史未满任务', 'published', 2)");
+            statement.execute("INSERT INTO " + schema
+                    + ".task_application(id, task_id, recommender_account_id, status) VALUES ('"
+                    + partialApp + "', '" + partialTask + "', '" + partialRecommender + "', 'accepted')");
         }
 
         Flyway.configure()
@@ -131,6 +143,14 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                 rs.next();
                 assertThat(rs.getString("status")).isEqualTo("closed");
                 assertThat(rs.getInt("version")).isEqualTo(2);
+            }
+            // V42 负对照：max_slots=2 + 1 条 accepted（未满）→ 保持 published、version 停在 V11 的 1
+            //（防「设了 max_slots 即关」回归——回填口径 = accepted 计数 ≥ max_slots）。
+            try (var rs = statement.executeQuery(
+                    "SELECT status, version FROM " + schema + ".task WHERE id = '" + partialTask + "'")) {
+                rs.next();
+                assertThat(rs.getString("status")).isEqualTo("published");
+                assertThat(rs.getInt("version")).isEqualTo(1);
             }
             // 迁移绝不伪造 outbox 事件：全表 0 行（含 V42 的 TaskClosed，D8；baseline 表无 event_type 列，
             // 回填迁移也确实不写 outbox，全表计数即完备断言）。

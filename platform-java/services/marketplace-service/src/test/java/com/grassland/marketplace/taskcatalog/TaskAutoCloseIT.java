@@ -388,6 +388,77 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         assertThat(scanned).contains(eligible).doesNotContain(full);
     }
 
+    // 场景 15（终审 F1）：两笔资金型接受并发激活。非资金路径由 task_acceptance_counter 行锁横跨
+    // claim→accept→closeIfFull 整个事务而安全；资金型 claim 在独立事务先提交，两个 saga 激活事务
+    // 各 UPDATE 不同 task_application 行、closeIfFull 谓词不匹配时不取 task 行锁——READ COMMITTED 下
+    // 两边满员判定子查询各只见自己那条 accepted（语句快照互盲），均判未满双双 no-op，
+    // 提交后 accepted=max_slots 任务却仍 published（无关闭、无事件、无通知，且不自愈）。
+    // 修复 = closeIfFull 前置 task 行 FOR NO KEY UPDATE 锁串行化判定（取 NO KEY 而非 FOR UPDATE：
+    // claim 事务的 acceptance_command FK 对 task 行持 KEY SHARE，FOR UPDATE 会与之死锁）；
+    // 后到者获锁后以新语句快照重评恰一次关闭。
+    @Test
+    void concurrentMonetaryActivationsCloseFullTaskExactlyOnce() throws Exception {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTaskBounty(merchant, org, 2, 500L);
+        String first = apply(UUID.randomUUID().toString(), task);
+        String second = apply(UUID.randomUUID().toString(), task);
+
+        // 两笔 reserve 各拴一扇门：两个 202 返回、两个 saga 都停在 reserveFunds（reservesReached 证实停稳），
+        // 主线程背靠背放行 → 两个 activateEngagement 事务同时开跑（放大并发判定窗口）。
+        CountDownLatch reservesReached = new CountDownLatch(2);
+        CompletableFuture<ReserveResult> firstGate = new CompletableFuture<>();
+        CompletableFuture<ReserveResult> secondGate = new CompletableFuture<>();
+        when(financeClient.reserve(eq(org), eq(first), eq(500L), anyString()))
+                .thenAnswer(inv -> {
+                    reservesReached.countDown();
+                    return Mono.fromFuture(firstGate);
+                });
+        when(financeClient.reserve(eq(org), eq(second), eq(500L), anyString()))
+                .thenAnswer(inv -> {
+                    reservesReached.countDown();
+                    return Mono.fromFuture(secondGate);
+                });
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread firstThread = new Thread(() -> runConcurrentUpdate(ready, start, failure,
+                () -> assertThat(monetaryAcceptStatus(merchant, org, task, first)).isEqualTo(202)));
+        Thread secondThread = new Thread(() -> runConcurrentUpdate(ready, start, failure,
+                () -> assertThat(monetaryAcceptStatus(merchant, org, task, second)).isEqualTo(202)));
+        firstThread.start();
+        secondThread.start();
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        firstThread.join(10_000);
+        secondThread.join(10_000);
+        assertThat(failure.get()).isNull();
+        assertThat(appStatus(first)).isEqualTo("reserving");
+        assertThat(appStatus(second)).isEqualTo("reserving");
+        assertThat(reservesReached.await(10, TimeUnit.SECONDS)).isTrue();
+
+        firstGate.complete(ReserveResult.reserved(500L));
+        secondGate.complete(ReserveResult.reserved(500L));
+
+        // 两个线程各自轮询到 accepted（两笔激活均已落定）后断言
+        AtomicReference<Throwable> awaitFailure = new AtomicReference<>();
+        Thread firstAwait = new Thread(() -> runAwait(
+                () -> awaitReservation(merchant, task, first, "accepted"), awaitFailure));
+        Thread secondAwait = new Thread(() -> runAwait(
+                () -> awaitReservation(merchant, task, second, "accepted"), awaitFailure));
+        firstAwait.start();
+        secondAwait.start();
+        firstAwait.join(15_000);
+        secondAwait.join(15_000);
+        assertThat(awaitFailure.get()).isNull();
+        assertThat(acceptedCount(task)).isEqualTo(2);
+        // 恰一次关闭：任务 closed + TaskClosed(slots_full) 恰 1 条（竞态缺陷下任务满员仍 published）
+        assertThat(taskStatus(task)).isEqualTo("closed");
+        assertThat(outboxCount("TaskClosed", task)).isEqualTo(1);
+        assertThat(outboxPayloadField("TaskClosed", task, "closeReason")).isEqualTo("slots_full");
+    }
+
     // ---------- 造数/断言 helper（照 ApplicationControllerIT 的同名 helper 风格） ----------
 
     @SuppressWarnings("unchecked")
@@ -539,6 +610,22 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .header("Idempotency-Key", idempotencyKey)
                 .exchange().returnResult(Void.class).getStatus().value();
+    }
+
+    /** 资金型接受 HTTP 状态（202 = claim 成功、saga 已派发，照场景 5 的签名口径）。 */
+    private int monetaryAcceptStatus(String merchant, String org, String task, String app) {
+        return client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().returnResult(Void.class).getStatus().value();
+    }
+
+    /** 场景 15：并发轮询线程的失败收集（awaitReservation 抛错不致打断另一线程）。 */
+    private void runAwait(Runnable await, AtomicReference<Throwable> failure) {
+        try {
+            await.run();
+        } catch (Throwable t) {
+            failure.compareAndSet(null, t);
+        }
     }
 
     private void runConcurrentUpdate(CountDownLatch ready, CountDownLatch start,

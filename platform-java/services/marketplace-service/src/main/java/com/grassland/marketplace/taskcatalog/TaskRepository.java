@@ -36,6 +36,15 @@ public class TaskRepository {
             + " version, application_deadline, published_at, cancelled_at, min_recommender_level,"
             + " requirements::text, auto_accept_min_level, freebie_deposit_cents";
 
+    /**
+     * #26 D6/D7 满员谓词（feed 与自动接受扫描同口径共用）：counter occupied≥max 不展示/不扫描——
+     * 与 apply 端「名额已满」同口径；closed 任务已被 status 谓词排除，counter 谓词兜住资金型 reserving
+     * 瞬态与漏网路径；max_slots NULL 恒展示。
+     */
+    private static final String SLOTS_AVAILABLE_PREDICATE =
+            " AND (task.max_slots IS NULL OR NOT EXISTS (SELECT 1 FROM task_acceptance_counter counter"
+            + " WHERE counter.task_id = task.id AND counter.occupied_slots >= task.max_slots))";
+
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final DatabaseClient db;
@@ -230,17 +239,36 @@ public class TaskRepository {
     /**
      * #26 满员自动关闭（D3）：accepted 计数达到 max_slots 时 published→closed。无版本守卫（系统迁移不参与
      * 用户乐观锁）；0 行 = 无操作（无上限/未满/已非 published——可能被并发手动 close 或 cancel 抢先），绝不报错。
+     *
+     * <p>FOR NO KEY UPDATE 前置锁串行化并发激活的满员判定（READ COMMITTED 快照互盲修复）：资金型接受 claim
+     * 在独立事务先提交，两个 saga 激活事务各 UPDATE 不同 task_application 行后并发判定；条件 UPDATE 谓词
+     * 不匹配时不取 task 行锁，两边的 count 子查询各只见自己那条已提交的 accepted（READ COMMITTED 语句快照
+     * 互盲），均判未满双双 no-op → 任务满员却仍 published。先同事务锁定 task 行：空 = 已非 published / 无上限
+     * → 直接无操作（顺带省去无上限任务的 UPDATE）；非空 = 后到者阻塞至先者提交后以新语句快照重评 count，可见
+     * 对方已提交的 accepted 行。两步须于同一调用方事务内执行（所有调用方均已如此，见 TaskFullAutoCloser 契约）。
+     *
+     * <p>锁强度取 FOR NO KEY UPDATE（而非 FOR UPDATE）有二因：① task_acceptance_command.task_id 有 FK→task，
+     * 每笔 claim 事务的 INSERT 都对 task 行持 FOR KEY SHARE——FOR UPDATE 与之冲突，会与「持 KEY SHARE 等
+     * counter 行锁的并发 claim 事务」成环死锁（40P01）；FOR NO KEY UPDATE 兼容 KEY SHARE，且与并发
+     * closeIfFull 互斥（NO KEY UPDATE 彼此冲突），串行化效果不变。② 与收口 UPDATE 自身（不改键列 →
+     * NO KEY UPDATE）同强度，取锁不超出必要。
      */
     public Mono<Task> closeIfFull(String taskId) {
-        return db.sql("""
-                UPDATE task SET status = 'closed', version = version + 1, updated_at = now()
-                WHERE id = CAST(:id AS uuid) AND status = 'published' AND max_slots IS NOT NULL
-                  AND (SELECT count(*) FROM task_application a
-                       WHERE a.task_id = task.id AND a.status = 'accepted') >= task.max_slots
-                RETURNING %s
-                """.formatted(SELECT_COLS))
+        return db.sql("SELECT id::text FROM task"
+                        + " WHERE id = CAST(:id AS uuid) AND status = 'published' AND max_slots IS NOT NULL"
+                        + " FOR NO KEY UPDATE")
                 .bind("id", taskId)
-                .map(TaskRepository::map).one();
+                .map(row -> row.get("id", String.class))
+                .one()
+                .flatMap(ignored -> db.sql("""
+                        UPDATE task SET status = 'closed', version = version + 1, updated_at = now()
+                        WHERE id = CAST(:id AS uuid) AND status = 'published' AND max_slots IS NOT NULL
+                          AND (SELECT count(*) FROM task_application a
+                               WHERE a.task_id = task.id AND a.status = 'accepted') >= task.max_slots
+                        RETURNING %s
+                        """.formatted(SELECT_COLS))
+                        .bind("id", taskId)
+                        .map(TaskRepository::map).one());
     }
 
     /**
@@ -396,10 +424,8 @@ public class TaskRepository {
         String predicate = "status = 'published'"
                 + " AND (application_deadline IS NULL OR application_deadline > now())"
                 + " AND min_recommender_level <= :recommenderLevel"
-                // #26 D6：满员（counter occupied>=max）不展示——与 apply 端「名额已满」同口径；
-                // closed 任务已被 status 谓词排除，counter 谓词兜住资金型 reserving 瞬态与漏网路径；max_slots NULL 恒展示。
-                + " AND (task.max_slots IS NULL OR NOT EXISTS (SELECT 1 FROM task_acceptance_counter counter"
-                + " WHERE counter.task_id = task.id AND counter.occupied_slots >= task.max_slots))"
+                // #26 D6：满员任务不展示（SLOTS_AVAILABLE_PREDICATE，与自动接受扫描同口径）
+                + SLOTS_AVAILABLE_PREDICATE
                 + (filter.platform() != null ? " AND platform = :platform" : "")
                 + (filter.contentForm() != null ? " AND content_form = :contentForm" : "")
                 + (filter.minBountyCents() != null ? " AND bounty_cents IS NOT NULL AND bounty_cents >= :minBountyCents" : "")
@@ -458,13 +484,12 @@ public class TaskRepository {
     }
 
     /** 任务书 #27：查找已发布且开启了自动通过门槛的任务（未截止、未关闭）。dispatcher 每轮扫描用。
-     *  #26 D7：满员（counter occupied>=max）任务不再被扫描——省去每轮空转出 slots_full 的拒绝。 */
+     *  #26 D7：满员任务不再被扫描——省去每轮空转出 slots_full 的拒绝（SLOTS_AVAILABLE_PREDICATE，与 feed 同口径）。 */
     public Flux<Task> findAutoAcceptEnabled(int limit) {
         return db.sql("SELECT " + SELECT_COLS
                         + " FROM task WHERE status = 'published' AND auto_accept_min_level IS NOT NULL"
                         + " AND (application_deadline IS NULL OR application_deadline > now())"
-                        + " AND (task.max_slots IS NULL OR NOT EXISTS (SELECT 1 FROM task_acceptance_counter counter"
-                        + " WHERE counter.task_id = task.id AND counter.occupied_slots >= task.max_slots))"
+                        + SLOTS_AVAILABLE_PREDICATE
                         + " ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED")
                 .bind("limit", Math.max(1, Math.min(limit, 200)))
                 .map(TaskRepository::map).all();
