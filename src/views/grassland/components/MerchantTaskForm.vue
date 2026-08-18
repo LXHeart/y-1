@@ -55,7 +55,7 @@
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>赏金 ¥<input :value="form.bountyYuan" type="number" min="0" :disabled="freebieActive || !canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>霸王餐押金 ¥<input :value="form.freebieDepositYuan" type="number" min="0" :disabled="bountyActive || !canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>霸王餐押金 ¥<input :value="form.freebieDepositYuan" type="number" min="0" :disabled="bountyActive || ladderEnabled || !canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>报名截止 <input :value="form.applicationDeadline" type="datetime-local" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
       <label>最低等级
         <select :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
@@ -72,6 +72,30 @@
     <p v-if="bountyActive || freebieActive" class="gl-hint">
       {{ fundingHint }}
     </p>
+    <div class="gl-row commission-ladder-toggle-row">
+      <label>阶梯佣金
+        <input type="checkbox" aria-label="启用阶梯佣金" :checked="ladderForm.enabled" :disabled="freebieActive" @change="patchCommissionLadder({ enabled: ($event.target as HTMLInputElement).checked })" />
+      </label>
+      <span v-if="freebieActive" class="gl-hint">霸王餐押金启用中，不能同时开启阶梯佣金</span>
+    </div>
+    <div v-if="ladderForm.enabled" class="commission-ladder-editor">
+      <label>指标标识
+        <input :value="ladderForm.metricKey" aria-label="阶梯佣金指标标识" placeholder="如 douyin.play_count（字母开头，可用字母/数字/点/下划线/连字符）" @input="patchCommissionLadder({ metricKey: ($event.target as HTMLInputElement).value })" />
+      </label>
+      <ul class="gl-list commission-tier-list">
+        <li v-for="(tier, index) in ladderForm.tiers" :key="index" class="gl-row commission-tier-row">
+          <label>第 {{ index + 1 }} 档阈值
+            <input :value="tier.threshold" type="number" min="0" :aria-label="`第 ${index + 1} 档阈值`" @input="patchCommissionTier(index, { threshold: Number(($event.target as HTMLInputElement).value) })" />
+          </label>
+          <label>第 {{ index + 1 }} 档佣金 ¥
+            <input :value="tier.payoutYuan" type="number" min="0" step="0.01" :aria-label="`第 ${index + 1} 档佣金`" @input="patchCommissionTier(index, { payoutYuan: Number(($event.target as HTMLInputElement).value) })" />
+          </label>
+          <button type="button" :aria-label="`删除第 ${index + 1} 档`" :disabled="ladderForm.tiers.length <= 1" @click="removeCommissionTier(index)">删除档位</button>
+        </li>
+      </ul>
+      <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
+      <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
+    </div>
     <div class="gl-row">
       <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
       <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
@@ -84,6 +108,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Store } from '../../../types/grassland'
+import { emptyCommissionLadderForm } from './commission-ladder'
+import type { CommissionLadderFormData, CommissionLadderFormTier } from './commission-ladder'
 
 interface TaskFormData {
   title: string
@@ -106,6 +132,8 @@ interface TaskFormData {
   publishEndAt: string
   metricRequirements: string
   evidenceRequirements: string
+  /** 任务书 #25：阶梯佣金表单元数据（可选——父组件未接入时按默认关闭渲染）。 */
+  commissionLadder?: CommissionLadderFormData
 }
 
 const props = defineProps<{
@@ -122,15 +150,22 @@ const props = defineProps<{
 
 /** XOR 交互（任务书 #22 B4）：其一 >0 时另一输入禁用，避免同时填导致后端 400。 */
 /** 任务书 #23 R6：contentForm=interaction 时展示目标链接 + 动作类型两个必填字段。 */
+/** 任务书 #25：阶梯佣金（赏金模式）与霸王餐押金互斥——freebie>0 禁用阶梯开关，阶梯启用禁用押金输入。 */
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
 const bountyActive = computed(() => props.form.bountyYuan > 0)
 const freebieActive = computed(() => props.form.freebieDepositYuan > 0)
+/** 阶梯表单元数据；父组件（Task 3）未接入时回退默认关闭表单，保证旧挂载点不受影响。 */
+const ladderForm = computed<CommissionLadderFormData>(
+  () => props.form.commissionLadder ?? emptyCommissionLadderForm(),
+)
+const ladderEnabled = computed(() => ladderForm.value.enabled)
 const fundingHint = computed(() => freebieActive.value
   ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ¥${props.form.freebieDepositYuan}，达标全额返还（与赏金互斥）`
   : '赏金模式：商家出资托管，结算时打给推荐官（与霸王餐押金互斥）')
 
 const emit = defineEmits<{
   'update:field': [field: string, value: string | number | null]
+  'update:commission-ladder': [value: CommissionLadderFormData]
   'change-store': [storeId: string]
   publish: []
   'save-draft': []
@@ -140,6 +175,44 @@ const emit = defineEmits<{
 function updateField(field: string, value: string | number | null): void {
   emit('update:field', field, value)
 }
+
+/** 阶梯佣金整值事件（任务书 #25）：所有变更以不可变更新发出完整 CommissionLadderFormData。 */
+
+function emitCommissionLadder(value: CommissionLadderFormData): void {
+  emit('update:commission-ladder', value)
+}
+
+function patchCommissionLadder(patch: Partial<CommissionLadderFormData>): void {
+  emitCommissionLadder({ ...ladderForm.value, ...patch })
+}
+
+function patchCommissionTier(index: number, patch: Partial<CommissionLadderFormTier>): void {
+  emitCommissionLadder({
+    ...ladderForm.value,
+    tiers: ladderForm.value.tiers.map((tier, tierIndex) =>
+      tierIndex === index ? { ...tier, ...patch } : tier),
+  })
+}
+
+function addCommissionTier(): void {
+  if (ladderForm.value.tiers.length >= 20) return
+  const last = ladderForm.value.tiers[ladderForm.value.tiers.length - 1]
+  emitCommissionLadder({
+    ...ladderForm.value,
+    tiers: [...ladderForm.value.tiers, {
+      threshold: (last?.threshold ?? 0) + 1,
+      payoutYuan: last?.payoutYuan ?? 0,
+    }],
+  })
+}
+
+function removeCommissionTier(index: number): void {
+  if (ladderForm.value.tiers.length <= 1) return
+  emitCommissionLadder({
+    ...ladderForm.value,
+    tiers: ladderForm.value.tiers.filter((_, tierIndex) => tierIndex !== index),
+  })
+}
 </script>
 
 <style scoped>
@@ -147,6 +220,20 @@ function updateField(field: string, value: string | number | null): void {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
+}
+
+.commission-ladder-toggle-row {
+  align-items: center;
+}
+
+.commission-tier-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.commission-tier-row {
+  align-items: end;
 }
 
 .task-requirement-grid label,
