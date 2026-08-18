@@ -23,9 +23,11 @@ import MerchantTaskForm from './components/MerchantTaskForm.vue'
 import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import {
   buildCommissionLadderPayload,
+  calculateCommissionPayoutCents,
   commissionLadderFormFromTask,
   emptyCommissionLadderForm,
   getCommissionLadderValidationError,
+  parseConfirmedMetricValue,
 } from './components/commission-ladder'
 import type { CommissionLadderFormData } from './components/commission-ladder'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
@@ -122,6 +124,11 @@ const revisingTask = ref<{ id: string; version: number } | null>(null)
 const applyNote = ref('')
 /** 商家拒绝理由按 application 独立保存，避免多条报名共用输入串值。 */
 const contestReasons = ref<Record<string, string>>({})
+/**
+ * 任务书 #25：商家按 application 申报的实际指标原始输入（key = applicationId）。
+ * 确认成功即清理；失败保留以便修正重试。仅阶梯佣金任务渲染输入。
+ */
+const confirmedMetricInputs = ref<Record<string, string>>({})
 
 // ---------- 推荐官：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）----------
 const feedItems = ref<Task[]>([])
@@ -392,6 +399,7 @@ function resetAccountState(): void {
   activeDisputeId.value = ''
   outcomes.value = {}
   contestReasons.value = {}
+  confirmedMetricInputs.value = {}
   notice.value = ''
   applicantReputation.value = {}
   applicantProfile.value = {}
@@ -997,13 +1005,51 @@ async function contest(app: TaskApplication): Promise<void> {
   setNotice('商家异议已提交，结算已暂停并转客服裁定')
 }
 
-/** 确认履约：202 后轮询结算结局（有未终局争议时为 held）。 */
+/** 选中任务的冻结阶梯（无 ladder = 固定佣金任务，确认时无需申报指标）。 */
+function selectedCommissionLadder() {
+  return selectedTask.value?.requirements?.commissionLadder ?? null
+}
+
+/** 解析某 application 的申报输入：未填/负数/非整数/超安全范围 → { value: null, error }。 */
+function confirmedMetricResult(applicationId: string) {
+  // v-model 对 type="number" 自动做 .number 转换（'50000' → 50000；空串保持 ''），统一按字符串解析
+  return parseConfirmedMetricValue(String(confirmedMetricInputs.value[applicationId] ?? ''))
+}
+
+/** 预计结算（分）：按冻结档位取已达最高档；未填/非法按 ¥0 展示。 */
+function previewCommissionCents(applicationId: string): number {
+  const ladder = selectedCommissionLadder()
+  const parsed = confirmedMetricResult(applicationId)
+  return ladder && parsed.value != null
+    ? calculateCommissionPayoutCents(ladder, parsed.value)
+    : 0
+}
+
+/**
+ * 确认履约：202 后轮询结算结局（有未终局争议时为 held）。
+ * 阶梯任务先本地校验申报指标（失败 setNotice 不发请求），确认成功清理该输入。
+ */
 async function confirm(app: TaskApplication): Promise<void> {
+  const ladder = selectedCommissionLadder()
+  const parsedMetric = ladder ? confirmedMetricResult(app.id) : { value: null, error: null }
+  if (parsedMetric.error) {
+    setNotice(parsedMetric.error)
+    return
+  }
   outcomes.value = { ...outcomes.value, [app.id]: '结算中…' }
-  const started = await grassland.confirmEngagement(app.taskId, app.id)
+  const started = await grassland.confirmEngagement(
+    app.taskId,
+    app.id,
+    ladder ? parsedMetric.value! : undefined,
+  )
   if (!started) {
     outcomes.value = { ...outcomes.value, [app.id]: '' }
     return
+  }
+  if (ladder) {
+    const next = { ...confirmedMetricInputs.value }
+    delete next[app.id]
+    confirmedMetricInputs.value = next
   }
   const outcome = await grassland.pollSettlement(app.taskId, app.id)
   if (!outcome) {
@@ -1532,7 +1578,28 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
                       <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
                         {{ taskContextLoadingAppId === a.id ? '加载上下文...' : '围绕任务创作' }}
                       </button>
-                      <button type="button" :disabled="grassland.loading.value" @click="confirm(a)">确认履约</button>
+                      <!-- 任务书 #25：阶梯任务确认履约须申报实际指标，实时预览预计结算 -->
+                      <template v-if="selectedCommissionLadder()">
+                        <input
+                          v-model="confirmedMetricInputs[a.id]"
+                          type="number"
+                          min="0"
+                          step="1"
+                          class="gl-metric-input"
+                          :aria-label="`实际指标 ${selectedCommissionLadder()?.metricKey ?? ''} ${a.id}`"
+                          placeholder="实际指标"
+                        />
+                        <span class="gl-hint">预计结算 ¥{{ (previewCommissionCents(a.id) / 100).toFixed(2) }}</span>
+                        <span v-if="confirmedMetricResult(a.id).error" class="gl-hint gl-metric-error">
+                          {{ confirmedMetricResult(a.id).error }}
+                        </span>
+                      </template>
+                      <button
+                        type="button"
+                        :disabled="grassland.loading.value
+                          || (selectedCommissionLadder() != null && confirmedMetricResult(a.id).error != null)"
+                        @click="confirm(a)"
+                      >确认履约</button>
                       <input
                         v-model="contestReasons[a.id]"
                         class="gl-contest-reason"
@@ -1725,6 +1792,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-table th, .gl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
 .gl-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .gl-contest-reason { min-width: 210px; padding: 6px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 12px; }
+/* 任务书 #25：阶梯任务申报指标输入（同拒绝理由行的紧凑样式）与校验错误提示 */
+.gl-metric-input { width: 110px; padding: 6px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 12px; }
+.gl-metric-error { color: var(--color-danger); white-space: nowrap; }
 .gl-outcome { font-size: 12px; opacity: 0.8; }
 .gl-filter { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .gl-filter label { display: flex; align-items: center; gap: 6px; opacity: 0.85; }

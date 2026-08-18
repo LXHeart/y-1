@@ -6,6 +6,7 @@ import GrasslandWorkbench from '../views/grassland/GrasslandWorkbench.vue'
 import MerchantTaskForm from '../views/grassland/components/MerchantTaskForm.vue'
 import { useAuth } from '../composables/useAuth'
 import type { AuthUser } from '../types/auth'
+import type { Task } from '../types/grassland'
 
 /**
  * 工作台**登录态**回归测试。
@@ -429,6 +430,147 @@ describe('GrasslandWorkbench deferred 争议', () => {
     await vi.advanceTimersByTimeAsync(6000)
 
     expect(calls.filter((url) => url === '/api/trust/dispute-requests/request-1')).toHaveLength(0)
+  })
+})
+
+/**
+ * 任务书 #25 Stage E：商家履约确认——阶梯任务申报实际指标 + 预计结算预览。
+ *
+ * 锁的是「未填/非法禁用确认、合法值实时预览、确认带 JSON body、成功清理输入」，
+ * 以及固定佣金任务零变化（无输入、无请求体）。
+ */
+describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () => {
+  const ladderTask: Task = {
+    id: 'task-ladder', ownerAccountId: 'acct-1', organizationId: 'org-1',
+    title: '阶梯确认任务', description: null, status: 'published',
+    contentForm: null, platform: 'douyin', maxSlots: 1, bountyCents: 10000,
+    freebieDepositCents: 0, minRecommenderLevel: 1,
+    requirements: {
+      mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [],
+      commissionLadder: {
+        policyVersion: 'ladder-v1', metricKey: 'douyin.play_count',
+        tiers: [{ threshold: 10000, payoutCents: 5000 }, { threshold: 50000, payoutCents: 10000 }],
+      },
+    },
+    version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+    cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', autoAcceptMinLevel: null,
+  }
+  const application = {
+    id: 'a-1', taskId: 'task-ladder', recommenderAccountId: 'acct-rec',
+    status: 'accepted', note: null, reviewedByAccountId: null, decidedAt: null, createdAt: null,
+  }
+
+  function confirmationsFetch(task: Task): Array<[string, RequestInit | undefined]> {
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.startsWith('/api/tasks?') && url.includes('status=published')) {
+        data = [task]
+      } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
+        data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
+      } else if (url === '/api/tasks/task-ladder/applications') {
+        data = [application]
+      } else if (url.endsWith('/confirm')) {
+        data = { applicationId: 'a-1', status: 'confirmed' }
+      } else if (url.endsWith('/settlement')) {
+        data = { status: 'settled' }
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      } else if (url.startsWith('/api/reputation/')) {
+        data = { accountId: 'acct-rec', level: 'Lv1', levelTitle: '新锐', acceptedCount: 1, completedCount: 0, completionRate: 0, ratingCount: 0, averageScore: null, averageResponseSeconds: null }
+      } else if (url.includes('/profile')) {
+        data = { accountId: 'acct-rec', displayName: null, bio: null, contentTags: [], domainTags: [], socialAccounts: [], updatedAt: null }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    return calls
+  }
+
+  async function selectFirstTask(wrapper: ReturnType<typeof mount>): Promise<void> {
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+    await wrapper.find('button.gl-link').trigger('click')
+    await flushPromises()
+  }
+
+  function confirmButton(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('button').find((item) => item.text() === '确认履约')!
+  }
+
+  test('阶梯任务渲染指标输入与预计结算，确认发送申报值并在成功后清空', async () => {
+    const calls = confirmationsFetch(ladderTask)
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    await selectFirstTask(wrapper)
+
+    // 未填：有输入、预览 ¥0.00、明确提示、确认禁用
+    const metric = wrapper.get('[aria-label="实际指标 douyin.play_count a-1"]')
+    expect(wrapper.text()).toContain('预计结算 ¥0.00')
+    expect(wrapper.text()).toContain('请输入实际指标')
+    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+
+    // 填 50000：达 50000 档（¥100.00），确认可点并发送 JSON body
+    await metric.setValue('50000')
+    expect(wrapper.text()).toContain('预计结算 ¥100.00')
+    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(false)
+    await confirmButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const confirmCall = calls.find(([url]) => url.endsWith('/a-1/confirm'))!
+    expect(confirmCall[1]?.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(String(confirmCall[1]?.body))).toEqual({ confirmedMetricValue: 50000 })
+    // 成功后清理该 application 的临时输入 → 回到未填态、确认再次禁用
+    expect((metric.element as HTMLInputElement).value).toBe('')
+    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test('清空或非法输入时禁用确认且不发请求', async () => {
+    const calls = confirmationsFetch(ladderTask)
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    await selectFirstTask(wrapper)
+
+    const metric = wrapper.get('[aria-label="实际指标 douyin.play_count a-1"]')
+    await metric.setValue('-5')
+    expect(wrapper.text()).toContain('实际指标必须是非负安全整数')
+    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+
+    await metric.setValue('')  // 清空回到未填态
+    expect(wrapper.text()).toContain('请输入实际指标')
+    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+    expect(calls.some(([url]) => url.endsWith('/a-1/confirm'))).toBe(false)
+  })
+
+  test('固定佣金任务无指标输入，确认仍是无请求体', async () => {
+    // 复用 ladderTask 的 id（fetch stub 按固定 id 路由报名列表），但 requirements 无 commissionLadder
+    const fixedTask = {
+      ...ladderTask,
+      title: '固定确认任务',
+      requirements: { ...ladderTask.requirements, commissionLadder: undefined },
+    }
+    const calls = confirmationsFetch(fixedTask)
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    await selectFirstTask(wrapper)
+
+    expect(wrapper.find('[aria-label^="实际指标"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('预计结算')
+    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(false)
+
+    await confirmButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const confirmCall = calls.find(([url]) => url.endsWith('/a-1/confirm'))!
+    expect(confirmCall).toBeDefined()
+    expect(confirmCall[1]?.body).toBeUndefined()
   })
 })
 

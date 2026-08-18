@@ -638,6 +638,20 @@ describe('履约确认请求契约', () => {
     })
   })
 
+  /**
+   * 钉住 `=== undefined` 判据不被 falsy 退化：0 是合法申报值（低于首档/首档阈值为 0），
+   * `if (!confirmedMetricValue)` 会把它误判成固定佣金确认而丢掉请求体。
+   */
+  test('0 值申报指标也必须发送 JSON body（不被 falsy 判据吞掉）', async () => {
+    const spy = mockFetchData({ applicationId: 'a-1', status: 'confirmed' })
+    const { confirmEngagement } = useGrassland()
+    await confirmEngagement('t-1', 'a-1', 0)
+    expect((spy.mock.calls[0][1] as RequestInit).headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body))).toEqual({
+      confirmedMetricValue: 0,
+    })
+  })
+
   test('固定佣金确认保持无请求体', async () => {
     const spy = mockFetchData({ applicationId: 'a-1', status: 'confirmed' })
     const { confirmEngagement } = useGrassland()
