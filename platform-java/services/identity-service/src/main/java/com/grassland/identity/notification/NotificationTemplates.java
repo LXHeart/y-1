@@ -108,6 +108,14 @@ public final class NotificationTemplates {
                         NotificationCategory.ENGAGEMENT, "任务已取消，履约资金已退还", body,
                         LINK_ENGAGEMENTS, taskPayload(payload));
             }
+            // marketplace：#26 满员自动关闭只通知任务归属人；商家手动关闭是自身操作，不通知（D11）。
+            case "TaskClosed" -> {
+                if (!"slots_full".equals(stringField(payload, "closeReason"))) {
+                    yield null;
+                }
+                yield new Template(NotificationCategory.ENGAGEMENT, "任务名额已满，已自动关闭",
+                        "你的任务报名名额已满，系统已自动关闭报名", LINK_ENGAGEMENTS, taskPayload(payload));
+            }
             // marketplace：资金预留失败补偿（如推荐官押金余额不足），通知商家为何未接受成功（ADR-D12 验收 #2）。
             case "ApplicationReservationFailed" -> new Template(
                     NotificationCategory.ENGAGEMENT, "接受报名未成功",

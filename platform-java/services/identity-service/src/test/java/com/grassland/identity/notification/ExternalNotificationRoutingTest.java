@@ -405,6 +405,48 @@ class ExternalNotificationRoutingTest {
         assertThat(bounty.body()).contains("退还商家");
     }
 
+    // ---------- 满员自动关闭（任务书 #26 / D11） ----------
+
+    @Test
+    void taskClosedOnSlotsFullNotifiesOwnerWithEngagementTemplate() {
+        // 自动关闭（slots_full）：marketplace 同时下发 taskOwnerId/ownerAccountId（同值）→ 去重只通知一次。
+        Map<String, Object> fields = Map.of(
+                "taskId", "task-1", "taskOwnerId", OWNER, "ownerAccountId", OWNER,
+                "closeReason", "slots_full");
+        assertThat(resolve("TaskClosed", fields)).containsExactly(OWNER);
+
+        NotificationTemplates.Template template = NotificationTemplates.template("TaskClosed", payload(fields));
+        assertThat(template).isNotNull();
+        assertThat(template.category()).isEqualTo(NotificationCategory.ENGAGEMENT);
+        assertThat(template.title()).isEqualTo("任务名额已满，已自动关闭");
+        assertThat(template.body()).isEqualTo("你的任务报名名额已满，系统已自动关闭报名");
+        assertThat(template.linkPath()).isEqualTo("/me/engagements");
+        assertThat(template.payload()).containsEntry("taskId", "task-1")
+                .doesNotContainKey("taskOwnerId")
+                .doesNotContainKey("ownerAccountId");
+    }
+
+    @Test
+    void taskClosedManualOrMissingReasonProducesNoTemplate() {
+        // 商家手动关闭是自身操作，不自我通知；closeReason 缺失同样不产生通知。
+        assertThat(NotificationTemplates.template("TaskClosed", payload(Map.of(
+                "taskId", "task-1", "taskOwnerId", OWNER, "closeReason", "manual")))).isNull();
+        assertThat(NotificationTemplates.template("TaskClosed", payload(Map.of(
+                "taskId", "task-1", "taskOwnerId", OWNER)))).isNull();
+    }
+
+    @Test
+    void taskClosedRecipientsFallbackToOwnerAccountIdAndDedup() {
+        // taskOwnerId 缺失时回退 ownerAccountId；两字段同值去重为一人。
+        assertThat(resolve("TaskClosed", Map.of(
+                "taskId", "task-1", "ownerAccountId", OWNER, "closeReason", "slots_full")))
+                .containsExactly(OWNER);
+        assertThat(resolve("TaskClosed", Map.of(
+                "taskId", "task-1", "taskOwnerId", OWNER, "ownerAccountId", OWNER)))
+                .containsExactly(OWNER);
+        assertThat(resolve("TaskClosed", Map.of("taskId", "task-1"))).isEmpty();
+    }
+
     // ---- helpers ----
 
     private List<String> resolve(String eventType, Map<String, Object> payload) {

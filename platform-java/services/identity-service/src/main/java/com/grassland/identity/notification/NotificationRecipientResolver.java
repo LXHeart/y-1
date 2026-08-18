@@ -81,6 +81,8 @@ public class NotificationRecipientResolver {
             case "TaskRecommenderInvited" -> accountIds(payload, "recommenderAccountId");
             // 任务审核结果：只读 marketplace 发出的任务归属人字段，不反查任务域。
             case "TaskReviewRejected" -> accountIds(payload, "taskOwnerId", "ownerAccountId");
+            // #26：满员自动关闭通知任务归属人（payload 直读，不反查任务域——照 TaskReviewRejected 先例）。
+            case "TaskClosed" -> accountIds(payload, "taskOwnerId", "ownerAccountId");
             // 推荐官侧：凭证被退回。
             case "DeliverableRejected" -> accountIds(payload, "recommenderAccountId");
             // 人工改判核验结果：商家是唯一需要知道运营结论的一方。
