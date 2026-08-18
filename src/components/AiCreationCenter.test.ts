@@ -90,6 +90,7 @@ describe('AI 内容创作中心', () => {
         stubs: {
           GuestTrialPanel: { template: '<div data-testid="guest-trial-panel" />' },
           AiRunHistoryPanel: { template: '<div data-testid="run-history-panel" />' },
+          SpeechTranscriptionPanel: { template: '<div data-testid="speech-panel" />' },
           AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel" />' },
         },
       },
@@ -97,14 +98,14 @@ describe('AI 内容创作中心', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text()))
-      .toEqual(['开始创作', '创作助手', '运行记录', '素材库', '模型密钥'])
+      .toEqual(['开始创作', '创作助手', '语音转写', '运行记录', '素材库', '模型密钥'])
 
     // 除「开始创作」外每个分栏都要求登录（助手要按账号存草稿，同 runs/keys 口径）
-    for (const label of ['创作助手', '运行记录', '素材库', '模型密钥']) {
+    for (const label of ['创作助手', '语音转写', '运行记录', '素材库', '模型密钥']) {
       await sectionTab(wrapper, label).trigger('click')
     }
 
-    expect(wrapper.emitted('request-login')).toHaveLength(4)
+    expect(wrapper.emitted('request-login')).toHaveLength(5)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
@@ -117,6 +118,7 @@ describe('AI 内容创作中心', () => {
       global: {
         stubs: {
           AiRunHistoryPanel: { template: '<div data-testid="run-history-panel">运行记录面板</div>' },
+          SpeechTranscriptionPanel: { template: '<div data-testid="speech-panel">语音转写面板</div>' },
           MediaLibraryPanel: { template: '<div data-testid="media-library-panel">素材库面板</div>' },
           AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel">模型密钥面板</div>' },
         },
@@ -132,7 +134,13 @@ describe('AI 内容创作中心', () => {
 
     await sectionTab(wrapper, '模型密钥').trigger('click')
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="speech-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(true)
+
+    // 任务书 #33：语音转写分栏懒挂载独立面板。
+    await sectionTab(wrapper, '语音转写').trigger('click')
+    expect(wrapper.find('[data-testid="speech-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
 
     await wrapper.setProps({ authenticated: false })
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)

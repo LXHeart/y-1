@@ -259,6 +259,7 @@
     </template>
 
     <AiRunHistoryPanel v-else-if="activeSection === 'runs'" />
+    <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
     <CreationAssistantPanel
       v-else-if="activeSection === 'assistant'"
       :authenticated="props.authenticated"
@@ -287,6 +288,7 @@ import { computed, ref, watch } from 'vue'
 import AiProviderKeysPanel from '../../components/AiProviderKeysPanel.vue'
 import AiRunHistoryPanel from '../../components/AiRunHistoryPanel.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
+import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
@@ -313,7 +315,7 @@ import type {
   VideoCreationWorkflowId,
 } from '../../types/ai-creation'
 
-type AiCenterSection = 'create' | 'runs' | 'assistant' | 'keys' | 'library'
+type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'keys' | 'library'
 
 const props = defineProps<{
   authenticated: boolean
@@ -358,6 +360,7 @@ let workflowRevision = Date.now()
 const centerSections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
   { id: 'create', label: '开始创作' },
   { id: 'assistant', label: '创作助手' },
+  { id: 'speech', label: '语音转写' },
   { id: 'runs', label: '运行记录' },
   { id: 'library', label: '素材库' },
   { id: 'keys', label: '模型密钥' },
@@ -434,6 +437,7 @@ const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
 const sectionTitle = computed(() => {
   if (activeSection.value === 'runs') return 'AI 运行记录'
+  if (activeSection.value === 'speech') return '语音转写'
   if (activeSection.value === 'assistant') return '智能创作助手'
   if (activeSection.value === 'library') return '内容素材库'
   if (activeSection.value === 'keys') return '模型密钥'
