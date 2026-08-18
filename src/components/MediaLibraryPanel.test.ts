@@ -298,3 +298,165 @@ describe('MediaLibraryPanel', () => {
     expect(adminWrapper.text()).toContain('已迁移 1 项素材到门店')
   })
 })
+
+// ---------- 任务书 #33：智能推荐 tab 的语义搜索与可解释得分 ----------
+
+describe('MediaLibraryPanel 语义搜索（#33）', () => {
+  const baseAsset = {
+    id: 's1', mediaId: 'm1', libraryType: 'personal', category: 'campaign',
+    title: '开业 海报', tags: [], status: 'active', version: 1,
+    mimeType: 'image/png', sizeBytes: 1024,
+    createdAt: '2026-08-18T00:00:00Z', updatedAt: '2026-08-18T00:00:00Z',
+  }
+
+  function appliedResult() {
+    return {
+      items: [{
+        ...baseAsset, score: 82, ruleScore: 70, semanticScore: 90,
+        reasons: ['标题命中「开业」', '语义匹配 90'],
+      }],
+      query: {
+        platform: '', contentForm: '', category: '', terms: ['开业'],
+        semantic: { status: 'applied' as const, provider: 'sandbox', model: 'sandbox-embedding-v1', sandbox: true },
+      },
+    }
+  }
+
+  function stubRecommend(result: unknown) {
+    return vi.fn(async (url: string | URL) => {
+      const path = typeof url === 'string' ? url : url.pathname + url.search
+      if (path.includes('/api/content-assets/recommendations')) return envelope(result)
+      if (path.includes('/api/me/identities')) return envelope([])
+      return envelope({ items: [] })
+    })
+  }
+
+  async function openRecommend(wrapper: Awaited<ReturnType<typeof mount>>) {
+    await wrapper.findAll('button[role="tab"]').find((b) => b.text().includes('智能推荐'))!.trigger('click')
+    await flushPromises()
+  }
+
+  test('搜索表单只在智能推荐 tab 显示，个人素材 tab 不显示', async () => {
+    vi.stubGlobal('fetch', stubRecommend(appliedResult()))
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+
+    expect(wrapper.find('input[data-testid="semantic-query"]').exists()).toBe(false)
+
+    await openRecommend(wrapper)
+    expect(wrapper.find('input[data-testid="semantic-query"]').exists()).toBe(true)
+  })
+
+  test('提交发送 trim 后的 query；Enter 也能提交', async () => {
+    const spy = stubRecommend(appliedResult())
+    vi.stubGlobal('fetch', spy)
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await openRecommend(wrapper)
+
+    const input = wrapper.find('input[data-testid="semantic-query"]')
+    await input.setValue('  开业 海报  ')
+    await wrapper.findAll('button').find((b) => b.text().includes('搜索'))!.trigger('click')
+    await flushPromises()
+
+    expect(spy.mock.calls.some((c) => String(c[0]).includes('query=')
+      && String(c[0]).includes('%E5%BC%80%E4%B8%9A'))).toBe(true)
+
+    // Enter 提交不整页刷新（form submit 拦截）
+    await input.setValue('新店 开业')
+    await wrapper.find('form[data-testid="semantic-search"]').trigger('submit')
+    await flushPromises()
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes('query=')).length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('任务模式空 query 省略参数（用权威任务文本派生）', async () => {
+    const spy = stubRecommend(appliedResult())
+    vi.stubGlobal('fetch', spy)
+    const wrapper = mount(MediaLibraryPanel, {
+      props: {
+        authenticated: true,
+        recommendationContext: { applicationId: 'app-1', taskId: 'task-1' },
+      },
+    })
+    await openRecommend(wrapper)
+
+    await wrapper.findAll('button').find((b) => b.text().includes('搜索'))!.trigger('click')
+    await flushPromises()
+
+    const recommendationCalls = spy.mock.calls
+      .filter((c) => String(c[0]).includes('/api/content-assets/recommendations'))
+    expect(recommendationCalls.length).toBeGreaterThanOrEqual(1)
+    expect(recommendationCalls.some((c) => String(c[0]).includes('query='))).toBe(false)
+    expect(recommendationCalls.some((c) => String(c[0]).includes('applicationId=app-1'))).toBe(true)
+  })
+
+  test('applied 结果展示总分/规则/语义得分与理由', async () => {
+    vi.stubGlobal('fetch', stubRecommend(appliedResult()))
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await openRecommend(wrapper)
+
+    expect(wrapper.text()).toContain('匹配度 82')
+    expect(wrapper.text()).toContain('规则 70')
+    expect(wrapper.text()).toContain('语义 90')
+    expect(wrapper.text()).toContain('语义匹配 90')
+  })
+
+  test('fallback 提示非阻断且规则结果仍可选择', async () => {
+    const fallbackResult = {
+      items: [{
+        ...baseAsset, score: 55, ruleScore: 55,
+        reasons: ['标题命中「开业」'],
+      }],
+      query: {
+        platform: '', contentForm: '', category: '', terms: [],
+        semantic: { status: 'fallback' as const, message: '语义检索暂不可用，已按规则排序' },
+      },
+    }
+    vi.stubGlobal('fetch', stubRecommend(fallbackResult))
+    const wrapper = mount(MediaLibraryPanel, {
+      props: { authenticated: true, selectable: true, selectedAssetIds: [] },
+    })
+    await openRecommend(wrapper)
+
+    expect(wrapper.text()).toContain('语义检索暂不可用，已按规则排序')
+    expect(wrapper.text()).toContain('匹配度 55')
+    expect(wrapper.text()).not.toContain('语义 90')
+    const checkbox = wrapper.find('input[type="checkbox"]')
+    expect((checkbox.element as HTMLInputElement).disabled).toBe(false)
+    await checkbox.setValue()
+    expect(wrapper.emitted('selection-change')?.[0]?.[0]).toEqual(['s1'])
+  })
+
+  test('无结果与请求失败文案不同；二次搜索替换陈旧得分', async () => {
+    let empty = true
+    const spy = vi.fn(async (url: string | URL) => {
+      const path = typeof url === 'string' ? url : url.pathname + url.search
+      if (path.includes('/api/content-assets/recommendations')) {
+        if (empty) {
+          return envelope({ items: [], query: { platform: '', contentForm: '', category: '', terms: [], semantic: { status: 'not_requested' } } })
+        }
+        return envelope(appliedResult())
+      }
+      if (path.includes('/api/me/identities')) return envelope([])
+      return envelope({ items: [] })
+    })
+    vi.stubGlobal('fetch', spy)
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await openRecommend(wrapper)
+    expect(wrapper.text()).toContain('暂无可推荐的素材')
+
+    empty = false
+    await wrapper.find('input[data-testid="semantic-query"]').setValue('开业')
+    await wrapper.findAll('button').find((b) => b.text().includes('搜索'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('匹配度 82')
+
+    // 请求失败：错误提示与空态文案是两条不同文案
+    const failing = vi.fn(async () => new Response(JSON.stringify({ success: false, error: '请求失败（502）' }), {
+      status: 502, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', failing)
+    await wrapper.findAll('button').find((b) => b.text().includes('搜索'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('请求失败（502）')
+  })
+})

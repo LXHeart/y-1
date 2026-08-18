@@ -11,6 +11,7 @@ import type {
   OrganizationAccessScope,
   Store,
   StoreAccessScope,
+  SemanticRecommendationMetadata,
 } from '../types/grassland'
 import type { CreationRecommendationContext } from '../types/ai-creation'
 
@@ -62,9 +63,17 @@ const selectedOrganizationId = ref('')
 /** Empty means organization-level merchant assets; otherwise the selected store scope. */
 const selectedStoreId = ref('')
 const selectedIds = ref<string[]>([...props.selectedAssetIds])
-/** 推荐 tab：id → 分数/理由（可解释排序）；query 存服务端实际采用的检索上下文。 */
-const recommendationScores = ref<Record<string, { score: number; reasons: string[] }>>({})
+/**
+ * 推荐 tab：id → 分数/理由（可解释排序）；query 存服务端实际采用的检索上下文，
+ * semantic 存语义运行元数据（任务书 #33：not_requested/applied/fallback）。
+ */
+const recommendationScores = ref<Record<string, {
+  score: number; ruleScore: number; semanticScore?: number; reasons: string[]
+}>>({})
 const recommendationQuery = ref<{ platform: string; contentForm: string; terms: string[]; sourceTitle?: string } | null>(null)
+const recommendationSemantic = ref<SemanticRecommendationMetadata | null>(null)
+/** 语义搜索输入（提交时 trim；空 = 不带 query，任务模式回落权威任务文本）。 */
+const semanticQuery = ref('')
 
 const CATEGORIES: ReadonlyArray<{ id: ContentAssetCategory; label: string }> = [
   { id: 'store', label: '门店' },
@@ -194,26 +203,43 @@ async function changeMerchantOrganization(): Promise<void> {
   await refresh()
 }
 
+/** 语义搜索提交：只刷新推荐数据，不动其它 tab 的列表与选择（任务书 #33）。 */
+async function searchRecommendations(): Promise<void> {
+  notice.value = ''
+  assets.value = []
+  recommendationScores.value = {}
+  recommendationQuery.value = null
+  recommendationSemantic.value = null
+  const context = props.recommendationContext
+  const query = semanticQuery.value.trim()
+  const result = await grassland.recommendContentAssets({
+    applicationId: context?.applicationId,
+    taskId: context?.taskId,
+    platform: context?.platform,
+    contentForm: context?.contentForm,
+    keywords: context?.keywords,
+    query: query || undefined,
+  })
+  if (result) {
+    assets.value = result.items
+    recommendationQuery.value = { ...result.query, sourceTitle: result.sourceTitle }
+    recommendationSemantic.value = result.query.semantic ?? null
+    recommendationScores.value = Object.fromEntries(
+      result.items.map((item) => [item.id, {
+        score: item.score, ruleScore: item.ruleScore,
+        semanticScore: item.semanticScore, reasons: item.reasons,
+      }]))
+  }
+}
+
 async function refresh(): Promise<void> {
   notice.value = ''
   assets.value = []
   recommendationScores.value = {}
   recommendationQuery.value = null
+  recommendationSemantic.value = null
   if (activeTab.value === 'recommend') {
-    const context = props.recommendationContext
-    const result = await grassland.recommendContentAssets({
-      applicationId: context?.applicationId,
-      taskId: context?.taskId,
-      platform: context?.platform,
-      contentForm: context?.contentForm,
-      keywords: context?.keywords,
-    })
-    if (result) {
-      assets.value = result.items
-      recommendationQuery.value = { ...result.query, sourceTitle: result.sourceTitle }
-      recommendationScores.value = Object.fromEntries(
-        result.items.map((item) => [item.id, { score: item.score, reasons: item.reasons }]))
-    }
+    await searchRecommendations()
     return
   }
   if (activeTab.value === 'public') {
@@ -384,6 +410,18 @@ function formatSize(bytes: number | null | undefined): string {
         }}{{ recommendationQuery.terms.length > 0 ? ` · 关键词：${recommendationQuery.terms.slice(0, 6).join('、')}` : '' }}）
     </p>
 
+    <!-- 任务书 #33：语义搜索（仅智能推荐 tab；空 query=按任务上下文推荐）。 -->
+    <form v-if="activeTab === 'recommend'" class="lib-semantic-search" data-testid="semantic-search"
+      @submit.prevent="searchRecommendations">
+      <input v-model="semanticQuery" type="search" data-testid="semantic-query" maxlength="500"
+        placeholder="用一句话描述想要的素材（如：门店开业宣传海报）" aria-label="语义搜索素材">
+      <button type="button" :disabled="grassland.loading.value" @click="searchRecommendations">搜索</button>
+    </form>
+    <p v-if="activeTab === 'recommend' && recommendationSemantic?.status === 'fallback'"
+      class="lib-semantic-fallback" aria-live="polite">
+      {{ recommendationSemantic.message ?? '语义检索暂不可用，已按规则排序' }}
+    </p>
+
     <!-- 上传区（个人/商家/审核员，公共需 content_reviewer；组织级商家素材仅 org owner/admin） -->
     <div v-if="activeTab === 'personal' || activeTab === 'public' && canReviewPublic
       || activeTab === 'merchant' && canManageCurrentMerchantScope" class="lib-actions">
@@ -444,7 +482,12 @@ function formatSize(bytes: number | null | undefined): string {
         </p>
         <p v-if="asset.tags.length > 0" class="lib-tags">{{ asset.tags.join('、') }}</p>
         <template v-if="activeTab === 'recommend' && recommendationScores[asset.id]">
-          <p class="lib-score">匹配度 {{ recommendationScores[asset.id].score }}</p>
+          <p class="lib-score">
+            匹配度 {{ recommendationScores[asset.id].score }} · 规则 {{ recommendationScores[asset.id].ruleScore
+            }}<template v-if="recommendationScores[asset.id].semanticScore != null">
+              · 语义 {{ recommendationScores[asset.id].semanticScore }}
+            </template>
+          </p>
           <p v-if="recommendationScores[asset.id].reasons.length > 0" class="lib-reasons">
             {{ recommendationScores[asset.id].reasons.join(' · ') }}
           </p>
@@ -514,5 +557,11 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-card-actions button { padding: 3px 10px; font-size: 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; }
 .lib-card-actions button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .lib-card-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.lib-semantic-search { display: flex; gap: 8px; }
+.lib-semantic-search input { flex: 1; }
+.lib-semantic-fallback {
+  margin: 0; padding: 6px 10px; border-radius: 6px; font-size: 12px;
+  background: color-mix(in srgb, var(--color-warning, #b36b00) 12%, transparent);
+}
 .lib-empty { margin: 0; font-size: 13px; opacity: 0.6; }
 </style>
