@@ -438,12 +438,25 @@ export function useGrasslandMarketplace(run: RunFn) {
     })
   }
 
-  /** 商家确认履约 → 启动结算窗口 workflow（202）。 */
-  async function confirmEngagement(taskId: string, appId: string): Promise<boolean> {
+  /**
+   * 商家确认履约 → 启动结算窗口 workflow（202）。
+   *
+   * 阶梯佣金任务必须申报实际指标（非负整数 `confirmedMetricValue`，JSON 请求体）；
+   * 固定佣金任务不传 → 无请求体，保持后端兼容。
+   */
+  async function confirmEngagement(
+    taskId: string,
+    appId: string,
+    confirmedMetricValue?: number,
+  ): Promise<boolean> {
     const result = await run(async () => {
       const response = await fetch(`/api/tasks/${taskId}/applications/${appId}/confirm`, {
         method: 'POST',
         credentials: 'include',
+        ...(confirmedMetricValue === undefined ? {} : {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirmedMetricValue }),
+        }),
       })
       if (!response.ok) {
         throw new Error(await readError(response, `确认失败（${response.status}）`))

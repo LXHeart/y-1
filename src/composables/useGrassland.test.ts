@@ -616,6 +616,36 @@ describe('202 异步轮询终态判据', () => {
   })
 })
 
+describe('履约确认请求契约', () => {
+  function mockFetchData(data: unknown): ReturnType<typeof vi.fn> {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data }),
+    })
+    vi.stubGlobal('fetch', spy)
+    return spy
+  }
+
+  test('阶梯佣金确认发送商家申报指标', async () => {
+    const spy = mockFetchData({ applicationId: 'a-1', status: 'confirmed' })
+    const { confirmEngagement } = useGrassland()
+    await confirmEngagement('t-1', 'a-1', 50_000)
+    expect(spy.mock.calls[0][0]).toBe('/api/tasks/t-1/applications/a-1/confirm')
+    expect((spy.mock.calls[0][1] as RequestInit).headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body))).toEqual({
+      confirmedMetricValue: 50_000,
+    })
+  })
+
+  test('固定佣金确认保持无请求体', async () => {
+    const spy = mockFetchData({ applicationId: 'a-1', status: 'confirmed' })
+    const { confirmEngagement } = useGrassland()
+    await confirmEngagement('t-1', 'a-1')
+    expect((spy.mock.calls[0][1] as RequestInit).body).toBeUndefined()
+  })
+})
+
 describe('争议 deferred 请求契约', () => {
   function mockFetchData(data: unknown): ReturnType<typeof vi.fn> {
     const spy = vi.fn().mockResolvedValue({
