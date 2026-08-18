@@ -348,10 +348,11 @@ class BrandProfileControllerIT extends IdentityItSupport {
         addMember(orgId, admin.accountId(), "admin");
         UUID ticketId = UUID.randomUUID();
         URI uploadUrl = URI.create("https://upload.test/media-pending/" + ticketId);
+        Instant expiresAt = Instant.parse("2026-08-18T12:00:00Z");
         when(brandLogoMediaClient.createTicket(orgId, admin.accountId(), "image/png", 2048L))
                 .thenReturn(Mono.just(new BrandLogoUploadTicket(ticketId,
-                        "media-pending/" + ticketId, uploadUrl, "PUT",
-                        Map.of("Content-Type", "image/png"), Instant.now().plusSeconds(900))));
+                        "media/brand_logo/" + ticketId, uploadUrl, "PUT",
+                        Map.of("Content-Type", "image/png"), expiresAt)));
 
         client().post().uri(ticketUri).contentType(MediaType.APPLICATION_JSON)
                 .header("Cookie", "y1.sid=" + admin.cookie())
@@ -359,8 +360,11 @@ class BrandProfileControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.data.id").isEqualTo(ticketId.toString())
+                .jsonPath("$.data.objectKey").isEqualTo("media/brand_logo/" + ticketId)
                 .jsonPath("$.data.uploadUrl").isEqualTo(uploadUrl.toString())
-                .jsonPath("$.data.method").isEqualTo("PUT");
+                .jsonPath("$.data.method").isEqualTo("PUT")
+                .jsonPath("$.data.headers.Content-Type").isEqualTo("image/png")
+                .jsonPath("$.data.expiresAt").isEqualTo("2026-08-18T12:00:00Z");
 
         // 上游 400（如 MIME 超白名单）透传同码 + 上游中文错误
         when(brandLogoMediaClient.createTicket(orgId, admin.accountId(), "image/gif", 2048L))
