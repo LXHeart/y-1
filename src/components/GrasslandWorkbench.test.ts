@@ -3,6 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
 import GrasslandWorkbench from '../views/grassland/GrasslandWorkbench.vue'
+import MerchantTaskForm from '../views/grassland/components/MerchantTaskForm.vue'
 import { useAuth } from '../composables/useAuth'
 import type { AuthUser } from '../types/auth'
 
@@ -586,5 +587,156 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     })
     expect(body.requirements.publishStartAt).toBe('2026-08-20T10:00:00.000Z')
     expect(body.requirements.publishEndAt).toBe('2026-08-25T10:00:00.000Z')
+  })
+})
+
+/**
+ * 任务书 #25 Stage C：工作台持久化与回填。
+ *
+ * 锁的是「validate-then-build」闭环——提交审核 / 存草稿 / 保存修订共用同一校验入口，
+ * payload 由 buildCommissionLadderPayload 构造（启用才带 commissionLadder，档位按阈值升序），
+ * 编辑草稿 / 修订已发布任务从任务快照回填表单且不篡改后端返回的 policyVersion。
+ */
+describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
+  /** 登录商家身份并等初始化（调用方须先 stub fetch）。 */
+  async function loginMerchant(wrapper: ReturnType<typeof mount>): Promise<void> {
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+  }
+
+  /** 赏金输入在「赏金 ¥」label 内（无独立 aria-label，用 label 文本定位）。 */
+  function bountyInput(wrapper: ReturnType<typeof mount>) {
+    const form = wrapper.getComponent(MerchantTaskForm)
+    return form.findAll('label').find((l) => l.text().startsWith('赏金'))!.find('input')
+  }
+
+  /**
+   * 表单内找按钮——MerchantKybCard 也有「提交审核」（KYB 资料送审），
+   * 全局按文本找会点错卡片，必须限定在任务表单内。
+   */
+  function formButton(wrapper: ReturnType<typeof mount>, text: string) {
+    return wrapper.getComponent(MerchantTaskForm).findAll('button').find((b) => b.text() === text)!
+  }
+
+  test('发布任务 payload 含按阈值升序的 commissionLadder', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mount(GrasslandWorkbench)
+    await loginMerchant(wrapper)
+
+    await wrapper.find('input[placeholder="任务标题"]').setValue('阶梯佣金任务')
+    await bountyInput(wrapper).setValue('100')
+    await wrapper.get('[aria-label="启用阶梯佣金"]').setValue(true)
+    await wrapper.get('[aria-label="阶梯佣金指标标识"]').setValue('douyin.play_count')
+    // 故意逆序填两档：payload 必须按阈值升序重排（高阈值高佣金，校验应通过）
+    await wrapper.get('[aria-label="第 1 档阈值"]').setValue('20000')
+    await wrapper.get('[aria-label="第 1 档佣金"]').setValue('60')
+    await wrapper.get('[aria-label="添加档位"]').trigger('click')
+    await wrapper.get('[aria-label="第 2 档阈值"]').setValue('10000')
+    await wrapper.get('[aria-label="第 2 档佣金"]').setValue('50')
+
+    const publish = formButton(wrapper, '提交审核')
+    await publish.trigger('click')
+    await flushPromises()
+
+    const createCall = calls.find(([url, init]) => url === '/api/tasks' && init?.method === 'POST')
+    expect(createCall).toBeDefined()
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(expect.objectContaining({
+      bountyCents: 10_000,
+      requirements: expect.objectContaining({
+        commissionLadder: {
+          policyVersion: 'ladder-v1',
+          metricKey: 'douyin.play_count',
+          tiers: [
+            { threshold: 10_000, payoutCents: 5_000 },
+            { threshold: 20_000, payoutCents: 6_000 },
+          ],
+        },
+      }),
+    }))
+  })
+
+  test('最高档佣金超过赏金时不发 POST 并提示「最高档佣金不能超过任务赏金」', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mount(GrasslandWorkbench)
+    await loginMerchant(wrapper)
+
+    await wrapper.find('input[placeholder="任务标题"]').setValue('超额阶梯任务')
+    await bountyInput(wrapper).setValue('50')  // 赏金 5000 分
+    await wrapper.get('[aria-label="启用阶梯佣金"]').setValue(true)
+    await wrapper.get('[aria-label="阶梯佣金指标标识"]').setValue('douyin.play_count')
+    await wrapper.get('[aria-label="第 1 档阈值"]').setValue('10000')
+    await wrapper.get('[aria-label="第 1 档佣金"]').setValue('60')  // ¥60 = 6000 分 > 赏金
+
+    const publish = formButton(wrapper, '提交审核')
+    await publish.trigger('click')
+    await flushPromises()
+
+    expect(calls.some(([url, init]) => url === '/api/tasks' && init?.method === 'POST')).toBe(false)
+    expect(wrapper.text()).toContain('最高档佣金不能超过任务赏金')
+  })
+
+  test('修订 legacy-v3 阶梯任务原样保留 policyVersion，且版本不进 UI', async () => {
+    const published = {
+      id: 'task-ladder', ownerAccountId: 'acct-1', organizationId: 'org-1',
+      title: '旧版阶梯任务', description: null, status: 'published',
+      contentForm: null, platform: 'douyin', maxSlots: 3, bountyCents: 1000,
+      minRecommenderLevel: 1,
+      requirements: {
+        mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [],
+        commissionLadder: {
+          policyVersion: 'legacy-v3', metricKey: 'douyin.play_count',
+          tiers: [{ threshold: 100, payoutCents: 500 }],
+        },
+      },
+      version: 4, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+      cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: null,
+    }
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.startsWith('/api/tasks/feed')) {
+        data = { items: [], nextCursor: null, hasMore: false }
+      } else if (url.startsWith('/api/tasks?') && url.includes('status=published')) {
+        data = [published]
+      } else if (url.startsWith('/api/tasks/task-ladder/revise')) {
+        data = { ...published, version: 5 }
+      } else if (url.startsWith('/api/tasks')) {
+        data = []
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench)
+    await loginMerchant(wrapper)
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')!
+    await editBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('正在修订已发布任务')
+    // 快照回填：编辑器可见、指标已载入；内部策略版本不出现在界面上
+    const metricInput = wrapper.get('[aria-label="阶梯佣金指标标识"]').element as HTMLInputElement
+    expect(metricInput.value).toBe('douyin.play_count')
+    expect(wrapper.text()).not.toContain('legacy-v3')
+
+    const saveBtn = formButton(wrapper, '保存修订')
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    const revise = calls.find(([u]) => u.endsWith('/api/tasks/task-ladder/revise'))!
+    const body = JSON.parse(revise[1]!.body as string)
+    expect(body.requirements.commissionLadder).toEqual({
+      policyVersion: 'legacy-v3',
+      metricKey: 'douyin.play_count',
+      tiers: [{ threshold: 100, payoutCents: 500 }],
+    })
+    expect(wrapper.text()).not.toContain('legacy-v3')
   })
 })

@@ -20,6 +20,13 @@ import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import MerchantTaskForm from './components/MerchantTaskForm.vue'
+import {
+  buildCommissionLadderPayload,
+  commissionLadderFormFromTask,
+  emptyCommissionLadderForm,
+  getCommissionLadderValidationError,
+} from './components/commission-ladder'
+import type { CommissionLadderFormData } from './components/commission-ladder'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
@@ -100,6 +107,8 @@ const taskForm = ref({
   applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null as number | null,
   productServiceInfo: '', mustInclude: '', forbiddenContent: '',
   publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
+  /** 任务书 #25：阶梯佣金表单元数据（内部 policyVersion 不进 UI）。 */
+  commissionLadder: emptyCommissionLadderForm(),
 })
 /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
 const editingDraft = ref<{ id: string; version: number } | null>(null)
@@ -486,6 +495,8 @@ async function publishTask(): Promise<void> {
   if (!activeOrgId.value || !taskForm.value.title.trim()) return
   const bountyCents = yuanToCents(taskForm.value.bountyYuan)
   const freebieDepositCents = yuanToCents(taskForm.value.freebieDepositYuan)
+  // 任务书 #25：validate-then-build——本地校验失败 setNotice 后不发请求。
+  if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return
   const created = await grassland.createTask({
     organizationId: activeOrgId.value,
     storeId: selectedStoreId.value || undefined,
@@ -526,6 +537,8 @@ function lines(value: string): string[] {
 }
 
 function taskRequirements() {
+  // 任务书 #25：禁用阶梯时省略 commissionLadder 键；启用时按阈值升序发送。
+  const commissionLadder = buildCommissionLadderPayload(taskForm.value.commissionLadder)
   return {
     productServiceInfo: taskForm.value.productServiceInfo.trim() || undefined,
     mustInclude: lines(taskForm.value.mustInclude),
@@ -541,7 +554,27 @@ function taskRequirements() {
           actionType: taskForm.value.interactionActionType,
         } }
       : {}),
+    ...(commissionLadder ? { commissionLadder } : {}),
   }
+}
+
+/** 任务书 #25：阶梯佣金整值事件（MerchantTaskForm 以不可变更新发出完整元数据）。 */
+function updateCommissionLadder(value: CommissionLadderFormData): void {
+  taskForm.value.commissionLadder = value
+}
+
+/**
+ * 任务书 #25：提交审核 / 存草稿 / 保存修订共用的阶梯校验入口。
+ * 失败用 setNotice 展示单一错误且不发请求（后端 400/409 仍走统一错误路径）。
+ */
+function validateTaskCommissionLadder(bountyCents: number, freebieDepositCents: number): boolean {
+  const error = getCommissionLadderValidationError(
+    taskForm.value.commissionLadder,
+    bountyCents,
+    freebieDepositCents,
+  )
+  if (error) setNotice(error)
+  return error == null
 }
 
 /** ISO → datetime-local（回填编辑草稿用）。 */
@@ -556,7 +589,8 @@ function isoToLocalInput(iso: string | null): string {
 function resetTaskForm(): void {
   taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
     applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
-    forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '' }
+    forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
+    commissionLadder: emptyCommissionLadderForm() }
   editingDraft.value = null
   revisingTask.value = null
 }
@@ -566,6 +600,8 @@ async function saveDraft(): Promise<void> {
   if (!activeOrgId.value || !taskForm.value.title.trim()) return
   const bountyCents = yuanToCents(taskForm.value.bountyYuan)
   const freebieDepositCents = yuanToCents(taskForm.value.freebieDepositYuan)
+  // 任务书 #25：三条提交链路（revise / update / createDraft）共用同一阶梯校验入口。
+  if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return
   const revising = revisingTask.value
   if (revising) {
     // 全字段修订：accept/结算读 app 的 bounty 快照（snapshot-pinning），改 task 赏金只影响新报名。
@@ -655,6 +691,8 @@ function editDraft(task: Task): void {
     publishEndAt: isoToLocalInput(task.requirements?.publishEndAt || null),
     metricRequirements: (task.requirements?.metricRequirements || []).join('\n'),
     evidenceRequirements: (task.requirements?.evidenceRequirements || []).join('\n'),
+    // 任务书 #25：从任务快照回填阶梯表单；policyVersion 原样保留（未知版本也不擅自升级）。
+    commissionLadder: commissionLadderFormFromTask(task.requirements?.commissionLadder),
   }
 }
 
@@ -686,6 +724,8 @@ function editPublished(task: Task): void {
     publishEndAt: isoToLocalInput(task.requirements?.publishEndAt || null),
     metricRequirements: (task.requirements?.metricRequirements || []).join('\n'),
     evidenceRequirements: (task.requirements?.evidenceRequirements || []).join('\n'),
+    // 任务书 #25：从任务快照回填阶梯表单；policyVersion 原样保留（未知版本也不擅自升级）。
+    commissionLadder: commissionLadderFormFromTask(task.requirements?.commissionLadder),
   }
 }
 
@@ -1234,7 +1274,8 @@ function statusLabel(status: string): string {
 }
 
 function handleTaskFormUpdate(field: string, value: string | number | null): void {
-  ;(taskForm.value as Record<string, string | number | null>)[field] = value
+  // commissionLadder 是嵌套对象、走独立的整值事件（updateCommissionLadder），这里只写标量字段。
+  ;(taskForm.value as unknown as Record<string, string | number | null>)[field] = value
 }
 
 async function handleTaskFormStoreChange(storeId: string): Promise<void> {
@@ -1382,6 +1423,7 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         :can-publish-bounty="canPublishBounty"
         :loading="grassland.loading.value"
         @update:field="handleTaskFormUpdate"
+        @update:commission-ladder="updateCommissionLadder"
         @change-store="handleTaskFormStoreChange"
         @publish="publishTask"
         @save-draft="saveDraft"
