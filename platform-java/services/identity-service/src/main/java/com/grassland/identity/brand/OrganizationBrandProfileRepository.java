@@ -44,6 +44,10 @@ public class OrganizationBrandProfileRepository {
      * 行存在走 version CAS 的 {@code UPDATE}（版本过期即 empty）；行不存在且 expectedVersion==0
      * 走 {@code INSERT ON CONFLICT DO NOTHING}（并发首建冲突即 empty）；expectedVersion!=0 时
      * 不尝试插入，直接 empty（首次创建必须期望版本 0）。
+     *
+     * <p>INSERT 显式落 {@code version=1}：无行状态以 version=0 表示（D3 无行 GET 回 0），
+     * 已保存行恒 version≥1，两个状态空间不相交；否则首建后仍是 version 0，
+     * 旧的 {@code expectedVersion=0} 可再次 CAS 命中，乐观锁失效。
      */
     public Mono<OrganizationBrandProfile> save(String organizationId, String brandName,
                                                String logoMediaReferenceId, String description,
@@ -78,8 +82,8 @@ public class OrganizationBrandProfileRepository {
                                                           String industry) {
         var spec = db.sql("""
                 INSERT INTO organization_brand_profile(organization_id, brand_name, brand_logo_media_reference_id,
-                        description, industry)
-                VALUES (CAST(:org AS uuid), :brandName, :logo, :description, :industry)
+                        description, industry, version)
+                VALUES (CAST(:org AS uuid), :brandName, :logo, :description, :industry, 1)
                 ON CONFLICT (organization_id) DO NOTHING
                 RETURNING %s
                 """.formatted(SELECT_COLS))

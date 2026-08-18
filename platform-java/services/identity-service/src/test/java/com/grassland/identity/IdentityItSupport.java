@@ -1,6 +1,7 @@
 package com.grassland.identity;
 
 import com.grassland.identity.admin.FinanceCreditsAdminClient;
+import com.grassland.identity.brand.BrandLogoMediaClient;
 import com.grassland.identity.security.CookieSigner;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -58,6 +59,9 @@ public abstract class IdentityItSupport {
 
     @MockitoBean
     protected FinanceCreditsAdminClient financeCreditsAdminClient;
+
+    @MockitoBean
+    protected BrandLogoMediaClient brandLogoMediaClient;
 
     /** 共享单例容器：类加载即启动一次，全程不重启 → 端口稳定。 */
     public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -147,6 +151,19 @@ public abstract class IdentityItSupport {
             UUID mediaId = invocation.getArgument(0);
             return Mono.just(new AvatarMediaDownload(
                     URI.create("https://cdn.example.com/avatar/" + mediaId), null));
+        });
+    }
+
+    /** 品牌 Logo 媒体默认替身（#32 D7）：归属复验放行 + 下发假 presigned URL，避免打真 intelligence。 */
+    @BeforeEach
+    void stubBrandLogoMedia() {
+        when(brandLogoMediaClient.usableLogoUrl(anyString(), anyString())).thenAnswer(invocation -> {
+            String mediaId = invocation.getArgument(0);
+            return Mono.just("https://cdn.example.com/brand-logo/" + mediaId);
+        });
+        when(brandLogoMediaClient.logoUrlFailSoft(anyString(), anyString())).thenAnswer(invocation -> {
+            String mediaId = invocation.getArgument(0);
+            return Mono.just("https://cdn.example.com/brand-logo/" + mediaId);
         });
     }
 
