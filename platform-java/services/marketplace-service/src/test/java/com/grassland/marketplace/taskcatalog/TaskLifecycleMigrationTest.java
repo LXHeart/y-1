@@ -10,7 +10,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Flyway 回填回归（GL-P1-TASK-001）：V11 既有 published 任务须拿到 {@code published_at=created_at}、{@code version=1}
- * 和一行 {@code task_version} 快照；V14 既有 task_application 须从 task 回填 {@code bounty_cents} 并 NOT NULL。
+ * 和一行 {@code task_version} 快照；V14 既有 task_application 须从 task 回填 {@code bounty_cents} 并 NOT NULL；
+ * V42（#26 D8）既有 published+accepted 满员任务须置 {@code closed} 且 version+1。
  * 迁移绝不伪造 outbox 事件。
  *
  * <p>镜像 identity {@code RecommenderIdentityBackfillMigrationTest} 的隔离 schema 模式：手动建 post-V10 的 task、
@@ -20,13 +21,17 @@ import org.junit.jupiter.api.Test;
 class TaskLifecycleMigrationTest extends MarketplaceItSupport {
 
     @Test
-    void v11AndV14BackfillTaskSnapshotAndApplicationBountyWithoutOutboxSideEffects() throws Exception {
+    void v11V14AndV42BackfillTaskSnapshotBountyAndFullAutocloseWithoutOutboxSideEffects() throws Exception {
         String schema = "task_v11_" + UUID.randomUUID().toString().replace("-", "");
         String publishedTask = UUID.randomUUID().toString();
         String owner = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String recommender = UUID.randomUUID().toString();
         String historicalApp = UUID.randomUUID().toString();
+        // #26 V42 回填锚点：published + accepted 已满（max_slots=1、恰 1 条 accepted）的历史任务。
+        String fullTask = UUID.randomUUID().toString();
+        String fullRecommender = UUID.randomUUID().toString();
+        String fullApp = UUID.randomUUID().toString();
 
         try (var connection = DriverManager.getConnection(
                         POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -67,6 +72,13 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
             statement.execute("INSERT INTO " + schema
                     + ".task_application(id, task_id, recommender_account_id, status) VALUES ('"
                     + historicalApp + "', '" + publishedTask + "', '" + recommender + "', 'accepted')");
+            // V42 目标行：满员（max_slots=1，1 条 accepted）但从未被关闭的历史 published 任务。
+            statement.execute("INSERT INTO " + schema
+                    + ".task(id, owner_account_id, organization_id, title, status, max_slots) "
+                    + "VALUES ('" + fullTask + "', '" + owner + "', '" + org + "', '历史满员任务', 'published', 1)");
+            statement.execute("INSERT INTO " + schema
+                    + ".task_application(id, task_id, recommender_account_id, status) VALUES ('"
+                    + fullApp + "', '" + fullTask + "', '" + fullRecommender + "', 'accepted')");
         }
 
         Flyway.configure()
@@ -112,6 +124,16 @@ class TaskLifecycleMigrationTest extends MarketplaceItSupport {
                 assertThat(rs.getObject("bounty_cents")).isNotNull();  // NOT NULL 生效
                 assertThat(rs.getLong("bounty_cents")).isEqualTo(500L);
             }
+            // V42（#26 D8）：published + accepted 满员的历史任务被回填为 closed 且 version+1（V11 落 1 → 2）；
+            // 未满的历史任务（max_slots NULL）保持 published。
+            try (var rs = statement.executeQuery(
+                    "SELECT status, version FROM " + schema + ".task WHERE id = '" + fullTask + "'")) {
+                rs.next();
+                assertThat(rs.getString("status")).isEqualTo("closed");
+                assertThat(rs.getInt("version")).isEqualTo(2);
+            }
+            // 迁移绝不伪造 outbox 事件：全表 0 行（含 V42 的 TaskClosed，D8；baseline 表无 event_type 列，
+            // 回填迁移也确实不写 outbox，全表计数即完备断言）。
             assertThat(count(statement, schema + ".marketplace_outbox", "true")).isZero();  // 无事件副作用
         }
     }

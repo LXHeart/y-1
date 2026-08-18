@@ -13,10 +13,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import reactor.core.publisher.Mono;
@@ -30,12 +32,17 @@ import reactor.core.publisher.Mono;
  * 补偿路径（预留失败回退 pending + 释放名额）绝不关闭——claim 阶段不判，按 occupied 判会在预留失败时误关。
  * outbox 发布器关闭（{@code marketplace.outbox.enabled=false}），直接查 marketplace_outbox 表断言；
  * 资金型用例照 {@code ApplicationControllerIT} 桩 finance 出站边界，真 saga（test-server）跑通。
+ * 场景 12-14 补查询面（D6/D7）：feed 与自动接受扫描均排除「counter 已满」的任务——
+ * counter 谓词兜住资金型 reserving 瞬态窗口与任何漏网路径，{@code max_slots IS NULL} 恒展示。
  */
 class TaskAutoCloseIT extends MarketplaceItSupport {
 
-    /** finance 出站边界替身（资金型场景 5/6）：真 Saga 编排跑通，仅 finance HTTP 被 mock，按用例桩 reserve 结果。 */
+    /** finance 出站边界替身（资金型场景 5/6/12）：真 Saga 编排跑通，仅 finance HTTP 被 mock，按用例桩 reserve 结果。 */
     @MockitoBean
     private FinanceEscrowClient financeClient;
+
+    @Autowired
+    private TaskRepository taskRepo;
 
     // 场景 1：maxSlots=1，唯一报名接受成功 → 任务 closed + outbox TaskClosed(slots_full)。
     @Test
@@ -311,6 +318,71 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         assertThat(appStatus(withdrawn)).isEqualTo("withdrawn");
     }
 
+    // 场景 12（D6）：occupied>=max（含资金型 reserving 瞬态）的任务不出现在 feed。
+    @Test
+    void feedExcludesFullTaskEvenWhilePublished() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String platform = "ac" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);  // ≤ varchar(32)
+        String task = publishTaskPlatform(merchant, org, 1, 500L, platform);  // maxSlots=1 + bounty=500 → 资金型
+        String app = apply(UUID.randomUUID().toString(), task);
+        // 正对照：未满时该任务在 feed（排除断言非空洞）
+        assertThat(feedIds(platform)).contains(task);
+
+        // 拴住 finance reserve：202 返回后 saga 停在 reserving——counter 已满、任务仍 published 的瞬态窗口
+        CompletableFuture<ReserveResult> reserveGate = new CompletableFuture<>();
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+                .thenReturn(Mono.fromFuture(reserveGate));
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isAccepted()
+                .expectBody().jsonPath("$.data.status").isEqualTo("reserving");
+
+        assertThat(occupiedSlots(task)).isEqualTo(1);  // claim 已占满
+        assertThat(taskStatus(task)).isEqualTo("published");  // 关闭要等激活落定（D4）
+        assertThat(feedIds(platform)).doesNotContain(task);  // D6：counter 谓词兜住瞬态窗口
+
+        // 放行预留 → 激活落定 → 满员自动关闭；closed 后 feed 依旧不含（status 谓词）
+        reserveGate.complete(ReserveResult.reserved(500L));
+        awaitReservation(merchant, task, app, "accepted");
+        assertThat(taskStatus(task)).isEqualTo("closed");
+        assertThat(feedIds(platform)).doesNotContain(task);
+    }
+
+    // 场景 13（D6）：maxSlots=null 任务恒在 feed（有人 accepted 也不排除）。
+    @Test
+    void feedAlwaysIncludesUnlimitedTask() {
+        String merchant = UUID.randomUUID().toString();
+        String platform = "ac" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String task = publishTaskPlatform(merchant, UUID.randomUUID().toString(), null, null, platform);
+        String app = apply(UUID.randomUUID().toString(), task);
+        accept(merchant, task, app);
+
+        assertThat(acceptedCount(task)).isEqualTo(1);
+        assertThat(taskStatus(task)).isEqualTo("published");
+        assertThat(feedIds(platform)).contains(task);
+    }
+
+    // 场景 14（D7）：自动接受扫描不返回满员任务——accepted 计数=max 但 status 仍 published
+    //（SQL 直改 counter 绕过关闭路径，照 BatchApplicationControllerIT.findAutoAcceptEnabledOnlyScansEligibleTasks）。
+    @Test
+    void autoAcceptScanSkipsFullTask() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+
+        String eligible = publishTask(merchant, org, null);  // 未满：对照，应被扫描
+        setAutoAccept(eligible, 4);
+
+        String full = publishTask(merchant, org, 1);
+        setAutoAccept(full, 4);
+        db.sql("INSERT INTO task_acceptance_counter(task_id, occupied_slots) VALUES (CAST(:id AS uuid), 1)")
+                .bind("id", full).then().block();  // occupied=1=max，任务却仍 published
+
+        List<String> scanned = taskRepo.findAutoAcceptEnabled(200)
+                .map(Task::id).collectList().block();
+        assertThat(scanned).contains(eligible).doesNotContain(full);
+    }
+
     // ---------- 造数/断言 helper（照 ApplicationControllerIT 的同名 helper 风格） ----------
 
     @SuppressWarnings("unchecked")
@@ -335,6 +407,48 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()) "
                         + "WHERE id = CAST(:id AS uuid)")
                 .bind("id", taskId).then().block();
+    }
+
+    /** 带唯一 platform（feed 筛选隔离单例容器累积数据）与可选 bounty（资金型判定）的发布。 */
+    @SuppressWarnings("unchecked")
+    private String publishTaskPlatform(String merchant, String org, Integer maxSlots, Long bountyCents, String platform) {
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("organizationId", org);
+        b.put("title", "满员关闭任务");
+        b.put("platform", platform);
+        if (maxSlots != null) {
+            b.put("maxSlots", maxSlots);
+        }
+        if (bountyCents != null) {
+            b.put("bountyCents", bountyCents);
+        }
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org,
+                        bountyCents == null ? "basic_publish" : "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(b)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+        markPublished(taskId);
+        return taskId;
+    }
+
+    /** feed 按 platform 筛选后的任务 id 列表（D6 断言入口）。 */
+    @SuppressWarnings("unchecked")
+    private List<String> feedIds(String platform) {
+        Map<String, Object> resp = client().get()
+                .uri("/api/tasks/feed?limit=50&platform=" + platform)
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        List<Map<String, Object>> items =
+                (List<Map<String, Object>>) ((Map<String, Object>) resp.get("data")).get("items");
+        return items.stream().map(item -> (String) item.get("id")).toList();
+    }
+
+    private void setAutoAccept(String taskId, Integer level) {
+        db.sql("UPDATE task SET auto_accept_min_level = :lv WHERE id = CAST(:id AS uuid)")
+                .bind("lv", level).bind("id", taskId).then().block();
     }
 
     /** 资金型任务（bounty>0 须 finance_transaction tier，照 ApplicationControllerIT.publishTaskBounty）。 */

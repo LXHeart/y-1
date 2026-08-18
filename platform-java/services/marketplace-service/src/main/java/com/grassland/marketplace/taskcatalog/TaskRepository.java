@@ -396,6 +396,10 @@ public class TaskRepository {
         String predicate = "status = 'published'"
                 + " AND (application_deadline IS NULL OR application_deadline > now())"
                 + " AND min_recommender_level <= :recommenderLevel"
+                // #26 D6：满员（counter occupied>=max）不展示——与 apply 端「名额已满」同口径；
+                // closed 任务已被 status 谓词排除，counter 谓词兜住资金型 reserving 瞬态与漏网路径；max_slots NULL 恒展示。
+                + " AND (task.max_slots IS NULL OR NOT EXISTS (SELECT 1 FROM task_acceptance_counter counter"
+                + " WHERE counter.task_id = task.id AND counter.occupied_slots >= task.max_slots))"
                 + (filter.platform() != null ? " AND platform = :platform" : "")
                 + (filter.contentForm() != null ? " AND content_form = :contentForm" : "")
                 + (filter.minBountyCents() != null ? " AND bounty_cents IS NOT NULL AND bounty_cents >= :minBountyCents" : "")
@@ -453,11 +457,14 @@ public class TaskRepository {
         return spec.map(TaskRepository::map).all();
     }
 
-    /** 任务书 #27：查找已发布且开启了自动通过门槛的任务（未截止、未关闭）。dispatcher 每轮扫描用。 */
+    /** 任务书 #27：查找已发布且开启了自动通过门槛的任务（未截止、未关闭）。dispatcher 每轮扫描用。
+     *  #26 D7：满员（counter occupied>=max）任务不再被扫描——省去每轮空转出 slots_full 的拒绝。 */
     public Flux<Task> findAutoAcceptEnabled(int limit) {
         return db.sql("SELECT " + SELECT_COLS
                         + " FROM task WHERE status = 'published' AND auto_accept_min_level IS NOT NULL"
                         + " AND (application_deadline IS NULL OR application_deadline > now())"
+                        + " AND (task.max_slots IS NULL OR NOT EXISTS (SELECT 1 FROM task_acceptance_counter counter"
+                        + " WHERE counter.task_id = task.id AND counter.occupied_slots >= task.max_slots))"
                         + " ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED")
                 .bind("limit", Math.max(1, Math.min(limit, 200)))
                 .map(TaskRepository::map).all();
