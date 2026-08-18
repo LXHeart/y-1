@@ -70,8 +70,19 @@ public final class ContentAssetRecommender {
         }
     }
 
-    /** 打分结果：素材 + 来源桶 + 总分 + 解释（稳定文案，顺序固定）。 */
-    public record Scored(ContentAsset asset, Bucket bucket, int score, List<String> reasons) {}
+    /**
+     * 打分结果：素材 + 来源桶 + 总分 + 解释（稳定文案，顺序固定）。
+     * 纯规则模式 {@code score == ruleScore} 且无语义分；语义运行中 {@code score} 为 60/40 融合分
+     * 或缺向量素材的规则份额，{@code semanticScore} 仅在拿到当前向量时非空。
+     */
+    public record Scored(ContentAsset asset, Bucket bucket, int score, int ruleScore,
+                         Integer semanticScore, List<String> reasons) {
+
+        /** 纯规则路径兼容构造：总分即规则分，无语义分。 */
+        public Scored(ContentAsset asset, Bucket bucket, int score, List<String> reasons) {
+            this(asset, bucket, score, score, null, reasons);
+        }
+    }
 
     /** 中文按 ≤4 字整词、更长串滑窗二元组；拉丁/数字词小写化（≥2 字符）。去重保序，上限 {@value MAX_TERMS}。 */
     public static List<String> tokenize(String text) {

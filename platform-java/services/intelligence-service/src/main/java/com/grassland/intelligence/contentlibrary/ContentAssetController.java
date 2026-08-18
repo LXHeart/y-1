@@ -226,6 +226,7 @@ public class ContentAssetController {
             @RequestParam(name = "contentForm", required = false) String contentForm,
             @RequestParam(name = "category", required = false) String categoryRaw,
             @RequestParam(name = "keywords", required = false) String keywords,
+            @RequestParam(name = "query", required = false) String query,
             @RequestParam(name = "limit", required = false) Integer limit,
             ServerWebExchange exchange) {
         AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
@@ -241,23 +242,42 @@ public class ContentAssetController {
                 .flatMap(caller -> recommendations.recommend(caller,
                         new ContentAssetRecommendationService.Request(
                                 applicationUuid, taskUuid, blankToNull(platform), blankToNull(contentForm),
-                                category, keywordList, limit)))
+                                category, keywordList, query, limit), exchange))
                 .map(result -> {
-                    Map<String, Object> query = new LinkedHashMap<>();
-                    query.put("platform", result.platform() == null ? "" : result.platform());
-                    query.put("contentForm", result.contentForm() == null ? "" : result.contentForm());
-                    query.put("category", result.category() == null ? "" : result.category().db());
-                    query.put("terms", result.terms());
+                    Map<String, Object> queryEcho = new LinkedHashMap<>();
+                    queryEcho.put("platform", result.platform() == null ? "" : result.platform());
+                    queryEcho.put("contentForm", result.contentForm() == null ? "" : result.contentForm());
+                    queryEcho.put("category", result.category() == null ? "" : result.category().db());
+                    queryEcho.put("terms", result.terms());
+                    queryEcho.put("semantic", semanticResponse(result.semantic()));
                     Map<String, Object> data = new LinkedHashMap<>();
                     data.put("items", result.items().stream()
                             .map(ContentAssetController::toRecommendationResponse).toList());
-                    data.put("query", query);
+                    data.put("query", queryEcho);
                     if (result.sourceTitle() != null) {
                         data.put("sourceTitle", result.sourceTitle());
                     }
                     return data;
                 })
                 .map(ContentAssetController::success);
+    }
+
+    /** semantic 元数据：status 恒有；provider/model/message 仅存在时输出（不返回向量或原文）。 */
+    private static Map<String, Object> semanticResponse(
+            ContentAssetRecommendationService.SemanticMetadata semantic) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("status", semantic.status());
+        if (semantic.provider() != null) {
+            map.put("provider", semantic.provider());
+        }
+        if (semantic.model() != null) {
+            map.put("model", semantic.model());
+        }
+        map.put("sandbox", semantic.sandbox());
+        if (semantic.message() != null) {
+            map.put("message", semantic.message());
+        }
+        return map;
     }
 
     /** 素材详情（个人库 owner 校验 / 商家库 org 校验 / 被授权推荐官 grant 校验）。 */
@@ -724,6 +744,10 @@ public class ContentAssetController {
     private static Map<String, Object> toRecommendationResponse(ContentAssetRecommender.Scored scored) {
         Map<String, Object> map = new LinkedHashMap<>(toResponse(scored.asset()));
         map.put("score", scored.score());
+        map.put("ruleScore", scored.ruleScore());
+        if (scored.semanticScore() != null) {
+            map.put("semanticScore", scored.semanticScore());
+        }
         map.put("reasons", scored.reasons());
         return map;
     }

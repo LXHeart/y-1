@@ -912,6 +912,135 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    // ---- 任务书 #33：语义检索（真实 worker 索引 + Sandbox Embedding 端到端）----
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.grassland.intelligence.embedding.EmbeddingIndexWorker embeddingWorker;
+
+    /** 跑一轮真实索引 worker，把 pending 意图变成 ready 向量。 */
+    private void indexPendingAssets() {
+        embeddingWorker.runOnce().block(java.time.Duration.ofSeconds(60));
+    }
+
+    @Test
+    void recommendationsWithoutQueryReportNotRequestedSemantic() {
+        createPersonalAsset("user-sem", seedMedia("user-sem"), "开业 海报", "campaign", List.of("海报"));
+
+        Map<String, Object> response = client().get().uri("/api/content-assets/recommendations")
+                .header(header(), sign("user-sem", null))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        Map<String, Object> semantic = (Map<String, Object>) ((Map<String, Object>) data.get("query")).get("semantic");
+        assertThat(semantic.get("status")).isEqualTo("not_requested");
+        List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+        assertThat(items).isNotEmpty();
+        assertThat(items.get(0)).containsEntry("ruleScore", items.get(0).get("score"));
+        assertThat(items.get(0)).doesNotContainKey("semanticScore");
+    }
+
+    @Test
+    void explicitQueryAppliesSemanticScoresEndToEnd() {
+        String match = createPersonalAsset("user-sem2", seedMedia("user-sem2"),
+                "开业 海报", "campaign", List.of());
+        createPersonalAsset("user-sem2", seedMedia("user-sem2"), "宠物 体检", "other", List.of());
+        indexPendingAssets();
+
+        Map<String, Object> response = client().get()
+                .uri("/api/content-assets/recommendations?query=" + java.net.URLEncoder
+                        .encode("开业 海报", java.nio.charset.StandardCharsets.UTF_8))
+                .header(header(), sign("user-sem2", null))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        Map<String, Object> semantic = (Map<String, Object>) ((Map<String, Object>) data.get("query")).get("semantic");
+        assertThat(semantic.get("status")).isEqualTo("applied");
+        assertThat(semantic.get("provider")).isEqualTo("sandbox");
+        assertThat(semantic.get("sandbox")).isEqualTo(true);
+        List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+        assertThat(items.get(0).get("id").toString()).isEqualTo(match);
+        assertThat(items.get(0)).containsKey("semanticScore");
+        assertThat((Integer) items.get(0).get("semanticScore"))
+                .isGreaterThan((Integer) items.get(1).get("semanticScore"));
+        assertThat(items.get(0).get("score")).isEqualTo(
+                (int) Math.round(0.6 * (Integer) items.get(0).get("semanticScore")
+                        + 0.4 * (Integer) items.get(0).get("ruleScore")));
+    }
+
+    @Test
+    void semanticRunKeepsRuleShareForUnindexedAsset() {
+        String indexed = createPersonalAsset("user-sem3", seedMedia("user-sem3"),
+                "开业 海报", "campaign", List.of());
+        createPersonalAsset("user-sem3", seedMedia("user-sem3"), "宠物 体检", "other", List.of());
+        // 第二个素材的索引意图置为「到达重试上限的 failed」：claim 不再认领，回填也不复活。
+        db.sql("""
+                UPDATE content_asset_embedding SET status = 'failed', attempt_count = 5,
+                       failure_code = 'provider_failure', next_attempt_at = now()
+                WHERE asset_id IN (
+                    SELECT id FROM content_asset WHERE owner_account_id = 'user-sem3' AND title = '宠物 体检')
+                """).then().block();
+        indexPendingAssets();
+
+        Map<String, Object> response = client().get()
+                .uri("/api/content-assets/recommendations?query=" + java.net.URLEncoder
+                        .encode("开业 海报", java.nio.charset.StandardCharsets.UTF_8))
+                .header(header(), sign("user-sem3", null))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        assertThat(((Map<String, Object>) ((Map<String, Object>) data.get("query")).get("semantic"))
+                .get("status")).isEqualTo("applied");
+        List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+        var indexedItem = items.stream()
+                .filter(item -> item.get("id").toString().equals(indexed)).findFirst().orElseThrow();
+        var unindexedItem = items.stream()
+                .filter(item -> !item.get("id").toString().equals(indexed)).findFirst().orElseThrow();
+        assertThat(indexedItem).containsKey("semanticScore");
+        assertThat(unindexedItem).doesNotContainKey("semanticScore");
+        assertThat(unindexedItem.get("score"))
+                .isEqualTo((int) Math.round(0.4 * (Integer) unindexedItem.get("ruleScore")));
+    }
+
+    @Test
+    void queryLengthValidationRejectsBlankAndOversized() {
+        client().get().uri("/api/content-assets/recommendations?query="
+                        + java.net.URLEncoder.encode("   ", java.nio.charset.StandardCharsets.UTF_8))
+                .header(header(), sign("user-sem4", null))
+                .exchange().expectStatus().isBadRequest();
+        String oversized = "a".repeat(501);
+        client().get().uri("/api/content-assets/recommendations?query=" + oversized)
+                .header(header(), sign("user-sem4", null))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    void taskModeDerivesSemanticTextFromAuthoritativePayload() {
+        String recommender = "recommender-sem";
+        String applicationId = UUID.randomUUID().toString();
+        String taskId = UUID.randomUUID().toString();
+        String match = createPersonalAsset(recommender, seedMedia(recommender),
+                "开业 海报", "campaign", List.of());
+        createPersonalAsset(recommender, seedMedia(recommender), "宠物 体检", "other", List.of());
+        indexPendingAssets();
+        when(marketplaceCreationContext.fetch(applicationId, taskId, recommender))
+                .thenReturn(Mono.just(new MarketplaceCreationContextClient.AuthoritativeContext(
+                        Map.of("title", "开业 海报 宣传", "requirements", Map.of()),
+                        "org-sem", Map.of())));
+
+        Map<String, Object> response = client().get()
+                .uri("/api/content-assets/recommendations?applicationId=" + applicationId
+                        + "&taskId=" + taskId)
+                .header(header(), sign(recommender, "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        assertThat(((Map<String, Object>) ((Map<String, Object>) data.get("query")).get("semantic"))
+                .get("status")).isEqualTo("applied");
+        List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+        assertThat(items.get(0).get("id").toString()).isEqualTo(match);
+        assertThat(items.get(0)).containsKey("semanticScore");
+    }
+
     @Test
     void recommendationsValidateParamsAndRequireLogin() {
         client().get().uri("/api/content-assets/recommendations")
