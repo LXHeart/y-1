@@ -4,6 +4,19 @@
  * draft=草稿；pending_review=待审核；published=大厅可见；closed=已关闭报名；cancelled=已取消。 */
 export type TaskStatus = 'draft' | 'pending_review' | 'published' | 'closed' | 'cancelled'
 
+/** 阶梯佣金单档（任务书 #25）：threshold=达成指标阈值，payoutCents=该档固定佣金（分）。 */
+export interface CommissionLadderTier {
+  threshold: number
+  payoutCents: number
+}
+
+/** 阶梯佣金策略（任务书 #25）：版本化单指标 + 1-20 档，按已达最高档结算，随任务快照冻结。 */
+export interface CommissionLadder {
+  policyVersion: string
+  metricKey: string
+  tiers: CommissionLadderTier[]
+}
+
 export interface TaskRequirements {
   productServiceInfo?: string | null
   mustInclude: string[]
@@ -12,6 +25,8 @@ export interface TaskRequirements {
   publishEndAt?: string | null
   metricRequirements: string[]
   evidenceRequirements: string[]
+  /** 任务书 #25：阶梯佣金配置；null/undefined = 固定佣金任务。 */
+  commissionLadder?: CommissionLadder | null
   /**
    * 任务书 #23 / ADR-D13：点赞互动配置块。仅 contentForm=interaction 的任务非空（后端交叉校验），
    * 自动随 task_version / task_context 快照冻结。
