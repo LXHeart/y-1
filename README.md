@@ -115,10 +115,13 @@ npm run build:client
 - 所有积分变动均有记录：余额与流水在同一事务内写入，不会出现半记账
 - 上游（AI 服务）调用失败会自动退回已扣积分；重试携带同一 operation id，不会重复扣分
 
-## 管理员
+## 管理员与后台角色
 
-- 管理员账号通过数据库 migration 创建
-- 登录后可看到「管理」标签页：查看用户列表、调整积分
+- 后台权限以 Identity 服务的 `backend_role` 表为权威；`platform_admin` 是后台角色超集
+- 仓库当前没有 `npm run admin:create` 或生产管理员 bootstrap CLI；Flyway `V26__backend_role.sql` 只把已有 `app_users.role=admin` 账号回填为 `platform_admin`，不会创建新账号
+- 已有平台管理员可通过 `PUT /api/admin/users/{id}/roles` 授予或撤销后台角色；首个平台管理员必须由部署运维在受控数据库环境完成引导并留存审计
+- `npm run e2e:seed` / `npm run e2e:seed:auth` 只用于隔离测试数据，禁止用于生产管理员初始化
+- 登录后可看到「管理」入口，按角色处理用户积分、审核、财务、风险、经营分析、AI 模型和统一审计等模块
 
 ## 视频分析配置
 
@@ -314,7 +317,7 @@ Node 前端全源覆盖率本次实测为 statements/lines 68.64%、branches 76.
 - 视频代理走后端签名 URL，不暴露上游地址
 - 只允许受信任的视频 host 进入代理链路
 - 注册需图形验证码 + 邮箱验证码双重验证
-- 密码使用 `scrypt` 哈希存储
+- 新密码使用 `Argon2id` 哈希存储；历史 `bcrypt` 哈希在登录成功后自动升级
 - 积分扣减使用原子操作
-- 管理员接口需 admin 角色认证
+- 后台接口由 Java 服务按 `backend_role` 做服务端 RBAC 校验，`platform_admin` 具有超集权限
 - 所有 API 带基础限流
