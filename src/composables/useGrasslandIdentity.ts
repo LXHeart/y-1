@@ -2,14 +2,19 @@
  * 草场 identity 域 —— 组织、身份、权限升级、成员/门店、会话、邀请。
  */
 import type { RunFn } from './grassland-http'
-import { request } from './grassland-http'
+import { request, putToPresignedUrl } from './grassland-http'
+import { compressImageToFile } from './compress-image'
 import type {
   IdentityProfile, Organization, StoreAccessScope, OrganizationAccessScope, IdentityType,
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
   Membership, LoginSession, OrgInvitation, MyInvitation,
   InvitationAcceptResult, Store, StoreMembership, StoreRole, StorePublicProfile,
+  MediaUploadTicket, MediaMetadata, BrandProfile, SaveBrandProfileInput,
 } from '../types/grassland'
+
+/** 品牌 Logo 上传前的客户端压缩帽（后端服务端帽 2MB，取 1MB 留余量，同头像模式）。 */
+const BRAND_LOGO_COMPRESS_MAX_BYTES = 1024 * 1024
 
 export function useGrasslandIdentity(run: RunFn) {
   // ---------- identity：组织 + 活动身份 ----------
@@ -240,6 +245,57 @@ export function useGrasslandIdentity(run: RunFn) {
     run(() => request<unknown>(
       `/api/organizations/${orgId}/stores/${storeId}/memberships/${accountId}`, { method: 'DELETE' }))
 
+  // ---------- identity：组织品牌资料（#32）----------
+
+  /**
+   * 组织品牌资料（org MEMBER+ 可读；member 只读）。
+   * 无行时后端回 version=0 的全空资料（不是 404），可直接绑表单；`logoUrl` 是短时效预览 URL。
+   */
+  const getBrandProfile = (orgId: string) =>
+    run(() => request<BrandProfile>(`/api/organizations/${orgId}/brand-profile`))
+
+  /**
+   * 保存品牌资料（org ADMIN+；PUT 整份覆盖，没带的字段等于清空，显式 null 也要照发）。
+   *
+   * ⚠️ 409 乐观锁冲突（「品牌资料已变更，请刷新后重试」）：`request` 抛的是带 status 的
+   * `GrasslandHttpError(409)`——经 `useGrassland().run` 落 error 通道返回 null（文案在
+   * `error` 里）；需要按状态分支（冲突后自动重拉）的调用方以
+   * `caught instanceof GrasslandHttpError && caught.status === 409` 判定（照 AiOrgBudgetPanel）。
+   */
+  const updateBrandProfile = (orgId: string, input: SaveBrandProfileInput) =>
+    run(() => request<BrandProfile>(`/api/organizations/${orgId}/brand-profile`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  /**
+   * 品牌 Logo 三步上传（org ADMIN+，D6）：压缩 ≤1MB（小图原样直传，不重复编码）→
+   * identity **代开**票据（浏览器不能直连 `/api/media/upload-tickets` 申 brand_logo——
+   * purpose 黑名单挡的就是它，归属断言只能在服务端做）→ 直传 presigned → confirm，
+   * 返回可随 PUT 保存的 mediaId（不建附件记录，换 Logo = 新 id 随整份保存覆盖，D8）。
+   *
+   * ⚠️ 开票体取**压缩后**文件的 type/size——confirm 按对象 HEAD 逐字节校验，
+   * 两处取值必须同源（与头像上传的「压缩在前、票据带真实字节数」约定一致）。
+   */
+  const uploadBrandLogo = (orgId: string, file: File) =>
+    run(async () => {
+      const uploadable = file.size > BRAND_LOGO_COMPRESS_MAX_BYTES
+        ? await compressImageToFile(file, BRAND_LOGO_COMPRESS_MAX_BYTES)
+        : file
+      const ticket = await request<MediaUploadTicket>(
+        `/api/organizations/${orgId}/brand-profile/logo/upload-ticket`, {
+          method: 'POST',
+          body: JSON.stringify({
+            contentType: uploadable.type,
+            sizeBytes: uploadable.size,
+          }),
+        })
+      await putToPresignedUrl(ticket, uploadable)
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      return confirmed.id
+    })
+
   return {
     listIdentities, listOrganizations, listMyStoreScopes, listMyOrganizationScopes, createOrganization,
     openIdentity, activateIdentity, reauthenticate,
@@ -253,5 +309,6 @@ export function useGrasslandIdentity(run: RunFn) {
     listMyInvitations, acceptInvitation, declineInvitation,
     listStores, createStore, getStorePublicProfile, listStoreMemberships, addStoreMembership,
     removeStoreMembership,
+    getBrandProfile, updateBrandProfile, uploadBrandLogo,
   }
 }

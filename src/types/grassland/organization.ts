@@ -343,6 +343,45 @@ export interface StoreMembership {
   createdAt: string | null
 }
 
+// ---------- identity：组织品牌资料（#32）----------
+
+/**
+ * 组织品牌资料（`GET/PUT /api/organizations/{orgId}/brand-profile`）。
+ *
+ * 字段全可空——资料未填也是合法状态；**无行时后端回 version=0 的全空资料（不是 404）**，
+ * 可直接绑到表单。与 merchant_profile 是两回事：品牌资料不受 KYB 审核门、可随时编辑（D1）。
+ *
+ * ⚠️ `logoUrl` 是 GET 时后端 fail-soft 解析出的**短时效** presigned 展示 URL（解析失败/无
+ * Logo 置 null，资料本体仍可读，D7）——只用于即时预览，别持久化；权威引用是
+ * `brandLogoMediaReferenceId`（跨服务逻辑引用，无 FK），保存时原样回传。
+ * 响应里另有 `organizationId`，调用方本来就有，这里不重复建模。
+ */
+export interface BrandProfile {
+  brandName: string | null
+  brandLogoMediaReferenceId: string | null
+  logoUrl: string | null
+  description: string | null
+  /** 经营分类，13 值 {@link Industry} 枚举之一；与 organization.industry（权限准入用）互不影响（D10）。 */
+  industry: Industry | null
+  /** 乐观锁版本；保存时原样回传 `expectedVersion`，无行首建须传 0。 */
+  version: number
+}
+
+/**
+ * 保存品牌资料（PUT **整份覆盖**：没带的字段等于清空，不是不改）。
+ *
+ * ⚠️ `expectedVersion` 必填且不可省——与当前版本不符（含无行时不为 0）后端 409
+ * 「品牌资料已变更，请刷新后重试」，前端以 `GrasslandHttpError.status===409` 分支后重拉（D3）。
+ * `industry` 只收 {@link Industry} 枚举值，自由文本会被后端 400 拒绝。
+ */
+export interface SaveBrandProfileInput {
+  brandName?: string | null
+  brandLogoMediaReferenceId?: string | null
+  description?: string | null
+  industry?: Industry | null
+  expectedVersion: number
+}
+
 // ---------- finance：推荐官钱包 ----------
 
 /** 钱包流水类型。金额符号由类型决定：入账为正，提现/冲正/押金预付为负。 */
