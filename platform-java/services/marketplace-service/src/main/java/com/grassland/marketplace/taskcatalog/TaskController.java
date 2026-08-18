@@ -41,7 +41,7 @@ import reactor.core.publisher.Mono;
  *   <li>POST /api/tasks/draft — 创建草稿（merchant；draft tier 允许；不占发布额度）。</li>
  *   <li>PUT /api/tasks/{id} — 编辑草稿（仅 draft 态；owner；expectedVersion 乐观锁）。</li>
  *   <li>POST /api/tasks/{id}/publish — 发布草稿（owner；tier/额度/资金闸门；落快照；outbox {@code TaskPublished}）。</li>
- *   <li>POST /api/tasks/{id}/close — 关闭报名（published→closed；owner；expectedVersion）。</li>
+ *   <li>POST /api/tasks/{id}/close — 关闭报名（published→closed；owner；expectedVersion；已 closed 幂等 200，#26 D5）。</li>
  *   <li>POST /api/tasks/{id}/cancel — 取消任务（draft|published→cancelled；owner；expectedVersion）。</li>
  *   <li>GET /api/tasks?organizationId=&status= — 列任务（默认 published；任意已登录 caller。非 published status 仅本 org merchant 可查）。</li>
  *   <li>GET /api/tasks/{id} — 任务详情（published 对任意 caller 可见；其余状态仅 owner 可见，否则 404 不泄露）。</li>
@@ -68,6 +68,7 @@ public class TaskController {
     private final AnalyticsRepository analytics;
     private final IdentityStoreAuthorizationClient identityStores;
     private final TaskStoreEnrichment storeEnrichment;
+    private final TaskFullAutoCloser taskFullAutoCloser;
 
     public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks,
                           TaskReviewRepository taskReviews, OutboxRepository outbox,
@@ -77,7 +78,8 @@ public class TaskController {
                           TaskResourceAuthorization taskAuthorization,
                           TaskMetricsRepository metrics, AnalyticsRepository analytics,
                           IdentityStoreAuthorizationClient identityStores,
-                          TaskStoreEnrichment storeEnrichment) {
+                          TaskStoreEnrichment storeEnrichment,
+                          TaskFullAutoCloser taskFullAutoCloser) {
         this.callers = callers;
         this.tasks = tasks;
         this.taskReviews = taskReviews;
@@ -93,6 +95,7 @@ public class TaskController {
         this.analytics = analytics;
         this.identityStores = identityStores;
         this.storeEnrichment = storeEnrichment;
+        this.taskFullAutoCloser = taskFullAutoCloser;
     }
 
     @PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -168,16 +171,31 @@ public class TaskController {
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
-    /** 关闭报名（published→closed；owner；expectedVersion）。 */
+    /**
+     * 关闭报名（published→closed；owner；expectedVersion）。
+     *
+     * <p>#26 D5 幂等化：任务已 closed（含满员自动关闭）→ <b>200 + 当前任务体</b>，不重复发事件、不校验 version
+     * （操作者重试语义）；仍为 published 但 version 不匹配 → 维持 409「任务已变更，请刷新后重试」；
+     * 其余状态（draft/pending_review/cancelled）维持 409。归属校验（{@code requireManager}）先于状态分支——
+     * 非 owner 即便任务已 closed 也拿不到幂等 200。
+     */
     @PostMapping("/api/tasks/{id}/close")
     public Mono<ResponseEntity<Map<String, Object>>> close(@PathVariable String id, @RequestBody TaskLifecycleRequest body,
                                                            ServerHttpRequest request) {
         return callers.requireUser(request)
-                .flatMap(caller -> loadManageableTask(id, caller, "published")
-                        .flatMap(ignored -> transactions.transactional(
-                                tasks.close(id, body.expectedVersion())
-                                        .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                        .flatMap(task -> outbox.append(taskClosedEnvelope(task)).thenReturn(task)))))
+                .flatMap(caller -> loadManageableTask(id, caller, null)
+                        .flatMap(task -> {
+                            if (TaskStatus.CLOSED.dbValue().equals(task.status())) {
+                                return Mono.just(task);  // 幂等重试：返回当前任务体，不重复发事件
+                            }
+                            if (!TaskStatus.PUBLISHED.dbValue().equals(task.status())) {
+                                return Mono.<Task>error(new MarketplaceException(409, "任务当前状态不允许该操作"));
+                            }
+                            return transactions.transactional(
+                                    tasks.close(id, body.expectedVersion())
+                                            .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+                                            .flatMap(closed -> outbox.append(taskClosedEnvelope(closed)).thenReturn(closed)));
+                        }))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 
@@ -250,6 +268,9 @@ public class TaskController {
      * <p>owner + published；乐观锁；赏金变更走 tier 闸门（{@link #enforceBountyTierGate}，与发布同口径但不占额度）。
      * 全字段可改——accept/结算读 task_application.bounty_cents 快照（V14），已 accept 履约不受影响。每次修订 version+1
      * + 新 task_version 快照 + outbox TaskRevised。
+     *
+     * <p>#26 D13：修订（含下调 maxSlots）提交成功的同一事务末尾触发一次 {@link TaskFullAutoCloser#closeIfFull}——
+     * 名额上限被下调到已接受数之下时任务收口为 closed（同事务发 {@code TaskClosed}/slots_full）。
      */
     @PostMapping(value = "/api/tasks/{id}/revise", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> revise(@PathVariable String id, @RequestBody ReviseTaskRequest body,
@@ -270,7 +291,12 @@ public class TaskController {
                                                 body.requirements(), caller.accountId(), body.autoAcceptMinLevel(),
                                                 body.freebieDepositCents())
                                                 .switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-                                                .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))))))
+                                                .flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))
+                                                // #26 D13：修订提交成功的同事务末尾判定满员收口——下调 maxSlots
+                                                // 至已接受数之下时任务即转 closed（同事务发 TaskClosed/slots_full）；
+                                                // 未满/无上限 → empty，回落修订后的任务体（响应返回最终状态与版本）
+                                                .flatMap(revised -> taskFullAutoCloser
+                                                        .closeIfFull(revised.id()).defaultIfEmpty(revised))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
     }
 

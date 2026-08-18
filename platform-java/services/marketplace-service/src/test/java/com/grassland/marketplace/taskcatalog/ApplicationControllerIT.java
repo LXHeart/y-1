@@ -156,10 +156,27 @@ class ApplicationControllerIT extends MarketplaceItSupport {
         String task = publishTask(merchant, org, null);
         db.sql("UPDATE task SET status = 'closed' WHERE id = CAST(:id AS uuid)").bind("id", task).then().block();
 
+        // #26 D9：closed 文案单独拆分（原统一「任务当前不可报名」）
         client().post().uri("/api/tasks/" + task + "/applications")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
-                .exchange().expectStatus().isEqualTo(409);
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("任务已关闭，无法报名");
+    }
+
+    @Test
+    void applyCancelledTaskConflict() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, null);
+        db.sql("UPDATE task SET status = 'cancelled' WHERE id = CAST(:id AS uuid)").bind("id", task).then().block();
+
+        // #26 D9：cancelled 文案单独拆分
+        client().post().uri("/api/tasks/" + task + "/applications")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of())
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("任务已取消，无法报名");
     }
 
     @Test

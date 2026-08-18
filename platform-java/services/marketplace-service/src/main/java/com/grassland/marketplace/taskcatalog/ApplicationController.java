@@ -160,7 +160,11 @@ public class ApplicationController {
                         .switchIfEmpty(fail(404, "任务不存在"))
                         .flatMap(task -> {
                             if (!"published".equals(task.status())) {
-                                return fail(409, "任务当前不可报名");
+                                // #26 D9：closed/cancelled 文案单独拆分（原统一「任务当前不可报名」），其余状态维持原文案
+                                String message = "closed".equals(task.status()) ? "任务已关闭，无法报名"
+                                        : "cancelled".equals(task.status()) ? "任务已取消，无法报名"
+                                        : "任务当前不可报名";
+                                return fail(409, message);
                             }
                             // GL-P1-TASK-001 Stage 1：报名截止（PRD「指定时间」）。已截止 → 不接受新报名；
                             // 既有 pending/accepted/履约不受影响（D-03 未决，不动 accept/confirm/结算）。

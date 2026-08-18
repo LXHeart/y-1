@@ -168,6 +168,149 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         assertThat(outboxCount("TaskClosed", task)).isZero();
     }
 
+    // 场景 7：自动关闭后再手动 close → 200 幂等返回当前任务体，不重复发事件（D5）。
+    @Test
+    void manualCloseAfterAutoCloseIsIdempotent() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, 1);
+        String app = apply(UUID.randomUUID().toString(), task);
+        int versionBeforeAutoClose = taskVersion(task);
+        accept(merchant, task, app);  // 满员自动关闭（version+1）
+        assertThat(taskStatus(task)).isEqualTo("closed");
+        assertThat(outboxCount("TaskClosed", task)).isEqualTo(1);
+
+        // 商家以过期 version 重试手动 close（真实重试语义）→ 幂等 200 + 当前任务体，不重复发事件
+        client().post().uri("/api/tasks/" + task + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", versionBeforeAutoClose))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("closed");
+        assertThat(outboxCount("TaskClosed", task)).isEqualTo(1);
+
+        // 归属校验先于幂等分支：非 owner 拿不到幂等 200
+        client().post().uri("/api/tasks/" + task + "/close")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant",
+                        UUID.randomUUID().toString(), "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", versionBeforeAutoClose))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    // 场景 8：published 状态下 version 不匹配的手动 close → 维持 409（现状护栏）。
+    @Test
+    void manualCloseVersionMismatchStillConflicts() {
+        String merchant = UUID.randomUUID().toString();
+        String task = publishTask(merchant, UUID.randomUUID().toString(), 5);
+
+        client().post().uri("/api/tasks/" + task + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 99))
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("任务已变更，请刷新后重试");
+
+        assertThat(taskStatus(task)).isEqualTo("published");
+        assertThat(outboxCount("TaskClosed", task)).isZero();
+    }
+
+    // 场景 9：cancelled 任务手动 close → 409；cancel/close 终态互斥（guarded transition 抢一，护栏断言）。
+    @Test
+    void closeAndCancelTerminalStatesAreMutuallyExclusive() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        // cancel 后 close → 409「任务当前状态不允许该操作」
+        String cancelledTask = publishTask(merchant, org, null);
+        client().post().uri("/api/tasks/" + cancelledTask + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", taskVersion(cancelledTask)))
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/tasks/" + cancelledTask + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", taskVersion(cancelledTask)))
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("任务当前状态不允许该操作");
+        assertThat(outboxCount("TaskClosed", cancelledTask)).isZero();
+
+        // close 后 cancel → 409「任务已结束，不可取消」；两条路径各恰一条事件
+        String closedTask = publishTask(merchant, org, null);
+        client().post().uri("/api/tasks/" + closedTask + "/close")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", taskVersion(closedTask)))
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/tasks/" + closedTask + "/cancel")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", taskVersion(closedTask)))
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("任务已结束，不可取消");
+        assertThat(outboxCount("TaskClosed", closedTask)).isEqualTo(1);
+        assertThat(outboxCount("TaskCancelled", closedTask)).isZero();
+    }
+
+    // 场景 10：revise 下调 maxSlots 至已接受数之下 → 提交成功后任务 closed + TaskClosed(slots_full)（D13）。
+    @Test
+    void reviseLoweringCapBelowAcceptedClosesTask() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String task = publishTask(merchant, org, 3);
+        String first = apply(UUID.randomUUID().toString(), task);
+        String second = apply(UUID.randomUUID().toString(), task);
+        accept(merchant, task, first);
+        accept(merchant, task, second);
+        assertThat(taskStatus(task)).isEqualTo("published");  // accepted=2 < 3，未触发关闭
+
+        client().post().uri("/api/tasks/" + task + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", taskVersion(task), "title", "下调名额", "maxSlots", 2))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("closed");
+
+        assertThat(taskStatus(task)).isEqualTo("closed");
+        assertThat(outboxCount("TaskRevised", task)).isEqualTo(1);
+        assertThat(outboxCount("TaskClosed", task)).isEqualTo(1);
+        assertThat(outboxPayloadField("TaskClosed", task, "closeReason")).isEqualTo("slots_full");
+    }
+
+    // 场景 11（D10 护栏）：关闭后 pending 报名仍可拒绝/撤回；accept 满员 409。
+    @Test
+    void pendingApplicationsRemainProcessableAfterClose() {
+        String merchant = UUID.randomUUID().toString();
+        String task = publishTask(merchant, UUID.randomUUID().toString(), 1);
+        String winner = apply(UUID.randomUUID().toString(), task);
+        String loser = apply(UUID.randomUUID().toString(), task);
+        String withdrawer = UUID.randomUUID().toString();
+        String withdrawn = apply(withdrawer, task);
+        accept(merchant, task, winner);  // 满员自动关闭；两条 pending 留存
+        assertThat(taskStatus(task)).isEqualTo("closed");
+
+        // 满员任务 accept pending → 409 名额已满（claim 抢不到名额）
+        client().post().uri("/api/tasks/" + task + "/applications/" + loser + "/accept")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("名额已满");
+
+        // 商家仍可拒绝 pending
+        client().post().uri("/api/tasks/" + task + "/applications/" + loser + "/reject")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("rejected");
+
+        // 推荐官仍可撤回本人 pending（非本人 → 403，先证归属门）
+        client().post().uri("/api/tasks/" + task + "/applications/" + withdrawn + "/withdraw")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/api/tasks/" + task + "/applications/" + withdrawn + "/withdraw")
+                .header("X-Grassland-Identity", sign(withdrawer, "recommender"))
+                .exchange().expectStatus().isOk();
+        assertThat(appStatus(withdrawn)).isEqualTo("withdrawn");
+    }
+
     // ---------- 造数/断言 helper（照 ApplicationControllerIT 的同名 helper 风格） ----------
 
     @SuppressWarnings("unchecked")
@@ -285,6 +428,12 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         return db.sql("SELECT status FROM task WHERE id = CAST(:id AS uuid)")
                 .bind("id", taskId)
                 .map(r -> r.get("status", String.class)).one().block();
+    }
+
+    private int taskVersion(String taskId) {
+        return db.sql("SELECT version FROM task WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId)
+                .map(r -> r.get("version", Integer.class)).one().block();
     }
 
     private String appStatus(String app) {
