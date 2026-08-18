@@ -14,6 +14,7 @@ import java.util.Locale;
  *   <li>{@link #CONTENT_ASSET} — 内容素材库资产（Slice 14 / PRD §4.8，三类素材库的物理资产）。</li>
  *   <li>{@link #AVATAR} — 推荐官头像（任务书 #29+#30 D6）；账号级资产，仅图片 MIME。</li>
  *   <li>{@link #BRAND_LOGO} — 组织品牌 Logo（#32 D5）；org 级资产，仅图片 MIME，票据只能由 identity 服务断言代开。</li>
+ *   <li>{@link #SPEECH_AUDIO} — 语音识别输入；仅受控音频 MIME 与文件签名。</li>
  * </ul>
  */
 public enum MediaPurpose {
@@ -24,7 +25,8 @@ public enum MediaPurpose {
     USER_UPLOAD("user_upload"),
     CONTENT_ASSET("content_asset"),
     AVATAR("avatar"),
-    BRAND_LOGO("brand_logo");
+    BRAND_LOGO("brand_logo"),
+    SPEECH_AUDIO("speech_audio");
 
     private final String db;
 

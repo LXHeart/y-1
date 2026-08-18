@@ -2,6 +2,7 @@ package com.grassland.intelligence.media;
 
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.speech.SpeechAudioPolicy;
 import com.grassland.intelligence.event.OutboxRepository;
 import com.grassland.storage.ObjectStorageAdapter;
 import com.grassland.storage.PresignRequest;
@@ -54,19 +55,21 @@ public class MediaController {
     private static final Set<String> ALLOWED_MIME_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/gif",
             "video/mp4", "video/quicktime", "video/webm",
-            "audio/mpeg", "audio/mp4", "audio/wav", "audio/webm",
+            "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg",
             "application/pdf", "text/csv");
     /** 非图片 MIME → 文件扩展名，用于推导 attachment; filename=<id>.<ext>（白名单与 ALLOWED_MIME_TYPES 同源）。 */
-    private static final Map<String, String> EXTENSIONS = Map.of(
-            "video/mp4", "mp4",
-            "video/quicktime", "mov",
-            "video/webm", "webm",
-            "audio/mpeg", "mp3",
-            "audio/mp4", "m4a",
-            "audio/wav", "wav",
-            "audio/webm", "webm",
-            "application/pdf", "pdf",
-            "text/csv", "csv");
+    private static final Map<String, String> EXTENSIONS = Map.ofEntries(
+            Map.entry("video/mp4", "mp4"),
+            Map.entry("video/quicktime", "mov"),
+            Map.entry("video/webm", "webm"),
+            Map.entry("audio/mpeg", "mp3"),
+            Map.entry("audio/mp4", "m4a"),
+            Map.entry("audio/wav", "wav"),
+            Map.entry("audio/x-wav", "wav"),
+            Map.entry("audio/webm", "webm"),
+            Map.entry("audio/ogg", "ogg"),
+            Map.entry("application/pdf", "pdf"),
+            Map.entry("text/csv", "csv"));
     /** 服务间断点唯一放行的用途（履约附件）；其余用途经此路径一律 404，缩小暴露面。 */
     private static final String SERVICE_ATTACHMENT_PURPOSE = MediaPurpose.ENGAGEMENT_ATTACHMENT.db();
     private static final String KYB_PURPOSE = MediaPurpose.MERCHANT_KYB.db();
@@ -78,6 +81,10 @@ public class MediaController {
     private static final String BRAND_LOGO_PURPOSE = MediaPurpose.BRAND_LOGO.db();
     private static final Set<String> BRAND_LOGO_MIME_TYPES = Set.of("image/png", "image/jpeg", "image/webp");
     private static final long BRAND_LOGO_MAX_BYTES = 2L * 1024 * 1024;
+    private static final String SPEECH_AUDIO_PURPOSE = MediaPurpose.SPEECH_AUDIO.db();
+    private static final Set<String> SPEECH_AUDIO_MIME_TYPES = Set.of(
+            "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg");
+    private static final long SPEECH_AUDIO_MAX_BYTES = 25L * 1024 * 1024;
     private static final long MIN_ASSET_TTL_SECONDS = 60;
     private static final long MAX_ASSET_TTL_SECONDS = 30L * 24 * 60 * 60;
     private static final long MIN_KYB_LEASE_SECONDS = 60;
@@ -434,21 +441,26 @@ public class MediaController {
                         .switchIfEmpty(Mono.error(new IntelligenceException(409, "媒体状态已变化，请刷新后重试"))))
                 .flatMap(active -> deleteObject(claimed.uploadKey())
                         .onErrorResume(error -> {
-                            log.warn("media temporary object deletion failed after confirm: mediaId={}, uploadKey={}",
-                                    claimed.id(), claimed.uploadKey(), error);
+                            log.warn("media temporary object deletion failed after confirm: "
+                                    + "mediaId={}, failureStage=storage_delete_after_confirm, "
+                                    + "exceptionType={}, errorCategory=storage_delete_failed",
+                                    claimed.id(), exceptionType(error));
                             return Mono.empty();
                         })
                         .thenReturn(active))
                 .onErrorResume(error -> releaseFinalize(claimed.id())
                         .onErrorResume(releaseError -> {
-                            log.warn("media finalizing release failed: mediaId={}", claimed.id(), releaseError);
+                            log.warn("media finalizing release failed: "
+                                    + "mediaId={}, failureStage=release_finalize, exceptionType={}, "
+                                    + "errorCategory=release_finalize_failed",
+                                    claimed.id(), exceptionType(releaseError));
                             return Mono.empty();
                         })
                         .then(Mono.error(error)));
     }
 
     private Mono<StoredObject> validateStoredObject(MediaReference ref, StoredObject head) {
-        if (head.contentLength() != ref.sizeBytes() || head.contentLength() > maxObjectBytes) {
+        if (head.contentLength() != ref.sizeBytes() || head.contentLength() > maxBytesFor(ref)) {
             return discardInvalidUpload(ref, "媒体文件大小与上传凭据不一致");
         }
         if (head.contentType() == null || !ref.mimeType().equalsIgnoreCase(head.contentType())) {
@@ -458,14 +470,22 @@ public class MediaController {
     }
 
     private Mono<byte[]> validateDownloadedBytes(MediaReference ref, byte[] bytes) {
-        if (bytes.length != ref.sizeBytes() || bytes.length > maxObjectBytes) {
+        if (bytes.length != ref.sizeBytes() || bytes.length > maxBytesFor(ref)) {
             return discardInvalidUpload(ref, "媒体文件大小与上传凭据不一致").then(Mono.empty());
         }
         if (KYB_PURPOSE.equals(ref.purpose())
                 && !KybMediaPolicy.hasExpectedSignature(ref.mimeType(), bytes)) {
             return discardInvalidUpload(ref, "KYB 证据文件签名与 MIME 不一致").then(Mono.empty());
         }
+        if (SPEECH_AUDIO_PURPOSE.equals(ref.purpose())
+                && !SpeechAudioPolicy.hasExpectedSignature(ref.mimeType(), bytes)) {
+            return discardInvalidUpload(ref, "语音音频文件签名与 MIME 不一致").then(Mono.empty());
+        }
         return Mono.just(bytes);
+    }
+
+    private long maxBytesFor(MediaReference ref) {
+        return SPEECH_AUDIO_PURPOSE.equals(ref.purpose()) ? SPEECH_AUDIO_MAX_BYTES : maxObjectBytes;
     }
 
     private <T> Mono<T> discardInvalidUpload(MediaReference ref, String message) {
@@ -493,9 +513,17 @@ public class MediaController {
                 // 释放/对象删除/complete 任一失败：跳过 completeDelete，行留 deleting，交由 MediaCleanup
                 // 重试整个释放+删除（quota_released 标志保证释放幂等）。此时 claimDelete 已生效，媒体对用户已 404。
                 .onErrorResume(error -> {
-                    log.warn("media delete finalization deferred to cleanup: mediaId={}", ref.id(), error);
+                    log.warn("media delete finalization deferred to cleanup: "
+                            + "mediaId={}, failureStage=delete_finalization, exceptionType={}, "
+                            + "errorCategory=delete_finalization_failed",
+                            ref.id(), exceptionType(error));
                     return Mono.empty();
                 });
+    }
+
+    private static String exceptionType(Throwable error) {
+        String simpleName = error == null ? null : error.getClass().getSimpleName();
+        return simpleName == null || simpleName.isBlank() ? "Unknown" : simpleName;
     }
 
     private Mono<MediaReference> owned(UUID id, String accountId) {
@@ -651,13 +679,17 @@ public class MediaController {
                 throw new IllegalArgumentException("头像大小不得超过 " + AVATAR_MAX_BYTES + " 字节");
             }
         }
+        if (purpose == MediaPurpose.SPEECH_AUDIO && !SPEECH_AUDIO_MIME_TYPES.contains(contentType)) {
+            throw new IllegalArgumentException("语音音频仅支持 MP3、M4A、WAV、WebM 或 OGG");
+        }
         String domainType = optional(body.domainType(), 64, "domainType");
         String domainId = optional(body.domainId(), 200, "domainId");
         if ((domainType == null) != (domainId == null)) {
             throw new IllegalArgumentException("domainType 与 domainId 必须同时提供");
         }
-        if (body.sizeBytes() == null || body.sizeBytes() < 1 || body.sizeBytes() > maxObjectBytes) {
-            throw new IllegalArgumentException("sizeBytes 必须在 1 到 " + maxObjectBytes + " 之间");
+        long uploadMaxBytes = purpose == MediaPurpose.SPEECH_AUDIO ? SPEECH_AUDIO_MAX_BYTES : maxObjectBytes;
+        if (body.sizeBytes() == null || body.sizeBytes() < 1 || body.sizeBytes() > uploadMaxBytes) {
+            throw new IllegalArgumentException("sizeBytes 必须在 1 到 " + uploadMaxBytes + " 之间");
         }
         Instant expiresAt = null;
         if (body.ttlSeconds() != null) {

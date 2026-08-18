@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
 import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
 import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import com.grassland.storage.ObjectStorageAdapter;
@@ -19,16 +23,19 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import reactor.core.publisher.Mono;
 
 /** testcontainers PostgreSQL + MinIO 端到端验证 media-reference 三步上传、签名读、归属与删除审计。 */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -45,6 +52,8 @@ class MediaControllerIT {
 
     private static final byte[] PNG =
             new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+    private static final byte[] WAV =
+            new byte[] {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E'};
 
     static {
         POSTGRES.start();
@@ -84,10 +93,10 @@ class MediaControllerIT {
     @Autowired
     private IdentityAssertionSigner signer;
 
-    @Autowired
+    @MockitoSpyBean
     private MediaReferenceRepository mediaRefs;
 
-    @Autowired
+    @MockitoSpyBean
     private ObjectStorageAdapter storage;
 
     @Autowired
@@ -283,6 +292,173 @@ class MediaControllerIT {
                 .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
                 .bodyValue(Map.of("contentType", "image/png", "purpose", "article_generated", "sizeBytes", 1))
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    void speechAudioTicketAllowsOnlySupportedAudioMimeTypesAndEnforcesItsSizeCap() {
+        for (String mime : List.of(
+                "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg")) {
+            client().post().uri("/api/media/upload-tickets")
+                    .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+                    .bodyValue(Map.of("contentType", mime, "purpose", "speech_audio", "sizeBytes", WAV.length))
+                    .exchange().expectStatus().isOk()
+                    .expectBody()
+                    .jsonPath("$.data.id").exists();
+        }
+
+        for (String mime : List.of("application/pdf", "video/mp4")) {
+            client().post().uri("/api/media/upload-tickets")
+                    .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+                    .bodyValue(Map.of("contentType", mime, "purpose", "speech_audio", "sizeBytes", WAV.length))
+                    .exchange().expectStatus().isBadRequest();
+        }
+
+        client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+                .bodyValue(Map.of("contentType", "audio/wav", "purpose", "speech_audio",
+                        "sizeBytes", 25L * 1024 * 1024 + 1))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void speechAudioConfirmChecksTheSignatureAgainstTheDeclaredMimeType() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        Map<String, Object> valid = createSpeechTicket(owner, "audio/wav", WAV.length);
+        UUID validId = UUID.fromString((String) valid.get("id"));
+        put(URI.create((String) valid.get("uploadUrl")), WAV, "audio/wav");
+
+        client().post().uri("/api/media/{id}/confirm", validId)
+                .header("X-Grassland-Identity", sign(owner, null))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.status").isEqualTo("active")
+                .jsonPath("$.data.purpose").isEqualTo("speech_audio");
+
+        String mismatchOwner = "acct-" + UUID.randomUUID();
+        Map<String, Object> mismatch = createSpeechTicket(mismatchOwner, "audio/mpeg", WAV.length);
+        UUID mismatchId = UUID.fromString((String) mismatch.get("id"));
+        put(URI.create((String) mismatch.get("uploadUrl")), WAV, "audio/mpeg");
+
+        client().post().uri("/api/media/{id}/confirm", mismatchId)
+                .header("X-Grassland-Identity", sign(mismatchOwner, null))
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("语音音频文件签名与 MIME 不一致");
+        assertThat(mediaRefs.findById(mismatchId).block().status()).isEqualTo(MediaStatus.DELETED);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void temporaryObjectCleanupFailureLogDoesNotExposeStorageDetails() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        Map<String, Object> ticket = createSpeechTicket(owner, "audio/wav", WAV.length);
+        UUID mediaId = UUID.fromString((String) ticket.get("id"));
+        String uploadKey = (String) ticket.get("objectKey");
+        put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/wav");
+
+        String sensitiveStorageMessage = "upstream body at /private/storage/path";
+        doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).deleteObject(uploadKey);
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(MediaController.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            client().post().uri("/api/media/{id}/confirm", mediaId)
+                    .header("X-Grassland-Identity", sign(owner, null))
+                    .exchange().expectStatus().isOk()
+                    .expectBody().jsonPath("$.data.status").isEqualTo("active");
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        ILoggingEvent cleanupWarning = appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("temporary object deletion"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(cleanupWarning.getFormattedMessage())
+                .contains(mediaId.toString(), "failureStage=storage_delete_after_confirm",
+                        "exceptionType=IllegalStateException")
+                .doesNotContain(uploadKey, sensitiveStorageMessage);
+        assertThat(cleanupWarning.getThrowableProxy()).isNull();
+        assertThat(mediaRefs.findById(mediaId).block().status()).isEqualTo(MediaStatus.ACTIVE);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void invalidUploadCleanupFailureLogDoesNotExposeStorageDetails() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        Map<String, Object> ticket = createSpeechTicket(owner, "audio/mpeg", WAV.length);
+        UUID mediaId = UUID.fromString((String) ticket.get("id"));
+        String uploadKey = (String) ticket.get("objectKey");
+        put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/mpeg");
+
+        String sensitiveStorageMessage = "upstream body at /private/storage/path";
+        doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).deleteObject(uploadKey);
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(MediaController.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            client().post().uri("/api/media/{id}/confirm", mediaId)
+                    .header("X-Grassland-Identity", sign(owner, null))
+                    .exchange().expectStatus().isBadRequest()
+                    .expectBody().jsonPath("$.error").isEqualTo("语音音频文件签名与 MIME 不一致");
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        ILoggingEvent cleanupWarning = appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("delete finalization deferred"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(cleanupWarning.getFormattedMessage())
+                .contains(mediaId.toString(), "failureStage=delete_finalization",
+                        "exceptionType=IllegalStateException")
+                .doesNotContain(uploadKey, sensitiveStorageMessage);
+        assertThat(cleanupWarning.getThrowableProxy()).isNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void finalizingReleaseFailureLogDoesNotExposeStorageDetails() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        Map<String, Object> ticket = createSpeechTicket(owner, "audio/wav", WAV.length);
+        UUID mediaId = UUID.fromString((String) ticket.get("id"));
+        String uploadKey = (String) ticket.get("objectKey");
+        put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/wav");
+
+        String sensitiveStorageMessage = "upstream response body at /private/storage/path";
+        String sensitiveReleaseMessage = "release failure details at /private/release/path";
+        doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).getObject(uploadKey);
+        doReturn(Mono.<Boolean>error(new IllegalStateException(sensitiveReleaseMessage)))
+                .when(mediaRefs).releaseFinalize(mediaId);
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(MediaController.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            client().post().uri("/api/media/{id}/confirm", mediaId)
+                    .header("X-Grassland-Identity", sign(owner, null))
+                    .exchange().expectStatus().is5xxServerError();
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        ILoggingEvent releaseWarning = appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("finalizing release failed"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(releaseWarning.getFormattedMessage())
+                .contains(mediaId.toString(), "failureStage=release_finalize",
+                        "exceptionType=IllegalStateException")
+                .doesNotContain(uploadKey, sensitiveStorageMessage, sensitiveReleaseMessage);
+        assertThat(releaseWarning.getThrowableProxy()).isNull();
     }
 
     @Test
@@ -973,6 +1149,16 @@ class MediaControllerIT {
         return (Map<String, Object>) envelope.get("data");
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> createSpeechTicket(String owner, String contentType, int sizeBytes) {
+        Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign(owner, null))
+                .bodyValue(Map.of("contentType", contentType, "purpose", "speech_audio", "sizeBytes", sizeBytes))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return (Map<String, Object>) envelope.get("data");
+    }
+
     /** 申请 engagement_attachment 上传凭据（pending，未 confirm）。 */
     @SuppressWarnings("unchecked")
     private Map<String, Object> createAttachmentTicket(String owner, String org, int sizeBytes) {
@@ -1025,9 +1211,13 @@ class MediaControllerIT {
     }
 
     private void put(URI uploadUrl, byte[] content) throws Exception {
+        put(uploadUrl, content, "image/png");
+    }
+
+    private void put(URI uploadUrl, byte[] content, String contentType) throws Exception {
         HttpResponse<Void> response = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(uploadUrl)
-                        .header("Content-Type", "image/png")
+                        .header("Content-Type", contentType)
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(content))
                         .build(),
                 HttpResponse.BodyHandlers.discarding());

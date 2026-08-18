@@ -2,6 +2,8 @@ package com.grassland.intelligence.media;
 
 import com.grassland.storage.ObjectStorageAdapter;
 import com.grassland.intelligence.event.OutboxRepository;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,7 +60,8 @@ public class MediaCleanup {
         }
         cleanup().doFinally(signal -> running.set(false)).subscribe(
                 ignored -> {},
-                error -> log.warn("media cleanup round failed", error));
+                error -> log.warn("media cleanup round failed: failureStage=cleanup_round, "
+                        + "exceptionType={}, errorCategory=cleanup_round_failed", exceptionType(error)));
     }
 
     Mono<Void> cleanup() {
@@ -71,8 +74,9 @@ public class MediaCleanup {
         return mediaRefs.claimCleanup(candidate.id())
                 .flatMap(this::deleteAndAudit)
                 .onErrorResume(error -> {
-                    log.warn("media cleanup failed: mediaId={}, objectKey={}",
-                            candidate.id(), candidate.objectKey(), error);
+                    log.warn("media cleanup failed: mediaId={}, failureStage=candidate_cleanup, "
+                            + "exceptionType={}, errorCategory=cleanup_failed",
+                            candidate.id(), exceptionType(error));
                     return Mono.empty();
                 })
                 .then();
@@ -102,7 +106,10 @@ public class MediaCleanup {
                 .filter(object -> object.lastModified() != null && object.lastModified().isBefore(cutoff))
                 .concatMap(object -> deleteObject(object.key())
                         .onErrorResume(error -> {
-                            log.warn("media temporary object cleanup failed: objectKey={}", object.key(), error);
+                            log.warn("media temporary object cleanup failed: "
+                                    + "failureStage=orphan_storage_delete, exceptionType={}, "
+                                    + "objectKeyHash={}, errorCategory=storage_delete_failed",
+                                    exceptionType(error), objectKeyHash(object.key()));
                             return Mono.empty();
                         }))
                 .then();
@@ -116,5 +123,24 @@ public class MediaCleanup {
 
     private Mono<Void> deleteObjectIfPresent(String key) {
         return key == null ? Mono.empty() : deleteObject(key);
+    }
+
+    private static String exceptionType(Throwable error) {
+        String simpleName = error == null ? null : error.getClass().getSimpleName();
+        return simpleName == null || simpleName.isBlank() ? "Unknown" : simpleName;
+    }
+
+    private static String objectKeyHash(String key) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(key.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(12);
+            for (int i = 0; i < 6; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
     }
 }
