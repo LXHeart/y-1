@@ -215,6 +215,16 @@ edge:
     - path: /api/creation-contexts
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CREATION_CONTEXTS_INTELLIGENCE:true}
+    # 语音转写（任务书 #33）→ intelligence。方法级路由：只放行 POST 创建与 GET 查询，
+    # 其余方法（如 PUT/DELETE）不匹配即 fail-closed 404；flag 关闭时两法全 404。
+    - method: POST
+      path: /api/speech
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_SPEECH_INTELLIGENCE:true}
+    - method: GET
+      path: /api/speech
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_SPEECH_INTELLIGENCE:true}
     # 平台 admin 用户管理 + 积分调整 → identity。
     # 精确路径，不抢同前缀的 permission-requests/kyb-requests/ai（它们排在前面，更具体优先）。
     # 同一 flag 绑定两者（同属一次迁移，不应分开切流）。

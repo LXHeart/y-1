@@ -77,6 +77,9 @@ class JavaRouteManifestGateTest {
                 route("POST", "/api/guest-trial/article-titles", "intelligence"),
                 route("POST", "/api/content-safety/check", "intelligence"),
                 route("GET", "/api/guest-trial/quota", "intelligence"),
+                // 任务书 #33：语音转写（方法级路由，仅 POST/GET 放行，其余方法 fail-closed）。
+                route("POST", "/api/speech/transcriptions", "intelligence"),
+                route("GET", "/api/speech/transcriptions/transcription-1", "intelligence"),
                 route("GET", "/api/admin/ai/models", "intelligence"),
                 route("GET", "/api/admin/ai/video-reconciliation", "intelligence"),
                 route("GET", "/api/admin/finance/reconciliation", "finance"),
@@ -155,7 +158,8 @@ class JavaRouteManifestGateTest {
                 Arguments.of("GET", "/api/auth/login"),
                 Arguments.of("GET", "/api/article-generation/titles"),
                 Arguments.of("GET", "/api/video-recreation/adapt-content"),
-                Arguments.of("GET", "/api/image-analysis/analyze"));
+                Arguments.of("GET", "/api/image-analysis/analyze"),
+                Arguments.of("PUT", "/api/speech/transcriptions/transcription-1"));
     }
 
     private static Arguments route(String method, String path, String upstream) {
