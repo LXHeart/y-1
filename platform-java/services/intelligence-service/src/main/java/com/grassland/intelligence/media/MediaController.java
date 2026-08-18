@@ -74,6 +74,10 @@ public class MediaController {
     private static final String AVATAR_PURPOSE = MediaPurpose.AVATAR.db();
     private static final Set<String> AVATAR_MIME_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
     private static final long AVATAR_MAX_BYTES = 5L * 1024 * 1024;
+    /** 组织品牌 Logo（#32 D5）：org 级资产，仅图片 MIME + 独立大小帽，票据只能由 identity 服务断言代开。 */
+    private static final String BRAND_LOGO_PURPOSE = MediaPurpose.BRAND_LOGO.db();
+    private static final Set<String> BRAND_LOGO_MIME_TYPES = Set.of("image/png", "image/jpeg", "image/webp");
+    private static final long BRAND_LOGO_MAX_BYTES = 2L * 1024 * 1024;
     private static final long MIN_ASSET_TTL_SECONDS = 60;
     private static final long MAX_ASSET_TTL_SECONDS = 30L * 24 * 60 * 60;
     private static final long MIN_KYB_LEASE_SECONDS = 60;
@@ -133,6 +137,15 @@ public class MediaController {
             @RequestBody CreateKybUploadTicketRequest body, ServerWebExchange exchange) {
         return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
                 .flatMap(caller -> createKybPending(caller, body))
+                .map(MediaController::success);
+    }
+
+    /** identity 完成组织授权（ADMIN+）后代申请品牌 Logo 上传票据（#32 D6）；组织上下文只取服务断言。 */
+    @PostMapping("/brand-logo-upload-tickets")
+    public Mono<Map<String, Object>> createBrandLogoUploadTicket(
+            @RequestBody CreateBrandLogoUploadTicketRequest body, ServerWebExchange exchange) {
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
+                .flatMap(caller -> createBrandLogoPending(caller, body))
                 .map(MediaController::success);
     }
 
@@ -305,6 +318,19 @@ public class MediaController {
                 .map(MediaController::success);
     }
 
+    /** identity 专用品牌 Logo 下载/校验端点（#32 D7）：org 级四重过滤，不符/不存在统一 404。 */
+    @GetMapping("/{id}/brand-logo-url")
+    public Mono<Map<String, Object>> brandLogoDownloadUrl(@PathVariable String id, ServerWebExchange exchange) {
+        UUID mediaId = parseId(id);
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
+                .flatMap(caller -> brandLogoAsset(mediaId, required(caller.organizationId(), 200, "服务断言 organizationId")))
+                .map(ref -> new MediaServiceDownloadResponse(
+                        storage.presignDownload(
+                                ref.objectKey(), downloadTtl(ref, Instant.now()), downloadDisposition(ref)),
+                        ref.expiresAt()))
+                .map(MediaController::success);
+    }
+
     private Mono<UploadTicketResponse> createPending(
             String ownerAccountId, String organizationId, UploadSpec spec) {
         UUID id = UUID.randomUUID();
@@ -343,6 +369,27 @@ public class MediaController {
         }
         UploadSpec spec = new UploadSpec(
                 contentType, MediaPurpose.MERCHANT_KYB, KYB_PURPOSE,
+                organizationId, body.sizeBytes(), null);
+        return createPending(ownerAccountId, organizationId, spec);
+    }
+
+    /** 品牌 Logo 票据（#32 D6）：照 KYB 代开结构，D5 白名单/大小帽在开票时就拒，不落 pending。 */
+    private Mono<UploadTicketResponse> createBrandLogoPending(
+            IntelligenceCallerResolver.Caller caller, CreateBrandLogoUploadTicketRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("品牌 Logo 上传请求不能为空");
+        }
+        String organizationId = required(caller.organizationId(), 200, "服务断言 organizationId");
+        String ownerAccountId = required(body.ownerAccountId(), 200, "ownerAccountId");
+        String contentType = normalizeMime(body.contentType());
+        if (!BRAND_LOGO_MIME_TYPES.contains(contentType)) {
+            throw new IllegalArgumentException("品牌 Logo 仅支持 PNG、JPEG 或 WebP 图片");
+        }
+        if (body.sizeBytes() == null || body.sizeBytes() < 1 || body.sizeBytes() > BRAND_LOGO_MAX_BYTES) {
+            throw new IllegalArgumentException("sizeBytes 必须在 1 到 " + BRAND_LOGO_MAX_BYTES + " 之间");
+        }
+        UploadSpec spec = new UploadSpec(
+                contentType, MediaPurpose.BRAND_LOGO, BRAND_LOGO_PURPOSE,
                 organizationId, body.sizeBytes(), null);
         return createPending(ownerAccountId, organizationId, spec);
     }
@@ -505,6 +552,19 @@ public class MediaController {
                 .switchIfEmpty(notFound());
     }
 
+    /** 品牌 Logo 放行过滤（#32 D7）：org 级四重归属 + active + 未过期 + MIME 白名单；不符/不存在统一 404。 */
+    private Mono<MediaReference> brandLogoAsset(UUID mediaId, String organizationId) {
+        return mediaRefs.findById(mediaId)
+                .filter(ref -> BRAND_LOGO_PURPOSE.equals(ref.purpose())
+                        && organizationId.equals(ref.organizationId())
+                        && BRAND_LOGO_PURPOSE.equals(ref.domainType())
+                        && organizationId.equals(ref.domainId())
+                        && ref.status() == MediaStatus.ACTIVE
+                        && BRAND_LOGO_MIME_TYPES.contains(ref.mimeType())
+                        && !isExpired(ref, Instant.now()))
+                .switchIfEmpty(notFound());
+    }
+
     private Mono<KybMediaRetentionRepository.Retention> applyKybRetention(
             UUID mediaId, String organizationId, UUID referenceId, UpsertKybRetentionRequest body) {
         if (body == null) {
@@ -576,8 +636,10 @@ public class MediaController {
         }
         String contentType = normalizeMime(body.contentType());
         MediaPurpose purpose = MediaPurpose.fromRequest(body.purpose());
+        // BRAND_LOGO（#32 D5）与 KYB 同列黑名单：只能由 identity 服务断言代开，客户端直连一律 400。
         if (purpose == null || purpose == MediaPurpose.ARTICLE_GENERATED
-                || purpose == MediaPurpose.MERCHANT_KYB) {
+                || purpose == MediaPurpose.MERCHANT_KYB
+                || purpose == MediaPurpose.BRAND_LOGO) {
             throw new IllegalArgumentException("媒体用途无效");
         }
         if (purpose == MediaPurpose.AVATAR) {
@@ -717,6 +779,9 @@ public class MediaController {
             String domainId, Long sizeBytes, Long ttlSeconds) {}
 
     public record CreateKybUploadTicketRequest(
+            String ownerAccountId, String contentType, Long sizeBytes) {}
+
+    public record CreateBrandLogoUploadTicketRequest(
             String ownerAccountId, String contentType, Long sizeBytes) {}
 
     public record KybRetentionRequest(String referenceId) {}

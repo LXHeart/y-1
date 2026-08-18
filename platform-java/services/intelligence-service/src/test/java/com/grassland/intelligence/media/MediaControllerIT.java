@@ -802,6 +802,167 @@ class MediaControllerIT {
         }
     }
 
+    /** #32 D5/D6：品牌 Logo 票据只能由 identity 服务断言代开，落 pending 行 org 级四元组（purpose/domain_type/domain_id/owner）。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void brandLogoTicketIssuedByIdentityServiceCreatesOrgScopedPendingRow() {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = UUID.randomUUID().toString();
+
+        Map<String, Object> envelope = client().post().uri("/api/media/brand-logo-upload-tickets")
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        assertThat(envelope).isNotNull();
+        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+        assertThat(ticket.get("id")).isNotNull();
+        assertThat((String) ticket.get("uploadUrl")).startsWith("http");
+
+        MediaReference pending = mediaRefs.findById(UUID.fromString((String) ticket.get("id"))).block();
+        assertThat(pending).isNotNull();
+        assertThat(pending.ownerAccountId()).isEqualTo(owner);
+        assertThat(pending.organizationId()).isEqualTo(org);
+        assertThat(pending.purpose()).isEqualTo("brand_logo");
+        assertThat(pending.domainType()).isEqualTo("brand_logo");
+        assertThat(pending.domainId()).isEqualTo(org);
+        assertThat(pending.status()).isEqualTo(MediaStatus.PENDING);
+    }
+
+    /** #32 D5：品牌 Logo 仅 PNG/JPEG/WebP 图片（gif/pdf 等一律 400）。 */
+    @Test
+    void brandLogoTicketRejectsNonImageMime() {
+        String org = UUID.randomUUID().toString();
+        for (String mime : List.of("image/gif", "application/pdf")) {
+            client().post().uri("/api/media/brand-logo-upload-tickets")
+                    .header("X-Grassland-Identity", signService(org, "identity"))
+                    .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
+                            "contentType", mime, "sizeBytes", PNG.length))
+                    .exchange()
+                    .expectStatus().isBadRequest()
+                    .expectBody()
+                    .jsonPath("$.error").isEqualTo("品牌 Logo 仅支持 PNG、JPEG 或 WebP 图片");
+        }
+    }
+
+    /** #32 D5：sizeBytes 独立大小帽 2MB，超帽或 <1 → 400。 */
+    @Test
+    void brandLogoTicketEnforcesTwoMegabyteCap() {
+        String org = UUID.randomUUID().toString();
+        client().post().uri("/api/media/brand-logo-upload-tickets")
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
+                        "contentType", "image/png", "sizeBytes", 2L * 1024 * 1024 + 1))
+                .exchange().expectStatus().isBadRequest();
+        client().post().uri("/api/media/brand-logo-upload-tickets")
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
+                        "contentType", "image/png", "sizeBytes", 0))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    /** #32 D5：brand_logo 进客户端自助开票黑名单，浏览器直连 /upload-tickets 申领被拒。 */
+    @Test
+    void brandLogoPurposeBlockedFromClientSelfServiceTickets() {
+        String org = UUID.randomUUID().toString();
+        client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+                .bodyValue(Map.of("contentType", "image/png", "purpose", "brand_logo",
+                        "sizeBytes", PNG.length, "domainType", "brand_logo", "domainId", org))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    /** #32 D7：brand-logo-url 仅放行本 org 的 active、未过期、白名单 MIME 品牌 Logo；他 org/不存在/边缘态统一 404。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void brandLogoUrlServesActiveLogoOnlyToOwningOrganizationService() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> envelope = client().post().uri("/api/media/brand-logo-upload-tickets")
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+        UUID mediaId = UUID.fromString((String) ticket.get("id"));
+        put(URI.create((String) ticket.get("uploadUrl")), PNG);
+        client().post().uri("/api/media/{id}/confirm", mediaId)
+                .header("X-Grassland-Identity", sign(owner, org))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("active");
+
+        Map<String, Object> downloadEnvelope = client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> download = (Map<String, Object>) downloadEnvelope.get("data");
+        assertThat(download.get("downloadUrl")).isNotNull();
+        HttpResponse<byte[]> bytes = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create((String) download.get("downloadUrl"))).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(bytes.statusCode()).isEqualTo(200);
+        assertThat(bytes.body()).isEqualTo(PNG);
+
+        // 他 org 的 identity 断言 → 404；不存在 id → 404（存在性不可探测）
+        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity"))
+                .exchange().expectStatus().isNotFound();
+        client().get().uri("/api/media/{id}/brand-logo-url", UUID.randomUUID())
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .exchange().expectStatus().isNotFound();
+
+        // 非 brand_logo 用途 / pending / 已过期 / domain 不符 / 非白名单 MIME → 404
+        for (UUID unusable : List.of(
+                insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE, null, "brand_logo", org),
+                insertMedia(owner, org, "brand_logo", MediaStatus.PENDING, null, "brand_logo", org),
+                insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE,
+                        Instant.now().minusSeconds(30), "brand_logo", org),
+                insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE,
+                        null, "brand_logo", UUID.randomUUID().toString()),
+                insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE,
+                        null, "brand_logo", org, "application/pdf"))) {
+            client().get().uri("/api/media/{id}/brand-logo-url", unusable)
+                    .header("X-Grassland-Identity", signService(org, "identity"))
+                    .exchange().expectStatus().isNotFound();
+        }
+    }
+
+    /** #32 D6/D7：两个新端点缺断言 → 401；终端用户断言或非 identity 服务 principal → 403。 */
+    @Test
+    void brandLogoEndpointsRequireIdentityServiceAssertion() {
+        String org = UUID.randomUUID().toString();
+        UUID mediaId = UUID.randomUUID();
+        Map<String, Object> body = Map.of(
+                "ownerAccountId", "acct-" + UUID.randomUUID(),
+                "contentType", "image/png", "sizeBytes", PNG.length);
+
+        client().post().uri("/api/media/brand-logo-upload-tickets")
+                .bodyValue(body)
+                .exchange().expectStatus().isUnauthorized();
+        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+                .exchange().expectStatus().isUnauthorized();
+
+        client().post().uri("/api/media/brand-logo-upload-tickets")
+                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+                .bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+                .exchange().expectStatus().isForbidden();
+
+        client().post().uri("/api/media/brand-logo-upload-tickets")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .bodyValue(body)
+                .exchange().expectStatus().isForbidden();
+        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isForbidden();
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> createTicket(String owner, int sizeBytes) {
         Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
@@ -848,10 +1009,15 @@ class MediaControllerIT {
 
     private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt,
                              String domainType, String domainId) {
+        return insertMedia(owner, org, purpose, status, expiresAt, domainType, domainId, "image/png");
+    }
+
+    private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt,
+                             String domainType, String domainId, String mimeType) {
         UUID id = UUID.randomUUID();
         MediaReference ref = new MediaReference(
                 id, owner, org, purpose, domainType, domainId,
-                "media/" + purpose + "/" + id, null, "image/png", PNG.length,
+                "media/" + purpose + "/" + id, null, mimeType, PNG.length,
                 MediaChecksums.sha256(PNG), "upload", status,
                 Instant.now().minusSeconds(120), expiresAt, null);
         mediaRefs.insert(ref).block();
