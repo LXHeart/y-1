@@ -52,6 +52,7 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
 
     @BeforeEach
     void cleanContentAssets() {
+        db.sql("DELETE FROM content_asset_embedding").then().block();
         db.sql("DELETE FROM content_asset_grant").then().block();
         db.sql("DELETE FROM content_asset_version").then().block();
         db.sql("DELETE FROM content_asset").then().block();
@@ -218,6 +219,98 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
                 .header(header(), sign("user-del", null))
                 .exchange()
                 .expectStatus().isNotFound();
+    }
+
+    // ---- 任务书 #33：素材 CRUD 与 Embedding 索引意图的事务一致性 ----
+
+    /** 查询某素材的全部索引行（status/version/hash），供钩子断言。 */
+    private List<Map<String, Object>> embeddingRows(String assetId) {
+        return db.sql("""
+                        SELECT status, asset_version, content_hash
+                        FROM content_asset_embedding WHERE asset_id = CAST(:id AS uuid)
+                        ORDER BY asset_version
+                        """)
+                .bind("id", assetId)
+                .map(row -> Map.<String, Object>of(
+                        "status", row.get("status", String.class),
+                        "asset_version", row.get("asset_version", Integer.class),
+                        "content_hash", row.get("content_hash", String.class)))
+                .all().collectList().block();
+    }
+
+    @Test
+    void createActiveAssetEnqueuesEmbeddingIntentInSameTransaction() {
+        String mediaId = seedMedia("user-idx");
+        String assetId = createPersonalAsset("user-idx", mediaId, "开业海报", "campaign", List.of("咖啡"));
+
+        List<Map<String, Object>> rows = embeddingRows(assetId);
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0)).containsEntry("asset_version", 1).containsEntry("status", "pending");
+        assertThat(rows.get(0).get("content_hash").toString()).hasSize(64);
+    }
+
+    @Test
+    void editEnqueuesNewVersionAndStalesOldIntent() {
+        String mediaId = seedMedia("user-idx2");
+        String assetId = createAsset("user-idx2", mediaId, "旧标题");
+
+        client().put().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("user-idx2", null))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "category", "store", "title", "新标题",
+                        "tags", List.of("新标签")))
+                .exchange()
+                .expectStatus().isOk();
+
+        List<Map<String, Object>> rows = embeddingRows(assetId);
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("asset_version", 1).containsEntry("status", "stale");
+        assertThat(rows.get(1)).containsEntry("asset_version", 2).containsEntry("status", "pending");
+        assertThat(rows.get(0).get("content_hash")).isNotEqualTo(rows.get(1).get("content_hash"));
+    }
+
+    @Test
+    void deleteStalesCurrentEmbeddingIntent() {
+        String mediaId = seedMedia("user-idx3");
+        String assetId = createAsset("user-idx3", mediaId, "待删索引");
+
+        client().delete().uri("/api/content-assets/" + assetId)
+                .header(header(), sign("user-idx3", null))
+                .exchange()
+                .expectStatus().isOk();
+
+        List<Map<String, Object>> rows = embeddingRows(assetId);
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0)).containsEntry("status", "stale");
+    }
+
+    @Test
+    void publicReviewControlsEmbeddingIntentByStatus() {
+        String mediaId = seedMedia("reviewer-idx");
+        // pending_review：不建索引意图。
+        String approvedId = createPublicAsset("reviewer-idx", mediaId, "公共素材A");
+        assertThat(embeddingRows(approvedId)).isEmpty();
+
+        // 审核通过（version 1→2 active）→ 入队 v2。
+        client().post().uri("/api/admin/content-assets/" + approvedId + "/review/approve")
+                .header(header(), signWithRole("reviewer-idx", null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1))
+                .exchange()
+                .expectStatus().isOk();
+        List<Map<String, Object>> approvedRows = embeddingRows(approvedId);
+        assertThat(approvedRows).hasSize(1);
+        assertThat(approvedRows.get(0)).containsEntry("asset_version", 2).containsEntry("status", "pending");
+
+        // 驳回路径：同样不产生索引意图。
+        String rejectedId = createPublicAsset("reviewer-idx", mediaId, "公共素材B");
+        client().post().uri("/api/admin/content-assets/" + rejectedId + "/review/reject")
+                .header(header(), signWithRole("reviewer-idx", null, null, "content_reviewer"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 1, "note", "来源不明"))
+                .exchange()
+                .expectStatus().isOk();
+        assertThat(embeddingRows(rejectedId)).isEmpty();
     }
 
     @Test

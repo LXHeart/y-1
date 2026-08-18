@@ -219,6 +219,24 @@ public class ContentAssetRepository {
     }
 
     /**
+     * Embedding 回填扫描（任务书 #33）：active 且当前版本没有 pending/processing/ready 索引行的素材，
+     * 按 updated_at ASC 有界返回。达到 max-attempts 的 failed 行不算「缺失」——不允许无限复活。
+     */
+    public Flux<ContentAsset> findActiveWithoutCurrentIndex(int limit) {
+        return db.sql("""
+                SELECT %s FROM content_asset AS a
+                WHERE a.deleted_at IS NULL AND a.status = 'active' AND NOT EXISTS (
+                    SELECT 1 FROM content_asset_embedding AS e
+                    WHERE e.asset_id = a.id AND e.asset_version = a.version
+                      AND e.status IN ('pending', 'processing', 'ready'))
+                ORDER BY a.updated_at ASC, a.id ASC
+                LIMIT :limit
+                """.formatted(SELECT_COLS))
+                .bind("limit", Math.max(1, limit))
+                .map(ContentAssetRepository::map).all();
+    }
+
+    /**
      * 审核通过（pending_review→active，version+1，记 reviewer/reviewed_at）。镜像
      * {@code TaskRepository.reviewApprove}。0 行（非 pending_review / 版本冲突）→ empty（controller 转 409）。
      */

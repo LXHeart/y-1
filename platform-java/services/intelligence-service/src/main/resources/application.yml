@@ -162,6 +162,14 @@ identity:
 # 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
 # intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。
 ai:
+  # 任务书 #33：素材 Embedding 索引 worker（回填 + claim + 指数退避；Sandbox 0 成本）。
+  embedding-index:
+    enabled: ${EMBEDDING_INDEX_ENABLED:true}
+    poll-interval-ms: ${EMBEDDING_INDEX_POLL_INTERVAL_MS:3000}
+    batch-size: ${EMBEDDING_INDEX_BATCH_SIZE:20}
+    backfill-batch-size: ${EMBEDDING_INDEX_BACKFILL_BATCH_SIZE:100}
+    claim-lease: ${EMBEDDING_INDEX_CLAIM_LEASE:PT1M}
+    max-attempts: ${EMBEDDING_INDEX_MAX_ATTEMPTS:5}
   # 任务书 #36 / ADR-D14：游客有限体验（未登录可试用 3 项白名单能力；总开关生产可关）。
   guest-trial:
     enabled: ${AI_GUEST_TRIAL_ENABLED:true}

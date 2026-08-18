@@ -48,10 +48,17 @@ public class ContentAssetEmbeddingRepository {
         if (assetId == null || version <= 0 || contentHash == null || contentHash.isBlank()) {
             return Mono.error(new IllegalArgumentException("An embedding requires asset, positive version and content hash"));
         }
+        // NOT EXISTS 覆盖全部状态：pending/processing 幂等，ready 不重复建索引，
+        // 到达重试上限的 failed 行不被回填复活（同一 asset/version/hash 只存在一批索引行）。
         return db.sql("""
                 INSERT INTO content_asset_embedding (asset_id, asset_version, content_hash, status)
-                VALUES (CAST(:assetId AS uuid), :version, :contentHash, 'pending')
-                ON CONFLICT (asset_id, asset_version, content_hash) WHERE status IN ('pending', 'processing') DO NOTHING
+                SELECT CAST(:assetId AS uuid), :version, :contentHash, 'pending'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM content_asset_embedding
+                    WHERE asset_id = CAST(:assetId AS uuid)
+                      AND asset_version = :version
+                      AND content_hash = :contentHash
+                )
                 """)
                 .bind("assetId", assetId.toString())
                 .bind("version", version)
@@ -153,6 +160,35 @@ public class ContentAssetEmbeddingRepository {
                 SET status = 'stale', claim_token = NULL, claimed_until = NULL, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'processing' AND claim_token = CAST(:claimToken AS uuid)
                 """).bind("id", id.toString()).bind("claimToken", claimToken.toString()));
+    }
+
+    /** 删除/驳回钩子：该素材全部 pending/ready 行转 stale（processing 行由 worker 漂移检测兜底）。 */
+    public Mono<Boolean> markCurrentRowsStale(UUID assetId) {
+        if (assetId == null) {
+            return Mono.error(new IllegalArgumentException("assetId is required"));
+        }
+        return changed(db.sql("""
+                UPDATE content_asset_embedding
+                SET status = 'stale', claim_token = NULL, claimed_until = NULL, updated_at = now()
+                WHERE asset_id = CAST(:assetId AS uuid) AND status IN ('pending', 'ready')
+                """).bind("assetId", assetId.toString()));
+    }
+
+    /** 编辑钩子：保留 (keepVersion, keepHash) 当前行，其余 pending/ready 行转 stale。 */
+    public Mono<Boolean> markOtherRowsStale(UUID assetId, int keepVersion, String keepHash) {
+        if (assetId == null || keepHash == null || keepHash.isBlank()) {
+            return Mono.error(new IllegalArgumentException("assetId and keepHash are required"));
+        }
+        return changed(db.sql("""
+                UPDATE content_asset_embedding
+                SET status = 'stale', claim_token = NULL, claimed_until = NULL, updated_at = now()
+                WHERE asset_id = CAST(:assetId AS uuid)
+                  AND status IN ('pending', 'ready')
+                  AND NOT (asset_version = :keepVersion AND content_hash = :keepHash)
+                """)
+                .bind("assetId", assetId.toString())
+                .bind("keepVersion", keepVersion)
+                .bind("keepHash", keepHash));
     }
 
     public Flux<ContentAssetEmbedding> findReadyForAssets(Collection<UUID> assetIds) {

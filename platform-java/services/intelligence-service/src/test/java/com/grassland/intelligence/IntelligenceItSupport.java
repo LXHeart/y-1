@@ -95,6 +95,8 @@ public abstract class IntelligenceItSupport {
         registerServiceKeyring(r, "intelligence");
         r.add("intelligence.outbox.enabled", () -> "false");
         r.add("ai.credit-compensation.enabled", () -> "false");
+        // 素材 Embedding 索引 worker：IT 里静默（轮询间隔拉到 1h），各 IT 直接调 runOnce() 驱动确定性断言。
+        r.add("ai.embedding-index.poll-interval-ms", () -> "3600000");
         // 未启 MinIO：回落 LocalGeneratedImageStore（本地卷），S3 自动配置与 S3GeneratedImageStore 不装配。
         r.add("object-storage.enabled", () -> "false");
         // 平台默认 Qwen 指向 WireMock：base-url 是主机名（localhost）→ SSRF 结构校验通过（IP 字面量才拒）。

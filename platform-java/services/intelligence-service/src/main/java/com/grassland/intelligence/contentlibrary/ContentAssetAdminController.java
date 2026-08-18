@@ -43,16 +43,19 @@ public class ContentAssetAdminController {
     private final ContentAssetRepository assets;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks;
 
     public ContentAssetAdminController(
             IntelligenceCallerResolver callers,
             ContentAssetRepository assets,
             OutboxRepository outbox,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions,
+            com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks) {
         this.callers = callers;
         this.assets = assets;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.indexingHooks = indexingHooks;
     }
 
     /** 列待审核公共素材（内容审核员队列）。 */
@@ -91,6 +94,7 @@ public class ContentAssetAdminController {
                 .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材状态已变化，请刷新后重试")))
                 .flatMap(approved -> outbox.append(ContentAssetController.assetEvent(
                         "ContentAssetPublished", approved, caller.accountId(), null, caller.accountId()))
+                        .then(indexingHooks.onActiveAsset(approved))
                         .thenReturn(approved))
                 .as(transactions::transactional)
                 .map(ContentAssetController::toResponse);
@@ -106,6 +110,7 @@ public class ContentAssetAdminController {
                 .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材状态已变化，请刷新后重试")))
                 .flatMap(rejected -> outbox.append(ContentAssetController.assetEvent(
                         "ContentAssetRejected", rejected, caller.accountId(), note, caller.accountId()))
+                        .then(indexingHooks.onRemovedAsset(rejected.id()))
                         .thenReturn(rejected))
                 .as(transactions::transactional)
                 .map(ContentAssetController::toResponse);

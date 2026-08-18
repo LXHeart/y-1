@@ -65,6 +65,7 @@ public class ContentAssetController {
     private final IdentityStoreAuthorizationClient storeAuthorization;
     private final IdentityOrgAuthorizationClient orgAuthorization;
     private final ContentAssetRecommendationService recommendations;
+    private final com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks;
 
     public ContentAssetController(
             IntelligenceCallerResolver callers,
@@ -76,7 +77,8 @@ public class ContentAssetController {
             TransactionalOperator transactions,
             IdentityStoreAuthorizationClient storeAuthorization,
             IdentityOrgAuthorizationClient orgAuthorization,
-            ContentAssetRecommendationService recommendations) {
+            ContentAssetRecommendationService recommendations,
+            com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks) {
         this.callers = callers;
         this.assets = assets;
         this.grants = grants;
@@ -87,6 +89,7 @@ public class ContentAssetController {
         this.storeAuthorization = storeAuthorization;
         this.orgAuthorization = orgAuthorization;
         this.recommendations = recommendations;
+        this.indexingHooks = indexingHooks;
     }
 
     /** 创建素材（个人库任意登录用户 / 商家库组织管理员或门店 MANAGER）。按 body libraryType 分流。 */
@@ -445,6 +448,7 @@ public class ContentAssetController {
                     return assets.create(asset)
                             .flatMap(created -> outbox.append(assetEvent(
                                     "ContentAssetCreated", created, caller.accountId(), null, null))
+                                    .then(indexingHooks.onActiveAsset(created))
                                     .thenReturn(created))
                             .as(transactions::transactional);
                 })
@@ -520,6 +524,7 @@ public class ContentAssetController {
                         .switchIfEmpty(Mono.error(new IntelligenceException(409, "素材已被他人修改，请刷新后重试")))
                         .flatMap(updated -> outbox.append(assetEvent(
                                 "ContentAssetUpdated", updated, caller.accountId(), null, null))
+                                .then(indexingHooks.onActiveAssetInvalidatingOld(updated))
                                 .thenReturn(updated))
                         .as(transactions::transactional))
                 .map(ContentAssetController::toResponse);
@@ -532,6 +537,7 @@ public class ContentAssetController {
                         .switchIfEmpty(Mono.error(new IntelligenceException(404, "素材不存在")))
                         .then(outbox.append(assetEvent(
                                 "ContentAssetDeleted", asset, caller.accountId(), null, null)))
+                        .then(indexingHooks.onRemovedAsset(asset.id()))
                         .thenReturn(Map.<String, Object>of("deleted", true)))
                 .as(transactions::transactional);
     }
