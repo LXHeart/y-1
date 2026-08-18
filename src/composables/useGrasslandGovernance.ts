@@ -13,6 +13,7 @@ import type {
   ContentAsset, ContentAssetCategory, ContentAssetGrant, ContentAssetVersion, ContentLibraryType,
   CreateContentAssetInput, UpdateContentAssetInput,
   ContentAssetRecommendationInput, ContentAssetRecommendationResult,
+  SpeechLanguage, SpeechTranscription,
   WithdrawalAccount, CreateWithdrawalAccountInput,
   StoreProfile, CreateStoreProfileInput,
   KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
@@ -342,11 +343,44 @@ export function useGrasslandGovernance(run: RunFn) {
     if (input.contentForm) qs.set('contentForm', input.contentForm)
     if (input.category) qs.set('category', input.category)
     if (input.keywords?.length) qs.set('keywords', input.keywords.join(','))
+    const query = input.query?.trim()
+    if (query) qs.set('query', query)
     if (input.limit != null) qs.set('limit', String(input.limit))
     const suffix = qs.size > 0 ? `?${qs}` : ''
     return run(() => request<ContentAssetRecommendationResult>(
       `/api/content-assets/recommendations${suffix}`))
   }
+
+  // ---------- 语音转写（任务书 #33）----------
+
+  /** 语音音频三步上传（purpose=speech_audio），返回 mediaId 供转写引用。 */
+  const uploadSpeechAudio = (file: File) =>
+    run(async () => {
+      const ticket = await request<MediaUploadTicket>('/api/media/upload-tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          contentType: file.type,
+          purpose: 'speech_audio',
+          sizeBytes: file.size,
+        }),
+      })
+      await putToPresignedUrl(ticket, file)
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      return confirmed.id
+    })
+
+  /** 创建转写（服务端同步完成 Sandbox 转写后返回终态记录）。 */
+  const createSpeechTranscription = (mediaId: string, language: SpeechLanguage = 'auto') =>
+    run(() => request<SpeechTranscription>('/api/speech/transcriptions', {
+      method: 'POST',
+      body: JSON.stringify({ mediaId, language }),
+    }))
+
+  /** 查询转写记录（owner 范围；id 做路径编码）。 */
+  const getSpeechTranscription = (id: string) =>
+    run(() => request<SpeechTranscription>(
+      `/api/speech/transcriptions/${encodeURIComponent(id)}`))
 
   /** 创建素材条目（挂接已 confirm 的 mediaId）。 */
   const createContentAsset = (input: CreateContentAssetInput) =>
@@ -557,6 +591,7 @@ export function useGrasslandGovernance(run: RunFn) {
     uploadContentAssetFile, listContentAssets, recommendContentAssets, createContentAsset, getContentAsset,
     listContentAssetVersions, updateContentAsset, deleteContentAsset, getContentAssetDownloadUrl,
     grantContentAsset, listContentAssetGrants, revokeContentAssetGrant, migrateContentAssetsToStore,
+    uploadSpeechAudio, createSpeechTranscription, getSpeechTranscription,
     listWithdrawalAccounts, createWithdrawalAccount, updateWithdrawalAccount,
     submitWithdrawalAccount, setDefaultWithdrawalAccount, deleteWithdrawalAccount,
     getStoreProfile, createStoreProfile, submitStoreProfile,

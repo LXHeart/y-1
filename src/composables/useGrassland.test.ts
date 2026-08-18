@@ -904,3 +904,95 @@ describe('履约附件三步上传请求契约（Slice 11）', () => {
     expect(spy.mock.calls.some((c) => String(c[0]).includes('/confirm'))).toBe(false)
   })
 })
+
+// ---------- 任务书 #33：语音转写 + 语义检索请求契约 ----------
+
+describe('语音转写与语义检索请求契约（#33）', () => {
+  const speechTicket = {
+    id: 'media-speech', objectKey: 'k', uploadUrl: 'http://localhost:9002/b/k',
+    method: 'PUT', headers: {}, expiresAt: null,
+  }
+
+  test('uploadSpeechAudio 以 speech_audio 用途三步上传并返回 mediaId', async () => {
+    let call = 0
+    const spy = vi.fn().mockImplementation(async (url: string) => {
+      call += 1
+      if (url === speechTicket.uploadUrl) return { ok: true, status: 200 }
+      const data = call === 1 ? speechTicket : { id: 'media-speech', status: 'active' }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    })
+    vi.stubGlobal('fetch', spy)
+    const { uploadSpeechAudio } = useGrassland()
+    const file = new File([new Uint8Array(4)], 'memo.mp3', { type: 'audio/mpeg' })
+
+    const mediaId = await uploadSpeechAudio(file)
+
+    expect(mediaId).toBe('media-speech')
+    expect(spy.mock.calls[0][0]).toBe('/api/media/upload-tickets')
+    expect(bodyOf(spy)).toEqual({
+      contentType: 'audio/mpeg', purpose: 'speech_audio', sizeBytes: file.size,
+    })
+    expect(spy.mock.calls[1][0]).toBe(speechTicket.uploadUrl)
+    expect(spy.mock.calls[2][0]).toBe('/api/media/media-speech/confirm')
+  })
+
+  test('createSpeechTranscription POST {mediaId, language} 到 /api/speech/transcriptions', async () => {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true, headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data: { id: 'tr-1', status: 'processing' } }),
+    })
+    vi.stubGlobal('fetch', spy)
+    const { createSpeechTranscription } = useGrassland()
+
+    await createSpeechTranscription('media-speech', 'zh-CN')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/speech/transcriptions')
+    expect(bodyOf(spy)).toEqual({ mediaId: 'media-speech', language: 'zh-CN' })
+  })
+
+  test('getSpeechTranscription GET 编码后的转写 id', async () => {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true, headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data: { id: 'tr/1', status: 'completed' } }),
+    })
+    vi.stubGlobal('fetch', spy)
+    const { getSpeechTranscription } = useGrassland()
+
+    await getSpeechTranscription('tr/1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/speech/transcriptions/tr%2F1')
+  })
+
+  test('recommendContentAssets 携带 trim 后的 query；无 query 时省略参数', async () => {
+    const spy = vi.fn().mockResolvedValue({
+      ok: true, headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data: { items: [], query: { terms: [] } } }),
+    })
+    vi.stubGlobal('fetch', spy)
+    const { recommendContentAssets } = useGrassland()
+
+    await recommendContentAssets({ query: '  开业 海报  ' })
+    expect(spy.mock.calls[0][0]).toBe('/api/content-assets/recommendations?query=%E5%BC%80%E4%B8%9A+%E6%B5%B7%E6%8A%A5')
+
+    await recommendContentAssets({ keywords: ['新店'] })
+    expect(spy.mock.calls[1][0]).toBe('/api/content-assets/recommendations?keywords=%E6%96%B0%E5%BA%97')
+
+    await recommendContentAssets({ query: '   ' })
+    expect(spy.mock.calls[2][0]).toBe('/api/content-assets/recommendations')
+  })
+
+  test('转写请求失败时返回 null 并落入既有 error 通道', async () => {
+    const spy = vi.fn().mockResolvedValue({
+      ok: false, status: 503,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: false, error: '平台未配置语音识别模型' }),
+    })
+    vi.stubGlobal('fetch', spy)
+    const { createSpeechTranscription, error } = useGrassland()
+
+    const result = await createSpeechTranscription('media-speech', 'auto')
+
+    expect(result).toBeNull()
+    expect(error.value).toContain('平台未配置语音识别模型')
+  })
+})
