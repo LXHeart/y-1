@@ -190,15 +190,20 @@ public class AiExecutionService {
         Mono<RunPreparation> preparation = reserveAndCreateRun(
                 provider, orgId, accountId, capability, allowFallback, budgetOpId,
                 estimatedTokens, estimatedCents, runType, priceTableVersion, contextSnapshotId);
-        return transactions.execute(ignored -> preparation)
-                .single()
-                .flatMap(prepared -> prepared.allowed()
+        return Mono.usingWhen(
+                transactions.execute(ignored -> preparation).single(),
+                prepared -> prepared.allowed()
                         ? chargeAfterRunCreated(
-                                prepared.runId(), prepared.budget(), provider,
-                                orgId, accountId, capability, feature, budgetOpId,
-                                decryptedKey, prepared.priceTableVersion(),
-                                estimatedInputTokens, estimatedOutputTokens)
-                        : Mono.just(ExecutionResult.denied(prepared.denialReason())));
+                                prepared, provider, orgId, accountId, capability, feature,
+                                budgetOpId, decryptedKey, estimatedInputTokens, estimatedOutputTokens)
+                        : Mono.just(ExecutionResult.denied(prepared.denialReason())),
+                ignored -> Mono.empty(),
+                (prepared, error) -> cleanupPreparationFailure(
+                        prepared, provider, orgId, accountId, capability, feature,
+                        budgetOpId, decryptedKey, estimatedInputTokens, estimatedOutputTokens, error),
+                prepared -> cleanupPreparationCancellation(
+                        prepared, provider, orgId, accountId, capability, feature,
+                        budgetOpId, decryptedKey, estimatedInputTokens, estimatedOutputTokens));
     }
 
     private Mono<RunPreparation> reserveAndCreateRun(
@@ -251,8 +256,7 @@ public class AiExecutionService {
     }
 
     private Mono<ExecutionResult> chargeAfterRunCreated(
-            UUID runId,
-            ModelBudgetService.BudgetCheckResult budget,
+            RunPreparation prepared,
             ProviderResolution provider,
             String orgId,
             String accountId,
@@ -260,36 +264,100 @@ public class AiExecutionService {
             CreditFeature feature,
             UUID operationId,
             String decryptedKey,
-            String priceTableVersion,
             int estimatedInputTokens,
             int estimatedOutputTokens) {
-        ExecutionContext cancellationContext = new ExecutionContext(
-                runId, orgId, accountId, capability, provider, budget, operationId,
-                null, feature, provider.isPlatform() && feature != null, decryptedKey,
-                priceTableVersion, estimatedInputTokens, estimatedOutputTokens);
-        Mono<Optional<CreditCharge>> chargeMono = provider.isPlatform() && feature != null
+        boolean chargesPlatformCredits = provider.isPlatform() && feature != null;
+        Mono<Optional<CreditCharge>> chargeMono = chargesPlatformCredits
                 ? credits.consume(accountId, feature, operationId.toString()).map(Optional::of)
                 : Mono.just(Optional.empty());
-        Mono<ExecutionResult> charge = chargeMono.map(optCharge -> ExecutionResult.allowed(new ExecutionContext(
-                runId, orgId, accountId, capability, provider, budget, operationId,
-                optCharge.orElse(null), feature, provider.isPlatform() && feature != null, decryptedKey,
-                priceTableVersion, estimatedInputTokens, estimatedOutputTokens)));
-        return Mono.usingWhen(
-                        Mono.just(cancellationContext),
-                        ignored -> charge,
-                        ignored -> Mono.empty(),
-                        (ignored, error) -> Mono.empty(),
-                        ignored -> handlePreparationCancellation(cancellationContext).then())
-                .onErrorResume(error -> {
-                    ExecutionContext failedContext = new ExecutionContext(
-                            runId, orgId, accountId, capability, provider, budget, operationId,
-                            null, feature,
-                            provider.isPlatform() && feature != null
-                                    && !(error instanceof InsufficientCreditsException),
-                            decryptedKey, priceTableVersion, estimatedInputTokens, estimatedOutputTokens);
-                    return handleFailure(failedContext, errorMessage(error))
-                            .then(Mono.error(error));
-                });
+        return chargeMono.map(optCharge -> ExecutionResult.allowed(preparationContext(
+                prepared, provider, orgId, accountId, capability, feature, operationId,
+                optCharge.orElse(null), chargesPlatformCredits, decryptedKey,
+                estimatedInputTokens, estimatedOutputTokens)));
+    }
+
+    private Mono<Void> cleanupPreparationFailure(
+            RunPreparation prepared,
+            ProviderResolution provider,
+            String orgId,
+            String accountId,
+            String capability,
+            CreditFeature feature,
+            UUID operationId,
+            String decryptedKey,
+            int estimatedInputTokens,
+            int estimatedOutputTokens,
+            Throwable error) {
+        if (!prepared.allowed()) {
+            return Mono.empty();
+        }
+        return suppressPreparationCleanup(
+                Mono.defer(() -> {
+                    boolean compensationRequired = provider.isPlatform() && feature != null
+                            && !(error instanceof InsufficientCreditsException);
+                    ExecutionContext context = preparationContext(
+                            prepared, provider, orgId, accountId, capability, feature, operationId,
+                            null, compensationRequired, decryptedKey,
+                            estimatedInputTokens, estimatedOutputTokens);
+                    return handleFailure(context, errorMessage(error)).then();
+                }),
+                prepared.runId(), "error");
+    }
+
+    private Mono<Void> cleanupPreparationCancellation(
+            RunPreparation prepared,
+            ProviderResolution provider,
+            String orgId,
+            String accountId,
+            String capability,
+            CreditFeature feature,
+            UUID operationId,
+            String decryptedKey,
+            int estimatedInputTokens,
+            int estimatedOutputTokens) {
+        if (!prepared.allowed()) {
+            return Mono.empty();
+        }
+        return suppressPreparationCleanup(
+                Mono.defer(() -> {
+                    boolean compensationRequired = provider.isPlatform() && feature != null;
+                    ExecutionContext context = preparationContext(
+                            prepared, provider, orgId, accountId, capability, feature, operationId,
+                            null, compensationRequired, decryptedKey,
+                            estimatedInputTokens, estimatedOutputTokens);
+                    return handlePreparationCancellation(context).then();
+                }),
+                prepared.runId(), "cancel");
+    }
+
+    private static ExecutionContext preparationContext(
+            RunPreparation prepared,
+            ProviderResolution provider,
+            String orgId,
+            String accountId,
+            String capability,
+            CreditFeature feature,
+            UUID operationId,
+            CreditCharge charge,
+            boolean compensationRequired,
+            String decryptedKey,
+            int estimatedInputTokens,
+            int estimatedOutputTokens) {
+        return new ExecutionContext(
+                prepared.runId(), orgId, accountId, capability, provider, prepared.budget(), operationId,
+                charge, feature, compensationRequired, decryptedKey, prepared.priceTableVersion(),
+                estimatedInputTokens, estimatedOutputTokens);
+    }
+
+    private Mono<Void> suppressPreparationCleanup(Mono<Void> cleanup, UUID runId, String stage) {
+        return cleanup.doOnError(error -> {
+                    String exceptionType = error.getClass().getSimpleName().isBlank()
+                            ? "Unknown" : error.getClass().getSimpleName();
+                    logger.warn("AI run preparation cleanup failed: runId={}, stage={}, "
+                                    + "exceptionType={}, errorCategory=preparation_cleanup_failed",
+                            runId, stage, exceptionType);
+                })
+                .onErrorResume(error -> Mono.empty());
     }
 
     private static String errorMessage(Throwable error) {
