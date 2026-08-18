@@ -16,6 +16,7 @@ import RecommenderIncomeStatsCard from '../../components/RecommenderIncomeStatsC
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import OrgTeamCard from '../../components/OrgTeamCard.vue'
 import AiOrgBudgetPanel from '../../components/AiOrgBudgetPanel.vue'
+import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import MerchantTaskForm from './components/MerchantTaskForm.vue'
@@ -1318,6 +1319,11 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
       <!-- 组织 AI 预算仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
       <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
         <AiOrgBudgetPanel :organization-id="activeOrg.id" />
+      </article>
+
+      <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
+      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
+        <OrganizationBrandCard :org-id="activeOrg.id" :role="activeOrganizationRole" />
       </article>
 
       <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
