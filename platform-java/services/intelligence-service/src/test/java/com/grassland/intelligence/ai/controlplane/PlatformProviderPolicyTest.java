@@ -1,5 +1,6 @@
 package com.grassland.intelligence.ai.controlplane;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
@@ -27,5 +28,17 @@ class PlatformProviderPolicyTest {
         assertThatThrownBy(() -> policy.validate("qwen", "http://localhost:8080"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("HTTPS");
+    }
+
+    @Test
+    void sandboxOnlyAcceptsTheBuiltInNonRoutableOrigin() {
+        when(defaults.baseUrl()).thenReturn("https://dashscope.aliyuncs.com");
+        PlatformProviderPolicy policy = new PlatformProviderPolicy(
+                defaults, "https://dashscope.aliyuncs.com");
+
+        assertThat(policy.validate("sandbox", "https://sandbox.invalid").toString())
+                .isEqualTo("https://sandbox.invalid");
+        assertThatThrownBy(() -> policy.validate("sandbox", "https://example.com"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

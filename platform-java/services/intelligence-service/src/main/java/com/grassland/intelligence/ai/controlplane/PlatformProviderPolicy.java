@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 public final class PlatformProviderPolicy {
 
     private static final String QWEN = "qwen";
+    private static final String SANDBOX = "sandbox";
+    private static final String SANDBOX_BASE_URL = "https://sandbox.invalid";
     private final Set<String> trustedOrigins;
     private final boolean allowInsecureLoopback;
 
@@ -50,8 +52,16 @@ public final class PlatformProviderPolicy {
     }
 
     public URI validate(String provider, String baseUrl) {
-        if (!QWEN.equals(provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("平台当前只配置了 qwen 凭据，provider 必须是 qwen");
+        String normalized = provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
+        if (SANDBOX.equals(normalized)) {
+            URI uri = ProviderUrlGuard.validate(baseUrl);
+            if (!SANDBOX_BASE_URL.equals(uri.toString())) {
+                throw new IllegalArgumentException("Sandbox provider 只能使用内置地址");
+            }
+            return uri;
+        }
+        if (!QWEN.equals(normalized)) {
+            throw new IllegalArgumentException("平台 provider 必须是 qwen 或 sandbox");
         }
         URI uri = validateTransport(ProviderUrlGuard.validate(baseUrl));
         if (!trustedOrigins.contains(origin(uri))) {

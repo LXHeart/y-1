@@ -118,6 +118,15 @@ public class PriceTableService {
             0
         ));
 
+        prices.put("sandbox-speech-v1", new PriceTable.ModelPrice(
+            "voice", "sandbox",
+            0, 0, 0, 0
+        ));
+        prices.put("sandbox-embedding-v1", new PriceTable.ModelPrice(
+            "retrieval", "sandbox",
+            0, 0, 0, 0
+        ));
+
         return prices;
     }
 }

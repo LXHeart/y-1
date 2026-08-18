@@ -53,6 +53,8 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
             // 任务书 #34 / ADR-D16 D1：content_safety 深检模型**可选** seed——env 显式提供时才种
             // （AI_CONTENT_SAFETY_MODEL 缺省不配置 → 控制面无该 capability → 深检降级为仅 L1）。
             seedContentSafety();
+            seedSandboxCapability("voice", "sandbox-speech-v1");
+            seedSandboxCapability("retrieval", "sandbox-embedding-v1");
         } catch (Exception e) {
             // best-effort：seed 失败（启动期 DB 不可达 / 测试用占位 DB）不阻断上下文启动；
             // admin 可经 CRUD 手动配置。生产 DB 真不可达时 Flyway 等会更早失败。
@@ -85,6 +87,24 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
             logger.info("Seeded platform model config content_safety/primary (model={})", model);
         } catch (Exception e) {
             logger.warn("content_safety seed skipped (best-effort): {}", e.getMessage());
+        }
+    }
+
+    private void seedSandboxCapability(String capability, String model) {
+        try {
+            boolean exists = repository.findCurrent(capability, PlatformModelConfig.ROLE_PRIMARY)
+                    .hasElement().block(BLOCK);
+            if (exists) {
+                return;
+            }
+            PlatformModelConfig seed = new PlatformModelConfig(
+                    null, capability, PlatformModelConfig.ROLE_PRIMARY, "sandbox",
+                    model, "https://sandbox.invalid", null,
+                    PlatformModelConfig.HEALTH_HEALTHY, true, 1, null, null, null);
+            transactions.transactional(repository.create(seed, "system")).block(BLOCK);
+            logger.info("Seeded platform model config {}/primary with Sandbox model {}", capability, model);
+        } catch (Exception e) {
+            logger.warn("Sandbox {} seed skipped (best-effort): {}", capability, e.getMessage());
         }
     }
 }
