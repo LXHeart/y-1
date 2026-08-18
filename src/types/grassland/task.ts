@@ -147,6 +147,8 @@ export interface BatchItemResult {
   commandId?: string
   workflowId?: string
   reason?: string
+  /** #26 满员自动关闭（D12）：该项接受落定同事务把任务关为 closed 时 true（资金型 reserving 阶段恒 false，以 reservation 轮询为准）。 */
+  taskClosed?: boolean
 }
 
 /** 任务书 #27：批量操作响应。 */
@@ -242,6 +244,8 @@ export interface MerchantContestOutcome {
 export interface ReservationOutcome {
   status: 'accepted' | 'reserving' | 'compensated' | 'pending'
   reason?: string
+  /** #26 满员自动关闭（D12）：任务当前已 closed（接受落定同事务满员关闭）时 true。 */
+  taskClosed?: boolean
 }
 
 /** 结算轮询结果。held = 存在未终局争议，资金暂不 capture（reason 如 open_dispute）。 */

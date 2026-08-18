@@ -62,6 +62,9 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         assertThat(outboxPayloadField("TaskClosed", task, "closeReason")).isEqualTo("slots_full");
         assertThat(outboxPayloadField("TaskClosed", task, "taskOwnerId")).isEqualTo(merchant);
         assertThat(outboxPayloadField("TaskClosed", task, "ownerAccountId")).isEqualTo(merchant);
+        // D12：预留结局响应携带 taskClosed=true（前端据此追加「任务名额已满，已自动关闭」文案）
+        assertThat(reservationField(merchant, task, app, "status")).isEqualTo("accepted");
+        assertThat(reservationField(merchant, task, app, "taskClosed")).isEqualTo(true);
     }
 
     // 场景 2：maxSlots=2，接受 1 个 → 仍 published，无 TaskClosed 事件。
@@ -76,6 +79,8 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         assertThat(acceptedCount(task)).isEqualTo(1);
         assertThat(taskStatus(task)).isEqualTo("published");
         assertThat(outboxCount("TaskClosed", task)).isZero();
+        // D12：未满员 → 预留结局响应 taskClosed=false
+        assertThat(reservationField(merchant, task, app, "taskClosed")).isEqualTo(false);
     }
 
     // 场景 3：maxSlots=null（无上限）→ 接受后永不自动关闭。
@@ -500,6 +505,17 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
         return (String) ((Map<String, Object>) resp.get("data")).get("status");
+    }
+
+    /** #26 D12：取预留结局响应 data 内单字段（status / taskClosed 等）。 */
+    @SuppressWarnings("unchecked")
+    private Object reservationField(String merchant, String task, String app, String field) {
+        Map<String, Object> resp = client().get()
+                .uri("/api/tasks/" + task + "/applications/" + app + "/reservation")
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        return ((Map<String, Object>) resp.get("data")).get(field);
     }
 
     @SuppressWarnings("unchecked")

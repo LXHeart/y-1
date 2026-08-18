@@ -833,7 +833,7 @@ async function accept(app: TaskApplication): Promise<void> {
     return
   }
   const label = outcome.status === 'accepted'
-    ? '已接受（资金已预留）'
+    ? `已接受（资金已预留）${outcome.taskClosed ? '；任务名额已满，已自动关闭' : ''}`
     : outcome.status === 'compensated'
       ? `未接受：${outcome.reason === 'insufficient_funds' ? '账户余额不足' : outcome.reason || '预留失败'}`
       : '处理中…'
@@ -883,6 +883,8 @@ function buildBatchSummary(results: BatchItemResult[], action: 'accept' | 'rejec
     const reasonText = Object.entries(reasons).map(([r, c]) => `${r}×${c}`).join('、')
     parts.push(`${failed.length} 条失败（${reasonText}）`)
   }
+  // #26 满员自动关闭（D12）：任一项接受触发关闭即汇总提示
+  if (results.some((r) => r.taskClosed)) parts.push('任务名额已满，已自动关闭')
   return parts.join('；') || '操作完成'
 }
 
@@ -901,7 +903,7 @@ async function batchAccept(): Promise<void> {
           outcomes.value = { ...outcomes.value, [r.applicationId]: '处理中…' }
           const outcome = await grassland.pollReservation(selectedTaskId.value, r.applicationId)
           const label = outcome?.status === 'accepted'
-            ? '已接受（资金已预留）'
+            ? `已接受（资金已预留）${outcome.taskClosed ? '；任务名额已满，已自动关闭' : ''}`
             : outcome?.status === 'compensated'
               ? `未接受：${outcome.reason === 'insufficient_funds' ? '账户余额不足' : outcome.reason || '预留失败'}`
               : '处理中…'

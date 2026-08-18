@@ -53,7 +53,8 @@ import reactor.core.publisher.Mono;
  *   <li>POST /api/tasks/{id}/applications/{appId}/accept — 商家接受（须任务 owner）。接受命令、原子名额占用、
  *       状态迁移和 outbox 在同一事务内完成；资金型任务由 durable dispatcher 启动预留 Saga，支持显式
  *       {@code Idempotency-Key} 重放和冲突检测。</li>
- *   <li>GET /api/tasks/{id}/applications/{appId}/reservation — owner 轮询预留结局（accepted/reserving/compensated+reason）。</li>
+ *   <li>GET /api/tasks/{id}/applications/{appId}/reservation — owner 轮询预留结局
+ *       （accepted/reserving/compensated+reason；#26 D12 附 {@code taskClosed}）。</li>
  *   <li>POST .../reject — 商家拒绝（须任务 owner；outbox {@code ApplicationRejected}）。</li>
  *   <li>POST .../withdraw — 推荐官撤销本人 pending（outbox {@code ApplicationWithdrawn}）。</li>
  *   <li>GET /api/tasks/{id}/applications — 任务 owner 列全部报名。</li>
@@ -204,8 +205,10 @@ public class ApplicationController {
         return callers.requireUser(request)
                 .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> acceptanceCommands.findByActorAndKey(merchant.accountId(), idempotencyKey)
-                                .flatMap(existing -> replayAcceptance(existing, id, appId))
-                                .switchIfEmpty(claimAcceptance(task, appId, merchant, idempotencyKey))));
+                                .flatMap(existing -> replayAcceptance(existing, id, appId)
+                                        .map(response -> new AcceptanceOutcome(response, false)))
+                                .switchIfEmpty(claimAcceptance(task, appId, merchant, idempotencyKey))))
+                .map(AcceptanceOutcome::response);
     }
 
     /** 资金型任务（Slice 4F + ADR-D12）：bounty &gt;0（商家出资赏金）或 freebie deposit &gt;0（推荐官押金）。 */
@@ -228,7 +231,12 @@ public class ApplicationController {
         return bountyOrZero(task) > 0 ? bountyOrZero(task) : freebieDepositOrZero(task);
     }
 
-    private Mono<ResponseEntity<Map<String, Object>>> claimAcceptance(
+    /**
+     * 单条/批量/自动接受共享的接受内核入口。#26 D12：返回 {@link AcceptanceOutcome} 携带关闭事实——
+     * 单条 accept 的 HTTP 响应体不带 {@code taskClosed}（资金型 202 时关闭尚未发生，加了也是 false，徒增误导），
+     * batch-accept 的逐项结果透传该字段。
+     */
+    private Mono<AcceptanceOutcome> claimAcceptance(
             Task task, String applicationId, Caller merchant, String idempotencyKey) {
         return apps.findById(applicationId)
                 .switchIfEmpty(fail(404, "报名不存在"))
@@ -241,11 +249,12 @@ public class ApplicationController {
                         .flatMap(entitlement -> claimAcceptance(task, app, merchant, idempotencyKey, entitlement)))
                 .onErrorResume(this::isAcceptanceConstraintConflict,
                         failure -> acceptanceCommands.findByActorAndKey(merchant.accountId(), idempotencyKey)
-                                .flatMap(existing -> replayAcceptance(existing, task.id(), applicationId))
+                                .flatMap(existing -> replayAcceptance(existing, task.id(), applicationId)
+                                        .map(response -> new AcceptanceOutcome(response, false)))
                                 .switchIfEmpty(fail(409, "该报名正在被其他请求处理")));
     }
 
-    private Mono<ResponseEntity<Map<String, Object>>> claimAcceptance(
+    private Mono<AcceptanceOutcome> claimAcceptance(
             Task task, TaskApplication app, Caller merchant, String idempotencyKey,
             ReputationEntitlementSnapshot entitlement) {
         boolean monetary = isMonetary(task);
@@ -273,16 +282,20 @@ public class ApplicationController {
                         // #26 满员自动关闭（D2/D4）：仅非资金型在接受落定后同事务判定关闭；
                         // 资金型 claim→reserving 阶段不判定（预留失败会释放名额，误关不可收口），
                         // 由 saga activateEngagement（reserving→accepted 落定）再判。
+                        // D12：关闭事实记入 AcceptanceClaim 供 batch item 透传（单条响应体不带该字段）。
                         .flatMap(accepted -> monetary
-                                ? Mono.just(accepted)
-                                : taskFullAutoCloser.closeIfFull(task.id()).thenReturn(accepted))
-                        .map(accepted -> new AcceptanceClaim(command, accepted)));
+                                ? Mono.just(new AcceptanceClaim(command, accepted, false))
+                                : taskFullAutoCloser.closeIfFull(task.id())
+                                        .map(closed -> true)
+                                        .defaultIfEmpty(false)
+                                        .map(closed -> new AcceptanceClaim(command, accepted, closed))));
 
         return transactions.transactional(write)
                 .flatMap(claim -> monetary
                         ? dispatchAcceptance(claim.command())
-                        : Mono.just(ResponseEntity.ok(Map.of(
-                                "success", true, "data", toBody(claim.application())))));
+                                .map(response -> new AcceptanceOutcome(response, false))
+                        : Mono.just(new AcceptanceOutcome(ResponseEntity.ok(Map.of(
+                                "success", true, "data", toBody(claim.application()))), claim.taskClosed())));
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> dispatchAcceptance(AcceptanceCommand command) {
@@ -361,7 +374,7 @@ public class ApplicationController {
                     default -> Mono.just("unknown");
                 })
                 .switchIfEmpty(claimAcceptance(task, app, systemCaller, idempotencyKey, entitlement)
-                        .map(claim -> isMonetary(task) ? "reserving" : "accepted"))
+                        .map(outcome -> isMonetary(task) ? "reserving" : "accepted"))
                 .onErrorResume(MarketplaceException.class, e -> {
                     if (e.status() == 409 && "名额已满".equals(e.getMessage())) {
                         return Mono.just("slots_full");
@@ -370,7 +383,18 @@ public class ApplicationController {
                 });
     }
 
-    private record AcceptanceClaim(AcceptanceCommand command, TaskApplication application) {}
+    /**
+     * 接受事务落定结果。#26 D12：{@code taskClosed} = 本事务是否触发满员自动关闭——
+     * 仅非资金型接受（apps.accept 后 closeIfFull）在此可知；资金型 reserving 阶段恒 false，
+     * 最终以 reservation 端点为准（saga activateEngagement 内关闭）。
+     */
+    private record AcceptanceClaim(AcceptanceCommand command, TaskApplication application, boolean taskClosed) {}
+
+    /**
+     * claimAcceptance 对上层（单条 accept / batch-accept / dispatcher）的返回：HTTP 响应 + 关闭事实。
+     * 单条 accept 响应体不携带 {@code taskClosed}（D12），batch item 序列化时透传。
+     */
+    private record AcceptanceOutcome(ResponseEntity<Map<String, Object>> response, boolean taskClosed) {}
 
     /** 任务书 #27：批量操作请求（1–50 条）。 */
     public record BatchOperationRequest(List<String> applicationIds) {
@@ -384,18 +408,18 @@ public class ApplicationController {
         }
     }
 
-    /** 任务书 #27：批量操作逐项结果。 */
+    /** 任务书 #27：批量操作逐项结果。#26 D12：{@code taskClosed} = 该项接受是否同事务触发满员自动关闭。 */
     private record BatchItemResult(String applicationId, String outcome, String commandId,
-                                   String workflowId, String reason) {
+                                   String workflowId, String reason, boolean taskClosed) {
         static BatchItemResult ofOutcome(String appId, String outcome, AcceptanceClaim claim) {
             return new BatchItemResult(appId, outcome, claim.command().id(),
-                    claim.command().workflowId(), null);
+                    claim.command().workflowId(), null, claim.taskClosed());
         }
         static BatchItemResult ofOutcome(String appId, String outcome) {
-            return new BatchItemResult(appId, outcome, null, null, null);
+            return new BatchItemResult(appId, outcome, null, null, null, false);
         }
         static BatchItemResult failed(String appId, String reason) {
-            return new BatchItemResult(appId, "failed", null, null, reason);
+            return new BatchItemResult(appId, "failed", null, null, reason, false);
         }
         Map<String, Object> toBody() {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -404,6 +428,7 @@ public class ApplicationController {
             if (commandId != null) m.put("commandId", commandId);
             if (workflowId != null) m.put("workflowId", workflowId);
             if (reason != null) m.put("reason", reason);
+            m.put("taskClosed", taskClosed);
             return m;
         }
     }
@@ -423,19 +448,41 @@ public class ApplicationController {
                                 })));
     }
 
-    /** 映射 application DB 状态为预留结局：accepted / reserving；pending（含补偿回退）查最近失败 reason。 */
+    /**
+     * 映射 application DB 状态为预留结局：accepted / reserving；pending（含补偿回退）查最近失败 reason。
+     * #26 D12：响应附 {@code taskClosed}（任务当前是否已 closed）——单条/资金型接受最终都收敛到本端点轮询，
+     * 前端在 accepted 且 taskClosed=true 时追加「任务名额已满，已自动关闭」文案，一处覆盖全路径。
+     */
     private Mono<ResponseEntity<Map<String, Object>>> reservationOutcome(TaskApplication app) {
         String status = app.status();
         if (ApplicationStatus.ACCEPTED.dbValue().equals(status)) {
-            return Mono.just(ok(Map.of("status", "accepted")));
+            return taskClosed(app.taskId()).map(closed -> ok(reservationBody("accepted", null, closed)));
         }
         if (ApplicationStatus.RESERVING.dbValue().equals(status)) {
-            return Mono.just(ok(Map.of("status", "reserving")));
+            return taskClosed(app.taskId()).map(closed -> ok(reservationBody("reserving", null, closed)));
         }
         // pending（含补偿回退）或其它：查最近 ApplicationReservationFailed 事件的 reason
-        return outbox.latestReservationFailureReason(app.id())
-                .map(reason -> ok(reasonBody("compensated", reason)))
-                .defaultIfEmpty(ok(Map.of("status", status)));  // 无失败记录 → 原状态（pending 等）
+        return taskClosed(app.taskId()).flatMap(closed -> outbox.latestReservationFailureReason(app.id())
+                .map(reason -> ok(reservationBody("compensated", reason, closed)))
+                .defaultIfEmpty(ok(reservationBody(status, null, closed))));  // 无失败记录 → 原状态（pending 等）
+    }
+
+    /** 任务是否已关闭（#26 D12；任务行不可得防御性回 false）。 */
+    private Mono<Boolean> taskClosed(String taskId) {
+        return tasks.findById(taskId)
+                .map(task -> TaskStatus.CLOSED.dbValue().equals(task.status()))
+                .defaultIfEmpty(false);
+    }
+
+    /** 预留结局响应体：status + 可选 reason + taskClosed（#26 D12）。 */
+    private Map<String, Object> reservationBody(String status, String reason, boolean closed) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("status", status);
+        if (reason != null) {
+            m.put("reason", reason);
+        }
+        m.put("taskClosed", closed);
+        return m;
     }
 
     /**
@@ -916,14 +963,17 @@ public class ApplicationController {
                                     return acceptanceCommands.findByActorAndKey(merchant.accountId(), itemKey)
                                             .flatMap(existing -> replayBatchAccept(existing, id, appId))
                                             .switchIfEmpty(claimAcceptance(task, appId, merchant, itemKey)
-                                                    .map(response -> {
+                                                    .map(claim -> {
                                                         String outcome = isMonetary(task) ? "reserving" : "accepted";
                                                         @SuppressWarnings("unchecked")
-                                                        Map<String, Object> data = response.getBody() != null
-                                                                ? (Map<String, Object>) response.getBody().get("data") : null;
+                                                        Map<String, Object> data = claim.response().getBody() != null
+                                                                ? (Map<String, Object>) claim.response().getBody().get("data") : null;
                                                         String cmdId = data != null ? (String) data.get("commandId") : null;
                                                         String wfId = data != null ? (String) data.get("workflowId") : null;
-                                                        return new BatchItemResult(appId, outcome, cmdId, wfId, null);
+                                                        // #26 D12：batch item 透传本事务关闭事实（资金型 reserving 恒 false，
+                                                        // 最终以 reservation 轮询为准）
+                                                        return new BatchItemResult(appId, outcome, cmdId, wfId, null,
+                                                                claim.taskClosed());
                                                     })
                                                     .onErrorResume(MarketplaceException.class,
                                                             e -> Mono.just(BatchItemResult.failed(appId, e.getMessage())))
@@ -945,11 +995,13 @@ public class ApplicationController {
         }
         return switch (command.status()) {
             case "pending_dispatch", "started" ->
-                    Mono.just(new BatchItemResult(appId, "reserving", command.id(), command.workflowId(), null));
-            case "accepted" -> Mono.just(BatchItemResult.ofOutcome(appId, "accepted"));
+                    Mono.just(new BatchItemResult(appId, "reserving", command.id(), command.workflowId(), null, false));
+            // #26 D12：重放时接受事务早已落定，关闭事实以任务现状为准
+            case "accepted" -> taskClosed(taskId).map(closed ->
+                    new BatchItemResult(appId, "accepted", null, null, null, closed));
             case "compensated", "aborted" ->
                     Mono.just(new BatchItemResult(appId, command.status(), command.id(), command.workflowId(),
-                            command.failureReason()));
+                            command.failureReason(), false));
             default -> Mono.just(BatchItemResult.failed(appId, "接受请求状态无效"));
         };
     }
@@ -1359,13 +1411,6 @@ public class ApplicationController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("success", true);
         m.put("data", null);
-        return m;
-    }
-
-    private Map<String, Object> reasonBody(String status, String reason) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("status", status);
-        m.put("reason", reason);
         return m;
     }
 

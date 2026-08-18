@@ -74,4 +74,38 @@ describe('useGrasslandMarketplace 批量操作契约（#27）', () => {
       .rejects.toThrow('applicationIds must not exceed 50')
     expect(captured).toBe('applicationIds must not exceed 50')
   })
+
+  // #26 满员自动关闭（D12）：batch-accept 每项结果带 taskClosed 布尔，须原样透传到组件层。
+  it('batch-accept 每项结果透传 taskClosed 标记（#26）', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      data: {
+        results: [
+          { applicationId: 'app-1', outcome: 'accepted', taskClosed: true },
+          { applicationId: 'app-2', outcome: 'failed', reason: '名额已满', taskClosed: false },
+        ],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const marketplace = useGrasslandMarketplace(passthroughRun)
+
+    const result = await marketplace.batchAcceptApplications('task-1', ['app-1', 'app-2'])
+
+    expect(result?.results).toHaveLength(2)
+    expect(result?.results[0].taskClosed).toBe(true)
+    expect(result?.results[1].taskClosed).toBe(false)
+  })
+
+  // #26 满员自动关闭（D12）：reservation 结局响应带 taskClosed（单条/资金型轮询最终都收敛到该端点）。
+  it('pollReservation 透传 taskClosed（#26：接受成功且任务已满员自动关闭）', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      data: { status: 'accepted', taskClosed: true },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const marketplace = useGrasslandMarketplace(passthroughRun)
+
+    const outcome = await marketplace.pollReservation('task-1', 'app-1')
+
+    expect(outcome?.status).toBe('accepted')
+    expect(outcome?.taskClosed).toBe(true)
+  })
 })

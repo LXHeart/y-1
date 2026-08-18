@@ -55,6 +55,8 @@ class BatchApplicationControllerIT extends MarketplaceItSupport {
         assertThat(results.get(0))
                 .containsEntry("applicationId", appA)
                 .containsEntry("outcome", "accepted");
+        // #26 D12：无上限任务接受成功也不关闭 → taskClosed=false
+        assertThat(results.get(0)).containsEntry("taskClosed", false);
         assertThat(results.get(1))
                 .containsEntry("applicationId", appB)
                 .containsEntry("outcome", "failed")
@@ -80,10 +82,13 @@ class BatchApplicationControllerIT extends MarketplaceItSupport {
         List<Map<String, Object>> results = batchAccept(merchant, org, task, List.of(first, second), null);
 
         assertThat(results.get(0)).containsEntry("applicationId", first).containsEntry("outcome", "accepted");
+        // #26 D12：最后一名额接受成功同事务关闭 → 该项结果带 taskClosed=true；满员失败项 false
+        assertThat(results.get(0)).containsEntry("taskClosed", true);
         assertThat(results.get(1))
                 .containsEntry("applicationId", second)
                 .containsEntry("outcome", "failed")
                 .containsEntry("reason", "名额已满");
+        assertThat(results.get(1)).containsEntry("taskClosed", false);
         assertThat(acceptedCount(task)).isEqualTo(1);
     }
 
