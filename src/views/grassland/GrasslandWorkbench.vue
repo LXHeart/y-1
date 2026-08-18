@@ -20,6 +20,7 @@ import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import MerchantTaskForm from './components/MerchantTaskForm.vue'
+import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import {
   buildCommissionLadderPayload,
   commissionLadderFormFromTask,
@@ -1440,6 +1441,8 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
             </button>
             <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
             <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
+            <!-- 任务书 #25：阶梯任务在状态/赏金标签旁展示 compact 档位摘要（赏金 = 最高档预留） -->
+            <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" compact />
             <span v-if="t.minRecommenderLevel > 1" class="gl-tag">Lv{{ t.minRecommenderLevel }}+</span>
             <span v-if="t.autoAcceptMinLevel" class="gl-tag gl-tag-auto-accept">Lv{{ t.autoAcceptMinLevel }}+ 自动通过中</span>
             <span v-if="t.storeId" class="gl-tag">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>

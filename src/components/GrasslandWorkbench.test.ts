@@ -739,4 +739,64 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
     })
     expect(wrapper.text()).not.toContain('legacy-v3')
   })
+
+  /** 任务书 #25 Stage D：商家任务列表对阶梯任务渲染 compact 摘要（状态/赏金标签旁），普通任务不渲染。 */
+  test('商家任务列表渲染阶梯摘要（标签/指标/范围/明细），无 ladder 的任务不受影响', async () => {
+    const ladderTask = {
+      id: 'task-ladder-display', ownerAccountId: 'acct-1', organizationId: 'org-1',
+      title: '阶梯展示任务', description: null, status: 'published',
+      contentForm: null, platform: 'douyin', maxSlots: 3, bountyCents: 10000,
+      minRecommenderLevel: 1,
+      requirements: {
+        mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [],
+        commissionLadder: {
+          policyVersion: 'ladder-v1', metricKey: 'douyin.play_count',
+          tiers: [{ threshold: 50000, payoutCents: 10000 }, { threshold: 10000, payoutCents: 5000 }],
+        },
+      },
+      version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+      cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: null,
+    }
+    const fixedTask = {
+      id: 'task-fixed', ownerAccountId: 'acct-1', organizationId: 'org-1',
+      title: '固定佣金任务', description: null, status: 'published',
+      contentForm: null, platform: null, maxSlots: 1, bountyCents: 8800,
+      minRecommenderLevel: 1,
+      requirements: { mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [] },
+      version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+      cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: null,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.startsWith('/api/tasks/feed')) {
+        data = { items: [], nextCursor: null, hasMore: false }
+      } else if (url.startsWith('/api/tasks?') && url.includes('status=published')) {
+        data = [ladderTask, fixedTask]
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench)
+    await loginMerchant(wrapper)
+
+    const list = wrapper.get('#gl-engagements ul.gl-list')
+    expect(list.text()).toContain('阶梯佣金')
+    expect(list.text()).toContain('douyin.play_count')
+    expect(list.text()).toContain('¥50.00–¥100.00')
+    expect(list.text()).toContain('10,000 → ¥50.00')
+    expect(list.text()).toContain('固定佣金，不累加')
+    // 赏金标签（最高档预留）与普通任务的固定赏金文案保持不变
+    expect(list.text()).toContain('¥100.00')
+    expect(list.text()).toContain('¥88.00')
+    // 摘要是 compact 实例；普通/无 ladder 任务不渲染摘要组件
+    const summaries = wrapper.findAllComponents({ name: 'CommissionLadderSummary' })
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0].props('compact')).toBe(true)
+  })
 })

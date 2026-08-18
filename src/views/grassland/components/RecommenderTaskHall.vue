@@ -33,6 +33,8 @@
           <td>{{ t.platform || '—' }}</td>
           <td>
             <span v-if="t.contentForm === 'interaction'" class="gl-tag gl-tag-freebie">点赞互动</span>
+            <!-- 任务书 #25：阶梯任务先看档位规则，再显示最高赏金（= 最高档可预留金额） -->
+            <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" />
             <span v-if="t.freebieDepositCents" class="gl-tag gl-tag-freebie"
                   :title="`报名被接受时从钱包预付 ¥${(t.freebieDepositCents / 100).toFixed(2)}，达标全额返还`">
               霸王餐 · 需预付 ¥{{ (t.freebieDepositCents / 100).toFixed(2) }} · 达标全额返还
@@ -56,6 +58,7 @@
 </template>
 
 <script setup lang="ts">
+import CommissionLadderSummary from './CommissionLadderSummary.vue'
 import type { Task } from '../../../types/grassland'
 
 withDefaults(defineProps<{
