@@ -98,6 +98,8 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 商家月度账单 | `/api/finance/organizations/{orgId}/monthly-bill?month=` | 任务书 #29+#30：journal/posting 双录按 `journal_type` 聚合 + FEE 腿单列，flow=ESCROW 腿净额；org-scoped 自查跨 org 404，月切北京时间 |
 | 游客试用 | `/api/guest-trial/{capability}`、`/api/guest-trial/quota` | 任务书 #36 / ADR-D14：未登录匿名放行（gtid httpOnly cookie + IP 双层限流 + 每能力 3 次/天，成功才计次）；不进 finance credits/ai_run，审计只存 IP 截断哈希；edge flag `EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE` 可整体关闭 |
 | 内容安全复查 | `/api/content-safety/check` | 登录用户对编辑后的文本重新检查；返回版本化 findings。Edge flag `EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE` 关闭时 fail-closed 404；词库不下发前端 |
+| 语音转写 | `/api/speech/transcriptions`（POST/GET） | 任务书 #33：`speech_audio` 三步上传（六种音频 MIME、25MiB、15 分钟内）→ 同步 Sandbox 转写（0 积分、真实 ai_run）；`language=auto/zh-CN/en-US`；owner 范围外 404。Edge 方法级路由 `EDGE_ROUTE_SPEECH_INTELLIGENCE`，仅 POST/GET 放行 |
+| 素材语义检索 | `/api/content-assets/recommendations?query=` | 任务书 #33：可选 `query`（trim 后 1-500 字符）触发语义重排——先构造已授权候选（≤500），再读当前 ready 向量做 60/40 融合排序；缺向量素材仅规则份额；任何 Embedding/预算错误整请求回退纯规则（`semantic.status=fallback`，200）；响应 items 增 `ruleScore`/可选 `semanticScore`，query 增 `semantic` 元数据。无 query 行为与旧契约逐字节兼容 |
 | 推荐官我的报名 | `/api/tasks/my-applications?status=&cursor=&limit=` | 任务书 #29+#30：跨任务 keyset 分页列当前推荐官报名，join task 标题/状态/赏金 + settledAt；复用 `/api/tasks/**` 前缀不新增公网路由 |
 | 积分 | `/api/credits/*` | balance, history, packages（active 积分包）, purchase-orders（购买/记录，Sandbox 支付即时生效）|
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）; credits-packages + credits-purchase-orders（含 reconciliation 三方对账，需 FINANCE 角色）|

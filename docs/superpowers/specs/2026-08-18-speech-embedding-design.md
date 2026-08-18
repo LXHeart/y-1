@@ -2,7 +2,11 @@
 
 日期：2026-08-18
 
-状态：已确认设计，待书面规格审阅
+状态：已实现（Sandbox-first，2026-08-19）
+
+> 实现验证命令（branch `codex/issue-33-speech-semantic-retrieval`）：
+> `cd platform-java && JAVA_HOME=/opt/homebrew/opt/openjdk@25 ./gradlew :services:intelligence-service:test :services:edge-bff:test`；
+> 前端 `npm test` / `npm run typecheck` / `npm run build`。实现记录见 `docs/草场开发进度与续接指南.md` Slice 25。
 
 范围：PRD §4.10 中尚未落地的 `voice` 与 `retrieval` 两项能力
 

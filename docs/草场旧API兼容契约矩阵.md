@@ -64,6 +64,7 @@ Java `edge-bff` 必须在迁移期完整保留现有 Vue 前端依赖的 `/api/*
 | 脱口秀 | POST | `/api/comedy-generation/generate-script` | 是 | JSON | SSE-POST | 流式，`enable_thinking:false` | 否 |
 | 设置 | GET/PUT | `/api/settings/analysis*`、`/homepage` | 是 | JSON | JSON | 密钥留空=保留 | 否 |
 | 设置-模型 | POST | `/api/settings/analysis/models`、`verify-model` | 是 | JSON | JSON | 模型验证 | 否 |
+| 语音转写 | POST/GET | `/api/speech/transcriptions`、`/api/speech/transcriptions/:id` | 是 | JSON | JSON | 任务书 #33 新端点（无 legacy 契约）：`speech_audio` 三步上传后同步 Sandbox 转写；owner 范围 404；Edge 方法级路由 flag `EDGE_ROUTE_SPEECH_INTELLIGENCE`（仅 POST/GET 放行，关闭/未登记方法 fail-closed 404）| POST 否 / GET 是 |
 | 健康 | GET | `/health` | 否 | 无 | JSON | `{success:true}` | 是 |
 
 > 完整路由清单以 `server/src/app.ts` 挂载顺序和 `server/src/routes/**` 为准；后续路由迁移时在本矩阵追加切换状态和回滚开关。
