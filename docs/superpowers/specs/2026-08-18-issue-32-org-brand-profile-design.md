@@ -1,7 +1,7 @@
 # Issue #32 商家主体品牌资料 设计
 
 - 日期：2026-08-18
-- 状态：已定稿，待实现（计划见 `docs/superpowers/plans/2026-08-18-issue-32-org-brand-profile.md`）
+- 状态：已实现（2026-08-18；计划见 `docs/superpowers/plans/2026-08-18-issue-32-org-brand-profile.md`）
 - 范围：identity-service（资料表+API）+ intelligence-service（媒体 purpose/端点）+ 前端（组织管理区品牌资料面板）
 - 登记：进度指南横向缺口 #32（PRD §2.1 商家主体资料）；推荐执行顺序第一批第 4 项
 - 取代关系：worktree `feat/issues-26-32` 中未提交的品牌字段方案（挂 merchant_profile、复用 merchant_kyb 媒体、无乐观锁）作废，仅作参考；其迁移号 V33/V34/V28 与主线冲突，新实现用主线空号
