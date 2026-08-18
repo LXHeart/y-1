@@ -24,7 +24,7 @@ organization 主体拥有独立的品牌资料（品牌名称、品牌 Logo、�
 | D8 | 替换/删除语义：换 Logo = 新 mediaId 随 PUT 覆盖；清空 = `brandLogoMediaReferenceId=null`；旧媒体**不主动删**（头像先例，靠配额/TTL 自然回收） | 不引入 retention 租约体系（品牌 Logo 无 KYB 式法定留存需求），控制复杂度 |
 | D9 | 公开性：仅组织后台（组织成员经鉴权）读写。任务大厅/任务详情/AI 创作上下文未来如需消费，再立项加白名单公开接口 | 需求「至少支持商家后台读写」为基线；当前无消费方 |
 | D10 | 经营分类与 `organization.industry` 是两个字段互不影响（后者服务权限准入），品牌资料不回写 organization 表 | 语义不同（展示分类 vs 准入行业）；避免权限链路被品牌编辑扰动 |
-| D11 | 前端：新独立组件 `OrganizationBrandCard.vue` 挂 GrasslandWorkbench 商家区（MerchantKybCard 之前），与门店资料分区展示；表单回填、Logo 压缩上传/预览/替换（照 MyRecommenderProfileCard 头像模式 + compress-image）、保存成功提示、409 提示「品牌资料已被他人修改，请刷新后重试」并自动重拉；member 只读视图（无编辑控件） | 需求逐条对应；独立卡片满足「与门店资料分区」 |
+| D11 | 前端：新独立组件 `OrganizationBrandCard.vue` 挂 GrasslandWorkbench 商家区（MerchantKybCard 之前），与门店资料分区展示；表单回填、Logo 压缩上传/预览/替换（照 MyRecommenderProfileCard 头像模式 + compress-image）、保存成功提示、409 提示「品牌资料已变更，请刷新后重试」（D3 后端契约文案，单一真相源在后端）并自动重拉；member 只读视图（无编辑控件） | 需求逐条对应；独立卡片满足「与门店资料分区」 |
 | D12 | 迁移：identity `V35__organization_brand_profile.sql`（`CREATE TABLE IF NOT EXISTS`，幂等 DDL） | 重放测试约定；identity 主线最新 V34 |
 
 ## 现状锚点（2026-08-18 快照，行号漂移按符号搜）

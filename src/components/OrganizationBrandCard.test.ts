@@ -6,7 +6,8 @@ import OrganizationBrandCard from './OrganizationBrandCard.vue'
 /**
  * 组织品牌资料卡片（#32 规格测试清单 9）组件契约测试：
  * 表单回填 / 保存 payload（含 expectedVersion）/ Logo 三步上传后 mediaId 随保存提交 /
- * 409 提示 + 自动重拉 / member 只读 / 独立渲染不依赖 MerchantKybCard。
+ * 移除 Logo 后 null 清空提交 + 预览清空（含下拉 14 项断言）/ 409 提示 + 自动重拉 /
+ * member 只读 / 独立渲染不依赖 MerchantKybCard。
  *
  * 照 MerchantKybCard.test.ts 的 stubFetch 模式：字段名 typecheck 抓不到，靠断言实际请求体锁死。
  */
@@ -167,6 +168,39 @@ describe('OrganizationBrandCard 契约', () => {
     await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
     await flushPromises()
     expect(putBodyOf(spy).brandLogoMediaReferenceId).toBe('media-7')
+  })
+
+  test('移除 Logo 后保存：PUT 提交 null 清空引用且预览清空；经营分类下拉共 14 项', async () => {
+    let stored = { ...FILLED_PROFILE }
+    const spy = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if ((init as RequestInit | undefined)?.method === 'PUT') {
+        const body = JSON.parse(String(init!.body)) as Record<string, unknown>
+        // 服务端落库后 logo 清空：回包 logoUrl=null。
+        stored = { ...stored, ...body, logoUrl: null, version: stored.version + 1 } as unknown as typeof stored
+        return success(stored)
+      }
+      return success({ ...stored })
+    })
+    vi.stubGlobal('fetch', spy)
+
+    const wrapper = mount(OrganizationBrandCard, { props: { orgId: 'org-1', role: 'owner' } })
+    await flushPromises()
+
+    // 13 值经营分类（镜像 identity Industry 枚举）+「未设置」空选项 = 14。
+    expect(wrapper.find('select').findAll('option')).toHaveLength(14)
+
+    expect(wrapper.find('img[alt="品牌 Logo 预览"]').exists()).toBe(true)
+    await wrapper.findAll('button').find((button) => button.text() === '移除 Logo')!.trigger('click')
+    // 移除即时清空预览（D8 清空语义在表单层生效，不等保存）。
+    expect(wrapper.find('img[alt="品牌 Logo 预览"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('暂无 Logo')
+
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+
+    expect(putBodyOf(spy).brandLogoMediaReferenceId).toBeNull()
+    // 保存回包（服务端 logoUrl=null）后预览仍为空。
+    expect(wrapper.find('img[alt="品牌 Logo 预览"]').exists()).toBe(false)
   })
 
   test('409 乐观锁冲突：展示后端冲突文案并自动重拉最新资料回填', async () => {
