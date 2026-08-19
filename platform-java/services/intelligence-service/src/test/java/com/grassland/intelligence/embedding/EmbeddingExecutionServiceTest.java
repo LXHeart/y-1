@@ -18,6 +18,7 @@ import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionContext;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionResult;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
+import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
 import java.util.List;
@@ -61,7 +62,8 @@ class EmbeddingExecutionServiceTest {
 
     private void allow(ExecutionContext ctx) {
         when(executions.prepareExecution(
-                anyString(), any(), eq("retrieval"), isNull(), anyInt(), eq(0), eq(true)))
+                anyString(), any(), eq("retrieval"), eq(CreditFeature.AI_RUN_EMBEDDING),
+                anyInt(), eq(0), eq(true)))
                 .thenReturn(Mono.just(ExecutionResult.allowed(ctx)));
     }
 
@@ -86,7 +88,8 @@ class EmbeddingExecutionServiceTest {
     void queryUsesExchangePreparation() {
         ExecutionContext ctx = context();
         when(executions.prepareExecution(
-                any(ServerWebExchange.class), eq("retrieval"), isNull(), anyInt(), eq(0), eq(true)))
+                any(ServerWebExchange.class), eq("retrieval"), eq(CreditFeature.AI_RUN_EMBEDDING),
+                anyInt(), eq(0), eq(true)))
                 .thenReturn(Mono.just(ExecutionResult.allowed(ctx)));
         when(providers.require("sandbox")).thenReturn(new SandboxEmbeddingProvider());
         ServerWebExchange exchange = mock(ServerWebExchange.class);
@@ -102,7 +105,8 @@ class EmbeddingExecutionServiceTest {
     @Test
     void deniedPreparationFailsWithStableCodeAndNeverSettles() {
         when(executions.prepareExecution(
-                anyString(), any(), eq("retrieval"), isNull(), anyInt(), eq(0), eq(true)))
+                anyString(), any(), eq("retrieval"), eq(CreditFeature.AI_RUN_EMBEDDING),
+                anyInt(), eq(0), eq(true)))
                 .thenReturn(Mono.just(ExecutionResult.denied("no_platform_model")));
 
         assertThatThrownBy(() -> service.embedForIndexing("acct-1", null, "门店").block(Duration.ofSeconds(5)))

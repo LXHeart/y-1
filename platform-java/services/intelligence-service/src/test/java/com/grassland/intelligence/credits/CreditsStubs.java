@@ -1,6 +1,7 @@
 package com.grassland.intelligence.credits;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 
 import reactor.core.publisher.Mono;
@@ -29,6 +30,23 @@ public final class CreditsStubs {
     public static void stubDefaults(CreditsClient credits) {
         when(credits.consume(any(), any())).thenAnswer(invocation ->
                 charge(invocation.getArgument(0), invocation.getArgument(1)));
+        when(credits.consume(any(), any(), any())).thenAnswer(invocation ->
+                Mono.just(new CreditCharge(
+                        invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2))));
+        when(credits.reserveUsage(any(), any(), any(), anyLong(), any())).thenAnswer(invocation ->
+                Mono.just(new CreditCharge(
+                        invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2),
+                        CreditCharge.Source.PAID, null, true, invocation.getArgument(4),
+                        invocation.getArgument(3), 1)));
+        when(credits.settleUsage(any(), anyLong(), any())).thenAnswer(invocation -> {
+            CreditCharge charge = invocation.getArgument(0);
+            long actualCents = invocation.getArgument(1);
+            return Mono.just(new CreditSettlement(
+                    charge.accountId(), charge.feature(), charge.operationId(), charge.source(),
+                    invocation.getArgument(2), charge.reservedCents(), charge.reservedCredits(),
+                    actualCents, 1, 0, false));
+        });
         when(credits.refund(any(), any())).thenReturn(Mono.empty());
+        when(credits.compensate(any(), any())).thenReturn(Mono.empty());
     }
 }

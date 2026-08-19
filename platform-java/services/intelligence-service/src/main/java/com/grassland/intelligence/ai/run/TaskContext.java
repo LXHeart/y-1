@@ -20,6 +20,7 @@ public record TaskContext(
         Integer platformModelVersion,
         boolean fallbackAuthorized,
         UUID contextSnapshotId,
+        String creditsCentsPolicyVersion,
         Instant startedAt) {
 
     public static TaskContext from(AiRun run) {
@@ -33,6 +34,7 @@ public record TaskContext(
                 run.platformModelVersion(),
                 run.fallbackAuthorized(),
                 run.contextSnapshotId(),
+                run.creditsCentsPolicyVersion(),
                 run.startedAt());
     }
 }

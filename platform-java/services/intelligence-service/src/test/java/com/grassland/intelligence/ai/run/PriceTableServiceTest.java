@@ -13,6 +13,9 @@ class PriceTableServiceTest {
     void sandboxModelsArePricedAtZero() {
         PriceTableService prices = new PriceTableService();
 
+        assertThat(prices.isZeroPricedModel("sandbox-speech-v1")).isTrue();
+        assertThat(prices.isZeroPricedModel("sandbox-embedding-v1")).isTrue();
+        assertThat(prices.isZeroPricedModel("qwen-plus")).isFalse();
         assertThat(prices.calculateCost("sandbox-speech-v1", 0, 0, 0, 0)).isZero();
         assertThat(prices.calculateCost("sandbox-embedding-v1", 400, 0, 0, 0)).isZero();
     }

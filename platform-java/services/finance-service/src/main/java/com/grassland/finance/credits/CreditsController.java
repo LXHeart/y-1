@@ -4,6 +4,8 @@ import com.grassland.finance.credits.CreditsRepository.CreditsAccount;
 import com.grassland.finance.credits.CreditsRepository.CreditsTransaction;
 import com.grassland.finance.credits.CreditsService.MutationResult;
 import com.grassland.finance.credits.CreditsService.CompensationResult;
+import com.grassland.finance.credits.CreditsService.UsageReservationResult;
+import com.grassland.finance.credits.CreditsService.UsageSettlementResult;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
 import java.util.LinkedHashMap;
@@ -40,7 +42,8 @@ public class CreditsController {
     private static final Set<String> AI_QUOTA_FEATURES = Set.of(
             "video_analysis", "image_analysis", "article_generation", "comedy_generation",
             "video_production_script", "video_production_video", "ai_run_text",
-            "intelligence_smoke", "creation_assistant", "moments_generation");
+            "ai_run_voice", "ai_run_embedding", "intelligence_smoke",
+            "creation_assistant", "moments_generation", "video_studio_bgm");
 
     private final FinanceCallerResolver callers;
     private final CreditsService credits;
@@ -97,6 +100,26 @@ public class CreditsController {
                 .then(credits.compensateConsume(
                         body.accountId(), body.feature(), body.consumeOperationId(), body.note()))
                 .map(CreditsController::compensationBody);
+    }
+
+    @PostMapping("/internal/credits/usage-reservations")
+    public Mono<Map<String, Object>> reserveUsage(
+            ServerHttpRequest request, @RequestBody UsageReservationRequest body) {
+        return callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE)
+                .then(credits.reserveUsage(
+                        body.accountId(), body.feature(), body.operationId(), body.estimatedCents(),
+                        body.creditsCentsPolicyVersion(), body.aiQuotaMultiplierBps(), body.policyVersion()))
+                .map(CreditsController::usageReservationBody);
+    }
+
+    @PostMapping("/internal/credits/usage-settlements")
+    public Mono<Map<String, Object>> settleUsage(
+            ServerHttpRequest request, @RequestBody UsageSettlementRequest body) {
+        return callers.requireService(request, FinanceCallerResolver.INTELLIGENCE_SERVICE)
+                .then(credits.settleUsage(
+                        body.accountId(), body.feature(), body.consumeOperationId(),
+                        body.actualCents(), body.creditsCentsPolicyVersion()))
+                .map(CreditsController::usageSettlementBody);
     }
 
     @PostMapping("/internal/credits/award")
@@ -181,6 +204,37 @@ public class CreditsController {
         return data;
     }
 
+    private static Map<String, Object> usageReservationBody(UsageReservationResult result) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("reserved", true);
+        data.put("balance", result.balance());
+        data.put("deduplicated", result.deduplicated());
+        data.put("transactionId", result.transactionId());
+        data.put("source", result.source());
+        data.put("policyVersion", result.entitlementPolicyVersion());
+        data.put("quotaLimit", result.quotaLimit());
+        data.put("creditsCentsPolicyVersion", result.creditsCentsPolicyVersion());
+        data.put("reservedCents", result.reservedCents());
+        data.put("reservedCredits", result.reservedCredits());
+        return success(data);
+    }
+
+    private static Map<String, Object> usageSettlementBody(UsageSettlementResult result) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("settled", true);
+        data.put("balance", result.balance());
+        data.put("deduplicated", result.deduplicated());
+        data.put("transactionId", result.transactionId());
+        data.put("source", result.source());
+        data.put("creditsCentsPolicyVersion", result.creditsCentsPolicyVersion());
+        data.put("reservedCents", result.reservedCents());
+        data.put("reservedCredits", result.reservedCredits());
+        data.put("actualCents", result.actualCents());
+        data.put("actualCredits", result.actualCredits());
+        data.put("adjustmentCredits", result.adjustmentCredits());
+        return success(data);
+    }
+
     private static Map<String, Object> historyItem(CreditsTransaction txn) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", txn.id());
@@ -206,6 +260,14 @@ public class CreditsController {
                 ? operation.quotaConsumeTransactionId() : operation.consumeTransactionId());
         item.put("refundTransactionId", "quota".equals(operation.chargeSource())
                 ? operation.quotaRefundTransactionId() : operation.refundTransactionId());
+        item.put("usagePriced", operation.usagePriced());
+        item.put("creditsCentsPolicyVersion", operation.creditsCentsPolicyVersion());
+        item.put("reservedCents", operation.reservedCents());
+        item.put("reservedCredits", operation.reservedCredits());
+        item.put("actualCents", operation.actualCents());
+        item.put("actualCredits", operation.actualCredits());
+        item.put("adjustmentCredits", operation.adjustmentCredits());
+        item.put("settlementTransactionId", operation.settlementTransactionId());
         return item;
     }
 
@@ -290,6 +352,39 @@ public class CreditsController {
         }
     }
 
+    public record UsageReservationRequest(
+            String accountId,
+            String feature,
+            String operationId,
+            Long estimatedCents,
+            String creditsCentsPolicyVersion,
+            Integer aiQuotaMultiplierBps,
+            Long policyVersion) {
+        public UsageReservationRequest {
+            requireUsageScope(accountId, feature, operationId, creditsCentsPolicyVersion);
+            if (estimatedCents == null || estimatedCents < 0) {
+                throw new IllegalArgumentException("estimatedCents 必须大于等于 0");
+            }
+            if ((aiQuotaMultiplierBps == null) != (policyVersion == null)) {
+                throw new IllegalArgumentException("AI 权益快照字段不完整");
+            }
+        }
+    }
+
+    public record UsageSettlementRequest(
+            String accountId,
+            String feature,
+            String consumeOperationId,
+            Long actualCents,
+            String creditsCentsPolicyVersion) {
+        public UsageSettlementRequest {
+            requireUsageScope(accountId, feature, consumeOperationId, creditsCentsPolicyVersion);
+            if (actualCents == null || actualCents < 0) {
+                throw new IllegalArgumentException("actualCents 必须大于等于 0");
+            }
+        }
+    }
+
     /** award 请求体：注册赠送 / admin 正向调整。amount 必填正整数。 */
     public record AwardRequest(String accountId, Integer amount, String note, String operationId) {
         public AwardRequest {
@@ -339,6 +434,27 @@ public class CreditsController {
             }
         } catch (IllegalArgumentException error) {
             throw new IllegalArgumentException(message);
+        }
+    }
+
+    private static void requireUsageScope(
+            String accountId, String feature, String operationId, String moneyPolicyVersion) {
+        if (accountId == null || accountId.isBlank()) {
+            throw new IllegalArgumentException("缺少 accountId");
+        }
+        requireCanonicalUuid(accountId, "accountId 无效");
+        if (feature == null || feature.isBlank() || !AI_QUOTA_FEATURES.contains(feature)) {
+            throw new IllegalArgumentException("feature 不支持按 AI 用量结算");
+        }
+        requireMaxLength(feature, MAX_FEATURE_LENGTH, "feature 过长");
+        if (operationId == null || operationId.isBlank()) {
+            throw new IllegalArgumentException("缺少 operationId");
+        }
+        requireMaxLength(operationId, MAX_OPERATION_ID_LENGTH, "operationId 过长");
+        if (moneyPolicyVersion == null || moneyPolicyVersion.isBlank()
+                || moneyPolicyVersion.length() > 64
+                || !moneyPolicyVersion.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("creditsCentsPolicyVersion 无效");
         }
     }
 

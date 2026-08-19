@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
+import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.media.MediaReference;
@@ -106,7 +107,8 @@ class SpeechTranscriptionServiceTest {
         when(transcriptions.createProcessing(any())).thenAnswer(invocation ->
                 Mono.just(invocation.getArgument(0, SpeechTranscription.class)));
         when(executions.prepareExecution(
-                eq(ACCOUNT_ID), isNull(), eq("voice"), isNull(), eq(0), eq(0), eq(0), eq(12), eq(true)))
+                eq(ACCOUNT_ID), isNull(), eq("voice"), eq(CreditFeature.AI_RUN_VOICE),
+                eq(0), eq(0), eq(0), eq(12), eq(true)))
                 .thenReturn(Mono.just(prepared).publishOn(Schedulers.boundedElastic()));
         when(concurrencyLimiter.acquire(provider)).thenReturn(Mono.never());
         when(transcriptions.markFailed(any(UUID.class), eq("execution_cancelled")))

@@ -35,6 +35,8 @@ public class FinanceCreditsClient implements CreditsClient {
     private final String consumePath;
     private final String refundPath;
     private final String compensationPath;
+    private final String usageReservationPath;
+    private final String usageSettlementPath;
     private final MarketplaceAiEntitlementClient entitlements;
     private final IntelligenceServiceAssertionIssuer assertionIssuer;
     private final CreditCompensationRepository compensationRepository;
@@ -46,6 +48,10 @@ public class FinanceCreditsClient implements CreditsClient {
                                 @Value("${credits.finance.refund-path:/internal/credits/refund}") String refundPath,
                                 @Value("${credits.finance.compensation-path:/internal/credits/consume-compensations}")
                                 String compensationPath,
+                                @Value("${credits.finance.usage-reservation-path:/internal/credits/usage-reservations}")
+                                String usageReservationPath,
+                                @Value("${credits.finance.usage-settlement-path:/internal/credits/usage-settlements}")
+                                String usageSettlementPath,
                                 @Value("${credits.finance.connect-timeout-ms:3000}") int connectTimeoutMs,
                                 @Value("${credits.finance.response-timeout-ms:5000}") long responseTimeoutMs,
                                 MarketplaceAiEntitlementClient entitlements,
@@ -60,6 +66,8 @@ public class FinanceCreditsClient implements CreditsClient {
         this.consumePath = consumePath;
         this.refundPath = refundPath;
         this.compensationPath = compensationPath;
+        this.usageReservationPath = usageReservationPath;
+        this.usageSettlementPath = usageSettlementPath;
         this.entitlements = entitlements;
         this.assertionIssuer = assertionIssuer;
         this.compensationRepository = compensationRepository;
@@ -82,6 +90,7 @@ public class FinanceCreditsClient implements CreditsClient {
             IntelligenceServiceAssertionIssuer assertionIssuer,
             CreditCompensationRepository compensationRepository) {
         this(baseUrl, consumePath, refundPath, "/internal/credits/consume-compensations",
+                "/internal/credits/usage-reservations", "/internal/credits/usage-settlements",
                 connectTimeoutMs, responseTimeoutMs, entitlements, assertionIssuer,
                 compensationRepository);
     }
@@ -120,6 +129,68 @@ public class FinanceCreditsClient implements CreditsClient {
                                 : persistAndCompensateUnknownConsume(
                                         accountId, feature, operationId,
                                         "积分扣减结果不确定自动补偿")));
+    }
+
+    @Override
+    public Mono<CreditCharge> reserveUsage(
+            String accountId, CreditFeature feature, String operationId,
+            long estimatedCents, String creditsCentsPolicyVersion) {
+        return entitlements.get(accountId)
+                .flatMap(entitlement -> webClient.post().uri(usageReservationPath)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
+                        .bodyValue(Map.of(
+                                "accountId", accountId,
+                                "feature", feature.key(),
+                                "operationId", operationId,
+                                "estimatedCents", estimatedCents,
+                                "creditsCentsPolicyVersion", creditsCentsPolicyVersion,
+                                "aiQuotaMultiplierBps", entitlement.aiQuotaMultiplierBps(),
+                                "policyVersion", entitlement.policyVersion()))
+                        .retrieve()
+                        .onStatus(s -> s.value() == 402,
+                                response -> Mono.error(new InsufficientCreditsException()))
+                        .onStatus(s -> s.is4xxClientError(), response -> Mono.error(
+                                new IntelligenceException(
+                                        response.statusCode().value(), "AI 用量积分预留请求无效")))
+                        .onStatus(s -> s.is5xxServerError(),
+                                response -> Mono.error(new UnknownConsumeOutcomeException()))
+                        .bodyToMono(UsageReservationEnvelope.class)
+                        .timeout(responseTimeout)
+                        .switchIfEmpty(Mono.error(new UnknownConsumeOutcomeException()))
+                        .map(response -> usageChargeFrom(
+                                accountId, feature, operationId, creditsCentsPolicyVersion,
+                                entitlement, response))
+                        .onErrorResume(error -> isDefinitiveRejection(error)
+                                ? Mono.error(error)
+                                : persistAndCompensateUnknownConsume(
+                                        accountId, feature, operationId,
+                                        "AI 用量积分预留结果不确定自动补偿")));
+    }
+
+    @Override
+    public Mono<CreditSettlement> settleUsage(
+            CreditCharge charge, long actualCents, String creditsCentsPolicyVersion) {
+        return webClient.post().uri(usageSettlementPath)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Grassland-Identity", assertionIssuer.issueService(FINANCE_AUDIENCE))
+                .bodyValue(Map.of(
+                        "accountId", charge.accountId(),
+                        "feature", charge.feature().key(),
+                        "consumeOperationId", charge.operationId(),
+                        "actualCents", actualCents,
+                        "creditsCentsPolicyVersion", creditsCentsPolicyVersion))
+                .retrieve()
+                .onStatus(s -> s.is4xxClientError(), response -> Mono.error(
+                        new IntelligenceException(
+                                response.statusCode().value(), "AI 用量积分结算请求无效")))
+                .onStatus(s -> s.is5xxServerError(), response -> Mono.error(
+                        new IntelligenceException(502, "积分服务暂不可用")))
+                .bodyToMono(UsageSettlementEnvelope.class)
+                .timeout(responseTimeout)
+                .switchIfEmpty(Mono.error(new IntelligenceException(502, "积分结算响应为空")))
+                .map(response -> settlementFrom(
+                        charge, actualCents, creditsCentsPolicyVersion, response));
     }
 
     @Override
@@ -206,6 +277,64 @@ public class FinanceCreditsClient implements CreditsClient {
         return new CreditCharge(accountId, feature, operationId, source, data.policyVersion());
     }
 
+    private static CreditCharge usageChargeFrom(
+            String accountId, CreditFeature feature, String operationId,
+            String expectedMoneyPolicyVersion,
+            MarketplaceAiEntitlementClient.AiEntitlement entitlement,
+            UsageReservationEnvelope envelope) {
+        if (envelope == null || !envelope.success() || envelope.data() == null) {
+            throw new UnknownConsumeOutcomeException();
+        }
+        UsageReservationData data = envelope.data();
+        CreditCharge.Source source;
+        try {
+            source = CreditCharge.Source.fromWire(data.source());
+        } catch (RuntimeException invalid) {
+            throw new UnknownConsumeOutcomeException();
+        }
+        if (data.policyVersion() == null
+                || data.policyVersion() != entitlement.policyVersion()
+                || !expectedMoneyPolicyVersion.equals(data.creditsCentsPolicyVersion())
+                || data.reservedCents() == null || data.reservedCents() < 0
+                || data.reservedCredits() == null || data.reservedCredits() < 0
+                || data.transactionId() == null || !isCanonicalUuid(data.transactionId())) {
+            throw new UnknownConsumeOutcomeException();
+        }
+        return new CreditCharge(
+                accountId, feature, operationId, source, data.policyVersion(), true,
+                data.creditsCentsPolicyVersion(), data.reservedCents(), data.reservedCredits());
+    }
+
+    private static CreditSettlement settlementFrom(
+            CreditCharge charge, long expectedActualCents, String expectedMoneyPolicyVersion,
+            UsageSettlementEnvelope envelope) {
+        if (envelope == null || !envelope.success() || envelope.data() == null) {
+            throw new IntelligenceException(502, "积分结算响应无效");
+        }
+        UsageSettlementData data = envelope.data();
+        CreditCharge.Source source;
+        try {
+            source = CreditCharge.Source.fromWire(data.source());
+        } catch (RuntimeException invalid) {
+            throw new IntelligenceException(502, "积分结算响应无效");
+        }
+        if (!expectedMoneyPolicyVersion.equals(data.creditsCentsPolicyVersion())
+                || data.reservedCents() == null
+                || charge.reservedCents() >= 0 && data.reservedCents() != charge.reservedCents()
+                || data.reservedCredits() == null
+                || charge.reservedCredits() >= 0 && data.reservedCredits() != charge.reservedCredits()
+                || data.actualCents() == null || data.actualCents() != expectedActualCents
+                || data.actualCredits() == null || data.actualCredits() < 0
+                || data.adjustmentCredits() == null) {
+            throw new IntelligenceException(502, "积分结算响应与冻结参数不一致");
+        }
+        return new CreditSettlement(
+                charge.accountId(), charge.feature(), charge.operationId(), source,
+                data.creditsCentsPolicyVersion(), data.reservedCents(), data.reservedCredits(),
+                data.actualCents(), data.actualCredits(), data.adjustmentCredits(),
+                Boolean.TRUE.equals(data.deduplicated()));
+    }
+
     private static boolean isCanonicalUuid(String value) {
         try {
             return value != null && UUID.fromString(value).toString().equalsIgnoreCase(value);
@@ -226,4 +355,18 @@ public class FinanceCreditsClient implements CreditsClient {
     private record ConsumeEnvelope(boolean success, ConsumeData data) {}
 
     private record ConsumeData(String source, Long policyVersion, String transactionId) {}
+
+    private record UsageReservationEnvelope(boolean success, UsageReservationData data) {}
+
+    private record UsageReservationData(
+            String source, Long policyVersion, String transactionId,
+            String creditsCentsPolicyVersion, Long reservedCents, Integer reservedCredits) {}
+
+    private record UsageSettlementEnvelope(boolean success, UsageSettlementData data) {}
+
+    private record UsageSettlementData(
+            String source, String creditsCentsPolicyVersion,
+            Long reservedCents, Integer reservedCredits,
+            Long actualCents, Integer actualCredits, Integer adjustmentCredits,
+            Boolean deduplicated) {}
 }

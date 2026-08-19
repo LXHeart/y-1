@@ -1,7 +1,7 @@
 # AI 用量套餐体系（平台内闭环 v1）设计
 
 - 日期：2026-08-15
-- 状态：已批准（用户当轮拍板计费口径=积分包；Sandbox 支付即时生效）
+- 状态：已批准并完成；2026-08-19 已追加 actual usage 差额结算扩展
 - 范围决策：平台内付费闭环，暂不接第三方 PSP（GL-P4 后置）；Web 端
 - 对应 backlog：GL-P2-FIN-001 平台内部分重定义
 
@@ -9,8 +9,8 @@
 
 **目标**：用户可自助购买积分包（SKU：¥X → N 积分，1 积分 = 1 次 AI 调用，与现有扣减口径一致）；Sandbox 支付即时生效（镜像消费者端 commerce）；admin 管理 SKU（版本化调价）与订单可见；全程双录账本 + 幂等 + 对账事实。
 
-**非目标（明确后置）**：
-- 按 actual usage 的差额金额结算（等真实价目与财务批准；B4 credits↔cents policy 机制已留口）
+**原 v1 非目标（后续状态见第 8 节）**：
+- 按 actual usage 的差额金额结算（v1 当时后置，2026-08-19 代码扩展已完成；真实比例仍待财务批准）
 - 组织配额与成本上限（企业客户，PRD §4.11）
 - 用户自助购买退款（v1 用 admin 调账兜底）
 - 发票、真实 PSP（D-01）
@@ -74,3 +74,12 @@ credits_purchase_order   -- account_id, package_id, package_version_id, price_ce
 - `SandboxPaymentProviderAdapter`：`@ConditionalOnProperty(finance.psp.mode=sandbox, matchIfMissing=true)`
 - marketplace `package_version`：不可变版本化范式
 - finance Flyway 当前最新 V13 → 本特性从 V14 起
+
+## 8. Actual usage 差额结算扩展（2026-08-19）
+
+Finance 通过版本化 `credits.cents-policy` 成为唯一换算权威，公式为
+`credits = round(cents * creditsDenominator / centsNumerator)`。每次平台 AI Run 在调用 Provider 前按预估 cents 预留积分，并冻结政策完整快照；成功后按实际 cents 幂等结算，多退少补写 `usage_adjustment`。同 operation、同 actual 重放不重复调账，不同 actual 返回冲突。
+
+免费 Quota 仍按调用次数消耗，仅记录成本；BYOK 不收费；生效政策下 0 成本 Sandbox 不扣费。Provider 失败退回全部预留；用户主动取消按预估成本结算、不退款。Intelligence 在 Run 完成或取消事务内写持久化结算意图，租约 Worker 调 Finance，只有 Finance 成功后才产生 `UsageAdjusted`。Finance 与 Intelligence 的生产配置必须使用相同政策版本和参数。
+
+本扩展不解除 D-01：真实 PSP、存管、真实积分购买，以及换算比例的财务批准仍是独立生产门禁。上线前还必须以真实厂商账单完成 Speech、Embedding 和视频成本校准及回退演练。

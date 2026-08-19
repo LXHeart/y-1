@@ -43,6 +43,8 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -86,9 +88,20 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
     @Autowired
     private SpeechTranscriptionService service;
 
+    @DynamicPropertySource
+    static void speechPolicy(DynamicPropertyRegistry registry) {
+        registry.add("credits.cents-policy.version", () -> "test-v1");
+        registry.add("credits.cents-policy.effective-at", () -> "2026-01-01T00:00:00Z");
+        registry.add("credits.cents-policy.rounding", () -> "HALF_UP");
+        registry.add("credits.cents-policy.cents-numerator", () -> "100");
+        registry.add("credits.cents-policy.credits-denominator", () -> "1");
+        registry.add("credits.cents-policy.max-cents-per-operation", () -> "100000");
+    }
+
     @BeforeEach
     void setUp() {
         reset(storage, durationProbe, credits, sandbox);
+        com.grassland.intelligence.credits.CreditsStubs.stubDefaults(credits);
         db.sql("DELETE FROM speech_transcription").then().block();
         db.sql("DELETE FROM intelligence_outbox").then().block();
         db.sql("DELETE FROM ai_credit_compensation").then().block();
@@ -226,7 +239,7 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
         UUID mediaId = activeSpeechMedia(OWNER);
         doReturn(Mono.error(new IllegalStateException("prepare-secret")))
                 .when(executions).prepareExecution(
-                        eq(OWNER), nullable(String.class), eq("voice"), isNull(),
+                        eq(OWNER), nullable(String.class), eq("voice"), eq(com.grassland.intelligence.credits.CreditFeature.AI_RUN_VOICE),
                         eq(0), eq(0), eq(0), eq(12), eq(true));
 
         String response = post(OWNER, mediaId, "auto")
@@ -245,7 +258,7 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
     void prepareCancellationFinalizesProcessingTranscription() {
         UUID mediaId = activeSpeechMedia(OWNER);
         doReturn(Mono.never()).when(executions).prepareExecution(
-                eq(OWNER), nullable(String.class), eq("voice"), isNull(),
+                eq(OWNER), nullable(String.class), eq("voice"), eq(com.grassland.intelligence.credits.CreditFeature.AI_RUN_VOICE),
                 eq(0), eq(0), eq(0), eq(12), eq(true));
 
         var subscription = service.create(request(OWNER), mediaId, "auto")

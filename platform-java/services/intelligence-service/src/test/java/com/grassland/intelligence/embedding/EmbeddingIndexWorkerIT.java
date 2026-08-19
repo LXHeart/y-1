@@ -12,6 +12,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import reactor.core.publisher.Mono;
 
 /**
@@ -20,6 +22,16 @@ import reactor.core.publisher.Mono;
  * 调度器在基座里已静默，全部断言直接驱动 {@code runOnce()}。
  */
 class EmbeddingIndexWorkerIT extends IntelligenceItSupport {
+
+    @DynamicPropertySource
+    static void embeddingPolicy(DynamicPropertyRegistry registry) {
+        registry.add("credits.cents-policy.version", () -> "test-v1");
+        registry.add("credits.cents-policy.effective-at", () -> "2026-01-01T00:00:00Z");
+        registry.add("credits.cents-policy.rounding", () -> "HALF_UP");
+        registry.add("credits.cents-policy.cents-numerator", () -> "100");
+        registry.add("credits.cents-policy.credits-denominator", () -> "1");
+        registry.add("credits.cents-policy.max-cents-per-operation", () -> "100000");
+    }
 
     @MockitoBean
     private EmbeddingProviderRegistry providers;

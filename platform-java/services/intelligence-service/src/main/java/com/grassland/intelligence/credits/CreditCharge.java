@@ -6,10 +6,18 @@ package com.grassland.intelligence.credits;
  */
 public record CreditCharge(
         String accountId, CreditFeature feature, String operationId,
-        Source source, Long policyVersion) {
+        Source source, Long policyVersion,
+        boolean usagePriced, String creditsCentsPolicyVersion,
+        long reservedCents, int reservedCredits) {
 
     public CreditCharge(String accountId, CreditFeature feature, String operationId) {
-        this(accountId, feature, operationId, Source.PAID, null);
+        this(accountId, feature, operationId, Source.PAID, null, false, null, 0, 1);
+    }
+
+    public CreditCharge(
+            String accountId, CreditFeature feature, String operationId,
+            Source source, Long policyVersion) {
+        this(accountId, feature, operationId, source, policyVersion, false, null, 0, 1);
     }
 
     public enum Source {

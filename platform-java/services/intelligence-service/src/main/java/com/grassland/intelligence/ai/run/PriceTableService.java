@@ -42,6 +42,18 @@ public class PriceTableService {
         return versionedTables.get(version);
     }
 
+    /** True only when every metered dimension for the model is explicitly free. */
+    public boolean isZeroPricedModel(String modelId) {
+        PriceTable.ModelPrice price = getCurrent().getPrice(modelId);
+        if (price == null) {
+            throw new IllegalArgumentException("Unknown model: " + modelId);
+        }
+        return price.centsPer1kInputTokens() == 0
+                && price.centsPer1kOutputTokens() == 0
+                && price.centsPerImage() == 0
+                && price.centsPerSecond() == 0;
+    }
+
     /** 计算成本（按实际用量）。 */
     public int calculateCost(
         String modelId,

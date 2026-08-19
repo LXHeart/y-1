@@ -6,6 +6,7 @@ import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.credits.CreditCharge;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
+import com.grassland.intelligence.credits.CreditsCentsPolicyProperties;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import com.grassland.intelligence.event.EventEnvelope;
 import com.grassland.intelligence.event.OutboxRepository;
@@ -29,11 +30,11 @@ import reactor.core.publisher.Mono;
  * AI 执行编排（GL-P3-AI-001 控制面闭环）。统一入口：预算检查 → provider 解析 →（平台）credits 预留 →
  * （BYOK）密钥解密 → Run 落库；成功结算 / 失败退款 / 取消不退。
  *
- * <p>计费口径（D-11 + GL-P0-BILL-002）：
+ * <p>计费口径（D-11 + GL-P0-BILL-002 + GL-P2-FIN-001）：
  * <ul>
- *   <li><b>平台模型</b>：Run 开始 {@link CreditsClient#consume} 预留 1 积分（其 operationId 即 Run operationId，
- *       保证退款幂等）；成功按 {@link PriceTableService} 算实际成本（首期不退差额——真实 credits↔cents 结算属 GL-P2-FIN-001）；
- *       provider 失败 {@link CreditsClient#refund} 全额退回。</li>
+ *   <li><b>正价平台模型</b>：有生效换算政策时按预估 cents 预留积分，成功后按实际 cents 多退少补；
+ *       未启用政策的环境兼容旧版单次扣减。provider 失败全额补偿。</li>
+ *   <li><b>零成本平台模型</b>：不触达 Finance，不扣积分。</li>
  *   <li><b>BYOK</b>：不收平台 AI 费（D-11），不 consume / 不 refund；用量仍入预算统计。</li>
  *   <li>用户主动 abort 不退（内容已流出）。</li>
  * </ul>
@@ -58,6 +59,8 @@ public class AiExecutionService {
     private final CreditCompensationRepository compensationRepository;
     private final CreditCompensationDispatcher compensationDispatcher;
     private final FrozenAiConfigResolver frozenAiConfigs;
+    private final CreditsCentsPolicyProperties creditsCentsPolicy;
+    private final CreditUsageSettlementRepository usageSettlements;
 
     public AiExecutionService(
             ModelBudgetService budgetService,
@@ -70,7 +73,9 @@ public class AiExecutionService {
             TransactionalOperator transactions,
             CreditCompensationRepository compensationRepository,
             CreditCompensationDispatcher compensationDispatcher,
-            FrozenAiConfigResolver frozenAiConfigs) {
+            FrozenAiConfigResolver frozenAiConfigs,
+            CreditsCentsPolicyProperties creditsCentsPolicy,
+            CreditUsageSettlementRepository usageSettlements) {
         this.budgetService = budgetService;
         this.routingService = routingService;
         this.priceTableService = priceTableService;
@@ -82,6 +87,8 @@ public class AiExecutionService {
         this.compensationRepository = compensationRepository;
         this.compensationDispatcher = compensationDispatcher;
         this.frozenAiConfigs = frozenAiConfigs;
+        this.creditsCentsPolicy = creditsCentsPolicy;
+        this.usageSettlements = usageSettlements;
     }
 
     /**
@@ -158,11 +165,14 @@ public class AiExecutionService {
                     if (estimatedCents == null) {
                         return Mono.just(ExecutionResult.denied("unpriced_model"));
                     }
+                    boolean billablePlatformUsage = provider.isPlatform()
+                            && !priceTableService.isZeroPricedModel(provider.model());
                     return reserveCreateAndCharge(
                             provider, organizationId, accountId, capability, feature,
                             allowFallback, budgetOpId, decryptedKey,
                             estimatedInputTokens, estimatedOutputTokens,
-                            estimatedTokens, estimatedCents, "sync", "v1", contextSnapshotId);
+                            estimatedTokens, estimatedCents, "sync", "v1", contextSnapshotId,
+                            billablePlatformUsage);
                 })
                 .onErrorResume(InsufficientCreditsException.class,
                         e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
@@ -187,7 +197,7 @@ public class AiExecutionService {
         return reserveCreateAndCharge(
                         provider, organizationId, accountId, capability, feature,
                         true, operationId, null, 0, 0, 0, estimatedCents,
-                        "async", priceTableVersion, contextSnapshotId)
+                        "async", priceTableVersion, contextSnapshotId, true)
                 .onErrorResume(InsufficientCreditsException.class,
                         e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
     }
@@ -198,11 +208,18 @@ public class AiExecutionService {
             boolean allowFallback, UUID budgetOpId, String decryptedKey,
             int estimatedInputTokens, int estimatedOutputTokens,
             int estimatedTokens, int estimatedCents, String runType,
-            String priceTableVersion, UUID contextSnapshotId) {
+            String priceTableVersion, UUID contextSnapshotId,
+            boolean billablePlatformUsage) {
+
+        Optional<String> activeMoneyPolicy = billablePlatformUsage && feature != null
+                ? creditsCentsPolicy.activeVersion() : Optional.empty();
+        String moneyPolicyVersion = activeMoneyPolicy.orElse(null);
+        boolean chargeRequired = billablePlatformUsage && feature != null;
 
         Mono<RunPreparation> preparation = reserveAndCreateRun(
                 provider, orgId, accountId, capability, allowFallback, budgetOpId,
-                estimatedTokens, estimatedCents, runType, priceTableVersion, contextSnapshotId);
+                estimatedTokens, estimatedCents, runType, priceTableVersion, contextSnapshotId,
+                moneyPolicyVersion, chargeRequired);
         return Mono.usingWhen(
                 transactions.execute(ignored -> preparation).single(),
                 prepared -> prepared.allowed()
@@ -224,7 +241,8 @@ public class AiExecutionService {
             String orgId, String accountId, String capability,
             boolean allowFallback, UUID budgetOpId,
             int estimatedTokens, int estimatedCents, String runType,
-            String priceTableVersion, UUID contextSnapshotId) {
+            String priceTableVersion, UUID contextSnapshotId,
+            String moneyPolicyVersion, boolean chargeRequired) {
 
         return budgetService.checkAndReserve(
                         orgId, capability,
@@ -233,7 +251,8 @@ public class AiExecutionService {
                 .flatMap(budget -> budget.allowed()
                         ? createRunRecord(
                                 budget, provider, orgId, accountId, capability,
-                                allowFallback, budgetOpId, runType, priceTableVersion, contextSnapshotId)
+                                allowFallback, budgetOpId, runType, priceTableVersion, contextSnapshotId,
+                                moneyPolicyVersion, chargeRequired)
                         : Mono.just(RunPreparation.denied(budget.denialReason())));
     }
 
@@ -242,16 +261,17 @@ public class AiExecutionService {
             ProviderResolution provider,
             String orgId, String accountId, String capability,
             boolean allowFallback, UUID budgetOpId, String runType,
-            String priceTableVersion, UUID contextSnapshotId) {
+            String priceTableVersion, UUID contextSnapshotId,
+            String moneyPolicyVersion, boolean chargeRequired) {
 
         AiRun run = AiRun.forCreate(orgId, accountId, capability,
                 provider.provider(), provider.model(), runType,
                 budget.reservedCents(), budgetOpId, priceTableVersion,
                 provider.platformModelVersion() > 0 ? provider.platformModelVersion() : null,
-                allowFallback, contextSnapshotId);
+                allowFallback, contextSnapshotId, moneyPolicyVersion);
         return budgetService.createRun(run)
                 .map(runId -> RunPreparation.allowed(
-                        runId, budget, run.priceTableVersion()));
+                        runId, budget, run.priceTableVersion(), moneyPolicyVersion, chargeRequired));
     }
 
     private Integer estimateForProvider(
@@ -281,10 +301,15 @@ public class AiExecutionService {
             String decryptedKey,
             int estimatedInputTokens,
             int estimatedOutputTokens) {
-        boolean chargesPlatformCredits = provider.isPlatform() && feature != null;
-        Mono<Optional<CreditCharge>> chargeMono = chargesPlatformCredits
-                ? credits.consume(accountId, feature, operationId.toString()).map(Optional::of)
-                : Mono.just(Optional.empty());
+        boolean chargesPlatformCredits = prepared.chargeRequired();
+        Mono<Optional<CreditCharge>> chargeMono = !chargesPlatformCredits
+                ? Mono.just(Optional.empty())
+                : prepared.creditsCentsPolicyVersion() != null
+                ? credits.reserveUsage(
+                                accountId, feature, operationId.toString(),
+                                prepared.budget().reservedCents(), prepared.creditsCentsPolicyVersion())
+                        .map(Optional::of)
+                : credits.consume(accountId, feature, operationId.toString()).map(Optional::of);
         return chargeMono.map(optCharge -> ExecutionResult.allowed(preparationContext(
                 prepared, provider, orgId, accountId, capability, feature, operationId,
                 optCharge.orElse(null), chargesPlatformCredits, decryptedKey,
@@ -308,7 +333,7 @@ public class AiExecutionService {
         }
         return suppressPreparationCleanup(
                 Mono.defer(() -> {
-                    boolean compensationRequired = provider.isPlatform() && feature != null
+                    boolean compensationRequired = prepared.chargeRequired()
                             && !(error instanceof InsufficientCreditsException);
                     ExecutionContext context = preparationContext(
                             prepared, provider, orgId, accountId, capability, feature, operationId,
@@ -335,7 +360,7 @@ public class AiExecutionService {
         }
         return suppressPreparationCleanup(
                 Mono.defer(() -> {
-                    boolean compensationRequired = provider.isPlatform() && feature != null;
+                    boolean compensationRequired = prepared.chargeRequired();
                     ExecutionContext context = preparationContext(
                             prepared, provider, orgId, accountId, capability, feature, operationId,
                             null, compensationRequired, decryptedKey,
@@ -361,7 +386,7 @@ public class AiExecutionService {
         return new ExecutionContext(
                 prepared.runId(), orgId, accountId, capability, provider, prepared.budget(), operationId,
                 charge, feature, compensationRequired, decryptedKey, prepared.priceTableVersion(),
-                estimatedInputTokens, estimatedOutputTokens);
+                estimatedInputTokens, estimatedOutputTokens, prepared.creditsCentsPolicyVersion());
     }
 
     private Mono<Void> suppressPreparationCleanup(Mono<Void> cleanup, UUID runId, String stage) {
@@ -413,6 +438,7 @@ public class AiExecutionService {
                 })
                 .flatMap(ignored -> outbox
                         .append(aiRunEvent("AiRunCompleted", ctx, actualCents, inputTokens, outputTokens))
+                        .then(enqueueUsageSettlement(ctx, actualCents))
                         .thenReturn(true));
 
         return transactions.transactional(chain)
@@ -453,6 +479,17 @@ public class AiExecutionService {
                 reason);
     }
 
+    private Mono<Void> enqueueUsageSettlement(ExecutionContext ctx, int actualCents) {
+        if (!ctx.creditCompensationRequired()
+                || ctx.creditFeature() == null
+                || ctx.creditsCentsPolicyVersion() == null) {
+            return Mono.empty();
+        }
+        return usageSettlements.enqueue(
+                ctx.runId(), ctx.operationId(), ctx.accountId(), ctx.creditFeature().key(),
+                ctx.creditsCentsPolicyVersion(), actualCents);
+    }
+
     /** Cancellation before provider execution compensates a platform consume whose response is unknown. */
     private Mono<Boolean> handlePreparationCancellation(ExecutionContext ctx) {
         Mono<Boolean> cancellation = transactions.transactional(
@@ -481,12 +518,14 @@ public class AiExecutionService {
         });
     }
 
-    /** 用户主动 abort：事务内标记 cancelled、释放预算并发事件；不退积分（内容可能已流出）。 */
+    /** 用户主动 abort：事务内标记 cancelled、释放预算并发事件；按预留成本结算且不退款（内容可能已流出）。 */
     public Mono<Boolean> handleCancellation(ExecutionContext ctx) {
         Mono<Boolean> cancellation = budgetService.cancelRun(ctx.runId())
                 .flatMap(ok -> ok
                         ? budgetService.releaseReservation(ctx.budgetReservation())
                                 .then(outbox.append(aiRunEvent("AiRunCancelled", ctx, null, null, null)))
+                                .then(enqueueUsageSettlement(
+                                        ctx, ctx.budgetReservation().reservedCents()))
                                 .thenReturn(true)
                         : Mono.just(false));
         return transactions.transactional(cancellation)
@@ -592,7 +631,28 @@ public class AiExecutionService {
             String decryptedKey,        // BYOK 解密明文；平台为 null
             String priceTableVersion,
             int estimatedInputTokens,
-            int estimatedOutputTokens) {
+            int estimatedOutputTokens,
+            String creditsCentsPolicyVersion) {
+
+        public ExecutionContext(
+                UUID runId,
+                String organizationId,
+                String accountId,
+                String capability,
+                ProviderResolution provider,
+                ModelBudgetService.BudgetCheckResult budgetReservation,
+                UUID operationId,
+                CreditCharge charge,
+                CreditFeature creditFeature,
+                boolean creditCompensationRequired,
+                String decryptedKey,
+                String priceTableVersion,
+                int estimatedInputTokens,
+                int estimatedOutputTokens) {
+            this(runId, organizationId, accountId, capability, provider, budgetReservation,
+                    operationId, charge, creditFeature, creditCompensationRequired, decryptedKey,
+                    priceTableVersion, estimatedInputTokens, estimatedOutputTokens, null);
+        }
     }
 
     /** prepare 结果。{@code allowed=false} 时 {@code denialReason} 决定 HTTP 状态。 */
@@ -614,14 +674,19 @@ public class AiExecutionService {
             String denialReason,
             UUID runId,
             ModelBudgetService.BudgetCheckResult budget,
-            String priceTableVersion) {
+            String priceTableVersion,
+            String creditsCentsPolicyVersion,
+            boolean chargeRequired) {
         private static RunPreparation allowed(
-                UUID runId, ModelBudgetService.BudgetCheckResult budget, String priceTableVersion) {
-            return new RunPreparation(true, null, runId, budget, priceTableVersion);
+                UUID runId, ModelBudgetService.BudgetCheckResult budget, String priceTableVersion,
+                String creditsCentsPolicyVersion, boolean chargeRequired) {
+            return new RunPreparation(
+                    true, null, runId, budget, priceTableVersion,
+                    creditsCentsPolicyVersion, chargeRequired);
         }
 
         private static RunPreparation denied(String reason) {
-            return new RunPreparation(false, reason, null, null, null);
+            return new RunPreparation(false, reason, null, null, null, null, false);
         }
     }
 }

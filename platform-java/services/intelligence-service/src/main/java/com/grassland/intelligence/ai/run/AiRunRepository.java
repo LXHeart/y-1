@@ -22,7 +22,8 @@ public class AiRunRepository {
             + "input_tokens, output_tokens, images_generated, video_seconds, "
             + "budget_cents, actual_cents, status, failure_reason, "
             + "started_at, completed_at, price_table_version, operation_id::text, refund_operation_id::text, "
-            + "created_at, updated_at, platform_model_version, fallback_authorized, context_snapshot_id::text";
+            + "created_at, updated_at, platform_model_version, fallback_authorized, context_snapshot_id::text, "
+            + "credits_cents_policy_version";
 
     private final DatabaseClient db;
 
@@ -35,11 +36,12 @@ public class AiRunRepository {
         return db.sql("""
                 INSERT INTO ai_run(
                     organization_id, account_id, capability, provider, model, run_type,
-                    budget_cents, operation_id, platform_model_version, fallback_authorized, context_snapshot_id
+                    budget_cents, operation_id, platform_model_version, fallback_authorized, context_snapshot_id,
+                    credits_cents_policy_version
                 ) VALUES (
                     :orgId, :accountId, :capability, :provider, :model, :runType,
                     :budgetCents, CAST(:operationId AS uuid), :platformModelVersion, :fallbackAuthorized,
-                    CAST(:contextSnapshotId AS uuid)
+                    CAST(:contextSnapshotId AS uuid), :creditsCentsPolicyVersion
                 )
                 RETURNING id::text
                 """)
@@ -55,6 +57,7 @@ public class AiRunRepository {
                 .bind("fallbackAuthorized", run.fallbackAuthorized())
                 .bind("contextSnapshotId", nullable(
                         run.contextSnapshotId() == null ? null : run.contextSnapshotId().toString(), String.class))
+                .bind("creditsCentsPolicyVersion", nullable(run.creditsCentsPolicyVersion(), String.class))
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
@@ -191,7 +194,8 @@ public class AiRunRepository {
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
                 row.get("platform_model_version", Integer.class),
                 row.get("fallback_authorized", Boolean.class),
-                uuidFromString(row.get("context_snapshot_id", String.class))
+                uuidFromString(row.get("context_snapshot_id", String.class)),
+                row.get("credits_cents_policy_version", String.class)
         );
     }
 

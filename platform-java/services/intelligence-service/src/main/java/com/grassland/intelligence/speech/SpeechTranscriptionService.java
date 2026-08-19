@@ -4,6 +4,7 @@ import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.ProviderInvocation;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
+import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.media.MediaReference;
@@ -169,7 +170,7 @@ public final class SpeechTranscriptionService {
             String organizationId) {
         return Mono.usingWhen(
                 executions.prepareExecution(
-                        accountId, organizationId, "voice", null, 0, 0, 0,
+                        accountId, organizationId, "voice", CreditFeature.AI_RUN_VOICE, 0, 0, 0,
                         billedSeconds(audio.durationMs()), true),
                 prepared -> {
                     if (!prepared.allowed()) {

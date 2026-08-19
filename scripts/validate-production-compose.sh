@@ -144,9 +144,17 @@ embedding_dimensions="$(env_value intelligence-service AI_EMBEDDING_DIMENSIONS)"
 for name in FINANCE_CREDITS_CENTS_POLICY_VERSION FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT \
     FINANCE_CREDITS_CENTS_POLICY_ROUNDING FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR \
     FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION; do
-  [[ -n "$(env_value intelligence-service "$name")" ]] \
+  intelligence_value="$(env_value intelligence-service "$name")"
+  finance_value="$(env_value finance-service "$name")"
+  [[ -n "$intelligence_value" ]] \
     || fail "intelligence-service must receive $name in the production overlay"
+  [[ -n "$finance_value" ]] \
+    || fail "finance-service must receive $name in the production overlay"
+  [[ "$intelligence_value" == "$finance_value" ]] \
+    || fail "finance-service and intelligence-service must receive the same $name"
 done
+[[ "$(env_value intelligence-service AI_CREDIT_USAGE_SETTLEMENT_ENABLED)" == true ]] \
+  || fail "intelligence-service must enable AI credit usage settlement in production"
 [[ "$(env_value intelligence-service VIDEO_GENERATION_MODE)" == seedance \
     || "$(env_value intelligence-service VIDEO_GENERATION_MODE)" == minimax ]] \
   || fail "production video adapter must not be Sandbox"

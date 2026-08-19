@@ -171,7 +171,6 @@ public class VideoGenerationWorker {
         }
         var resolution = ProviderResolution.platform(null, job.provider(), properties.getBaseUrl(), job.model(), job.platformModelVersion(), null);
         var budget = budget(job);
-        var ctx = executionContext(job, resolution, budget);
         int seconds = r.durationSeconds() == null ? job.requestedDurationSeconds() : r.durationSeconds();
         int cost;
         try {
@@ -179,10 +178,14 @@ public class VideoGenerationWorker {
         } catch (ArithmeticException error) {
             return reactor.core.publisher.Mono.error(new IllegalStateException("视频实际成本溢出", error));
         }
-        return runs.findById(job.runId()).flatMap(run -> "completed".equals(run.status())
-                ? requireCostUpdate(job, cost)
-                : execution.settleSuccessWithCost(ctx, cost, 0, 0, 0, seconds)
-                        .then(requireCostUpdate(job, cost)));
+        return runs.findById(job.runId()).flatMap(run -> {
+            var ctx = executionContext(
+                    job, resolution, budget, run.creditsCentsPolicyVersion());
+            return "completed".equals(run.status())
+                    ? requireCostUpdate(job, cost)
+                    : execution.settleSuccessWithCost(ctx, cost, 0, 0, 0, seconds)
+                            .then(requireCostUpdate(job, cost));
+        });
     }
 
     private Mono<Void> requireCostUpdate(VideoGenerationJob job, int cost) {
@@ -209,9 +212,15 @@ public class VideoGenerationWorker {
     private static AiExecutionService.ExecutionContext executionContext(
             VideoGenerationJob job, ProviderResolution resolution,
             ModelBudgetService.BudgetCheckResult budget) {
+        return executionContext(job, resolution, budget, null);
+    }
+
+    private static AiExecutionService.ExecutionContext executionContext(
+            VideoGenerationJob job, ProviderResolution resolution,
+            ModelBudgetService.BudgetCheckResult budget, String creditsCentsPolicyVersion) {
         return new AiExecutionService.ExecutionContext(
                 job.runId(), job.organizationId(), job.accountId(), "video_generation",
                 resolution, budget, job.id(), null, CreditFeature.VIDEO_PRODUCTION_VIDEO,
-                true, null, job.pricingVersion(), 0, 0);
+                true, null, job.pricingVersion(), 0, 0, creditsCentsPolicyVersion);
     }
 }

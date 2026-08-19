@@ -307,9 +307,102 @@ class FinanceCreditsClientTest {
         wireMock.verify(1, postRequestedFor(urlEqualTo("/internal/credits/consume-compensations")));
     }
 
+    @Test
+    void usageReservationCarriesFrozenPolicyAndReturnsFinanceSnapshot() {
+        String operationId = "12121212-1212-1212-1212-121212121212";
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/usage-reservations"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(successfulUsageReservation("paid", 7, "money-v1", 250, 3))));
+
+        CreditCharge charge = client.reserveUsage(
+                ACCOUNT, CreditFeature.AI_RUN_EMBEDDING, operationId, 250, "money-v1").block();
+
+        assertThat(charge).isNotNull();
+        assertThat(charge.usagePriced()).isTrue();
+        assertThat(charge.creditsCentsPolicyVersion()).isEqualTo("money-v1");
+        assertThat(charge.reservedCents()).isEqualTo(250);
+        assertThat(charge.reservedCredits()).isEqualTo(3);
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/usage-reservations"))
+                .withHeader("X-Grassland-Identity", equalTo("intelligence-finance-assertion"))
+                .withRequestBody(containing("\"operationId\":\"" + operationId + "\""))
+                .withRequestBody(containing("\"estimatedCents\":250"))
+                .withRequestBody(containing("\"creditsCentsPolicyVersion\":\"money-v1\""))
+                .withRequestBody(containing("\"aiQuotaMultiplierBps\":15000"))
+                .withRequestBody(containing("\"policyVersion\":7")));
+    }
+
+    @Test
+    void usageSettlementValidatesAndReturnsFinanceAdjustment() {
+        String operationId = "34343434-3434-3434-3434-343434343434";
+        CreditCharge charge = new CreditCharge(
+                ACCOUNT, CreditFeature.AI_RUN_VOICE, operationId,
+                CreditCharge.Source.PAID, 7L, true, "money-v1", 300, 3);
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/usage-settlements"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(successfulUsageSettlement(
+                                "paid", "money-v1", 300, 3, 100, 1, -2, false))));
+
+        CreditSettlement settlement = client.settleUsage(charge, 100, "money-v1").block();
+
+        assertThat(settlement).isNotNull();
+        assertThat(settlement.adjustmentCredits()).isEqualTo(-2);
+        assertThat(settlement.actualCredits()).isEqualTo(1);
+        assertThat(settlement.deduplicated()).isFalse();
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/credits/usage-settlements"))
+                .withHeader("X-Grassland-Identity", equalTo("intelligence-finance-assertion"))
+                .withRequestBody(containing("\"consumeOperationId\":\"" + operationId + "\""))
+                .withRequestBody(containing("\"actualCents\":100"))
+                .withRequestBody(containing("\"creditsCentsPolicyVersion\":\"money-v1\"")));
+    }
+
+    @Test
+    void usageSettlementRejectsResponseThatDiffersFromFrozenReservation() {
+        CreditCharge charge = new CreditCharge(
+                ACCOUNT, CreditFeature.AI_RUN_TEXT,
+                "56565656-5656-5656-5656-565656565656",
+                CreditCharge.Source.PAID, 7L, true, "money-v1", 300, 3);
+        wireMock.stubFor(post(urlEqualTo("/internal/credits/usage-settlements"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(successfulUsageSettlement(
+                                "paid", "money-v1", 999, 3, 100, 1, -2, false))));
+
+        assertThatThrownBy(() -> client.settleUsage(charge, 100, "money-v1").block())
+                .isInstanceOfSatisfying(IntelligenceException.class,
+                        error -> assertThat(error.status()).isEqualTo(502));
+    }
+
     private static String successfulConsume(String source, long policyVersion) {
         return "{\"success\":true,\"data\":{\"consumed\":true,\"source\":\"" + source
                 + "\",\"policyVersion\":" + policyVersion + ",\"deduplicated\":false,"
                 + "\"transactionId\":\"11111111-1111-1111-1111-111111111111\"}}";
+    }
+
+    private static String successfulUsageReservation(
+            String source, long entitlementPolicyVersion, String moneyPolicyVersion,
+            long reservedCents, int reservedCredits) {
+        return "{\"success\":true,\"data\":{\"reserved\":true,\"source\":\"" + source
+                + "\",\"policyVersion\":" + entitlementPolicyVersion
+                + ",\"creditsCentsPolicyVersion\":\"" + moneyPolicyVersion
+                + "\",\"reservedCents\":" + reservedCents
+                + ",\"reservedCredits\":" + reservedCredits
+                + ",\"transactionId\":\"11111111-1111-1111-1111-111111111111\"}}";
+    }
+
+    private static String successfulUsageSettlement(
+            String source, String moneyPolicyVersion,
+            long reservedCents, int reservedCredits,
+            long actualCents, int actualCredits, int adjustmentCredits,
+            boolean deduplicated) {
+        return "{\"success\":true,\"data\":{\"settled\":true,\"source\":\"" + source
+                + "\",\"creditsCentsPolicyVersion\":\"" + moneyPolicyVersion
+                + "\",\"reservedCents\":" + reservedCents
+                + ",\"reservedCredits\":" + reservedCredits
+                + ",\"actualCents\":" + actualCents
+                + ",\"actualCredits\":" + actualCredits
+                + ",\"adjustmentCredits\":" + adjustmentCredits
+                + ",\"deduplicated\":" + deduplicated + "}}";
     }
 }

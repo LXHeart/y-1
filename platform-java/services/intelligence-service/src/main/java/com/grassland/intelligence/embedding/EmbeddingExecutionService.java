@@ -5,6 +5,7 @@ import com.grassland.intelligence.ai.ProviderInvocation;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
+import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
 import java.util.UUID;
@@ -54,13 +55,15 @@ public final class EmbeddingExecutionService {
     /** 索引路径：素材所有者的账号/组织直接准备（后台 worker，无 HTTP 交换）。 */
     public Mono<EmbeddingOutcome> embedForIndexing(String accountId, String organizationId, String normalizedText) {
         return execute(normalizedText, executions.prepareExecution(
-                accountId, organizationId, "retrieval", null, estimateInputTokens(normalizedText), 0, true));
+                accountId, organizationId, "retrieval", CreditFeature.AI_RUN_EMBEDDING,
+                estimateInputTokens(normalizedText), 0, true));
     }
 
     /** 查询路径：经 HTTP 断言准备（走调用者身份/组织的路由与预算）。 */
     public Mono<EmbeddingOutcome> embedQuery(ServerWebExchange exchange, String normalizedText) {
         return execute(normalizedText, executions.prepareExecution(
-                exchange, "retrieval", null, estimateInputTokens(normalizedText), 0, true));
+                exchange, "retrieval", CreditFeature.AI_RUN_EMBEDDING,
+                estimateInputTokens(normalizedText), 0, true));
     }
 
     private Mono<EmbeddingOutcome> execute(String normalizedText, Mono<AiExecutionService.ExecutionResult> preparation) {

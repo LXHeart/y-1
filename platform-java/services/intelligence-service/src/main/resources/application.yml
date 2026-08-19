@@ -164,6 +164,14 @@ identity:
 ai:
   provider:
     allow-sandbox: ${AI_PROVIDER_ALLOW_SANDBOX:true}
+  credit-usage-settlement:
+    enabled: ${AI_CREDIT_USAGE_SETTLEMENT_ENABLED:true}
+    poll-interval-ms: ${AI_CREDIT_USAGE_SETTLEMENT_POLL_INTERVAL_MS:2000}
+    batch-size: ${AI_CREDIT_USAGE_SETTLEMENT_BATCH_SIZE:20}
+    max-attempts: ${AI_CREDIT_USAGE_SETTLEMENT_MAX_ATTEMPTS:20}
+    claim-lease: ${AI_CREDIT_USAGE_SETTLEMENT_CLAIM_LEASE:PT1M}
+    initial-backoff: ${AI_CREDIT_USAGE_SETTLEMENT_INITIAL_BACKOFF:PT2S}
+    max-backoff: ${AI_CREDIT_USAGE_SETTLEMENT_MAX_BACKOFF:PT5M}
   # Speech/Embedding default to deterministic Sandbox locally. Production must configure real
   # OpenAI-compatible endpoints and pricing through the production Compose contract.
   speech:
@@ -354,6 +362,13 @@ bilibili:
 
 # 积分扣减：只经 finance-service（Java 原生积分域，GL-P3-AI-001）。
 credits:
+  cents-policy:
+    version: ${FINANCE_CREDITS_CENTS_POLICY_VERSION:}
+    effective-at: ${FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT:}
+    rounding: ${FINANCE_CREDITS_CENTS_POLICY_ROUNDING:}
+    cents-numerator: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:}
+    credits-denominator: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:}
+    max-cents-per-operation: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:}
   finance:
     # 直连 finance 容器（不经 edge-bff，避免 intelligence↔edge 循环；同 marketplace→finance 模式）。
     base-url: ${FINANCE_CREDITS_BASE_URL:http://finance-service:8084}
@@ -362,6 +377,8 @@ credits:
     consume-path: /internal/credits/consume
     refund-path: /internal/credits/refund
     compensation-path: /internal/credits/consume-compensations
+    usage-reservation-path: /internal/credits/usage-reservations
+    usage-settlement-path: /internal/credits/usage-settlements
 # 首页热点聚合（Legacy 迁移）。60s 为无鉴权公共源；ALAPI 需用户级 token（存 user_settings，不在此配）。
 # 60s 结果落 DB 缓存（intelligence_cached_hot_topics，2h TTL，上游失败降级到过期缓存）；ALAPI 走进程内 5min 缓存。
 hot-items:

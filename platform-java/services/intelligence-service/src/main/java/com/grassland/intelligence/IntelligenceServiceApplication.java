@@ -8,6 +8,7 @@ import com.grassland.intelligence.douyin.DouyinProxyTokenProperties;
 import com.grassland.intelligence.event.OutboxProperties;
 import com.grassland.intelligence.embedding.EmbeddingProviderProperties;
 import com.grassland.intelligence.speech.SpeechProviderProperties;
+import com.grassland.intelligence.credits.CreditsCentsPolicyProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -22,7 +23,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         DouyinProxyTokenProperties.class,
         DouyinFetchProperties.class,
         SpeechProviderProperties.class,
-        EmbeddingProviderProperties.class
+        EmbeddingProviderProperties.class,
+        CreditsCentsPolicyProperties.class
 })
 @SpringBootApplication
 public class IntelligenceServiceApplication {

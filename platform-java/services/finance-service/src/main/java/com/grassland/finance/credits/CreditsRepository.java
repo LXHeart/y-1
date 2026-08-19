@@ -29,6 +29,17 @@ public class CreditsRepository {
     private static final String ACCOUNT_COLS = "account_id::text, balance, total_earned, total_spent";
     private static final String TXN_COLS =
             "id::text, account_id::text, amount, balance_after, type, feature, note, operation_id, created_at";
+    private static final String CONSUME_OPERATION_COLS = """
+            operation_id, account_id::text, feature, state,
+            consume_transaction_id::text, refund_transaction_id::text,
+            consume_balance_after, charge_source, quota_day, quota_limit,
+            policy_version, ai_quota_multiplier_bps,
+            quota_consume_transaction_id::text, quota_refund_transaction_id::text,
+            usage_priced, credits_cents_policy_version, credits_cents_rounding,
+            cents_numerator, credits_denominator, max_cents_per_operation,
+            reserved_cents, reserved_credits, actual_cents, actual_credits,
+            adjustment_credits, settlement_transaction_id::text, settled_at
+            """;
 
     private final DatabaseClient db;
 
@@ -73,49 +84,62 @@ public class CreditsRepository {
     public Mono<ConsumeOperation> lockOrCreateConsumeOperation(
             String accountId, String feature, String operationId, String initialState,
             Integer aiQuotaMultiplierBps, Long policyVersion) {
+        return lockOrCreateConsumeOperation(
+                accountId, feature, operationId, initialState,
+                aiQuotaMultiplierBps, policyVersion, null);
+    }
+
+    public Mono<ConsumeOperation> lockOrCreateConsumeOperation(
+            String accountId, String feature, String operationId, String initialState,
+            Integer aiQuotaMultiplierBps, Long policyVersion, UsageReservation usage) {
         GenericExecuteSpec insert = db.sql("""
                 INSERT INTO credits_consume_operation(
                     operation_id, account_id, feature, state,
-                    ai_quota_multiplier_bps, policy_version)
+                    ai_quota_multiplier_bps, policy_version,
+                    usage_priced, credits_cents_policy_version, credits_cents_rounding,
+                    cents_numerator, credits_denominator, max_cents_per_operation,
+                    reserved_cents, reserved_credits)
                 VALUES (:operationId, CAST(:accountId AS uuid), :feature, :initialState,
-                        :aiQuotaMultiplierBps, :policyVersion)
+                        :aiQuotaMultiplierBps, :policyVersion,
+                        :usagePriced, :moneyPolicyVersion, :rounding,
+                        :centsNumerator, :creditsDenominator, :maxCents,
+                        :reservedCents, :reservedCredits)
                 ON CONFLICT (operation_id) DO NOTHING
                 """)
                 .bind("operationId", operationId)
                 .bind("accountId", accountId)
                 .bind("feature", feature)
-                .bind("initialState", initialState);
+                .bind("initialState", initialState)
+                .bind("usagePriced", usage != null);
         insert = bindNullable(insert, "aiQuotaMultiplierBps", aiQuotaMultiplierBps, Integer.class);
         insert = bindNullable(insert, "policyVersion", policyVersion, Long.class);
+        insert = bindNullable(insert, "moneyPolicyVersion", usage == null ? null : usage.policyVersion());
+        insert = bindNullable(insert, "rounding", usage == null ? null : usage.rounding());
+        insert = bindNullable(insert, "centsNumerator", usage == null ? null : usage.centsNumerator(), Long.class);
+        insert = bindNullable(insert, "creditsDenominator", usage == null ? null : usage.creditsDenominator(), Long.class);
+        insert = bindNullable(insert, "maxCents", usage == null ? null : usage.maxCentsPerOperation(), Long.class);
+        insert = bindNullable(insert, "reservedCents", usage == null ? null : usage.reservedCents(), Long.class);
+        insert = bindNullable(insert, "reservedCredits", usage == null ? null : usage.reservedCredits(), Integer.class);
         return insert.fetch().rowsUpdated()
-                .flatMap(inserted -> db.sql("""
-                        SELECT operation_id, account_id::text, feature, state,
-                               consume_transaction_id::text, refund_transaction_id::text,
-                               consume_balance_after, charge_source, quota_day, quota_limit,
-                               policy_version, ai_quota_multiplier_bps,
-                               quota_consume_transaction_id::text, quota_refund_transaction_id::text
+                .flatMap(inserted -> db.sql("SELECT " + CONSUME_OPERATION_COLS + """
                         FROM credits_consume_operation
                         WHERE operation_id = :operationId
                         FOR UPDATE
                         """)
                         .bind("operationId", operationId)
-                        .map(row -> new ConsumeOperation(
-                                row.get("operation_id", String.class),
-                                row.get("account_id", String.class),
-                                row.get("feature", String.class),
-                                row.get("state", String.class),
-                                row.get("consume_transaction_id", String.class),
-                                row.get("refund_transaction_id", String.class),
-                                row.get("consume_balance_after", Integer.class),
-                                row.get("charge_source", String.class),
-                                row.get("quota_day", LocalDate.class),
-                                row.get("quota_limit", Integer.class),
-                                row.get("policy_version", Long.class),
-                                row.get("ai_quota_multiplier_bps", Integer.class),
-                                row.get("quota_consume_transaction_id", String.class),
-                                row.get("quota_refund_transaction_id", String.class),
-                                inserted > 0))
+                        .map(row -> mapConsumeOperation(row, inserted > 0))
                         .one());
+    }
+
+    public Mono<ConsumeOperation> lockConsumeOperation(String operationId) {
+        return db.sql("SELECT " + CONSUME_OPERATION_COLS + """
+                FROM credits_consume_operation
+                WHERE operation_id = :operationId
+                FOR UPDATE
+                """)
+                .bind("operationId", operationId)
+                .map(row -> mapConsumeOperation(row, false))
+                .one();
     }
 
     /** Read-only authority lookup for cross-service reconciliation; never creates or locks fences. */
@@ -123,32 +147,12 @@ public class CreditsRepository {
         if (operationIds == null || operationIds.isEmpty()) {
             return Flux.empty();
         }
-        return db.sql("""
-                SELECT operation_id, account_id::text, feature, state,
-                       consume_transaction_id::text, refund_transaction_id::text,
-                       consume_balance_after, charge_source, quota_day, quota_limit,
-                       policy_version, ai_quota_multiplier_bps,
-                       quota_consume_transaction_id::text, quota_refund_transaction_id::text
+        return db.sql("SELECT " + CONSUME_OPERATION_COLS + """
                 FROM credits_consume_operation
                 WHERE operation_id = ANY(CAST(:operationIds AS text[]))
                 """)
                 .bind("operationIds", operationIds.toArray(String[]::new))
-                .map(row -> new ConsumeOperation(
-                        row.get("operation_id", String.class),
-                        row.get("account_id", String.class),
-                        row.get("feature", String.class),
-                        row.get("state", String.class),
-                        row.get("consume_transaction_id", String.class),
-                        row.get("refund_transaction_id", String.class),
-                        row.get("consume_balance_after", Integer.class),
-                        row.get("charge_source", String.class),
-                        row.get("quota_day", LocalDate.class),
-                        row.get("quota_limit", Integer.class),
-                        row.get("policy_version", Long.class),
-                        row.get("ai_quota_multiplier_bps", Integer.class),
-                        row.get("quota_consume_transaction_id", String.class),
-                        row.get("quota_refund_transaction_id", String.class),
-                        false))
+                .map(row -> mapConsumeOperation(row, false))
                 .all();
     }
 
@@ -232,6 +236,30 @@ public class CreditsRepository {
                 .fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
     }
 
+    public Mono<Boolean> markUsageSettled(
+            String operationId, long actualCents, int actualCredits,
+            int adjustmentCredits, String settlementTransactionId) {
+        GenericExecuteSpec spec = db.sql("""
+                UPDATE credits_consume_operation
+                SET state = 'settled',
+                    actual_cents = :actualCents,
+                    actual_credits = :actualCredits,
+                    adjustment_credits = :adjustmentCredits,
+                    settlement_transaction_id = CAST(:settlementTransactionId AS uuid),
+                    settled_at = now(),
+                    updated_at = now()
+                WHERE operation_id = :operationId
+                  AND state = 'consumed'
+                  AND usage_priced
+                """)
+                .bind("operationId", operationId)
+                .bind("actualCents", actualCents)
+                .bind("actualCredits", actualCredits)
+                .bind("adjustmentCredits", adjustmentCredits);
+        spec = bindNullable(spec, "settlementTransactionId", settlementTransactionId);
+        return spec.fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+    }
+
     /** Atomically consumes one free unit without ever exceeding the caller's snapshotted limit. */
     public Mono<QuotaUsage> claimQuota(String accountId, LocalDate quotaDay, int quotaLimit) {
         return db.sql("""
@@ -291,13 +319,39 @@ public class CreditsRepository {
 
     /** 条件扣 1：余额不足（或账户不存在）→ empty。镜像 legacy {@code consumeCredit} 的 UPDATE。 */
     public Mono<CreditsAccount> consumeOne(String accountId) {
+        return consumeCredits(accountId, 1);
+    }
+
+    /** Atomically reserves a bounded number of paid credits. Zero is retained as an audit transaction. */
+    public Mono<CreditsAccount> consumeCredits(String accountId, int amount) {
+        if (amount < 0) {
+            return Mono.error(new IllegalArgumentException("积分预留不能为负数"));
+        }
         return db.sql("""
                 UPDATE credits_account
-                SET balance = balance - 1, total_spent = total_spent + 1, updated_at = now()
-                WHERE account_id = CAST(:acct AS uuid) AND balance >= 1
+                SET balance = balance - :amount, total_spent = total_spent + :amount, updated_at = now()
+                WHERE account_id = CAST(:acct AS uuid) AND balance >= :amount
                 RETURNING %s
                 """.formatted(ACCOUNT_COLS))
                 .bind("acct", accountId)
+                .bind("amount", amount)
+                .map(CreditsRepository::mapAccount)
+                .one();
+    }
+
+    /** Positive adjustment charges more; negative adjustment returns the unused reservation. */
+    public Mono<CreditsAccount> adjustUsageCredits(String accountId, int adjustmentCredits) {
+        return db.sql("""
+                UPDATE credits_account
+                SET balance = balance - :adjustment,
+                    total_spent = total_spent + :adjustment,
+                    updated_at = now()
+                WHERE account_id = CAST(:acct AS uuid)
+                  AND (:adjustment <= 0 OR balance >= :adjustment)
+                RETURNING %s
+                """.formatted(ACCOUNT_COLS))
+                .bind("acct", accountId)
+                .bind("adjustment", adjustmentCredits)
                 .map(CreditsRepository::mapAccount)
                 .one();
     }
@@ -384,6 +438,38 @@ public class CreditsRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)));
     }
 
+    private static ConsumeOperation mapConsumeOperation(Readable row, boolean created) {
+        return new ConsumeOperation(
+                row.get("operation_id", String.class),
+                row.get("account_id", String.class),
+                row.get("feature", String.class),
+                row.get("state", String.class),
+                row.get("consume_transaction_id", String.class),
+                row.get("refund_transaction_id", String.class),
+                row.get("consume_balance_after", Integer.class),
+                row.get("charge_source", String.class),
+                row.get("quota_day", LocalDate.class),
+                row.get("quota_limit", Integer.class),
+                row.get("policy_version", Long.class),
+                row.get("ai_quota_multiplier_bps", Integer.class),
+                row.get("quota_consume_transaction_id", String.class),
+                row.get("quota_refund_transaction_id", String.class),
+                Boolean.TRUE.equals(row.get("usage_priced", Boolean.class)),
+                row.get("credits_cents_policy_version", String.class),
+                row.get("credits_cents_rounding", String.class),
+                row.get("cents_numerator", Long.class),
+                row.get("credits_denominator", Long.class),
+                row.get("max_cents_per_operation", Long.class),
+                row.get("reserved_cents", Long.class),
+                row.get("reserved_credits", Integer.class),
+                row.get("actual_cents", Long.class),
+                row.get("actual_credits", Integer.class),
+                row.get("adjustment_credits", Integer.class),
+                row.get("settlement_transaction_id", String.class),
+                toInstant(row.get("settled_at", OffsetDateTime.class)),
+                created);
+    }
+
     private static int nonNull(Integer v) {
         return v == null ? 0 : v;
     }
@@ -434,6 +520,19 @@ public class CreditsRepository {
             Integer aiQuotaMultiplierBps,
             String quotaConsumeTransactionId,
             String quotaRefundTransactionId,
+            boolean usagePriced,
+            String creditsCentsPolicyVersion,
+            String creditsCentsRounding,
+            Long centsNumerator,
+            Long creditsDenominator,
+            Long maxCentsPerOperation,
+            Long reservedCents,
+            Integer reservedCredits,
+            Long actualCents,
+            Integer actualCredits,
+            Integer adjustmentCredits,
+            String settlementTransactionId,
+            Instant settledAt,
             boolean created) {
 
         public ConsumeOperation(
@@ -442,7 +541,17 @@ public class CreditsRepository {
                 Integer consumeBalanceAfter, boolean created) {
             this(operationId, accountId, feature, state, consumeTransactionId,
                     refundTransactionId, consumeBalanceAfter, null, null, null,
-                    null, null, null, null, created);
+                    null, null, null, null, false, null, null,
+                    null, null, null, null, null, null, null, null, null, null, created);
         }
     }
+
+    public record UsageReservation(
+            String policyVersion,
+            String rounding,
+            long centsNumerator,
+            long creditsDenominator,
+            long maxCentsPerOperation,
+            long reservedCents,
+            int reservedCredits) {}
 }

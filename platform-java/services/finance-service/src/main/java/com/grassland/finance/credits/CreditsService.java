@@ -9,6 +9,7 @@ import com.grassland.finance.security.FinanceException;
 import io.r2dbc.spi.R2dbcException;
 import java.util.Objects;
 import java.util.function.Supplier;
+import java.math.RoundingMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -39,17 +40,77 @@ public class CreditsService {
     private final CreditsRepository repo;
     private final TransactionalOperator transactions;
     private final AiQuotaPolicy aiQuotaPolicy;
+    private final CreditsCentsPolicyProperties creditsCentsPolicy;
 
     @Autowired
-    public CreditsService(CreditsRepository repo, TransactionalOperator transactions, AiQuotaPolicy aiQuotaPolicy) {
+    public CreditsService(
+            CreditsRepository repo,
+            TransactionalOperator transactions,
+            AiQuotaPolicy aiQuotaPolicy,
+            CreditsCentsPolicyProperties creditsCentsPolicy) {
         this.repo = repo;
         this.transactions = transactions;
         this.aiQuotaPolicy = aiQuotaPolicy;
+        this.creditsCentsPolicy = creditsCentsPolicy;
     }
 
     /** Unit-test/backward-compatible constructor: no free quota unless an entitlement is supplied. */
     public CreditsService(CreditsRepository repo, TransactionalOperator transactions) {
-        this(repo, transactions, new AiQuotaPolicy(0, java.time.ZoneId.of("Asia/Shanghai"), java.time.Clock.systemUTC()));
+        this(repo, transactions,
+                new AiQuotaPolicy(0, java.time.ZoneId.of("Asia/Shanghai"), java.time.Clock.systemUTC()),
+                new CreditsCentsPolicyProperties(null, null, null, null, null, null));
+    }
+
+    /** Reserve the policy-converted credits for a priced AI run before provider execution. */
+    public Mono<UsageReservationResult> reserveUsage(
+            String accountId, String feature, String operationId, long estimatedCents,
+            String expectedMoneyPolicyVersion,
+            Integer aiQuotaMultiplierBps, Long entitlementPolicyVersion) {
+        if (operationId == null || operationId.isBlank()) {
+            return Mono.error(new FinanceException(400, "AI 用量预留必须提供 operationId"));
+        }
+        Mono<Void> entitlementValidation = validateEntitlement(
+                operationId, aiQuotaMultiplierBps, entitlementPolicyVersion);
+        return entitlementValidation.then(Mono.defer(() -> {
+            CreditsCentsPolicyProperties.Snapshot snapshot =
+                    creditsCentsPolicy.requireActive(expectedMoneyPolicyVersion);
+            int reservedCredits = snapshot.creditsFor(estimatedCents);
+            var usage = new CreditsRepository.UsageReservation(
+                    snapshot.version(), snapshot.rounding().name(),
+                    snapshot.centsNumerator(), snapshot.creditsDenominator(),
+                    snapshot.maxCentsPerOperation(), estimatedCents, reservedCredits);
+            Mono<ConsumeOperation> locked = repo.lockOrCreateConsumeOperation(
+                    accountId, feature, operationId, "open",
+                    aiQuotaMultiplierBps, entitlementPolicyVersion, usage);
+            Mono<UsageReservationResult> body = locked.flatMap(operation ->
+                    validateUsageScope(operation, accountId, feature, aiQuotaMultiplierBps,
+                                    entitlementPolicyVersion, usage)
+                            .then(Mono.defer(() -> switch (operation.state()) {
+                                case "consumed", "settled" -> repo.findAccount(accountId)
+                                        .map(account -> usageReservationResult(
+                                                operation, account.balance(), true));
+                                case "compensated" -> Mono.error(new FinanceException(
+                                        409, "该 AI 用量预留已被补偿，拒绝迟到扣费"));
+                                case "open" -> performUsageReservation(
+                                        accountId, feature, operationId,
+                                        aiQuotaMultiplierBps, entitlementPolicyVersion, usage);
+                                default -> Mono.error(new IllegalStateException(
+                                        "未知积分扣减状态: " + operation.state()));
+                            })));
+            return repo.ensureAccount(accountId).then(transactions.transactional(body));
+        }));
+    }
+
+    /** Idempotently reconcile a priced reservation to the provider's actual cost. */
+    public Mono<UsageSettlementResult> settleUsage(
+            String accountId, String feature, String operationId,
+            long actualCents, String expectedMoneyPolicyVersion) {
+        Mono<UsageSettlementResult> body = repo.lockConsumeOperation(operationId)
+                .switchIfEmpty(Mono.error(new FinanceException(404, "AI 用量预留不存在")))
+                .flatMap(operation -> validateScope(operation, accountId, feature)
+                        .then(Mono.defer(() -> settleLockedUsage(
+                                operation, actualCents, expectedMoneyPolicyVersion))));
+        return transactions.transactional(body);
     }
 
     /** 扣 1 积分（consume）。operationId 非空即幂等；余额不足 → 402。 */
@@ -61,32 +122,20 @@ public class CreditsService {
     public Mono<MutationResult> consume(
             String accountId, String feature, String operationId,
             Integer aiQuotaMultiplierBps, Long policyVersion) {
-        boolean hasMultiplier = aiQuotaMultiplierBps != null;
-        boolean hasVersion = policyVersion != null;
-        if (hasMultiplier != hasVersion) {
-            return Mono.error(new FinanceException(400, "AI 权益快照字段不完整"));
-        }
-        if (hasMultiplier) {
-            if (operationId == null || operationId.isBlank()) {
-                return Mono.error(new FinanceException(400, "AI 权益扣减必须提供 operationId"));
-            }
-            if (policyVersion < 1) {
-                return Mono.error(new FinanceException(400, "policyVersion 必须大于等于 1"));
-            }
-            try {
-                aiQuotaPolicy.limitFor(aiQuotaMultiplierBps);
-            } catch (IllegalArgumentException invalid) {
-                return Mono.error(new FinanceException(400, invalid.getMessage()));
-            }
+        Mono<Void> entitlementValidation = validateEntitlement(
+                operationId, aiQuotaMultiplierBps, policyVersion);
+        if (aiQuotaMultiplierBps != null && (operationId == null || operationId.isBlank())) {
+            return Mono.error(new FinanceException(400, "AI 权益扣减必须提供 operationId"));
         }
         if (operationId != null && !operationId.isBlank()) {
-            return fencedConsume(accountId, feature, operationId, aiQuotaMultiplierBps, policyVersion);
+            return entitlementValidation.then(fencedConsume(
+                    accountId, feature, operationId, aiQuotaMultiplierBps, policyVersion));
         }
-        return idempotent(accountId, operationId, () -> repo.consumeOne(accountId)
+        return entitlementValidation.then(idempotent(accountId, operationId, () -> repo.consumeOne(accountId)
                 .switchIfEmpty(Mono.error(new FinanceException(402, "积分不足")))
                 .flatMap(acct -> repo.insertTransaction(
                         accountId, -1, acct.balance(), "consume", feature, null, operationId)
-                        .map(txnId -> MutationResult.paid(acct.balance(), txnId, false, policyVersion))));
+                        .map(txnId -> MutationResult.paid(acct.balance(), txnId, false, policyVersion)))));
     }
 
     /**
@@ -241,6 +290,117 @@ public class CreditsService {
                                         : Mono.error(new IllegalStateException("积分扣减 fence 状态更新失败")))));
     }
 
+    private Mono<UsageReservationResult> performUsageReservation(
+            String accountId, String feature, String operationId,
+            Integer aiQuotaMultiplierBps, Long entitlementPolicyVersion,
+            CreditsRepository.UsageReservation usage) {
+        if (aiQuotaMultiplierBps != null) {
+            int quotaLimit = aiQuotaPolicy.limitFor(aiQuotaMultiplierBps);
+            java.time.LocalDate quotaDay = aiQuotaPolicy.quotaDay();
+            return repo.claimQuota(accountId, quotaDay, quotaLimit)
+                    .flatMap(quota -> performQuotaConsume(
+                                    accountId, feature, operationId, aiQuotaMultiplierBps,
+                                    entitlementPolicyVersion, quotaLimit, quota)
+                            .map(result -> new UsageReservationResult(
+                                    result.balance(), result.transactionId(), false,
+                                    result.source(), result.policyVersion(), result.quotaLimit(),
+                                    usage.policyVersion(), usage.reservedCents(),
+                                    usage.reservedCredits())))
+                    .switchIfEmpty(Mono.defer(() -> performPaidUsageReservation(
+                            accountId, feature, operationId, entitlementPolicyVersion, usage)));
+        }
+        return performPaidUsageReservation(
+                accountId, feature, operationId, null, usage);
+    }
+
+    private Mono<UsageReservationResult> performPaidUsageReservation(
+            String accountId, String feature, String operationId,
+            Long entitlementPolicyVersion, CreditsRepository.UsageReservation usage) {
+        return repo.consumeCredits(accountId, usage.reservedCredits())
+                .switchIfEmpty(Mono.error(new FinanceException(402, "积分不足")))
+                .flatMap(account -> repo.insertTransaction(
+                                accountId, -usage.reservedCredits(), account.balance(), "consume",
+                                feature, "AI 用量积分预留", operationId)
+                        .flatMap(transactionId -> repo.markConsumeOperationConsumed(
+                                        operationId, transactionId, account.balance())
+                                .flatMap(updated -> updated
+                                        ? Mono.just(new UsageReservationResult(
+                                                account.balance(), transactionId, false, "paid",
+                                                entitlementPolicyVersion, null,
+                                                usage.policyVersion(), usage.reservedCents(),
+                                                usage.reservedCredits()))
+                                        : Mono.error(new IllegalStateException(
+                                                "AI 用量预留 fence 状态更新失败")))));
+    }
+
+    private Mono<UsageSettlementResult> settleLockedUsage(
+            ConsumeOperation operation, long actualCents, String expectedMoneyPolicyVersion) {
+        if (!operation.usagePriced()) {
+            return Mono.error(new FinanceException(409, "该积分操作不是按用量计价预留"));
+        }
+        if (!Objects.equals(operation.creditsCentsPolicyVersion(), expectedMoneyPolicyVersion)) {
+            return Mono.error(new FinanceException(409, "AI 用量结算 policy 版本冲突"));
+        }
+        CreditsCentsPolicyProperties.Snapshot snapshot;
+        try {
+            snapshot = new CreditsCentsPolicyProperties.Snapshot(
+                    operation.creditsCentsPolicyVersion(),
+                    RoundingMode.valueOf(operation.creditsCentsRounding()),
+                    operation.centsNumerator(), operation.creditsDenominator(),
+                    operation.maxCentsPerOperation());
+        } catch (RuntimeException invalidSnapshot) {
+            return Mono.error(new FinanceException(500, "冻结的 credits↔cents policy 非法"));
+        }
+        int actualCredits = snapshot.creditsFor(actualCents);
+        if ("settled".equals(operation.state())) {
+            if (!Objects.equals(operation.actualCents(), actualCents)
+                    || !Objects.equals(operation.actualCredits(), actualCredits)) {
+                return Mono.error(new FinanceException(409, "AI 用量结算重放参数冲突"));
+            }
+            return repo.findAccount(operation.accountId())
+                    .map(account -> usageSettlementResult(operation, account.balance(), true));
+        }
+        if ("compensated".equals(operation.state())) {
+            return Mono.error(new FinanceException(409, "已补偿的 AI 用量预留不能结算"));
+        }
+        if (!"consumed".equals(operation.state())) {
+            return Mono.error(new FinanceException(409, "AI 用量预留尚未完成"));
+        }
+        int adjustmentCredits = "quota".equals(operation.chargeSource())
+                ? 0 : Math.subtractExact(actualCredits, operation.reservedCredits());
+        if ("quota".equals(operation.chargeSource())) {
+            return markUsageSettled(
+                    operation, actualCents, actualCredits, adjustmentCredits, null);
+        }
+        return repo.adjustUsageCredits(operation.accountId(), adjustmentCredits)
+                .switchIfEmpty(Mono.error(new FinanceException(402, "实际 AI 用量超出预留且积分不足")))
+                .flatMap(account -> adjustmentCredits == 0
+                        ? markUsageSettled(operation, actualCents, actualCredits, 0, null)
+                        : repo.insertTransaction(
+                                        operation.accountId(), -adjustmentCredits, account.balance(),
+                                        "usage_adjustment", operation.feature(),
+                                        "AI 实际用量差额结算", "settle:" + operation.operationId())
+                                .flatMap(transactionId -> markUsageSettled(
+                                        operation, actualCents, actualCredits,
+                                        adjustmentCredits, transactionId)));
+    }
+
+    private Mono<UsageSettlementResult> markUsageSettled(
+            ConsumeOperation operation, long actualCents, int actualCredits,
+            int adjustmentCredits, String transactionId) {
+        return repo.markUsageSettled(
+                        operation.operationId(), actualCents, actualCredits,
+                        adjustmentCredits, transactionId)
+                .flatMap(updated -> updated
+                        ? repo.findAccount(operation.accountId()).map(account ->
+                                new UsageSettlementResult(
+                                        account.balance(), transactionId, false,
+                                        operation.chargeSource(), operation.creditsCentsPolicyVersion(),
+                                        operation.reservedCents(), operation.reservedCredits(),
+                                        actualCents, actualCredits, adjustmentCredits))
+                        : Mono.error(new IllegalStateException("AI 用量结算状态更新失败")));
+    }
+
     private Mono<MutationResult> performQuotaConsume(
             String accountId, String feature, String operationId, int multiplierBps,
             long policyVersion, int quotaLimit, QuotaUsage usage) {
@@ -275,6 +435,7 @@ public class CreditsService {
             case "consumed" -> "quota".equals(operation.chargeSource())
                     ? refundQuotaOperation(operation, note)
                     : refundConsumedOperation(operation, note);
+            case "settled" -> Mono.error(new FinanceException(409, "已成功结算的 AI 用量不能退款"));
             default -> Mono.error(new IllegalStateException("未知积分扣减状态: " + operation.state()));
         };
     }
@@ -305,9 +466,10 @@ public class CreditsService {
 
     private Mono<CompensationResult> createCompensationRefund(
             ConsumeOperation operation, String note, String refundOperationId) {
-        return repo.creditAccount(operation.accountId(), 1, 0, -1)
+        int refundCredits = operation.usagePriced() ? operation.reservedCredits() : 1;
+        return repo.creditAccount(operation.accountId(), refundCredits, 0, -refundCredits)
                 .flatMap(account -> repo.insertTransaction(
-                                operation.accountId(), 1, account.balance(), "refund",
+                                operation.accountId(), refundCredits, account.balance(), "refund",
                                 operation.feature(), note, refundOperationId)
                         .flatMap(transactionId -> repo.markConsumeOperationRefunded(
                                         operation.operationId(), transactionId)
@@ -344,6 +506,67 @@ public class CreditsService {
             return Mono.error(new FinanceException(409, "积分 operationId 作用域冲突"));
         }
         return Mono.empty();
+    }
+
+    private Mono<Void> validateEntitlement(
+            String operationId, Integer aiQuotaMultiplierBps, Long policyVersion) {
+        boolean hasMultiplier = aiQuotaMultiplierBps != null;
+        boolean hasVersion = policyVersion != null;
+        if (hasMultiplier != hasVersion) {
+            return Mono.error(new FinanceException(400, "AI 权益快照字段不完整"));
+        }
+        if (!hasMultiplier) {
+            return Mono.empty();
+        }
+        if (operationId == null || operationId.isBlank()) {
+            return Mono.error(new FinanceException(400, "AI 权益扣减必须提供 operationId"));
+        }
+        if (policyVersion < 1) {
+            return Mono.error(new FinanceException(400, "policyVersion 必须大于等于 1"));
+        }
+        try {
+            aiQuotaPolicy.limitFor(aiQuotaMultiplierBps);
+            return Mono.empty();
+        } catch (IllegalArgumentException invalid) {
+            return Mono.error(new FinanceException(400, invalid.getMessage()));
+        }
+    }
+
+    private static Mono<Void> validateUsageScope(
+            ConsumeOperation operation, String accountId, String feature,
+            Integer aiQuotaMultiplierBps, Long entitlementPolicyVersion,
+            CreditsRepository.UsageReservation usage) {
+        return validateScope(operation, accountId, feature, aiQuotaMultiplierBps, entitlementPolicyVersion)
+                .then(Mono.defer(() -> operation.usagePriced()
+                                && Objects.equals(operation.creditsCentsPolicyVersion(), usage.policyVersion())
+                                && Objects.equals(operation.creditsCentsRounding(), usage.rounding())
+                                && Objects.equals(operation.centsNumerator(), usage.centsNumerator())
+                                && Objects.equals(operation.creditsDenominator(), usage.creditsDenominator())
+                                && Objects.equals(operation.maxCentsPerOperation(), usage.maxCentsPerOperation())
+                                && Objects.equals(operation.reservedCents(), usage.reservedCents())
+                                && Objects.equals(operation.reservedCredits(), usage.reservedCredits())
+                        ? Mono.empty()
+                        : Mono.error(new FinanceException(409, "AI 用量预留幂等参数冲突"))));
+    }
+
+    private static UsageReservationResult usageReservationResult(
+            ConsumeOperation operation, int balance, boolean deduplicated) {
+        String transactionId = "quota".equals(operation.chargeSource())
+                ? operation.quotaConsumeTransactionId() : operation.consumeTransactionId();
+        return new UsageReservationResult(
+                balance, transactionId, deduplicated, operation.chargeSource(),
+                operation.policyVersion(), operation.quotaLimit(),
+                operation.creditsCentsPolicyVersion(), operation.reservedCents(),
+                operation.reservedCredits());
+    }
+
+    private static UsageSettlementResult usageSettlementResult(
+            ConsumeOperation operation, int balance, boolean deduplicated) {
+        return new UsageSettlementResult(
+                balance, operation.settlementTransactionId(), deduplicated,
+                operation.chargeSource(), operation.creditsCentsPolicyVersion(),
+                operation.reservedCents(), operation.reservedCredits(),
+                operation.actualCents(), operation.actualCredits(), operation.adjustmentCredits());
     }
 
     private static Mono<Void> validateScope(
@@ -443,4 +666,15 @@ public class CreditsService {
             this(state, action, balance, null, null, null, null);
         }
     }
+
+    public record UsageReservationResult(
+            int balance, String transactionId, boolean deduplicated,
+            String source, Long entitlementPolicyVersion, Integer quotaLimit,
+            String creditsCentsPolicyVersion, long reservedCents, int reservedCredits) {}
+
+    public record UsageSettlementResult(
+            int balance, String transactionId, boolean deduplicated,
+            String source, String creditsCentsPolicyVersion,
+            long reservedCents, int reservedCredits,
+            long actualCents, int actualCredits, int adjustmentCredits) {}
 }

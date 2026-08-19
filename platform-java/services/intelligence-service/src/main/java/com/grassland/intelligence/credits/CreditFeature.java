@@ -16,6 +16,10 @@ public enum CreditFeature {
     VIDEO_PRODUCTION_VIDEO("video_production_video"),
     /** 控制面 text run（GL-P3-AI-001）：经 AiExecutionService 的平台模型 text 能力调用，按平台口径扣 1 积分；BYOK run 不扣。 */
     AI_RUN_TEXT("ai_run_text"),
+    /** 平台语音识别按真实秒数/token 成本结算；Sandbox 0 成本不扣。 */
+    AI_RUN_VOICE("ai_run_voice"),
+    /** 平台 Embedding 按真实 input token 成本结算；Sandbox 0 成本不扣。 */
+    AI_RUN_EMBEDDING("ai_run_embedding"),
     /** 冒烟端点：真实消耗 Qwen 上游，与其它 AI 调用同等扣分（GL-P0-SEC-002，原先免费）。 */
     INTELLIGENCE_SMOKE("intelligence_smoke"),
     /** 智能创作助手（PRD §4.9）：内容评分 / 优化建议 / 问答引导等 AI 诊断调用，单次扣 1 积分。 */

@@ -23,6 +23,18 @@ public interface CreditsClient {
         return consume(accountId, feature);
     }
 
+    /** Reserve credits converted from estimated provider cost under a frozen monetary policy. */
+    Mono<CreditCharge> reserveUsage(
+            String accountId,
+            CreditFeature feature,
+            String operationId,
+            long estimatedCents,
+            String creditsCentsPolicyVersion);
+
+    /** Idempotently settle a priced reservation against provider-reported actual cost. */
+    Mono<CreditSettlement> settleUsage(
+            CreditCharge charge, long actualCents, String creditsCentsPolicyVersion);
+
     /** 退回一次已确认扣减。幂等；失败必须传播给持久化补偿 worker。 */
     Mono<Void> refund(CreditCharge charge, String note);
 

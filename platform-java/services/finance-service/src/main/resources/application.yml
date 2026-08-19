@@ -150,3 +150,10 @@ credits:
   ai-quota:
     base-daily: ${AI_FREE_QUOTA_BASE_DAILY:0}
     zone-id: ${AI_FREE_QUOTA_ZONE_ID:Asia/Shanghai}
+  cents-policy:
+    version: ${FINANCE_CREDITS_CENTS_POLICY_VERSION:}
+    effective-at: ${FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT:}
+    rounding: ${FINANCE_CREDITS_CENTS_POLICY_ROUNDING:}
+    cents-numerator: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:}
+    credits-denominator: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:}
+    max-cents-per-operation: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:}

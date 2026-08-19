@@ -1,6 +1,7 @@
 package com.grassland.finance;
 
 import com.grassland.finance.event.OutboxProperties;
+import com.grassland.finance.credits.CreditsCentsPolicyProperties;
 import io.r2dbc.spi.ConnectionFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -12,7 +13,7 @@ import org.springframework.transaction.ReactiveTransactionManager;
 import org.springframework.transaction.reactive.TransactionalOperator;
 
 @EnableScheduling
-@EnableConfigurationProperties(OutboxProperties.class)
+@EnableConfigurationProperties({OutboxProperties.class, CreditsCentsPolicyProperties.class})
 @SpringBootApplication
 public class FinanceServiceApplication {
     public static void main(String[] args) {

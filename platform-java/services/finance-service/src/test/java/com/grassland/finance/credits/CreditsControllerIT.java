@@ -30,6 +30,119 @@ class CreditsControllerIT extends FinanceItSupport {
     static void creditsProps(DynamicPropertyRegistry r) {
         r.add("credits.ai-quota.base-daily", () -> "2");
         r.add("credits.ai-quota.zone-id", () -> "Asia/Shanghai");
+        r.add("credits.cents-policy.version", () -> "test-v1");
+        r.add("credits.cents-policy.effective-at", () -> "2026-01-01T00:00:00Z");
+        r.add("credits.cents-policy.rounding", () -> "HALF_UP");
+        r.add("credits.cents-policy.cents-numerator", () -> "100");
+        r.add("credits.cents-policy.credits-denominator", () -> "1");
+        r.add("credits.cents-policy.max-cents-per-operation", () -> "100000");
+    }
+
+    @Test
+    void usageSettlementReturnsUnusedPaidReservationAndIsIdempotent() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+        award(acct, 5);
+
+        reserveUsage(acct, operationId, 300, null, null).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.source").isEqualTo("paid")
+                .jsonPath("$.data.reservedCredits").isEqualTo(3)
+                .jsonPath("$.data.balance").isEqualTo(2);
+        settleUsage(acct, operationId, 100).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.actualCredits").isEqualTo(1)
+                .jsonPath("$.data.adjustmentCredits").isEqualTo(-2)
+                .jsonPath("$.data.balance").isEqualTo(4)
+                .jsonPath("$.data.deduplicated").isEqualTo(false);
+
+        settleUsage(acct, operationId, 100).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.balance").isEqualTo(4)
+                .jsonPath("$.data.deduplicated").isEqualTo(true);
+        settleUsage(acct, operationId, 200).expectStatus().isEqualTo(409);
+
+        assertThat(balanceOf(acct)).isEqualTo(4);
+        assertThat(spentOf(acct)).isEqualTo(1);
+        assertThat(usageAdjustmentCount(operationId)).isEqualTo(1);
+    }
+
+    @Test
+    void usageSettlementChargesActualCostAboveReservation() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+        award(acct, 4);
+
+        reserveUsage(acct, operationId, 100, null, null).expectStatus().isOk();
+        settleUsage(acct, operationId, 300).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.reservedCredits").isEqualTo(1)
+                .jsonPath("$.data.actualCredits").isEqualTo(3)
+                .jsonPath("$.data.adjustmentCredits").isEqualTo(2)
+                .jsonPath("$.data.balance").isEqualTo(1);
+
+        assertThat(balanceOf(acct)).isEqualTo(1);
+        assertThat(spentOf(acct)).isEqualTo(3);
+        assertThat(usageAdjustmentCount(operationId)).isEqualTo(1);
+    }
+
+    @Test
+    void usageSettlementLeavesReservationOpenWhenAdditionalCreditsAreInsufficient() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+        award(acct, 1);
+
+        reserveUsage(acct, operationId, 100, null, null).expectStatus().isOk();
+        settleUsage(acct, operationId, 300).expectStatus().isEqualTo(402);
+
+        assertThat(balanceOf(acct)).isZero();
+        assertThat(spentOf(acct)).isEqualTo(1);
+        assertThat(usageAdjustmentCount(operationId)).isZero();
+        assertThat(consumeOperationState(operationId)).isEqualTo("consumed");
+    }
+
+    @Test
+    void quotaUsageSettlementRecordsActualCostWithoutChangingPaidBalance() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+
+        reserveUsage(acct, operationId, 300, 10_000, 88L).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.source").isEqualTo("quota")
+                .jsonPath("$.data.reservedCredits").isEqualTo(3)
+                .jsonPath("$.data.balance").isEqualTo(0);
+        settleUsage(acct, operationId, 500).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.source").isEqualTo("quota")
+                .jsonPath("$.data.actualCredits").isEqualTo(5)
+                .jsonPath("$.data.adjustmentCredits").isEqualTo(0)
+                .jsonPath("$.data.balance").isEqualTo(0);
+
+        assertThat(balanceOf(acct)).isZero();
+        assertThat(spentOf(acct)).isZero();
+        assertThat(quotaUsed(acct)).isEqualTo(1);
+        assertThat(usageAdjustmentCount(operationId)).isZero();
+    }
+
+    @Test
+    void failedPricedUsageCompensationReturnsEntireReservation() {
+        String acct = UUID.randomUUID().toString();
+        String operationId = UUID.randomUUID().toString();
+        award(acct, 5);
+
+        reserveUsage(acct, operationId, 300, null, null).expectStatus().isOk();
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.action").isEqualTo("refunded")
+                .jsonPath("$.data.balance").isEqualTo(5);
+        internalCompensate(acct, "ai_run_text", operationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.action").isEqualTo("deduplicated")
+                .jsonPath("$.data.balance").isEqualTo(5);
+
+        assertThat(balanceOf(acct)).isEqualTo(5);
+        assertThat(spentOf(acct)).isZero();
+        assertThat(consumeOperationState(operationId)).isEqualTo("compensated");
     }
 
     @Test
@@ -795,6 +908,37 @@ class CreditsControllerIT extends FinanceItSupport {
                 .exchange();
     }
 
+    private WebTestClient.ResponseSpec reserveUsage(
+            String acct, String operationId, long estimatedCents,
+            Integer multiplierBps, Long entitlementPolicyVersion) {
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("accountId", acct);
+        body.put("feature", "ai_run_text");
+        body.put("operationId", operationId);
+        body.put("estimatedCents", estimatedCents);
+        body.put("creditsCentsPolicyVersion", "test-v1");
+        if (multiplierBps != null) {
+            body.put("aiQuotaMultiplierBps", multiplierBps);
+            body.put("policyVersion", entitlementPolicyVersion);
+        }
+        return client().post().uri("/internal/credits/usage-reservations")
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange();
+    }
+
+    private WebTestClient.ResponseSpec settleUsage(String acct, String operationId, long actualCents) {
+        return client().post().uri("/internal/credits/usage-settlements")
+                .header("X-Grassland-Identity", signService(null, "intelligence"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "accountId", acct,
+                        "feature", "ai_run_text",
+                        "consumeOperationId", operationId,
+                        "actualCents", actualCents,
+                        "creditsCentsPolicyVersion", "test-v1"))
+                .exchange();
+    }
+
     private Mono<Void> oldFinanceConsume(String acct, String feature, String operationId) {
         Mono<Void> mutation = db.sql("""
                         UPDATE credits_account
@@ -842,6 +986,23 @@ class CreditsControllerIT extends FinanceItSupport {
         Integer c = db.sql("SELECT COUNT(*)::int AS c FROM credits_transaction WHERE account_id = CAST(:a AS uuid)")
                 .bind("a", acct).map(r -> r.get("c", Integer.class)).one().block();
         return c == null ? 0 : c.longValue();
+    }
+
+    private long usageAdjustmentCount(String operationId) {
+        Integer count = db.sql("""
+                        SELECT COUNT(*)::int AS count
+                        FROM credits_transaction
+                        WHERE operation_id = :operationId AND type = 'usage_adjustment'
+                        """)
+                .bind("operationId", "settle:" + operationId)
+                .map(row -> row.get("count", Integer.class)).one().block();
+        return count == null ? 0 : count.longValue();
+    }
+
+    private String consumeOperationState(String operationId) {
+        return db.sql("SELECT state FROM credits_consume_operation WHERE operation_id = :operationId")
+                .bind("operationId", operationId)
+                .map(row -> row.get("state", String.class)).one().block();
     }
 
     private int quotaUsed(String acct) {

@@ -48,7 +48,8 @@ public record AiRun(
     // 任务上下文快照（TaskContext，V8 新增）
     Integer platformModelVersion, // 平台模型配置版本（平台 run 冻结；BYOK run 为 null）
     boolean fallbackAuthorized,   // 本次调用是否经授权回退平台（HLD §12.3 审计）
-    UUID contextSnapshotId         // PRD §4.12 task creation snapshot, nullable for independent runs
+    UUID contextSnapshotId,        // PRD §4.12 task creation snapshot, nullable for independent runs
+    String creditsCentsPolicyVersion // priced platform run conversion snapshot; null for flat/BYOK
 ) {
     public AiRun(
             UUID id, String organizationId, String accountId, String capability, String provider, String model,
@@ -59,7 +60,7 @@ public record AiRun(
         this(id, organizationId, accountId, capability, provider, model, runType, inputTokens, outputTokens,
                 imagesGenerated, videoSeconds, budgetCents, actualCents, status, failureReason, startedAt,
                 completedAt, priceTableVersion, operationId, refundOperationId, createdAt, updatedAt,
-                platformModelVersion, fallbackAuthorized, null);
+                platformModelVersion, fallbackAuthorized, null, null);
     }
     /** 创建新 Run。 */
     public static AiRun forCreate(
@@ -96,7 +97,7 @@ public record AiRun(
     ) {
         return forCreate(organizationId, accountId, capability, provider, model, runType,
                 budgetCents, operationId, priceTableVersion, platformModelVersion,
-                fallbackAuthorized, null);
+                fallbackAuthorized, null, null);
     }
 
     /** 创建带任务创作上下文快照的 Run。 */
@@ -113,6 +114,26 @@ public record AiRun(
         Integer platformModelVersion,
         boolean fallbackAuthorized,
         UUID contextSnapshotId
+    ) {
+        return forCreate(organizationId, accountId, capability, provider, model, runType,
+                budgetCents, operationId, priceTableVersion, platformModelVersion,
+                fallbackAuthorized, contextSnapshotId, null);
+    }
+
+    public static AiRun forCreate(
+        String organizationId,
+        String accountId,
+        String capability,
+        String provider,
+        String model,
+        String runType,
+        int budgetCents,
+        UUID operationId,
+        String priceTableVersion,
+        Integer platformModelVersion,
+        boolean fallbackAuthorized,
+        UUID contextSnapshotId,
+        String creditsCentsPolicyVersion
     ) {
         return new AiRun(
             null,  // id 由数据库生成
@@ -139,7 +160,8 @@ public record AiRun(
             null,  // updatedAt 由数据库默认
                 platformModelVersion,
                 fallbackAuthorized,
-                contextSnapshotId
+                contextSnapshotId,
+                creditsCentsPolicyVersion
         );
     }
 
