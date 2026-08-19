@@ -4,6 +4,7 @@ import io.r2dbc.spi.Readable;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
@@ -267,6 +268,33 @@ public class MediaReferenceRepository {
                            AND updated_at < now() - (:pendingGraceMillis * interval '1 millisecond')))
                 """.formatted(SELECT_COLS))
                 .bind("pendingGraceMillis", Math.max(pendingGrace.toMillis(), 1L))
+                .map(MediaReferenceRepository::map).all();
+    }
+
+    /**
+     * 门店媒体批量换 URL 的四重过滤查询（#42 D5）：单条 SQL {@code id = ANY(:ids)} +
+     * purpose ∧ organization_id ∧ domain_type='store' ∧ domain_id=storeId ∧ active ∧ 未过期，
+     * 仅返回通过过滤的子集（不逐项 findById）。过滤失败的 id 直接缺席，调用方据此实现子集语义。
+     */
+    public Flux<MediaReference> findActiveStoreMedia(
+            Collection<UUID> ids, String purpose, String organizationId, String storeId) {
+        if (ids.isEmpty()) {
+            return Flux.empty();
+        }
+        return db.sql("""
+                SELECT %s FROM media_reference
+                WHERE id = ANY(CAST(:ids AS uuid[]))
+                  AND purpose = :purpose
+                  AND organization_id = :organizationId
+                  AND domain_type = 'store'
+                  AND domain_id = :storeId
+                  AND status = 'active'
+                  AND (expires_at IS NULL OR expires_at > now())
+                """.formatted(SELECT_COLS))
+                .bind("ids", ids.stream().map(UUID::toString).toArray(String[]::new))
+                .bind("purpose", purpose)
+                .bind("organizationId", organizationId)
+                .bind("storeId", storeId)
                 .map(MediaReferenceRepository::map).all();
     }
 

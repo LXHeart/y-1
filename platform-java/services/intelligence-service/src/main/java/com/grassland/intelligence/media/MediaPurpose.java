@@ -15,6 +15,8 @@ import java.util.Locale;
  *   <li>{@link #AVATAR} — 推荐官头像（任务书 #29+#30 D6）；账号级资产，仅图片 MIME。</li>
  *   <li>{@link #BRAND_LOGO} — 组织品牌 Logo（#32 D5）；org 级资产，仅图片 MIME，票据只能由 identity 服务断言代开。</li>
  *   <li>{@link #SPEECH_AUDIO} — 语音识别输入；仅受控音频 MIME 与文件签名。</li>
+ *   <li>{@link #STORE_MEDIA} — 门店媒体库（#42 D1）：门头/环境/菜单图与宣传视频；org+门店级资产，
+ *       图片/视频双白名单分型大小帽，票据只能由 identity 服务断言代开（domain_type='store'，domain_id=storeId）。</li>
  * </ul>
  */
 public enum MediaPurpose {
@@ -26,7 +28,8 @@ public enum MediaPurpose {
     CONTENT_ASSET("content_asset"),
     AVATAR("avatar"),
     BRAND_LOGO("brand_logo"),
-    SPEECH_AUDIO("speech_audio");
+    SPEECH_AUDIO("speech_audio"),
+    STORE_MEDIA("store_media");
 
     private final String db;
 

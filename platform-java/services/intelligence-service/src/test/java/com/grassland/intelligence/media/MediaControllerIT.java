@@ -1049,6 +1049,17 @@ class MediaControllerIT {
                 .exchange().expectStatus().isBadRequest();
     }
 
+    /** #42 D2：store_media 进客户端自助开票黑名单，浏览器直连 /upload-tickets 申领被拒（只能经 identity 门店端点拿票）。 */
+    @Test
+    void storeMediaPurposeBlockedFromClientSelfServiceTickets() {
+        String org = UUID.randomUUID().toString();
+        client().post().uri("/api/media/upload-tickets")
+                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+                .bodyValue(Map.of("contentType", "image/png", "purpose", "store_media",
+                        "sizeBytes", PNG.length, "domainType", "store", "domainId", UUID.randomUUID().toString()))
+                .exchange().expectStatus().isBadRequest();
+    }
+
     /** #32 D7：brand-logo-url 仅放行本 org 的 active、未过期、白名单 MIME 品牌 Logo；他 org/不存在/边缘态统一 404。 */
     @Test
     @SuppressWarnings("unchecked")

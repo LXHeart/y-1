@@ -11,6 +11,8 @@ import com.grassland.storage.UploadTicket;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -85,6 +87,14 @@ public class MediaController {
     private static final Set<String> SPEECH_AUDIO_MIME_TYPES = Set.of(
             "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg");
     private static final long SPEECH_AUDIO_MAX_BYTES = 25L * 1024 * 1024;
+    /** 门店媒体库（#42 D1/D7）：org+门店级资产，图片/视频双白名单分型大小帽，票据只能由 identity 服务断言代开。 */
+    private static final String STORE_MEDIA_PURPOSE = MediaPurpose.STORE_MEDIA.db();
+    private static final String STORE_MEDIA_DOMAIN_TYPE = "store";
+    private static final Set<String> STORE_MEDIA_IMAGE_MIME_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
+    private static final long STORE_MEDIA_IMAGE_MAX_BYTES = 10L * 1024 * 1024;
+    private static final Set<String> STORE_MEDIA_VIDEO_MIME_TYPES = Set.of("video/mp4", "video/quicktime", "video/webm");
+    private static final long STORE_MEDIA_VIDEO_MAX_BYTES = 20L * 1024 * 1024;
+    private static final int STORE_MEDIA_MAX_DOWNLOAD_IDS = 50;
     private static final long MIN_ASSET_TTL_SECONDS = 60;
     private static final long MAX_ASSET_TTL_SECONDS = 30L * 24 * 60 * 60;
     private static final long MIN_KYB_LEASE_SECONDS = 60;
@@ -153,6 +163,15 @@ public class MediaController {
             @RequestBody CreateBrandLogoUploadTicketRequest body, ServerWebExchange exchange) {
         return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
                 .flatMap(caller -> createBrandLogoPending(caller, body))
+                .map(MediaController::success);
+    }
+
+    /** identity 校验门店 MANAGER 权限后代开门店媒体上传票据（#42 D2）；组织上下文只取服务断言，storeId 落 domain 锚。 */
+    @PostMapping("/store-media-upload-tickets")
+    public Mono<Map<String, Object>> createStoreMediaUploadTicket(
+            @RequestBody CreateStoreMediaUploadTicketRequest body, ServerWebExchange exchange) {
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
+                .flatMap(caller -> createStoreMediaPending(caller, body))
                 .map(MediaController::success);
     }
 
@@ -338,6 +357,20 @@ public class MediaController {
                 .map(MediaController::success);
     }
 
+    /**
+     * 门店媒体批量换 URL（#42 D5）：仅 identity 服务断言可调。四重过滤（purpose=store_media ∧
+     * organization_id=断言 org ∧ domain_type='store' ∧ domain_id=storeId ∧ active ∧ 未过期），
+     * 过滤失败的项直接不出现在响应里（子集语义，不逐项报错）；URL TTL/disposition 复用
+     * {@link #downloadTtl}/{@link #downloadDisposition}（图片内联、视频 attachment）。
+     */
+    @PostMapping("/store-media-download-urls")
+    public Mono<Map<String, Object>> storeMediaDownloadUrls(
+            @RequestBody StoreMediaDownloadUrlsRequest body, ServerWebExchange exchange) {
+        return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
+                .flatMap(caller -> resolveStoreMediaDownloads(caller, body))
+                .map(MediaController::success);
+    }
+
     private Mono<UploadTicketResponse> createPending(
             String ownerAccountId, String organizationId, UploadSpec spec) {
         UUID id = UUID.randomUUID();
@@ -399,6 +432,54 @@ public class MediaController {
                 contentType, MediaPurpose.BRAND_LOGO, BRAND_LOGO_PURPOSE,
                 organizationId, body.sizeBytes(), null);
         return createPending(ownerAccountId, organizationId, spec);
+    }
+
+    /** 门店媒体票据（#42 D2/D7）：照品牌 Logo 代开结构，图片/视频双白名单与分型大小帽在开票时就拒，不落 pending。 */
+    private Mono<UploadTicketResponse> createStoreMediaPending(
+            IntelligenceCallerResolver.Caller caller, CreateStoreMediaUploadTicketRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("门店媒体上传请求不能为空");
+        }
+        String organizationId = required(caller.organizationId(), 200, "服务断言 organizationId");
+        String ownerAccountId = required(body.ownerAccountId(), 200, "ownerAccountId");
+        String storeId = requireUuid(body.storeId(), "storeId");
+        String contentType = normalizeMime(body.contentType());
+        long maxBytes;
+        if (STORE_MEDIA_IMAGE_MIME_TYPES.contains(contentType)) {
+            maxBytes = STORE_MEDIA_IMAGE_MAX_BYTES;
+        } else if (STORE_MEDIA_VIDEO_MIME_TYPES.contains(contentType)) {
+            maxBytes = STORE_MEDIA_VIDEO_MAX_BYTES;
+        } else {
+            throw new IllegalArgumentException("门店媒体仅支持 JPEG、PNG、WebP 图片或 MP4、MOV、WebM 视频");
+        }
+        if (body.sizeBytes() == null || body.sizeBytes() < 1 || body.sizeBytes() > maxBytes) {
+            throw new IllegalArgumentException("sizeBytes 必须在 1 到 " + maxBytes + " 之间");
+        }
+        // domain_type='store' + domain_id=storeId + organization_id=断言 org，是批量换 URL 四重过滤的锚。
+        UploadSpec spec = new UploadSpec(
+                contentType, MediaPurpose.STORE_MEDIA, STORE_MEDIA_DOMAIN_TYPE,
+                storeId, body.sizeBytes(), null);
+        return createPending(ownerAccountId, organizationId, spec);
+    }
+
+    /** 门店媒体批量换 URL（#42 D5）：请求校验后单条 SQL 四重过滤，逐项 presign，子集语义。 */
+    private Mono<StoreMediaDownloadUrlsResponse> resolveStoreMediaDownloads(
+            IntelligenceCallerResolver.Caller caller, StoreMediaDownloadUrlsRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("门店媒体下载请求不能为空");
+        }
+        String organizationId = required(caller.organizationId(), 200, "服务断言 organizationId");
+        String storeId = requireUuid(body.storeId(), "storeId");
+        List<UUID> mediaIds = parseStoreMediaIds(body.mediaIds());
+        Instant now = Instant.now();
+        return mediaRefs.findActiveStoreMedia(mediaIds, STORE_MEDIA_PURPOSE, organizationId, storeId)
+                .map(ref -> new StoreMediaDownloadItem(
+                        ref.id(), ref.mimeType(), ref.sizeBytes(),
+                        storage.presignDownload(
+                                ref.objectKey(), downloadTtl(ref, now), downloadDisposition(ref)),
+                        ref.expiresAt()))
+                .collectList()
+                .map(StoreMediaDownloadUrlsResponse::new);
     }
 
     private Mono<MediaReference> confirmOwned(MediaReference ref) {
@@ -664,10 +745,11 @@ public class MediaController {
         }
         String contentType = normalizeMime(body.contentType());
         MediaPurpose purpose = MediaPurpose.fromRequest(body.purpose());
-        // BRAND_LOGO（#32 D5）与 KYB 同列黑名单：只能由 identity 服务断言代开，客户端直连一律 400。
+        // BRAND_LOGO（#32 D5）、STORE_MEDIA（#42 D2）与 KYB 同列黑名单：只能由 identity 服务断言代开，客户端直连一律 400。
         if (purpose == null || purpose == MediaPurpose.ARTICLE_GENERATED
                 || purpose == MediaPurpose.MERCHANT_KYB
-                || purpose == MediaPurpose.BRAND_LOGO) {
+                || purpose == MediaPurpose.BRAND_LOGO
+                || purpose == MediaPurpose.STORE_MEDIA) {
             throw new IllegalArgumentException("媒体用途无效");
         }
         if (purpose == MediaPurpose.AVATAR) {
@@ -730,6 +812,38 @@ public class MediaController {
             throw new IllegalArgumentException(field + " 不能为空");
         }
         return value;
+    }
+
+    /** 必填 UUID 字段：缺失/非 UUID 格式一律 400（storeId 等外部引用句柄）。返回规范化小写形式。 */
+    private static String requireUuid(String raw, String field) {
+        String value = required(raw, 64, field);
+        try {
+            return UUID.fromString(value).toString();
+        } catch (IllegalArgumentException ignored) {
+            throw new IllegalArgumentException(field + " 必须是 UUID 格式");
+        }
+    }
+
+    /** 批量换 URL 的 mediaIds：非空、逐项 UUID、去重后 ≤50，任一非法 400。 */
+    private static List<UUID> parseStoreMediaIds(List<String> mediaIds) {
+        if (mediaIds == null || mediaIds.isEmpty()) {
+            throw new IllegalArgumentException("mediaIds 不能为空");
+        }
+        LinkedHashSet<UUID> unique = new LinkedHashSet<>();
+        for (String raw : mediaIds) {
+            if (raw == null || raw.isBlank()) {
+                throw new IllegalArgumentException("mediaIds 含非法项");
+            }
+            try {
+                unique.add(UUID.fromString(raw.trim()));
+            } catch (IllegalArgumentException ignored) {
+                throw new IllegalArgumentException("mediaIds 含非法 UUID");
+            }
+        }
+        if (unique.size() > STORE_MEDIA_MAX_DOWNLOAD_IDS) {
+            throw new IllegalArgumentException("mediaIds 去重后一次最多 " + STORE_MEDIA_MAX_DOWNLOAD_IDS + " 个");
+        }
+        return List.copyOf(unique);
     }
 
     private static UUID parseId(String value) {
@@ -816,6 +930,13 @@ public class MediaController {
     public record CreateBrandLogoUploadTicketRequest(
             String ownerAccountId, String contentType, Long sizeBytes) {}
 
+    /** 门店媒体代开票据请求（#42 Stage 1）；Jackson 3 可选数值字段必须包装类型。 */
+    public record CreateStoreMediaUploadTicketRequest(
+            String ownerAccountId, String storeId, String contentType, Long sizeBytes) {}
+
+    /** 门店媒体批量换 URL 请求（#42 Stage 1）：storeId UUID、mediaIds 非空去重后 ≤50。 */
+    public record StoreMediaDownloadUrlsRequest(String storeId, List<String> mediaIds) {}
+
     public record KybRetentionRequest(String referenceId) {}
 
     public record UpsertKybRetentionRequest(
@@ -854,6 +975,13 @@ public class MediaController {
 
     /** 服务间断点（Slice 11 Stage 1）附件下载 URL 响应。{@code expiresAt} 为媒体资产 TTL，非 URL 过期时间。 */
     public record MediaServiceDownloadResponse(URI downloadUrl, Instant expiresAt) {}
+
+    /** 门店媒体批量换 URL 单项响应（#42 D5）。{@code expiresAt} 为媒体资产 TTL，非 URL 过期时间（同 {@link MediaServiceDownloadResponse} 口径）。 */
+    public record StoreMediaDownloadItem(
+            UUID id, String mimeType, long sizeBytes, URI downloadUrl, Instant expiresAt) {}
+
+    /** 门店媒体批量换 URL 响应（#42 D5）：仅含通过四重过滤的子集。 */
+    public record StoreMediaDownloadUrlsResponse(List<StoreMediaDownloadItem> items) {}
 
     private record UploadSpec(
             String contentType, MediaPurpose purpose, String domainType,
