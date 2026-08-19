@@ -24,6 +24,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$ENV_FILE" ]]; then
+  [[ ! -L "$ENV_FILE" ]] || { echo "production env file must not be a symbolic link" >&2; exit 1; }
+  env_mode="$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)"
+  if [[ -n "$env_mode" ]] && (( 8#$env_mode & 077 )); then
+    echo "production env file must not be group/world accessible (mode $env_mode)" >&2
+    exit 1
+  fi
   load_dotenv "$ENV_FILE" || exit 1
 fi
 

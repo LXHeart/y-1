@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -15,6 +15,9 @@ const CANARY_EVIDENCE_VALIDATOR = resolve(REPOSITORY_ROOT, 'scripts/validate-pro
 const FAILURE_EVIDENCE_VALIDATOR = resolve(REPOSITORY_ROOT, 'scripts/validate-production-failure-evidence.sh')
 const OBSERVABILITY_EVIDENCE_VALIDATOR = resolve(REPOSITORY_ROOT, 'scripts/validate-observability-evidence.sh')
 const ROTATION_EVIDENCE_VALIDATOR = resolve(REPOSITORY_ROOT, 'scripts/validate-identity-key-rotation-evidence.sh')
+const CREDENTIAL_EVIDENCE_VALIDATOR = resolve(REPOSITORY_ROOT, 'scripts/validate-credential-rotation-evidence.sh')
+const CREDENTIAL_EVIDENCE_CREATOR = resolve(REPOSITORY_ROOT, 'scripts/create-credential-rotation-evidence.sh')
+const SECRET_MATERIALIZER = resolve(REPOSITORY_ROOT, 'scripts/materialize-production-secrets.sh')
 const VIDEO_DRILL_INPUTS_SCRIPT = resolve(REPOSITORY_ROOT, 'scripts/validate-video-production-drill-inputs.sh')
 const FINANCE_POLICY_SCRIPT = resolve(REPOSITORY_ROOT, 'scripts/validate-finance-credits-cents-policy.sh')
 const COMPOSE_VALIDATOR = resolve(REPOSITORY_ROOT, 'scripts/validate-production-compose.sh')
@@ -72,7 +75,7 @@ function productionComposeEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
   const temporalKey = join(root, 'temporal-client.key')
   writeFileSync(truststore, 'test-truststore')
   writeFileSync(temporalCert, 'test-certificate')
-  writeFileSync(temporalKey, 'test-private-key')
+  writeFileSync(temporalKey, 'test-private-key', { mode: 0o600 })
   return {
     ...process.env,
     MINIO_ROOT_USER: 'test-minio-root',
@@ -115,6 +118,49 @@ function productionComposeEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
     PRODUCTION_SERVICE_MEMORY_RESERVATION: '256M',
     ...overrides,
   }
+}
+
+function productionSecretEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const root = temporaryDirectory()
+  const alertWebhook = join(root, 'alertmanager-webhook-url')
+  const grafanaPassword = join(root, 'grafana-admin-password')
+  writeFileSync(alertWebhook, 'https://alerts.example.test/receiver', { mode: 0o600 })
+  writeFileSync(grafanaPassword, 'test-grafana-admin-password', { mode: 0o600 })
+  const env = productionComposeEnvironment({
+    SESSION_SECRET: 'test-session-secret-at-least-32-characters',
+    IDENTITY_ACCESS_TOKEN_KID: 'access-token-test-v1',
+    IDENTITY_ACCESS_TOKEN_SECRET: 'test-access-token-secret-at-least-32-characters',
+    EDGE_ACCESS_TOKEN_KID: 'access-token-test-v1',
+    EDGE_ACCESS_TOKEN_SECRET: 'test-access-token-secret-at-least-32-characters',
+    CRYPTO_KEK_BASE64: Buffer.alloc(32, 7).toString('base64'),
+    MINIO_ROOT_PASSWORD: 'test-minio-root-password-at-least-32-characters',
+    MINIO_SECRET_KEY: 'test-minio-runtime-secret-at-least-32-characters',
+    PUBLIC_FORWARDED_PROTO: 'https',
+    SESSION_COOKIE_SECURE: 'always',
+    IDENTITY_ASSERTION_REPLAY_ENABLED: 'true',
+    IDENTITY_ASSERTION_REPLAY_STORAGE: 'redis',
+    CONFIRMATION_WINDOW_SECONDS: '259200',
+    KAFKA_SECURITY_PROTOCOL: 'SASL_SSL',
+    KAFKA_SASL_MECHANISM: 'SCRAM-SHA-512',
+    TEMPORAL_ENABLE_HTTPS: 'true',
+    FRONTEND_ORIGIN: 'https://app.example.test',
+    PUBLIC_BACKEND_ORIGIN: 'https://api.example.test',
+    CORS_ORIGIN: 'https://app.example.test',
+    ALERTMANAGER_WEBHOOK_URL_FILE: alertWebhook,
+    GRAFANA_ADMIN_PASSWORD_FILE: grafanaPassword,
+  })
+  const contract = readFileSync(resolve(REPOSITORY_ROOT, 'deploy/security/production-secret-contract.csv'), 'utf8')
+  for (const line of contract.split('\n').slice(1).filter(Boolean)) {
+    const [name, minimumLength] = line.split(',')
+    if (env[name] == null) env[name] = `contract-${name.toLowerCase()}-${'x'.repeat(Number(minimumLength))}`
+  }
+  const pairs = readFileSync(resolve(REPOSITORY_ROOT, 'deploy/security/identity-assertion-key-pairs.csv'), 'utf8')
+  for (const line of pairs.split('\n').slice(1).filter(Boolean)) {
+    const [pair, , , , defaultKid] = line.split(',')
+    env[`IDENTITY_ASSERTION_KEY_${pair}_KID`] = defaultKid
+    env[`IDENTITY_ASSERTION_KEY_${pair}`] = 'test-assertion-secret-at-least-32-characters'
+  }
+  return { ...env, ...overrides }
 }
 
 afterEach(() => {
@@ -962,6 +1008,104 @@ process.stdout.write(String(status))
     const release = readFileSync(RELEASE_SCRIPT, 'utf8')
     expect(release).toContain('key-rotation-promote --release-id ID')
     expect(release).toContain('validate-identity-key-rotation-evidence.sh')
+  })
+
+  it('promotes historical credentials only after rollout, rollback, revocation, rejection, and audit evidence', () => {
+    const root = temporaryDirectory()
+    const evidence = join(root, 'credential-rotation.txt')
+    const base = new Date(Date.now() - 120_000)
+    const stamp = (offset: number) => new Date(base.getTime() + offset * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    writeFileSync(evidence, [
+      '# Grassland credential rotation evidence v1',
+      'evidence_id=credential-qwen-01', 'release_id=2026-08-19.1', 'target=qwen-api-key',
+      'secret_backend=sops', 'old_credential_id=qwen-key-v1', 'new_credential_id=qwen-key-v2',
+      'affected_services=intelligence-service', 'rollout_mode=blue-green', 'revocation_method=provider-revoked',
+      'approval_reference=SEC-2026-0819', 'audit_reference=AUDIT-2026-0819',
+      `rotation_started_at=${stamp(0)}`, `new_materialized_at=${stamp(5)}`,
+      `rollout_completed_at=${stamp(10)}`, `rollback_started_at=${stamp(15)}`,
+      `rollback_completed_at=${stamp(20)}`, `old_revoked_at=${stamp(25)}`,
+      `verification_completed_at=${stamp(30)}`, 'materialization_status=passed',
+      'rollout_status=passed', 'readiness_status=passed', 'smoke_status=passed',
+      'rollback_status=passed', 'old_credential_rejection_status=passed', 'audit_status=passed',
+      'old_credential_revoked=true', 'secrets_recorded=false', 'result=passed', '',
+    ].join('\n'))
+    const args = ['--evidence', evidence, '--release-id', '2026-08-19.1']
+    expect(execFileSync(CREDENTIAL_EVIDENCE_VALIDATOR, args, { encoding: 'utf8' }))
+      .toContain('valid for promotion')
+
+    writeFileSync(evidence, readFileSync(evidence, 'utf8')
+      .replace('old_credential_rejection_status=passed', 'old_credential_rejection_status=missing'))
+    expect(spawnSync(CREDENTIAL_EVIDENCE_VALIDATOR, args, { encoding: 'utf8' }).status).toBe(1)
+    writeFileSync(evidence, readFileSync(evidence, 'utf8')
+      .replace('old_credential_rejection_status=missing', 'old_credential_rejection_status=passed')
+      .replace('old_credential_id=qwen-key-v1', `old_credential_id=${'a'.repeat(64)}`))
+    expect(spawnSync(CREDENTIAL_EVIDENCE_VALIDATOR, args, { encoding: 'utf8' }).status).toBe(1)
+
+    const release = readFileSync(RELEASE_SCRIPT, 'utf8')
+    expect(release).toContain('credential-rotation-promote --release-id ID')
+    expect(release).toContain('validate-credential-rotation-evidence.sh')
+  })
+
+  it('creates a private fail-closed credential evidence worksheet without accepting key material as an ID', () => {
+    const root = temporaryDirectory()
+    const evidence = join(root, 'credential-worksheet.txt')
+    const common = [
+      '--output', evidence, '--release-id', '2026-08-19.1', '--target', 'qwen-api-key',
+      '--backend', 'sops', '--old-credential-id', 'qwen-v1', '--new-credential-id', 'qwen-v2',
+      '--services', 'intelligence-service', '--rollout-mode', 'blue-green',
+      '--revocation-method', 'provider-revoked', '--approval-reference', 'SEC-2026-0819',
+    ]
+    expect(execFileSync(CREDENTIAL_EVIDENCE_CREATOR, common, { encoding: 'utf8' }))
+      .toContain('worksheet created')
+    expect(statSync(evidence).mode & 0o777).toBe(0o600)
+    expect(readFileSync(evidence, 'utf8')).toContain('old_credential_rejection_status=pending')
+
+    const rejectedArgs = [...common]
+    rejectedArgs[1] = join(root, 'rejected.txt')
+    rejectedArgs[9] = 'a'.repeat(64)
+    const rejected = spawnSync(CREDENTIAL_EVIDENCE_CREATOR, rejectedArgs, { encoding: 'utf8' })
+    expect(rejected.status).toBe(1)
+  })
+
+  it('materializes SOPS dotenv atomically only after the production contract passes', () => {
+    const root = temporaryDirectory()
+    const secretDirectory = join(root, 'secrets')
+    mkdirSync(secretDirectory, { mode: 0o700 })
+    const encrypted = join(root, 'production.env.enc')
+    const fakeSops = join(root, 'sops')
+    const output = join(secretDirectory, 'production.env')
+    writeFileSync(encrypted, 'encrypted fixture')
+    writeFileSync(fakeSops, '#!/usr/bin/env bash\nprintf "MATERIALIZED_FROM_SOPS=true\\n"\n', { mode: 0o700 })
+    const args = ['--input', encrypted, '--output', output]
+    const env = productionSecretEnvironment({ SOPS_BIN: fakeSops })
+
+    expect(execFileSync(SECRET_MATERIALIZER, args, { env, encoding: 'utf8' }))
+      .toContain('dry-run left')
+    expect(() => statSync(output)).toThrow()
+    expect(execFileSync(SECRET_MATERIALIZER, [...args, '--execute'], { env, encoding: 'utf8' }))
+      .toContain('atomically materialized')
+    expect(statSync(output).mode & 0o777).toBe(0o600)
+    expect(readFileSync(output, 'utf8')).toBe('MATERIALIZED_FROM_SOPS=true\n')
+
+    const sameFile = spawnSync(SECRET_MATERIALIZER, [
+      '--input', output, '--output', output, '--execute', '--replace',
+    ], { env, encoding: 'utf8' })
+    expect(sameFile.status).toBe(1)
+    expect(sameFile.stderr).toContain('must differ')
+
+    writeFileSync(fakeSops, '#!/usr/bin/env bash\nexit 7\n', { mode: 0o700 })
+    const failed = spawnSync(SECRET_MATERIALIZER, [...args, '--execute', '--replace'], { env, encoding: 'utf8' })
+    expect(failed.status).toBe(1)
+    expect(readFileSync(output, 'utf8')).toBe('MATERIALIZED_FROM_SOPS=true\n')
+  })
+
+  it('rejects production env files exposed to group or other users', () => {
+    const envFile = join(temporaryDirectory(), 'production.env')
+    writeFileSync(envFile, 'SESSION_SECRET=not-printed\n', { mode: 0o644 })
+    const result = spawnSync(SECRET_VALIDATOR, ['--env-file', envFile], { encoding: 'utf8' })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('must not be group/world accessible')
+    expect(result.stderr).not.toContain('not-printed')
   })
 
   it('fails closed when real provider, archive, public, or Finance policy inputs are absent', () => {

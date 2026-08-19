@@ -28,6 +28,8 @@ OBSERVABILITY_EVIDENCE=""
 OBSERVABILITY_MAX_AGE_SECONDS="86400"
 ROTATION_EVIDENCE=""
 ROTATION_MAX_AGE_SECONDS="604800"
+CREDENTIAL_EVIDENCE=""
+CREDENTIAL_MAX_AGE_SECONDS="604800"
 COMMAND=""
 
 SERVICES=(frontend database-bootstrap edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)
@@ -50,6 +52,8 @@ Usage:
     --observability-evidence PATH [--observability-max-age-seconds N]
   scripts/production-release.sh [--env-file PATH] key-rotation-promote --release-id ID \
     --rotation-evidence PATH [--rotation-max-age-seconds N]
+  scripts/production-release.sh [--env-file PATH] credential-rotation-promote --release-id ID \
+    --credential-evidence PATH [--credential-max-age-seconds N]
   scripts/production-release.sh [--env-file PATH] rollback --release-id ID [--execute]
   scripts/production-release.sh [--env-file PATH] status
 
@@ -201,6 +205,13 @@ validate_rotation_evidence() {
   "$ROOT_DIR/scripts/validate-identity-key-rotation-evidence.sh" \
     --evidence "$ROTATION_EVIDENCE" --release-id "$RELEASE_ID" \
     --max-age-seconds "$ROTATION_MAX_AGE_SECONDS"
+}
+
+validate_credential_rotation_evidence() {
+  [[ -n "$CREDENTIAL_EVIDENCE" ]] || die "--credential-evidence is required for credential-rotation-promote"
+  "$ROOT_DIR/scripts/validate-credential-rotation-evidence.sh" \
+    --evidence "$CREDENTIAL_EVIDENCE" --release-id "$RELEASE_ID" \
+    --max-age-seconds "$CREDENTIAL_MAX_AGE_SECONDS"
 }
 
 capture_images() {
@@ -430,6 +441,15 @@ key_rotation_promote() {
   log "release $RELEASE_ID key rotation evidence accepted; rotation gate passed"
 }
 
+credential_rotation_promote() {
+  load_env
+  [[ -n "$RELEASE_ID" ]] || die "--release-id is required"
+  validate_gates
+  validate_secrets
+  validate_credential_rotation_evidence
+  log "release $RELEASE_ID credential rotation evidence accepted; revocation gate passed"
+}
+
 status() {
   if [[ ! -d "$STATE_ROOT" ]]; then log "no release state found"; return 0; fi
   find "$STATE_ROOT" -mindepth 2 -maxdepth 2 -name release.env -print | sort | while read -r file; do
@@ -461,9 +481,11 @@ while [[ $# -gt 0 ]]; do
     --observability-max-age-seconds) OBSERVABILITY_MAX_AGE_SECONDS="${2:?missing observability evidence age}"; shift 2 ;;
     --rotation-evidence) ROTATION_EVIDENCE="${2:?missing rotation evidence}"; shift 2 ;;
     --rotation-max-age-seconds) ROTATION_MAX_AGE_SECONDS="${2:?missing rotation evidence age}"; shift 2 ;;
+    --credential-evidence) CREDENTIAL_EVIDENCE="${2:?missing credential rotation evidence}"; shift 2 ;;
+    --credential-max-age-seconds) CREDENTIAL_MAX_AGE_SECONDS="${2:?missing credential rotation evidence age}"; shift 2 ;;
     --execute) EXECUTE=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    preflight|plan|deploy|promote|canary-promote|failure-promote|observability-promote|key-rotation-promote|rollback|status) COMMAND="$1"; shift ;;
+    preflight|plan|deploy|promote|canary-promote|failure-promote|observability-promote|key-rotation-promote|credential-rotation-promote|rollback|status) COMMAND="$1"; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -476,6 +498,7 @@ case "${COMMAND:-}" in
   failure-promote) failure_promote ;;
   observability-promote) observability_promote ;;
   key-rotation-promote) key_rotation_promote ;;
+  credential-rotation-promote) credential_rotation_promote ;;
   rollback) rollback ;;
   status) status ;;
   *) usage >&2; exit 2 ;;
