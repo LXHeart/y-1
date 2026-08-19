@@ -1,5 +1,7 @@
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.testing.Test
+import org.gradle.testing.jacoco.plugins.JacocoPluginExtension
+import org.gradle.testing.jacoco.tasks.JacocoReport
 
 plugins {
     base
@@ -43,5 +45,21 @@ allprojects {
             "--enable-native-access=ALL-UNNAMED",
             "--sun-misc-unsafe-memory-access=allow",
         )
+    }
+
+    // Java 覆盖率度量（2026-08-20）：先度量后设门——统一 XML+HTML 报告，test 完成即生成；
+    // 阈值门禁待基线数字稳定后另批引入。0.8.15 支持 Java 25 class 文件。
+    apply(plugin = "jacoco")
+    configure<JacocoPluginExtension> {
+        toolVersion = "0.8.15"
+    }
+    tasks.withType<JacocoReport>().configureEach {
+        reports {
+            xml.required.set(true)
+            html.required.set(true)
+        }
+    }
+    tasks.matching { it.name == "test" }.configureEach {
+        finalizedBy(tasks.matching { it.name == "jacocoTestReport" })
     }
 }
