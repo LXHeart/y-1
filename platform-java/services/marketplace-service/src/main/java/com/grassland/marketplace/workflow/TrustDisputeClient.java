@@ -1,5 +1,7 @@
 package com.grassland.marketplace.workflow;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
@@ -36,7 +38,7 @@ public class TrustDisputeClient {
         this.issuer = issuer;
         this.objectMapper = objectMapper;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(TrustDisputeClient.class, baseUrl);
     }
 
     public Mono<Boolean> hasOpenDispute(String orgId, String engagementRef) {

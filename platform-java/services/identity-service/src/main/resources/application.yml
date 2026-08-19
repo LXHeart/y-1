@@ -161,6 +161,9 @@ identity:
     max-backoff: ${IDENTITY_EXTERNAL_DELIVERY_MAX_BACKOFF:1m}
     send-timeout: ${IDENTITY_EXTERNAL_DELIVERY_SEND_TIMEOUT:15s}
     challenge-secret: ${IDENTITY_SMS_CHALLENGE_SECRET:}
+    # Provider endpoint is operator-controlled, HTTPS by default, and may be restricted to exact hosts.
+    allow-insecure-http: ${IDENTITY_EXTERNAL_DELIVERY_ALLOW_INSECURE_HTTP:false}
+    allowed-hosts: ${IDENTITY_EXTERNAL_DELIVERY_ALLOWED_HOSTS:}
     push:
       endpoint: ${PUSH_GATEWAY_ENDPOINT:}
       token: ${PUSH_GATEWAY_TOKEN:}

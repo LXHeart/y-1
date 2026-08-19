@@ -1,5 +1,7 @@
 package com.grassland.marketplace.workflow;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import com.grassland.marketplace.workflow.saga.ReserveResult;
 import java.util.Objects;
@@ -46,7 +48,7 @@ public class FinanceEscrowClient {
                                @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(FinanceEscrowClient.class, baseUrl);
     }
 
     /**

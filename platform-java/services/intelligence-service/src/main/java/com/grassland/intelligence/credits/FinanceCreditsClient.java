@@ -3,18 +3,16 @@ package com.grassland.intelligence.credits;
 import com.grassland.intelligence.ai.run.CreditCompensationRepository;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.security.IntelligenceServiceAssertionIssuer;
-import io.netty.channel.ChannelOption;
+import com.grassland.http.ManagedWebClientFactory;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * 经 finance-service 扣费（GL-P3-AI-001 下属切片，Java 原生积分的默认实现）。
@@ -53,18 +51,19 @@ public class FinanceCreditsClient implements CreditsClient {
                                 MarketplaceAiEntitlementClient entitlements,
                                 IntelligenceServiceAssertionIssuer assertionIssuer,
                                 CreditCompensationRepository compensationRepository) {
-        HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.max(1, connectTimeoutMs))
-                .responseTimeout(Duration.ofMillis(Math.max(1, responseTimeoutMs)));
-        this.webClient = WebClient.builder().baseUrl(baseUrl)
-                .clientConnector(new ReactorClientHttpConnector(httpClient)).build();
+        Duration connectTimeout = Duration.ofMillis(Math.max(1, connectTimeoutMs));
+        Duration requestTimeout = Duration.ofMillis(Math.max(1, responseTimeoutMs));
+        this.webClient = ManagedWebClientFactory.builder(
+                        FinanceCreditsClient.class, connectTimeout, requestTimeout, 2 * 1024 * 1024)
+                .baseUrl(baseUrl)
+                .build();
         this.consumePath = consumePath;
         this.refundPath = refundPath;
         this.compensationPath = compensationPath;
         this.entitlements = entitlements;
         this.assertionIssuer = assertionIssuer;
         this.compensationRepository = compensationRepository;
-        this.responseTimeout = Duration.ofMillis(Math.max(1, responseTimeoutMs));
+        this.responseTimeout = requestTimeout;
     }
 
     FinanceCreditsClient(

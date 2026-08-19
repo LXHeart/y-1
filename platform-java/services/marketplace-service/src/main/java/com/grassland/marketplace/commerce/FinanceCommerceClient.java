@@ -1,5 +1,7 @@
 package com.grassland.marketplace.commerce;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -21,7 +23,7 @@ public class FinanceCommerceClient {
             ServiceAssertionIssuer issuer,
             @Value("${finance.service.base-url:http://finance-service:8084}") String baseUrl,
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
-        this.client = WebClient.builder().baseUrl(baseUrl).build();
+        this.client = ManagedWebClientFactory.create(FinanceCommerceClient.class, baseUrl);
         this.issuer = issuer;
         this.headerName = headerName;
     }

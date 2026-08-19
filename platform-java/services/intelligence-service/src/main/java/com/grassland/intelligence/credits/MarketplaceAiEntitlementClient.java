@@ -2,15 +2,13 @@ package com.grassland.intelligence.credits;
 
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.security.IntelligenceServiceAssertionIssuer;
-import io.netty.channel.ChannelOption;
+import com.grassland.http.ManagedWebClientFactory;
 import java.time.Duration;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /** Fetches the authoritative reputation AI entitlement and fails closed on every invalid response. */
 @Component
@@ -30,13 +28,8 @@ public final class MarketplaceAiEntitlementClient {
         this.headerName = headerName;
         long boundedSeconds = Math.max(1, Math.min(timeoutSeconds, 30));
         this.timeout = Duration.ofSeconds(boundedSeconds);
-        HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.toIntExact(timeout.toMillis()))
-                .responseTimeout(timeout);
-        this.webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .baseUrl(baseUrl)
-                .build();
+        this.webClient = ManagedWebClientFactory.create(
+                MarketplaceAiEntitlementClient.class, baseUrl, timeout);
     }
 
     public Mono<AiEntitlement> get(String accountId) {

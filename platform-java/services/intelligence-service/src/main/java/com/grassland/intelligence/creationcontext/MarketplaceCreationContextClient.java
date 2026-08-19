@@ -2,6 +2,7 @@ package com.grassland.intelligence.creationcontext;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceServiceAssertionIssuer;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
@@ -10,8 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import reactor.core.publisher.Mono;
 
 /** Fetches authoritative accepted-task facts from marketplace; intelligence never reads its database. */
@@ -29,9 +28,8 @@ public class MarketplaceCreationContextClient {
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.client = WebClient.builder().baseUrl(baseUrl)
-                .clientConnector(new ReactorClientHttpConnector(HttpClient.create()
-                        .responseTimeout(Duration.ofSeconds(3)))).build();
+        this.client = ManagedWebClientFactory.create(
+                MarketplaceCreationContextClient.class, baseUrl, Duration.ofSeconds(3));
     }
 
     public Mono<AuthoritativeContext> fetch(String applicationId, String taskId, String accountId) {

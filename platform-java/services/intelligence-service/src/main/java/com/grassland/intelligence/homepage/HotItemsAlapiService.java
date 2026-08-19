@@ -1,5 +1,6 @@
 package com.grassland.intelligence.homepage;
 
+import com.grassland.http.ManagedWebClientFactory;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
@@ -33,7 +34,7 @@ public class HotItemsAlapiService {
     public HotItemsAlapiService(
             @Value("${hot-items.alapi.base-url:https://v3.alapi.cn}") String baseUrl,
             @Value("${hot-items.alapi.timeout-ms:8000}") long timeoutMs) {
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(HotItemsAlapiService.class, baseUrl);
         this.timeout = Duration.ofMillis(timeoutMs);
     }
 

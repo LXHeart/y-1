@@ -2,6 +2,7 @@ package com.grassland.intelligence.douyin;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.net.URI;
 import java.time.Duration;
@@ -15,11 +16,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * 抖音视频解析服务（移植 legacy {@code server/src/services/douyin-resolve.service.ts} 的匿名 HTTP 阶段）。
@@ -80,11 +79,9 @@ public class DouyinResolveService {
 
     public DouyinResolveService(DouyinFetchProperties props) {
         this.props = props;
-        // followRedirect(false)：手动处理重定向，每跳经 page host 守卫复验（SSRF 边界，对齐 legacy fetchText）
-        HttpClient http = HttpClient.create().followRedirect(false).responseTimeout(props.timeout());
-        this.client = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(http))
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
+        // 共享客户端禁用自动重定向；本服务逐跳执行 page host 守卫复验。
+        this.client = ManagedWebClientFactory.builder(
+                        DouyinResolveService.class, props.timeout(), 8 * 1024 * 1024)
                 .build();
     }
 

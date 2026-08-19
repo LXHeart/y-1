@@ -1,5 +1,7 @@
 package com.grassland.marketplace.workflow;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import java.net.URI;
 import java.time.Instant;
@@ -46,7 +48,7 @@ public class IntelligenceMediaClient {
                                    @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(IntelligenceMediaClient.class, baseUrl);
     }
 
     /** 取附件元数据：200→元数据，404（不可用）→empty，其余→异常。orgId 用于现签服务断言。 */

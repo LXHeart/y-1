@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":platform-identity-assertion"))
     testImplementation(testFixtures(project(":platform-identity-assertion")))
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    implementation("io.r2dbc:r2dbc-pool")
     implementation(libs.r2dbc.postgresql)
     implementation("com.fasterxml.jackson.core:jackson-databind")
 

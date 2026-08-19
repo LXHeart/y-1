@@ -8,17 +8,7 @@
       <p class="capability-version">规则 {{ AI_PLATFORM_CAPABILITY_VERSION }}</p>
     </header>
 
-    <nav class="center-tabs" role="tablist" aria-label="创作中心模块">
-      <button
-        v-for="section in centerSections"
-        :key="section.id"
-        type="button"
-        role="tab"
-        :aria-selected="activeSection === section.id"
-        :class="{ active: activeSection === section.id }"
-        @click="selectSection(section.id)"
-      >{{ section.label }}</button>
-    </nav>
+    <AiCenterNavigation :model-value="activeSection" @update:model-value="selectSection" />
 
     <template v-if="activeSection === 'create'">
       <!-- 任务书 #36 / ADR-D14：未登录游客的免费体验入口（登录用户不显示，功能面不变） -->
@@ -309,6 +299,7 @@ import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.vue'
 import ImageStudioView from './components/ImageStudioView.vue'
 import VideoStudioView from './components/VideoStudioView.vue'
+import AiCenterNavigation, { type AiCenterSection } from './components/AiCenterNavigation.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
@@ -334,8 +325,6 @@ import type {
   CreationSourceType,
   VideoCreationWorkflowId,
 } from '../../types/ai-creation'
-
-type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'video-studio' | 'keys' | 'library'
 
 const props = defineProps<{
   authenticated: boolean
@@ -376,17 +365,6 @@ const hydratedRevision = ref<number | null>(null)
 let contextRequestEpoch = 0
 let hotRefineEpoch = 0
 let workflowRevision = Date.now()
-
-const centerSections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
-  { id: 'create', label: '开始创作' },
-  { id: 'assistant', label: '创作助手' },
-  { id: 'speech', label: '语音转写' },
-  { id: 'image-studio', label: '图片编辑' },
-  { id: 'video-studio', label: '视频工坊' },
-  { id: 'runs', label: '运行记录' },
-  { id: 'library', label: '素材库' },
-  { id: 'keys', label: '模型密钥' },
-]
 
 const sourceOptions: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
   { id: 'independent', label: '独立创作', note: '从主题或想法开始' },
@@ -911,9 +889,6 @@ function nextWorkflowRevision(): number {
 .choice-title-row h3 { font-size: 1rem; }
 .section-kicker, .capability-version, .choice-title-row span, .start-bar p { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
 .section-kicker { margin-bottom: 4px; font-weight: 700; color: var(--color-accent); }
-.center-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border); }
-.center-tabs button { min-height: 40px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-text-muted); cursor: pointer; }
-.center-tabs button.active { border-bottom-color: var(--color-accent); color: var(--color-text); font-weight: 600; }
 .platform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
 .platform-option { min-height: 78px; padding: 14px; display: grid; gap: 5px; text-align: left; background: var(--color-surface); color: var(--color-text); border: 0; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); cursor: pointer; }
 .platform-option:nth-child(3n) { border-right: 0; }

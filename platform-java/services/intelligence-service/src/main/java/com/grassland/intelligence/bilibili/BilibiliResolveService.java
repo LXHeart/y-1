@@ -2,6 +2,7 @@ package com.grassland.intelligence.bilibili;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -17,14 +18,12 @@ import java.util.regex.Pattern;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * Bilibili 视频解析（移植 legacy {@code server/src/services/bilibili-resolve.service.ts}）。
@@ -72,9 +71,8 @@ public class BilibiliResolveService {
     public BilibiliResolveService(BilibiliFetchProperties props) {
         this.props = props;
         // followRedirect(false)：手动处理 ≤5 跳，每跳经 page host 守卫复验（SSRF 边界）。Bilibili 分享页可达 ~1MB。
-        this.client = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(HttpClient.create().followRedirect(false)))
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
+        this.client = ManagedWebClientFactory.builder(
+                        BilibiliResolveService.class, props.timeout(), 4 * 1024 * 1024)
                 .build();
     }
 

@@ -1,5 +1,7 @@
 package com.grassland.identity.recommenderprofile;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.security.IdentityServiceAssertionIssuer;
 import java.time.Duration;
@@ -38,7 +40,7 @@ public class AvatarMediaClient {
             @Value("${intelligence.service.base-url:http://intelligence-service:8086}") String baseUrl,
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName,
             @Value("${identity.avatar.media-validation-timeout-ms:3000}") long timeoutMs) {
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(AvatarMediaClient.class, baseUrl);
         this.issuer = issuer;
         this.validator = validator;
         this.headerName = headerName;

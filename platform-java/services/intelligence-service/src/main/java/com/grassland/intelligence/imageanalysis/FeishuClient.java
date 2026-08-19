@@ -2,6 +2,7 @@ package com.grassland.intelligence.imageanalysis;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
 import java.util.HashMap;
@@ -10,14 +11,12 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * 飞书开放平台 HTTP 客户端（草场 intelligence Slice 6）。移植 legacy {@code feishu-export.service.ts} 的 5 个 API 调用。
@@ -38,11 +37,8 @@ public class FeishuClient {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public FeishuClient(@Value("${feishu.export.api-timeout-ms:30000}") long timeoutMs) {
-        HttpClient http = HttpClient.create().responseTimeout(Duration.ofMillis(timeoutMs));
-        this.client = WebClient.builder()
-                .baseUrl(BASE_URL)
-                .clientConnector(new ReactorClientHttpConnector(http))
-                .build();
+        this.client = ManagedWebClientFactory.create(
+                FeishuClient.class, BASE_URL, Duration.ofMillis(Math.max(1, timeoutMs)));
     }
 
     public Mono<String> tenantAccessToken(String appId, String appSecret) {

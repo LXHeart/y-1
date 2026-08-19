@@ -1,5 +1,7 @@
 package com.grassland.intelligence.videoproduction;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.security.IntelligenceServiceAssertionIssuer;
@@ -30,7 +32,7 @@ public class FinanceCreditOperationClient {
             String path,
             @Value("${credits.finance.response-timeout-ms:5000}") long timeoutMs,
             IntelligenceServiceAssertionIssuer assertions) {
-        this.client = WebClient.builder().baseUrl(baseUrl).build();
+        this.client = ManagedWebClientFactory.create(FinanceCreditOperationClient.class, baseUrl);
         this.assertions = assertions;
         this.path = path;
         this.timeout = Duration.ofMillis(Math.max(1, timeoutMs));

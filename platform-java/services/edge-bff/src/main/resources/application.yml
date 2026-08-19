@@ -51,6 +51,14 @@ edge:
   identity:
     # true 时 edge-bff 直读 session 表签发内部身份断言（HLD 7.4）；与 identity-assertion.enabled 同开。
     from-database-url: ${EDGE_IDENTITY_FROM_DATABASE_URL:false}
+    datasource:
+      pool:
+        # Edge 只读 session 查询使用有界 R2DBC 池，避免副本扩容时连接数无上限增长。
+        initial-size: ${EDGE_IDENTITY_DB_POOL_INITIAL_SIZE:2}
+        max-size: ${EDGE_IDENTITY_DB_POOL_MAX_SIZE:10}
+        max-idle-seconds: ${EDGE_IDENTITY_DB_POOL_MAX_IDLE_SECONDS:120}
+        max-life-seconds: ${EDGE_IDENTITY_DB_POOL_MAX_LIFE_SECONDS:600}
+        max-acquire-seconds: ${EDGE_IDENTITY_DB_POOL_MAX_ACQUIRE_SECONDS:20}
   # GL-P3-IDENTITY-001：移动端 access token 验签。secret 未配 → bean 不装 → bearer 分支跳过（Web 不受影响）。
   access-token:
     secret: ${EDGE_ACCESS_TOKEN_SECRET:}

@@ -1,5 +1,7 @@
 package com.grassland.marketplace.workflow;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -32,7 +34,7 @@ public class TrustResolutionClient {
                                  @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(TrustResolutionClient.class, baseUrl);
     }
 
     public Mono<TrustResolution> resolve(String organizationId, String disputeId) {

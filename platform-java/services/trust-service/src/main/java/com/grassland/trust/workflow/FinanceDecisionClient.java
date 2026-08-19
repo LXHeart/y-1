@@ -1,5 +1,7 @@
 package com.grassland.trust.workflow;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.trust.security.TrustServiceAssertionIssuer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +32,7 @@ public class FinanceDecisionClient {
                                  @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(FinanceDecisionClient.class, baseUrl);
     }
 
     /** release：reserved→released。true=已释放，false=非 reserved/不存在（幂等）。 */

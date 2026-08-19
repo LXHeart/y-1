@@ -1,18 +1,17 @@
 package com.grassland.intelligence.imagestudio;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceException;
-import io.netty.channel.ChannelOption;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * OpenAI 兼容抠图提供者（任务书 #43 D3）。
@@ -38,12 +37,9 @@ public class OpenAiCompatibleImageMattingProvider implements ImageMattingProvide
     }
 
     private static WebClient buildWebClient() {
-        HttpClient http = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000)
-                .responseTimeout(java.time.Duration.ofSeconds(60));
-        return WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(http))
-                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+        return ManagedWebClientFactory.builder(
+                        OpenAiCompatibleImageMattingProvider.class,
+                        Duration.ofSeconds(5), Duration.ofSeconds(60), 16 * 1024 * 1024)
                 .build();
     }
 

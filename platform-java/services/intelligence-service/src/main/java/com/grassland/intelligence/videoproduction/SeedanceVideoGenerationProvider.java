@@ -2,6 +2,7 @@ package com.grassland.intelligence.videoproduction;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -98,7 +99,9 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
     }
 
     private WebClient client() {
-        return WebClient.builder().baseUrl(properties.getBaseUrl())
+        return ManagedWebClientFactory.builder(
+                        SeedanceVideoGenerationProvider.class, properties.getRequestTimeout())
+                .baseUrl(properties.getBaseUrl())
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
                 .build();
     }

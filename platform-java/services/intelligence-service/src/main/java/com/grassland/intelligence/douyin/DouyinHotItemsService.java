@@ -2,19 +2,19 @@ package com.grassland.intelligence.douyin;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * 抖音热点抓取（移植 legacy {@code server/src/services/douyin-hot.service.ts}）。
@@ -38,9 +38,8 @@ public class DouyinHotItemsService {
 
     public DouyinHotItemsService(DouyinHotItemsProperties props) {
         this.props = props;
-        this.client = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(HttpClient.create()))
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(512 * 1024))
+        this.client = ManagedWebClientFactory.builder(
+                        DouyinHotItemsService.class, Duration.ofSeconds(30), 512 * 1024)
                 .build();
     }
 

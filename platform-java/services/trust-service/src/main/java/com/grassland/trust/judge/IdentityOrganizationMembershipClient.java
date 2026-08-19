@@ -1,18 +1,16 @@
 package com.grassland.trust.judge;
 
 import com.grassland.trust.security.TrustServiceAssertionIssuer;
-import io.netty.channel.ChannelOption;
+import com.grassland.http.ManagedWebClientFactory;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /** Reads an account's complete, authoritative organization memberships from identity. */
 @Component
@@ -31,13 +29,8 @@ public class IdentityOrganizationMembershipClient {
         this.issuer = issuer;
         this.headerName = headerName;
         this.timeout = Duration.ofSeconds(Math.max(1, Math.min(timeoutSeconds, 30)));
-        HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.toIntExact(timeout.toMillis()))
-                .responseTimeout(timeout);
-        this.webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .baseUrl(baseUrl)
-                .build();
+        this.webClient = ManagedWebClientFactory.create(
+                IdentityOrganizationMembershipClient.class, baseUrl, timeout);
     }
 
     public Mono<Set<String>> organizationIds(String accountId) {

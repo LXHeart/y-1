@@ -1,5 +1,7 @@
 package com.grassland.trust.dispute;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.trust.security.TrustServiceAssertionIssuer;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -33,7 +35,7 @@ public class MarketplaceEngagementAuthorizationClient {
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(MarketplaceEngagementAuthorizationClient.class, baseUrl);
     }
 
     /** 授权结果：成功时携带 marketplace 返回的 canonical organizationId。 */

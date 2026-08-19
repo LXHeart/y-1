@@ -2,6 +2,7 @@ package com.grassland.intelligence.ai.qwen;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
@@ -11,19 +12,16 @@ import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.security.IntelligenceException;
-import io.netty.channel.ChannelOption;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /**
  * Qwen（OpenAI 兼容）流式 chat client——草场 intelligence Slice 1 唯一 {@link AiCapabilityAdapter} 实现。
@@ -45,12 +43,9 @@ public class QwenClient implements AiCapabilityAdapter {
 
     public QwenClient(PlatformModelConfig config) {
         this.config = config;
-        HttpClient http = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.toIntExact(config.connectTimeout().toMillis()))
-                .responseTimeout(config.readTimeout());
-        this.webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(http))
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(256 * 1024))
+        this.webClient = ManagedWebClientFactory.builder(
+                        QwenClient.class,
+                        config.connectTimeout(), config.readTimeout(), 256 * 1024)
                 .build();
     }
 

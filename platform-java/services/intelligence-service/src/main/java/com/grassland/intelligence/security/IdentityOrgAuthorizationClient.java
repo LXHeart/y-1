@@ -1,5 +1,7 @@
 package com.grassland.intelligence.security;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,7 +28,7 @@ public class IdentityOrgAuthorizationClient {
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(IdentityOrgAuthorizationClient.class, baseUrl);
     }
 
     /** 要求账号在 org 内角色不低于 minimumRole（member/admin/owner）；不足/非成员 → 403，org 不存在 → 404。 */

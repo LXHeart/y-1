@@ -18,7 +18,7 @@ describe('Java-only backend and Node frontend boundary', () => {
     const scripts = packageJson.scripts ?? {}
     const allowedScripts = new Set([
       'dev', 'dev:client', 'build', 'build:client', 'preview', 'typecheck',
-      'test', 'test:coverage', 'coverage:changed', 'security:secrets',
+      'test', 'test:coverage', 'coverage:changed', 'security:secrets', 'docs:status',
       'e2e', 'e2e:ci', 'e2e:seed:auth', 'e2e:seed',
     ])
 

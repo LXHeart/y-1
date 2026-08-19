@@ -17,6 +17,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "coverage:changed": "tsx scripts/quality/check-changed-coverage.ts",
+    "docs:status": "tsx scripts/quality/check-doc-status.ts",
     "security:secrets": "node --import tsx scripts/security/check-tracked-secrets.ts",
     "e2e": "playwright test --config=playwright.config.ts",
     "e2e:ci": "bash scripts/ci-e2e.sh",

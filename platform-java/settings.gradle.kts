@@ -21,6 +21,7 @@ include(
     "platform-crypto",
     "platform-storage",
     "platform-identity-assertion",
+    "platform-http",
     "services:database-bootstrap",
     "services:edge-bff",
     "services:identity-service",

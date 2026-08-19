@@ -1,5 +1,7 @@
 package com.grassland.identity.admin;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.security.IdentityServiceAssertionIssuer;
 import java.time.Duration;
@@ -35,7 +37,7 @@ public class FinanceCreditsAdminClient {
             @Value("${identity.finance-credits.base-url:http://finance-service:8084}") String baseUrl,
             @Value("${identity.finance-credits.timeout-ms:5000}") long timeoutMs,
             IdentityServiceAssertionIssuer assertionIssuer) {
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(FinanceCreditsAdminClient.class, baseUrl);
         this.timeout = Duration.ofMillis(Math.max(timeoutMs, 100));
         this.assertionIssuer = assertionIssuer;
     }

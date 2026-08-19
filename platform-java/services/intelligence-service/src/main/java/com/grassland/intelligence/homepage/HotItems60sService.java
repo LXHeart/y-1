@@ -1,5 +1,6 @@
 package com.grassland.intelligence.homepage;
 
+import com.grassland.http.ManagedWebClientFactory;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -40,7 +41,7 @@ public class HotItems60sService {
             @Value("${hot-items.sixty-s.timeout-ms:8000}") long timeoutMs) {
         // baseUrl 形如 https://60s.viki.moe/v2/douyin，取 origin
         this.origin = URI.create(baseUrl).getScheme() + "://" + URI.create(baseUrl).getHost();
-        this.webClient = WebClient.builder().baseUrl(this.origin).build();
+        this.webClient = ManagedWebClientFactory.create(HotItems60sService.class, this.origin);
         this.timeout = Duration.ofMillis(timeoutMs);
     }
 

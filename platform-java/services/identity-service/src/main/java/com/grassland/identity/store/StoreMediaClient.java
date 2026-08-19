@@ -1,5 +1,7 @@
 package com.grassland.identity.store;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.identity.security.IdentityServiceAssertionIssuer;
 import java.net.URI;
@@ -49,7 +51,7 @@ public class StoreMediaClient {
             @Value("${intelligence.service.base-url:http://intelligence-service:8086}") String baseUrl,
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName,
             @Value("${identity.store.media-validation-timeout-ms:3000}") long timeoutMs) {
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(StoreMediaClient.class, baseUrl);
         this.issuer = issuer;
         this.headerName = headerName;
         this.timeout = Duration.ofMillis(Math.max(timeoutMs, 100));

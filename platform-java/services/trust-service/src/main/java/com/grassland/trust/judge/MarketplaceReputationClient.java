@@ -1,15 +1,13 @@
 package com.grassland.trust.judge;
 
 import com.grassland.trust.security.TrustServiceAssertionIssuer;
-import io.netty.channel.ChannelOption;
+import com.grassland.http.ManagedWebClientFactory;
 import java.time.Duration;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
 import reactor.core.publisher.Mono;
 
 /**
@@ -39,13 +37,8 @@ public class MarketplaceReputationClient {
         this.headerName = headerName;
         long boundedTimeoutSeconds = Math.max(1, Math.min(timeoutSeconds, 30));
         this.timeout = Duration.ofSeconds(boundedTimeoutSeconds);
-        HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.toIntExact(timeout.toMillis()))
-                .responseTimeout(timeout);
-        this.webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .baseUrl(baseUrl)
-                .build();
+        this.webClient = ManagedWebClientFactory.create(
+                MarketplaceReputationClient.class, baseUrl, timeout);
     }
 
     /** marketplace 的有效等级及审判资格判定。 */

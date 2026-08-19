@@ -210,7 +210,7 @@ npm run e2e:ci
 
 失败时脚本会保存 `test-artifacts/compose.log`、`test-artifacts/compose-ps.txt` 和 Playwright 报告；无论成功或失败都会清理隔离 Compose project 及卷。GitHub Actions 的 `node`、`java`、`e2e` 三个 job 会分别执行已跟踪文件密钥扫描、类型检查、全源覆盖率测试与构建；全量 Gradle 测试与 jar artifact；公共入口浏览器测试。
 
-Node 前端全源覆盖率本次实测为 statements/lines 68.64%、branches 76.60%、functions 53.80%；CI 保留 statements/lines 68%、branches 74%、functions 53% 的纯前端全局 ratchet，并对 Git diff 中变更的可执行行执行 80% 门禁、上传 HTML 报告。总体覆盖率仍未达到 80%，不能把 CI 绿色解释为全仓覆盖率目标已完成。
+Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同锁定：statements/lines 68%、branches 74%、functions 53%；CI 对 Git diff 中变更的可执行行执行 80% 门禁并上传 HTML 报告。`npm run docs:status` 会阻止两处门槛漂移。总体覆盖率仍未达到 80%，不能把 CI 绿色解释为全仓覆盖率目标已完成。
 
 兼容约束和契约矩阵见 [`docs/草场旧API兼容契约矩阵.md`](docs/草场旧API兼容契约矩阵.md)。可观测性组件按需使用 `--profile observability` 启动。
 

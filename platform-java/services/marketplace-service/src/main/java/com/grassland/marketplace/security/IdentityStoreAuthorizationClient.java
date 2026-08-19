@@ -1,5 +1,7 @@
 package com.grassland.marketplace.security;
 
+import com.grassland.http.ManagedWebClientFactory;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
@@ -23,7 +25,7 @@ public class IdentityStoreAuthorizationClient {
             @Value("${identity-assertion.header-name:X-Grassland-Identity}") String headerName) {
         this.issuer = issuer;
         this.headerName = headerName;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.webClient = ManagedWebClientFactory.create(IdentityStoreAuthorizationClient.class, baseUrl);
     }
 
     public Mono<Void> require(String accountId, String organizationId, String storeId, String minimumRole) {

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-19",
+  "authority": "docs/草场开发进度与续接指南.md#四当前开放项速览按优先级",
+  "backlog": {
+    "scope": "22-45",
+    "items": [
+      { "id": 22, "status": "completed" }, { "id": 23, "status": "completed" },
+      { "id": 24, "status": "completed" }, { "id": 25, "status": "completed" },
+      { "id": 26, "status": "completed" }, { "id": 27, "status": "completed" },
+      { "id": 28, "status": "completed" }, { "id": 29, "status": "completed" },
+      { "id": 30, "status": "completed" }, { "id": 31, "status": "completed" },
+      { "id": 32, "status": "completed" }, { "id": 33, "status": "completed" },
+      { "id": 34, "status": "completed" }, { "id": 35, "status": "completed" },
+      { "id": 36, "status": "completed" }, { "id": 37, "status": "completed" },
+      { "id": 38, "status": "open", "title": "个人数据导出、按规则删除与账号注销" },
+      { "id": 39, "status": "completed" },
+      { "id": 40, "status": "open", "title": "全文搜索与报表导出" },
+      { "id": 41, "status": "completed" }, { "id": 42, "status": "completed" },
+      { "id": 43, "status": "completed" }, { "id": 44, "status": "completed" },
+      { "id": 45, "status": "completed" }
+    ]
+  },
+  "platform": {
+    "edgeIdentityDatabase": "read-only-session-access-with-bounded-r2dbc-pool",
+    "nodeBackend": "removed",
+    "productionMoney": "blocked-by-D01"
+  },
+  "quality": {
+    "frontendCoverageThresholds": {
+      "statements": 68, "branches": 74, "functions": 53, "lines": 68
+    },
+    "changedExecutableLinesThreshold": 80
+  }
+}

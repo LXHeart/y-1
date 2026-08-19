@@ -1,5 +1,6 @@
 package com.grassland.intelligence.ai.run;
 
+import com.grassland.http.ManagedWebClientFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.PinnedByokClients;
@@ -101,7 +102,7 @@ public class TextCompletionClient {
 
     private WebClient platformClient(String baseUrl) {
         platformProviderPolicy.validateBaseUrl(baseUrl);
-        return WebClient.builder().baseUrl(withTrailingSlash(baseUrl)).build();
+        return ManagedWebClientFactory.create(TextCompletionClient.class, withTrailingSlash(baseUrl));
     }
 
     private WebClient pinnedByokClient(String baseUrl) {

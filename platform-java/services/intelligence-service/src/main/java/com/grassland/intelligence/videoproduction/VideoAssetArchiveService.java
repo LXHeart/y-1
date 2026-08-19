@@ -1,5 +1,6 @@
 package com.grassland.intelligence.videoproduction;
 
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.media.MediaStatus;
@@ -12,7 +13,6 @@ import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.http.codec.ClientCodecConfigurer;
 import java.net.URI;
 import java.net.URISyntaxException;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -29,9 +29,7 @@ public class VideoAssetArchiveService {
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final VideoGenerationProperties properties;
-    private final WebClient client = WebClient.builder()
-            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize((int) MAX_BYTES))
-            .build();
+    private final WebClient client;
 
     public VideoAssetArchiveService(MediaReferenceRepository mediaRefs,
                                     ObjectProvider<ObjectStorageAdapter> storageProvider,
@@ -42,6 +40,9 @@ public class VideoAssetArchiveService {
         this.outbox = outbox;
         this.transactions = transactions;
         this.properties = properties;
+        this.client = ManagedWebClientFactory.builder(
+                        VideoAssetArchiveService.class, properties.getRequestTimeout(), (int) MAX_BYTES)
+                .build();
     }
 
     public Mono<String> archive(VideoGenerationJob job, String providerUrl) {

@@ -27,6 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run security:secrets
+      - run: npm run docs:status
       - run: ./scripts/validate-released-migrations.sh
       - run: npm audit --audit-level=high
       - run: npm run typecheck

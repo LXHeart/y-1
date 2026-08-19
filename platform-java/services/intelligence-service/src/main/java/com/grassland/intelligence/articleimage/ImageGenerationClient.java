@@ -2,18 +2,16 @@ package com.grassland.intelligence.articleimage;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.http.ManagedWebClientFactory;
 import com.grassland.intelligence.security.IntelligenceException;
-import io.netty.channel.ChannelOption;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
 /** OpenAI-compatible {@code /images/generations} client。 */
 @Component
@@ -25,13 +23,9 @@ public class ImageGenerationClient {
 
     public ImageGenerationClient(ImageGenerationConfig config) {
         this.config = config;
-        HttpClient http = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS,
-                        Math.toIntExact(config.connectTimeout().toMillis()))
-                .responseTimeout(config.readTimeout());
-        this.webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(http))
-                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+        this.webClient = ManagedWebClientFactory.builder(
+                        ImageGenerationClient.class,
+                        config.connectTimeout(), config.readTimeout(), 16 * 1024 * 1024)
                 .build();
     }
 
