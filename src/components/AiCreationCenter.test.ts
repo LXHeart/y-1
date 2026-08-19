@@ -98,14 +98,14 @@ describe('AI 内容创作中心', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text()))
-      .toEqual(['开始创作', '创作助手', '语音转写', '运行记录', '素材库', '模型密钥'])
+      .toEqual(['开始创作', '创作助手', '语音转写', '图片编辑', '视频工坊', '运行记录', '素材库', '模型密钥'])
 
     // 除「开始创作」外每个分栏都要求登录（助手要按账号存草稿，同 runs/keys 口径）
-    for (const label of ['创作助手', '语音转写', '运行记录', '素材库', '模型密钥']) {
+    for (const label of ['创作助手', '语音转写', '图片编辑', '视频工坊', '运行记录', '素材库', '模型密钥']) {
       await sectionTab(wrapper, label).trigger('click')
     }
 
-    expect(wrapper.emitted('request-login')).toHaveLength(5)
+    expect(wrapper.emitted('request-login')).toHaveLength(7)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
@@ -752,17 +752,22 @@ describe('AI 内容创作中心', () => {
     })
   })
 
-  test('非视频平台的参考素材组合保持尚未接入且不能开始', async () => {
+  test('图文平台的参考素材进入分析器并保留目标平台与参考来源', async () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
     await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')
     await choiceButton(wrapper, '创作来源', '参考素材').trigger('click')
+    await choiceButton(wrapper, '参考链接来源', 'B 站').trigger('click')
     await wrapper.get('textarea[name="reference-url"]').setValue('https://example.com/share')
 
-    expect(wrapper.text()).toContain('该创作路径尚未接入')
-    expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
     await button(wrapper, '开始创作').trigger('click')
-    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+    expect(wrapper.emitted('start-workflow')?.[0]?.[0]).toMatchObject({
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'reference-analyze',
+      targetView: 'video',
+      prefill: { referencePlatform: 'bilibili' },
+    })
   })
 
   test('大众点评图文进入点评文案工作流并落到图片评价文案视图', async () => {

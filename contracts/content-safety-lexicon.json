@@ -91,5 +91,27 @@
   "exceptionPatterns": [
     { "id": "first_time_phrase", "regex": "第[一二三四五六七八九十]+(次|天|步|章|期|批|波|期|个)" },
     { "id": "zui_adjective_self", "regex": "最(近|后|终|新|爱|喜欢|适合|划算|划算的)" }
-  ]
+  ],
+  "overlays": {
+    "platforms": {
+      "douyin": ["私信领券", "评论区发链接"],
+      "kuaishou": ["老铁点关注", "私信发购买链接"]
+    },
+    "industries": {
+      "food": ["药膳治病", "吃一次就见效"],
+      "beauty": ["医美零风险", "永久定型无副作用"],
+      "medical": ["包治专病", "替代正规治疗"]
+    },
+    "industryAliases": {
+      "美食": "food",
+      "餐饮": "food",
+      "食品": "food",
+      "丽人": "beauty",
+      "美容": "beauty",
+      "医美": "beauty",
+      "医疗": "medical",
+      "健康": "medical",
+      "医药": "medical"
+    }
+  }
 }

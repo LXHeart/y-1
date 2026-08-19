@@ -50,6 +50,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 ### Frontend (`src/`)
 
 - `App.vue` — 顶层 shell：标签导航（AI 内容创作中心为默认一级入口，更多工具下拉收纳兼容入口）、认证、设置、积分、管理
+- `AiCreationCenter` 的 reference 来源支持全部合法非朋友圈平台×内容形式；链接提取来源仍仅抖音/B 站，分析完成后按目标形式分发到视频、文章或点评图文工作流
 - `components/` — 各功能模块的页面组件
 - `composables/` — 请求与状态逻辑（`useAuth`, `useDouyinParse`, `useArticleCreation`, `useCredits` 等）
 - `types/` — 前端类型定义
@@ -90,6 +91,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 创作助手 | `/api/creation-assistant/*` | score (SSE), suggest (SSE), guide (SSE), task-coverage (SSE), topic-from-hot (SSE)（intelligence-service，PRD §4.9）|
 | 创作草稿 | `/api/creation-drafts/*` | 列表/新建/读取/保存（乐观锁 PUT，冲突 409）/删除；`GET /{id}/versions` 版本历史（version DESC keyset）、`GET /{id}/versions/{version}` 版本快照（intelligence-service，§4.9.7）|
 | 任务创作上下文 | `/api/creation-contexts/*` | 创建/读取不可变快照（intelligence-service，PRD §4.12）；Marketplace 内部端点只向 intelligence 返回 accepted 报名的权威任务快照（含 storeBranding 门店品牌块，任务书 #24） |
+| 创作生成追踪 | `/api/creation-generations` | 任务书 #44：owner 范围的 append-only 视频改编/复刻出图 lineage；列表支持 kind/keyset 且不回全文，详情返回 prompt/result 与媒体可用性。Edge flag `EDGE_ROUTE_CREATION_GENERATIONS_INTELLIGENCE` |
 | 门店公开资料 | `/api/stores/{storeId}/public-profile` | identity 只读白名单（GET，任务书 #24）：未登录也放行（resolveOptional），只回 PRD §2.1 公开字段（不含 KYB 审核列/org 内部字段），门店/组织非 active → 404；edge flag `EDGE_ROUTE_STORES_PUBLIC_IDENTITY`。内部批量端点 `/internal/identity/stores/public-profiles` 仅 marketplace 服务断言可调，不进 edge |
 | 品牌资料 | `/api/organizations/{orgId}/brand-profile`（GET/PUT）、`/api/organizations/{orgId}/brand-profile/logo/upload-ticket` | 任务书 #32：组织品牌资料（品牌名/Logo/简介/经营分类，独立表不挂 merchant_profile）。GET MEMBER+（无行回 version=0 空资料，logoUrl fail-soft）；PUT ADMIN+ 整份覆盖 + `expectedVersion` 乐观锁（冲突 409），Logo 归属 fail-closed 校验；开票 ADMIN+ 经 identity 服务断言代理。intelligence 侧 `POST /api/media/brand-logo-upload-tickets` 与 `GET /api/media/{id}/brand-logo-url` 复用既有 `/api/media` 前缀路由，但仅 identity 服务断言可调（org 级四重过滤，不符统一 404），浏览器直连拒绝 |
 | 门店媒体库 | `/api/organizations/{orgId}/stores/{storeId}/media*`、`/api/stores/{storeId}/public-media` | 任务书 #42：identity 门店公开媒体库（门头/环境/菜单/宣传视频四类，帽 6/12/12/3）。管理端点五件（写 MANAGER+/读 STAFF+ 回落）：POST upload-tickets 代开票据、POST 绑定（fail-closed）、GET 读（fail-soft）、PUT order 整类精确集合重排（冲突 409）、DELETE 解绑（只删绑定行不删对象）；公开聚合 GET public-media 未登录放行，store+org active gate、无绑定回空 groups，白名单不含 uploadedBy/organizationId，单项被滤静默跳过、上游故障 503。intelligence 侧 `POST /api/media/store-media-upload-tickets` 与 `POST /api/media/store-media-download-urls`（purpose+org+domain+active+未过期四重过滤，子集语义）复用既有 `/api/media` 前缀路由，仅 identity 服务断言可调，浏览器直连拒绝 |
@@ -98,9 +100,13 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 | 推荐官收入统计 | `/api/finance/wallets/me/statistics?from=&to=` | 任务书 #29+#30：`wallet_ledger` 权威表按月（北京时间 `date_trunc`）+ 按 engagement 聚合，含毛/抽成/净；跨度≤12 月，self-scoped；前端按任务标题经 my-applications join |
 | 商家月度账单 | `/api/finance/organizations/{orgId}/monthly-bill?month=` | 任务书 #29+#30：journal/posting 双录按 `journal_type` 聚合 + FEE 腿单列，flow=ESCROW 腿净额；org-scoped 自查跨 org 404，月切北京时间 |
 | 游客试用 | `/api/guest-trial/{capability}`、`/api/guest-trial/quota` | 任务书 #36 / ADR-D14：未登录匿名放行（gtid httpOnly cookie + IP 双层限流 + 每能力 3 次/天，成功才计次）；不进 finance credits/ai_run，审计只存 IP 截断哈希；edge flag `EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE` 可整体关闭 |
-| 内容安全复查 | `/api/content-safety/check` | 登录用户对编辑后的文本重新检查；返回版本化 findings。Edge flag `EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE` 关闭时 fail-closed 404；词库不下发前端 |
+| 内容安全复查 | `/api/content-safety/check` | 登录用户对编辑后的文本重新检查；返回在线词库版本、base/平台/行业 overlay、重复度与低原创度 findings。Edge flag `EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE` 关闭时 fail-closed 404；词库不下发前端 |
+| 内容安全词库管理 | `/api/admin/content-safety/lexicons` | 任务书 #45：admin 列表/详情/新建 draft/激活/退役，单 active + 60 秒缓存；Edge flag `EDGE_ROUTE_ADMIN_CONTENT_SAFETY_INTELLIGENCE` |
 | 语音转写 | `/api/speech/transcriptions`（POST/GET） | 任务书 #33：`speech_audio` 三步上传（六种音频 MIME、25MiB、15 分钟内）→ 同步 Sandbox 转写（0 积分、真实 ai_run）；`language=auto/zh-CN/en-US`；owner 范围外 404。Edge 方法级路由 `EDGE_ROUTE_SPEECH_INTELLIGENCE`，仅 POST/GET 放行 |
+| 图片编辑台 | `/api/image-studio/*` | 任务书 #43：`POST /api/image-studio/matting`（抠图，mediaId → 带 alpha PNG URL，30min TTL）；`GET /api/image-studio/matting-results/{id}`（PNG 中转）。Edge flag `EDGE_ROUTE_IMAGE_STUDIO_INTELLIGENCE` |
+| 视频工坊 | `/api/video-studio/*` | 任务书 #43：`POST /api/video-studio/bgm-advice`（扣 1 积分 `video_studio_bgm`，AI 情绪节奏建议→结构化 JSON）。Edge flag `EDGE_ROUTE_VIDEO_STUDIO_INTELLIGENCE` |
 | 素材语义检索 | `/api/content-assets/recommendations?query=` | 任务书 #33：可选 `query`（trim 后 1-500 字符）触发语义重排——先构造已授权候选（≤500），再读当前 ready 向量做 60/40 融合排序；缺向量素材仅规则份额；任何 Embedding/预算错误整请求回退纯规则（`semantic.status=fallback`，200）；响应 items 增 `ruleScore`/可选 `semanticScore`，query 增 `semantic` 元数据。无 query 行为与旧契约逐字节兼容 |
+| 公共素材批量生成 | `/api/admin/content-assets/batch-generate` | 任务书 #45：content reviewer 逐张预算闸生成 1–12 个永久公共素材，部分成功并进入 pending_review 审核队列 |
 | 推荐官我的报名 | `/api/tasks/my-applications?status=&cursor=&limit=` | 任务书 #29+#30：跨任务 keyset 分页列当前推荐官报名，join task 标题/状态/赏金 + settledAt；复用 `/api/tasks/**` 前缀不新增公网路由 |
 | 积分 | `/api/credits/*` | balance, history, packages（active 积分包）, purchase-orders（购买/记录，Sandbox 支付即时生效）|
 | 管理 | `/api/admin/*` | users, adjust-credits（需 admin 角色）; credits-packages + credits-purchase-orders（含 reconciliation 三方对账，需 FINANCE 角色）|

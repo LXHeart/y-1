@@ -91,13 +91,14 @@ public class ImageAnalysisController {
             validateMultipartShape(form, true);
             return readImages(form).flatMap(images -> input.taskModeEnabled()
                     ? taskBinding(exchange, input)
-                            .map(binding -> analysis.analyzeTask(
-                                    images, binding.input(), binding.binding(), exchange)
-                                    .onErrorResume(error -> Flux.just(
-                                            errorFrame(error, ANALYZE_FALLBACK))))
-                            .flatMap(events -> sseResponse(exchange, withSafety(exchange, events)))
+                            .flatMap(binding -> sseResponse(exchange, withSafety(
+                                    exchange, analysis.analyzeTask(
+                                                    images, binding.input(), binding.binding(), exchange)
+                                            .onErrorResume(error -> Flux.just(
+                                                    errorFrame(error, ANALYZE_FALLBACK))),
+                                    binding.binding().snapshot(), binding.input().platform())))
                     : sseResponse(exchange, withSafety(exchange,
-                            analyzeEvents(exchange, input.input(), images))));
+                            analyzeEvents(exchange, input.input(), images), null, input.input().platform())));
         }).doFinally(s -> releaseParts(form)));
     }
 
@@ -108,20 +109,27 @@ public class ImageAnalysisController {
             validateMultipartShape(form, true);
             return readImages(form).flatMap(images -> input.taskModeEnabled()
                     ? taskBinding(exchange, input)
-                            .map(binding -> analysis.draftTask(
-                                    images, binding.input(), binding.binding(), exchange)
-                                    .onErrorResume(error -> Flux.just(
-                                            errorFrame(error, DRAFT_FALLBACK))))
-                            .flatMap(events -> sseResponse(exchange, withSafety(exchange, events)))
+                            .flatMap(binding -> sseResponse(exchange, withSafety(
+                                    exchange, analysis.draftTask(
+                                                    images, binding.input(), binding.binding(), exchange)
+                                            .onErrorResume(error -> Flux.just(
+                                                    errorFrame(error, DRAFT_FALLBACK))),
+                                    binding.binding().snapshot(), binding.input().platform())))
                     : sseResponse(exchange, withSafety(exchange,
-                            draftEvents(exchange, input.input(), images))));
+                            draftEvents(exchange, input.input(), images), null, input.input().platform())));
         }).doFinally(s -> releaseParts(form)));
     }
 
     /** 任务书 #34 D8：图片评价文案流尾追加安全检查帧（检查文本=result 帧 data.review）。 */
-    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+    private Flux<String> withSafety(
+            ServerWebExchange exchange, Flux<String> frames,
+            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot,
+            String requestedPlatform) {
         return safety.appendSafetyFrame(exchange, frames,
-                com.grassland.intelligence.contentsafety.ContentSafetyService.reviewExtractor());
+                com.grassland.intelligence.contentsafety.ContentSafetyService.reviewExtractor(),
+                snapshot == null ? requestedPlatform : snapshot.platformId(),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.industryFromSnapshot(snapshot),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
     }
 
     private Flux<String> analyzeEvents(ServerWebExchange exchange, ImageReviewInput baseInput, List<UploadedImage> images) {

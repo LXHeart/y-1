@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import java.time.Instant;
 
 /**
  * 公共素材库审核 API（草场 PRD §4.8 / Slice 14，GL-P2-ADMIN-003 同款全审政策）。
@@ -44,18 +45,68 @@ public class ContentAssetAdminController {
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks;
+    private final PublicAssetBatchGenerationService batchGeneration;
 
     public ContentAssetAdminController(
             IntelligenceCallerResolver callers,
             ContentAssetRepository assets,
             OutboxRepository outbox,
             TransactionalOperator transactions,
-            com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks) {
+            com.grassland.intelligence.embedding.ContentAssetIndexingHooks indexingHooks,
+            PublicAssetBatchGenerationService batchGeneration) {
         this.callers = callers;
         this.assets = assets;
         this.outbox = outbox;
         this.transactions = transactions;
         this.indexingHooks = indexingHooks;
+        this.batchGeneration = batchGeneration;
+    }
+
+    public record BatchGenerateRequest(
+            String kind, String theme, String style, Integer count, Instant validUntil) {}
+
+    /** AI batch generation is content-reviewer scoped and intentionally returns partial success. */
+    @PostMapping("/batch-generate")
+    public Mono<ResponseEntity<Map<String, Object>>> batchGenerate(
+            @RequestBody BatchGenerateRequest body, ServerWebExchange exchange) {
+        return callers.requireRole(exchange.getRequest(), BackendRole.CONTENT_REVIEWER)
+                .flatMap(caller -> {
+                    if (body == null || body.theme() == null || body.theme().isBlank()
+                            || body.theme().trim().length() > 100) {
+                        return Mono.error(new IntelligenceException(400, "主题长度需为 1-100 字符"));
+                    }
+                    String style = body.style() == null || body.style().isBlank() ? null : body.style().trim();
+                    if (style != null && style.length() > 100) {
+                        return Mono.error(new IntelligenceException(400, "风格描述不能超过 100 字符"));
+                    }
+                    int count = body.count() == null ? 0 : body.count();
+                    if (count < 1 || count > 12) {
+                        return Mono.error(new IntelligenceException(400, "生成数量需为 1-12"));
+                    }
+                    Instant now = Instant.now();
+                    if (body.validUntil() == null || !body.validUntil().isAfter(now)
+                            || body.validUntil().isAfter(now.plus(java.time.Duration.ofDays(90)))) {
+                        return Mono.error(new IntelligenceException(400, "有效期必须在未来 90 天内"));
+                    }
+                    PublicAssetBatchGenerationService.Command command =
+                            new PublicAssetBatchGenerationService.Command(
+                                    PublicAssetBatchGenerationService.Kind.parse(body.kind()),
+                                    body.theme().trim(), style, count, body.validUntil());
+                    return batchGeneration.generate(caller.accountId(), command);
+                })
+                .map(result -> {
+                    Map<String, Object> data = new java.util.LinkedHashMap<>();
+                    data.put("items", result.items().stream().map(item -> {
+                        Map<String, Object> value = new java.util.LinkedHashMap<>();
+                        value.put("index", item.index());
+                        value.put("ok", item.ok());
+                        value.put("assetId", item.assetId());
+                        value.put("errorReason", item.errorReason());
+                        return value;
+                    }).toList());
+                    data.put("okCount", result.okCount());
+                    return ContentAssetController.success(data);
+                });
     }
 
     /** 列待审核公共素材（内容审核员队列）。 */

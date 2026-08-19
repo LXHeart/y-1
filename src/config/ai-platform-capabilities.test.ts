@@ -70,6 +70,24 @@ describe('AI 平台能力矩阵', () => {
     }
   })
 
+  test('reference 覆盖全部合法非朋友圈组合，朋友圈仍保持 planned', () => {
+    for (const platform of AI_PLATFORM_DEFINITIONS) {
+      for (const form of platform.forms) {
+        const result = resolveWorkflow(platform.id, form.id, 'reference')
+        if (platform.id === 'moments') {
+          expect(result).toEqual({ status: 'planned', workflowId: null, targetView: null })
+        } else {
+          expect(result).toEqual({
+            status: 'available', workflowId: 'reference-analyze', targetView: 'video',
+          })
+        }
+      }
+    }
+    expect(resolveWorkflow('xiaohongshu', 'video', 'reference').status).toBe('available')
+    expect(resolveWorkflow('zhihu', 'graphic', 'reference').status).toBe('available')
+    expect(resolveWorkflow('dianping', 'graphic', 'reference').status).toBe('available')
+  })
+
   test('视频创作可显式选择风格化喜剧脚本，默认工作流保持不变', () => {
     expect(resolveWorkflow('douyin', 'video', 'task')).toEqual({
       status: 'available', workflowId: 'video-script', targetView: 'video-production',

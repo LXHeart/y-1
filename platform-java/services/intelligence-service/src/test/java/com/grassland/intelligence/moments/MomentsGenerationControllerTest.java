@@ -61,7 +61,7 @@ class MomentsGenerationControllerTest {
     void setUp() {
         controller = new MomentsGenerationController(callers, service, credits, contexts, safety);
         // 任务书 #34：safety 追加帧默认透传（mock 服务只回灌入帧）
-        lenient().when(safety.appendSafetyFrame(any(), any(), any()))
+        lenient().when(safety.appendSafetyFrame(any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(1));
     }
 

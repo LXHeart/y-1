@@ -13,6 +13,7 @@ import type {
   MediaUploadTicket, MediaMetadata,
   ContentAsset, ContentAssetCategory, ContentAssetGrant, ContentAssetVersion, ContentLibraryType,
   CreateContentAssetInput, UpdateContentAssetInput,
+  PublicAssetBatchGenerateInput, PublicAssetBatchGenerateResult,
   ContentAssetRecommendationInput, ContentAssetRecommendationResult,
   SpeechLanguage, SpeechTranscription,
   WithdrawalAccount, CreateWithdrawalAccountInput,
@@ -442,6 +443,27 @@ export function useGrasslandGovernance(run: RunFn) {
         body: JSON.stringify(input),
       }))
 
+  /** 内容审核员的公共素材待审队列。 */
+  const listPendingPublicAssetReviews = () =>
+    run(() => request<{ items: ContentAsset[] }>('/api/admin/content-assets/review'))
+
+  const approvePublicAsset = (id: string, expectedVersion: number, note?: string) =>
+    run(() => request<ContentAsset>(
+      `/api/admin/content-assets/${encodeURIComponent(id)}/review/approve`, {
+        method: 'POST', body: JSON.stringify({ expectedVersion, note: note?.trim() || undefined }),
+      }))
+
+  const rejectPublicAsset = (id: string, expectedVersion: number, note: string) =>
+    run(() => request<ContentAsset>(
+      `/api/admin/content-assets/${encodeURIComponent(id)}/review/reject`, {
+        method: 'POST', body: JSON.stringify({ expectedVersion, note: note.trim() }),
+      }))
+
+  const batchGeneratePublicAssets = (input: PublicAssetBatchGenerateInput) =>
+    run(() => request<PublicAssetBatchGenerateResult>('/api/admin/content-assets/batch-generate', {
+      method: 'POST', body: JSON.stringify(input),
+    }))
+
   // ---------- KYB：收款账户 ----------
 
   /** 列出本组织的收款账户。 */
@@ -661,6 +683,7 @@ export function useGrasslandGovernance(run: RunFn) {
     uploadContentAssetFile, listContentAssets, recommendContentAssets, createContentAsset, getContentAsset,
     listContentAssetVersions, updateContentAsset, deleteContentAsset, getContentAssetDownloadUrl,
     grantContentAsset, listContentAssetGrants, revokeContentAssetGrant, migrateContentAssetsToStore,
+    listPendingPublicAssetReviews, approvePublicAsset, rejectPublicAsset, batchGeneratePublicAssets,
     uploadSpeechAudio, createSpeechTranscription, getSpeechTranscription,
     listWithdrawalAccounts, createWithdrawalAccount, updateWithdrawalAccount,
     submitWithdrawalAccount, setDefaultWithdrawalAccount, deleteWithdrawalAccount,

@@ -298,6 +298,23 @@ public class MediaReferenceRepository {
                 .map(MediaReferenceRepository::map).all();
     }
 
+    /** IDs whose media reference is still active and unexpired. */
+    public Flux<UUID> findAvailableIds(Collection<UUID> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Flux.empty();
+        }
+        return db.sql("""
+                SELECT id::text FROM media_reference
+                WHERE id = ANY(CAST(:ids AS uuid[]))
+                  AND status = 'active'
+                  AND deleted_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > now())
+                """)
+                .bind("ids", ids.stream().map(UUID::toString).toArray(String[]::new))
+                .map((row, metadata) -> UUID.fromString(row.get("id", String.class)))
+                .all();
+    }
+
     public record OwnerUsage(long objectCount, long totalBytes) {}
 
     private static MediaReference map(Readable row) {

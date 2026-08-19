@@ -111,6 +111,17 @@
         @retry-analysis="handleRetryBilibiliAnalysis"
       />
 
+      <section v-if="referenceTarget && currentAnalysis" class="reference-handoff glass-card">
+        <div>
+          <p class="reference-handoff-kicker">发布目标</p>
+          <h2>{{ referenceTarget.label }}</h2>
+          <p>分析摘要会作为可编辑的创作要求带入下一步。</p>
+        </div>
+        <button class="btn-primary" type="button" @click="startFromReference">
+          带入创作
+        </button>
+      </section>
+
       <section v-if="showEmptyState" class="empty-card glass-card">
         <div class="empty-icon" aria-hidden="true">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
@@ -145,6 +156,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'open-view': [view: 'video-production']
+  'start-workflow': [handoff: CreationHandoff]
 }>()
 
 const autoOpenSessionErrorPatterns = [
@@ -260,6 +272,57 @@ const inputPlaceholder = computed(() => inputPlaceholderByPlatform[activePlatfor
 const inputNote = computed(() => inputNoteByPlatform[activePlatform.value])
 const emptyTitle = computed(() => emptyTitleByPlatform[activePlatform.value])
 const emptyCopy = computed(() => emptyCopyByPlatform[activePlatform.value])
+const currentAnalysis = computed(() => activePlatform.value === 'douyin'
+  ? videoAnalysis.value
+  : bilibiliVideoAnalysis.value)
+const currentExtractedTitle = computed(() => activePlatform.value === 'douyin'
+  ? extractedVideo.value?.title
+  : bilibiliExtractedVideo.value?.title)
+const referenceTarget = computed(() => {
+  const handoff = props.creationHandoff
+  if (!handoff || handoff.workflowId !== 'reference-analyze') return null
+  const platform = {
+    xiaohongshu: '小红书', douyin: '抖音', dianping: '大众点评', kuaishou: '快手',
+    'wechat-channels': '视频号', bilibili: 'Bilibili', 'wechat-official': '公众号',
+    zhihu: '知乎', moments: '朋友圈',
+  }[handoff.platformId]
+  return { label: `${platform} · ${handoff.contentFormId === 'video' ? '视频' : '图文'}` }
+})
+
+let handoffRevision = Date.now()
+
+function startFromReference(): void {
+  const previous = props.creationHandoff
+  const analysis = currentAnalysis.value
+  if (!previous || previous.workflowId !== 'reference-analyze' || !analysis) return
+  const sections = [
+    ['脚本与字幕', analysis.videoScript ?? analysis.videoCaptions],
+    ['人物', analysis.charactersDescription],
+    ['场景', analysis.sceneDescription],
+    ['道具', analysis.propsDescription],
+    ['声音', analysis.voiceDescription],
+  ].filter((item): item is [string, string] => Boolean(item[1]))
+  const topic = currentExtractedTitle.value?.trim() || '参考视频内容改编'
+  const instructions = [
+    '参考视频分析摘要：',
+    ...sections.map(([label, content]) => `${label}：${content}`),
+  ].join('\n')
+  const isVideo = previous.contentFormId === 'video'
+  const isReview = previous.platformId === 'dianping' && previous.contentFormId === 'graphic'
+  handoffRevision = Math.max(handoffRevision + 1, Date.now())
+  emit('start-workflow', {
+    ...previous,
+    revision: handoffRevision,
+    workflowId: isVideo ? 'video-script' : isReview ? 'review-copy' : 'longform',
+    targetView: isVideo ? 'video-production' : isReview ? 'image' : 'article',
+    prefill: {
+      ...previous.prefill,
+      topic,
+      instructions,
+      referencePlatform: activePlatform.value,
+    },
+  })
+}
 
 void refreshDouyinSession()
 
@@ -320,9 +383,8 @@ function handleReset(): void {
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'video' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
-  const nextPlatform: SupportedPlatform = handoff.workflowId === 'video-recreation'
-    ? handoff.prefill?.referencePlatform || 'douyin'
-    : handoff.platformId === 'bilibili' ? 'bilibili' : 'douyin'
+  const nextPlatform: SupportedPlatform = handoff.prefill?.referencePlatform
+    ?? (handoff.platformId === 'bilibili' ? 'bilibili' : 'douyin')
   handleSwitchPlatform(nextPlatform)
   taskExecutionContext.value = handoff.workflowId === 'video-recreation'
     && handoff.source.type === 'task'
@@ -356,6 +418,44 @@ watch(() => props.creationHandoff, (handoff) => {
 .view-header-copy {
   display: grid;
   gap: 6px;
+}
+
+.reference-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+}
+
+.reference-handoff-kicker,
+.reference-handoff h2,
+.reference-handoff p {
+  margin: 0;
+}
+
+.reference-handoff-kicker {
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.reference-handoff h2 {
+  margin-top: 3px;
+  font-size: 1rem;
+}
+
+.reference-handoff p:last-child {
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .reference-handoff {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .view-kicker {

@@ -30,6 +30,29 @@ describe('SafetyFindingsPanel', () => {
     await wrapper.get('button').trigger('click')
     await flushPromises()
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ text: '编辑后的文案' })
-    expect(wrapper.emitted('updated')?.[0]).toEqual([fresh])
+    expect(wrapper.emitted('updated')?.[0]).toEqual([{ ...fresh, appliedOverlays: [] }])
+  })
+
+  it('展示重复度、低原创度与平台行业 overlay 文案', () => {
+    const wrapper = mount(SafetyFindingsPanel, {
+      props: {
+        text: '测试文案',
+        report: {
+          findings: [
+            { category: 'duplicate_content', severity: 'medium', match: '相似度 92%', index: 0, advice: '改写', deep: false },
+            { category: 'low_originality', severity: 'low', match: '重复率 40%', index: 0, advice: '减少重复', deep: false },
+            { category: 'platform_overlay', severity: 'medium', match: '平台词', index: 0, advice: '替换', deep: false },
+            { category: 'industry_overlay', severity: 'medium', match: '行业词', index: 0, advice: '替换', deep: false },
+          ],
+          lexiconVersion: 'lexicon-v2',
+          deepCheck: false,
+          appliedOverlays: ['douyin', 'food'],
+        },
+      },
+    })
+    expect(wrapper.findAll('.sfp-chip').map((item) => item.text())).toEqual([
+      '内容重复度', '平台规则', '行业规则', '低原创度',
+    ])
+    expect(wrapper.text()).toContain('已叠加：抖音、餐饮')
   })
 })

@@ -7,6 +7,11 @@ package com.grassland.intelligence.ai;
  *
  * @param content 模型返回的文本内容（非空）
  * @param runId 上游 run id（可空）
+ * @param provider 实际 provider（可空，旧实现兼容）
+ * @param model 实际模型（可空，旧实现兼容）
  */
-public record MultimodalResult(String content, String runId) {
+public record MultimodalResult(String content, String runId, String provider, String model) {
+    public MultimodalResult(String content, String runId) {
+        this(content, runId, null, null);
+    }
 }

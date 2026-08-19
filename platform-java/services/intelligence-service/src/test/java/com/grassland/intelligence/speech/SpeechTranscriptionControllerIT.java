@@ -496,6 +496,92 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
         assertThat(singleString("SELECT status FROM speech_transcription LIMIT 1")).isEqualTo("failed");
     }
 
+    @Test
+    void listReturnsRecentOwnedTranscriptionsWithTextOnlyForCompleted() {
+        UUID mediaId = activeSpeechMedia(OWNER);
+        UUID completedId = UUID.randomUUID();
+        insertRow(completedId, mediaId, OWNER, "completed", "转写完成的文本", Instant.now().minusSeconds(120));
+        UUID processingId = UUID.randomUUID();
+        insertRow(processingId, mediaId, OWNER, "processing", null, Instant.now());
+        insertRow(UUID.randomUUID(), mediaId, OTHER_OWNER, "completed", "别人的转写", Instant.now());
+
+        client().get().uri("/api/speech/transcriptions")
+                .header("X-Grassland-Identity", sign(OWNER, null))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.items.length()").isEqualTo(2)
+                .jsonPath("$.data.items[0].id").isEqualTo(processingId.toString())
+                .jsonPath("$.data.items[1].id").isEqualTo(completedId.toString())
+                .jsonPath("$.data.items[1].transcriptText").isEqualTo("转写完成的文本")
+                .jsonPath("$.data.items[0].transcriptText").doesNotExist()
+                .jsonPath("$.data.items[0].mediaReferenceId").isEqualTo(mediaId.toString())
+                .jsonPath("$.data.items[0].durationMs").isEqualTo(12_000)
+                .jsonPath("$.data.items[0].status").isEqualTo("processing");
+
+        client().get().uri("/api/speech/transcriptions")
+                .header("X-Grassland-Identity", sign(OTHER_OWNER, null))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].transcriptText").isEqualTo("别人的转写");
+    }
+
+    @Test
+    void listCapsAtTwentyMostRecentRows() {
+        UUID mediaId = activeSpeechMedia(OWNER);
+        for (int i = 0; i < 22; i++) {
+            insertRow(UUID.randomUUID(), mediaId, OWNER, "processing", null,
+                    Instant.now().minusSeconds(100 - i));
+        }
+
+        client().get().uri("/api/speech/transcriptions")
+                .header("X-Grassland-Identity", sign(OWNER, null))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(20);
+    }
+
+    @Test
+    void listRequiresAuthentication() {
+        client().get().uri("/api/speech/transcriptions")
+                .exchange().expectStatus().isUnauthorized();
+    }
+
+    private void insertRow(UUID id, UUID mediaId, String owner, String status,
+                           String transcriptText, Instant createdAt) {
+        boolean completed = "completed".equals(status);
+        String sql = completed ? """
+                        INSERT INTO speech_transcription (
+                            id, media_reference_id, owner_account_id, requested_language,
+                            duration_ms, status, transcript_text, provider, model,
+                            ai_run_id, completed_at, created_at, updated_at)
+                        VALUES (
+                            CAST(:id AS uuid), CAST(:mediaId AS uuid), :owner, 'zh-CN',
+                            12000, 'completed', :text, 'sandbox', 'sandbox-speech-v1',
+                            gen_random_uuid(), :createdAt, :createdAt, :createdAt)
+                        """ : """
+                        INSERT INTO speech_transcription (
+                            id, media_reference_id, owner_account_id, requested_language,
+                            duration_ms, status, transcript_text, created_at, updated_at)
+                        VALUES (
+                            CAST(:id AS uuid), CAST(:mediaId AS uuid), :owner, 'zh-CN',
+                            12000, 'processing', NULL, :createdAt, :createdAt)
+                        """;
+        var spec = db.sql(sql)
+                .bind("id", id.toString())
+                .bind("mediaId", mediaId.toString())
+                .bind("owner", owner)
+                .bind("createdAt", createdAt);
+        if (completed) {
+            spec = spec.bind("text", transcriptText);
+        }
+        spec.then().block();
+    }
+
     private WebTestClient.ResponseSpec post(String accountId, UUID mediaId, String language) {
         return client().post().uri("/api/speech/transcriptions")
                 .header("X-Grassland-Identity", sign(accountId, null))

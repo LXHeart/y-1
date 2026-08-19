@@ -35,14 +35,17 @@ public class CreationContextService {
     private final PlatformModelControlPlaneService models;
     private final FrozenVideoGenerationConfigResolver videoGenerationConfig;
     private final FrozenImageGenerationConfigResolver imageGenerationConfig;
+    private final com.grassland.intelligence.contentsafety.ContentSafetyLexicon safetyLexicon;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public CreationContextService(MarketplaceCreationContextClient marketplace,
                                   ContentAssetRepository assets,
                                   CreationContextSnapshotRepository snapshots,
                                   AiProviderKeyRepository keys,
                                   PlatformModelControlPlaneService models,
                                   FrozenVideoGenerationConfigResolver videoGenerationConfig,
-                                  FrozenImageGenerationConfigResolver imageGenerationConfig) {
+                                  FrozenImageGenerationConfigResolver imageGenerationConfig,
+                                  com.grassland.intelligence.contentsafety.ContentSafetyLexicon safetyLexicon) {
         this.marketplace = marketplace;
         this.assets = assets;
         this.snapshots = snapshots;
@@ -50,6 +53,18 @@ public class CreationContextService {
         this.models = models;
         this.videoGenerationConfig = videoGenerationConfig;
         this.imageGenerationConfig = imageGenerationConfig;
+        this.safetyLexicon = safetyLexicon;
+    }
+
+    CreationContextService(MarketplaceCreationContextClient marketplace,
+                           ContentAssetRepository assets,
+                           CreationContextSnapshotRepository snapshots,
+                           AiProviderKeyRepository keys,
+                           PlatformModelControlPlaneService models,
+                           FrozenVideoGenerationConfigResolver videoGenerationConfig,
+                           FrozenImageGenerationConfigResolver imageGenerationConfig) {
+        this(marketplace, assets, snapshots, keys, models, videoGenerationConfig,
+                imageGenerationConfig, null);
     }
 
     public Mono<CreationContextSnapshot> create(String accountId, CreateCreationContextRequest request) {
@@ -120,7 +135,9 @@ public class CreationContextService {
         int taskVersion = taskVersion(task);
         Map<String, Object> rules = PlatformCreationRuleCatalog.snapshot(platform, form);
         // 任务书 #34 / ADR-D16 D2：词库版本随创作上下文快照冻结（规则更新不改变历史生成记录的检查结论）。
-        rules.put("safetyLexiconVersion", com.grassland.intelligence.contentsafety.ContentSafetyLexicon.version());
+        rules.put("safetyLexiconVersion", safetyLexicon == null
+                ? com.grassland.intelligence.contentsafety.ContentSafetyLexicon.version()
+                : safetyLexicon.cachedLexicon().version());
         Map<String, Object> materialSnapshot = new LinkedHashMap<>();
         materialSnapshot.put("items", found.stream().map(CreationContextService::assetSnapshot).toList());
         return aiConfig(accountId)

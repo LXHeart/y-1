@@ -6,6 +6,8 @@ import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.ai.run.TextCompletionClient;
 import com.grassland.intelligence.credits.CreditFeature;
+import com.grassland.intelligence.creationlineage.CreationGeneration;
+import com.grassland.intelligence.creationlineage.CreationGenerationRecorder;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.settings.AnalysisByokResolver;
 import java.time.Duration;
@@ -39,18 +41,21 @@ public class VideoRecreationAdaptationService {
     private final FrozenTextExecutionService frozenText;
     private final AnalysisByokResolver byok;
     private final TextCompletionClient textCompletion;
+    private final CreationGenerationRecorder lineage;
     private final Duration timeout;
     private final String provider;
 
     public VideoRecreationAdaptationService(
             AiCapabilityAdapter ai, VideoRecreationAdaptationResultNormalizer normalizer,
             FrozenTextExecutionService frozenText, AnalysisByokResolver byok,
-            TextCompletionClient textCompletion, Environment environment) {
+            TextCompletionClient textCompletion, CreationGenerationRecorder lineage,
+            Environment environment) {
         this.ai = ai;
         this.normalizer = normalizer;
         this.frozenText = frozenText;
         this.byok = byok;
         this.textCompletion = textCompletion;
+        this.lineage = lineage;
         this.provider = environment.getProperty("ai.video-recreation.provider", "qwen");
         long timeoutMs = environment.getProperty(
                 "ai.video-recreation.timeout-ms", Long.class, DEFAULT_TIMEOUT.toMillis());
@@ -59,11 +64,16 @@ public class VideoRecreationAdaptationService {
 
     /** 独立模式改编：用户 BYOK（features.video）优先，未配置回落平台 Qwen。 */
     public Mono<Map<String, Object>> adapt(VideoRecreationAdaptationRequest request, String accountId) {
+        return adapt(request, accountId, null);
+    }
+
+    public Mono<Map<String, Object>> adapt(
+            VideoRecreationAdaptationRequest request, String accountId, String organizationId) {
         String prompt = VideoRecreationAdaptationPrompts.build(request);
         List<ContentPart> parts = new ArrayList<>(request.referenceImages());
         parts.add(ContentPart.text(prompt));
         if (accountId == null || accountId.isBlank()) {
-            return adaptWithPlatform(parts);
+            return adaptWithPlatform(parts, request, prompt, accountId, organizationId);
         }
         return byok.resolve(accountId, "video")
                 .flatMap(config -> {
@@ -71,26 +81,45 @@ public class VideoRecreationAdaptationService {
                         return Mono.error(new IntelligenceException(400, UNSUPPORTED));
                     }
                     return config.complete()
-                            ? adaptWithByok(parts, config)
-                            : adaptWithPlatform(parts);
+                            ? adaptWithByok(parts, config, request, prompt, accountId, organizationId)
+                            : adaptWithPlatform(parts, request, prompt, accountId, organizationId);
                 })
-                .switchIfEmpty(Mono.defer(() -> adaptWithPlatform(parts)));
+                .switchIfEmpty(Mono.defer(() -> adaptWithPlatform(
+                        parts, request, prompt, accountId, organizationId)));
     }
 
-    private Mono<Map<String, Object>> adaptWithPlatform(List<ContentPart> parts) {
+    private Mono<Map<String, Object>> adaptWithPlatform(
+            List<ContentPart> parts, VideoRecreationAdaptationRequest request, String prompt,
+            String accountId, String organizationId) {
         if (!"qwen".equalsIgnoreCase(provider)) {
             return Mono.error(new IntelligenceException(400, UNSUPPORTED));
         }
-        return ai.completeMultimodal(parts, timeout)
-                .map(content -> normalizer.normalize(content, null));
+        return ai.completeMultimodalMeta(parts, timeout)
+                .flatMap(meta -> {
+                    Map<String, Object> result = normalizer.normalize(meta.content(), meta.runId());
+                    return record(request, prompt, result, accountId, organizationId,
+                            CreationGeneration.Mode.INDEPENDENT, null, null,
+                            CreationGeneration.Resolution.PLATFORM,
+                            firstNonBlank(meta.provider(), provider), meta.model(), null, meta.runId())
+                            .thenReturn(result);
+                });
     }
 
     /** BYOK 改编：OpenAI 兼容多模态调用，D-11 不扣平台额度；baseUrl 执行前强制校验（HTTPS/DNS 固定）。 */
-    private Mono<Map<String, Object>> adaptWithByok(List<ContentPart> parts, AnalysisByokResolver.ByokConfig config) {
+    private Mono<Map<String, Object>> adaptWithByok(
+            List<ContentPart> parts, AnalysisByokResolver.ByokConfig config,
+            VideoRecreationAdaptationRequest request, String prompt,
+            String accountId, String organizationId) {
         return textCompletion.completeMessages(
                         config.baseUrl(), config.bearer(), config.model(),
                         List.of(ChatMessage.user(parts)), MAX_COMPLETION_TOKENS, true)
-                .map(result -> normalizer.normalize(result.content(), null))
+                .flatMap(completion -> {
+                    Map<String, Object> result = normalizer.normalize(completion.content(), null);
+                    return record(request, prompt, result, accountId, organizationId,
+                            CreationGeneration.Mode.INDEPENDENT, null, null,
+                            CreationGeneration.Resolution.BYOK,
+                            config.provider(), config.model(), null, null).thenReturn(result);
+                })
                 .onErrorMap(IllegalArgumentException.class,
                         error -> new IntelligenceException(400, error.getMessage()));
     }
@@ -102,10 +131,39 @@ public class VideoRecreationAdaptationService {
         String prompt = VideoRecreationAdaptationPrompts.build(request);
         List<ContentPart> parts = new ArrayList<>(request.referenceImages());
         parts.add(ContentPart.text(prompt));
-        return frozenText.execute(
+        return frozenText.executeTraced(
                 exchange, binding.snapshot().id(),
                 List.of(binding.promptContext(), ChatMessage.user(parts)),
                 MAX_COMPLETION_TOKENS, CreditFeature.AI_RUN_TEXT,
-                completion -> normalizer.normalize(completion.content(), null));
+                completion -> normalizer.normalize(completion.content(), null))
+                .flatMap(trace -> record(
+                                request, prompt, trace.value(), binding.snapshot().accountId(),
+                                binding.snapshot().organizationId(), CreationGeneration.Mode.TASK,
+                                binding.snapshot().id(), trace.runId(),
+                                trace.byok() ? CreationGeneration.Resolution.BYOK
+                                        : CreationGeneration.Resolution.PLATFORM,
+                                trace.provider(), trace.model(), trace.platformModelVersion(), null)
+                        .thenReturn(trace.value()));
+    }
+
+    private Mono<CreationGeneration> record(
+            VideoRecreationAdaptationRequest request, String prompt, Map<String, Object> result,
+            String accountId, String organizationId, CreationGeneration.Mode mode,
+            java.util.UUID contextSnapshotId, java.util.UUID aiRunId,
+            CreationGeneration.Resolution resolution, String actualProvider, String model,
+            Integer platformModelVersion, String upstreamRunId) {
+        Map<String, Object> input = new java.util.LinkedHashMap<>();
+        input.put("topic", request.extractedContent());
+        input.put("platform", request.platform());
+        input.put("referenceImageCount", request.referenceImages().size());
+        input.put("customInstruction", request.userInstructions());
+        return lineage.record(new CreationGenerationRecorder.Command(
+                CreationGeneration.Kind.VIDEO_ADAPTATION, mode, contextSnapshotId, aiRunId,
+                resolution, actualProvider, model, platformModelVersion, upstreamRunId, prompt,
+                input, List.of(), result, List.of(), accountId, organizationId));
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        return primary == null || primary.isBlank() ? fallback : primary;
     }
 }

@@ -54,7 +54,7 @@ public class MomentsTaskCreationContext {
             context.put("storeBranding", snapshot.storeBrandingSnapshot());
         }
         try {
-            return new Binding(snapshot.id(), ChatMessage.system(
+            return new Binding(snapshot, snapshot.id(), ChatMessage.system(
                     "以下 JSON 是创作开始时冻结的权威朋友圈图文任务上下文。必须遵守任务要求和平台规则，"
                             + "只能使用其中授权的素材信息，不得用当前配置或推测覆盖。\n"
                             + mapper.writeValueAsString(context)
@@ -64,5 +64,9 @@ public class MomentsTaskCreationContext {
         }
     }
 
-    public record Binding(UUID snapshotId, ChatMessage promptContext) {}
+    public record Binding(CreationContextSnapshot snapshot, UUID snapshotId, ChatMessage promptContext) {
+        public Binding(UUID snapshotId, ChatMessage promptContext) {
+            this(null, snapshotId, promptContext);
+        }
+    }
 }

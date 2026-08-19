@@ -11,6 +11,7 @@ const report = {
   }],
   lexiconVersion: 'lexicon-v1',
   deepCheck: false,
+  appliedOverlays: [],
 }
 
 describe('useContentSafety', () => {
@@ -19,7 +20,7 @@ describe('useContentSafety', () => {
     expect(parseSafetyFrame(null)).toBeNull()
     expect(parseSafetyFrame({ safety: report })).toEqual(report)
     expect(parseSafetyFrame({ safety: { findings: 'bad', deepCheck: 1 } })).toEqual({
-      findings: [], lexiconVersion: '', deepCheck: false,
+      findings: [], lexiconVersion: '', deepCheck: false, appliedOverlays: [],
     })
   })
 

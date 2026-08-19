@@ -140,7 +140,8 @@ public class ArticleController {
                     .onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))));
             // 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
             return sseEntity(safety.appendSafetyFrame(exchange, payloads,
-                    com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor()),
+                    com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+                    body.platform(), null, null),
                     exchange);
         });
     }
@@ -155,12 +156,21 @@ public class ArticleController {
                 .flatMap(caller -> creationContexts.bind(snapshotId, caller.accountId(), platform))
                 .flatMap(binding -> frozenText.execute(
                         exchange, snapshotId, messages.apply(binding), maxTokens, null,
-                        completion -> completion.content()))
-                .map(content -> {
+                        completion -> completion.content())
+                        .map(content -> Map.entry(binding, content)))
+                .map(bound -> {
+                    ArticleCreationContext.Binding binding = bound.getKey();
+                    String content = bound.getValue();
                     Flux<String> frames = Flux.just(frame(Map.of("content", content)));
                     if (appendSafety) {
+                        var snapshot = binding.snapshot();
                         frames = safety.appendSafetyFrame(exchange, frames,
-                                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor());
+                                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+                                snapshot.platformId(),
+                                com.grassland.intelligence.contentsafety.ContentSafetyService
+                                        .industryFromSnapshot(snapshot),
+                                com.grassland.intelligence.contentsafety.ContentSafetyService
+                                        .generationContext(snapshot));
                     }
                     return sseEntity(frames, exchange);
                 })

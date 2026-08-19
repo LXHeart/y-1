@@ -2,9 +2,19 @@ package com.grassland.intelligence.videorecreation;
 
 import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
+import com.grassland.intelligence.articleimage.FrozenImageGenerationConfigResolver;
+import com.grassland.intelligence.creationlineage.CreationGeneration;
+import com.grassland.intelligence.creationlineage.CreationGenerationRecorder;
 import com.grassland.intelligence.media.MediaOwner;
 import com.grassland.intelligence.media.MediaPurpose;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -23,36 +33,163 @@ import reactor.core.publisher.Mono;
 public class VideoRecreationImageService {
 
     private final ArticleImageService articleImages;
+    private final CreationGenerationRecorder lineage;
+    private final FrozenImageGenerationConfigResolver imageConfig;
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
-    public VideoRecreationImageService(ArticleImageService articleImages) {
+    @Autowired
+    public VideoRecreationImageService(
+            ArticleImageService articleImages,
+            CreationGenerationRecorder lineage,
+            FrozenImageGenerationConfigResolver imageConfig) {
         this.articleImages = articleImages;
+        this.lineage = lineage;
+        this.imageConfig = imageConfig;
+    }
+
+    /** Unit-test compatibility; production wiring always uses the traced constructor. */
+    VideoRecreationImageService(ArticleImageService articleImages) {
+        this.articleImages = articleImages;
+        this.lineage = null;
+        this.imageConfig = null;
     }
 
     public Mono<GeneratedImageResponse> generateAsset(
             Asset asset, String visualStyle, String size, MediaOwner owner) {
         String prompt = VideoRecreationPrompts.buildAssetImagePrompt(asset, visualStyle);
-        return articleImages.generate(
-                new ArticleImageService.GenerateCommand(prompt, size, List.of()), owner, MediaPurpose.VIDEO_ASSET);
+        return generate(prompt, size, owner)
+                .flatMap(response -> record(
+                                CreationGeneration.Kind.ASSET_IMAGE, List.of(prompt),
+                                assetSummary(asset, visualStyle, size), List.of(response), owner)
+                        .thenReturn(response));
     }
 
     public Mono<List<GeneratedImageResponse>> generateAllAssets(
             List<Asset> assets, String visualStyle, String size, MediaOwner owner) {
-        return Flux.fromIterable(assets)
-                .concatMap(asset -> generateAsset(asset, visualStyle, size, owner))
-                .collectList();
+        List<String> prompts = assets.stream()
+                .map(asset -> VideoRecreationPrompts.buildAssetImagePrompt(asset, visualStyle)).toList();
+        return Flux.fromIterable(prompts)
+                .concatMap(prompt -> generate(prompt, size, owner))
+                .collectList()
+                .flatMap(responses -> record(
+                                CreationGeneration.Kind.ASSET_IMAGE, prompts,
+                                assetBatchSummary(assets, visualStyle, size), responses, owner)
+                        .thenReturn(responses));
     }
 
     public Mono<GeneratedImageResponse> generateScene(
             VideoScene scene, String overallStyle, String size, MediaOwner owner) {
         String prompt = VideoRecreationPrompts.buildSceneImagePrompt(scene, overallStyle);
-        return articleImages.generate(
-                new ArticleImageService.GenerateCommand(prompt, size, List.of()), owner, MediaPurpose.VIDEO_ASSET);
+        return generate(prompt, size, owner)
+                .flatMap(response -> record(
+                                CreationGeneration.Kind.SCENE_IMAGE, List.of(prompt),
+                                sceneSummary(scene, overallStyle, size), List.of(response), owner)
+                        .thenReturn(response));
     }
 
     public Mono<List<GeneratedImageResponse>> generateAllScenes(
             List<VideoScene> scenes, String overallStyle, String size, MediaOwner owner) {
-        return Flux.fromIterable(scenes)
-                .concatMap(scene -> generateScene(scene, overallStyle, size, owner))
-                .collectList();
+        List<String> prompts = scenes.stream()
+                .map(scene -> VideoRecreationPrompts.buildSceneImagePrompt(scene, overallStyle)).toList();
+        return Flux.fromIterable(prompts)
+                .concatMap(prompt -> generate(prompt, size, owner))
+                .collectList()
+                .flatMap(responses -> record(
+                                CreationGeneration.Kind.SCENE_IMAGE, prompts,
+                                sceneBatchSummary(scenes, overallStyle, size), responses, owner)
+                        .thenReturn(responses));
     }
+
+    private Mono<GeneratedImageResponse> generate(String prompt, String size, MediaOwner owner) {
+        return articleImages.generate(
+                new ArticleImageService.GenerateCommand(prompt, size, List.of()),
+                owner, MediaPurpose.VIDEO_ASSET);
+    }
+
+    private Mono<CreationGeneration> record(
+            CreationGeneration.Kind kind, List<String> prompts, Map<String, Object> input,
+            List<GeneratedImageResponse> responses, MediaOwner owner) {
+        if (lineage == null) return Mono.empty();
+        FrozenImageGenerationConfigResolver.Config config = imageConfig.current();
+        ImageResult result = imageResult(responses, String.valueOf(input.get("size")));
+        return lineage.record(new CreationGenerationRecorder.Command(
+                kind, CreationGeneration.Mode.INDEPENDENT, null, null,
+                CreationGeneration.Resolution.PLATFORM, config.provider(), config.model(),
+                config.platformModelVersion(), null, String.join("\n\n---\n\n", prompts),
+                input, List.of(), Map.of("images", result.images()), result.mediaIds(),
+                owner.accountId(), owner.organizationId()));
+    }
+
+    private Map<String, Object> assetSummary(Asset asset, String visualStyle, String size) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("assetType", assetType(asset));
+        result.put("visualStyle", visualStyle);
+        result.put("size", size);
+        result.put("asset", mapper.convertValue(asset, new TypeReference<Map<String, Object>>() {}));
+        return result;
+    }
+
+    private Map<String, Object> assetBatchSummary(List<Asset> assets, String visualStyle, String size) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("assetType", assets.isEmpty() ? null : assetType(assets.getFirst()));
+        result.put("visualStyle", visualStyle);
+        result.put("size", size);
+        result.put("assets", assets.stream().map(asset -> mapper.convertValue(
+                asset, new TypeReference<Map<String, Object>>() {})).toList());
+        return result;
+    }
+
+    private Map<String, Object> sceneSummary(VideoScene scene, String overallStyle, String size) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("overallStyle", overallStyle);
+        result.put("size", size);
+        result.put("scene", mapper.convertValue(scene, new TypeReference<Map<String, Object>>() {}));
+        return result;
+    }
+
+    private Map<String, Object> sceneBatchSummary(List<VideoScene> scenes, String overallStyle, String size) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("overallStyle", overallStyle);
+        result.put("size", size);
+        result.put("scenes", scenes.stream().map(scene -> mapper.convertValue(
+                scene, new TypeReference<Map<String, Object>>() {})).toList());
+        return result;
+    }
+
+    static ImageResult imageResult(List<GeneratedImageResponse> responses, String size) {
+        List<Map<String, Object>> images = new ArrayList<>();
+        List<UUID> ids = new ArrayList<>();
+        for (GeneratedImageResponse response : responses) {
+            UUID mediaId = mediaId(response.imageUrl());
+            if (mediaId != null) ids.add(mediaId);
+            Map<String, Object> image = new LinkedHashMap<>();
+            image.put("mediaId", mediaId);
+            image.put("imageUrl", response.imageUrl());
+            image.put("size", size);
+            image.put("revisedPrompt", response.revisedPrompt());
+            images.add(image);
+        }
+        return new ImageResult(List.copyOf(images), List.copyOf(ids));
+    }
+
+    private static UUID mediaId(String imageUrl) {
+        if (imageUrl == null) return null;
+        int slash = imageUrl.lastIndexOf('/');
+        String value = slash >= 0 ? imageUrl.substring(slash + 1) : imageUrl;
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+    }
+
+    private static String assetType(Asset asset) {
+        return switch (asset) {
+            case Asset.CharacterAsset ignored -> "character-three-view";
+            case Asset.SceneAsset ignored -> "scene";
+            case Asset.PropAsset ignored -> "prop";
+        };
+    }
+
+    record ImageResult(List<Map<String, Object>> images, List<UUID> mediaIds) {}
 }

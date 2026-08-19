@@ -276,6 +276,29 @@ export interface UpdateContentAssetInput {
   validUntil?: string
 }
 
+/** 公共素材 AI 批量生产类型（任务书 #45）。 */
+export type PublicAssetGenerationKind = 'icon' | 'decoration' | 'background' | 'mood'
+
+export interface PublicAssetBatchGenerateInput {
+  kind: PublicAssetGenerationKind
+  theme: string
+  style?: string
+  count: number
+  validUntil: string
+}
+
+export interface PublicAssetBatchGenerateItem {
+  index: number
+  ok: boolean
+  assetId: string | null
+  errorReason: string | null
+}
+
+export interface PublicAssetBatchGenerateResult {
+  items: PublicAssetBatchGenerateItem[]
+  okCount: number
+}
+
 /** 附件下载 URL（marketplace 经服务断言中转 intelligence 签发）。⚠️ `expiresAt` 是**资产 TTL 而非 URL 过期时间**。 */
 export interface AttachmentDownload {
   downloadUrl: string

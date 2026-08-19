@@ -173,9 +173,10 @@ public class VideoProductionController {
                                     VideoScriptPrompts.system(body.videoStyle(), body.industryType(), body.targetPlatform()),
                                     binding.promptContext(), VideoScriptPrompts.user(body)),
                             2048, CreditFeature.VIDEO_PRODUCTION_SCRIPT,
-                            completion -> completion.content()))
-                    .map(content -> sseEntity(withSafety(exchange,
-                            Flux.just(frame(Map.of("content", content)))), exchange))
+                            completion -> completion.content())
+                            .map(content -> sseEntity(withSafety(exchange,
+                                    Flux.just(frame(Map.of("content", content))), binding.snapshot(),
+                                    body.targetPlatform(), body.industryType()), exchange)))
                     .onErrorMap(error -> error instanceof com.grassland.intelligence.security.IntelligenceException
                             ? error : new com.grassland.intelligence.security.IntelligenceException(502, ERROR_MESSAGE));
         }
@@ -189,7 +190,8 @@ public class VideoProductionController {
                             // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
                             .onErrorResume(error -> credits.refund(charge, "视频脚本生成失败自动退回")
                                     .thenMany(Flux.just(frame(Map.of("error", ERROR_MESSAGE)))));
-                    Flux<DataBuffer> sseBody = Sse.stream(withSafety(exchange, payloads),
+                    Flux<DataBuffer> sseBody = Sse.stream(withSafety(
+                                    exchange, payloads, null, body.targetPlatform(), body.industryType()),
                             exchange.getResponse().bufferFactory());
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.TEXT_EVENT_STREAM);
@@ -200,9 +202,17 @@ public class VideoProductionController {
     }
 
     /** 任务书 #34 D8：视频脚本流尾追加安全检查帧（脚本=长文本，L2 已配置时深检）。 */
-    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+    private Flux<String> withSafety(
+            ServerWebExchange exchange, Flux<String> frames,
+            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot,
+            String requestedPlatform, String requestedIndustry) {
         return safety.appendSafetyFrame(exchange, frames,
-                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor());
+                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+                snapshot == null ? requestedPlatform : snapshot.platformId(),
+                snapshot == null ? requestedIndustry
+                        : com.grassland.intelligence.contentsafety.ContentSafetyService
+                                .industryFromSnapshot(snapshot),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
     }
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(

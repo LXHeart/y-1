@@ -353,7 +353,10 @@ watch(platform, (value) => {
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
-  setTopic(handoff.prefill?.topic || '')
+  const initialTopic = handoff.source.type === 'reference'
+    ? [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n\n')
+    : handoff.prefill?.topic || ''
+  setTopic(initialTopic)
   bindCreationContext(
     handoff.source.type === 'task', handoff.contextSnapshotId, handoff.platformId,
   )

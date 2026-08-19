@@ -9,14 +9,21 @@ import java.util.List;
  * @param lexiconVersion 词库版本（随快照冻结；前端展示「按 lexicon-v1 检查」）
  * @param deepCheck      本次是否跑了 LLM 深检（false = 未配置模型或短文本仅 L1，非错误态）
  */
-public record SafetyReport(List<Finding> findings, String lexiconVersion, boolean deepCheck) {
+public record SafetyReport(
+        List<Finding> findings, String lexiconVersion, boolean deepCheck,
+        List<String> appliedOverlays) {
 
     public SafetyReport {
         findings = findings == null ? List.of() : List.copyOf(findings);
+        appliedOverlays = appliedOverlays == null ? List.of() : List.copyOf(appliedOverlays);
+    }
+
+    public SafetyReport(List<Finding> findings, String lexiconVersion, boolean deepCheck) {
+        this(findings, lexiconVersion, deepCheck, List.of());
     }
 
     public static SafetyReport shallow(List<Finding> findings) {
-        return new SafetyReport(findings, ContentSafetyLexicon.version(), false);
+        return new SafetyReport(findings, ContentSafetyLexicon.version(), false, List.of());
     }
 
     /** 无发现 + 未深检（空文本/短文本）。 */

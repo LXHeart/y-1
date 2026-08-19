@@ -55,6 +55,7 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
             seedContentSafety();
             seedSandboxCapability("voice", "sandbox-speech-v1");
             seedSandboxCapability("retrieval", "sandbox-embedding-v1");
+            seedSandboxCapability("image_edit", "sandbox-matting-v1");
         } catch (Exception e) {
             // best-effort：seed 失败（启动期 DB 不可达 / 测试用占位 DB）不阻断上下文启动；
             // admin 可经 CRUD 手动配置。生产 DB 真不可达时 Flyway 等会更早失败。

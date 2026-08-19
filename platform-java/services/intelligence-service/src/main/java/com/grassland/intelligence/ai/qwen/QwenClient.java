@@ -185,7 +185,9 @@ public class QwenClient implements AiCapabilityAdapter {
                 throw new IntelligenceException(502, "AI 上游返回了空内容");
             }
             String runId = root.path("id").asText(null);
-            return new MultimodalResult(content, (runId == null || runId.isBlank()) ? null : runId);
+            return new MultimodalResult(
+                    content, (runId == null || runId.isBlank()) ? null : runId,
+                    "qwen", config.model());
         } catch (IntelligenceException error) {
             throw error;
         } catch (Exception error) {

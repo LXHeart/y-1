@@ -149,6 +149,10 @@ edge:
     - path: /api/content-safety
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE:true}
+    # 内容安全词库在线运营（任务书 #45），独立 flag 保持 fail-closed。
+    - path: /api/admin/content-safety
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_CONTENT_SAFETY_INTELLIGENCE:true}
     # 游客有限体验（任务书 #36 / ADR-D14）：未登录可用的 AI 试用窄面（3 项白名单 + gtid 额度 + IP 限流，
     # 智能化侧匿名放行）。生产可经 flag 整体关闭；fail-closed：不注册即 404。
     - path: /api/guest-trial
@@ -211,6 +215,10 @@ edge:
     - path: /api/creation-drafts
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE:true}
+    # 视频改编与复刻图片的不可变生成追踪（任务书 #44）。
+    - path: /api/creation-generations
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_GENERATIONS_INTELLIGENCE:true}
     # P1 任务创作上下文快照：开始创作时由 intelligence 冻结任务/规则/素材/AI 配置。
     - path: /api/creation-contexts
       upstream: intelligence
@@ -225,6 +233,14 @@ edge:
       path: /api/speech
       upstream: intelligence
       enabled: ${EDGE_ROUTE_SPEECH_INTELLIGENCE:true}
+    # 图片编辑台抠图（任务书 #43）→ intelligence。/api/image-studio/matting + /matting-results/{id}。
+    - path: /api/image-studio
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_IMAGE_STUDIO_INTELLIGENCE:true}
+    # 视频工坊 BGM 建议等（任务书 #43）→ intelligence。/api/video-studio/bgm-advice 等。
+    - path: /api/video-studio
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_STUDIO_INTELLIGENCE:true}
     # 平台 admin 用户管理 + 积分调整 → identity。
     # 精确路径，不抢同前缀的 permission-requests/kyb-requests/ai（它们排在前面，更具体优先）。
     # 同一 flag 绑定两者（同属一次迁移，不应分开切流）。

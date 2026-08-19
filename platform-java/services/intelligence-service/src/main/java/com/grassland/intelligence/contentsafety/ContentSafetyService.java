@@ -24,23 +24,55 @@ public class ContentSafetyService {
             new com.fasterxml.jackson.databind.ObjectMapper();
 
     private final ContentSafetyAiChecker aiChecker;
+    private final ContentSafetyChecker checker;
+    private final OriginalityChecker originality;
+    private final com.grassland.intelligence.security.IntelligenceCallerResolver callers;
 
-    public ContentSafetyService(ContentSafetyAiChecker aiChecker) {
+    public ContentSafetyService(
+            ContentSafetyAiChecker aiChecker,
+            ContentSafetyChecker checker,
+            OriginalityChecker originality,
+            com.grassland.intelligence.security.IntelligenceCallerResolver callers) {
         this.aiChecker = aiChecker;
+        this.checker = checker;
+        this.originality = originality;
+        this.callers = callers;
     }
 
     /** 完整检查（生成流内联与手动复查共用）。永不 error。 */
     public Mono<SafetyReport> check(ServerWebExchange exchange, String text) {
-        List<Finding> shallow = ContentSafetyChecker.check(text);
-        return aiChecker.deepCheck(exchange, text)
-                .map(deep -> new SafetyReport(
-                        merge(shallow, deep), ContentSafetyLexicon.version(), true))
-                .defaultIfEmpty(SafetyReport.shallow(shallow));
+        return check(exchange, text, null, null, null);
+    }
+
+    public Mono<SafetyReport> check(
+            ServerWebExchange exchange, String text, String platform, String industry,
+            OriginalityChecker.Context context) {
+        return checker.checkActive(text, platform, industry)
+                .onErrorResume(error -> Mono.just(checker.checkCached(text, platform, industry)))
+                .flatMap(shallow -> aiChecker.deepCheck(exchange, text)
+                        .map(deep -> new SafetyReport(
+                                merge(shallow.findings(), deep), shallow.lexiconVersion(), true,
+                                shallow.appliedOverlays()))
+                        .defaultIfEmpty(new SafetyReport(
+                                shallow.findings(), shallow.lexiconVersion(), false,
+                                shallow.appliedOverlays())))
+                .flatMap(report -> originality(exchange, text, platform, context)
+                        .map(findings -> new SafetyReport(
+                                merge(report.findings(), findings), report.lexiconVersion(),
+                                report.deepCheck(), report.appliedOverlays()))
+                        .defaultIfEmpty(report))
+                .onErrorResume(error -> Mono.just(checkShallow(text, platform, industry)));
     }
 
     /** 仅 L1（不需要 exchange/模型的调用方——短文本路径等价于 check 的降级形态）。 */
     public SafetyReport checkShallow(String text) {
-        return SafetyReport.shallow(ContentSafetyChecker.check(text));
+        return checkShallow(text, null, null);
+    }
+
+    public SafetyReport checkShallow(String text, String platform, String industry) {
+        ContentSafetyChecker.CheckResult result = checker.checkCached(text, platform, industry);
+        return new SafetyReport(
+                result.findings(), result.lexiconVersion(), false, result.appliedOverlays());
     }
 
     /**
@@ -50,6 +82,12 @@ public class ContentSafetyService {
      */
     public Flux<String> appendSafetyFrame(
             ServerWebExchange exchange, Flux<String> frames, Function<String, String> textExtractor) {
+        return appendSafetyFrame(exchange, frames, textExtractor, null, null, null);
+    }
+
+    public Flux<String> appendSafetyFrame(
+            ServerWebExchange exchange, Flux<String> frames, Function<String, String> textExtractor,
+            String platform, String industry, OriginalityChecker.Context context) {
         StringBuilder accumulated = new StringBuilder();
         return frames
                 .doOnNext(frame -> {
@@ -58,8 +96,27 @@ public class ContentSafetyService {
                         accumulated.append(text);
                     }
                 })
-                .concatWith(Mono.defer(() -> safetyFrame(exchange, accumulated.toString())
+                .concatWith(Mono.defer(() -> check(
+                                exchange, accumulated.toString(), platform, industry, context)
+                        .map(this::safetyFrameJson)
                         .onErrorResume(error -> Mono.just(safetyFrameJson(SafetyReport.emptyShallow())))));
+    }
+
+    public static OriginalityChecker.Context generationContext(
+            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot) {
+        if (snapshot == null) return null;
+        return new OriginalityChecker.Context(
+                snapshot.accountId(), snapshot.taskId(), snapshot.applicationId(),
+                snapshot.platformId(), snapshot.contentFormId(), "generation");
+    }
+
+    public static String industryFromSnapshot(
+            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot) {
+        if (snapshot == null || snapshot.storeBrandingSnapshot() == null) return null;
+        Object raw = snapshot.storeBrandingSnapshot().get("categories");
+        if (!(raw instanceof List<?> values) || values.isEmpty() || values.getFirst() == null) return null;
+        String value = String.valueOf(values.getFirst()).trim();
+        return value.isBlank() ? null : value;
     }
 
     /** 单帧 JSON（手动拼接安全字面量避免双重编码；findings 数组由序列化产出）。 */
@@ -73,6 +130,7 @@ public class ContentSafetyService {
         safety.put("findings", report.findings().stream().map(ContentSafetyService::findingBody).toList());
         safety.put("lexiconVersion", report.lexiconVersion());
         safety.put("deepCheck", report.deepCheck());
+        safety.put("appliedOverlays", report.appliedOverlays());
         return safety;
     }
 
@@ -84,7 +142,7 @@ public class ContentSafetyService {
             return mapper.writeValueAsString(envelope);
         } catch (Exception error) {
             return "{\"type\":\"safety\",\"safety\":{\"findings\":[],\"lexiconVersion\":\"unknown\","
-                    + "\"deepCheck\":false}}";
+                    + "\"deepCheck\":false,\"appliedOverlays\":[]}}";
         }
     }
 
@@ -144,5 +202,14 @@ public class ContentSafetyService {
             }
         }
         return List.copyOf(merged);
+    }
+
+    private Mono<List<Finding>> originality(
+            ServerWebExchange exchange, String text, String platform,
+            OriginalityChecker.Context supplied) {
+        if (supplied != null) return originality.checkAndRecord(text, supplied);
+        return callers.resolveOptional(exchange.getRequest())
+                .flatMap(caller -> originality.checkAndRecord(text, new OriginalityChecker.Context(
+                        caller.accountId(), null, null, platform, null, "generation")));
     }
 }

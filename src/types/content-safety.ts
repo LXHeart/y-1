@@ -13,6 +13,7 @@ export interface SafetyReport {
   findings: SafetyFinding[]
   lexiconVersion: string
   deepCheck: boolean
+  appliedOverlays?: string[]
 }
 
 export interface ContentSafetyStreamFrame extends Record<string, unknown> {

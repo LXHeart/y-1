@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import VideoAnalysisView from '../views/video/VideoAnalysisView.vue'
+import type { AiContentFormId, AiPlatformId, CreationHandoff } from '../types/ai-creation'
 
 /**
  * VideoAnalysisView 特征测试。
@@ -66,5 +67,79 @@ describe('VideoAnalysisView 重定位文案', () => {
     expect(tabs.map((tab) => tab.text())).toEqual(['抖音', 'B 站'])
     expect(wrapper.find('#video-input').exists()).toBe(true)
     expect(wrapper.findAll('button').some((btn) => btn.text().includes('提取视频'))).toBe(true)
+  })
+
+  test('分析结果按视频、长文与点评图文分发完整 handoff', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/douyin/session') {
+        return jsonResponse({ success: true, data: { status: 'missing', hasPersistedSession: false } })
+      }
+      if (url === '/api/douyin/extract-video') {
+        return jsonResponse({ success: true, data: {
+          sourceUrl: 'https://v.douyin.com/example', proxyVideoUrl: '/api/douyin/proxy/example',
+          downloadVideoUrl: '/api/douyin/download/example', downloadAudioUrl: '/api/douyin/audio/example',
+          usedSession: false, fetchStage: 'page_json', title: '夏日饮品实拍',
+        } })
+      }
+      if (url === '/api/douyin/analyze-video') {
+        return jsonResponse({ success: true, data: {
+          video_script: '开场展示饮品，随后介绍口感',
+          characters_description: '年轻顾客',
+          scene_description: '明亮门店',
+        } })
+      }
+      if (url.startsWith('/api/creation-generations')) {
+        return jsonResponse({ success: true, data: { items: [] } })
+      }
+      return jsonResponse({ success: true, data: null })
+    }))
+
+    const cases: Array<{
+      platformId: AiPlatformId
+      contentFormId: AiContentFormId
+      workflowId: string
+      targetView: string
+    }> = [
+      { platformId: 'xiaohongshu', contentFormId: 'video', workflowId: 'video-script', targetView: 'video-production' },
+      { platformId: 'zhihu', contentFormId: 'graphic', workflowId: 'longform', targetView: 'article' },
+      { platformId: 'dianping', contentFormId: 'graphic', workflowId: 'review-copy', targetView: 'image' },
+    ]
+
+    for (const item of cases) {
+      const handoff: CreationHandoff = {
+        revision: 1,
+        platformId: item.platformId,
+        contentFormId: item.contentFormId,
+        source: { type: 'reference', sourceUrl: 'https://v.douyin.com/example' },
+        workflowId: 'reference-analyze',
+        targetView: 'video',
+        prefill: { referencePlatform: 'douyin' },
+      }
+      const wrapper = mount(VideoAnalysisView, { props: { creationHandoff: handoff } })
+      await flushPromises()
+      await wrapper.get('button.btn-primary').trigger('click')
+      await flushPromises()
+      const analyze = wrapper.findAll('button').find((button) => button.text() === '分析视频')
+      expect(analyze).toBeDefined()
+      await analyze!.trigger('click')
+      await flushPromises()
+      const continueButton = wrapper.findAll('button').find((button) => button.text() === '带入创作')
+      expect(continueButton).toBeDefined()
+      await continueButton!.trigger('click')
+      const emitted = wrapper.emitted('start-workflow')?.[0]?.[0] as CreationHandoff
+      expect(emitted).toMatchObject({
+        platformId: item.platformId,
+        contentFormId: item.contentFormId,
+        workflowId: item.workflowId,
+        targetView: item.targetView,
+        source: { type: 'reference', sourceUrl: 'https://v.douyin.com/example' },
+        prefill: {
+          topic: '夏日饮品实拍',
+          referencePlatform: 'douyin',
+        },
+      })
+      expect(emitted.prefill?.instructions).toContain('脚本与字幕：开场展示饮品')
+      wrapper.unmount()
+    }
   })
 })

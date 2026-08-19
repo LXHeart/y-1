@@ -98,15 +98,80 @@
     <div v-else-if="hasAttempted" class="analysis-status analysis-status-empty">
       <p>点击"开始改编"后输入改编要求，或不填任何提示直接改编。</p>
     </div>
+
+    <section class="generation-history" aria-labelledby="adaptation-history-heading">
+      <div class="history-heading-row">
+        <div>
+          <p class="analysis-kicker">版本记录</p>
+          <h4 id="adaptation-history-heading" class="history-heading">历史改编</h4>
+        </div>
+        <button type="button" class="btn-secondary btn-sm" :disabled="historyLoading" @click="loadHistory(true)">
+          刷新
+        </button>
+      </div>
+
+      <p v-if="historyError" class="history-message history-error">{{ historyError }}</p>
+      <p v-else-if="historyLoading && historyItems.length === 0" class="history-message">正在加载历史改编…</p>
+      <p v-else-if="historyItems.length === 0" class="history-message">还没有历史改编。</p>
+
+      <div v-else class="history-list">
+        <article v-for="item in historyItems" :key="item.id" class="history-row">
+          <button type="button" class="history-row-button" @click="toggleHistory(item.id)">
+            <span class="history-row-main">
+              <strong>{{ item.resultTitle }}</strong>
+              <small>{{ formatGenerationTime(item.createdAt) }} · {{ item.provider }}{{ item.model ? ` / ${item.model}` : '' }}</small>
+            </span>
+            <span class="history-mode">{{ item.mode === 'task' ? '任务' : '独立' }}</span>
+          </button>
+
+          <div v-if="expandedHistoryId === item.id" class="history-detail">
+            <p v-if="detailLoading" class="history-message">正在加载版本详情…</p>
+            <p v-else-if="detailError" class="history-message history-error">{{ detailError }}</p>
+            <template v-else-if="historyDetail">
+              <div class="history-actions">
+                <button type="button" class="btn-primary btn-sm" @click="refillHistoryInput">回填输入</button>
+                <span class="history-model">{{ historyDetail.resolution === 'byok' ? 'BYOK' : '平台' }} · {{ historyDetail.provider }}{{ historyDetail.model ? ` / ${historyDetail.model}` : '' }}</span>
+              </div>
+              <div class="analysis-grid">
+                <article v-for="card in historyCards" :key="card.key" class="analysis-card">
+                  <p class="analysis-card-label">{{ card.label }}</p>
+                  <p class="analysis-card-copy">{{ card.content }}</p>
+                </article>
+              </div>
+              <details class="history-prompt">
+                <summary>查看提示词</summary>
+                <pre>{{ historyDetail.promptText }}</pre>
+              </details>
+              <details class="history-prompt">
+                <summary>输入摘要</summary>
+                <pre>{{ JSON.stringify(historyDetail.inputSummary, null, 2) }}</pre>
+              </details>
+            </template>
+          </div>
+        </article>
+      </div>
+
+      <button
+        v-if="historyNextBefore"
+        type="button"
+        class="btn-secondary btn-sm history-more"
+        :disabled="historyLoading"
+        @click="loadHistory(false)"
+      >
+        加载更多
+      </button>
+    </section>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useVideoContentAdaptation } from '../composables/useVideoContentAdaptation'
+import { getCreationGeneration, useCreationGenerations } from '../composables/useCreationGenerations'
 import { buildVideoAdaptationDisplayCards } from '../types/video-recreation'
-import type { VideoAnalysisResult } from '../types/video-recreation'
+import type { VideoAdaptationResult, VideoAnalysisResult } from '../types/video-recreation'
 import type { VideoTaskExecutionContext } from '../types/video-recreation'
+import type { CreationGenerationDetail } from '../types/grassland/creation-generation'
 
 const props = defineProps<{
   platform: 'douyin' | 'bilibili'
@@ -125,10 +190,24 @@ const selectedImages = ref<File[]>([])
 const previewImages = ref<Array<{ url: string; name: string }>>([])
 
 const { result, loading, error, adaptContent, reset } = useVideoContentAdaptation()
+const {
+  items: historyItems,
+  nextBefore: historyNextBefore,
+  loading: historyLoading,
+  error: historyError,
+  load: loadHistory,
+} = useCreationGenerations('video_adaptation')
+const expandedHistoryId = ref('')
+const historyDetail = ref<CreationGenerationDetail | null>(null)
+const detailLoading = ref(false)
+const detailError = ref('')
 
 const hasAttempted = computed(() => Boolean(result.value || error.value))
 
 const adaptationCards = computed(() => buildVideoAdaptationDisplayCards(result.value))
+const historyCards = computed(() => buildVideoAdaptationDisplayCards(
+  historyDetail.value?.result as unknown as VideoAdaptationResult | null,
+))
 
 const adaptationMeta = computed(() => {
   if (!result.value) {
@@ -232,7 +311,7 @@ async function handleAdapt(): Promise<void> {
 
   showForm.value = false
 
-  await adaptContent(
+  const adapted = await adaptContent(
     props.platform,
     props.proxyVideoUrl,
     {
@@ -252,6 +331,46 @@ async function handleAdapt(): Promise<void> {
     selectedImages.value.length > 0 ? selectedImages.value : undefined,
     props.taskContext,
   )
+  if (adapted) await loadHistory(true)
+}
+
+async function toggleHistory(id: string): Promise<void> {
+  if (expandedHistoryId.value === id) {
+    expandedHistoryId.value = ''
+    historyDetail.value = null
+    return
+  }
+  expandedHistoryId.value = id
+  historyDetail.value = null
+  detailLoading.value = true
+  detailError.value = ''
+  try {
+    historyDetail.value = await getCreationGeneration(id)
+  } catch (cause) {
+    detailError.value = cause instanceof Error ? cause.message : '版本详情加载失败'
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function refillHistoryInput(): void {
+  const custom = historyDetail.value?.inputSummary.customInstruction
+  if (typeof custom !== 'object' || custom === null || Array.isArray(custom)) return
+  const instructions = custom as Record<string, unknown>
+  scriptInstruction.value = readText(instructions.scriptInstruction)
+  characterInstruction.value = readText(instructions.characterInstruction)
+  scenePropsInstruction.value = readText(instructions.scenePropsInstruction)
+  voiceInstruction.value = readText(instructions.voiceInstruction)
+  showForm.value = true
+}
+
+function readText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function formatGenerationTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
 async function handleCopy(text: string, key: string): Promise<void> {
@@ -267,6 +386,8 @@ async function handleCopy(text: string, key: string): Promise<void> {
     copiedKey.value = ''
   }
 }
+
+onMounted(() => loadHistory(true))
 </script>
 
 <style scoped>
@@ -338,6 +459,122 @@ async function handleCopy(text: string, key: string): Promise<void> {
 .form-actions {
   display: flex;
   gap: 10px;
+}
+
+.generation-history {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.history-heading-row,
+.history-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-heading {
+  margin: 2px 0 0;
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.history-list {
+  display: grid;
+}
+
+.history-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.history-row:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.history-row-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-row-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.history-row-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-row-main small,
+.history-model,
+.history-message {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.history-mode {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.history-detail {
+  display: grid;
+  gap: 12px;
+  padding: 2px 0 16px;
+}
+
+.history-prompt {
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+}
+
+.history-prompt summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.history-prompt pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 10px 0 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--surface-page);
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.history-error {
+  color: var(--color-danger, #b42318);
+}
+
+.history-more {
+  justify-self: center;
 }
 
 .image-upload-area {

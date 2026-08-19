@@ -44,6 +44,27 @@ public class FrozenTextExecutionService {
                         : Mono.error(deniedException(result.denialReason())));
     }
 
+    /** Same execution contract as {@link #execute}, with immutable run/provider metadata for lineage. */
+    public <T> Mono<Traced<T>> executeTraced(
+            ServerWebExchange exchange, UUID snapshotId, List<ChatMessage> messages,
+            int maxTokens, CreditFeature feature, Function<TextCompletionResult, T> transform) {
+        int estimatedInputTokens = messages.stream()
+                .mapToInt(FrozenTextExecutionService::estimatedMessageBytes)
+                .sum();
+        return executions.prepareExecution(
+                        exchange, "text", feature, estimatedInputTokens, maxTokens, true, snapshotId)
+                .flatMap(result -> {
+                    if (!result.allowed()) return Mono.error(deniedException(result.denialReason()));
+                    AiExecutionService.ExecutionContext context = result.context();
+                    return executePrepared(context, messages, maxTokens, completion -> new Traced<>(
+                            transform.apply(completion), context.runId(), context.provider().provider(),
+                            context.provider().model(),
+                            context.provider().platformModelVersion() > 0
+                                    ? context.provider().platformModelVersion() : null,
+                            context.provider().isByok()));
+                });
+    }
+
     /** Executes several ordered completions as one frozen, billed and audited AI run. */
     public <T> Mono<T> executeBatch(
             ServerWebExchange exchange,
@@ -187,4 +208,8 @@ public class FrozenTextExecutionService {
     private record Transformed<T>(TextCompletionResult completion, T value) {}
 
     private record TransformedBatch<T>(List<TextCompletionResult> completions, T value) {}
+
+    public record Traced<T>(
+            T value, UUID runId, String provider, String model,
+            Integer platformModelVersion, boolean byok) {}
 }

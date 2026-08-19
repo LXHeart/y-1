@@ -128,7 +128,8 @@ class VideoProductionControllerIT extends IntelligenceItSupport {
                 "data: {\"content\":\"【镜头1】\"}\n\n"
                 + "data: {\"content\":\"旁白：欢迎光临\"}\n\n"
                 + "data: {\"type\":\"safety\",\"safety\":{\"findings\":[],"
-                + "\"lexiconVersion\":\"lexicon-v1\",\"deepCheck\":false}}\n\n"
+                + "\"lexiconVersion\":\"lexicon-v1\",\"deepCheck\":false,"
+                + "\"appliedOverlays\":[\"food\"]}}\n\n"
                 + "data: [DONE]\n\n");
         assertThat(feature.getValue()).isEqualTo(CreditFeature.VIDEO_PRODUCTION_SCRIPT);
 

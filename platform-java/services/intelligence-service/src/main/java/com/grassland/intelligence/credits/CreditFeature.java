@@ -21,7 +21,9 @@ public enum CreditFeature {
     /** 智能创作助手（PRD §4.9）：内容评分 / 优化建议 / 问答引导等 AI 诊断调用，单次扣 1 积分。 */
     CREATION_ASSISTANT("creation_assistant"),
     /** 朋友圈内容生成（PRD §4.4 图片+文字）：一次多模态调用产出精简文案 + 图片顺序建议 + 每图配文，单次扣 1 积分。 */
-    MOMENTS_GENERATION("moments_generation");
+    MOMENTS_GENERATION("moments_generation"),
+    /** 视频工坊 BGM 节奏建议（任务书 #43 D6）：文本类 AI 建议，单次扣 1 积分，与 image_analysis/creation_assistant 同口径。 */
+    VIDEO_STUDIO_BGM("video_studio_bgm");
 
     private final String key;
 

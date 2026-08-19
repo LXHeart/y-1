@@ -29,6 +29,18 @@ const CATEGORY_LABEL: Record<string, string> = {
   porn: '低俗内容',
   illegal: '涉嫌违法',
   platform_unwanted: '平台不推荐表达',
+  platform_overlay: '平台规则',
+  industry_overlay: '行业规则',
+  duplicate_content: '内容重复度',
+  low_originality: '低原创度',
+}
+
+const OVERLAY_LABEL: Record<string, string> = {
+  douyin: '抖音',
+  kuaishou: '快手',
+  food: '餐饮',
+  beauty: '美业',
+  medical: '医疗',
 }
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
@@ -62,6 +74,10 @@ async function recheck(): Promise<void> {
       <span v-if="report.lexiconVersion" class="sfp-version">按 {{ report.lexiconVersion }} 检查</span>
     </header>
 
+    <p v-if="report.appliedOverlays?.length" class="sfp-overlays">
+      已叠加：{{ report.appliedOverlays.map((item) => OVERLAY_LABEL[item] || item).join('、') }}
+    </p>
+
     <p v-if="recheckError" class="sfp-error" role="alert">{{ recheckError }}</p>
 
     <ul v-if="hasFindings" class="sfp-list">
@@ -92,6 +108,7 @@ async function recheck(): Promise<void> {
 .sfp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .sfp-head h4 { margin: 0; font-size: 13px; }
 .sfp-version { font-size: 11px; opacity: 0.55; }
+.sfp-overlays { margin: 0; font-size: 11px; color: var(--color-text-secondary); }
 .sfp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .sfp-list li { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; background: var(--color-surface-strong, var(--color-surface)); }
 .sfp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

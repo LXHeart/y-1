@@ -264,7 +264,7 @@
           运营处置
         </button>
         <button
-          v-if="isAuthenticated && hasBackendRole('platform_admin')"
+          v-if="isAuthenticated && (hasBackendRole('platform_admin') || hasBackendRole('content_reviewer'))"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentViewName === 'admin' }"
           :aria-current="currentViewName === 'admin' ? 'page' : undefined"

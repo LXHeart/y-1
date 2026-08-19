@@ -126,6 +126,10 @@ public class PriceTableService {
             "retrieval", "sandbox",
             0, 0, 0, 0
         ));
+        prices.put("sandbox-matting-v1", new PriceTable.ModelPrice(
+            "image_edit", "sandbox",
+            0, 0, 0, 0
+        ));
 
         return prices;
     }

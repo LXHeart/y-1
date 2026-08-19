@@ -14,7 +14,9 @@ import org.springframework.test.web.reactive.server.WebTestClient;
         "EDGE_ROUTE_AUTH_ME_IDENTITY=false",
         "EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE=false",
         "EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE=false",
-        "EDGE_ROUTE_SPEECH_INTELLIGENCE=false"
+        "EDGE_ROUTE_SPEECH_INTELLIGENCE=false",
+        "EDGE_ROUTE_IMAGE_STUDIO_INTELLIGENCE=false",
+        "EDGE_ROUTE_VIDEO_STUDIO_INTELLIGENCE=false"
 })
 class EdgeFailClosedIT {
 
@@ -71,6 +73,24 @@ class EdgeFailClosedIT {
                 .expectStatus().isNotFound();
         WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
                 .get().uri("/api/speech/transcriptions/transcription-1")
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    /** 任务书 #43：图片编辑台 flag 关闭 → /api/image-studio/* fail-closed 404。 */
+    @Test
+    void imageStudioFlagOffFailsClosed() {
+        WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
+                .post().uri("/api/image-studio/matting")
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    /** 任务书 #43：视频工坊 flag 关闭 → /api/video-studio/* fail-closed 404。 */
+    @Test
+    void videoStudioFlagOffFailsClosed() {
+        WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
+                .post().uri("/api/video-studio/bgm-advice")
                 .exchange()
                 .expectStatus().isNotFound();
     }

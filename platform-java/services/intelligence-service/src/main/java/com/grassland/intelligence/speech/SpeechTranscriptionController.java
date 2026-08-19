@@ -1,6 +1,7 @@
 package com.grassland.intelligence.speech;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -18,9 +19,16 @@ import reactor.core.publisher.Mono;
 public final class SpeechTranscriptionController {
 
     private final SpeechTranscriptionService service;
+    private final SpeechTranscriptionRepository repository;
+    private final com.grassland.intelligence.security.IntelligenceCallerResolver callers;
 
-    public SpeechTranscriptionController(SpeechTranscriptionService service) {
+    public SpeechTranscriptionController(
+            SpeechTranscriptionService service,
+            SpeechTranscriptionRepository repository,
+            com.grassland.intelligence.security.IntelligenceCallerResolver callers) {
         this.service = service;
+        this.repository = repository;
+        this.callers = callers;
     }
 
     @PostMapping
@@ -39,6 +47,31 @@ public final class SpeechTranscriptionController {
             ServerWebExchange exchange) {
         return service.get(exchange.getRequest(), id)
                 .map(transcription -> ResponseEntity.ok(envelope(transcription)));
+    }
+
+    /** owner 最近 20 条转写，按 created_at DESC（任务书 #43）。 */
+    @GetMapping
+    public Mono<ResponseEntity<Map<String, Object>>> list(ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> repository.findRecentOwned(caller.accountId(), 20)
+                        .map(SpeechTranscriptionController::listItem)
+                        .collectList()
+                        .map(items -> ResponseEntity.ok(Map.of("success", true, "data", Map.of("items", items)))));
+    }
+
+    private static Map<String, Object> listItem(SpeechTranscription t) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", t.id().toString());
+        item.put("mediaReferenceId", t.mediaReferenceId().toString());
+        item.put("durationMs", t.durationMs());
+        item.put("status", t.status());
+        item.put("detectedLanguage", t.detectedLanguage());
+        item.put("createdAt", t.createdAt());
+        // 仅 completed 且非空时带文本
+        if ("completed".equals(t.status()) && t.transcriptText() != null && !t.transcriptText().isBlank()) {
+            item.put("transcriptText", t.transcriptText());
+        }
+        return item;
     }
 
     private static Map<String, Object> envelope(SpeechTranscription transcription) {

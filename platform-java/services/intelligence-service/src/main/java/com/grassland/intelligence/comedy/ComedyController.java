@@ -73,9 +73,10 @@ public class ComedyController {
                                     binding.promptContext(),
                                     ComedyPrompts.user(body.topic())),
                             2048, CreditFeature.COMEDY_GENERATION,
-                            completion -> completion.content()))
-                    .map(content -> sseEntity(withSafety(exchange,
-                            Flux.just(frame(Map.of("content", content)))), exchange))
+                            completion -> completion.content())
+                            .map(content -> sseEntity(withSafety(exchange,
+                                    Flux.just(frame(Map.of("content", content))),
+                                    binding.snapshot(), body.targetPlatform()), exchange)))
                     .onErrorMap(error -> error instanceof IntelligenceException
                             ? error : new IntelligenceException(502, ERROR_MESSAGE));
         }
@@ -89,14 +90,20 @@ public class ComedyController {
                             // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
                             .onErrorResume(e -> credits.refund(charge, "脱口秀文稿生成失败自动退回")
                                     .thenMany(Flux.just(frame(Map.of("error", ERROR_MESSAGE)))));
-                    return sseEntity(withSafety(exchange, payloads), exchange);
+                    return sseEntity(withSafety(exchange, payloads, null, body.targetPlatform()), exchange);
                 });
     }
 
     /** 任务书 #34 D8：喜剧脚本流尾追加安全检查帧（脚本=长文本，L2 已配置时深检）。 */
-    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+    private Flux<String> withSafety(
+            ServerWebExchange exchange, Flux<String> frames,
+            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot,
+            String requestedPlatform) {
         return safety.appendSafetyFrame(exchange, frames,
-                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor());
+                com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+                snapshot == null ? requestedPlatform : snapshot.platformId(),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.industryFromSnapshot(snapshot),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
     }
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {

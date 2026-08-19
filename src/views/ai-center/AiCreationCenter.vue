@@ -163,16 +163,32 @@
         />
       </label>
 
-      <label v-if="sourceType === 'reference'" class="topic-field">
-        <span>参考链接或分享文本</span>
+      <div v-if="sourceType === 'reference'" class="topic-field">
+        <span id="reference-source-label">参考链接来源</span>
+        <div class="segmented" role="group" aria-label="参考链接来源">
+          <button
+            type="button"
+            :class="{ active: referencePlatform === 'douyin' }"
+            :aria-pressed="referencePlatform === 'douyin'"
+            @click="referencePlatform = 'douyin'"
+          >抖音</button>
+          <button
+            type="button"
+            :class="{ active: referencePlatform === 'bilibili' }"
+            :aria-pressed="referencePlatform === 'bilibili'"
+            @click="referencePlatform = 'bilibili'"
+          >B 站</button>
+        </div>
+        <span>链接或分享文本</span>
         <textarea
           v-model="referenceUrl"
           name="reference-url"
+          aria-label="参考链接或分享文本"
           rows="3"
           maxlength="2000"
           placeholder="粘贴抖音或 B 站链接、分享文本"
         />
-      </label>
+      </div>
 
       <div v-if="videoWorkflowId === 'video-recreation' && sourceType !== 'reference'" class="topic-field">
         <span id="recreation-reference-label">参考链接或分享文本</span>
@@ -260,6 +276,8 @@
 
     <AiRunHistoryPanel v-else-if="activeSection === 'runs'" />
     <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
+        <ImageStudioView v-else-if="activeSection === 'image-studio'" />
+        <VideoStudioView v-else-if="activeSection === 'video-studio'" @handoff="onVideoStudioHandoff" />
     <CreationAssistantPanel
       v-else-if="activeSection === 'assistant'"
       :authenticated="props.authenticated"
@@ -289,6 +307,8 @@ import AiProviderKeysPanel from '../../components/AiProviderKeysPanel.vue'
 import AiRunHistoryPanel from '../../components/AiRunHistoryPanel.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.vue'
+import ImageStudioView from './components/ImageStudioView.vue'
+import VideoStudioView from './components/VideoStudioView.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
@@ -315,7 +335,7 @@ import type {
   VideoCreationWorkflowId,
 } from '../../types/ai-creation'
 
-type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'keys' | 'library'
+type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'video-studio' | 'keys' | 'library'
 
 const props = defineProps<{
   authenticated: boolean
@@ -361,6 +381,8 @@ const centerSections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
   { id: 'create', label: '开始创作' },
   { id: 'assistant', label: '创作助手' },
   { id: 'speech', label: '语音转写' },
+  { id: 'image-studio', label: '图片编辑' },
+  { id: 'video-studio', label: '视频工坊' },
   { id: 'runs', label: '运行记录' },
   { id: 'library', label: '素材库' },
   { id: 'keys', label: '模型密钥' },
@@ -371,7 +393,7 @@ const sourceOptions: ReadonlyArray<{ id: CreationSourceType; label: string; note
   { id: 'task', label: '从任务创作', note: '带入已接受履约' },
   { id: 'store', label: '从门店创作', note: '带入门店资料' },
   { id: 'hot-topic', label: '从热点创作', note: '以热点标题为主题' },
-  { id: 'reference', label: '参考素材', note: '分析抖音或 B站视频' },
+  { id: 'reference', label: '参考素材', note: '分析抖音或 B 站视频，再适配目标平台' },
 ]
 const videoWorkflowOptions: ReadonlyArray<{ id: VideoCreationWorkflowId; label: string }> = [
   { id: 'video-script', label: '常规视频脚本' },
@@ -798,7 +820,7 @@ function prefillForHandoff(): CreationDraftPrefill {
       referenceUrl: videoWorkflowId.value === 'video-recreation'
         ? referenceUrl.value.trim() || undefined
         : undefined,
-      referencePlatform: videoWorkflowId.value === 'video-recreation'
+      referencePlatform: videoWorkflowId.value === 'video-recreation' || sourceType.value === 'reference'
         ? referencePlatform.value
         : undefined,
     }
@@ -810,7 +832,7 @@ function prefillForHandoff(): CreationDraftPrefill {
     referenceUrl: videoWorkflowId.value === 'video-recreation'
       ? referenceUrl.value.trim() || undefined
       : undefined,
-    referencePlatform: videoWorkflowId.value === 'video-recreation'
+    referencePlatform: videoWorkflowId.value === 'video-recreation' || sourceType.value === 'reference'
       ? referencePlatform.value
       : undefined,
     storeName: store?.name,
@@ -853,6 +875,14 @@ function startWorkflow(): void {
     return
   }
   emit('start-workflow', handoff)
+}
+
+/** 视频工坊模板「带入创作」：预填平台/形式/主题，切回创作 tab。 */
+function onVideoStudioHandoff(payload: { platformId: string; contentFormId: string; topic: string }) {
+  platformId.value = payload.platformId as AiPlatformId
+  contentFormId.value = payload.contentFormId as AiContentFormId
+  topic.value = payload.topic || ''
+  activeSection.value = 'create'
 }
 
 function formatRequirement(value: unknown): string {

@@ -39,7 +39,7 @@ describe('AdminView KYB 审核', () => {
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
       ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
-        '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '统一审计'])
+        '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '统一审计', '公共素材'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
     const aiModelsTab = tabs.find((tab) => tab.text().trim() === 'AI 模型')!
@@ -483,5 +483,70 @@ describe('AdminView 用户管理（identity 信封）', () => {
     expect(usersCallCount).toBe(2)
     // 模态关闭
     expect(wrapper.find('.modal-overlay').exists()).toBe(false)
+  })
+})
+
+describe('AdminView 公共素材审核台', () => {
+  test('批量生成展示部分成功，待审素材加载缩略图并可携理由驳回', async () => {
+    const asset = {
+      id: 'asset-1', mediaId: 'media-1', libraryType: 'public', category: 'scene',
+      title: '夏日饮品·背景·1', tags: ['夏日饮品', 'background'], status: 'pending_review',
+      version: 1, mimeType: 'image/png', sizeBytes: 1024,
+      validUntil: '2026-09-01T00:00:00Z', createdAt: '2026-08-19T00:00:00Z', updatedAt: null,
+    }
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/users') return response({ users: [] }, true)
+      if (url === '/api/admin/kyb-requests') return response([])
+      if (url === '/api/admin/content-assets/review') return response({ items: [asset] })
+      if (url === '/api/content-assets/asset-1/download-url') {
+        return response({ downloadUrl: 'https://assets.test/asset-1.png', expiresIn: 300 })
+      }
+      if (url === '/api/admin/content-assets/batch-generate' && init?.method === 'POST') {
+        return response({
+          items: [
+            { index: 1, ok: true, assetId: 'asset-2', errorReason: null },
+            { index: 2, ok: false, assetId: null, errorReason: '上游繁忙' },
+          ],
+          okCount: 1,
+        })
+      }
+      if (url === '/api/admin/content-assets/asset-1/review/reject' && init?.method === 'POST') {
+        return response({ ...asset, status: 'rejected', version: 2 })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    const publicTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text().includes('公共素材'))!
+    await publicTab.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.public-review-item img').attributes('src')).toBe('https://assets.test/asset-1.png')
+    expect(wrapper.text()).toContain('夏日饮品·背景·1')
+
+    await wrapper.get('[data-testid="public-asset-generation-form"] input[placeholder*="夏日饮品"]')
+      .setValue('夏日上新')
+    await wrapper.get('[data-testid="public-asset-generation-form"] input[type="number"]').setValue(2)
+    await wrapper.get('[data-testid="public-asset-generation-form"]').trigger('submit')
+    await flushPromises()
+
+    const generateCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/content-assets/batch-generate')
+    const generateBody = JSON.parse(String((generateCall?.[1] as RequestInit).body))
+    expect(generateBody).toMatchObject({ kind: 'icon', theme: '夏日上新', count: 2 })
+    expect(new Date(generateBody.validUntil).getTime()).toBeGreaterThan(Date.now())
+    expect(wrapper.text()).toContain('本批成功 1 / 2')
+    expect(wrapper.text()).toContain('上游繁忙')
+
+    await wrapper.get('.public-asset-body input').setValue('画面含品牌标识')
+    await wrapper.get('.public-review-item .reject-btn').trigger('click')
+    await flushPromises()
+
+    const rejectCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/content-assets/asset-1/review/reject')
+    expect(JSON.parse(String((rejectCall?.[1] as RequestInit).body))).toEqual({
+      expectedVersion: 1, note: '画面含品牌标识',
+    })
+    expect(wrapper.text()).toContain('暂无待审核公共素材')
   })
 })

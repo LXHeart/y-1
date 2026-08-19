@@ -49,6 +49,16 @@ public class TaskImageGenerationService {
             CreationContextSnapshot snapshot,
             ChatMessage promptContext,
             MediaPurpose purpose) {
+        return generateForBoundContextTraced(command, snapshot, promptContext, purpose)
+                .map(GeneratedImageWithTrace::response);
+    }
+
+    /** Internal traced variant; public endpoint response remains {@link GeneratedImageResponse}. */
+    public Mono<GeneratedImageWithTrace> generateForBoundContextTraced(
+            ArticleImageService.GenerateCommand command,
+            CreationContextSnapshot snapshot,
+            ChatMessage promptContext,
+            MediaPurpose purpose) {
         FrozenImageGenerationConfigResolver.Config config = frozenConfigs.resolve(snapshot);
         ArticleImageService.GenerateCommand frozenCommand = new ArticleImageService.GenerateCommand(
                 promptContext.content() + "\n\n用户生图要求：\n" + command.prompt(),
@@ -66,7 +76,7 @@ public class TaskImageGenerationService {
                         : Mono.error(denied(result.denialReason())));
     }
 
-    private Mono<GeneratedImageResponse> execute(
+    private Mono<GeneratedImageWithTrace> execute(
             ArticleImageService.GenerateCommand command,
             CreationContextSnapshot snapshot,
             MediaPurpose purpose,
@@ -79,7 +89,9 @@ public class TaskImageGenerationService {
                 ignored -> generateImage(command, owner, purpose)
                         .flatMap(result -> executions.settleSuccessWithCost(
                                         context, config.unitPriceCents(), 0, 0, 1, 0)
-                                .thenReturn(result)),
+                                .thenReturn(new GeneratedImageWithTrace(
+                                        result, context.runId(), context.provider().provider(),
+                                        context.provider().model(), config.platformModelVersion()))),
                 ignored -> Mono.empty(),
                 (ignored, error) -> executions.handleFailure(
                         context, error.getMessage() == null ? "image generation failed" : error.getMessage()).then(),
@@ -100,4 +112,8 @@ public class TaskImageGenerationService {
             default -> new IntelligenceException(403, "图片生成执行被拒绝：" + reason);
         };
     }
+
+    public record GeneratedImageWithTrace(
+            GeneratedImageResponse response, UUID aiRunId, String provider,
+            String model, Integer platformModelVersion) {}
 }

@@ -65,7 +65,7 @@ public class MomentsGenerationController {
                             .map(dataUrls -> sseEntity(
                                     withSafety(exchange, service.generateTask(dataUrls, style, body.topic(),
                                                     body.feelings(), binding, exchange)
-                                            .onErrorResume(e -> Flux.just(errorFrame()))),
+                                            .onErrorResume(e -> Flux.just(errorFrame())), binding.snapshot()),
                                     exchange)))
                     .onErrorMap(error -> error instanceof IntelligenceException
                             ? error : new IntelligenceException(502, ERROR_MESSAGE));
@@ -77,14 +77,19 @@ public class MomentsGenerationController {
                                 withSafety(exchange, service.generate(dataUrls, style, body.topic(), body.feelings())
                                         // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
                                         .onErrorResume(e -> credits.refund(charge, "朋友圈内容生成失败自动退回")
-                                                .thenMany(Flux.just(errorFrame())))),
+                                                .thenMany(Flux.just(errorFrame()))), null),
                                 exchange)));
     }
 
     /** 任务书 #34 D8：朋友圈文案流尾追加安全检查帧（检查文本=result 帧 copy）。 */
-    private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames) {
+    private Flux<String> withSafety(
+            ServerWebExchange exchange, Flux<String> frames,
+            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot) {
         return safety.appendSafetyFrame(exchange, frames,
-                com.grassland.intelligence.contentsafety.ContentSafetyService.momentsCopyExtractor());
+                com.grassland.intelligence.contentsafety.ContentSafetyService.momentsCopyExtractor(),
+                snapshot == null ? "moments" : snapshot.platformId(),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.industryFromSnapshot(snapshot),
+                com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
     }
 
     /** 素材图 base64 解码与 magic 校验留在 boundedElastic（解码 9×5MB 不占事件循环）。 */

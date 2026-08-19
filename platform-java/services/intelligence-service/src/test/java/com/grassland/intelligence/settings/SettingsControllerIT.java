@@ -29,7 +29,7 @@ class SettingsControllerIT extends IntelligenceItSupport {
                 """)
                 .bind("id", UUID.randomUUID()).bind("uid", account)
                 .bind("json", """
-                        {"features":{"video":{"provider":"qwen","apiKey":"sk-1234567890abcd",
+                        {"features":{"video":{"provider":"qwen","apiKey":"sk-test-1234567890abcd",
                           "evil":"junk","number":42},"ghost":{"apiKey":"sk-y"}},
                          "integrations":{"feishu":{"appId":"cli_x","extra":"junk"}},
                          "topJunk":"drop"}
@@ -53,7 +53,7 @@ class SettingsControllerIT extends IntelligenceItSupport {
         // 存储仍含原值（读路径归一不改写存储，掩码只作用于响应）。
         String stored = db.sql("SELECT settings_json::text FROM user_settings WHERE user_id = CAST(:uid AS uuid)")
                 .bind("uid", account).map(r -> r.get(0, String.class)).one().block();
-        assertThat(stored).contains("sk-1234567890abcd").contains("evil");
+        assertThat(stored).contains("sk-test-1234567890abcd").contains("evil");
     }
 
     @Test

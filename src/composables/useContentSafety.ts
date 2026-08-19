@@ -24,6 +24,9 @@ export function parseSafetyFrame(payload: unknown): SafetyReport | null {
       : [],
     lexiconVersion: String(safety.lexiconVersion ?? ''),
     deepCheck: safety.deepCheck === true,
+    appliedOverlays: Array.isArray(safety.appliedOverlays)
+      ? safety.appliedOverlays.filter((item): item is string => typeof item === 'string')
+      : [],
   }
 }
 

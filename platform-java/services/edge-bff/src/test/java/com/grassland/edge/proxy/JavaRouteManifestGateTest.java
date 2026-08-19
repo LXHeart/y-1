@@ -76,10 +76,15 @@ class JavaRouteManifestGateTest {
                 // 任务书 #36：游客试用窄面（flag on 时路由、off 时 fail-closed 404，见 flagOff 测试）。
                 route("POST", "/api/guest-trial/article-titles", "intelligence"),
                 route("POST", "/api/content-safety/check", "intelligence"),
+                route("GET", "/api/admin/content-safety/lexicons", "intelligence"),
                 route("GET", "/api/guest-trial/quota", "intelligence"),
                 // 任务书 #33：语音转写（方法级路由，仅 POST/GET 放行，其余方法 fail-closed）。
                 route("POST", "/api/speech/transcriptions", "intelligence"),
                 route("GET", "/api/speech/transcriptions/transcription-1", "intelligence"),
+                // 任务书 #43：图片编辑台抠图 + 视频工坊 BGM 建议。
+                route("POST", "/api/image-studio/matting", "intelligence"),
+                route("GET", "/api/image-studio/matting-results/result-1", "intelligence"),
+                route("POST", "/api/video-studio/bgm-advice", "intelligence"),
                 route("GET", "/api/admin/ai/models", "intelligence"),
                 route("GET", "/api/admin/ai/video-reconciliation", "intelligence"),
                 route("GET", "/api/admin/finance/reconciliation", "finance"),
@@ -95,6 +100,7 @@ class JavaRouteManifestGateTest {
                 route("POST", "/api/admin/content-assets/review", "intelligence"),
                 route("POST", "/api/creation-assistant/score", "intelligence"),
                 route("GET", "/api/creation-drafts/draft-1", "intelligence"),
+                route("GET", "/api/creation-generations/generation-1", "intelligence"),
                 route("POST", "/api/creation-contexts", "intelligence"),
                 route("GET", "/api/admin/users", "identity"),
                 route("POST", "/api/admin/adjust-credits", "identity"),

@@ -6,7 +6,7 @@ import type {
   CreationWorkflowResolution,
 } from '../types/ai-creation'
 
-export const AI_PLATFORM_CAPABILITY_VERSION = '2026-08-06'
+export const AI_PLATFORM_CAPABILITY_VERSION = '2026-08-19'
 
 export interface AiContentFormDefinition {
   id: AiContentFormId
@@ -145,9 +145,7 @@ export function resolveWorkflow(
   if (!getContentForm(platformId, formId)) return UNSUPPORTED
 
   if (source === 'reference') {
-    return formId === 'video' && (platformId === 'douyin' || platformId === 'bilibili')
-      ? available('reference-analyze', 'video')
-      : PLANNED
+    return platformId === 'moments' ? PLANNED : available('reference-analyze', 'video')
   }
 
   if (formId === 'video' || (formId === 'video-text' && platformId === 'moments')) {

@@ -61,7 +61,7 @@ class ArticleCreationContext {
             context.put("storeBranding", snapshot.storeBrandingSnapshot());
         }
         try {
-            return new Binding(platform, ChatMessage.system(
+            return new Binding(snapshot, platform, ChatMessage.system(
                     "以下 JSON 是创作开始时冻结的权威任务上下文。必须遵守任务要求和平台规则，"
                             + "只能使用其中授权的素材信息，不得用当前配置或推测覆盖。\n"
                             + mapper.writeValueAsString(context)
@@ -71,5 +71,5 @@ class ArticleCreationContext {
         }
     }
 
-    record Binding(ArticlePrompts.Platform platform, ChatMessage promptContext) {}
+    record Binding(CreationContextSnapshot snapshot, ArticlePrompts.Platform platform, ChatMessage promptContext) {}
 }

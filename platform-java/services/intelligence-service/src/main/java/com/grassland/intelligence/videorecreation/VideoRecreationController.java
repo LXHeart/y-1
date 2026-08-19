@@ -1,10 +1,6 @@
 package com.grassland.intelligence.videorecreation;
 
-import com.grassland.intelligence.articleimage.ArticleImageService;
-import com.grassland.intelligence.articleimage.GeneratedImageResponse;
-import com.grassland.intelligence.articleimage.TaskImageGenerationService;
 import com.grassland.intelligence.media.MediaOwner;
-import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.ArrayList;
@@ -19,7 +15,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.MediaType;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Flux;
 
 /**
  * 视频改编出图四端点（草场 intelligence Slice 9），镜像 legacy {@code /api/video-recreation/*} 图片端点。
@@ -41,12 +36,12 @@ public class VideoRecreationController {
     private final VideoRecreationAdaptationParser adaptationParser;
     private final VideoRecreationAdaptationService adaptation;
     private final VideoRecreationTaskCreationContext creationContexts;
-    private final TaskImageGenerationService taskImages;
+    private final VideoRecreationTaskImageService taskImages;
 
     public VideoRecreationController(IntelligenceCallerResolver callers, VideoRecreationImageService images,
             VideoRecreationAdaptationParser adaptationParser, VideoRecreationAdaptationService adaptation,
             VideoRecreationTaskCreationContext creationContexts,
-            TaskImageGenerationService taskImages) {
+            VideoRecreationTaskImageService taskImages) {
         this.callers = callers;
         this.images = images;
         this.adaptationParser = adaptationParser;
@@ -63,10 +58,8 @@ public class VideoRecreationController {
                     TaskBinding task = taskBinding(body);
                     return task.taskMode()
                             ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
-                                    .flatMap(binding -> taskImage(
-                                            VideoRecreationPrompts.buildAssetImagePrompt(
-                                                    req.asset(), req.visualStyle()),
-                                            req.size(), binding))
+                                    .flatMap(binding -> taskImages.generateAsset(
+                                            req.asset(), req.visualStyle(), req.size(), binding))
                             : images.generateAsset(req.asset(), req.visualStyle(), req.size(), owner(caller));
                 })
                 .map(VideoRecreationController::success);
@@ -80,12 +73,8 @@ public class VideoRecreationController {
                     TaskBinding task = taskBinding(body);
                     return task.taskMode()
                             ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
-                                    .flatMap(binding -> Flux.fromIterable(req.assets())
-                                            .concatMap(asset -> taskImage(
-                                                    VideoRecreationPrompts.buildAssetImagePrompt(
-                                                            asset, req.visualStyle()),
-                                                    req.size(), binding))
-                                            .collectList())
+                                    .flatMap(binding -> taskImages.generateAssets(
+                                            req.assets(), req.visualStyle(), req.size(), binding))
                             : images.generateAllAssets(req.assets(), req.visualStyle(), req.size(), owner(caller));
                 })
                 .map(list -> success(Map.of("images", list)));
@@ -100,10 +89,8 @@ public class VideoRecreationController {
                     TaskBinding task = taskBinding(body);
                     return task.taskMode()
                             ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
-                                    .flatMap(binding -> taskImage(
-                                            VideoRecreationPrompts.buildSceneImagePrompt(
-                                                    req.scene(), req.overallStyle()),
-                                            req.size(), binding))
+                                    .flatMap(binding -> taskImages.generateScene(
+                                            req.scene(), req.overallStyle(), req.size(), binding))
                             : images.generateScene(req.scene(), req.overallStyle(), req.size(), owner(caller));
                 })
                 .map(VideoRecreationController::success);
@@ -118,12 +105,8 @@ public class VideoRecreationController {
                     TaskBinding task = taskBinding(body);
                     return task.taskMode()
                             ? creationContexts.bind(task.snapshotId(), caller.accountId(), task.targetPlatform())
-                                    .flatMap(binding -> Flux.fromIterable(req.scenes())
-                                            .concatMap(scene -> taskImage(
-                                                    VideoRecreationPrompts.buildSceneImagePrompt(
-                                                            scene, req.overallStyle()),
-                                                    req.size(), binding))
-                                            .collectList())
+                                    .flatMap(binding -> taskImages.generateScenes(
+                                            req.scenes(), req.overallStyle(), req.size(), binding))
                             : images.generateAllScenes(req.scenes(), req.overallStyle(), req.size(), owner(caller));
                 })
                 .map(list -> success(Map.of("images", list)));
@@ -150,17 +133,12 @@ public class VideoRecreationController {
             VideoRecreationAdaptationRequest request,
             IntelligenceCallerResolver.Caller caller,
             ServerWebExchange exchange) {
-        if (!request.taskMode()) return adaptation.adapt(request, caller.accountId());
+        if (!request.taskMode()) {
+            return adaptation.adapt(request, caller.accountId(), caller.organizationId());
+        }
         return creationContexts.bind(
                         request.contextSnapshotId(), caller.accountId(), request.targetPlatform())
                 .flatMap(binding -> adaptation.adaptTask(request, binding, exchange));
-    }
-
-    private Mono<GeneratedImageResponse> taskImage(
-            String prompt, String size, VideoRecreationTaskCreationContext.Binding binding) {
-        return taskImages.generateForBoundContext(
-                new ArticleImageService.GenerateCommand(prompt, size, List.of()),
-                binding.snapshot(), binding.promptContext(), MediaPurpose.VIDEO_ASSET);
     }
 
     private static MediaOwner owner(IntelligenceCallerResolver.Caller caller) {

@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.articleimage.ArticleImageService;
+import com.grassland.intelligence.articleimage.FrozenImageGenerationConfigResolver;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
+import com.grassland.intelligence.creationlineage.CreationGenerationRecorder;
 import com.grassland.intelligence.media.MediaOwner;
 import com.grassland.intelligence.media.MediaPurpose;
 import java.util.List;
@@ -49,6 +51,26 @@ class VideoRecreationImageServiceTest {
 
         assertThat(result).isEqualTo(response);
         verify(articleImages).generate(any(), eq(OWNER), eq(MediaPurpose.VIDEO_ASSET));
+    }
+
+    @Test
+    void lineageFailurePreventsSuccessfulGenerationResponse() {
+        CreationGenerationRecorder lineage = org.mockito.Mockito.mock(CreationGenerationRecorder.class);
+        FrozenImageGenerationConfigResolver config =
+                org.mockito.Mockito.mock(FrozenImageGenerationConfigResolver.class);
+        VideoRecreationImageService traced = new VideoRecreationImageService(articleImages, lineage, config);
+        Asset.CharacterAsset asset = new Asset.CharacterAsset("id1", "名1", "描述1", "三视图1");
+        String mediaId = java.util.UUID.randomUUID().toString();
+        when(articleImages.generate(any(), any(), eq(MediaPurpose.VIDEO_ASSET))).thenReturn(Mono.just(
+                new GeneratedImageResponse("/api/article-generation/generated-images/" + mediaId, "p")));
+        when(config.current()).thenReturn(new FrozenImageGenerationConfigResolver.Config(
+                "qwen", "wanx-v1", "v1", 80, 1, "fingerprint"));
+        when(lineage.record(any())).thenReturn(Mono.error(new RuntimeException("lineage db down")));
+
+        StepVerifier.create(traced.generateAsset(asset, null, "1024x1792", OWNER))
+                .expectErrorMatches(error -> "lineage db down".equals(error.getMessage()))
+                .verify();
+        verify(lineage).record(any());
     }
 
     @Test

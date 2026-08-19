@@ -77,6 +77,61 @@
       </div>
     </div>
 
+    <section class="recent-generations" aria-labelledby="recent-generations-heading">
+      <div class="recent-heading-row">
+        <div>
+          <p class="recent-kicker">生成记录</p>
+          <h3 id="recent-generations-heading" class="recent-heading">最近产物</h3>
+        </div>
+        <button type="button" class="btn-secondary btn-sm" :disabled="recentLoading" @click="loadRecent">
+          刷新
+        </button>
+      </div>
+
+      <p v-if="recentError" class="recent-message recent-error">{{ recentError }}</p>
+      <p v-else-if="recentLoading && recentItems.length === 0" class="recent-message">正在加载最近产物…</p>
+      <p v-else-if="recentItems.length === 0" class="recent-message">还没有图片产物。</p>
+
+      <div v-else class="recent-list">
+        <article v-for="item in recentItems" :key="item.id" class="recent-row">
+          <button type="button" class="recent-row-button" @click="toggleRecent(item.id)">
+            <span>
+              <strong>{{ item.kind === 'asset_image' ? '资产图' : '场景图' }} · {{ item.resultTitle }}</strong>
+              <small>{{ formatGenerationTime(item.createdAt) }} · {{ item.mode === 'task' ? '任务' : '独立' }}</small>
+            </span>
+            <span aria-hidden="true">{{ expandedRecentId === item.id ? '−' : '+' }}</span>
+          </button>
+
+          <div v-if="expandedRecentId === item.id" class="recent-detail">
+            <p v-if="recentDetailLoading" class="recent-message">正在加载产物…</p>
+            <p v-else-if="recentDetailError" class="recent-message recent-error">{{ recentDetailError }}</p>
+            <div v-else-if="recentDetail" class="recent-media-grid">
+              <figure v-for="media in recentDetail.resultMedia" :key="media.mediaId" class="recent-media">
+                <img
+                  v-if="media.available && media.imageUrl"
+                  :src="media.imageUrl"
+                  alt="生成图片"
+                  @click="openLightbox(media.imageUrl)"
+                />
+                <div v-else class="recent-expired">已过期</div>
+                <figcaption>
+                  <button
+                    v-if="media.available && media.imageUrl"
+                    type="button"
+                    class="btn-secondary btn-xs"
+                    :disabled="savingMediaId === media.mediaId"
+                    @click="saveToLibrary(media)"
+                  >
+                    {{ savingMediaId === media.mediaId ? '保存中…' : savedMediaIds.has(media.mediaId) ? '已保存' : '保存到素材库' }}
+                  </button>
+                </figcaption>
+              </figure>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <Teleport to="body">
       <div v-if="lightboxSrc" class="lightbox-overlay" @click.self="closeLightbox">
         <button class="lightbox-close" type="button" @click="closeLightbox" aria-label="关闭">
@@ -93,6 +148,14 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { VideoScene } from '../types/video-recreation'
 import type { VideoTaskExecutionContext } from '../types/video-recreation'
 import { useVideoRecreation } from '../composables/useVideoRecreation'
+import { getCreationGeneration, listCreationGenerations } from '../composables/useCreationGenerations'
+import { useGrasslandGovernance } from '../composables/useGrasslandGovernance'
+import type { RunFn } from '../composables/grassland-http'
+import type {
+  CreationGenerationDetail,
+  CreationGenerationResultMediaItem,
+  CreationGenerationSummary,
+} from '../types/grassland/creation-generation'
 
 const props = defineProps<{
   scenes: VideoScene[]
@@ -110,17 +173,95 @@ const {
 
 const copied = ref(false)
 const lightboxSrc = ref('')
+const recentItems = ref<CreationGenerationSummary[]>([])
+const recentLoading = ref(false)
+const recentError = ref('')
+const expandedRecentId = ref('')
+const recentDetail = ref<CreationGenerationDetail | null>(null)
+const recentDetailLoading = ref(false)
+const recentDetailError = ref('')
+const savingMediaId = ref('')
+const savedMediaIds = ref(new Set<string>())
+const directRun: RunFn = async operation => operation()
+const { uploadContentAssetFile } = useGrasslandGovernance(directRun)
 
 function getImageState(index: number) {
   return sceneImages.value.get(index)
 }
 
-function handleGenerateOne(index: number): void {
-  generateSceneImage(index, props.scenes[index], props.overallStyle)
+async function handleGenerateOne(index: number): Promise<void> {
+  await generateSceneImage(index, props.scenes[index], props.overallStyle)
+  await loadRecent()
 }
 
-function handleGenerateAll(): void {
-  generateAllImages(props.scenes, props.overallStyle)
+async function handleGenerateAll(): Promise<void> {
+  await generateAllImages(props.scenes, props.overallStyle)
+  await loadRecent()
+}
+
+async function loadRecent(): Promise<void> {
+  if (recentLoading.value) return
+  recentLoading.value = true
+  recentError.value = ''
+  try {
+    const [assets, scenes] = await Promise.all([
+      listCreationGenerations({ kind: 'asset_image', limit: 10 }),
+      listCreationGenerations({ kind: 'scene_image', limit: 10 }),
+    ])
+    recentItems.value = [...assets.items, ...scenes.items]
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, 12)
+  } catch (cause) {
+    recentError.value = cause instanceof Error ? cause.message : '最近产物加载失败'
+  } finally {
+    recentLoading.value = false
+  }
+}
+
+async function toggleRecent(id: string): Promise<void> {
+  if (expandedRecentId.value === id) {
+    expandedRecentId.value = ''
+    recentDetail.value = null
+    return
+  }
+  expandedRecentId.value = id
+  recentDetail.value = null
+  recentDetailLoading.value = true
+  recentDetailError.value = ''
+  try {
+    recentDetail.value = await getCreationGeneration(id)
+  } catch (cause) {
+    recentDetailError.value = cause instanceof Error ? cause.message : '产物详情加载失败'
+  } finally {
+    recentDetailLoading.value = false
+  }
+}
+
+async function saveToLibrary(media: CreationGenerationResultMediaItem): Promise<void> {
+  if (!media.imageUrl || savingMediaId.value) return
+  savingMediaId.value = media.mediaId
+  recentDetailError.value = ''
+  try {
+    const response = await fetch(media.imageUrl, { credentials: 'include' })
+    if (!response.ok) throw new Error('生成图片读取失败，可能已经过期')
+    const blob = await response.blob()
+    const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png'
+    const file = new File([blob], `creation-${media.mediaId}.${extension}`, {
+      type: blob.type || 'image/png',
+    })
+    const uploaded = await uploadContentAssetFile(file)
+    if (!uploaded) throw new Error('素材保存失败')
+    savedMediaIds.value = new Set(savedMediaIds.value).add(media.mediaId)
+  } catch (cause) {
+    recentDetailError.value = cause instanceof Error ? cause.message : '素材保存失败'
+  } finally {
+    savingMediaId.value = ''
+  }
+}
+
+function formatGenerationTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
 async function handleCopy(): Promise<void> {
@@ -152,7 +293,10 @@ function handleLightboxKey(e: KeyboardEvent): void {
   if (e.key === 'Escape' && lightboxSrc.value) closeLightbox()
 }
 
-onMounted(() => document.addEventListener('keydown', handleLightboxKey))
+onMounted(() => {
+  document.addEventListener('keydown', handleLightboxKey)
+  loadRecent()
+})
 onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey))
 </script>
 
@@ -301,6 +445,115 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 .btn-xs {
   padding: 3px 8px;
   font-size: 0.78em;
+}
+
+.recent-generations {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.recent-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recent-kicker,
+.recent-heading,
+.recent-message {
+  margin: 0;
+}
+
+.recent-kicker {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.recent-heading {
+  margin-top: 2px;
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.recent-list {
+  display: grid;
+}
+
+.recent-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.recent-row:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.recent-row-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-row-button > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.recent-row-button small,
+.recent-message {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.recent-detail {
+  padding: 0 0 14px;
+}
+
+.recent-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.recent-media {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.recent-media img,
+.recent-expired {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.recent-media img {
+  cursor: zoom-in;
+}
+
+.recent-expired {
+  display: grid;
+  place-items: center;
+  background: var(--surface-page);
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.recent-error {
+  color: var(--color-danger, #b42318);
 }
 
 .lightbox-overlay {

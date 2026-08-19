@@ -34,7 +34,7 @@ public class ContentSafetyController {
     @PostMapping("/api/content-safety/check")
     public Mono<Map<String, Object>> check(@RequestBody CheckRequest body, ServerWebExchange exchange) {
         return callers.requireUser(exchange.getRequest())
-                .then(Mono.defer(() -> {
+                .flatMap(caller -> Mono.defer(() -> {
                     if (body.text() == null || body.text().isBlank()) {
                         return Mono.just(ok(SafetyReport.emptyShallow()));
                     }
@@ -42,7 +42,12 @@ public class ContentSafetyController {
                         return Mono.error(new IntelligenceException(400,
                                 "文本超长（上限 " + MAX_TEXT_CHARS + " 字符）"));
                     }
-                    return safety.check(exchange, body.text()).map(ContentSafetyController::ok);
+                    return safety.check(
+                                    exchange, body.text(), body.platform(), body.industry(),
+                                    new OriginalityChecker.Context(
+                                            caller.accountId(), body.taskId(), body.applicationId(),
+                                            body.platform(), body.contentForm(), "manual"))
+                            .map(ContentSafetyController::ok);
                 }));
     }
 
@@ -61,10 +66,13 @@ public class ContentSafetyController {
                 }).toList());
         safetyBody.put("lexiconVersion", report.lexiconVersion());
         safetyBody.put("deepCheck", report.deepCheck());
+        safetyBody.put("appliedOverlays", report.appliedOverlays());
         return Map.of("success", true, "data", Map.of("safety", safetyBody));
     }
 
     /** 请求体：text 必填；platform 可选（overlay 预留，v1 不参与判定）。 */
-    record CheckRequest(String text, String platform) {
+    record CheckRequest(
+            String text, String platform, String industry,
+            String taskId, String applicationId, String contentForm) {
     }
 }

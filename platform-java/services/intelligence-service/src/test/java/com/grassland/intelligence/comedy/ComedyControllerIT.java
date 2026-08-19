@@ -114,7 +114,8 @@ class ComedyControllerIT extends IntelligenceItSupport {
                 "data: {\"content\":\"【铺垫】\"}\n\n"
                 + "data: {\"content\":\"【爆点】\"}\n\n"
                 + "data: {\"type\":\"safety\",\"safety\":{\"findings\":[],"
-                + "\"lexiconVersion\":\"lexicon-v1\",\"deepCheck\":false}}\n\n"
+                + "\"lexiconVersion\":\"lexicon-v1\",\"deepCheck\":false,"
+                + "\"appliedOverlays\":[]}}\n\n"
                 + "data: [DONE]\n\n");
 
         // 扣的是脱口秀功能键

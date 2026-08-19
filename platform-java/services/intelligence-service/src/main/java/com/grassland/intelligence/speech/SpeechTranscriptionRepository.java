@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Component
@@ -60,6 +61,15 @@ public class SpeechTranscriptionRepository {
                 .bind("ownerAccountId", ownerAccountId)
                 .map(SpeechTranscriptionRepository::map)
                 .one();
+    }
+
+    /** owner 最近 20 条转写，按 created_at DESC（任务书 #43 D5 字幕工作台来源）。 */
+    public Flux<SpeechTranscription> findRecentOwned(String ownerAccountId, int limit) {
+        return db.sql("SELECT " + COLUMNS + " FROM speech_transcription WHERE owner_account_id = :ownerAccountId ORDER BY created_at DESC LIMIT :limit")
+                .bind("ownerAccountId", ownerAccountId)
+                .bind("limit", limit)
+                .map(SpeechTranscriptionRepository::map)
+                .all();
     }
 
     public Mono<Boolean> storeProviderResult(
