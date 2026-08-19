@@ -10,6 +10,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
@@ -60,6 +61,33 @@ class MerchantBillControllerIT extends FinanceItSupport {
 
         // 不变式：Σ flows == 该 org 该月 ESCROW 腿净额（独立 SQL 复核）
         assertThat(10000L - 6000 + 1000).isEqualTo(escrowLegSum(org, "2026-08"));
+    }
+
+    @Test
+    void monthlyBillExportKeepsOrgScopeAndSupportsCsvAndXlsx() {
+        String org = UUID.randomUUID().toString();
+        String merchant = UUID.randomUUID().toString();
+        seedJournal("DEPOSIT", org, beijing("2026-08-10T10:00:00"),
+                post("EXTERNAL", "DEBIT", 500), post("ESCROW", "CREDIT", 500));
+        String assertion = sign(merchant, "merchant", org, "finance_transaction");
+
+        byte[] csv = client().get().uri("/api/finance/organizations/" + org
+                        + "/monthly-bill/export?month=2026-08&format=csv")
+                .header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk()
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertThat(new String(csv, StandardCharsets.UTF_8)).contains("DEPOSIT", "500");
+
+        byte[] xlsx = client().get().uri("/api/finance/organizations/" + org
+                        + "/monthly-bill/export?month=2026-08&format=xlsx")
+                .header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk()
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertThat(xlsx).startsWith((byte) 'P', (byte) 'K');
+
+        client().get().uri("/api/finance/organizations/" + org
+                        + "/monthly-bill/export?month=2026-08&format=csv")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", UUID.randomUUID().toString(),
+                        "finance_transaction"))
+                .exchange().expectStatus().isNotFound();
     }
 
     /** 冲正：Cr ESCROW（退商家）+ Dr FEE（回冲抽成）。 */

@@ -54,6 +54,10 @@
     </div>
 
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
+      <form class="panel-toolbar search-toolbar" @submit.prevent="loadUsers">
+        <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
+        <button class="refresh-btn" type="submit" :disabled="loading">搜索</button>
+      </form>
       <p v-if="loadError" class="error-msg" role="alert">{{ loadError }}</p>
       <div v-if="loading" class="loading-state">加载中...</div>
       <div v-else class="table-card">
@@ -137,7 +141,10 @@
     <div v-else-if="activeSection === 'tasks'" class="admin-panel" role="tabpanel">
       <div class="panel-toolbar">
         <div><h3>待审核任务</h3><p>全审政策：所有任务提交后需审核通过才在大厅上架</p></div>
-        <button class="refresh-btn" type="button" :disabled="taskReviewLoading" @click="loadReviewTasks">刷新</button>
+        <form class="search-toolbar" @submit.prevent="loadReviewTasks">
+          <input v-model="taskSearch" type="search" maxlength="100" placeholder="搜索任务标题或描述">
+          <button class="refresh-btn" type="submit" :disabled="taskReviewLoading">搜索</button>
+        </form>
       </div>
       <p v-if="taskReviewError" class="error-msg" role="alert">{{ taskReviewError }}</p>
       <div v-if="taskReviewLoading" class="loading-state">加载中...</div>
@@ -351,6 +358,7 @@ const { currentUser, hasBackendRole } = useAuth()
 const reviewerOnly = computed(() => Boolean(currentUser.value)
   && hasBackendRole('content_reviewer') && !hasBackendRole('platform_admin'))
 const users = ref<UserItem[]>([])
+const userSearch = ref('')
 const activeSection = ref<
   'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'public-assets' | 'audit'
 >('users')
@@ -387,6 +395,7 @@ const journalError = ref('')
 const journalOrgFilter = ref('')
 
 const reviewTasks = ref<Task[]>([])
+const taskSearch = ref('')
 const taskReviewLoading = ref(false)
 const taskReviewError = ref('')
 const taskReviewNotes = ref<Record<string, string>>({})
@@ -422,7 +431,7 @@ const JOURNAL_TYPE_LABELS: Record<string, string> = {
 async function loadReviewTasks(): Promise<void> {
   taskReviewLoading.value = true
   taskReviewError.value = ''
-  const result = await grassland.listPendingReviewTasks()
+  const result = await grassland.listPendingReviewTasks(taskSearch.value)
   if (result) reviewTasks.value = [...result]
   else taskReviewError.value = grassland.error.value || '待审核任务加载失败'
   taskReviewLoading.value = false
@@ -485,7 +494,10 @@ async function loadUsers(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await fetch('/api/admin/users', { credentials: 'include' })
+    const query = userSearch.value.trim()
+    const res = await fetch(`/api/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`, {
+      credentials: 'include',
+    })
     if (!res.ok) {
       const data = await res.json().catch(() => null)
       throw new Error((data as Record<string, unknown>)?.error as string || '加载失败')
@@ -756,6 +768,9 @@ function formatBytes(value: number | null): string {
 .panel-toolbar p {
   margin: 0;
 }
+
+.search-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.search-toolbar input { min-width: min(320px, 64vw); min-height: 34px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); }
 
 .panel-toolbar h3 {
   font-size: 1rem;

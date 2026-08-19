@@ -22,6 +22,7 @@ include(
     "platform-storage",
     "platform-identity-assertion",
     "platform-http",
+    "platform-reporting",
     "services:database-bootstrap",
     "services:edge-bff",
     "services:identity-service",

@@ -134,6 +134,25 @@ class ContentAssetControllerIT extends IntelligenceItSupport {
     }
 
     @Test
+    void listSearchesTitleLiterallyWithoutCrossAccountLeakage() {
+        String account = "user-search";
+        createAsset(account, seedMedia(account), "100% 专属素材");
+        createAsset(account, seedMedia(account), "普通素材");
+        createAsset("user-other", seedMedia("user-other"), "100% 别人素材");
+
+        client().get().uri(uri -> uri.path("/api/content-assets").queryParam("q", "%").build())
+                .header(header(), sign(account, null))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].title").isEqualTo("100% 专属素材");
+
+        client().get().uri(uri -> uri.path("/api/content-assets")
+                        .queryParam("q", "x".repeat(101)).build())
+                .header(header(), sign(account, null))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
     void getReturns404ForOtherAccountAsset() {
         String mediaId = seedMedia("user-owner");
         String assetId = createAsset("user-owner", mediaId, "owner 的素材");

@@ -49,6 +49,10 @@ async function refresh(): Promise<void> {
   if (data) wallet.value = data
 }
 
+function exportWallet(format: 'csv' | 'xlsx'): void {
+  window.location.assign(`/api/finance/wallets/me/export?format=${format}`)
+}
+
 watch(() => currentUser.value?.id, (accountId) => {
   wallet.value = null
   notice.value = ''
@@ -71,7 +75,11 @@ async function withdraw(): Promise<void> {
   <article class="wal">
     <header class="wal-head">
       <h3>我的收益</h3>
-      <button type="button" class="wal-quiet" :disabled="grassland.loading.value" @click="refresh">刷新</button>
+      <div class="wal-actions">
+        <button type="button" class="wal-quiet" :disabled="grassland.loading.value" @click="refresh">刷新</button>
+        <button type="button" class="wal-quiet" @click="exportWallet('csv')">导出 CSV</button>
+        <button type="button" class="wal-quiet" @click="exportWallet('xlsx')">导出 Excel</button>
+      </div>
     </header>
 
     <p v-if="grassland.error.value" class="wal-alert wal-err" role="alert">{{ grassland.error.value }}</p>
@@ -109,6 +117,7 @@ async function withdraw(): Promise<void> {
 <style scoped>
 .wal { display: flex; flex-direction: column; gap: 10px; }
 .wal-head { display: flex; justify-content: space-between; align-items: center; }
+.wal-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .wal-head h3 { margin: 0; font-size: 15px; }
 .wal h4 { margin: 6px 0 0; font-size: 13px; }
 .wal-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }

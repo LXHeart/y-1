@@ -9,6 +9,9 @@ import com.grassland.finance.provider.ProviderOperationRepository;
 import com.grassland.finance.report.MonthParam;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
+import com.grassland.reporting.ReportFormat;
+import com.grassland.reporting.ReportRenderer;
+import com.grassland.reporting.TabularReport;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.util.ArrayList;
@@ -16,6 +19,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -79,6 +85,28 @@ public class WalletController {
                         .flatMap(wallet -> wallets.findEntries(accountId, RECENT_ENTRIES).collectList()
                                 .map(entries -> ResponseEntity.ok(Map.of("success", true,
                                         "data", toBody(wallet, entries))))));
+    }
+
+    @GetMapping("/api/finance/wallets/me/export")
+    public Mono<ResponseEntity<byte[]>> exportWallet(
+            @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to,
+            @RequestParam(defaultValue = "csv") String format,
+            ServerHttpRequest request) {
+        if (from != null && to != null && !from.isBefore(to)) {
+            throw new FinanceException(400, "to 必须晚于 from");
+        }
+        ReportFormat reportFormat = ReportFormat.parse(format);
+        return requireUser(request)
+                .flatMap(accountId -> wallets.exportEntries(accountId, from, to, TabularReport.MAX_ROWS).collectList())
+                .map(entries -> reportResponse("wallet-ledger", reportFormat, new TabularReport(
+                        "Wallet Ledger",
+                        List.of("entry_id", "entry_type", "amount_cents", "fee_cents",
+                                "commission_bonus_cents", "engagement_ref", "memo", "created_at"),
+                        entries.stream().<List<?>>map(entry -> List.of(
+                                value(entry.id()), value(entry.entryType()), entry.amountCents(), entry.feeCents(),
+                                entry.commissionBonusCents(), value(entry.engagementRef()), value(entry.memo()),
+                                value(entry.createdAt()))).toList())));
     }
 
     /**
@@ -233,5 +261,18 @@ public class WalletController {
         map.put("memo", entry.memo());
         map.put("createdAt", entry.createdAt() == null ? null : entry.createdAt().toString());
         return map;
+    }
+
+    private static Object value(Object value) {
+        return value == null ? "" : value;
+    }
+
+    private static ResponseEntity<byte[]> reportResponse(
+            String filename, ReportFormat format, TabularReport report) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(format.mediaType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(filename + "." + format.extension()).build().toString())
+                .body(ReportRenderer.render(report, format));
     }
 }

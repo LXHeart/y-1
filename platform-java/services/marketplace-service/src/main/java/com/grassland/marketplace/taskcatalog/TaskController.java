@@ -352,12 +352,14 @@ public class TaskController {
     public Mono<ResponseEntity<Map<String, Object>>> list(@RequestParam String organizationId,
                                                           @RequestParam(required = false, defaultValue = "published") String status,
                                                           @RequestParam(required = false) String storeId,
+                                                          @RequestParam(required = false) String q,
                                                           ServerHttpRequest request) {
+        String query = searchQuery(q);
         return callers.resolve(request)
                 .flatMap(caller -> {
                     if (storeId != null && !storeId.isBlank()) {
                         return taskAuthorization.requireScope(caller, organizationId, storeId, "staff")
-                                .then(tasks.findByStore(organizationId, storeId, status).collectList())
+                                .then(tasks.findByStore(organizationId, storeId, status, query).collectList())
                                 .flatMap(this::enrichTasks)
                                 .map(list -> ResponseEntity.ok(Map.of("success", true, "data", list)));
                     }
@@ -369,9 +371,9 @@ public class TaskController {
                                     : TaskStatus.PUBLISHED.dbValue());
                     boolean ownerView = caller.isMerchant() && organizationId.equals(caller.organizationId());
                     Mono<List<Task>> visibleTasks = ownerView
-                            ? tasks.findByOrganization(organizationId, effectiveStatus).collectList()
+                            ? tasks.findByOrganization(organizationId, effectiveStatus, query).collectList()
                             : visibleRecommenderLevel(caller).flatMap(level ->
-                                    tasks.findByOrganization(organizationId, effectiveStatus)
+                                    tasks.findByOrganization(organizationId, effectiveStatus, query)
                                             .filter(task -> !TaskStatus.PUBLISHED.dbValue().equals(task.status())
                                                     || task.minRecommenderLevel() <= level)
                                             .collectList());
@@ -409,10 +411,12 @@ public class TaskController {
             @org.springframework.web.bind.annotation.RequestParam(required = false) String platform,
             @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "false") boolean overdue,
             @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "0") int offset,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String q,
             ServerHttpRequest request) {
+        String query = searchQuery(q);
         return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
                 .thenMany(tasks.findReviewQueue(blankToNull(status), blankToNull(organizationId),
-                                blankToNull(platform), overdue, limit, offset).map(this::toBody))
+                                blankToNull(platform), overdue, limit, offset, query).map(this::toBody))
                 .collectList()
                 .flatMap(items -> taskReviews.queueStats()
                         .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", items,
@@ -525,9 +529,11 @@ public class TaskController {
             @RequestParam(required = false) Double latitude,
             @RequestParam(required = false) Double longitude,
             @RequestParam(required = false) Double maxDistanceKm,
+            @RequestParam(required = false) String q,
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false, defaultValue = "20") int limit,
             ServerHttpRequest request) {
+        String query = searchQuery(q);
         return callers.resolve(request)
                 .flatMap(caller -> {
                     int safeLimit = Math.max(1, Math.min(limit, 50));
@@ -555,7 +561,7 @@ public class TaskController {
                         TaskRepository.FeedFilter filter = new TaskRepository.FeedFilter(
                                 blankToNull(platform), blankToNull(contentForm),
                                 (minBountyCents == null || minBountyCents < 0) ? null : minBountyCents,
-                                tuple.getT1(), storeIds);
+                                tuple.getT1(), storeIds, query);
                         return tasks.findFeed(filter,
                                         decoded == null ? null : decoded.ts(),
                                         decoded == null ? null : decoded.id(), safeLimit + 1)
@@ -845,6 +851,13 @@ public class TaskController {
 
     private static String blankToNull(String value) {
         return (value == null || value.isBlank()) ? null : value;
+    }
+
+    private static String searchQuery(String value) {
+        String query = blankToNull(value == null ? null : value.trim());
+        if (query == null) return null;
+        if (query.length() > 100) throw new MarketplaceException(400, "q 最长 100 字符");
+        return "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
     private Mono<List<Map<String, Object>>> enrichTasks(List<Task> rows) {

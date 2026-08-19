@@ -138,7 +138,7 @@ const feedCursor = ref('')
 const feedHasMore = ref(false)
 const feedLoading = ref(false)
 const feedFilters = ref({
-  platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
+  q: '', platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
   latitude: null as number | null, longitude: null as number | null,
 })
 const locating = ref(false)
@@ -1092,6 +1092,7 @@ async function loadFeed(reset = false): Promise<void> {
   }
   feedLoading.value = true
   const page = await grassland.listTaskFeed({
+    q: feedFilters.value.q.trim() || undefined,
     platform: feedFilters.value.platform.trim() || undefined,
     contentForm: feedFilters.value.contentForm.trim() || undefined,
     minBountyCents: feedFilters.value.minBountyYuan > 0 ? yuanToCents(feedFilters.value.minBountyYuan) : undefined,

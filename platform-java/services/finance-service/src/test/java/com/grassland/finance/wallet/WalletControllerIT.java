@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.finance.FinanceItSupport;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -43,6 +44,33 @@ class WalletControllerIT extends FinanceItSupport {
                 .jsonPath("$.data.entries[0].entryType").isEqualTo("task_payout")
                 .jsonPath("$.data.entries[0].amountCents").isEqualTo(600)
                 .jsonPath("$.data.entries[0].feeCents").isEqualTo(0);
+    }
+
+    @Test
+    void walletExportIsSelfScopedAndSupportsCsvAndXlsx() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String ref = UUID.randomUUID().toString();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 450, recommender);
+        capture(merchant, org, ref);
+        String assertion = sign(recommender, "recommender", null, null);
+
+        byte[] csv = client().get().uri("/api/finance/wallets/me/export?format=csv")
+                .header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk()
+                .expectHeader().contentType("text/csv;charset=UTF-8")
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertThat(new String(csv, StandardCharsets.UTF_8)).contains("task_payout", ref);
+
+        byte[] xlsx = client().get().uri("/api/finance/wallets/me/export?format=xlsx")
+                .header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk()
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertThat(xlsx).startsWith((byte) 'P', (byte) 'K');
+
+        client().get().uri("/api/finance/wallets/me/export?format=csv")
+                .exchange().expectStatus().isUnauthorized();
     }
 
     /** 无收款人（存量预留 / 非撮合场景）：capture 维持旧行为，不动任何钱包。 */

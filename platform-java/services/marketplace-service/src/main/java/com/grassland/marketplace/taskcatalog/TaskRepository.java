@@ -55,7 +55,7 @@ public class TaskRepository {
 
     /** 任务大厅筛选条件（GL-P1-TASK-001 Stage 2）。字段均可空（null=不过滤该维度）。 */
     public record FeedFilter(String platform, String contentForm, Long minBountyCents,
-                             int recommenderLevel, List<String> nearbyStoreIds) {}
+                             int recommenderLevel, List<String> nearbyStoreIds, String query) {}
 
     /**
      * 创建即提交审核（GL-P2-ADMIN-003 全审政策）：status=pending_review，不设 published_at（审核通过时才设），
@@ -390,18 +390,22 @@ public class TaskRepository {
 
     /** Operational review queue with status, organization, platform, SLA and offset filters. */
     public reactor.core.publisher.Flux<Task> findReviewQueue(
-            String status, String organizationId, String platform, boolean overdue, int limit, int offset) {
+            String status, String organizationId, String platform, boolean overdue, int limit, int offset,
+            String query) {
         StringBuilder sql = new StringBuilder("SELECT ").append(SELECT_COLS).append(" FROM task WHERE 1=1");
         if (status != null && !status.isBlank()) sql.append(" AND status = :status");
         if (organizationId != null && !organizationId.isBlank()) sql.append(" AND organization_id = CAST(:org AS uuid)");
         if (platform != null && !platform.isBlank()) sql.append(" AND platform = :platform");
         if (overdue) sql.append(" AND status = 'pending_review' AND updated_at < now() - interval '24 hours'");
+        if (query != null) sql.append(" AND lower(coalesce(title,'') || ' ' || coalesce(description,''))"
+                + " LIKE lower(:query) ESCAPE E'\\\\'");
         sql.append(" ORDER BY updated_at ASC, id LIMIT :limit OFFSET :offset");
         var spec = db.sql(sql.toString()).bind("limit", Math.max(1, Math.min(limit, 200)))
                 .bind("offset", Math.max(0, offset));
         if (status != null && !status.isBlank()) spec = spec.bind("status", status);
         if (organizationId != null && !organizationId.isBlank()) spec = spec.bind("org", organizationId);
         if (platform != null && !platform.isBlank()) spec = spec.bind("platform", platform);
+        if (query != null) spec = spec.bind("query", query);
         return spec.map(TaskRepository::map).all();
     }
 
@@ -430,6 +434,8 @@ public class TaskRepository {
                 + (filter.contentForm() != null ? " AND content_form = :contentForm" : "")
                 + (filter.minBountyCents() != null ? " AND bounty_cents IS NOT NULL AND bounty_cents >= :minBountyCents" : "")
                 + (filter.nearbyStoreIds() != null ? " AND store_id::text IN (:nearbyStoreIds)" : "")
+                + (filter.query() != null ? " AND lower(coalesce(title,'') || ' ' || coalesce(description,''))"
+                        + " LIKE lower(:query) ESCAPE E'\\\\'" : "")
                 + (firstPage ? "" : " AND (created_at, id) < (CAST(:cursorTs AS timestamptz), CAST(:cursorId AS uuid))");
         String sql = "SELECT " + SELECT_COLS + " FROM task WHERE " + predicate
                 + " ORDER BY created_at DESC, id DESC LIMIT :limit";
@@ -448,6 +454,9 @@ public class TaskRepository {
         if (filter.nearbyStoreIds() != null) {
             spec = spec.bind("nearbyStoreIds", filter.nearbyStoreIds());
         }
+        if (filter.query() != null) {
+            spec = spec.bind("query", filter.query());
+        }
         if (!firstPage) {
             spec = spec.bind("cursorTs", cursorTs.atOffset(ZoneOffset.UTC)).bind("cursorId", cursorId);
         }
@@ -455,31 +464,38 @@ public class TaskRepository {
     }
 
     /** 列某 org 的组织级任务（不含 store-scoped 行）；status 为空则不限。 */
-    public Flux<Task> findByOrganization(String organizationId, String status) {
+    public Flux<Task> findByOrganization(String organizationId, String status, String query) {
+        String search = query == null ? "" : " AND lower(coalesce(title,'') || ' ' || coalesce(description,''))"
+                + " LIKE lower(:query) ESCAPE E'\\\\'";
         if (status == null || status.isBlank()) {
-            return db.sql("SELECT " + SELECT_COLS
-                    + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL ORDER BY created_at DESC")
-                    .bind("org", organizationId)
-                    .map(TaskRepository::map).all();
+            var spec = db.sql("SELECT " + SELECT_COLS
+                    + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL"
+                    + search + " ORDER BY created_at DESC").bind("org", organizationId);
+            if (query != null) spec = spec.bind("query", query);
+            return spec.map(TaskRepository::map).all();
         }
-        return db.sql("SELECT " + SELECT_COLS
+        var spec = db.sql("SELECT " + SELECT_COLS
                 + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL"
-                + " AND status = :status ORDER BY created_at DESC")
-                .bind("org", organizationId).bind("status", status)
-                .map(TaskRepository::map).all();
+                + " AND status = :status" + search + " ORDER BY created_at DESC")
+                .bind("org", organizationId).bind("status", status);
+        if (query != null) spec = spec.bind("query", query);
+        return spec.map(TaskRepository::map).all();
     }
 
     /** 列某一门店的任务；调用方必须先完成 Identity 门店授权。 */
-    public Flux<Task> findByStore(String organizationId, String storeId, String status) {
+    public Flux<Task> findByStore(String organizationId, String storeId, String status, String query) {
         String statusPredicate = status == null || status.isBlank() ? "" : " AND status = :status";
+        String search = query == null ? "" : " AND lower(coalesce(title,'') || ' ' || coalesce(description,''))"
+                + " LIKE lower(:query) ESCAPE E'\\\\'";
         var spec = db.sql("SELECT " + SELECT_COLS + " FROM task"
                         + " WHERE organization_id = CAST(:org AS uuid) AND store_id = CAST(:store AS uuid)"
-                        + statusPredicate + " ORDER BY created_at DESC")
+                        + statusPredicate + search + " ORDER BY created_at DESC")
                 .bind("org", organizationId)
                 .bind("store", storeId);
         if (!statusPredicate.isEmpty()) {
             spec = spec.bind("status", status);
         }
+        if (query != null) spec = spec.bind("query", query);
         return spec.map(TaskRepository::map).all();
     }
 

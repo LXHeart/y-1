@@ -16,6 +16,7 @@ dependencies {
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     implementation(project(":platform-identity-assertion"))
     implementation(project(":platform-http"))
+    implementation(project(":platform-reporting"))
     testImplementation(testFixtures(project(":platform-identity-assertion")))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-kafka")

@@ -3,6 +3,7 @@ package com.grassland.finance.wallet;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
@@ -94,6 +95,19 @@ public class WalletRepository {
                 + " WHERE account_id = CAST(:acct AS uuid) ORDER BY created_at DESC LIMIT :lim")
                 .bind("acct", accountId).bind("lim", limit)
                 .map(WalletRepository::mapEntry).all();
+    }
+
+    public Flux<WalletEntry> exportEntries(String accountId, Instant from, Instant to, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(ENTRY_COLS).append(" FROM wallet_ledger")
+                .append(" WHERE account_id = CAST(:acct AS uuid)");
+        if (from != null) sql.append(" AND created_at >= :fromAt");
+        if (to != null) sql.append(" AND created_at < :toAt");
+        sql.append(" ORDER BY created_at DESC LIMIT :limit");
+        GenericExecuteSpec spec = db.sql(sql.toString()).bind("acct", accountId)
+                .bind("limit", Math.max(1, Math.min(limit, 10_000)));
+        if (from != null) spec = spec.bind("fromAt", from.atOffset(ZoneOffset.UTC));
+        if (to != null) spec = spec.bind("toAt", to.atOffset(ZoneOffset.UTC));
+        return spec.map(WalletRepository::mapEntry).all();
     }
 
     private static Wallet mapWallet(Readable row) {

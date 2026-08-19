@@ -1,7 +1,6 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -130,7 +129,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
         awaitReservation(merchant, task, app, "accepted");
 
         verify(financeClient).freebieReserve(org, app, 100L, recommender, merchant);
-        verify(financeClient, never()).reserve(anyString(), anyString(), anyLong(), anyString());
+        verify(financeClient, never()).reserve(org, app, 100L, recommender);
         TaskApplication accepted = applicationRepo.findById(app).block();
         assertThat(accepted.freebieDepositCents()).as("押金快照冻结").isEqualTo(100L);
         assertThat(taskContextSnapshot(app)).contains("\"freebieDepositCents\": 100");
@@ -153,7 +152,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 
         assertThat(appStatus(app)).isEqualTo("pending");
         // 无部分扣款：押金从未成功托管，无退款调用
-        verify(financeClient, never()).freebieRefund(anyString(), anyString());
+        verify(financeClient, never()).freebieRefund(org, app);
         // 商家通知（ADR-D12 验收 #2）：ApplicationReservationFailed 带 taskOwnerId
         String owner = outboxPayloadFieldForApp("ApplicationReservationFailed", app, "taskOwnerId");
         assertThat(owner).isEqualTo(merchant);
@@ -186,7 +185,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 
         // D9：结算唯一钱侧入口按资金来源分支——freebie 退推荐官，绝不走 capture
         verify(financeClient, timeout(3_000)).freebieRefund(org, app);
-        verify(financeClient, never()).capture(anyString(), anyString());
+        verify(financeClient, never()).capture(org, app);
         assertThat(outboxCountForApp("EngagementSettled", app)).isEqualTo(1);
     }
 
@@ -216,7 +215,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk();
 
         verify(financeClient, timeout(3_000)).freebieRefund(org, app);
-        verify(financeClient, never()).release(anyString(), anyString());
+        verify(financeClient, never()).release(org, app);
         assertThat(appStatus(app)).isEqualTo("refunded");
         // 违约信号仍在（trust 消费），但资金方向标记为推荐官
         assertThat(outboxPayloadFieldForApp("EngagementRefundedOnCancel", app, "refundDirection"))
@@ -247,7 +246,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk();
 
         verify(financeClient, timeout(3_000)).release(org, app);
-        verify(financeClient, never()).freebieRefund(anyString(), anyString());
+        verify(financeClient, never()).freebieRefund(org, app);
         assertThat(outboxPayloadFieldForApp("EngagementRefundedOnCancel", app, "refundDirection"))
                 .isEqualTo("merchant");
     }

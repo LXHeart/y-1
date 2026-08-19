@@ -334,6 +334,26 @@ public class CommerceRepository {
         return spec.map(CommerceRepository::mapOrderWithSlot).all();
     }
 
+    /** Bounded merchant export. Authorization is completed by the service before this query runs. */
+    public Flux<Order> exportMerchantOrders(
+            String organizationId, String storeId, String status, Instant from, Instant to, int limit) {
+        String storePredicate = storeId == null || storeId.isBlank()
+                ? "o.store_id IS NULL" : "o.store_id = CAST(:store AS uuid)";
+        StringBuilder predicates = new StringBuilder(" WHERE o.organization_id = CAST(:org AS uuid) AND ")
+                .append(storePredicate);
+        if (status != null && !status.isBlank()) predicates.append(" AND o.status = :status");
+        if (from != null) predicates.append(" AND o.created_at >= :fromAt");
+        if (to != null) predicates.append(" AND o.created_at < :toAt");
+        GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o"
+                        + ORDER_SLOT_JOIN + predicates + " ORDER BY o.created_at DESC LIMIT :limit")
+                .bind("org", organizationId).bind("limit", Math.max(1, Math.min(limit, 10_000)));
+        if (storeId != null && !storeId.isBlank()) spec = spec.bind("store", storeId);
+        if (status != null && !status.isBlank()) spec = spec.bind("status", status);
+        if (from != null) spec = spec.bind("fromAt", from.atOffset(ZoneOffset.UTC));
+        if (to != null) spec = spec.bind("toAt", to.atOffset(ZoneOffset.UTC));
+        return spec.map(CommerceRepository::mapOrderWithSlot).all();
+    }
+
     public Flux<Order> listAdminOrders(String status, int limit) {
         String predicate = status == null || status.isBlank() ? "" : " WHERE o.status = :status";
         GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o"

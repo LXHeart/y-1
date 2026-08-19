@@ -65,6 +65,25 @@ describe('MediaLibraryPanel', () => {
     expect(wrapper.text()).toContain('暂无公共素材')
   })
 
+  test('关键词搜索会把 q 参数透传到素材列表接口', async () => {
+    const fetchMock = mockFetch({
+      '/api/content-assets': { items: [] },
+      '/api/me/identities': [],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: false } })
+    await flushPromises()
+    await wrapper.findAll('button[role="tab"]').find((button) => button.text().includes('公共'))!.trigger('click')
+    await flushPromises()
+    await wrapper.get('.lib-semantic-search input').setValue('门店 海报')
+    await wrapper.get('.lib-semantic-search').trigger('submit')
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url)))
+      .toContain('/api/content-assets?libraryType=public&q=%E9%97%A8%E5%BA%97+%E6%B5%B7%E6%8A%A5')
+  })
+
   test('个人 tab 渲染自己的素材', async () => {
     const fetchMock = mockFetch({
       '/api/content-assets?libraryType=personal': { items: [

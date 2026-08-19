@@ -74,6 +74,7 @@ const recommendationQuery = ref<{ platform: string; contentForm: string; terms: 
 const recommendationSemantic = ref<SemanticRecommendationMetadata | null>(null)
 /** 语义搜索输入（提交时 trim；空 = 不带 query，任务模式回落权威任务文本）。 */
 const semanticQuery = ref('')
+const keywordQuery = ref('')
 
 const CATEGORIES: ReadonlyArray<{ id: ContentAssetCategory; label: string }> = [
   { id: 'store', label: '门店' },
@@ -243,13 +244,15 @@ async function refresh(): Promise<void> {
     return
   }
   if (activeTab.value === 'public') {
-    const result = await grassland.listContentAssets({ libraryType: 'public' })
+    const result = await grassland.listContentAssets({ libraryType: 'public', q: keywordQuery.value })
     if (result) assets.value = result.items
     return
   }
   if (activeTab.value === 'merchant') {
     if (grantedView.value && isRecommender.value) {
-      const result = await grassland.listContentAssets({ libraryType: 'merchant', granted: true })
+      const result = await grassland.listContentAssets({
+        libraryType: 'merchant', granted: true, q: keywordQuery.value,
+      })
       if (result) assets.value = result.items
       return
     }
@@ -264,13 +267,14 @@ async function refresh(): Promise<void> {
         libraryType: 'merchant',
         organizationId: selectedOrganizationId.value || undefined,
         storeId: selectedStoreId.value || undefined,
+        q: keywordQuery.value,
       })
       if (result) assets.value = result.items
     }
     return
   }
   // personal
-  const result = await grassland.listContentAssets({ libraryType: 'personal' })
+  const result = await grassland.listContentAssets({ libraryType: 'personal', q: keywordQuery.value })
   if (result) assets.value = result.items
 }
 
@@ -421,6 +425,12 @@ function formatSize(bytes: number | null | undefined): string {
       class="lib-semantic-fallback" aria-live="polite">
       {{ recommendationSemantic.message ?? '语义检索暂不可用，已按规则排序' }}
     </p>
+
+    <form v-if="activeTab !== 'recommend'" class="lib-semantic-search" @submit.prevent="refresh">
+      <input v-model="keywordQuery" type="search" maxlength="100" placeholder="搜索素材标题或标签"
+        aria-label="搜索素材标题或标签">
+      <button type="submit" :disabled="grassland.loading.value">搜索</button>
+    </form>
 
     <!-- 上传区（个人/商家/审核员，公共需 content_reviewer；组织级商家素材仅 org owner/admin） -->
     <div v-if="activeTab === 'personal' || activeTab === 'public' && canReviewPublic

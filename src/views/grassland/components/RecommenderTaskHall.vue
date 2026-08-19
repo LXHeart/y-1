@@ -2,6 +2,9 @@
   <article id="gl-task-hall" class="gl-card gl-card-wide">
     <h3>任务大厅</h3>
     <div class="gl-row">
+      <input :value="feedFilters.q || ''" type="search" maxlength="100" placeholder="搜索任务标题或描述"
+             @input="$emit('update:feedFilter', 'q', ($event.target as HTMLInputElement).value)"
+             @keyup.enter="$emit('load-feed', true)" />
       <input :value="feedFilters.platform" placeholder="平台筛选（可选）" @input="$emit('update:feedFilter', 'platform', ($event.target as HTMLInputElement).value)" />
       <input :value="feedFilters.contentForm" placeholder="内容形式筛选（可选）" @input="$emit('update:feedFilter', 'contentForm', ($event.target as HTMLInputElement).value)" />
       <label>最低赏金 ¥<input :value="feedFilters.minBountyYuan" type="number" min="0" @input="$emit('update:feedFilter', 'minBountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -66,7 +69,7 @@ withDefaults(defineProps<{
   feedHasMore: boolean
   feedLoading: boolean
   feedFilters: {
-    platform: string; contentForm: string; minBountyYuan: number; maxDistanceKm: number
+    q?: string; platform: string; contentForm: string; minBountyYuan: number; maxDistanceKm: number
     latitude: number | null; longitude: number | null
   }
   applyNote: string

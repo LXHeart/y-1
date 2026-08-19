@@ -2,7 +2,11 @@
   <article class="commerce-card">
     <header class="card-head">
       <div><h3>到店套餐与核销</h3><p>套餐每次保存生成不可变版本；下单后价格、归因与分账不再随编辑变化。</p></div>
-      <button type="button" :disabled="commerce.loading.value || !organizationId" @click="refresh">刷新</button>
+      <div class="header-actions">
+        <button type="button" :disabled="commerce.loading.value || !organizationId" @click="refresh">刷新</button>
+        <button type="button" :disabled="!organizationId" @click="exportOrders('csv')">导出 CSV</button>
+        <button type="button" :disabled="!organizationId" @click="exportOrders('xlsx')">导出 Excel</button>
+      </div>
     </header>
     <p v-if="commerce.error.value" class="alert error">{{ commerce.error.value }}</p>
     <p v-if="notice" class="alert ok">{{ notice }}</p>
@@ -212,6 +216,13 @@ async function refresh(): Promise<void> {
   }
 }
 
+function exportOrders(format: 'csv' | 'xlsx'): void {
+  if (!props.organizationId) return
+  const query = new URLSearchParams({ organizationId: props.organizationId, format })
+  if (props.storeId) query.set('storeId', props.storeId)
+  window.location.assign(`/api/v2/merchant/orders/export?${query}`)
+}
+
 async function save(): Promise<void> {
   const slots = slotInputs()
   const totalStock = slots ? slots.reduce((sum, slot) => sum + slot.totalStock, 0) : form.totalStock
@@ -377,6 +388,7 @@ onBeforeUnmount(stopScanner)
 <style scoped>
 .commerce-card { grid-column: 1 / -1; display: grid; gap: 14px; padding: 16px; border: 1px solid var(--color-border); border-radius: 10px; }
 .card-head, .package-row, .promotion-box, .copy-row, .actions, .row-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card-head h3, .card-head p, .package-row p, .promotion-box h4, .redemption-grid h4 { margin: 0; }.card-head p, .package-row p, .empty { font-size: 12px; opacity: .7; }
 .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }.wide { grid-column: 1 / -1; }.date-field { display: grid; gap: 3px; font-size: 11px; opacity: .8; }
 .slots-editor { display: grid; gap: 8px; padding: 10px; border: 1px dashed var(--color-border); border-radius: 9px; }

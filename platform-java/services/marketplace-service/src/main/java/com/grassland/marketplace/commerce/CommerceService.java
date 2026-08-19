@@ -363,6 +363,13 @@ public class CommerceService {
                         scope.organizationId(), scope.storeId(), limit));
     }
 
+    public Flux<Order> exportMerchantOrders(
+            Caller caller, String organizationId, String storeId, String status, Instant from, Instant to) {
+        return authorization.requireScope(caller, organizationId, storeId, "staff")
+                .flatMapMany(scope -> repository.exportMerchantOrders(
+                        scope.organizationId(), scope.storeId(), status, from, to, 10_000));
+    }
+
     public Flux<Order> listAdminOrders(String status, int limit) {
         return repository.listAdminOrders(status, limit);
     }

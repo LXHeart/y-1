@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -58,9 +59,11 @@ public class AdminUserController {
     }
 
     @GetMapping("/api/admin/users")
-    public Mono<ResponseEntity<Map<String, Object>>> listUsers(ServerHttpRequest request) {
+    public Mono<ResponseEntity<Map<String, Object>>> listUsers(
+            @RequestParam(required = false) String q, ServerHttpRequest request) {
+        String query = searchQuery(q);
         return accounts.requireAdmin(request)
-                .flatMap(admin -> adminUsers.findAll()
+                .flatMap(admin -> (query == null ? adminUsers.findAll() : adminUsers.findAll(query))
                         .flatMap(rows -> {
                             List<String> accountIds = rows.stream().map(AdminUserRow::id).toList();
                             return financeCredits.fetchBalances(accountIds)
@@ -73,6 +76,10 @@ public class AdminUserController {
                         })
                         .map(users -> ResponseEntity.ok(Map.of("success", true,
                                 "data", Map.of("users", users)))));
+    }
+
+    Mono<ResponseEntity<Map<String, Object>>> listUsers(ServerHttpRequest request) {
+        return listUsers(null, request);
     }
 
     @PutMapping(value = "/api/admin/users/{id}/roles", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -204,6 +211,13 @@ public class AdminUserController {
             throw new IllegalArgumentException("note 过长（上限 " + MAX_NOTE_LENGTH + " 字符）");
         }
         return trimmed;
+    }
+
+    private static String searchQuery(String value) {
+        String query = value == null ? "" : value.trim();
+        if (query.isEmpty()) return null;
+        if (query.length() > 100) throw new IllegalArgumentException("q 最长 100 字符");
+        return "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
     /** adjust-credits 请求体：amount 可正可负（正=award / 负=refund），对齐 legacy schema。 */

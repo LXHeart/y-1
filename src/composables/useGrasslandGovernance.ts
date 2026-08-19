@@ -324,12 +324,14 @@ export function useGrasslandGovernance(run: RunFn) {
     granted?: boolean
     organizationId?: string
     storeId?: string
+    q?: string
   }) => {
     const qs = new URLSearchParams({ libraryType: params.libraryType })
     if (params.category) qs.set('category', params.category)
     if (params.granted) qs.set('granted', 'true')
     if (params.organizationId) qs.set('organizationId', params.organizationId)
     if (params.storeId) qs.set('storeId', params.storeId)
+    if (params.q?.trim()) qs.set('q', params.q.trim())
     return run(() => request<{ items: ContentAsset[] }>(`/api/content-assets?${qs}`))
   }
 
@@ -444,8 +446,11 @@ export function useGrasslandGovernance(run: RunFn) {
       }))
 
   /** 内容审核员的公共素材待审队列。 */
-  const listPendingPublicAssetReviews = () =>
-    run(() => request<{ items: ContentAsset[] }>('/api/admin/content-assets/review'))
+  const listPendingPublicAssetReviews = (q?: string) => {
+    const query = q?.trim()
+    return run(() => request<{ items: ContentAsset[] }>(
+      `/api/admin/content-assets/review${query ? `?q=${encodeURIComponent(query)}` : ''}`))
+  }
 
   const approvePublicAsset = (id: string, expectedVersion: number, note?: string) =>
     run(() => request<ContentAsset>(
@@ -635,8 +640,11 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
 
-  const listPendingReviewTasks = () =>
-    run(() => request<Task[]>('/api/admin/tasks/review'))
+  const listPendingReviewTasks = (q?: string) => {
+    const query = q?.trim()
+    return run(() => request<Task[]>(
+      `/api/admin/tasks/review${query ? `?q=${encodeURIComponent(query)}` : ''}`))
+  }
 
   const approveTaskReview = (taskId: string, expectedVersion: number) =>
     run(() => request<Task>(`/api/admin/tasks/${encodeURIComponent(taskId)}/review/approve`, {

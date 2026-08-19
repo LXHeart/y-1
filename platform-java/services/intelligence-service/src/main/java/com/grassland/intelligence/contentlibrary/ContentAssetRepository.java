@@ -130,38 +130,56 @@ public class ContentAssetRepository {
      * 商家库/公共库的列表查询走各自专用方法（Stage 2/3）。
      */
     public Flux<ContentAsset> listPersonal(String ownerAccountId) {
-        return db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
+        return listPersonal(ownerAccountId, null);
+    }
+
+    public Flux<ContentAsset> listPersonal(String ownerAccountId, String query) {
+        String search = searchPredicate(query);
+        var spec = db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
                 + " WHERE owner_account_id=:ownerAccountId AND library_type='personal'"
                 + " AND deleted_at IS NULL AND status='active'"
-                + " ORDER BY created_at DESC")
-                .bind("ownerAccountId", ownerAccountId)
-                .map(ContentAssetRepository::map).all();
+                + search + " ORDER BY created_at DESC").bind("ownerAccountId", ownerAccountId);
+        if (query != null) spec = spec.bind("query", query);
+        return spec.map(ContentAssetRepository::map).all();
     }
 
     /**
      * 列组织级商家素材（不含 store-scoped 行）。按创建时间倒序，可按分类筛选。
      */
     public Flux<ContentAsset> listMerchantByOrg(String organizationId, AssetCategory category) {
+        return listMerchantByOrg(organizationId, category, null);
+    }
+
+    public Flux<ContentAsset> listMerchantByOrg(
+            String organizationId, AssetCategory category, String query) {
         String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
                 + " WHERE organization_id=:organizationId AND library_type='merchant'"
                 + " AND store_id IS NULL"
                 + " AND deleted_at IS NULL AND status='active'"
                 + (category != null ? " AND category=:category" : "")
+                + searchPredicate(query)
                 + " ORDER BY created_at DESC";
         DatabaseClient.GenericExecuteSpec spec = db.sql(sql).bind("organizationId", organizationId);
         if (category != null) {
             spec = spec.bind("category", category.db());
         }
+        if (query != null) spec = spec.bind("query", query);
         return spec.map(ContentAssetRepository::map).all();
     }
 
     /** 列某门店素材；调用方必须先完成 Identity 门店 STAFF 授权。 */
     public Flux<ContentAsset> listMerchantByStore(
             String organizationId, String storeId, AssetCategory category) {
+        return listMerchantByStore(organizationId, storeId, category, null);
+    }
+
+    public Flux<ContentAsset> listMerchantByStore(
+            String organizationId, String storeId, AssetCategory category, String query) {
         String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
                 + " WHERE organization_id=:organizationId AND store_id=CAST(:storeId AS uuid)"
                 + " AND library_type='merchant' AND deleted_at IS NULL AND status='active'"
                 + (category != null ? " AND category=:category" : "")
+                + searchPredicate(query)
                 + " ORDER BY created_at DESC";
         DatabaseClient.GenericExecuteSpec spec = db.sql(sql)
                 .bind("organizationId", organizationId)
@@ -169,6 +187,7 @@ public class ContentAssetRepository {
         if (category != null) {
             spec = spec.bind("category", category.db());
         }
+        if (query != null) spec = spec.bind("query", query);
         return spec.map(ContentAssetRepository::map).all();
     }
 
@@ -187,15 +206,21 @@ public class ContentAssetRepository {
      * 真推荐算法留后续，首期按 category 筛选）。按创建时间倒序。
      */
     public Flux<ContentAsset> listPublic(AssetCategory category) {
+        return listPublic(category, null);
+    }
+
+    public Flux<ContentAsset> listPublic(AssetCategory category, String query) {
         String sql = "SELECT " + SELECT_COLS + " FROM content_asset"
                 + " WHERE library_type='public' AND deleted_at IS NULL AND status='active'"
                 + " AND (valid_until IS NULL OR valid_until > now())"
                 + (category != null ? " AND category=:category" : "")
+                + searchPredicate(query)
                 + " ORDER BY created_at DESC";
         DatabaseClient.GenericExecuteSpec spec = db.sql(sql);
         if (category != null) {
             spec = spec.bind("category", category.db());
         }
+        if (query != null) spec = spec.bind("query", query);
         return spec.map(ContentAssetRepository::map).all();
     }
 
@@ -211,11 +236,21 @@ public class ContentAssetRepository {
 
     /** 列待审核公共素材（内容审核员队列，GL-P2-ADMIN-003 同款 pending_review）。按提交时间正序。 */
     public Flux<ContentAsset> listPendingReview(int limit) {
-        return db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
+        return listPendingReview(limit, null);
+    }
+
+    public Flux<ContentAsset> listPendingReview(int limit, String query) {
+        var spec = db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
                 + " WHERE library_type='public' AND status='pending_review' AND deleted_at IS NULL"
-                + " ORDER BY created_at LIMIT :limit")
-                .bind("limit", Math.max(1, Math.min(limit, 200)))
-                .map(ContentAssetRepository::map).all();
+                + searchPredicate(query) + " ORDER BY created_at LIMIT :limit")
+                .bind("limit", Math.max(1, Math.min(limit, 200)));
+        if (query != null) spec = spec.bind("query", query);
+        return spec.map(ContentAssetRepository::map).all();
+    }
+
+    private static String searchPredicate(String query) {
+        return query == null ? "" : " AND lower(coalesce(title,'') || ' ' || tags::text)"
+                + " LIKE lower(:query) ESCAPE E'\\\\'";
     }
 
     /**

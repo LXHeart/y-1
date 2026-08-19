@@ -86,6 +86,23 @@ class AdminUserControllerTest {
     }
 
     @Test
+    void listUsersEscapesWildcardCharactersBeforeRepositorySearch() {
+        when(adminUsers.findAll("%100\\%\\_ok%" )).thenReturn(Mono.just(List.of()));
+
+        controller.listUsers(" 100%_ok ", request()).block();
+
+        verify(adminUsers).findAll("%100\\%\\_ok%");
+    }
+
+    @Test
+    void listUsersRejectsOverlongSearch() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> controller.listUsers("x".repeat(101), request()).block())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("100");
+    }
+
+    @Test
     void adjustCreditsPositiveAmountCallsAward() {
         String acct = UUID.randomUUID().toString();
         controller.adjustCredits(new AdjustCreditsRequest(acct, 10, "赠送"), request()).block();

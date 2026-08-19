@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -111,9 +112,11 @@ public class ContentAssetAdminController {
 
     /** 列待审核公共素材（内容审核员队列）。 */
     @GetMapping("/review")
-    public Mono<ResponseEntity<Map<String, Object>>> reviewQueue(ServerWebExchange exchange) {
+    public Mono<ResponseEntity<Map<String, Object>>> reviewQueue(
+            @RequestParam(required = false) String q, ServerWebExchange exchange) {
+        String query = ContentAssetController.searchQuery(q);
         return callers.requireRole(exchange.getRequest(), BackendRole.CONTENT_REVIEWER)
-                .flatMap(caller -> assets.listPendingReview(REVIEW_QUEUE_LIMIT).collectList())
+                .flatMap(caller -> assets.listPendingReview(REVIEW_QUEUE_LIMIT, query).collectList())
                 .map(list -> ContentAssetController.success(
                         Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }

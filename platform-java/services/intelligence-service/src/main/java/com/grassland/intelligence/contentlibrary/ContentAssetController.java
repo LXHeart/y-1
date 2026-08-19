@@ -150,24 +150,27 @@ public class ContentAssetController {
             @RequestParam(name = "granted", required = false) Boolean granted,
             @RequestParam(name = "organizationId", required = false) String organizationId,
             @RequestParam(name = "storeId", required = false) String storeId,
+            @RequestParam(name = "q", required = false) String q,
             ServerWebExchange exchange) {
+        String query = searchQuery(q);
         LibraryType requested = libraryTypeRaw == null ? LibraryType.PERSONAL : LibraryType.fromRequest(libraryTypeRaw);
         if (requested == null) {
             return Mono.error(new IntelligenceException(400, "libraryType 无效"));
         }
         return switch (requested) {
             case PERSONAL -> callers.resolve(exchange.getRequest())
-                    .flatMap(caller -> assets.listPersonal(caller.accountId()).collectList())
+                    .flatMap(caller -> assets.listPersonal(caller.accountId(), query).collectList())
                     .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
             case MERCHANT -> Boolean.TRUE.equals(granted)
-                    ? listGrantedMerchant(exchange)
-                    : listOwnMerchant(exchange, categoryRaw, organizationId, storeId);
-            case PUBLIC -> listPublic(categoryRaw);
+                    ? listGrantedMerchant(exchange, query)
+                    : listOwnMerchant(exchange, categoryRaw, organizationId, storeId, query);
+            case PUBLIC -> listPublic(categoryRaw, query);
         };
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> listOwnMerchant(
-            ServerWebExchange exchange, String categoryRaw, String organizationIdRaw, String storeIdRaw) {
+            ServerWebExchange exchange, String categoryRaw, String organizationIdRaw, String storeIdRaw,
+            String query) {
         AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
         if (categoryRaw != null && category == null) {
             return Mono.error(new IntelligenceException(400, "category 无效"));
@@ -181,7 +184,7 @@ public class ContentAssetController {
                                 || organizationId != null && !organizationId.equals(caller.organizationId())) {
                             return Mono.error(new IntelligenceException(403, "需要商家组织身份"));
                         }
-                        return assets.listMerchantByOrg(caller.organizationId(), category).collectList();
+                        return assets.listMerchantByOrg(caller.organizationId(), category, query).collectList();
                     }
                     String requestedOrganizationId = organizationId != null
                             ? organizationId : caller.organizationId();
@@ -191,24 +194,25 @@ public class ContentAssetController {
                     return storeAuthorization.authorize(
                                     caller.accountId(), requestedOrganizationId, storeId, "staff")
                             .flatMap(access -> assets.listMerchantByStore(
-                                    access.organizationId(), access.storeId(), category).collectList());
+                                    access.organizationId(), access.storeId(), category, query).collectList());
                 })
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
-    private Mono<ResponseEntity<Map<String, Object>>> listGrantedMerchant(ServerWebExchange exchange) {
+    private Mono<ResponseEntity<Map<String, Object>>> listGrantedMerchant(
+            ServerWebExchange exchange, String query) {
         return callers.requireRecommender(exchange.getRequest())
-                .flatMap(caller -> grants.listGrantedAssets(caller.accountId()).collectList())
+                .flatMap(caller -> grants.listGrantedAssets(caller.accountId(), query).collectList())
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
     /** 公共库列表（全员只读，不解析身份）。active + 未过期，可按分类筛选。 */
-    private Mono<ResponseEntity<Map<String, Object>>> listPublic(String categoryRaw) {
+    private Mono<ResponseEntity<Map<String, Object>>> listPublic(String categoryRaw, String query) {
         AssetCategory category = categoryRaw == null ? null : AssetCategory.fromRequest(categoryRaw);
         if (categoryRaw != null && category == null) {
             return Mono.error(new IntelligenceException(400, "category 无效"));
         }
-        return assets.listPublic(category).collectList()
+        return assets.listPublic(category, query).collectList()
                 .map(list -> success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
     }
 
@@ -808,6 +812,13 @@ public class ContentAssetController {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    static String searchQuery(String value) {
+        String query = blankToNull(value);
+        if (query == null) return null;
+        if (query.length() > 100) throw new IntelligenceException(400, "q 最长 100 字符");
+        return "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
     private static List<String> sanitizeTags(List<String> tags) {

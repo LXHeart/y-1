@@ -32,6 +32,12 @@ async function load(): Promise<void> {
   if (data) bill.value = data
 }
 
+function exportBill(format: 'csv' | 'xlsx'): void {
+  if (!props.organizationId || !month.value) return
+  const path = `/api/finance/organizations/${encodeURIComponent(props.organizationId)}/monthly-bill/export`
+  window.location.assign(`${path}?month=${encodeURIComponent(month.value)}&format=${format}`)
+}
+
 watch(() => [props.organizationId, month.value], () => { void load() }, { immediate: true })
 </script>
 
@@ -39,7 +45,11 @@ watch(() => [props.organizationId, month.value], () => { void load() }, { immedi
   <article class="mmb">
     <header class="mmb-head">
       <h3>月度账单</h3>
-      <MonthPicker v-model="month" />
+      <div class="mmb-actions">
+        <MonthPicker v-model="month" />
+        <button type="button" :disabled="!organizationId || !month" @click="exportBill('csv')">导出 CSV</button>
+        <button type="button" :disabled="!organizationId || !month" @click="exportBill('xlsx')">导出 Excel</button>
+      </div>
     </header>
 
     <p v-if="grassland.error.value" class="mmb-alert" role="alert">{{ grassland.error.value }}</p>
@@ -79,6 +89,8 @@ watch(() => [props.organizationId, month.value], () => { void load() }, { immedi
 <style scoped>
 .mmb { display: flex; flex-direction: column; gap: 10px; }
 .mmb-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.mmb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mmb-actions button { min-height: 32px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 6px; background: transparent; color: var(--color-text); cursor: pointer; }
 .mmb-head h3 { margin: 0; font-size: 15px; }
 .mmb-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px;
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }

@@ -173,6 +173,7 @@ export interface BatchOperationResponse {
 
 /** 任务大厅 feed 查询（GL-P1-TASK-001 Stage 2）。 */
 export interface TaskFeedQuery {
+  q?: string
   platform?: string
   contentForm?: string
   minBountyCents?: number

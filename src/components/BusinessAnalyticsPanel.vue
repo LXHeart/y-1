@@ -5,6 +5,7 @@
       <div class="panel-actions">
         <button type="button" :disabled="loading || !effectiveOrganizationId" @click="load">刷新</button>
         <button type="button" :disabled="loading || !effectiveOrganizationId" @click="exportCsv">导出 CSV</button>
+        <button type="button" :disabled="loading || !effectiveOrganizationId" @click="exportExcel">导出 Excel</button>
       </div>
     </header>
 
@@ -144,6 +145,15 @@ function exportCsv(): void {
   if (from.value) query.set('from', toIso(from.value) || '')
   if (to.value) query.set('to', toIso(to.value) || '')
   const endpoint = props.admin ? '/api/admin/analytics/business/export.csv' : '/api/analytics/export.csv'
+  window.location.assign(`${endpoint}?${query.toString()}`)
+}
+function exportExcel(): void {
+  if (!effectiveOrganizationId.value) return
+  const query = new URLSearchParams({ organizationId: effectiveOrganizationId.value, format: 'xlsx' })
+  if (effectiveStoreId.value) query.set('storeId', effectiveStoreId.value)
+  if (from.value) query.set('from', toIso(from.value) || '')
+  if (to.value) query.set('to', toIso(to.value) || '')
+  const endpoint = props.admin ? '/api/admin/analytics/business/export' : '/api/analytics/export'
   window.location.assign(`${endpoint}?${query.toString()}`)
 }
 function money(cents: number): string { return `¥${(cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }

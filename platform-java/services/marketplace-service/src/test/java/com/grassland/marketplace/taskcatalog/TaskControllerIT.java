@@ -44,6 +44,32 @@ class TaskControllerIT extends MarketplaceItSupport {
     }
 
     @Test
+    void reviewAndFeedSearchTreatWildcardsLiterally() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> percent = createPendingTask(merchant, org, "100% 命中任务");
+        Map<String, Object> ordinary = createPendingTask(merchant, org, "普通任务");
+
+        client().get().uri(uri -> uri.path("/api/admin/tasks/review").queryParam("q", "%").build())
+                .header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "content_reviewer"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].title").isEqualTo("100% 命中任务");
+
+        approveTask(percent);
+        approveTask(ordinary);
+        client().get().uri(uri -> uri.path("/api/tasks/feed").queryParam("q", "普通").build())
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].title").isEqualTo("普通任务");
+
+        client().get().uri(uri -> uri.path("/api/tasks/feed").queryParam("q", "x".repeat(101)).build())
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
     void storeScopedDraftPersistsAndRequiresStoreAuthorization() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();

@@ -11,6 +11,8 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.taskcatalog.TaskResourceAuthorization;
+import com.grassland.reporting.ReportFormat;
+import com.grassland.reporting.ReportRenderer;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -141,7 +143,18 @@ public class AnalyticsController {
             ServerHttpRequest request) {
         validateScope(organizationId, storeId, from, to);
         return callers.requireRole(request, BackendRole.FINANCE, BackendRole.RISK)
-                .then(export(organizationId, blank(storeId), from, to));
+                .then(export(organizationId, blank(storeId), from, to, ReportFormat.CSV));
+    }
+
+    @GetMapping("/api/admin/analytics/business/export")
+    public Mono<ResponseEntity<byte[]>> exportAdminReport(
+            @RequestParam String organizationId, @RequestParam(required = false) String storeId,
+            @RequestParam(required = false) Instant from, @RequestParam(required = false) Instant to,
+            @RequestParam(defaultValue = "csv") String format, ServerHttpRequest request) {
+        validateScope(organizationId, storeId, from, to);
+        ReportFormat reportFormat = ReportFormat.parse(format);
+        return callers.requireRole(request, BackendRole.FINANCE, BackendRole.RISK)
+                .then(export(organizationId, blank(storeId), from, to, reportFormat));
     }
 
     @GetMapping("/api/analytics/export.csv")
@@ -152,17 +165,32 @@ public class AnalyticsController {
         validateScope(organizationId, storeId, from, to);
         return callers.requireUser(request)
                 .flatMap(caller -> authorization.requireScope(caller, organizationId, blank(storeId), "staff"))
-                .flatMap(access -> export(access.organizationId(), access.storeId(), from, to));
+                .flatMap(access -> export(access.organizationId(), access.storeId(), from, to, ReportFormat.CSV));
     }
 
-    private Mono<ResponseEntity<byte[]>> export(String organizationId, String storeId, Instant from, Instant to) {
+    @GetMapping("/api/analytics/export")
+    public Mono<ResponseEntity<byte[]>> exportMerchantReport(
+            @RequestParam String organizationId, @RequestParam(required = false) String storeId,
+            @RequestParam(required = false) Instant from, @RequestParam(required = false) Instant to,
+            @RequestParam(defaultValue = "csv") String format, ServerHttpRequest request) {
+        validateScope(organizationId, storeId, from, to);
+        ReportFormat reportFormat = ReportFormat.parse(format);
+        return callers.requireUser(request)
+                .flatMap(caller -> authorization.requireScope(caller, organizationId, blank(storeId), "staff"))
+                .flatMap(access -> export(access.organizationId(), access.storeId(), from, to, reportFormat));
+    }
+
+    private Mono<ResponseEntity<byte[]>> export(
+            String organizationId, String storeId, Instant from, Instant to, ReportFormat format) {
         return analytics.report(organizationId, storeId, from, to).map(report -> {
-            byte[] csv = MarketingAttributionCsv.render(report, AnalyticsAdvice.evaluate(report).advice(), from, to);
+            byte[] body = ReportRenderer.render(
+                    MarketingAttributionCsv.report(report, AnalyticsAdvice.evaluate(report).advice(), from, to), format);
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                    .contentType(MediaType.parseMediaType(format.mediaType()))
                     .header(HttpHeaders.CONTENT_DISPOSITION,
-                            ContentDisposition.attachment().filename("marketing-attribution.csv").build().toString())
-                    .body(csv);
+                            ContentDisposition.attachment().filename("business-analytics." + format.extension())
+                                    .build().toString())
+                    .body(body);
         });
     }
 

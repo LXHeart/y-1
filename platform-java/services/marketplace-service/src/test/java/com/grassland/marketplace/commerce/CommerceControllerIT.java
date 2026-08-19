@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.commerce.CommerceModels.Order;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -78,6 +79,31 @@ class CommerceControllerIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(consumer, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("rating", 5, "comment", "很好"))
                 .exchange().expectStatus().isCreated();
+    }
+
+    @Test
+    void merchantOrderExportSupportsCsvAndRealXlsx() {
+        String merchant = UUID.randomUUID().toString();
+        String consumer = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> offer = createAndPublish(merchant, org, 1200, 2);
+        createOrder(consumer, (String) offer.get("id"), null);
+        String assertion = sign(merchant, "merchant", org, "finance_transaction");
+
+        byte[] csv = client().get().uri(uri -> uri.path("/api/v2/merchant/orders/export")
+                        .queryParam("organizationId", org).queryParam("format", "csv").build())
+                .header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk()
+                .expectHeader().contentType("text/csv;charset=UTF-8")
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertThat(csv).startsWith((byte) 0xef, (byte) 0xbb, (byte) 0xbf);
+        assertThat(new String(csv, StandardCharsets.UTF_8)).contains("order_id", consumer);
+
+        byte[] xlsx = client().get().uri(uri -> uri.path("/api/v2/merchant/orders/export")
+                        .queryParam("organizationId", org).queryParam("format", "xlsx").build())
+                .header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk()
+                .expectHeader().contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertThat(xlsx).startsWith((byte) 'P', (byte) 'K');
     }
 
     @Test

@@ -17,7 +17,7 @@
       </div>
     </section>
     <section aria-labelledby="public-review-title">
-      <div class="panel-toolbar"><div><h3 id="public-review-title">待审公共素材</h3><p>通过后进入公共素材库，驳回必须填写原因。</p></div><button class="refresh-btn" type="button" :disabled="publicAssetsLoading" @click="loadPublicAssetReviews">刷新</button></div>
+      <div class="panel-toolbar"><div><h3 id="public-review-title">待审公共素材</h3><p>通过后进入公共素材库，驳回必须填写原因。</p></div><form class="review-search" @submit.prevent="loadPublicAssetReviews"><input v-model="publicAssetSearch" type="search" maxlength="100" placeholder="搜索标题或标签"><button class="refresh-btn" type="submit" :disabled="publicAssetsLoading">搜索</button></form></div>
       <p v-if="publicAssetsError" class="error-msg" role="alert">{{ publicAssetsError }}</p>
       <div v-if="publicAssetsLoading" class="loading-state">加载中...</div>
       <div v-else-if="publicAssetReviews.length" class="public-review-grid">
@@ -38,6 +38,7 @@ import type { ContentAsset, ContentAssetCategory, PublicAssetBatchGenerateResult
 
 const grassland = useGrassland()
 const publicAssetReviews = ref<ContentAsset[]>([])
+const publicAssetSearch = ref('')
 const publicAssetPreviewUrls = ref<Record<string, string>>({})
 const publicAssetReviewNotes = ref<Record<string, string>>({})
 const reviewingPublicAssetIds = ref(new Set<string>())
@@ -56,7 +57,7 @@ const publicGeneration = ref<{ kind: PublicAssetGenerationKind; theme: string; s
 
 async function loadPublicAssetReviews(): Promise<void> {
   publicAssetsLoading.value = true; publicAssetsError.value = ''
-  const result = await grassland.listPendingPublicAssetReviews()
+  const result = await grassland.listPendingPublicAssetReviews(publicAssetSearch.value)
   if (!result) { publicAssetsError.value = grassland.error.value || '公共素材审核队列加载失败'; publicAssetsLoading.value = false; return }
   publicAssetReviews.value = [...result.items]
   const previews = await Promise.all(result.items.map(async (asset) => { const download = await grassland.getContentAssetDownloadUrl(asset.id); return [asset.id, download?.downloadUrl || ''] as const }))
@@ -93,6 +94,7 @@ onMounted(() => void loadPublicAssetReviews())
 .panel-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .panel-toolbar h3, .panel-toolbar p { margin: 0; }
 .panel-toolbar h3 { font-size: 1rem; }
+.review-search{display:flex;align-items:center;gap:8px}.review-search input{min-width:min(280px,56vw);min-height:34px;padding:6px 9px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);color:var(--color-text)}
 .panel-toolbar p { margin-top: 4px; color: var(--color-text-muted); font-size: 0.82rem; }
 .refresh-btn, .approve-btn, .reject-btn { min-height: 32px; padding: 0 12px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; }
 .refresh-btn { border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); }

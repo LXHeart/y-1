@@ -3,10 +3,16 @@ package com.grassland.finance.escrow;
 import com.grassland.finance.report.MonthParam;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
+import com.grassland.reporting.ReportFormat;
+import com.grassland.reporting.ReportRenderer;
+import com.grassland.reporting.TabularReport;
 import java.time.YearMonth;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -78,11 +84,54 @@ public class MerchantBillController {
                 });
     }
 
+    @GetMapping("/api/finance/organizations/{orgId}/monthly-bill/export")
+    public Mono<ResponseEntity<byte[]>> exportMonthlyBill(
+            @PathVariable String orgId, @RequestParam String month,
+            @RequestParam(defaultValue = "csv") String format, ServerHttpRequest request) {
+        YearMonth yearMonth = MonthParam.parse(month, "month");
+        MonthParam.MonthRange range = MonthParam.range(yearMonth);
+        ReportFormat reportFormat = ReportFormat.parse(format);
+        return callers.requireMerchant(request)
+                .flatMap(caller -> {
+                    if (!orgId.equals(caller.organizationId())) {
+                        return Mono.<ResponseEntity<byte[]>>error(new FinanceException(404, "账单不存在"));
+                    }
+                    return bills.flows(orgId, range.start(), range.end()).collectList()
+                            .zipWith(bills.platformFee(orgId, range.start(), range.end()))
+                            .map(tuple -> {
+                                List<MerchantBillRepository.JournalFlow> flows = tuple.getT1();
+                                long platformFeeCents = tuple.getT2();
+                                long netEscrowDeltaCents = flows.stream()
+                                        .mapToLong(MerchantBillRepository.JournalFlow::escrowNetCents).sum();
+                                List<List<?>> rows = new java.util.ArrayList<>();
+                                flows.forEach(flow -> rows.add(List.of(yearMonth.toString(), flow.journalType(),
+                                        FLOW_LABELS.getOrDefault(flow.journalType(), flow.journalType()),
+                                        flow.escrowNetCents(), "flow")));
+                                rows.add(List.of(yearMonth.toString(), "PLATFORM_FEE", "平台费",
+                                        platformFeeCents, "summary"));
+                                rows.add(List.of(yearMonth.toString(), "NET_ESCROW_DELTA", "托管净变动",
+                                        netEscrowDeltaCents, "summary"));
+                                return reportResponse("monthly-bill-" + yearMonth, reportFormat,
+                                        new TabularReport("Monthly Bill",
+                                                List.of("month", "type", "label", "amount_cents", "row_type"), rows));
+                            });
+                });
+    }
+
     private static Map<String, Object> flowBody(MerchantBillRepository.JournalFlow flow) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("type", flow.journalType());
         map.put("label", FLOW_LABELS.getOrDefault(flow.journalType(), flow.journalType()));
         map.put("amountCents", flow.escrowNetCents());
         return map;
+    }
+
+    private static ResponseEntity<byte[]> reportResponse(
+            String filename, ReportFormat format, TabularReport report) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(format.mediaType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(filename + "." + format.extension()).build().toString())
+                .body(ReportRenderer.render(report, format));
     }
 }

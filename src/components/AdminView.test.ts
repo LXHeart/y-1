@@ -18,6 +18,24 @@ function response(data: unknown, envelope = true): Response {
 }
 
 describe('AdminView KYB 审核', () => {
+  test('用户搜索会对关键词编码并透传 q 参数', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response({ users: [] }, true)
+      if (url === '/api/admin/kyb-requests') return response([])
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('input[placeholder="搜索邮箱、昵称或账号 ID"]').setValue('alice+ops')
+    await wrapper.get('.admin-panel form.search-toolbar').trigger('submit')
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url)))
+      .toContain('/api/admin/users?q=alice%2Bops')
+  })
+
   test('管理 tab 完整显示等级与信任治理入口，AI 模型面板仍懒挂载', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url === '/api/admin/users') return response({ users: [] }, true)

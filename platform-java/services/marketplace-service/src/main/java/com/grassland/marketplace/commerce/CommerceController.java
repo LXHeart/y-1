@@ -5,9 +5,16 @@ import com.grassland.marketplace.commerce.CommerceModels.AfterSalesDispute;
 import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.Order;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
+import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.reporting.ReportFormat;
+import com.grassland.reporting.ReportRenderer;
+import com.grassland.reporting.TabularReport;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -182,6 +189,41 @@ public class CommerceController {
                 .map(values -> ResponseEntity.ok(success(values)));
     }
 
+    @GetMapping("/api/v2/merchant/orders/export")
+    public Mono<ResponseEntity<byte[]>> exportMerchantOrders(
+            @RequestParam String organizationId,
+            @RequestParam(required = false) String storeId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to,
+            @RequestParam(defaultValue = "csv") String format,
+            ServerHttpRequest request) {
+        if (from != null && to != null && !from.isBefore(to)) {
+            throw new MarketplaceException(400, "to 必须晚于 from");
+        }
+        if (status != null && status.length() > 64) {
+            throw new MarketplaceException(400, "status 过长");
+        }
+        ReportFormat reportFormat = ReportFormat.parse(format);
+        return callers.requireUser(request)
+                .flatMap(caller -> commerce.exportMerchantOrders(
+                                caller, organizationId, storeId, blank(status), from, to)
+                        .collectList())
+                .map(orders -> reportResponse("merchant-orders", reportFormat, new TabularReport(
+                        "Merchant Orders",
+                        List.of("order_id", "package_title", "status", "consumer_account_id", "store_id",
+                                "price_cents", "merchant_amount_cents", "platform_fee_cents",
+                                "recommender_amount_cents", "refunded_amount_cents", "created_at", "paid_at",
+                                "redeemed_at", "refunded_at"),
+                        orders.stream().<List<?>>map(order -> List.of(
+                                value(order.id()), value(order.packageTitle()), value(order.status()),
+                                value(order.consumerAccountId()), value(order.storeId()), order.priceCents(),
+                                order.merchantAmountCents(), order.platformFeeCents(),
+                                order.recommenderAmountCents(), order.refundedAmountCents(),
+                                value(order.createdAt()), value(order.paidAt()), value(order.redeemedAt()),
+                                value(order.refundedAt()))).toList())));
+    }
+
     @PostMapping(value = "/api/v2/merchant/redemptions", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> redeem(
             @RequestBody RedemptionRequest body, ServerHttpRequest request) {
@@ -300,6 +342,23 @@ public class CommerceController {
 
     private static Map<String, Object> success(Object data) {
         return Map.of("success", true, "data", data);
+    }
+
+    private static Object value(Object value) {
+        return value == null ? "" : value;
+    }
+
+    private static String blank(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static ResponseEntity<byte[]> reportResponse(
+            String filename, ReportFormat format, TabularReport report) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(format.mediaType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(filename + "." + format.extension()).build().toString())
+                .body(ReportRenderer.render(report, format));
     }
 
     public record RefundRequest(Long amountCents, String reason) {}

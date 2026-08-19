@@ -300,6 +300,7 @@ export function useGrasslandMarketplace(run: RunFn) {
   /** 全局任务大厅 feed（GL-P1-TASK-001 Stage 2）：跨组织、仅 published 且未截止，keyset 游标分页。 */
   const listTaskFeed = (query: TaskFeedQuery = {}) => {
     const params = new URLSearchParams()
+    if (query.q?.trim()) params.set('q', query.q.trim())
     if (query.platform) params.set('platform', query.platform)
     if (query.contentForm) params.set('contentForm', query.contentForm)
     if (query.minBountyCents != null) params.set('minBountyCents', String(query.minBountyCents))

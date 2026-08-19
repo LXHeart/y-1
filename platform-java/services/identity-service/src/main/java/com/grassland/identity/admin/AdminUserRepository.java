@@ -25,11 +25,22 @@ public class AdminUserRepository {
 
     /** 全部用户按注册时间倒序（对齐 legacy ORDER BY created_at DESC）。 */
     public Mono<List<AdminUserRow>> findAll() {
-        return db.sql("""
+        return findAll(null);
+    }
+
+    public Mono<List<AdminUserRow>> findAll(String query) {
+        String search = query == null ? "" : """
+                         WHERE lower(coalesce(email,'') || ' ' || coalesce(display_name,'') || ' ' || id::text)
+                               LIKE lower(:query) ESCAPE E'\\\\'
+                """;
+        DatabaseClient.GenericExecuteSpec spec = db.sql("""
                         SELECT id::text, email, display_name, role, status, created_at
                           FROM app_users
+                        %s
                          ORDER BY created_at DESC
-                        """)
+                        """.formatted(search));
+        if (query != null) spec = spec.bind("query", query);
+        return spec
                 .map((row, meta) -> new AdminUserRow(
                         row.get("id", String.class),
                         row.get("email", String.class),

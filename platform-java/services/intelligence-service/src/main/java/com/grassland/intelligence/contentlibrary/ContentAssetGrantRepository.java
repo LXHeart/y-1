@@ -99,18 +99,25 @@ public class ContentAssetGrantRepository {
      * 仅未释放且租约有效的授权。按授权时间倒序。
      */
     public Flux<ContentAsset> listGrantedAssets(String recommenderAccountId) {
-        return db.sql("""
+        return listGrantedAssets(recommenderAccountId, null);
+    }
+
+    public Flux<ContentAsset> listGrantedAssets(String recommenderAccountId, String query) {
+        String search = query == null ? "" : " AND lower(coalesce(a.title,'') || ' ' || a.tags::text)"
+                + " LIKE lower(:query) ESCAPE E'\\\\'";
+        var spec = db.sql("""
                 SELECT %s FROM content_asset a
                 JOIN content_asset_grant g ON g.asset_id = a.id
                 WHERE g.grant_type = 'recommender_share'
                   AND g.grantee_account_id = :grantee
                   AND g.released_at IS NULL
                   AND (g.lease_until IS NULL OR g.lease_until > now())
-                  AND a.deleted_at IS NULL AND a.status = 'active'
+                  AND a.deleted_at IS NULL AND a.status = 'active' %s
                 ORDER BY g.granted_at DESC
-                """.formatted(ContentAssetRepository.SELECT_COLS_PLACEHOLDER))
-                .bind("grantee", recommenderAccountId)
-                .map(ContentAssetGrantRepository::mapAsset).all();
+                """.formatted(ContentAssetRepository.SELECT_COLS_PLACEHOLDER, search))
+                .bind("grantee", recommenderAccountId);
+        if (query != null) spec = spec.bind("query", query);
+        return spec.map(ContentAssetGrantRepository::mapAsset).all();
     }
 
     /** 校验某推荐官对某素材是否有有效授权（下载跨账号读用）。 */
