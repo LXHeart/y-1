@@ -204,7 +204,7 @@ describe('OrganizationBrandCard 契约', () => {
   })
 
   test('409 乐观锁冲突：展示后端冲突文案并自动重拉最新资料回填', async () => {
-    let serverProfile = { ...FILLED_PROFILE }
+    const serverProfile = { ...FILLED_PROFILE }
     let conflict = false
     const spy = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       if ((init as RequestInit | undefined)?.method === 'PUT') {

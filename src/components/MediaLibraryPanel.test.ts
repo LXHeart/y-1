@@ -281,7 +281,7 @@ describe('MediaLibraryPanel', () => {
     expect(memberWrapper.text()).not.toContain('迁移组织素材到门店')
 
     // admin：进入迁移模式 → 勾选 → 选目标门店 → 提交体锁死契约。
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string | URL, _init?: RequestInit) => {
       const path = typeof url === 'string' ? url : url.pathname + url.search
       if (path.includes(migrationRoute)) {
         return envelope({ moved: 1, items: [{ id: 'a1', moved: true }] })

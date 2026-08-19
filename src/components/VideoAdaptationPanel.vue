@@ -189,7 +189,7 @@ const copiedKey = ref('')
 const selectedImages = ref<File[]>([])
 const previewImages = ref<Array<{ url: string; name: string }>>([])
 
-const { result, loading, error, adaptContent, reset } = useVideoContentAdaptation()
+const { result, loading, error, adaptContent } = useVideoContentAdaptation()
 const {
   items: historyItems,
   nextBefore: historyNextBefore,

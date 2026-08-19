@@ -68,7 +68,7 @@ const accountForm = ref({
 })
 
 // 门店列表（从父组件传入或自行获取）
-const stores = ref<{ id: string; name: string }[]>([])
+const storeOptions = ref<{ id: string; name: string }[]>([])
 const selectedStoreId = ref('')
 const storeProfile = ref<StoreProfile | null>(null)
 const storeForm = ref({
@@ -351,16 +351,16 @@ async function deleteWithdrawalAccount(accountId: string): Promise<void> {
 async function loadStores(orgId: string, version: number): Promise<void> {
   if (Array.isArray(props.stores)) {
     if (isCurrentOrganization(orgId, version)) {
-      stores.value = [...props.stores]
-      if (stores.value.length > 0 && !selectedStoreId.value) {
-        selectedStoreId.value = stores.value[0].id
+      storeOptions.value = [...props.stores]
+      if (storeOptions.value.length > 0 && !selectedStoreId.value) {
+        selectedStoreId.value = storeOptions.value[0].id
       }
     }
     return
   }
   const list = await grassland.listStores(orgId)
   if (list && isCurrentOrganization(orgId, version)) {
-    stores.value = list
+    storeOptions.value = list
     if (list.length > 0 && !selectedStoreId.value) {
       selectedStoreId.value = list[0].id
     }
@@ -482,7 +482,7 @@ function resetOrganizationState(): void {
   accountForm.value = {
     accountType: 'bank_card', accountName: '', accountNumber: '', bankName: '', branchName: '',
   }
-  stores.value = []
+  storeOptions.value = []
   selectedStoreId.value = ''
   storeProfile.value = null
   storeReadError.value = ''
@@ -756,7 +756,7 @@ watch(() => props.orgId, (orgId) => {
         <label>选择门店
           <select v-model="selectedStoreId">
             <option value="" disabled>请选择门店</option>
-            <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+            <option v-for="s in storeOptions" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
         </label>
       </div>

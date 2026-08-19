@@ -40,7 +40,7 @@ function speechRoutes(overrides: Record<string, unknown> = {}) {
 }
 
 function stubFetch(routes: Record<string, unknown>, uploadUrlOk = true): ReturnType<typeof vi.fn> {
-  return vi.fn(async (url: string | URL, init?: RequestInit) => {
+  return vi.fn(async (url: string | URL, _init?: RequestInit) => {
     const path = typeof url === 'string' ? url : url.pathname + url.search
     if (path === ticket.uploadUrl) {
       return uploadUrlOk

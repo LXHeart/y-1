@@ -116,7 +116,7 @@ async function query(): Promise<void> {
   }
   loading.value = true
   error.value = ''
-  let next: AuditRow[] | null = null
+  let next: AuditRow[] | null
   if (filters.source === 'identity') {
     const data = await grassland.listAdminUserAudit(filters.resourceId)
     next = data?.map(normalizeIdentity) ?? null

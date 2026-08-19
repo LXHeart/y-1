@@ -5,7 +5,7 @@
         <input type="file" accept="image/jpeg,image/png,image/webp" @change="onFileSelected">
         <span>选择图片</span>
       </label>
-      <span v-if="sourceFile" class="studio-file-name">{{ sourceFile.name }} ({{ sourceFile.size | 0 }} KB)</span>
+      <span v-if="sourceFile" class="studio-file-name">{{ sourceFile.name }} ({{ Math.floor(sourceFile.size / 1024) }} KB)</span>
       <span v-if="downsampleNote" class="studio-warn">{{ downsampleNote }}</span>
     </div>
 

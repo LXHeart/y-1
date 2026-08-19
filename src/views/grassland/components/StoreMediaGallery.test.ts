@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function publicMediaEnvelope(groups: Record<string, unknown[]>, urlSuffix = ''): Response {
+function publicMediaEnvelope(groups: Record<string, unknown[]>, _urlSuffix = ''): Response {
   return {
     ok: true, headers: { get: () => 'application/json' },
     json: async () => ({

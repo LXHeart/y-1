@@ -339,7 +339,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import AiCreationCenter from '../views/ai-center/AiCreationCenter.vue'
 import NotificationBell from '../components/NotificationBell.vue'
 
 const AnalysisSettingsModal = defineAsyncComponent(() => import('../components/AnalysisSettingsModal.vue'))
@@ -381,7 +380,7 @@ const loginModalMessage = ref('')
 const authBannerMessage = ref('')
 
 const {
-  currentUser, isAuthenticated, hasBackendRole, loaded: authLoaded,
+  currentUser, isAuthenticated, hasBackendRole,
   loggingIn, registering, loggingOut,
   loginError, registerError, logoutError, loadError: authLoadError,
   clearLoginError, clearRegisterError, clearLogoutError,
@@ -404,7 +403,7 @@ const {
   loadSettings: loadHomepageSettingsAction, saveSettings: saveHomepageSettingsAction,
 } = useHomepageSettings()
 
-const { mode: themeMode, resolvedTheme, setMode: setThemeMode } = useTheme()
+const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
 function cycleTheme(): void {
   const order: ThemeMode[] = ['light', 'dark', 'system']

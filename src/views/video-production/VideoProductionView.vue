@@ -328,8 +328,6 @@ interface ReferenceCardOption {
   selected: boolean
 }
 
-const showReferenceInput = ref(false)
-const showTopicInput = ref(false)
 const referencePlatform = ref<ReferencePlatform>('douyin')
 const referenceInput = ref('')
 const hotTopicInput = ref('')

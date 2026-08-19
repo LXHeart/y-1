@@ -5,7 +5,7 @@ import { useGrassland } from '../composables/useGrassland'
 import MonthPicker from './MonthPicker.vue'
 import { currentMonth } from '../lib/month'
 import { formatCents, formatSignedCents } from '../lib/money'
-import type { MyApplication, WalletStatistics } from '../types/grassland'
+import type { WalletStatistics } from '../types/grassland'
 
 /**
  * 推荐官收入统计（任务书 #29+#30 #29）：月份区间 → 月度汇总表（任务佣金/到店佣金/提现/冲正/毛/抽成/净）

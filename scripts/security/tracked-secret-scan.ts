@@ -28,7 +28,7 @@ const SECRET_RULES: readonly SecretRule[] = [
   },
   {
     name: 'structured-credential',
-    pattern: /(?<![A-Za-z0-9_.$\{-])((?:[A-Za-z][A-Za-z0-9_.-]*\.)?(?:api[-_.]?key|token|secret|password|passwd|passphrase)[A-Za-z0-9_.-]*)[ \t]*=[ \t]*([^"'\s#;,}]{12,})/gi,
+    pattern: /(?<![A-Za-z0-9_.${-])((?:[A-Za-z][A-Za-z0-9_.-]*\.)?(?:api[-_.]?key|token|secret|password|passwd|passphrase)[A-Za-z0-9_.-]*)[ \t]*=[ \t]*([^"'\s#;,}]{12,})/gi,
     valueGroup: 2,
     pathPattern: /\.properties$/i,
   },
@@ -39,7 +39,7 @@ const SECRET_RULES: readonly SecretRule[] = [
   },
   {
     name: 'structured-credential',
-    pattern: /(?<![A-Za-z0-9_.$\{-])((?:api[-_.]?key|token|secret|password|passwd|passphrase)|[A-Za-z][A-Za-z0-9_.-]*(?:api[-_.]?key|token|secret|password|passwd|passphrase)[A-Za-z0-9_.-]*)[ \t]*:[ \t]*([^"'\s#;,}]{12,})/gi,
+    pattern: /(?<![A-Za-z0-9_.${-])((?:api[-_.]?key|token|secret|password|passwd|passphrase)|[A-Za-z][A-Za-z0-9_.-]*(?:api[-_.]?key|token|secret|password|passwd|passphrase)[A-Za-z0-9_.-]*)[ \t]*:[ \t]*([^"'\s#;,}]{12,})/gi,
     valueGroup: 2,
     pathPattern: /\.(?:ya?ml|toml|properties)$/i,
   },

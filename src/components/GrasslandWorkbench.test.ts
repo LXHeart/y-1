@@ -741,7 +741,7 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
  */
 describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
   /** 登录商家身份并等初始化（调用方须先 stub fetch）。 */
-  async function loginMerchant(wrapper: ReturnType<typeof mount>): Promise<void> {
+  async function loginMerchant(_wrapper: ReturnType<typeof mount>): Promise<void> {
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
   }

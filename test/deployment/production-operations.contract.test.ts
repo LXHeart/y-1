@@ -211,13 +211,13 @@ describe('Production release and recovery contracts', () => {
   it('rejects modifications to migrations already applied in a released environment', () => {
     const output = execFileSync(MIGRATION_VALIDATOR, [], { encoding: 'utf8' })
     const releasedMigrations = readFileSync(MIGRATION_MANIFEST, 'utf8')
-      .split('\n').filter(line => /^[0-9a-f]{64}  /.test(line))
+      .split('\n').filter(line => /^[0-9a-f]{64} {2}/.test(line))
     expect(output).toContain(`released migration checksums are valid (${releasedMigrations.length} files)`)
 
     const root = temporaryDirectory()
     const manifest = readFileSync(MIGRATION_MANIFEST, 'utf8')
     for (const line of manifest.split('\n')) {
-      if (!/^[0-9a-f]{64}  /.test(line)) continue
+      if (!/^[0-9a-f]{64} {2}/.test(line)) continue
       const relative = line.slice(66)
       const target = join(root, relative)
       mkdirSync(resolve(target, '..'), { recursive: true })

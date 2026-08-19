@@ -38,7 +38,7 @@ export interface StepResultData {
   }
 }
 
-const props = defineProps<{
+defineProps<{
   stepResult: StepResultData | null
   getStageLabel: (stage: ImageAnalysisProgressStage) => string
 }>()

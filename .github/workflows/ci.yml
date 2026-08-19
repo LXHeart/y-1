@@ -30,6 +30,7 @@ jobs:
       - run: npm run docs:status
       - run: ./scripts/validate-released-migrations.sh
       - run: npm audit --audit-level=high
+      - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:coverage
       - run: npm run coverage:changed
