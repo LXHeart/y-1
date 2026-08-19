@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import reactor.core.publisher.Mono;
 
 /**
@@ -16,6 +17,7 @@ import reactor.core.publisher.Mono;
  * 按词频加权累加，最终 L2 归一化。无网络、无随机源；相同文本逐元素一致。
  */
 @Component
+@ConditionalOnProperty(prefix = "ai.provider", name = "allow-sandbox", havingValue = "true", matchIfMissing = true)
 public final class SandboxEmbeddingProvider implements EmbeddingProvider {
 
     static final int DIMENSIONS = 256;

@@ -443,6 +443,9 @@ describe('Edge BFF deployment entrypoint contract', () => {
     const compose = readRepositoryFile('docker-compose.yml')
     expect(compose).toContain('QWEN_BASE_URL: ${QWEN_BASE_URL:?')
     expect(compose).toContain('QWEN_API_KEY: ${QWEN_API_KEY:?')
+    expect(compose).toContain('AI_PROVIDER_ALLOW_SANDBOX: ${AI_PROVIDER_ALLOW_SANDBOX:-true}')
+    expect(compose).toContain('AI_SPEECH_PROVIDER: ${AI_SPEECH_PROVIDER:-sandbox}')
+    expect(compose).toContain('AI_EMBEDDING_PROVIDER: ${AI_EMBEDDING_PROVIDER:-sandbox}')
 
     for (const template of ['.env.example', '.env.docker.example']) {
       const environment = readRepositoryFile(template)
@@ -456,6 +459,9 @@ describe('Edge BFF deployment entrypoint contract', () => {
         'QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1',
       )
       expect(environment, template).toContain('QWEN_API_KEY=replace-with-qwen-api-key')
+      expect(environment, template).toContain('AI_PROVIDER_ALLOW_SANDBOX=true')
+      expect(environment, template).toContain('AI_SPEECH_PROVIDER=sandbox')
+      expect(environment, template).toContain('AI_EMBEDDING_PROVIDER=sandbox')
     }
   })
 

@@ -41,4 +41,17 @@ class PlatformProviderPolicyTest {
         assertThatThrownBy(() -> policy.validate("sandbox", "https://example.com"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void acceptsOnlyTrustedOpenAiCompatibleOrigin() {
+        when(defaults.baseUrl()).thenReturn("https://dashscope.aliyuncs.com");
+        PlatformProviderPolicy policy = new PlatformProviderPolicy(
+                defaults, "https://dashscope.aliyuncs.com");
+
+        assertThat(policy.validate("openai-compatible", "https://api.openai.com/v1").getHost())
+                .isEqualTo("api.openai.com");
+        assertThatThrownBy(() -> policy.validate("openai-compatible", "https://example.com/v1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("受信");
+    }
 }

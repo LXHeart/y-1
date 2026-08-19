@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
+import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionContext;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionResult;
@@ -25,6 +26,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -163,5 +165,38 @@ class EmbeddingExecutionServiceTest {
                 .isInstanceOf(IntelligenceException.class);
         verify(executions).handleFailure(eq(ctx), anyString());
         verify(executions, never()).settleSuccess(any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void realProviderReceivesRuntimeRoutingAndByokUsageCannotBeUnderreported() {
+        ProviderResolution resolution = ProviderResolution.byok(
+                "openai-compatible", "https://api.openai.com/v1", "embed-v1", "ciphertext", "v1");
+        ExecutionContext ctx = new ExecutionContext(
+                UUID.randomUUID(), null, "acct-1", "retrieval", resolution,
+                null, UUID.randomUUID(), null, null, false, "decrypted-secret-key-1234", "v1", 8, 0);
+        allow(ctx);
+        EmbeddingProvider real = mock(EmbeddingProvider.class);
+        when(real.dimensions()).thenReturn(3);
+        when(real.algorithmVersion(any(EmbeddingProvider.Command.class))).thenReturn("real-v1");
+        when(real.embed(any(EmbeddingProvider.Command.class)))
+                .thenReturn(Mono.just(new EmbeddingProvider.Result(List.of(0.1, 0.2, 0.3), 2, false)));
+        when(providers.require("openai-compatible")).thenReturn(real);
+        EmbeddingProviderProperties properties = new EmbeddingProviderProperties(
+                "openai-compatible", "https://api.openai.com/v1", "platform-secret-key-1234", "embed-v1",
+                "/embeddings", Duration.ofSeconds(30), 65_536, 3, false, 1);
+        PlatformModelConfig platformDefaults = mock(PlatformModelConfig.class);
+        service = new EmbeddingExecutionService(executions, concurrency, providers, properties, platformDefaults);
+
+        EmbeddingExecutionService.EmbeddingOutcome outcome =
+                service.embedForIndexing("acct-1", null, "coffee shop poster").block(Duration.ofSeconds(5));
+
+        ArgumentCaptor<EmbeddingProvider.Command> command = ArgumentCaptor.forClass(EmbeddingProvider.Command.class);
+        verify(real).embed(command.capture());
+        assertThat(command.getValue().invocation().bearer()).isEqualTo("decrypted-secret-key-1234");
+        assertThat(command.getValue().invocation().byok()).isTrue();
+        assertThat(outcome.inputTokens()).isEqualTo(8);
+        assertThat(outcome.algorithmVersion()).isEqualTo("real-v1");
+        assertThat(outcome.sandbox()).isFalse();
+        verify(executions).settleSuccess(ctx, 8, 0, 0, 0);
     }
 }

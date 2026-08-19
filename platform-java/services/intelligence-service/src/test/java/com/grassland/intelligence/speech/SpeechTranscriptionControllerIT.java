@@ -226,7 +226,8 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
         UUID mediaId = activeSpeechMedia(OWNER);
         doReturn(Mono.error(new IllegalStateException("prepare-secret")))
                 .when(executions).prepareExecution(
-                        eq(OWNER), nullable(String.class), eq("voice"), isNull(), eq(0), eq(0), eq(true));
+                        eq(OWNER), nullable(String.class), eq("voice"), isNull(),
+                        eq(0), eq(0), eq(0), eq(12), eq(true));
 
         String response = post(OWNER, mediaId, "auto")
                 .expectStatus().isEqualTo(502)
@@ -244,7 +245,8 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
     void prepareCancellationFinalizesProcessingTranscription() {
         UUID mediaId = activeSpeechMedia(OWNER);
         doReturn(Mono.never()).when(executions).prepareExecution(
-                eq(OWNER), nullable(String.class), eq("voice"), isNull(), eq(0), eq(0), eq(true));
+                eq(OWNER), nullable(String.class), eq("voice"), isNull(),
+                eq(0), eq(0), eq(0), eq(12), eq(true));
 
         var subscription = service.create(request(OWNER), mediaId, "auto")
                 .subscribe(ignored -> { }, ignored -> { });

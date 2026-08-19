@@ -1,5 +1,7 @@
 package com.grassland.intelligence.speech;
 
+import com.grassland.intelligence.ai.PlatformModelConfig;
+import com.grassland.intelligence.ai.ProviderInvocation;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
 import com.grassland.intelligence.media.MediaChecksums;
@@ -18,6 +20,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -44,7 +47,10 @@ public final class SpeechTranscriptionService {
     private final PlatformConcurrencyLimiter concurrencyLimiter;
     private final SpeechProviderRegistry providers;
     private final TransactionalOperator transactions;
+    private final SpeechProviderProperties providerProperties;
+    private final PlatformModelConfig platformDefaults;
 
+    @Autowired
     public SpeechTranscriptionService(
             IntelligenceCallerResolver callers,
             MediaReferenceRepository mediaReferences,
@@ -54,7 +60,9 @@ public final class SpeechTranscriptionService {
             AiExecutionService executions,
             PlatformConcurrencyLimiter concurrencyLimiter,
             SpeechProviderRegistry providers,
-            TransactionalOperator intelligenceTransactionalOperator) {
+            TransactionalOperator intelligenceTransactionalOperator,
+            SpeechProviderProperties providerProperties,
+            PlatformModelConfig platformDefaults) {
         this.callers = callers;
         this.mediaReferences = mediaReferences;
         this.transcriptions = transcriptions;
@@ -64,6 +72,8 @@ public final class SpeechTranscriptionService {
         this.concurrencyLimiter = concurrencyLimiter;
         this.providers = providers;
         this.transactions = intelligenceTransactionalOperator;
+        this.providerProperties = providerProperties;
+        this.platformDefaults = platformDefaults;
     }
 
     public Mono<SpeechTranscription> create(
@@ -124,7 +134,7 @@ public final class SpeechTranscriptionService {
                     if (durationMs > MAX_DURATION_MS) {
                         throw new IllegalArgumentException("语音音频时长不得超过 15 分钟");
                     }
-                    return new AudioInput(bytes, durationMs, media.checksum());
+                    return new AudioInput(bytes, durationMs, media.checksum(), media.mimeType());
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(error -> sanitizeStorageError(error));
@@ -159,7 +169,8 @@ public final class SpeechTranscriptionService {
             String organizationId) {
         return Mono.usingWhen(
                 executions.prepareExecution(
-                        accountId, organizationId, "voice", null, 0, 0, true),
+                        accountId, organizationId, "voice", null, 0, 0, 0,
+                        billedSeconds(audio.durationMs()), true),
                 prepared -> {
                     if (!prepared.allowed()) {
                         return Mono.error(deniedException(prepared.denialReason()));
@@ -177,17 +188,18 @@ public final class SpeechTranscriptionService {
             SpeechTranscription transcription,
             AudioInput audio,
             AiExecutionService.ExecutionContext context) {
-        SpeechRecognitionProvider.Command command = new SpeechRecognitionProvider.Command(
-                transcription.mediaReferenceId(), audio.checksum(), transcription.requestedLanguage(),
-                audio.durationMs(), audio.bytes());
         return Mono.usingWhen(
                 concurrencyLimiter.acquire(context.provider()),
                 lease -> Mono.defer(() -> {
                             // Keep provider selection errors (for example unsupported_provider) visible;
                             // only the provider's own response/error boundary is sanitized.
                             SpeechRecognitionProvider provider = providers.require(context.provider().provider());
+                            SpeechRecognitionProvider.Command command = new SpeechRecognitionProvider.Command(
+                                    transcription.mediaReferenceId(), audio.checksum(),
+                                    transcription.requestedLanguage(), audio.durationMs(), audio.bytes(),
+                                    audio.mimeType(), invocation(context));
                             return provider.transcribe(command)
-                                    .onErrorMap(providerError -> new SpeechProviderFailure());
+                                    .onErrorMap(SpeechTranscriptionService::sanitizeProviderError);
                         })
                         .flatMap(result -> complete(transcription, context, result)),
                 PlatformConcurrencyLimiter.Lease::release,
@@ -200,18 +212,19 @@ public final class SpeechTranscriptionService {
             AiExecutionService.ExecutionContext context,
             SpeechRecognitionProvider.Result result) {
         if (result == null || result.text() == null || result.text().isBlank()
-                || result.inputTokens() < 0 || result.outputTokens() < 0) {
+                || result.inputTokens() < 0 || result.outputTokens() < 0 || result.billedSeconds() < 0) {
             return Mono.error(new IllegalStateException("语音模型返回无效结果"));
         }
         String detectedLanguage = result.detectedLanguage() == null || result.detectedLanguage().isBlank()
                 ? transcription.requestedLanguage() : result.detectedLanguage();
+        int actualSeconds = Math.max(result.billedSeconds(), billedSeconds(transcription.durationMs()));
         Mono<SpeechTranscription> chain = requireChanged(transcriptions.storeProviderResult(
                         transcription.id(), result.text(), detectedLanguage,
                         context.provider().provider(), context.provider().model(),
                         context.provider().platformModelVersion(), context.runId()),
                         "语音转写结果保存失败")
                 .then(requireChanged(executions.settleSuccess(
-                        context, result.inputTokens(), result.outputTokens(), 0, 0),
+                        context, result.inputTokens(), result.outputTokens(), 0, actualSeconds),
                         "语音转写 Run 结算失败"))
                 .then(requireChanged(transcriptions.markCompleted(transcription.id()),
                         "语音转写完成状态保存失败"))
@@ -291,6 +304,21 @@ public final class SpeechTranscriptionService {
         return new IntelligenceException(502, "speech_media_unavailable", "语音音频暂不可用");
     }
 
+    private static Throwable sanitizeProviderError(Throwable error) {
+        if (error instanceof IntelligenceException intelligence) {
+            return switch (intelligence.code() == null ? "" : intelligence.code()) {
+                case "provider_timeout" -> new IntelligenceException(
+                        504, "provider_timeout", "语音识别服务超时");
+                case "provider_invalid_response" -> new IntelligenceException(
+                        502, "provider_invalid_response", "语音识别服务返回无效数据");
+                case "provider_failure" -> new IntelligenceException(
+                        502, "provider_failure", "语音识别服务调用失败");
+                default -> new SpeechProviderFailure();
+            };
+        }
+        return new SpeechProviderFailure();
+    }
+
     private static String failureCode(Throwable error) {
         if (error instanceof IntelligenceException intelligence) {
             if (intelligence.code() != null && STABLE_CODE.matcher(intelligence.code()).matches()) {
@@ -330,6 +358,47 @@ public final class SpeechTranscriptionService {
         return candidate != null && STABLE_CODE.matcher(candidate).matches() ? candidate : fallback;
     }
 
+    private ProviderInvocation invocation(AiExecutionService.ExecutionContext context) {
+        if ("sandbox".equalsIgnoreCase(context.provider().provider())) {
+            return null;
+        }
+        String bearer = context.provider().isByok()
+                ? context.decryptedKey()
+                : configuredPlatformBearer(
+                        context.provider().provider(), context.provider().baseUrl());
+        try {
+            return new ProviderInvocation(
+                    context.provider().provider(), context.provider().baseUrl(),
+                    context.provider().model(), bearer, context.provider().isByok());
+        } catch (IllegalArgumentException error) {
+            throw new IntelligenceException(
+                    503, "provider_credentials_missing", "语音识别 Provider 配置不完整");
+        }
+    }
+
+    private String configuredPlatformBearer(String provider, String baseUrl) {
+        String configured = providerProperties == null ? null : providerProperties.apiKey();
+        if (providerProperties != null && !providerProperties.sandbox()
+                && provider.equalsIgnoreCase(providerProperties.provider())
+                && sameBaseUrl(baseUrl, providerProperties.baseUrl())
+                && configured != null && !configured.isBlank()) {
+            return configured;
+        }
+        return "qwen".equalsIgnoreCase(provider) && platformDefaults != null
+                        && sameBaseUrl(baseUrl, platformDefaults.baseUrl())
+                ? platformDefaults.apiKey() : null;
+    }
+
+    private static boolean sameBaseUrl(String left, String right) {
+        return left != null && right != null
+                && left.trim().replaceFirst("/+$", "")
+                        .equals(right.trim().replaceFirst("/+$", ""));
+    }
+
+    private static int billedSeconds(long durationMs) {
+        return Math.toIntExact(Math.max(1L, (durationMs + 999L) / 1000L));
+    }
+
     private static <T> Mono<T> notFound() {
         return Mono.error(new IntelligenceException(404, "语音音频不存在"));
     }
@@ -346,5 +415,5 @@ public final class SpeechTranscriptionService {
         }
     }
 
-    private record AudioInput(byte[] bytes, long durationMs, String checksum) {}
+    private record AudioInput(byte[] bytes, long durationMs, String checksum, String mimeType) {}
 }

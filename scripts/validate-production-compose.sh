@@ -110,6 +110,37 @@ qwen_base_url="$(env_value intelligence-service QWEN_BASE_URL)"
 qwen_api_key="$(env_value intelligence-service QWEN_API_KEY)"
 [[ ${#qwen_api_key} -ge 16 && "$qwen_api_key" != *replace-with* && "$qwen_api_key" != *placeholder* ]] \
   || fail "intelligence-service QWEN_API_KEY must be non-placeholder and at least 16 characters"
+[[ "$(env_value intelligence-service AI_PROVIDER_ALLOW_SANDBOX)" == false ]] \
+  || fail "intelligence-service must disable Sandbox AI providers in production"
+for name in AI_SPEECH_PROVIDER AI_SPEECH_BASE_URL AI_SPEECH_API_KEY AI_SPEECH_MODEL \
+    AI_EMBEDDING_PROVIDER AI_EMBEDDING_BASE_URL AI_EMBEDDING_API_KEY AI_EMBEDDING_MODEL; do
+  [[ -n "$(env_value intelligence-service "$name")" ]] \
+    || fail "intelligence-service must receive $name in the production overlay"
+done
+for prefix in AI_SPEECH AI_EMBEDDING; do
+  provider="$(env_value intelligence-service "${prefix}_PROVIDER")"
+  [[ "$provider" == qwen || "$provider" == openai-compatible ]] \
+    || fail "${prefix}_PROVIDER must be qwen or openai-compatible in production"
+  base_url="$(env_value intelligence-service "${prefix}_BASE_URL")"
+  [[ "$base_url" == https://* && "$base_url" != *localhost* && "$base_url" != *127.0.0.1* ]] \
+    || fail "${prefix}_BASE_URL must use a non-local HTTPS origin"
+  api_key="$(env_value intelligence-service "${prefix}_API_KEY")"
+  [[ ${#api_key} -ge 16 && "$api_key" != *replace-with* && "$api_key" != *placeholder* ]] \
+    || fail "${prefix}_API_KEY must be non-placeholder and at least 16 characters"
+done
+speech_path="$(env_value intelligence-service AI_SPEECH_TRANSCRIPTION_PATH)"
+[[ "$speech_path" == /* && "$speech_path" != //* && "$speech_path" != *..* ]] \
+  || fail "AI_SPEECH_TRANSCRIPTION_PATH must be an absolute provider path"
+embedding_path="$(env_value intelligence-service AI_EMBEDDING_PATH)"
+[[ "$embedding_path" == /* && "$embedding_path" != //* && "$embedding_path" != *..* ]] \
+  || fail "AI_EMBEDDING_PATH must be an absolute provider path"
+[[ "$(env_value intelligence-service AI_SPEECH_CENTS_PER_SECOND)" =~ ^[1-9][0-9]*$ ]] \
+  || fail "AI_SPEECH_CENTS_PER_SECOND must be a positive integer in production"
+[[ "$(env_value intelligence-service AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS)" =~ ^[1-9][0-9]*$ ]] \
+  || fail "AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS must be a positive integer in production"
+embedding_dimensions="$(env_value intelligence-service AI_EMBEDDING_DIMENSIONS)"
+[[ "$embedding_dimensions" =~ ^[1-9][0-9]*$ && "$embedding_dimensions" -le 4096 ]] \
+  || fail "AI_EMBEDDING_DIMENSIONS must be an integer between 1 and 4096"
 for name in FINANCE_CREDITS_CENTS_POLICY_VERSION FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT \
     FINANCE_CREDITS_CENTS_POLICY_ROUNDING FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR \
     FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION; do

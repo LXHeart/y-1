@@ -20,6 +20,12 @@ public final class EmbeddingProviderRegistry {
             if (name == null || indexed.putIfAbsent(name, provider) != null) {
                 throw new IllegalStateException("Embedding 模型供应商注册重复或为空");
             }
+            for (String aliasValue : provider.aliases()) {
+                String alias = normalize(aliasValue);
+                if (alias == null || indexed.putIfAbsent(alias, provider) != null) {
+                    throw new IllegalStateException("Embedding 模型供应商别名注册重复或为空");
+                }
+            }
         }
         this.providers = Map.copyOf(indexed);
     }

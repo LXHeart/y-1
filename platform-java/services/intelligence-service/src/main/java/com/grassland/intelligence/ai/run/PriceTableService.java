@@ -1,9 +1,12 @@
 package com.grassland.intelligence.ai.run;
 
+import com.grassland.intelligence.embedding.EmbeddingProviderProperties;
+import com.grassland.intelligence.speech.SpeechProviderProperties;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * AI 价目表服务（GL-P3-AI-001 Phase 4）。
@@ -17,8 +20,15 @@ public class PriceTableService {
     private final Map<String, PriceTable> versionedTables = new HashMap<>();
 
     public PriceTableService() {
+        this(null, null);
+    }
+
+    @Autowired
+    public PriceTableService(
+            SpeechProviderProperties speech,
+            EmbeddingProviderProperties embedding) {
         // 首期默认价目表（v1）
-        PriceTable v1 = new PriceTable("v1", buildDefaultPrices());
+        PriceTable v1 = new PriceTable("v1", buildDefaultPrices(speech, embedding));
         versionedTables.put("v1", v1);
     }
 
@@ -70,7 +80,9 @@ public class PriceTableService {
     }
 
     /** 构建默认价目表（首期硬编码）。 */
-    private Map<String, PriceTable.ModelPrice> buildDefaultPrices() {
+    private Map<String, PriceTable.ModelPrice> buildDefaultPrices(
+            SpeechProviderProperties speech,
+            EmbeddingProviderProperties embedding) {
         Map<String, PriceTable.ModelPrice> prices = new HashMap<>();
 
         // Qwen 通义千问系列
@@ -130,6 +142,18 @@ public class PriceTableService {
             "image_edit", "sandbox",
             0, 0, 0, 0
         ));
+
+        if (speech != null && !speech.sandbox()) {
+            prices.put(speech.model(), new PriceTable.ModelPrice(
+                    "voice", speech.provider(),
+                    speech.centsPer1kInputTokens(), speech.centsPer1kOutputTokens(),
+                    0, speech.centsPerSecond()));
+        }
+        if (embedding != null && !embedding.sandbox()) {
+            prices.put(embedding.model(), new PriceTable.ModelPrice(
+                    "retrieval", embedding.provider(),
+                    embedding.centsPer1kInputTokens(), 0, 0, 0));
+        }
 
         return prices;
     }

@@ -1,6 +1,9 @@
 package com.grassland.intelligence.ai.controlplane;
 
+import com.grassland.intelligence.embedding.EmbeddingProviderProperties;
+import com.grassland.intelligence.speech.SpeechProviderProperties;
 import java.time.Duration;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -28,14 +31,28 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
     private final PlatformModelConfigRepository repository;
     private final com.grassland.intelligence.ai.PlatformModelConfig envDefaults;
     private final TransactionalOperator transactions;
+    private final SpeechProviderProperties speech;
+    private final EmbeddingProviderProperties embedding;
 
+    @Autowired
     public PlatformModelConfigSeeder(
             PlatformModelConfigRepository repository,
             com.grassland.intelligence.ai.PlatformModelConfig envDefaults,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions,
+            SpeechProviderProperties speech,
+            EmbeddingProviderProperties embedding) {
         this.repository = repository;
         this.envDefaults = envDefaults;
         this.transactions = transactions;
+        this.speech = speech;
+        this.embedding = embedding;
+    }
+
+    PlatformModelConfigSeeder(
+            PlatformModelConfigRepository repository,
+            com.grassland.intelligence.ai.PlatformModelConfig envDefaults,
+            TransactionalOperator transactions) {
+        this(repository, envDefaults, transactions, null, null);
     }
 
     @Override
@@ -53,8 +70,16 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
             // 任务书 #34 / ADR-D16 D1：content_safety 深检模型**可选** seed——env 显式提供时才种
             // （AI_CONTENT_SAFETY_MODEL 缺省不配置 → 控制面无该 capability → 深检降级为仅 L1）。
             seedContentSafety();
-            seedSandboxCapability("voice", "sandbox-speech-v1");
-            seedSandboxCapability("retrieval", "sandbox-embedding-v1");
+            seedCapability(
+                    "voice",
+                    speech == null || speech.sandbox() ? "sandbox" : speech.provider(),
+                    speech == null || speech.sandbox() ? "sandbox-speech-v1" : speech.model(),
+                    speech == null || speech.sandbox() ? "https://sandbox.invalid" : speech.baseUrl());
+            seedCapability(
+                    "retrieval",
+                    embedding == null || embedding.sandbox() ? "sandbox" : embedding.provider(),
+                    embedding == null || embedding.sandbox() ? "sandbox-embedding-v1" : embedding.model(),
+                    embedding == null || embedding.sandbox() ? "https://sandbox.invalid" : embedding.baseUrl());
             seedSandboxCapability("image_edit", "sandbox-matting-v1");
         } catch (Exception e) {
             // best-effort：seed 失败（启动期 DB 不可达 / 测试用占位 DB）不阻断上下文启动；
@@ -92,20 +117,33 @@ public class PlatformModelConfigSeeder implements ApplicationRunner {
     }
 
     private void seedSandboxCapability(String capability, String model) {
+        seedCapability(capability, "sandbox", model, "https://sandbox.invalid");
+    }
+
+    private void seedCapability(String capability, String provider, String model, String baseUrl) {
         try {
-            boolean exists = repository.findCurrent(capability, PlatformModelConfig.ROLE_PRIMARY)
-                    .hasElement().block(BLOCK);
-            if (exists) {
+            PlatformModelConfig current = repository.findCurrent(
+                    capability, PlatformModelConfig.ROLE_PRIMARY).block(BLOCK);
+            if (current != null && !("sandbox".equals(current.provider()) && !"sandbox".equals(provider))) {
                 return;
             }
             PlatformModelConfig seed = new PlatformModelConfig(
-                    null, capability, PlatformModelConfig.ROLE_PRIMARY, "sandbox",
-                    model, "https://sandbox.invalid", null,
+                    null, capability, PlatformModelConfig.ROLE_PRIMARY, provider,
+                    model, baseUrl, null,
                     PlatformModelConfig.HEALTH_HEALTHY, true, 1, null, null, null);
-            transactions.transactional(repository.create(seed, "system")).block(BLOCK);
-            logger.info("Seeded platform model config {}/primary with Sandbox model {}", capability, model);
+            if (current == null) {
+                transactions.transactional(repository.create(seed, "system")).block(BLOCK);
+                logger.info("Seeded platform model config {}/primary with provider={} model={}",
+                        capability, provider, model);
+            } else {
+                transactions.transactional(repository.revise(
+                        capability, PlatformModelConfig.ROLE_PRIMARY, seed, "system"))
+                        .block(BLOCK);
+                logger.info("Upgraded platform model config {}/primary from Sandbox to provider={} model={}",
+                        capability, provider, model);
+            }
         } catch (Exception e) {
-            logger.warn("Sandbox {} seed skipped (best-effort): {}", capability, e.getMessage());
+            logger.warn("{} model seed skipped (best-effort): {}", capability, e.getMessage());
         }
     }
 }

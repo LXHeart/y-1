@@ -1,9 +1,11 @@
 package com.grassland.intelligence.speech;
 
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import reactor.core.publisher.Mono;
 
 @Component
+@ConditionalOnProperty(prefix = "ai.provider", name = "allow-sandbox", havingValue = "true", matchIfMissing = true)
 public final class SandboxSpeechRecognitionProvider implements SpeechRecognitionProvider {
 
     @Override

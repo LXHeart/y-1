@@ -1,5 +1,7 @@
 package com.grassland.intelligence.embedding;
 
+import com.grassland.intelligence.ai.PlatformModelConfig;
+import com.grassland.intelligence.ai.ProviderInvocation;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
@@ -8,6 +10,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -24,14 +27,28 @@ public final class EmbeddingExecutionService {
     private final AiExecutionService executions;
     private final PlatformConcurrencyLimiter concurrencyLimiter;
     private final EmbeddingProviderRegistry providers;
+    private final EmbeddingProviderProperties providerProperties;
+    private final PlatformModelConfig platformDefaults;
 
+    @Autowired
     public EmbeddingExecutionService(
             AiExecutionService executions,
             PlatformConcurrencyLimiter concurrencyLimiter,
-            EmbeddingProviderRegistry providers) {
+            EmbeddingProviderRegistry providers,
+            EmbeddingProviderProperties providerProperties,
+            PlatformModelConfig platformDefaults) {
         this.executions = executions;
         this.concurrencyLimiter = concurrencyLimiter;
         this.providers = providers;
+        this.providerProperties = providerProperties;
+        this.platformDefaults = platformDefaults;
+    }
+
+    EmbeddingExecutionService(
+            AiExecutionService executions,
+            PlatformConcurrencyLimiter concurrencyLimiter,
+            EmbeddingProviderRegistry providers) {
+        this(executions, concurrencyLimiter, providers, null, null);
     }
 
     /** 索引路径：素材所有者的账号/组织直接准备（后台 worker，无 HTTP 交换）。 */
@@ -69,11 +86,14 @@ public final class EmbeddingExecutionService {
                 concurrencyLimiter.acquire(context.provider()),
                 lease -> Mono.defer(() -> {
                     EmbeddingProvider provider = providers.require(context.provider().provider());
+                    EmbeddingProvider.Command command = new EmbeddingProvider.Command(
+                            normalizedText, invocation(context));
                     // Provider 选择错误（unsupported_provider 等）原样透出；Provider 自身响应/异常统一脱敏。
-                    return provider.embed(normalizedText)
+                    return provider.embed(command)
                             .map(result -> requireValidVector(provider, result))
                             .map(validated -> new ValidatedEmbedding(
-                                    validated.vector(), provider, validated.inputTokens()))
+                                    validated.vector(), provider, normalizedUsage(context, validated.inputTokens()),
+                                    provider.algorithmVersion(command), validated.sandbox()))
                             .flatMap(validated -> requireSettled(
                                     executions.settleSuccess(context, validated.inputTokens(), 0, 0, 0),
                                     context, validated))
@@ -112,8 +132,8 @@ public final class EmbeddingExecutionService {
         return settlement.flatMap(settled -> settled
                 ? Mono.just(new EmbeddingOutcome(
                         validated.vector(), context.provider(),
-                        validated.provider().algorithmVersion(), context.runId(),
-                        validated.inputTokens(), true))
+                        validated.algorithmVersion(), context.runId(),
+                        validated.inputTokens(), validated.sandbox()))
                 : Mono.error(new IllegalStateException("Embedding Run 结算失败")));
     }
 
@@ -128,6 +148,49 @@ public final class EmbeddingExecutionService {
 
     private static int estimateInputTokens(String normalizedText) {
         return Math.max(1, normalizedText.trim().split("\\s+").length);
+    }
+
+    private ProviderInvocation invocation(AiExecutionService.ExecutionContext context) {
+        if ("sandbox".equalsIgnoreCase(context.provider().provider())) {
+            return null;
+        }
+        String bearer = context.provider().isByok()
+                ? context.decryptedKey()
+                : configuredPlatformBearer(
+                        context.provider().provider(), context.provider().baseUrl());
+        try {
+            return new ProviderInvocation(
+                    context.provider().provider(), context.provider().baseUrl(),
+                    context.provider().model(), bearer, context.provider().isByok());
+        } catch (IllegalArgumentException error) {
+            throw new IntelligenceException(
+                    503, "provider_credentials_missing", "Embedding Provider 配置不完整");
+        }
+    }
+
+    private String configuredPlatformBearer(String provider, String baseUrl) {
+        String configured = providerProperties == null ? null : providerProperties.apiKey();
+        if (providerProperties != null && !providerProperties.sandbox()
+                && provider.equalsIgnoreCase(providerProperties.provider())
+                && sameBaseUrl(baseUrl, providerProperties.baseUrl())
+                && configured != null && !configured.isBlank()) {
+            return configured;
+        }
+        return "qwen".equalsIgnoreCase(provider) && platformDefaults != null
+                        && sameBaseUrl(baseUrl, platformDefaults.baseUrl())
+                ? platformDefaults.apiKey() : null;
+    }
+
+    private static boolean sameBaseUrl(String left, String right) {
+        return left != null && right != null
+                && left.trim().replaceFirst("/+$", "")
+                        .equals(right.trim().replaceFirst("/+$", ""));
+    }
+
+    private static int normalizedUsage(AiExecutionService.ExecutionContext context, int reportedInputTokens) {
+        return context.provider().isByok()
+                ? Math.max(reportedInputTokens, context.estimatedInputTokens())
+                : reportedInputTokens;
     }
 
     private static String failureCode(Throwable error) {
@@ -155,7 +218,12 @@ public final class EmbeddingExecutionService {
         return candidate != null && STABLE_CODE.matcher(candidate).matches() ? candidate : fallback;
     }
 
-    private record ValidatedEmbedding(List<Double> vector, EmbeddingProvider provider, int inputTokens) {}
+    private record ValidatedEmbedding(
+            List<Double> vector,
+            EmbeddingProvider provider,
+            int inputTokens,
+            String algorithmVersion,
+            boolean sandbox) {}
 
     /** 成功结果：向量 + 路由快照 + Run 元数据（用于索引行持久化与查询响应元数据）。 */
     public record EmbeddingOutcome(

@@ -113,7 +113,8 @@ public class AiExecutionService {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> prepareExecution(
                         caller.accountId(), caller.organizationId(), capability, feature,
-                        estimatedInputTokens, estimatedOutputTokens, allowFallback, contextSnapshotId));
+                        estimatedInputTokens, estimatedOutputTokens, 0, 0,
+                        allowFallback, contextSnapshotId));
     }
 
     /** Worker entry point with explicit ownership; no HTTP exchange or caller resolution is required. */
@@ -121,12 +122,23 @@ public class AiExecutionService {
             String accountId, String organizationId, String capability, CreditFeature feature,
             int estimatedInputTokens, int estimatedOutputTokens, boolean allowFallback) {
         return prepareExecution(accountId, organizationId, capability, feature,
-                estimatedInputTokens, estimatedOutputTokens, allowFallback, null);
+                estimatedInputTokens, estimatedOutputTokens, 0, 0, allowFallback, null);
+    }
+
+    /** Worker entry point for providers whose budget estimate includes images or duration. */
+    public Mono<ExecutionResult> prepareExecution(
+            String accountId, String organizationId, String capability, CreditFeature feature,
+            int estimatedInputTokens, int estimatedOutputTokens,
+            int estimatedImages, int estimatedSeconds, boolean allowFallback) {
+        return prepareExecution(accountId, organizationId, capability, feature,
+                estimatedInputTokens, estimatedOutputTokens,
+                estimatedImages, estimatedSeconds, allowFallback, null);
     }
 
     private Mono<ExecutionResult> prepareExecution(
             String accountId, String organizationId, String capability, CreditFeature feature,
-            int estimatedInputTokens, int estimatedOutputTokens, boolean allowFallback,
+            int estimatedInputTokens, int estimatedOutputTokens,
+            int estimatedImages, int estimatedSeconds, boolean allowFallback,
             UUID contextSnapshotId) {
         UUID budgetOpId = UUID.randomUUID();
         Mono<ProviderResolution> providerResolution = contextSnapshotId == null
@@ -141,7 +153,8 @@ public class AiExecutionService {
                     String decryptedKey = decryptIfNeeded(provider);
                     int estimatedTokens = Math.addExact(estimatedInputTokens, estimatedOutputTokens);
                     Integer estimatedCents = estimateForProvider(
-                            provider, estimatedInputTokens, estimatedOutputTokens);
+                            provider, estimatedInputTokens, estimatedOutputTokens,
+                            estimatedImages, estimatedSeconds);
                     if (estimatedCents == null) {
                         return Mono.just(ExecutionResult.denied("unpriced_model"));
                     }
@@ -242,13 +255,15 @@ public class AiExecutionService {
     }
 
     private Integer estimateForProvider(
-            ProviderResolution provider, int estimatedInputTokens, int estimatedOutputTokens) {
+            ProviderResolution provider, int estimatedInputTokens, int estimatedOutputTokens,
+            int estimatedImages, int estimatedSeconds) {
         if (provider.isByok()) {
             return 0;
         }
         try {
             return priceTableService.calculateCost(
-                    provider.model(), estimatedInputTokens, estimatedOutputTokens, 0, 0);
+                    provider.model(), estimatedInputTokens, estimatedOutputTokens,
+                    estimatedImages, estimatedSeconds);
         } catch (IllegalArgumentException error) {
             logger.error("Refusing unpriced platform model: {}", provider.model());
             return null;

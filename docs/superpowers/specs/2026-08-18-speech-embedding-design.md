@@ -2,11 +2,13 @@
 
 日期：2026-08-18
 
-状态：已实现（Sandbox-first，2026-08-19）
+状态：已实现（Sandbox-first 主链路 + 生产 Provider Adapter，2026-08-19）
 
 > 实现验证命令（branch `codex/issue-33-speech-semantic-retrieval`）：
 > `cd platform-java && JAVA_HOME=/opt/homebrew/opt/openjdk@25 ./gradlew :services:intelligence-service:test :services:edge-bff:test`；
 > 前端 `npm test` / `npm run typecheck` / `npm run build`。实现记录见 `docs/草场开发进度与续接指南.md` Slice 25。
+
+> 生产化增量（2026-08-19）：已增加 OpenAI-compatible Speech `/audio/transcriptions` 与 Embedding `/embeddings` Adapter，支持平台模型和个人 BYOK、真实 usage 解析、语音按服务端探测时长结算、Embedding 按 token 结算，以及超时、响应体上限、禁止重定向、平台受信源校验和 BYOK DNS pinning。Sandbox 只保留给本地/测试；生产配置会拒绝 Sandbox、HTTP、占位密钥、非法路径、非正价格和非法向量维度。真实厂商账号凭据、公网网络、真实语料命中率和厂商账单对账仍需部署联调证明，不属于 Adapter 代码缺口。
 
 范围：PRD §4.10 中尚未落地的 `voice` 与 `retrieval` 两项能力
 
@@ -14,7 +16,7 @@
 
 当前 Java 主线已经具备模型控制面、BYOK 路由、组织预算、并发限制、`ai_run` 审计、积分补偿、媒体三步直传和三类内容素材库。`platform_model_config` 也已经预留 `voice` 与 `retrieval` capability，但尚无实际 Provider、消费 API、领域数据或前端入口。
 
-本功能采用 **Sandbox-first**：先交付完整、可替换的业务闭环，不在本阶段绑定真实语音或 Embedding 厂商。首版必须能验证上传、权限、模型路由、运行审计、预算边界、失败补偿、索引版本、语义排序、前端状态和 Edge fail-closed；Sandbox 结果必须明确标识，不能伪装成真实识别或生产级语义质量。
+本功能采用 **Sandbox-first**：先交付完整、可替换的业务闭环，首版不绑定真实语音或 Embedding 厂商。首版必须能验证上传、权限、模型路由、运行审计、预算边界、失败补偿、索引版本、语义排序、前端状态和 Edge fail-closed；Sandbox 结果必须明确标识，不能伪装成真实识别或生产级语义质量。后续生产化增量已在不改变公开 API 和领域表语义的前提下接入 OpenAI-compatible Adapter。
 
 目标如下：
 
@@ -26,9 +28,9 @@
 
 ## 2. 非目标
 
-本阶段明确不做：
+Sandbox-first 首版明确不做（其中真实 Provider Adapter 已由后续生产化增量补齐）：
 
-- 接入或联调真实语音、Embedding 厂商。
+- 使用真实厂商账号完成公网联调、质量验收和账单对账。
 - 提供浏览器直连第三方接口或向前端返回第三方密钥。
 - 引入 PostgreSQL `vector` 扩展、pgvector 索引或独立向量数据库。
 - 对视频自动抽音轨后转写；首版只接受专用音频媒体。
@@ -80,7 +82,14 @@ Content asset recommendations
 - `SandboxSpeechRecognitionProvider`：读取受控媒体，基于媒体校验和与请求语言产生稳定的、明确带 Sandbox 标记的转写文本。它验证链路，不声称理解真实音频内容。
 - `SandboxEmbeddingProvider`：对规范化 token 做稳定哈希投影并 L2 归一化，输出固定 256 维向量。相同文本和相同模型版本必须得到逐元素相同的结果；有共同 token 的文本应比完全无关文本更接近。
 
-模型控制面为 `voice` 和 `retrieval` 提供内置 `sandbox` 平台配置；Provider 名分别为 `sandbox`，模型名分别为 `sandbox-speech-v1` 与 `sandbox-embedding-v1`，配置版本照常冻结到 `ai_run`。如果管理员或 BYOK 路由选择了当前未安装的真实 Provider，执行必须返回 `unsupported_provider`，产生失败审计并按既有规则退款，不能静默退回 Sandbox，除非该 Run 已明确授权 fallback。
+生产化增量内置：
+
+- `OpenAiCompatibleSpeechRecognitionProvider`：向可配置的 `/audio/transcriptions` 发送受限 multipart 请求，解析文本、语言、时长和 usage；最终计费秒数不得低于服务端媒体探测时长，防止上游低报。
+- `OpenAiCompatibleEmbeddingProvider`：向可配置的 `/embeddings` 发送规范 JSON 请求，严格校验响应向量、维度和 `usage.prompt_tokens`；BYOK 上游用量不得低于服务端估算。
+- Provider 名支持 `openai-compatible` 和 `qwen`。`qwen` 复用已验证的 OpenAI-compatible 契约，不假定未经验证的厂商私有 ASR 协议。
+- 平台调用只允许配置的受信 HTTPS 源，BYOK 继续使用 DNS pinning；密钥同时绑定 Provider 与 base URL。出站请求限制连接/响应超时和响应体大小，禁止重定向，日志与 `ProviderInvocation.toString()` 永不输出 Bearer 明文。
+
+本地模型控制面为 `voice` 和 `retrieval` 提供内置 `sandbox` 平台配置；Provider 名分别为 `sandbox`，模型名分别为 `sandbox-speech-v1` 与 `sandbox-embedding-v1`，配置版本照常冻结到 `ai_run`。配置真实 Provider 后，启动 Seeder 会创建真实模型，或升级已有系统 Sandbox seed，但不会覆盖管理员维护的非 Sandbox 模型。生产环境要求 `qwen` 或 `openai-compatible`，并通过 `AI_PROVIDER_ALLOW_SANDBOX=false` 禁止注册 Sandbox Bean。若路由选择当前未安装或未启用的 Provider，执行必须返回 `unsupported_provider`，产生失败审计并按既有规则退款，不能静默退回 Sandbox，除非该 Run 已明确授权 fallback。
 
 ## 5. 语音识别
 
@@ -160,7 +169,7 @@ Content asset recommendations
 
 ### 5.4 计费口径
 
-Sandbox 模型价目为 0 分，不扣用户积分，但仍执行预算检查并记录 `ai_run.actual_cents=0`。这样可以验证控制面和审计，又不会为模拟结果收费。真实 Provider 上线前必须单独确定 voice 计价单位和积分功能键，不能复用文本 token 假计价。
+Sandbox 模型价目为 0 分，不扣用户积分，但仍执行预算检查并记录 `ai_run.actual_cents=0`。这样可以验证控制面和审计，又不会为模拟结果收费。真实 Speech 按冻结的每秒价格计价：执行前按服务端媒体探测时长预留，成功后按不低于探测值的结算秒数完成实际成本结算；具体生产单价仍需以厂商合同和账单对账确认。
 
 ## 6. Embedding 与语义检索
 
@@ -203,7 +212,7 @@ license_scope: <public license scope，可空>
 
 启动后的后台扫描负责补齐没有当前索引的 active 素材，因此上线前存量数据无需一次性阻塞迁移。扫描和 dispatcher 都必须有批量上限、并发上限和 feature flag；不得在每次请求中无界全表回填。
 
-每次索引执行经过 `AiExecutionService`，capability=`retrieval`，并把 Run 关联回索引行。Sandbox 索引成本为 0、不扣用户积分；真实 Provider 的批量计价在接入时另立价目规则。
+每次索引执行经过 `AiExecutionService`，capability=`retrieval`，并把 Run 关联回索引行。Sandbox 索引成本为 0、不扣用户积分；真实 Provider 按冻结的每 token 价格和可信 usage 结算，具体生产单价仍需以厂商合同和账单对账确认。
 
 ### 6.3 查询 API 与兼容性
 
@@ -391,3 +400,5 @@ git diff --check
 6. Edge 路由 fail-closed，公开响应不泄露密钥、向量、对象 key 或跨租户信息。
 7. Java、Edge、前端和类型/构建门禁全部通过。
 8. `CLAUDE.md`、API 契约矩阵、开发进度指南和 `项目速览.md` 同步为实现后的事实状态，避免再次产生文档漂移。
+
+生产 Provider Adapter 的代码完成标准另增加：真实配置启用时不得回落 Sandbox；生产配置必须 fail-fast；平台/BYOK 出站与密钥边界必须有契约测试；Speech/Embedding usage 和动态价目必须进入既有 `ai_run` 预算、结算和审计闭环。真实账号网络冒烟、真实语料准确率/召回率和厂商账单核对属于发布证据，不能用 WireMock 契约测试替代。

@@ -13,7 +13,7 @@ import jakarta.validation.constraints.Pattern;
  */
 public record UpdatePlatformModelRequest(
         @NotBlank(message = "provider 必填")
-        @Pattern(regexp = "qwen", message = "平台当前只支持 qwen provider") String provider,
+        @Pattern(regexp = "qwen|openai-compatible", message = "平台只支持 qwen/openai-compatible provider") String provider,
         @NotBlank(message = "model 必填") String model,
         @NotBlank(message = "baseUrl 必填") String baseUrl,
         @Min(value = 1, message = "maxConcurrency 必须大于 0")

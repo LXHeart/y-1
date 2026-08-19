@@ -95,6 +95,21 @@ function productionComposeEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
     VIDEO_GENERATION_MODE: 'seedance',
     QWEN_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     QWEN_API_KEY: 'test-qwen-api-key-for-compose',
+    AI_PROVIDER_ALLOW_SANDBOX: 'false',
+    AI_SPEECH_PROVIDER: 'openai-compatible',
+    AI_SPEECH_BASE_URL: 'https://api.openai.com/v1',
+    AI_SPEECH_API_KEY: 'test-speech-api-key-for-compose',
+    AI_SPEECH_MODEL: 'test-speech-model',
+    AI_SPEECH_TRANSCRIPTION_PATH: '/audio/transcriptions',
+    AI_SPEECH_CENTS_PER_SECOND: '1',
+    AI_EMBEDDING_PROVIDER: 'openai-compatible',
+    AI_EMBEDDING_BASE_URL: 'https://api.openai.com/v1',
+    AI_EMBEDDING_API_KEY: 'test-embedding-api-key-for-compose',
+    AI_EMBEDDING_MODEL: 'test-embedding-model',
+    AI_EMBEDDING_PATH: '/embeddings',
+    AI_EMBEDDING_DIMENSIONS: '256',
+    AI_EMBEDDING_SEND_DIMENSIONS: 'true',
+    AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS: '1',
     VIDEO_GENERATION_BASE_URL: 'https://video.example.test',
     VIDEO_GENERATION_API_KEY: 'test-video-api-key',
     VIDEO_GENERATION_MODEL: 'test-video-model',
@@ -574,7 +589,7 @@ describe('Production release and recovery contracts', () => {
     expect(validator).toContain('condition == "service_healthy"')
   })
 
-  it('fails closed unless production video generation uses a configured real provider', () => {
+  it('fails closed unless production AI capabilities use configured real providers', () => {
     const overlay = readFileSync(resolve(REPOSITORY_ROOT, 'docker-compose.production.yml'), 'utf8')
     const validator = readFileSync(COMPOSE_VALIDATOR, 'utf8')
     const secrets = readFileSync(SECRET_VALIDATOR, 'utf8')
@@ -592,6 +607,19 @@ describe('Production release and recovery contracts', () => {
       'VIDEO_GENERATION_PRICING_VERSION',
       'VIDEO_GENERATION_UNIT_PRICE_CENTS',
       'VIDEO_GENERATION_WEBHOOK_SECRET',
+      'AI_SPEECH_PROVIDER',
+      'AI_SPEECH_BASE_URL',
+      'AI_SPEECH_API_KEY',
+      'AI_SPEECH_MODEL',
+      'AI_SPEECH_TRANSCRIPTION_PATH',
+      'AI_SPEECH_CENTS_PER_SECOND',
+      'AI_EMBEDDING_PROVIDER',
+      'AI_EMBEDDING_BASE_URL',
+      'AI_EMBEDDING_API_KEY',
+      'AI_EMBEDDING_MODEL',
+      'AI_EMBEDDING_PATH',
+      'AI_EMBEDDING_DIMENSIONS',
+      'AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS',
       'FINANCE_CREDITS_CENTS_POLICY_VERSION',
       'FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT',
       'FINANCE_CREDITS_CENTS_POLICY_ROUNDING',
@@ -608,6 +636,10 @@ describe('Production release and recovery contracts', () => {
     expect(secrets).toContain('FINANCE_PSP_MODE must select a real production adapter')
     expect(contract).toContain('VIDEO_GENERATION_API_KEY,16,true,intelligence')
     expect(contract).toContain('VIDEO_GENERATION_WEBHOOK_SECRET,32,true,intelligence')
+    expect(contract).toContain('AI_SPEECH_API_KEY,16,true,intelligence')
+    expect(contract).toContain('AI_EMBEDDING_API_KEY,16,true,intelligence')
+    expect(overlay).toContain('AI_PROVIDER_ALLOW_SANDBOX: "false"')
+    expect(validator).toContain('must disable Sandbox AI providers in production')
   })
 
   it('fails closed unless production Finance selects a non-Sandbox PSP adapter', () => {
