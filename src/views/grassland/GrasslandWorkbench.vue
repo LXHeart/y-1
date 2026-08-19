@@ -33,6 +33,7 @@ import type { CommissionLadderFormData } from './components/commission-ladder'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
+import StoreMediaGallery from './components/StoreMediaGallery.vue'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
@@ -1683,6 +1684,9 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
         :loading="storePublicProfileLoading"
         :error="storePublicProfileError"
       />
+
+      <!-- 任务书 #42：门店公开媒体画廊（按需拉取，URL 过期 onerror 重拉一次） -->
+      <StoreMediaGallery :store-id="selectedTask?.storeId ?? null" />
 
       <article id="gl-engagements" class="gl-card gl-card-wide">
         <h3>我的履约与争议</h3>

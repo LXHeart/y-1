@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
+import StoreMediaManager from './StoreMediaManager.vue'
 import type {
   MerchantProfile,
   MerchantAttachment,
@@ -769,7 +770,8 @@ watch(() => props.orgId, (orgId) => {
         </span>
       </div>
 
-      <form v-if="selectedStoreId" class="kyb-form" @submit.prevent>
+      <template v-if="selectedStoreId">
+      <form class="kyb-form" @submit.prevent>
         <div class="form-row">
           <label>门店地址</label>
           <div class="address-inputs">
@@ -831,6 +833,10 @@ watch(() => props.orgId, (orgId) => {
           >提交审核</button>
         </div>
       </form>
+
+      <!-- 任务书 #42：门店媒体库（不进 KYB 状态机，D8：绑定/解绑不触发资料 draft 重置） -->
+      <StoreMediaManager :org-id="orgId" :store-id="selectedStoreId" />
+      </template>
 
       <div v-else class="empty-hint">
         请先选择一个门店

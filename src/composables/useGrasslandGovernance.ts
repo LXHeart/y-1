@@ -3,6 +3,7 @@
  */
 import type { RunFn } from './grassland-http'
 import { request, putToPresignedUrl } from './grassland-http'
+import { STORE_MEDIA_KIND_META } from '../types/grassland'
 import type {
   DisputeCase, DeferredDisputeRequest, AdjudicationSnapshot, OpenDisputeResult,
   Judge, JudgeVote, VoteChoice, AdminJudge, AdminJudgePage, UpdateJudgeAdmissionInput,
@@ -16,6 +17,7 @@ import type {
   SpeechLanguage, SpeechTranscription,
   WithdrawalAccount, CreateWithdrawalAccountInput,
   StoreProfile, CreateStoreProfileInput,
+  StoreMediaKind, StoreMediaManageList,
   KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
   RecommenderVerificationRequest, Task,
   RiskCase, RiskCaseAction, RiskCaseDetail, RiskCaseQuery, RiskSignal, RiskSignalQuery,
@@ -496,6 +498,74 @@ export function useGrasslandGovernance(run: RunFn) {
     run(() => request<StoreProfile>(
       `/api/organizations/${orgId}/stores/${storeId}/profile/submit`, { method: 'POST' }))
 
+  // ---------- KYB：门店媒体库（任务书 #42）----------
+
+  /**
+   * 读整店媒体绑定（门店 STAFF+ / org MEMBER 回落）。
+   * 响应 `{storeId, items:[…]}`，每项带 downloadUrl（fail-soft：单项被滤置 null；上游整体故障 503）。
+   */
+  const getStoreMedia = (orgId: string, storeId: string) =>
+    run(() => request<StoreMediaManageList>(
+      `/api/organizations/${orgId}/stores/${storeId}/media`))
+
+  /**
+   * 绑定媒体（MANAGER+）：mediaIds 1..12，须已 confirm 且归属本店，否则 400（fail-closed）；
+   * 帽满/已绑定 409。返回更新后整店 `{storeId, items:[…]}`。
+   */
+  const bindStoreMedia = (orgId: string, storeId: string, kind: StoreMediaKind, mediaIds: string[]) =>
+    run(() => request<StoreMediaManageList>(
+      `/api/organizations/${orgId}/stores/${storeId}/media`, {
+        method: 'POST',
+        body: JSON.stringify({ kind, mediaIds }),
+      }))
+
+  /** 解绑（MANAGER+）：只删绑定行不删对象本体（D6）；未绑定本店 404。 */
+  const unbindStoreMedia = (orgId: string, storeId: string, mediaId: string) =>
+    run(() => request<{ deleted: boolean }>(
+      `/api/organizations/${orgId}/stores/${storeId}/media/${encodeURIComponent(mediaId)}`,
+      { method: 'DELETE' }))
+
+  /** 整类重排（MANAGER+，D10）：请求集合必须与该 kind 当前集合精确相等，否则 409；返回更新后整店。 */
+  const reorderStoreMedia = (
+    orgId: string, storeId: string, kind: StoreMediaKind, orderedMediaIds: string[],
+  ) => run(() => request<StoreMediaManageList>(
+    `/api/organizations/${orgId}/stores/${storeId}/media/order`, {
+      method: 'PUT',
+      body: JSON.stringify({ kind, orderedMediaIds }),
+    }))
+
+  /**
+   * 门店媒体三步上传（门店 MANAGER+，D2）：identity **代开**票据（浏览器不得直连
+   * intelligence 开票——store_media 在直连 purpose 黑名单）→ 直传 presigned → confirm，
+   * 返回 mediaId。
+   *
+   * **不在此步自动绑定**：绑定是独立的 POST /media（fail-closed 归属校验），由管理端
+   * 上传完成后显式调用，分离使上传失败不污染绑定集。
+   * **刻意不做图片压缩**（与品牌 Logo/头像不同）：菜单价目表需要清晰度，压缩会把文字压糊。
+   *
+   * ⚠️ 票据体取**真实文件**的 file.type/file.size——confirm 按对象 HEAD 逐字节校验，
+   * 两处取值必须同源（代码库陷阱清单）。
+   */
+  const uploadStoreMediaFile = (orgId: string, storeId: string, kind: StoreMediaKind, file: File) =>
+    run(async () => {
+      const meta = STORE_MEDIA_KIND_META[kind]
+      if (!meta.accept.split(',').includes(file.type)) {
+        throw new Error(`「${meta.label}」不支持此文件类型，仅支持：${meta.accept.split(',').join(' / ')}`)
+      }
+      if (file.size < 1 || file.size > meta.maxBytes) {
+        throw new Error(`「${meta.label}」文件大小不得超过 ${Math.round(meta.maxBytes / (1024 * 1024))}MB`)
+      }
+      const ticket = await request<MediaUploadTicket>(
+        `/api/organizations/${orgId}/stores/${storeId}/media/upload-tickets`, {
+          method: 'POST',
+          body: JSON.stringify({ kind, contentType: file.type, sizeBytes: file.size }),
+        })
+      await putToPresignedUrl(ticket, file)
+      const confirmed = await request<MediaMetadata>(
+        `/api/media/${ticket.id}/confirm`, { method: 'POST' })
+      return confirmed.id
+    })
+
   // ---------- KYB：审核申请（平台管理员）----------
 
   /** 列出所有 KYB 审核申请（管理员专用）。 */
@@ -595,6 +665,7 @@ export function useGrasslandGovernance(run: RunFn) {
     listWithdrawalAccounts, createWithdrawalAccount, updateWithdrawalAccount,
     submitWithdrawalAccount, setDefaultWithdrawalAccount, deleteWithdrawalAccount,
     getStoreProfile, createStoreProfile, submitStoreProfile,
+    getStoreMedia, bindStoreMedia, unbindStoreMedia, reorderStoreMedia, uploadStoreMediaFile,
     listKybVerifications, getKybVerificationDetail, getKybAttachmentDownload, reviewKybVerification,
     listRecommenderVerifications, reviewRecommenderVerification,
     newOperationId,

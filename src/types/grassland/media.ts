@@ -5,7 +5,7 @@
 /** 附件用途。履约附件是唯一允许 marketplace 跨账号读的 purpose（服务间断点的放行条件）。 */
 export type MediaPurpose =
   'engagement_attachment' | 'merchant_kyb' | 'video_asset' | 'user_upload' | 'avatar'
-  | 'content_asset' | 'speech_audio'
+  | 'content_asset' | 'speech_audio' | 'store_media'
 
 /**
  * 上传凭据（第一步 `POST /api/media/upload-tickets` 的响应）。
@@ -60,6 +60,94 @@ export interface MediaMetadata {
   createdAt: string | null
   expiresAt: string | null
   deletedAt: string | null
+}
+
+// ---------- 门店媒体库（任务书 #42）----------
+
+/** 门店媒体分类（与后端 identity StoreMediaKind 枚举对齐）。 */
+export type StoreMediaKind = 'storefront' | 'environment' | 'menu' | 'video'
+
+/** 四类 kind 的固定展示顺序（公开画廊与管理端共用）。 */
+export const STORE_MEDIA_KINDS: readonly StoreMediaKind[] = [
+  'storefront', 'environment', 'menu', 'video',
+]
+
+/**
+ * kind → 元数据的**唯一权威映射**（D7 帽表）：composable 的开票预检、管理端上传控件、
+ * 公开画廊标签都取这一份，勿三处重复。MIME 白名单与后端 identity 开票前置校验一一对齐。
+ */
+export const STORE_MEDIA_KIND_META: Record<StoreMediaKind, {
+  label: string
+  accept: string
+  maxBytes: number
+  maxCount: number
+  mediaType: 'image' | 'video'
+}> = {
+  storefront: {
+    label: '门头照片', accept: 'image/jpeg,image/png,image/webp',
+    maxBytes: 10 * 1024 * 1024, maxCount: 6, mediaType: 'image',
+  },
+  environment: {
+    label: '环境照片', accept: 'image/jpeg,image/png,image/webp',
+    maxBytes: 10 * 1024 * 1024, maxCount: 12, mediaType: 'image',
+  },
+  menu: {
+    label: '菜单价目表', accept: 'image/jpeg,image/png,image/webp',
+    maxBytes: 10 * 1024 * 1024, maxCount: 12, mediaType: 'image',
+  },
+  video: {
+    label: '宣传视频', accept: 'video/mp4,video/quicktime,video/webm',
+    maxBytes: 20 * 1024 * 1024, maxCount: 3, mediaType: 'video',
+  },
+}
+
+/**
+ * 公开形态单项（GET /api/stores/{storeId}/public-media 白名单）。
+ * 后端严禁下发 uploadedByAccountId/organizationId/createdAt，本类型刻意不含。
+ * `urlExpiresAt` 是资产 TTL（同 MediaServiceDownloadResponse 口径），URL 过期重拉整端点即可。
+ */
+export interface StoreMediaItem {
+  mediaId: string
+  mimeType: string | null
+  sizeBytes: number | null
+  position: number
+  downloadUrl: string | null
+  urlExpiresAt: string | null
+}
+
+/**
+ * 管理形态单项（GET /api/organizations/{orgId}/stores/{storeId}/media）。
+ * 与管理端 toBody 逐字段对齐：比公开形态多 kind/uploadedByAccountId/createdAt，无 urlExpiresAt。
+ */
+export interface StoreMediaManageItem {
+  mediaId: string
+  kind: StoreMediaKind
+  mimeType: string | null
+  sizeBytes: number | null
+  position: number
+  uploadedByAccountId: string
+  createdAt: string | null
+  downloadUrl: string | null
+}
+
+/** 四组媒体容器（公开端点 groups 形态；泛型允许管理端复用分组逻辑）。 */
+export interface StoreMediaGroups<T> {
+  storefront: T[]
+  environment: T[]
+  menu: T[]
+  video: T[]
+}
+
+/** 公开聚合端点响应 data：`{storeId, groups:{storefront:[], environment:[], menu:[], video:[]}}`。 */
+export interface StorePublicMedia {
+  storeId: string
+  groups: StoreMediaGroups<StoreMediaItem>
+}
+
+/** 管理读/写端点响应 data：`{storeId, items:[…]}`（绑定/重排后原样返回更新后整店）。 */
+export interface StoreMediaManageList {
+  storeId: string
+  items: StoreMediaManageItem[]
 }
 
 // ---------- 内容素材库（PRD §4.8）----------
