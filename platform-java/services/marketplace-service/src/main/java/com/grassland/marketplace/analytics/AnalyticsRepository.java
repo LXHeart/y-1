@@ -34,7 +34,14 @@ public class AnalyticsRepository {
     }
 
     public Mono<EventRegistration> record(RecordEventRequest request, String accountId) {
+        return record(request, accountId, "sandbox_manual");
+    }
+
+    public Mono<EventRegistration> record(RecordEventRequest request, String accountId, String source) {
         validate(request);
+        if (blank(source) || source.length() > 48 || !source.matches("[a-z0-9][a-z0-9._-]*")) {
+            throw new IllegalArgumentException("source 格式错误");
+        }
         String id = UUID.randomUUID().toString();
         String metadata = json(request.metadata() == null ? Map.of() : request.metadata());
         Instant occurred = request.occurredAt() == null ? Instant.now() : request.occurredAt();
@@ -42,13 +49,14 @@ public class AnalyticsRepository {
                 INSERT INTO marketing_attribution_event(
                     id, idempotency_key, source_event_id, source, event_type, organization_id, store_id, task_id,
                     recommender_account_id, occurred_at, value_cents, metadata, recorded_by)
-                VALUES(CAST(:id AS uuid), :key, :sourceEventId, 'sandbox_manual', :type, CAST(:org AS uuid),
+                VALUES(CAST(:id AS uuid), :key, :sourceEventId, :source, :type, CAST(:org AS uuid),
                        CAST(:store AS uuid), CAST(:task AS uuid), CAST(:recommender AS uuid), :occurred,
                        :value, CAST(:metadata AS jsonb), CAST(:recordedBy AS uuid))
                 ON CONFLICT (idempotency_key) DO NOTHING
                 RETURNING %s
                 """.formatted(EVENT_COLS))
-                .bind("id", id).bind("key", request.idempotencyKey()).bind("type", request.eventType())
+                .bind("id", id).bind("key", request.idempotencyKey()).bind("source", source)
+                .bind("type", request.eventType())
                 .bind("occurred", occurred.atOffset(ZoneOffset.UTC)).bind("value", value(request.valueCents()))
                 .bind("metadata", metadata);
         spec = bindNullableText(spec, "sourceEventId", request.sourceEventId());
@@ -74,6 +82,7 @@ public class AnalyticsRepository {
                        COUNT(*) FILTER (WHERE event_type='conversion')::int conversions,
                        COALESCE(SUM(value_cents) FILTER (WHERE event_type='conversion'),0)::bigint revenue,
                        COALESCE(SUM(value_cents) FILTER (WHERE event_type='conversion_refund'),0)::bigint refunds,
+                       COUNT(*)::int total,
                        COUNT(*) FILTER (WHERE source <> 'sandbox_manual')::int verified
                 FROM marketing_attribution_event
                 WHERE organization_id=CAST(:org AS uuid)
@@ -91,10 +100,12 @@ public class AnalyticsRepository {
             long revenue = value(row.get("revenue", Long.class));
             long refunds = value(row.get("refunds", Long.class));
             int verified = integer(row.get("verified", Integer.class));
+            int total = integer(row.get("total", Integer.class));
             String status = conversions == 0 ? (exposures + interactions == 0 ? "not_collected" : "conversion_not_collected") : "collected";
+            String dataQuality = total == 0 ? "none"
+                    : verified == 0 ? "sandbox" : verified == total ? "verified" : "mixed";
             return new AttributionSummary(exposures, interactions, conversions, revenue, refunds,
-                    verified == 0 && (exposures + interactions + conversions) > 0 ? "sandbox" : "mixed_or_verified",
-                    status, null);
+                    dataQuality, status, null);
         }).one().defaultIfEmpty(new AttributionSummary(0, 0, 0, 0, 0, "none", "not_collected", null));
     }
 
@@ -146,7 +157,8 @@ public class AnalyticsRepository {
             long cost = report.settledBountyCents();
             long returns = attribution.attributedRevenueCents() - attribution.attributedRefundCents();
             Double roi = cost > 0 && attribution.conversions() > 0 ? ((double) returns - cost) / cost : null;
-            String status = attribution.conversions() > 0 && cost > 0 ? "estimated_sandbox" : attribution.status();
+            String status = attribution.conversions() > 0 && cost > 0
+                    ? "estimated_" + attribution.dataQuality() : attribution.status();
             return new BusinessReport(report.organizationId(), report.storeId(), report.orders(), report.paidOrders(),
                     report.redeemedOrders(), report.refundedOrders(), report.grossGmvCents(), report.refundedGmvCents(),
                     report.netGmvCents(), report.merchantRevenueCents(), report.platformFeeCents(),

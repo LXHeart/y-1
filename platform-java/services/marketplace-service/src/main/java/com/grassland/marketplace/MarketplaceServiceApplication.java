@@ -1,5 +1,6 @@
 package com.grassland.marketplace;
 
+import com.grassland.marketplace.analytics.MarketingAttributionProperties;
 import com.grassland.marketplace.event.MarketplaceOutboxProperties;
 import com.grassland.marketplace.settlement.SettlementReconciliationProperties;
 import org.springframework.boot.SpringApplication;
@@ -8,7 +9,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
-@EnableConfigurationProperties({MarketplaceOutboxProperties.class, SettlementReconciliationProperties.class})
+@EnableConfigurationProperties({MarketplaceOutboxProperties.class, SettlementReconciliationProperties.class,
+        MarketingAttributionProperties.class})
 @SpringBootApplication
 public class MarketplaceServiceApplication {
     public static void main(String[] args) {

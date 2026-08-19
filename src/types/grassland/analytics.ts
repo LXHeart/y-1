@@ -9,6 +9,30 @@ export interface AttributionSummary {
   roi: number | null
 }
 
+export interface MarketingAdvice {
+  code: string
+  severity: string
+  message: string
+  action: string
+}
+
+export interface MarketingAlertCandidate {
+  ruleCode: string
+  severity: string
+  message: string
+  observedValue: number
+  thresholdValue: number
+}
+
+export interface MarketingAlert extends MarketingAlertCandidate {
+  id: string
+  organizationId: string
+  storeId: string | null
+  status: string
+  acknowledgedAt: string | null
+  lastObservedAt: string | null
+}
+
 export interface BusinessAnalyticsReport {
   organizationId: string
   storeId: string | null
@@ -24,6 +48,8 @@ export interface BusinessAnalyticsReport {
   recommenderRevenueCents: number
   settledBountyCents: number
   attribution: AttributionSummary
+  advice: MarketingAdvice[]
+  alerts: MarketingAlert[]
 }
 
 export interface RecommenderAnalyticsReport {
@@ -60,7 +86,10 @@ export interface MerchantAnalyticsDashboard {
     roi: number | 'unavailable'
     roiFormula: string
   }
-  businessMetrics: Omit<BusinessAnalyticsReport, 'organizationId' | 'storeId' | 'settledBountyCents' | 'attribution'>
+  advice: MarketingAdvice[]
+  alerts: MarketingAlertCandidate[]
+  businessMetrics: Omit<BusinessAnalyticsReport,
+    'organizationId' | 'storeId' | 'settledBountyCents' | 'attribution' | 'advice' | 'alerts'>
 }
 
 export interface AnalyticsQuery {

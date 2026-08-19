@@ -1,6 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
 import com.grassland.marketplace.analytics.AnalyticsModels.BusinessReport;
+import com.grassland.marketplace.analytics.AnalyticsAdvice;
 import com.grassland.marketplace.analytics.AnalyticsRepository;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
@@ -907,6 +908,9 @@ public class TaskController {
         marketing.put("roi", attribution.roi() == null ? "unavailable" : attribution.roi());
         marketing.put("roiFormula", "(attributedRevenue-attributedRefund-settledBounty)/settledBounty");
         body.put("marketingMetrics", marketing);
+        var guidance = AnalyticsAdvice.evaluate(report);
+        body.put("advice", guidance.advice());
+        body.put("alerts", guidance.alerts());
         body.put("businessMetrics", Map.of(
                 "orders", report.orders(), "paidOrders", report.paidOrders(),
                 "redeemedOrders", report.redeemedOrders(), "refundedOrders", report.refundedOrders(),

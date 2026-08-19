@@ -1,6 +1,8 @@
 spring:
   application:
     name: marketplace-service
+  codec:
+    max-in-memory-size: 1MB
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     template:
@@ -100,6 +102,11 @@ management:
 marketplace:
   datasource:
     from-database-url: ${MARKETPLACE_DATASOURCE_FROM_DATABASE_URL:false}
+  marketing:
+    attribution:
+      enabled: ${MARKETPLACE_MARKETING_ATTRIBUTION_ENABLED:true}
+      webhook-timestamp-window: ${MARKETPLACE_MARKETING_WEBHOOK_TIMESTAMP_WINDOW:5m}
+      # map key 为 provider（如 meta）；生产通过 MARKETPLACE_MARKETING_ATTRIBUTION_WEBHOOK_SECRETS_<PROVIDER> 注入。
   # 结算窗口：按接受报名时冻结的 T+N 权益计算。生产一天=86400 秒。
   settlement:
     day-seconds: ${SETTLEMENT_DAY_SECONDS:86400}
