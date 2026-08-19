@@ -721,6 +721,13 @@ services:
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     restart: unless-stopped
+    # identity 断言 replay 防护强依赖 redis；补齐与其他常驻服务一致的 healthcheck
+    #（redis:7-alpine 自带 redis-cli，ping 通过即 PONG）。
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   # Epic 3：对象存储（S3 兼容）。无 profile 常驻（与 kafka/redis 一致），service name minio。
   # bucket 由 platform-storage 适配器在服务启动时幂等创建，无需 mc init 容器。
