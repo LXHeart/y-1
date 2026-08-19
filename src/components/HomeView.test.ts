@@ -23,15 +23,16 @@ function stubHotItems(payload: { ok: boolean; status?: number; body?: unknown; e
       return {
         ok: false,
         status: payload.status ?? 500,
-        headers: { get: () => 'application/json' },
+        headers: { get: (): string => 'application/json' },
         json: async () => ({ success: false, error: payload.error ?? '热点服务暂不可用' }),
       }
     }
     return {
       ok: true,
       status: 200,
-      headers: { get: () => 'application/json' },
+      headers: { get: (): string => 'application/json' },
       json: async () => payload.body,
+      text: async () => JSON.stringify(payload.body),
     }
   }))
   return urls

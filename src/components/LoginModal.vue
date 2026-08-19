@@ -188,6 +188,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { AuthMode, LoginFormValues, RegisterFormValues } from '../types/auth'
+import { requestText } from '../composables/grassland-http'
 
 const props = defineProps<{
   visible: boolean
@@ -235,10 +236,7 @@ const canSendCode = computed(() => {
 async function refreshCaptcha(): Promise<void> {
   captchaCode.value = ''
   try {
-    const response = await fetch('/api/auth/captcha', { credentials: 'include' })
-    if (response.ok) {
-      captchaSvg.value = await response.text()
-    }
+    captchaSvg.value = await requestText('/api/auth/captcha')
   } catch {
     captchaSvg.value = ''
   }

@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { fetchApi } from './grassland-http'
 import type {
   ContentScore,
   CoverageGap,
@@ -89,10 +90,8 @@ async function consumeFrames(
 }
 
 async function postStream(url: string, body: unknown, signal: AbortSignal): Promise<Response> {
-  const response = await fetch(url, {
+  const response = await fetchApi(url, {
     method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   })

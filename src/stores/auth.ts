@@ -1,26 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type {
-  AuthLoginResponse,
-  AuthLogoutApiResponse,
-  AuthMeResponse,
-  AuthRegisterResponse,
-  AuthUser,
-  LoginFormValues,
-  RegisterFormValues,
-} from '../types/auth'
-
-async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-
-  if (contentType.includes('application/json')) {
-    const body = await response.json() as { error?: string }
-    return body.error || fallbackMessage
-  }
-
-  const text = await response.text()
-  return text.trim() || fallbackMessage
-}
+import type { AuthUser, LoginFormValues, RegisterFormValues } from '../types/auth'
+import { GrasslandHttpError, request, requestText } from '../composables/grassland-http'
 
 export const useAuthStore = defineStore('auth', () => {
   const currentUser = ref<AuthUser | null>(null)
@@ -63,26 +44,21 @@ export const useAuthStore = defineStore('auth', () => {
   function clearSendCodeError(): void { sendCodeError.value = '' }
 
   async function fetchCaptchaSvg(): Promise<string> {
-    const response = await fetch('/api/auth/captcha', { credentials: 'include' })
-    if (!response.ok) throw new Error('获取验证码失败')
-    return await response.text()
+    try {
+      return await requestText('/api/auth/captcha')
+    } catch {
+      throw new Error('获取验证码失败')
+    }
   }
 
   async function sendVerificationCode(email: string, captchaCode: string): Promise<boolean> {
     sendingCode.value = true
     sendCodeError.value = ''
     try {
-      const response = await fetch('/api/auth/send-code', {
+      await request<{ sent: boolean }>('/api/auth/send-code', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, captchaCode }),
-      })
-      if (!response.ok) {
-        throw new Error(await readApiError(response, `验证码发送失败（${response.status}）`))
-      }
-      const body = await response.json() as { success: boolean; error?: string }
-      if (!body.success) throw new Error(body.error || '验证码发送失败')
+      }, { fallbackError: '验证码发送失败' })
       return true
     } catch (error: unknown) {
       sendCodeError.value = error instanceof Error ? error.message : '验证码发送失败'
@@ -99,19 +75,17 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = true
     loadError.value = ''
     try {
-      const response = await fetch('/api/auth/me', { credentials: 'include' })
-      if (response.status === 401) {
+      const data = await request<{ user: AuthUser }>('/api/auth/me')
+      currentUser.value = data.user
+      loaded.value = true
+      return true
+    } catch (error: unknown) {
+      // 401 = 未登录，是正常态而非错误（与原实现的显式状态分支等价）。
+      if (error instanceof GrasslandHttpError && error.status === 401) {
         currentUser.value = null
         loaded.value = true
         return true
       }
-      if (!response.ok) throw new Error(`当前无法确认登录状态，请稍后重试（${response.status}）`)
-      const body = await response.json() as AuthMeResponse
-      if (!body.success) throw new Error(body.error || '当前无法确认登录状态，请稍后重试')
-      currentUser.value = body.data.user
-      loaded.value = true
-      return true
-    } catch (error: unknown) {
       currentUser.value = null
       loaded.value = false
       loadError.value = error instanceof Error ? error.message : '当前无法确认登录状态，请稍后重试'
@@ -127,16 +101,11 @@ export const useAuthStore = defineStore('auth', () => {
     registerError.value = ''
     logoutError.value = ''
     try {
-      const response = await fetch('/api/auth/login', {
+      const data = await request<{ user: AuthUser }>('/api/auth/login', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
-      })
-      if (!response.ok) throw new Error(await readApiError(response, `登录失败（${response.status}）`))
-      const body = await response.json() as AuthLoginResponse
-      if (!body.success) throw new Error(body.error || '登录失败')
-      currentUser.value = body.data.user
+      }, { fallbackError: '登录失败' })
+      currentUser.value = data.user
       loaded.value = true
       return true
     } catch (error: unknown) {
@@ -154,16 +123,11 @@ export const useAuthStore = defineStore('auth', () => {
     loginError.value = ''
     logoutError.value = ''
     try {
-      const response = await fetch('/api/auth/register', {
+      const data = await request<{ user: AuthUser }>('/api/auth/register', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
-      })
-      if (!response.ok) throw new Error(await readApiError(response, `注册失败（${response.status}）`))
-      const body = await response.json() as AuthRegisterResponse
-      if (!body.success) throw new Error(body.error || '注册失败')
-      currentUser.value = body.data.user
+      }, { fallbackError: '注册失败' })
+      currentUser.value = data.user
       loaded.value = true
       return true
     } catch (error: unknown) {
@@ -179,19 +143,16 @@ export const useAuthStore = defineStore('auth', () => {
     loggingOut.value = true
     logoutError.value = ''
     try {
-      const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
-      if (response.status === 401) {
-        currentUser.value = null
-        loaded.value = true
-        return true
-      }
-      if (!response.ok) throw new Error(await readApiError(response, `退出登录失败（${response.status}）`))
-      const body = await response.json() as AuthLogoutApiResponse
-      if (!body.success) throw new Error(body.error || '退出登录失败')
+      await request<{ loggedOut: true }>('/api/auth/logout', { method: 'POST' })
       currentUser.value = null
       loaded.value = true
       return true
     } catch (error: unknown) {
+      if (error instanceof GrasslandHttpError && error.status === 401) {
+        currentUser.value = null
+        loaded.value = true
+        return true
+      }
       logoutError.value = error instanceof Error ? error.message : '退出登录失败'
       return false
     } finally {

@@ -42,12 +42,13 @@ function stubFetch(responses: unknown[], options: { ok?: boolean } = {}): Call[]
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method || 'GET', body: init?.body as string | undefined })
     const data = responses[Math.min(index++, responses.length - 1)]
+    const body = options.ok === false ? { error: '后端炸了' } : { success: true, data }
     return {
       ok: options.ok ?? true,
       status: options.ok === false ? 500 : 200,
       headers: { get: () => 'application/json' },
-      json: async () => (options.ok === false ? { error: '后端炸了' } : { success: true, data }),
-      text: async () => '',
+      json: async () => body,
+      text: async () => JSON.stringify(body),
     }
   }))
   return calls

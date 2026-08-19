@@ -48,7 +48,7 @@ function stubFetch(responses: unknown[]): Call[] {
       status: 200,
       headers: { get: () => 'application/json' },
       json: async () => ({ success: true, data }),
-      text: async () => '',
+      text: async () => JSON.stringify({ success: true, data }),
     }
   }))
   return calls

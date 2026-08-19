@@ -11,6 +11,8 @@ import type {
 import type { AiPlatformId } from '../types/ai-creation'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
+import { fetchApi, request } from './grassland-http'
+import { generateImage } from './useImageGeneration'
 
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
@@ -121,25 +123,22 @@ export function useArticleCreation() {
     safetyReport.value = null
 
     try {
-      const response = await fetch('/api/article-generation/titles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: trimmed, platform: platform.value, ...executionContext() }),
-        signal: controller.signal,
-      })
+      const data = await request<{ titles: ArticleTitleOption[]; safety?: SafetyReport }>(
+        '/api/article-generation/titles',
+        {
+          method: 'POST',
+          body: JSON.stringify({ topic: trimmed, platform: platform.value, ...executionContext() }),
+          signal: controller.signal,
+        },
+        { fallbackError: '标题生成失败' },
+      )
 
-      const body = await response.json() as {
-        success?: boolean
-        data?: { titles: ArticleTitleOption[]; safety?: SafetyReport }
-        error?: string
+      if (!data?.titles) {
+        throw new Error('标题生成失败')
       }
 
-      if (!response.ok || !body.success || !body.data?.titles) {
-        throw new Error(body.error || '标题生成失败')
-      }
-
-      titles.value = body.data.titles
-      safetyReport.value = parseSafetyFrame({ safety: body.data.safety })
+      titles.value = data.titles
+      safetyReport.value = parseSafetyFrame({ safety: data.safety })
       stage.value = 'titles'
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -167,9 +166,8 @@ export function useArticleCreation() {
     stage.value = 'outline'
 
     try {
-      const response = await fetch('/api/article-generation/outline', {
+      const response = await fetchApi('/api/article-generation/outline', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topic: topic.value.trim(), title: trimmed, platform: platform.value, ...executionContext(),
         }),
@@ -207,9 +205,8 @@ export function useArticleCreation() {
     stage.value = 'content'
 
     try {
-      const response = await fetch('/api/article-generation/content', {
+      const response = await fetchApi('/api/article-generation/content', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topic: topic.value.trim(),
           title: selectedTitle.value.trim(),
@@ -328,28 +325,25 @@ export function useArticleCreation() {
     slot.mode = 'search'
 
     try {
-      const response = await fetch('/api/article-generation/search-images', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          keywords: slot.placement.searchKeywords,
-          count: 3,
-        }),
-        signal: controller.signal,
-      })
+      const data = await request<{ images: ImageSearchResult[] }>(
+        '/api/article-generation/search-images',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            keywords: slot.placement.searchKeywords,
+            count: 3,
+          }),
+          signal: controller.signal,
+        },
+        { fallbackError: '搜图失败' },
+      )
 
-      const body = await response.json() as {
-        success?: boolean
-        data?: { images: ImageSearchResult[] }
-        error?: string
-      }
-
-      if (!response.ok || !body.success || !body.data?.images) {
-        throw new Error(body.error || '搜图失败')
+      if (!data?.images) {
+        throw new Error('搜图失败')
       }
 
       imageSlots.value = imageSlots.value.map((s, i) =>
-        i === index ? { ...s, searchResults: body.data!.images } : s,
+        i === index ? { ...s, searchResults: data.images } : s,
       )
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -378,29 +372,19 @@ export function useArticleCreation() {
     slot.mode = 'generate'
 
     try {
-      const response = await fetch('/api/article-generation/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: slot.placement.prompt,
-          size: '1024x1024',
-          ...imageExecutionContext(),
-        }),
+      const generated = await generateImage({
+        prompt: slot.placement.prompt,
+        size: '1024x1024',
+        json: imageExecutionContext(),
         signal: controller.signal,
       })
 
-      const body = await response.json() as {
-        success?: boolean
-        data?: GeneratedImage
-        error?: string
-      }
-
-      if (!response.ok || !body.success || !body.data) {
-        throw new Error(body.error || '图片生成失败')
+      if (!generated?.imageUrl) {
+        throw new Error('图片生成失败')
       }
 
       imageSlots.value = imageSlots.value.map((s, i) =>
-        i === index ? { ...s, selectedImage: body.data! } : s,
+        i === index ? { ...s, selectedImage: generated } : s,
       )
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return

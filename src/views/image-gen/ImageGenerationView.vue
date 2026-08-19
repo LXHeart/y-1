@@ -126,6 +126,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { compressImageToFile } from '../../composables/compress-image'
+import { generateImage } from '../../composables/useImageGeneration'
 import OversizedImageDialog from './components/OversizedImageDialog.vue'
 
 interface GenerateResult {
@@ -138,10 +139,8 @@ interface MaterialItem {
   previewUrl: string
 }
 
-const API_BASE = ''
 const MAX_MATERIALS = 4
 const MAX_FILE_SIZE = 5 * 1024 * 1024
-
 const prompt = ref('')
 const selectedSize = ref<'1024x1024' | '1024x1792' | '1792x1024'>('1024x1024')
 const generating = ref(false)
@@ -313,31 +312,14 @@ async function handleGenerate(): Promise<void> {
   generating.value = true
 
   try {
-    const formData = new FormData()
-    formData.append('prompt', trimmed)
-    formData.append('size', selectedSize.value)
-    for (const mat of materials.value) {
-      formData.append('images', mat.file)
-    }
-
-    const res = await fetch(`${API_BASE}/api/article-generation/generate-image`, {
-      method: 'POST',
-      credentials: 'include',
-      body: formData,
+    const data = await generateImage({
+      prompt: trimmed,
+      size: selectedSize.value,
+      images: materials.value.map((mat) => mat.file),
     })
 
-    const data = await res.json()
-
-    if (!data.success) {
-      error.value = data.error || '图片生成失败'
-      return
-    }
-
     results.value = [
-      {
-        imageUrl: data.data.imageUrl,
-        revisedPrompt: data.data.revisedPrompt,
-      },
+      data,
       ...results.value,
     ]
   } catch (e: unknown) {

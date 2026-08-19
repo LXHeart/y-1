@@ -3,6 +3,7 @@ import type { VideoProductionStage, VideoProductionImage, VideoProductionForm } 
 import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
+import { fetchApi, request } from './grassland-http'
 
 function generateId(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -122,9 +123,8 @@ export function useVideoProduction() {
         return base64 || img.dataUrl
       })
 
-      const response = await fetch('/api/video-production/generate-script', {
+      const response = await fetchApi('/api/video-production/generate-script', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           images: imageBase64List,
           shopName: form.value.shopName.trim(),
@@ -160,7 +160,7 @@ export function useVideoProduction() {
 
   async function loadCapabilities(): Promise<void> {
     try {
-      const response = await fetch('/api/video-production/capabilities')
+      const response = await fetchApi('/api/video-production/capabilities')
       if (!response.ok) return
 
       const body = await response.json() as CapabilitiesResponse
@@ -197,9 +197,8 @@ export function useVideoProduction() {
     try {
       const imageDataUrls = images.value.map((img) => img.dataUrl)
 
-      const response = await fetch('/api/video-production/generate-video', {
+      const created = await request<{ id: string }>('/api/video-production/generate-video', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script: script.value.trim(),
           images: imageDataUrls,
@@ -211,25 +210,19 @@ export function useVideoProduction() {
           ...executionContext(),
         }),
         signal: controller.signal,
-      })
+      }, { fallbackError: '视频生成失败' })
 
-      const body = await response.json() as { success?: boolean; data?: { id: string }; error?: string }
-
-      if (!response.ok || !body.success) {
-        throw new Error(body.error || '视频生成失败')
-      }
-
-      const id = body.data?.id
+      const id = created?.id
       if (!id) throw new Error('视频任务创建失败')
       while (!controller.signal.aborted) {
         await new Promise((resolve) => setTimeout(resolve, 2000))
-        const statusResponse = await fetch(`/api/video-production/jobs/${id}`, { signal: controller.signal })
+        const statusResponse = await fetchApi(`/api/video-production/jobs/${id}`, { signal: controller.signal })
         const statusBody = await statusResponse.json() as { data?: { status: string; progress: number; errorMessage?: string } }
         const job = statusBody.data
         if (!job) throw new Error('视频任务状态读取失败')
         videoProgress.value = job.progress ?? 0
         if (job.status === 'succeeded') {
-          const downloadResponse = await fetch(
+          const downloadResponse = await fetchApi(
             `/api/video-production/jobs/${id}/download-url`,
             { signal: controller.signal },
           )

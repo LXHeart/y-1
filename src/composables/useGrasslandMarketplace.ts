@@ -2,7 +2,7 @@
  * 草场 marketplace 域 —— 交付物、media 上传、推荐官画像/声誉、钱包、任务/报名、资金账户。
  */
 import type { RunFn } from './grassland-http'
-import { request, readError, sleep, putToPresignedUrl, POLL_MAX_ATTEMPTS, POLL_INTERVAL_MS } from './grassland-http'
+import { request, fetchApi, readError, sleep, putToPresignedUrl, POLL_MAX_ATTEMPTS, POLL_INTERVAL_MS } from './grassland-http'
 import type {
   EngagementSubmission, EngagementVerification, EngagementVerificationRun, EngagementRating, TaskContextSnapshot,
   MediaUploadTicket, MediaMetadata, CreateMediaUploadTicketInput, AttachmentDownload,
@@ -375,9 +375,9 @@ export function useGrasslandMarketplace(run: RunFn) {
    */
   async function acceptApplication(taskId: string, appId: string): Promise<boolean> {
     const result = await run(async () => {
-      const response = await fetch(`/api/tasks/${taskId}/applications/${appId}/accept`, {
+      // 202 空响应体（Saga 异步），刻意走 fetchApi 保留原始状态判断而非信封解析。
+      const response = await fetchApi(`/api/tasks/${taskId}/applications/${appId}/accept`, {
         method: 'POST',
-        credentials: 'include',
       })
       if (!response.ok) {
         throw new Error(await readError(response, `接受失败（${response.status}）`))
@@ -451,11 +451,10 @@ export function useGrasslandMarketplace(run: RunFn) {
     confirmedMetricValue?: number,
   ): Promise<boolean> {
     const result = await run(async () => {
-      const response = await fetch(`/api/tasks/${taskId}/applications/${appId}/confirm`, {
+      // 202 空响应体，同 acceptApplication：fetchApi 保留原始状态判断。
+      const response = await fetchApi(`/api/tasks/${taskId}/applications/${appId}/confirm`, {
         method: 'POST',
-        credentials: 'include',
         ...(confirmedMetricValue === undefined ? {} : {
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ confirmedMetricValue }),
         }),
       })

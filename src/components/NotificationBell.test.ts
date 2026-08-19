@@ -33,7 +33,7 @@ function stubFetch(unreadCount: number): Call[] {
       status: 200,
       headers: { get: () => 'application/json' },
       json: async () => ({ success: true, data }),
-      text: async () => '',
+      text: async () => JSON.stringify({ success: true, data }),
     }
   }))
   return calls
@@ -162,7 +162,7 @@ describe('面板开合', () => {
         ok: true, status: 200,
         headers: { get: () => 'application/json' },
         json: async () => ({ success: true, data }),
-        text: async () => '',
+        text: async () => JSON.stringify({ success: true, data }),
       }
     }))
     currentUser.value = asUser('u1')

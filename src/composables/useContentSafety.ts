@@ -5,6 +5,7 @@
  * 词库服务端独占（D9）——前端只持有 findings 渲染；findings 是 advisory（D6，不阻断）。
  */
 
+import { fetchApi } from './grassland-http'
 import type { SafetyFinding, SafetyReport } from '../types/content-safety'
 
 export type { ContentSafetyStreamFrame, SafetyFinding, SafetyReport } from '../types/content-safety'
@@ -33,10 +34,9 @@ export function parseSafetyFrame(payload: unknown): SafetyReport | null {
 /** 手动复查（编辑后的文本）：返回最新 findings；失败返回 null（UI 显示原状态）。 */
 export async function recheckSafety(text: string): Promise<SafetyReport | null> {
   try {
-    const response = await fetch('/api/content-safety/check', {
+    // 该端点的响应不带 success 信封（只认 2xx + data.safety），故走 fetchApi 保留原契约。
+    const response = await fetchApi('/api/content-safety/check', {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     })
     if (!response.ok) return null

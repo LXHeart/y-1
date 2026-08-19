@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { fetchApi, readError } from './grassland-http'
 import type {
   HomepageSettings,
   HomepageSettingsApiResponse,
@@ -32,15 +33,16 @@ function normalizeSettings(data: unknown): HomepageSettings {
   }
 }
 
-async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    const body = await response.json() as HomepageSettingsApiResponse
-    return body.error || fallbackMessage
+async function loadSettingsBody(
+  url: string,
+  init: RequestInit | undefined,
+  fallbackPrefix: string,
+): Promise<HomepageSettingsApiResponse> {
+  const response = await fetchApi(url, init)
+  if (!response.ok) {
+    throw new Error(await readError(response, `${fallbackPrefix}（${response.status}）`))
   }
-
-  const text = await response.text()
-  return text.trim() || fallbackMessage
+  return await response.json() as HomepageSettingsApiResponse
 }
 
 export function useHomepageSettings() {
@@ -56,13 +58,7 @@ export function useHomepageSettings() {
     error.value = ''
 
     try {
-      const response = await fetch('/api/settings/homepage')
-
-      if (!response.ok) {
-        throw new Error(await readApiError(response, `加载首页设置失败（${response.status}）`))
-      }
-
-      const body = await response.json() as HomepageSettingsApiResponse
+      const body = await loadSettingsBody('/api/settings/homepage', undefined, '加载首页设置失败')
       settings.value = normalizeSettings(body.data)
       loaded.value = true
     } catch (err: unknown) {
@@ -77,17 +73,10 @@ export function useHomepageSettings() {
     saveError.value = ''
 
     try {
-      const response = await fetch('/api/settings/homepage', {
+      const body = await loadSettingsBody('/api/settings/homepage', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSettings),
-      })
-
-      if (!response.ok) {
-        throw new Error(await readApiError(response, `保存首页设置失败（${response.status}）`))
-      }
-
-      const body = await response.json() as HomepageSettingsApiResponse
+      }, '保存首页设置失败')
       settings.value = normalizeSettings(body.data)
       return true
     } catch (err: unknown) {

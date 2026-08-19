@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import type { ApiResponse, ExtractedBilibiliVideoPayload } from '../types/bilibili'
+import { request } from './grassland-http'
+import type { ExtractedBilibiliVideoPayload } from '../types/bilibili'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -56,25 +57,15 @@ export function useBilibiliParse() {
     extractedVideo.value = null
 
     try {
-      const response = await fetch('/api/bilibili/extract-video', {
+      const data = await request<unknown>('/api/bilibili/extract-video', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ input: normalizedInput }),
-      })
+      }, { fallbackError: '提取视频失败，请稍后重试' })
 
-      const contentType = response.headers.get('content-type') || ''
-      if (!contentType.includes('application/json')) {
-        const fallbackText = await response.text()
-        throw new Error(fallbackText || '提取视频失败，请稍后重试')
-      }
+      const normalizedData = normalizeExtractedBilibiliVideoPayload(data)
 
-      const body = await response.json() as ApiResponse<unknown>
-      const normalizedData = normalizeExtractedBilibiliVideoPayload(body.data)
-
-      if (!response.ok || !body.success || !normalizedData) {
-        throw new Error(body.error || '提取视频失败，请稍后重试')
+      if (!normalizedData) {
+        throw new Error('提取视频失败，请稍后重试')
       }
 
       extractedVideo.value = normalizedData

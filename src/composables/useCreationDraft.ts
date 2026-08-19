@@ -1,4 +1,5 @@
 import { getCurrentScope, onScopeDispose, ref } from 'vue'
+import { fetchApi } from './grassland-http'
 import type {
   AutosaveState,
   CreateDraftInput,
@@ -14,17 +15,16 @@ interface Envelope<T> {
   error?: string
 }
 
+/**
+ * 草稿端点的非 2xx 语义刻意只透出 JSON 信封里的 error（网关 HTML/纯文本一律回退状态码文案），
+ * 与共享 `request` 的 readError（会透出原始文本）不同；且 409 判定要求错误携带 status——
+ * `useCreationDraft.test.ts` 已锁定该契约，故只复用 fetchApi 做传输层统一。
+ */
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    credentials: 'include',
-    ...init,
-    headers: init.body
-      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
-      : init.headers || {},
-  })
+  const response = await fetchApi(url, init)
 
   const raw = await response.text()
-  let body: Envelope<T> | null = null
+  let body: Envelope<T> | null
   try {
     body = raw ? JSON.parse(raw) as Envelope<T> : null
   } catch {

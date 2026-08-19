@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { ApiResponse } from '../types/bilibili'
+import { request } from './grassland-http'
 import type { VideoAnalysisResult } from '../types/video-recreation'
 import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
@@ -82,24 +82,16 @@ export function useBilibiliVideoAnalysis() {
     analysis.value = null
 
     try {
-      const response = await fetch('/api/bilibili/analyze-video', {
+      const data = await request<unknown>('/api/bilibili/analyze-video', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ proxyVideoUrl: normalizedProxyVideoUrl, ...(taskContext || {}) }),
         signal: controller.signal,
-      })
+      }, { fallbackError: '视频内容提取失败，请稍后重试' })
 
-      const contentType = response.headers.get('content-type') || ''
-      if (!contentType.includes('application/json')) {
-        const fallbackText = await response.text()
-        throw new Error(fallbackText || '视频内容提取失败，请稍后重试')
-      }
+      const normalizedData = normalizeVideoAnalysisResult(data)
 
-      const body = await response.json() as ApiResponse<unknown>
-      const normalizedData = normalizeVideoAnalysisResult(body.data)
-
-      if (!response.ok || !body.success || !normalizedData) {
-        throw new Error(body.error || '视频内容提取失败，请稍后重试')
+      if (!normalizedData) {
+        throw new Error('视频内容提取失败，请稍后重试')
       }
 
       if (requestId !== requestCounter) return null

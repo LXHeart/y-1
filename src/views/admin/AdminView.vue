@@ -332,6 +332,7 @@ import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import { useAuth } from '../../composables/useAuth'
+import { request } from '../../composables/grassland-http'
 import type {
   KybVerificationDetail,
   KybVerificationRequest,
@@ -495,15 +496,12 @@ async function loadUsers(): Promise<void> {
   loadError.value = ''
   try {
     const query = userSearch.value.trim()
-    const res = await fetch(`/api/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`, {
-      credentials: 'include',
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => null)
-      throw new Error((data as Record<string, unknown>)?.error as string || '加载失败')
-    }
-    const data = await res.json() as { success: boolean; data: { users: UserItem[] } }
-    users.value = data.data.users
+    const data = await request<{ users: UserItem[] }>(
+      `/api/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`,
+      {},
+      { fallbackError: '加载失败' },
+    )
+    users.value = data.users
   } catch (e: unknown) {
     loadError.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -635,20 +633,14 @@ async function handleAdjust(): Promise<void> {
   adjustError.value = ''
 
   try {
-    const res = await fetch('/api/admin/adjust-credits', {
+    await request('/api/admin/adjust-credits', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({
         userId: adjustTarget.value.id,
         amount: adjustAmount.value,
         note: adjustNote.value.trim(),
       }),
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => null)
-      throw new Error((data as Record<string, unknown>)?.error as string || '调整失败')
-    }
+    }, { fallbackError: '调整失败' })
     adjustTarget.value = null
     await loadUsers()
   } catch (e: unknown) {

@@ -21,6 +21,7 @@ function jsonResponse(data: unknown) {
     status: 200,
     headers: { get: () => 'application/json' },
     json: async () => data,
+    text: async () => JSON.stringify(data),
   }
 }
 

@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { request } from './grassland-http'
 import type {
   CreationGenerationDetail,
   CreationGenerationKind,
@@ -6,20 +7,7 @@ import type {
   CreationGenerationSummary,
 } from '../types/grassland/creation-generation'
 
-interface ApiEnvelope<T> {
-  success?: boolean
-  data?: T
-  error?: string
-}
-
-async function request<T>(url: string): Promise<T> {
-  const response = await fetch(url, { credentials: 'include' })
-  const body = await response.json() as ApiEnvelope<T>
-  if (!response.ok || !body.success || body.data == null) {
-    throw new Error(body.error || '生成记录加载失败')
-  }
-  return body.data
-}
+const LOAD_FALLBACK = '生成记录加载失败'
 
 export async function listCreationGenerations(input: {
   kind?: CreationGenerationKind
@@ -31,11 +19,24 @@ export async function listCreationGenerations(input: {
   if (input.limit != null) query.set('limit', String(input.limit))
   if (input.before) query.set('before', input.before)
   const suffix = query.size ? `?${query}` : ''
-  return request<CreationGenerationPage>(`/api/creation-generations${suffix}`)
+  const page = await request<CreationGenerationPage>(`/api/creation-generations${suffix}`, {}, {
+    fallbackError: LOAD_FALLBACK,
+  })
+  if (page == null) {
+    // 原实现对 data==null 也按加载失败处理，保留该契约。
+    throw new Error(LOAD_FALLBACK)
+  }
+  return page
 }
 
-export function getCreationGeneration(id: string): Promise<CreationGenerationDetail> {
-  return request<CreationGenerationDetail>(`/api/creation-generations/${encodeURIComponent(id)}`)
+export async function getCreationGeneration(id: string): Promise<CreationGenerationDetail> {
+  const detail = await request<CreationGenerationDetail>(`/api/creation-generations/${encodeURIComponent(id)}`, {}, {
+    fallbackError: LOAD_FALLBACK,
+  })
+  if (detail == null) {
+    throw new Error(LOAD_FALLBACK)
+  }
+  return detail
 }
 
 export function useCreationGenerations(kind?: CreationGenerationKind) {

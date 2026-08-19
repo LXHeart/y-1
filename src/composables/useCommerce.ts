@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { request } from './grassland-http'
 import type {
   AfterSalesDispute,
   CommercePackage,
@@ -6,23 +7,6 @@ import type {
   ConsumerOrder,
   ConsumerReview,
 } from '../types/commerce'
-
-interface Envelope<T> { success: boolean; data?: T; error?: string }
-
-async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    credentials: 'include',
-    ...init,
-    headers: init.body
-      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
-      : init.headers,
-  })
-  const body = await response.json().catch(() => null) as Envelope<T> | null
-  if (!response.ok || !body?.success) {
-    throw new Error(body?.error || `请求失败（${response.status}）`)
-  }
-  return body.data as T
-}
 
 export function useCommerce() {
   const loading = ref(false)

@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
-import type { ApiResponse, DouyinSessionState } from '../types/douyin'
+import { request } from './grassland-http'
+import type { DouyinSessionState } from '../types/douyin'
 
 const state = ref<DouyinSessionState | null>(null)
 const loading = ref(false)
@@ -36,23 +37,16 @@ function normalizeSessionState(value: unknown): DouyinSessionState | null {
 }
 
 async function requestSession(path: string, method: 'GET' | 'POST', requestId: number): Promise<DouyinSessionState> {
-  const response = await fetch(path, {
+  const data = await request<unknown>(path, {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-  })
+  }, { fallbackError: '抖音登录服务暂不可用，请稍后重试' })
 
-  const contentType = response.headers.get('content-type') || ''
-  if (!contentType.includes('application/json')) {
-    const fallbackText = await response.text()
-    throw new Error(fallbackText || '抖音登录服务暂不可用，请稍后重试')
-  }
-
-  const body = await response.json() as ApiResponse<unknown>
-  const normalized = normalizeSessionState(body.data)
-  if (!response.ok || !body.success || !normalized) {
-    throw new Error(body.error || '抖音登录服务暂不可用，请稍后重试')
+  const normalized = normalizeSessionState(data)
+  if (!normalized) {
+    throw new Error('抖音登录服务暂不可用，请稍后重试')
   }
 
   if (requestId === latestRequestId) {

@@ -93,12 +93,12 @@ import type { CreationHandoff } from '../../types/ai-creation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { parseSafetyFrame } from '../../composables/useContentSafety'
 import type { SafetyReport } from '../../composables/useContentSafety'
+import { fetchApi } from '../../composables/grassland-http'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
 
-const API_BASE = ''
 
 const topic = ref('')
 const duration = ref(60)
@@ -236,10 +236,8 @@ async function handleGenerate(): Promise<void> {
   generating.value = true
 
   try {
-    const response = await fetch(`${API_BASE}/api/comedy-generation/generate-script`, {
+    const response = await fetchApi('/api/comedy-generation/generate-script', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({
         topic: buildStyledTopic(trimmed),
         duration: duration.value,

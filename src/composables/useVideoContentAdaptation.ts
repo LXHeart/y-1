@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { ApiResponse } from '../types/douyin'
+import { request } from './grassland-http'
 import type { VideoAdaptationResult, VideoAdaptationUserInstructions } from '../types/video-recreation'
 import type { VideoTaskExecutionContext } from '../types/video-recreation'
 
@@ -174,24 +174,16 @@ export function useVideoContentAdaptation() {
         })
       }
 
-      const response = await fetch('/api/video-recreation/adapt-content', {
+      const data = await request<unknown>('/api/video-recreation/adapt-content', {
         method: 'POST',
-        headers: hasImages ? {} : { 'Content-Type': 'application/json' },
         body,
         signal: controller.signal,
-      })
+      }, { fallbackError: '内容改编失败，请稍后重试' })
 
-      const contentType = response.headers.get('content-type') || ''
-      if (!contentType.includes('application/json')) {
-        const fallbackText = await response.text()
-        throw new Error(fallbackText || '内容改编失败，请稍后重试')
-      }
+      const normalizedData = normalizeVideoAdaptationResult(data)
 
-      const responseBody = await response.json() as ApiResponse<unknown>
-      const normalizedData = normalizeVideoAdaptationResult(responseBody.data)
-
-      if (!response.ok || !responseBody.success || !normalizedData) {
-        throw new Error(responseBody.error || '内容改编失败，请稍后重试')
+      if (!normalizedData) {
+        throw new Error('内容改编失败，请稍后重试')
       }
 
       if (requestId !== requestCounter) {

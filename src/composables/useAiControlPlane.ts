@@ -8,6 +8,7 @@ import type {
   UpdateAiProviderKeyInput,
   UpdatePlatformModelInput,
 } from '../types/ai-control-plane'
+import { fetchApi } from './grassland-http'
 
 async function readError(response: Response): Promise<string> {
   const fallback = `请求失败（${response.status}）`
@@ -28,13 +29,9 @@ export class AiControlPlaneError extends Error {
 }
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    credentials: 'include',
-    headers: init.body
-      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
-      : init.headers,
-  })
+  // 这些控制面端点回非信封裸 JSON（数组/对象/204），不走 grassland-http 的信封解析；
+  // 只复用其传输层统一（cookie 与字符串主体的 JSON Content-Type）。
+  const response = await fetchApi(url, init)
   if (!response.ok) throw new AiControlPlaneError(response.status, await readError(response))
   if (response.status === 204) return undefined as T
   const text = await response.text()

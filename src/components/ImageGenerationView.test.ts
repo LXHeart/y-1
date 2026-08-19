@@ -94,10 +94,13 @@ describe('ImageGenerationView 生成交互', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe('/api/article-generation/generate-image')
     expect(calls[0].init?.method).toBe('POST')
-    const formData = calls[0].init?.body as FormData
-    expect(formData).toBeInstanceOf(FormData)
-    expect(formData.get('prompt')).toBe('一只橘色的猫坐在窗台上')
-    expect(formData.get('size')).toBe('1792x1024')
+    // 统一生图入口后无参考素材走 JSON 主体（有素材仍 FormData），两种契约都带 prompt/size
+    const body = calls[0].init?.body
+    const payload: Record<string, string> = body instanceof FormData
+      ? { prompt: String(body.get('prompt')), size: String(body.get('size')) }
+      : JSON.parse(String(body))
+    expect(payload.prompt).toBe('一只橘色的猫坐在窗台上')
+    expect(payload.size).toBe('1792x1024')
 
     // 结果卡渲染：图片、优化提示词、下载与复制提示词入口
     const resultCard = wrapper.get('.result-card')

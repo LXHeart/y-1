@@ -6,6 +6,7 @@
  * （HTTP 429）；额度用尽/provider 失败在流内以 `{error, code}` 帧返回。
  */
 import { ref } from 'vue'
+import { fetchApi } from './grassland-http'
 
 export type GuestTrialCapability = 'article-titles' | 'content-score' | 'image-review'
 
@@ -36,7 +37,7 @@ async function refreshQuota(): Promise<void> {
   error.value = ''
   loading.value = true
   try {
-    const response = await fetch('/api/guest-trial/quota', { credentials: 'include' })
+    const response = await fetchApi('/api/guest-trial/quota')
     if (response.status === 404) {
       quota.value = null
       return
@@ -61,10 +62,8 @@ async function runTrial(
 ): Promise<GuestTrialRunResult> {
   const empty: GuestTrialRunResult = { result: null, errorCode: null, errorMessage: null }
   try {
-    const response = await fetch(`/api/guest-trial/${capability}`, {
+    const response = await fetchApi(`/api/guest-trial/${capability}`, {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (response.status === 429) {

@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { request } from './grassland-http'
 import type { VideoScene } from '../types/video-recreation'
 import type { SceneImageState } from '../types/video-recreation'
 import type { VideoTaskExecutionContext } from '../types/video-recreation'
@@ -18,24 +19,18 @@ export function useVideoRecreation(taskContext?: VideoTaskExecutionContext) {
     sceneImages.value = new Map(sceneImages.value).set(index, { loading: true })
 
     try {
-      const response = await fetch('/api/video-recreation/generate-scene-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene, overallStyle, ...(taskContext || {}) }),
-      })
+      const data = await request<{ imageUrl: string; revisedPrompt?: string }>(
+        '/api/video-recreation/generate-scene-image', {
+          method: 'POST',
+          body: JSON.stringify({ scene, overallStyle, ...(taskContext || {}) }),
+        }, { fallbackError: '参考图生成失败' })
 
-      const body = await response.json() as {
-        success?: boolean
-        data?: { imageUrl: string; revisedPrompt?: string }
-        error?: string
-      }
-
-      if (!response.ok || !body.success || !body.data) {
-        throw new Error(body.error || '参考图生成失败')
+      if (!data) {
+        throw new Error('参考图生成失败')
       }
 
       sceneImages.value = new Map(sceneImages.value).set(index, {
-        imageUrl: body.data.imageUrl,
+        imageUrl: data.imageUrl,
         loading: false,
       })
     } catch (err: unknown) {
@@ -61,24 +56,18 @@ export function useVideoRecreation(taskContext?: VideoTaskExecutionContext) {
     sceneImages.value = newMap
 
     try {
-      const response = await fetch('/api/video-recreation/generate-all-scene-images', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenes, overallStyle, ...(taskContext || {}) }),
-      })
+      const data = await request<{ images: Array<{ imageUrl: string; revisedPrompt?: string }> }>(
+        '/api/video-recreation/generate-all-scene-images', {
+          method: 'POST',
+          body: JSON.stringify({ scenes, overallStyle, ...(taskContext || {}) }),
+        }, { fallbackError: '批量生成参考图失败' })
 
-      const body = await response.json() as {
-        success?: boolean
-        data?: { images: Array<{ imageUrl: string; revisedPrompt?: string }> }
-        error?: string
-      }
-
-      if (!response.ok || !body.success || !body.data) {
-        throw new Error(body.error || '批量生成参考图失败')
+      if (!data) {
+        throw new Error('批量生成参考图失败')
       }
 
       const resultMap = new Map<number, SceneImageState>()
-      body.data.images.forEach((img, i) => {
+      data.images.forEach((img, i) => {
         resultMap.set(i, { imageUrl: img.imageUrl, loading: false })
       })
       sceneImages.value = resultMap

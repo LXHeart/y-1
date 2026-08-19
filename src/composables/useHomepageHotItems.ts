@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { request } from './grassland-http'
 import type {
   HomepageHotFilters,
   HomepageHotItem,
@@ -9,12 +10,6 @@ import type {
   HomepageHotTaxonomyOption,
 } from '../types/homepage-hot'
 import type { HotItemsProvider } from '../types/settings'
-
-interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -149,17 +144,6 @@ export function buildHomepageHotItemsUrl(filters: HomepageHotFilters = {}): stri
   return query ? `/api/homepage/hot-items?${query}` : '/api/homepage/hot-items'
 }
 
-async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    const body = await response.json() as ApiResponse<unknown>
-    return body.error || fallbackMessage
-  }
-
-  const text = await response.text()
-  return text.trim() || fallbackMessage
-}
-
 export function useHomepageHotItems() {
   const items = ref<HomepageHotItem[]>([])
   const groups = ref<HomepageHotItemGroup[]>([])
@@ -179,15 +163,12 @@ export function useHomepageHotItems() {
     error.value = ''
 
     try {
-      const response = await fetch(buildHomepageHotItemsUrl(normalizedFilters))
-      if (!response.ok) {
-        throw new Error(await readApiError(response, `加载全网热点失败（${response.status}）`))
-      }
-
-      const body = await response.json() as ApiResponse<unknown>
-      const normalizedData = normalizePayload(body.data)
-      if (!body.success || !normalizedData) {
-        throw new Error(body.error || '加载全网热点失败')
+      const data = await request<unknown>(buildHomepageHotItemsUrl(normalizedFilters), undefined, {
+        fallbackError: '加载全网热点失败',
+      })
+      const normalizedData = normalizePayload(data)
+      if (!normalizedData) {
+        throw new Error('加载全网热点失败')
       }
       if (requestId !== requestEpoch) return
 

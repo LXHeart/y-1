@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { fetchApi } from '../composables/grassland-http'
 
 export interface CreditBalance {
   balance: number
@@ -28,7 +29,7 @@ export const useCreditsStore = defineStore('credits', () => {
     try {
       loading.value = true
       error.value = ''
-      const response = await fetch('/api/credits/balance', { credentials: 'include' })
+      const response = await fetchApi('/api/credits/balance')
       if (!response.ok) {
         if (response.status === 401) return
         throw new Error('获取积分失败')
@@ -43,7 +44,7 @@ export const useCreditsStore = defineStore('credits', () => {
 
   async function loadHistory(): Promise<CreditHistoryItem[]> {
     try {
-      const response = await fetch('/api/credits/history', { credentials: 'include' })
+      const response = await fetchApi('/api/credits/history')
       if (!response.ok) return []
       const data = await response.json() as { history: CreditHistoryItem[] }
       return data.history ?? []

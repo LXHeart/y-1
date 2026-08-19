@@ -224,6 +224,7 @@
 import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import { useAiStudio } from '../../../composables/useAiStudio'
 import { useGrassland } from '../../../composables/useGrassland'
+import { generateImage } from '../../../composables/useImageGeneration'
 import { VIDEO_EDIT_TEMPLATES } from '../../../constants/video-edit-templates'
 import { autoSplitSubtitles, buildSrt, buildVtt } from '../../../utils/subtitle-timeline'
 import type { VideoEditTemplate, SubtitleCue, SpeechTranscriptionItem, BgmAdviceInput, BgmAdviceResult } from '../../../types/grassland/ai-studio'
@@ -295,13 +296,11 @@ const audioUrl = ref('')
 const audioRef = ref<HTMLAudioElement | null>(null)
 const currentCueId = ref('')
 const cues = ref<SubtitleCue[]>([])
-let audioFileRef: File | null = null
 let transcriptionIdForStorage = ''
 
 async function onAudioSelected(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
-  audioFileRef = file
   audioUrl.value = URL.createObjectURL(file)
   transcribing.value = true
   // 复用草场上传 + 转写
@@ -481,18 +480,15 @@ async function generateAiCover() {
   try {
     // 走既有生图端点（D7）：请求体只发 prompt + size（platform 字段后端不存在，
     // 竖版封面用白名单内的 1024x1792）
-    const response = await fetch('/api/article-generation/generate-image', {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: `视频封面图，主题：${aiCoverPrompt.value}，高对比度、视觉焦点明确、适合叠加标题文字`, size: '1024x1792' }),
+    const data = await generateImage({
+      prompt: `视频封面图，主题：${aiCoverPrompt.value}，高对比度、视觉焦点明确、适合叠加标题文字`,
+      size: '1024x1792',
     })
-    if (!response.ok) { aiCoverError.value = '封面生成失败，请稍后重试'; return }
-    const body = await response.json() as { success: boolean; data?: { imageUrl?: string } }
-    if (body.success && body.data?.imageUrl) {
+    if (data?.imageUrl) {
       const img = new Image()
       img.crossOrigin = 'anonymous'
       img.onload = () => { coverBaseImage.value = img }
-      img.src = body.data.imageUrl
+      img.src = data.imageUrl
     } else {
       aiCoverError.value = '封面生成失败，请稍后重试'
     }

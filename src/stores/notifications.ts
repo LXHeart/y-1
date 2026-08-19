@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { request } from '../composables/grassland-http'
 import {
   NOTIFICATION_CATEGORY_ORDER,
   NOTIFICATION_LINK_TARGETS,
@@ -25,34 +26,6 @@ const POLL_INTERVAL_MS = 60_000
 
 /** 每页条数。与后端默认页大小无关——显式传，翻页判定才稳。 */
 const PAGE_SIZE = 20
-
-async function readError(response: Response, fallback: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    const body = await response.json() as { error?: string }
-    return body.error || fallback
-  }
-  const text = await response.text()
-  return text.trim() || fallback
-}
-
-async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    credentials: 'include',
-    ...init,
-    headers: init.body
-      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
-      : init.headers || {},
-  })
-  if (!response.ok) {
-    throw new Error(await readError(response, `请求失败（${response.status}）`))
-  }
-  const body = await response.json() as { success: boolean; data?: T; error?: string }
-  if (!body.success) {
-    throw new Error(body.error || '请求失败')
-  }
-  return body.data as T
-}
 
 /** keyset 游标必须成对下发，缺一个后端 400；故这里统一拼参数，不在调用点手拼 query。 */
 function buildListUrl(query: NotificationQuery): string {

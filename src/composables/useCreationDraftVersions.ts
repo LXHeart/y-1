@@ -1,29 +1,9 @@
 import { ref } from 'vue'
+import { request } from './grassland-http'
 import type {
   CreationDraftVersion,
   CreationDraftVersionPage,
 } from '../types/creation-assistant'
-
-interface Envelope<T> {
-  success: boolean
-  data?: T
-  error?: string
-}
-
-async function request<T>(url: string): Promise<T> {
-  const response = await fetch(url, { credentials: 'include' })
-  const raw = await response.text()
-  let body: Envelope<T> | null = null
-  try {
-    body = raw ? JSON.parse(raw) as Envelope<T> : null
-  } catch {
-    body = null
-  }
-  if (!response.ok || !body?.success) {
-    throw new Error(body?.error || `请求失败（${response.status}）`)
-  }
-  return body.data as T
-}
 
 /** 草稿历史只读 API；比较和恢复编排留在前端。 */
 export function useCreationDraftVersions() {

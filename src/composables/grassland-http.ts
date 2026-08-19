@@ -16,24 +16,37 @@ export class GrasslandHttpError extends Error {
 }
 
 export async function readError(response: Response, fallback: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    const body = await response.json() as { error?: string }
-    return body.error || fallback
+  // 错误体解析：优先后端 {error}（不依赖 content-type——部分网关/测试 stub 不带 headers），
+  // JSON 无 error 或不可解析时回退文本，最后 fallback。全程容忍缺字段的 stub。
+  if (typeof response.json === 'function') {
+    const body = await response.json().catch(() => null) as { error?: string } | null
+    if (body?.error) return body.error
   }
-  const text = await response.text()
+  const text = typeof response.text === 'function' ? await response.text().catch(() => '') : ''
   return text.trim() || fallback
 }
 
-/** 统一请求：注入 cookie、解信封、非 2xx 抛带后端消息的 Error。 */
-export async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    credentials: 'include',
-    ...init,
-    headers: init.body
-      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
-      : init.headers || {},
-  })
+/** FormData/Blob/URLSearchParams 等非字符串主体由浏览器自动带正确的 Content-Type，覆写会破坏上传。 */
+function shouldDefaultJsonContentType(body: BodyInit | null | undefined): boolean {
+  return typeof body === 'string'
+}
+
+/** 统一请求选项：fallbackError 允许调用方保留原有的领域化失败文案（如「登录失败」）。 */
+export interface RequestOptions {
+  fallbackError?: string
+}
+
+/**
+ * 统一请求：注入 cookie、解 `{success,data,error}` 信封、非 2xx 抛 {@link GrasslandHttpError}（保留
+ * 状态码供 401/409 等分支）、信封失败抛带后端消息的 Error。JSON 解析容错：非 JSON 响应体（网关错误页
+ * 等）回退为状态码文案，不再抛 SyntaxError。
+ */
+export async function request<T>(
+  url: string,
+  init: RequestInit = {},
+  options: RequestOptions = {},
+): Promise<T> {
+  const response = await fetchApi(url, init)
 
   if (!response.ok) {
     throw new GrasslandHttpError(
@@ -42,11 +55,47 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
     )
   }
 
-  const body = await response.json() as GrasslandResponse<T>
+  // 刻意用 json()+catch 而非 text() 再 parse：与既有测试的 fetch mock（仅提供 json()）兼容，
+  // 同时对非 JSON 成功体（网关错误页/空 202）容错为格式错误，不抛 SyntaxError。
+  let body: GrasslandResponse<T> | null
+  try {
+    body = await response.json() as GrasslandResponse<T>
+  } catch {
+    body = null
+  }
+  if (!body || typeof body.success !== 'boolean') {
+    throw new GrasslandHttpError(response.status, options.fallbackError || '响应格式错误')
+  }
   if (!body.success) {
-    throw new Error(body.error || '请求失败')
+    throw new Error(body.error || options.fallbackError || '请求失败')
   }
   return body.data as T
+}
+
+/** 统一请求（文本响应）：验证码 SVG 等非 JSON 端点；cookie 与非 2xx 语义同 {@link request}。 */
+export async function requestText(url: string, init: RequestInit = {}): Promise<string> {
+  const response = await fetchApi(url, init)
+  if (!response.ok) {
+    throw new GrasslandHttpError(
+      response.status,
+      await readError(response, `请求失败（${response.status}）`),
+    )
+  }
+  return response.text()
+}
+
+/**
+ * 带统一默认项的裸 fetch：注入 cookie、字符串主体默认 JSON Content-Type。
+ * 只做传输层统一——SSE/流式读取与上传等由调用方拥有响应体，不在此解信封。
+ */
+export async function fetchApi(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    credentials: 'include',
+    ...init,
+    headers: shouldDefaultJsonContentType(init.body)
+      ? { 'Content-Type': 'application/json', ...(init.headers || {}) }
+      : init.headers || {},
+  })
 }
 
 export function sleep(ms: number): Promise<void> {

@@ -1,24 +1,20 @@
 import { computed, getCurrentInstance, onBeforeUnmount, ref } from 'vue'
 import type {
-  FeishuExportResponse,
   GenerationStage,
-  ImageAnalysisApiResponse,
   ImageAnalysisProgressEvent,
   ImageAnalysisResult,
   ImageAnalysisStreamEvent,
   ImageAnalysisStreamProgressEvent,
   ReviewPlatform,
-  SaveStyleMemoryResponse,
   StepReviewRequest,
-  UpdateStylePreferencesResponse,
 } from '../types/image-analysis'
 import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
+import { fetchApi, readError, request } from './grassland-http'
 
 const MAX_IMAGES = 6
 const MAX_FILE_SIZE = 5 * 1024 * 1024
-const MAX_STYLE_PREFERENCES = 100
 const DEFAULT_REVIEW_LENGTH = 0
 const MIN_REVIEW_LENGTH = 15
 const MAX_REVIEW_LENGTH = 300
@@ -51,14 +47,6 @@ function mergeProgressEvents(
 export interface SelectedImage {
   file: File
   preview: string
-}
-
-function readApiError(response: Response, fallback: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    return response.json().then((body: ImageAnalysisApiResponse) => body.error || fallback)
-  }
-  return response.text().then((text) => text.trim() || fallback)
 }
 
 export async function consumeImageAnalysisStream(
@@ -337,14 +325,14 @@ export function useImageAnalysis() {
     appendExecutionContext(formData)
 
     try {
-      const response = await fetch('/api/image-analysis/step/draft', {
+      const response = await fetchApi('/api/image-analysis/step/draft', {
         method: 'POST',
         body: formData,
         signal: controller.signal,
       })
 
       if (!isCurrentRequest(controller) || controller.signal.aborted) return null
-      if (!response.ok) throw new Error(await readApiError(response, '初稿生成失败，请稍后重试'))
+      if (!response.ok) throw new Error(await readError(response, '初稿生成失败，请稍后重试'))
 
       const contentType = response.headers.get('content-type') || ''
       if (!contentType.includes('text/event-stream')) {
@@ -411,16 +399,10 @@ export function useImageAnalysis() {
 
     try {
       const body = buildStepRequestBody(result.value)
-      const response = await fetch('/api/image-analysis/step/optimize', {
+      const data = await request<ImageAnalysisResult>('/api/image-analysis/step/optimize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      })
-
-      const data = await response.json() as { success: boolean; data?: ImageAnalysisResult; error?: string }
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || '润色优化失败，请稍后重试')
-      }
+      }, { fallbackError: '润色优化失败，请稍后重试' })
 
       const completedAt = new Date().toISOString()
       progressEvents.value = mergeProgressEvents(progressEvents.value, {
@@ -432,12 +414,12 @@ export function useImageAnalysis() {
         durationMs: Date.parse(completedAt) - Date.parse(startedAt),
       })
 
-      result.value = data.data ?? null
-      if (data.data) {
-        stepResults.value = { ...stepResults.value, optimize: { ...data.data } }
+      result.value = data ?? null
+      if (data) {
+        stepResults.value = { ...stepResults.value, optimize: { ...data } }
       }
       generationStage.value = 'optimize-review'
-      return data.data ?? null
+      return data ?? null
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '润色优化失败，请稍后重试'
       generationStage.value = 'optimize-review'
@@ -455,16 +437,10 @@ export function useImageAnalysis() {
 
     try {
       const body = buildStepRequestBody(result.value)
-      const response = await fetch('/api/image-analysis/step/style-refine', {
+      const data = await request<ImageAnalysisResult>('/api/image-analysis/step/style-refine', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      })
-
-      const data = await response.json() as { success: boolean; data?: ImageAnalysisResult; error?: string }
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || '风格偏好优化失败，请稍后重试')
-      }
+      }, { fallbackError: '风格偏好优化失败，请稍后重试' })
 
       const completedAt = new Date().toISOString()
       progressEvents.value = mergeProgressEvents(progressEvents.value, {
@@ -476,12 +452,12 @@ export function useImageAnalysis() {
         durationMs: Date.parse(completedAt) - Date.parse(startedAt),
       })
 
-      result.value = data.data ?? null
-      if (data.data) {
-        stepResults.value = { ...stepResults.value, 'style-refine': { ...data.data } }
+      result.value = data ?? null
+      if (data) {
+        stepResults.value = { ...stepResults.value, 'style-refine': { ...data } }
       }
       generationStage.value = 'complete'
-      return data.data ?? null
+      return data ?? null
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '风格偏好优化失败，请稍后重试'
       generationStage.value = 'complete'
@@ -539,9 +515,8 @@ export function useImageAnalysis() {
     saveStyleSuccess.value = false
 
     try {
-      const response = await fetch('/api/image-analysis/save-style-memory', {
+      await request('/api/image-analysis/save-style-memory', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           original: {
             review: originalSnapshot.value.review,
@@ -551,15 +526,10 @@ export function useImageAnalysis() {
           edited: {
             review: editReview.value,
             title: editTitle.value || undefined,
-            tags: editTags.value.length > 0 ? editTags.value : undefined,
+            tags: editTags.value.length > 0 ? [...editTags.value] : undefined,
           },
         }),
-      })
-
-      const body = await response.json() as SaveStyleMemoryResponse
-      if (!response.ok || !body.success) {
-        throw new Error(body.error || `保存风格偏好失败（${response.status}）`)
-      }
+      }, { fallbackError: '保存风格偏好失败' })
 
       result.value = {
         ...result.value,
@@ -604,11 +574,13 @@ export function useImageAnalysis() {
     if (feelings.value) formData.append('feelings', feelings.value)
 
     try {
-      const response = await fetch('/api/image-analysis/export-feishu', { method: 'POST', body: formData })
-      const body = await response.json() as FeishuExportResponse
-      if (!response.ok || !body.success) throw new Error(body.error || `导出失败（${response.status}）`)
-      if (body.data) {
-        exportedDocUrl.value = body.data.documentUrl
+      const body = await request<{ documentUrl?: string } | null>(
+        '/api/image-analysis/export-feishu',
+        { method: 'POST', body: formData },
+        { fallbackError: '导出失败' },
+      )
+      if (body) {
+        if (body.documentUrl) exportedDocUrl.value = body.documentUrl
         exportedDocTitle.value = result.value.title || '图片评价导出'
       }
       return true
@@ -626,13 +598,10 @@ export function useImageAnalysis() {
   async function loadStylePreferences(): Promise<void> {
     loadingPreferences.value = true
     try {
-      const response = await fetch('/api/image-analysis/style-preferences')
-      if (response.ok) {
-        const body = await response.json() as { success: boolean; data?: { preferences: string[] } }
-        stylePreferences.value = body.success && body.data ? body.data.preferences : []
-      } else {
-        stylePreferences.value = []
-      }
+      const body = await request<{ preferences: string[] } | null>(
+        '/api/image-analysis/style-preferences',
+      )
+      stylePreferences.value = body?.preferences ?? []
     } catch {
       stylePreferences.value = []
     } finally {
@@ -647,16 +616,15 @@ export function useImageAnalysis() {
     optimizedPreferences.value = null
 
     try {
-      const response = await fetch('/api/image-analysis/style-preferences/optimize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences: stylePreferences.value }),
-      })
-      const body = await response.json() as { success: boolean; data?: { preferences: string[] }; error?: string }
-      if (!response.ok || !body.success) {
-        throw new Error(body.error || '风格偏好优化失败')
-      }
-      optimizedPreferences.value = body.data?.preferences ?? []
+      const body = await request<{ preferences: string[] } | null>(
+        '/api/image-analysis/style-preferences/optimize',
+        {
+          method: 'POST',
+          body: JSON.stringify({ preferences: stylePreferences.value }),
+        },
+        { fallbackError: '风格偏好优化失败' },
+      )
+      optimizedPreferences.value = body?.preferences ?? []
     } catch (err: unknown) {
       optimizeError.value = err instanceof Error ? err.message : '风格偏好优化失败'
     } finally {
@@ -695,14 +663,14 @@ export function useImageAnalysis() {
   async function updateStylePreferencesOnServer(preferences: string[]): Promise<boolean> {
     savingPreference.value = true
     try {
-      const response = await fetch('/api/image-analysis/style-preferences', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences }),
-      })
-      const body = await response.json() as UpdateStylePreferencesResponse
-      if (!response.ok || !body.success) return false
-      stylePreferences.value = body.data?.preferences ?? preferences
+      const body = await request<{ preferences?: string[] } | null>(
+        '/api/image-analysis/style-preferences',
+        {
+          method: 'PUT',
+          body: JSON.stringify({ preferences }),
+        },
+      )
+      stylePreferences.value = body?.preferences ?? preferences
       return true
     } catch {
       return false

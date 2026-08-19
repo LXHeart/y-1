@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { fetchApi, readError, request } from '../composables/grassland-http'
 import type {
   AnalysisFeature,
   AnalysisProvider,
@@ -119,14 +120,13 @@ function normalizeSettings(data: unknown): AnalysisSettings {
   }
 }
 
-async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
-  const contentType = response.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    const body = await response.json() as AnalysisSettingsApiResponse
-    return body.error || fallbackMessage
+/** 设置读写不校验信封 success（静默回退默认值），只统一传输层与非 2xx 文案。 */
+async function loadSettingsEnvelope(url: string, init: RequestInit | undefined, fallbackPrefix: string): Promise<AnalysisSettingsApiResponse> {
+  const response = await fetchApi(url, init)
+  if (!response.ok) {
+    throw new Error(await readError(response, `${fallbackPrefix}（${response.status}）`))
   }
-  const text = await response.text()
-  return text.trim() || fallbackMessage
+  return await response.json() as AnalysisSettingsApiResponse
 }
 
 export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
@@ -142,9 +142,7 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
     loading.value = true
     error.value = ''
     try {
-      const response = await fetch('/api/settings/analysis')
-      if (!response.ok) throw new Error(await readApiError(response, `加载设置失败（${response.status}）`))
-      const body = await response.json() as AnalysisSettingsApiResponse
+      const body = await loadSettingsEnvelope('/api/settings/analysis', undefined, '加载设置失败')
       settings.value = normalizeSettings(body.data)
       loaded.value = true
     } catch (err: unknown) {
@@ -158,13 +156,10 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
     saving.value = true
     saveError.value = ''
     try {
-      const response = await fetch('/api/settings/analysis', {
+      const body = await loadSettingsEnvelope('/api/settings/analysis', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSettings),
-      })
-      if (!response.ok) throw new Error(await readApiError(response, `保存设置失败（${response.status}）`))
-      const body = await response.json() as AnalysisSettingsApiResponse
+      }, '保存设置失败')
       settings.value = normalizeSettings(body.data)
       return true
     } catch (err: unknown) {
@@ -177,15 +172,10 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
 
   async function persistBeforeFeatureAction(settingsToSave?: AnalysisSettings, fallbackMessage?: string): Promise<void> {
     if (!settingsToSave) return
-    const saveResponse = await fetch('/api/settings/analysis', {
+    const saveBody = await loadSettingsEnvelope('/api/settings/analysis', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settingsToSave),
-    })
-    if (!saveResponse.ok) {
-      throw new Error(await readApiError(saveResponse, fallbackMessage ?? '保存设置失败'))
-    }
-    const saveBody = await saveResponse.json() as AnalysisSettingsApiResponse
+    }, fallbackMessage ?? '保存设置失败')
     settings.value = normalizeSettings(saveBody.data)
   }
 
@@ -205,20 +195,15 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
     }
     try {
       await persistBeforeFeatureAction(settingsToSave, '保存设置失败，无法获取模型列表')
-      const response = await fetch('/api/settings/analysis/models', {
+      const data = await request<{ models?: ModelInfo[] }>('/api/settings/analysis/models', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ feature, provider }),
-      })
-      const body = await response.json() as { success: boolean; data?: { models: ModelInfo[] }; error?: string }
-      if (!response.ok || !body.success) {
-        throw new Error(body.error || `获取模型列表失败（${response.status}）`)
-      }
+      }, { fallbackError: '获取模型列表失败' })
       featureModelStates.value = {
         ...featureModelStates.value,
         [feature]: {
           ...featureModelStates.value[feature],
-          availableModels: body.data?.models ?? [],
+          availableModels: data?.models ?? [],
         },
       }
     } catch (err: unknown) {
@@ -257,15 +242,10 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
     }
     try {
       await persistBeforeFeatureAction(settingsToSave, '保存设置失败，无法验证模型')
-      const response = await fetch('/api/settings/analysis/verify-model', {
+      await request<{ verified: boolean }>('/api/settings/analysis/verify-model', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ feature, provider, model }),
-      })
-      const body = await response.json() as { success: boolean; data?: { verified: boolean }; error?: string }
-      if (!response.ok || !body.success) {
-        throw new Error(body.error || `模型验证失败（${response.status}）`)
-      }
+      }, { fallbackError: '模型验证失败' })
       featureModelStates.value = {
         ...featureModelStates.value,
         [feature]: {
