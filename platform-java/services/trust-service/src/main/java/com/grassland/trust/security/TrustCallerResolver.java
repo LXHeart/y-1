@@ -20,6 +20,8 @@ public class TrustCallerResolver {
 
     /** 受信任的 Saga 编排服务 principal（marketplace SettlementWindowWorkflow 查争议）。 */
     public static final String MARKETPLACE_SERVICE = "marketplace";
+    /** Account authority; used only by private compliance endpoints. */
+    public static final String IDENTITY_SERVICE = "identity";
 
     private final IdentityAssertionSigner signer;
     private final String headerName;
@@ -106,6 +108,13 @@ public class TrustCallerResolver {
                 .filter(c -> organizationId.equals(c.organizationId())
                         && c.isServicePrincipal(servicePrincipal))
                 .switchIfEmpty(Mono.error(new TrustException(403, "无权读取内部争议终局")));
+    }
+
+    /** Private account-level commands without an organization scope. */
+    public Mono<Caller> requireService(ServerHttpRequest request, String servicePrincipal) {
+        return resolve(request)
+                .filter(c -> c.isServicePrincipal(servicePrincipal))
+                .switchIfEmpty(Mono.error(new TrustException(403, "无权执行内部命令")));
     }
 
     /** 接受终端商家或指定服务 principal（org 由调用方按已加载资源自查）。开放争议查询用（marketplace 调）。 */

@@ -42,7 +42,7 @@ class DatabaseBootstrapMigrationTest {
         DataSource dataSource = dataSource();
         Flyway flyway = flyway(dataSource);
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
         new DatabaseSchemaVerifier(dataSource).verify();
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
@@ -108,7 +108,7 @@ class DatabaseBootstrapMigrationTest {
         }
 
         DataSource dataSource = dataSource();
-        assertThat(flyway(dataSource).migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway(dataSource).migrate().migrationsExecuted).isEqualTo(2);
         new DatabaseSchemaVerifier(dataSource).verify();
 
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {

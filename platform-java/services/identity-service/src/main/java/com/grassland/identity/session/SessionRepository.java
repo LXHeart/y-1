@@ -48,6 +48,16 @@ public class SessionRepository {
         return db.sql("DELETE FROM session WHERE sid = :sid").bind("sid", sid).fetch().rowsUpdated();
     }
 
+    /** Account closure: revoke every web session in one idempotent statement. */
+    public Mono<Long> deleteAllForAccount(String accountId) {
+        if (accountId == null || accountId.isBlank()) {
+            return Mono.just(0L);
+        }
+        return db.sql("DELETE FROM session WHERE sess->'user'->>'id' = :accountId")
+                .bind("accountId", accountId)
+                .fetch().rowsUpdated();
+    }
+
     String extractUserId(String sessJson) {
         try {
             JsonNode node = mapper.readTree(sessJson);

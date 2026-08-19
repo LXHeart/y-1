@@ -156,6 +156,13 @@ public class IdentitySessionRepository {
                 .fetch().rowsUpdated();
     }
 
+    /** Account closure: remove all per-device active identity state. */
+    public Mono<Long> deleteByAccount(String accountId) {
+        return db.sql("DELETE FROM identity_session WHERE account_id = CAST(:accountId AS uuid)")
+                .bind("accountId", accountId)
+                .fetch().rowsUpdated();
+    }
+
     /** 更新 last_seen（行不存在时为 no-op）；GET 活动身份时刷新，支撑多设备「最近活跃」视图。 */
     public Mono<Long> touchLastSeen(String sessionToken) {
         return db.sql("UPDATE identity_session SET last_seen_at = now() WHERE session_token = :sid")

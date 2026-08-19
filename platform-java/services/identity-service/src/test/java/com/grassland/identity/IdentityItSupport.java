@@ -98,6 +98,7 @@ public abstract class IdentityItSupport {
                 + "@" + host + ":" + p + "/" + name);
         r.add("management.server.port", () -> "0");
         r.add("identity.outbox.enabled", () -> "false");
+        r.add("identity.compliance.enabled", () -> "false");
         r.add("identity.kyb.retention.enabled", () -> "false");
         r.add("identity.external-delivery.challenge-secret",
                 () -> "test-sms-challenge-secret-at-least-32-characters");
@@ -113,13 +114,19 @@ public abstract class IdentityItSupport {
         // IF NOT EXISTS：多个子类各自触发一次 @BeforeAll，需幂等。
         try (var c = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              var s = c.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz)");
+            s.execute("CREATE TABLE IF NOT EXISTS app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz, deleted_at timestamptz)");
+            s.execute("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS deleted_at timestamptz");
             s.execute("CREATE TABLE IF NOT EXISTS session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
             // 注册验证码表由 database-bootstrap 管理，identity 只读写，不由本服务 Flyway 建，
             // 列名/类型对齐 EmailVerificationService 的 SQL：明文 code、used 标记。
             s.execute("CREATE TABLE IF NOT EXISTS email_verification_codes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
                     + "email text NOT NULL, code text NOT NULL, used boolean NOT NULL DEFAULT false, "
                     + "expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now())");
+            s.execute("CREATE TABLE IF NOT EXISTS user_settings (id uuid PRIMARY KEY, "
+                    + "user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE, "
+                    + "settings_type text NOT NULL, settings_json jsonb NOT NULL, version integer NOT NULL DEFAULT 1, "
+                    + "created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), "
+                    + "UNIQUE (user_id, settings_type))");
         }
     }
 

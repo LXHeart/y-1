@@ -180,6 +180,16 @@ identity-assertion:
       purpose: service
       audience: grassland-trust
       secret: ${IDENTITY_ASSERTION_KEY_MARKETPLACE_SERVICE_TRUST_PREVIOUS:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_TRUST_KID:identity-service-trust-v1}
+      issuer: identity
+      purpose: service
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_TRUST:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_TRUST_PREVIOUS_KID:}
+      issuer: identity
+      purpose: service
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_TRUST_PREVIOUS:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
     storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}

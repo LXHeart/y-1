@@ -11,6 +11,7 @@ import type {
   Membership, LoginSession, OrgInvitation, MyInvitation,
   InvitationAcceptResult, Store, StoreMembership, StoreRole, StorePublicProfile, StorePublicMedia,
   MediaUploadTicket, MediaMetadata, BrandProfile, SaveBrandProfileInput,
+  AccountClosureCheck, AccountClosureRequest, PersonalDataExport, PiiLifecycleAudit,
 } from '../types/grassland'
 
 /** 品牌 Logo 上传前的客户端压缩帽（后端服务端帽 2MB，取 1MB 留余量，同头像模式）。 */
@@ -166,6 +167,24 @@ export function useGrasslandIdentity(run: RunFn) {
   const revokeOtherSessions = () =>
     run(() => request<{ revoked: number }>('/api/me/sessions', { method: 'DELETE' }))
 
+  // ---------- identity：个人数据合规（#38）----------
+
+  const checkAccountClosure = () =>
+    run(() => request<AccountClosureCheck>('/api/me/compliance/closure-check'))
+
+  const requestPersonalDataExport = () =>
+    run(() => request<PersonalDataExport>('/api/me/compliance/exports', { method: 'POST' }))
+
+  const getPersonalDataExport = (id: string) =>
+    run(() => request<PersonalDataExport>(`/api/me/compliance/exports/${encodeURIComponent(id)}`))
+
+  const requestAccountClosure = () =>
+    run(() => request<AccountClosureRequest>('/api/me/compliance/account-closure', { method: 'POST' }))
+
+  const listPiiLifecycleAudit = (limit = 20) =>
+    run(() => request<{ entries: PiiLifecycleAudit[] }>(
+      `/api/me/compliance/audit?limit=${Math.max(1, Math.min(limit, 100))}`))
+
   // ---------- identity：按邮箱邀请成员 ----------
 
   /**
@@ -313,6 +332,8 @@ export function useGrasslandIdentity(run: RunFn) {
     reviewPermissionRequest,
     listMemberships, addMembership, removeMembership,
     listMySessions, revokeOtherSessions, revokeSession,
+    checkAccountClosure, requestPersonalDataExport, getPersonalDataExport,
+    requestAccountClosure, listPiiLifecycleAudit,
     inviteMember, listInvitations, revokeInvitation,
     listMyInvitations, acceptInvitation, declineInvitation,
     listStores, createStore, getStorePublicProfile, getStorePublicMedia, listStoreMemberships, addStoreMembership,

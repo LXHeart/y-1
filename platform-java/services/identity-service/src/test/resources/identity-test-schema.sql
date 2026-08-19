@@ -8,7 +8,8 @@ CREATE TABLE app_users (
   status        text NOT NULL DEFAULT 'active',
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
-  last_login_at timestamptz
+  last_login_at timestamptz,
+  deleted_at    timestamptz
 );
 CREATE TABLE session (
   sid    varchar NOT NULL PRIMARY KEY,

@@ -23,7 +23,8 @@ final class DatabaseSchemaVerifier {
                     entry("status", "text", false),
                     entry("created_at", "timestamptz", false),
                     entry("updated_at", "timestamptz", false),
-                    entry("last_login_at", "timestamptz", true)),
+                    entry("last_login_at", "timestamptz", true),
+                    entry("deleted_at", "timestamptz", true)),
             "session", columns(
                     entry("sid", "varchar", false),
                     entry("sess", "json", false),

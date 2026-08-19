@@ -47,6 +47,7 @@ public final class IdentityAuthorizationManifest {
                 "mobile.RevokeController");
         register(policies, AUTHENTICATED,
                 "auth.MeController",
+                "compliance.ComplianceController",
                 "identityprofile.IdentityAuditController",
                 "identityprofile.IdentityProfileController",
                 "identityprofile.IdentitySessionController",

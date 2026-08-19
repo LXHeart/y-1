@@ -12,6 +12,8 @@ TRUST_SERVICE_FINANCE,trust,grassland-finance,service,trust-service-finance-v1
 TRUST_SERVICE_MARKETPLACE,trust,grassland-marketplace,service,trust-service-marketplace-v1
 TRUST_SERVICE_IDENTITY,trust,grassland-identity,service,trust-service-identity-v1
 IDENTITY_SERVICE_FINANCE,identity,grassland-finance,service,identity-service-finance-v1
+IDENTITY_SERVICE_MARKETPLACE,identity,grassland-marketplace,service,identity-service-marketplace-v1
+IDENTITY_SERVICE_TRUST,identity,grassland-trust,service,identity-service-trust-v1
 IDENTITY_SERVICE_INTELLIGENCE,identity,grassland-intelligence,service,identity-service-intelligence-v1
 INTELLIGENCE_SERVICE_MARKETPLACE,intelligence,grassland-marketplace,service,intelligence-service-marketplace-v1
 INTELLIGENCE_SERVICE_FINANCE,intelligence,grassland-finance,service,intelligence-service-finance-v1

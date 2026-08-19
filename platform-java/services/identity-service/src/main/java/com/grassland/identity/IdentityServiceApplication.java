@@ -1,6 +1,7 @@
 package com.grassland.identity;
 
 import com.grassland.identity.event.OutboxProperties;
+import com.grassland.identity.compliance.ComplianceProperties;
 import com.grassland.identity.kyb.KybMediaRetentionProperties;
 import com.grassland.identity.kyb.KybDocumentAnalysisProperties;
 import com.grassland.identity.identityprofile.IdentitySessionPolicyProperties;
@@ -24,7 +25,8 @@ import org.springframework.transaction.reactive.TransactionalOperator;
         ExternalDeliveryProperties.class,
         KybMediaRetentionProperties.class,
         KybDocumentAnalysisProperties.class,
-        IdentitySessionPolicyProperties.class
+        IdentitySessionPolicyProperties.class,
+        ComplianceProperties.class
 })
 public class IdentityServiceApplication {
     public static void main(String[] args) {

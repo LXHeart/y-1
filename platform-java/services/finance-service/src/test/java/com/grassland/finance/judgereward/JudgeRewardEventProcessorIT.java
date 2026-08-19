@@ -53,6 +53,9 @@ class JudgeRewardEventProcessorIT extends FinanceItSupport {
         r.add("finance.judge-reward-consumer.topic", () -> TOPIC);
         r.add("finance.judge-reward-consumer.group-id", () -> "finance-judge-it-" + RUN_ID);
         r.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        // The random topic is created before the listener joins. earliest prevents the first
+        // test record from being skipped when the consumer assignment races the producer.
+        r.add("spring.kafka.consumer.auto-offset-reset", () -> "earliest");
     }
 
     @BeforeAll

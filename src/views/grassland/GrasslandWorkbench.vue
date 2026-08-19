@@ -10,6 +10,7 @@ import MerchantMonthlyBillCard from '../../components/MerchantMonthlyBillCard.vu
 import MyInvitationsCard from '../../components/MyInvitationsCard.vue'
 import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.vue'
 import MySessionsCard from '../../components/MySessionsCard.vue'
+import PersonalDataComplianceCard from '../../components/PersonalDataComplianceCard.vue'
 import MyWalletCard from '../../components/MyWalletCard.vue'
 import RecommenderHistoryCard from '../../components/RecommenderHistoryCard.vue'
 import RecommenderIncomeStatsCard from '../../components/RecommenderIncomeStatsCard.vue'
@@ -1367,6 +1368,10 @@ function handleFeedFilterUpdate(field: string, value: string | number): void {
 
     <article class="gl-card gl-card-wide">
       <MySessionsCard />
+    </article>
+
+    <article class="gl-card gl-card-wide">
+      <PersonalDataComplianceCard />
     </article>
 
     <!-- ============ 商家视角 ============ -->

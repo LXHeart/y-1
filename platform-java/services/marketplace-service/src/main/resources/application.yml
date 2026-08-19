@@ -244,6 +244,16 @@ identity-assertion:
       purpose: service
       audience: grassland-marketplace
       secret: ${IDENTITY_ASSERTION_KEY_INTELLIGENCE_SERVICE_MARKETPLACE_PREVIOUS:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_MARKETPLACE_KID:identity-service-marketplace-v1}
+      issuer: identity
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_MARKETPLACE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_MARKETPLACE_PREVIOUS_KID:}
+      issuer: identity
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_MARKETPLACE_PREVIOUS:}
   replay-protection:
     enabled: ${IDENTITY_ASSERTION_REPLAY_ENABLED:false}
     storage: ${IDENTITY_ASSERTION_REPLAY_STORAGE:redis}

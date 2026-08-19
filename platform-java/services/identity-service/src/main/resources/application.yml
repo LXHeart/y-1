@@ -93,6 +93,19 @@ management:
         include: health,info,prometheus
 
 identity:
+  compliance:
+    enabled: ${IDENTITY_COMPLIANCE_ENABLED:true}
+    poll-interval-ms: ${IDENTITY_COMPLIANCE_POLL_INTERVAL_MS:5000}
+    batch-size: ${IDENTITY_COMPLIANCE_BATCH_SIZE:10}
+    max-concurrency: ${IDENTITY_COMPLIANCE_MAX_CONCURRENCY:2}
+    claim-lease-seconds: ${IDENTITY_COMPLIANCE_CLAIM_LEASE_SECONDS:300}
+    max-attempts: ${IDENTITY_COMPLIANCE_MAX_ATTEMPTS:8}
+    initial-backoff-seconds: ${IDENTITY_COMPLIANCE_INITIAL_BACKOFF_SECONDS:5}
+    max-backoff-seconds: ${IDENTITY_COMPLIANCE_MAX_BACKOFF_SECONDS:3600}
+    export-ttl-hours: ${IDENTITY_COMPLIANCE_EXPORT_TTL_HOURS:24}
+    # ADR D10 provisional default; production must keep this configurable until legal calibration.
+    pii-retention-days: ${IDENTITY_COMPLIANCE_PII_RETENTION_DAYS:180}
+    upstream-timeout-ms: ${IDENTITY_COMPLIANCE_UPSTREAM_TIMEOUT_MS:10000}
   session:
     cookie-name: ${SESSION_COOKIE_NAME:y1.sid}
     secret: ${SESSION_SECRET:}
@@ -228,10 +241,18 @@ identity-assertion:
   issuer: ${IDENTITY_ASSERTION_ISSUER:identity}
   header-name: ${IDENTITY_ASSERTION_HEADER_NAME:X-Grassland-Identity}
   signing-keys:
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_MARKETPLACE_KID:identity-service-marketplace-v1}
+      purpose: service
+      audience: grassland-marketplace
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_MARKETPLACE:}
     - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE_KID:identity-service-finance-v1}
       purpose: service
       audience: grassland-finance
       secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_FINANCE:}
+    - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_TRUST_KID:identity-service-trust-v1}
+      purpose: service
+      audience: grassland-trust
+      secret: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_TRUST:}
     - kid: ${IDENTITY_ASSERTION_KEY_IDENTITY_SERVICE_INTELLIGENCE_KID:identity-service-intelligence-v1}
       purpose: service
       audience: grassland-intelligence
@@ -288,6 +309,18 @@ identity-assertion:
 intelligence:
   service:
     base-url: ${INTELLIGENCE_SERVICE_BASE_URL:http://intelligence-service:8086}
+
+marketplace:
+  service:
+    base-url: ${MARKETPLACE_SERVICE_BASE_URL:http://marketplace-service:8083}
+
+finance:
+  service:
+    base-url: ${FINANCE_SERVICE_BASE_URL:http://finance-service:8084}
+
+trust:
+  service:
+    base-url: ${TRUST_SERVICE_BASE_URL:http://trust-service:8085}
 
 # GL-P3-MERCHANT-001：KYB 敏感字段（法人身份证号/收款账号）信封加密。
 # 与 intelligence BYOK 共用同一 KEK 变量名。未配置时 EnvelopeEncryption bean 不装配，
