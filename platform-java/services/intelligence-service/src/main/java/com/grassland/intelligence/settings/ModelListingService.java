@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -31,19 +30,16 @@ public class ModelListingService {
 
     private final AnalysisSettingsService analysisSettings;
     private final UserSettingsRepository repo;
-    private final Duration timeout;
     private final ObjectMapperHolder json;
     private final DnsPinningResolver dnsPinning;
 
     public ModelListingService(
             AnalysisSettingsService analysisSettings,
             UserSettingsRepository repo,
-            DnsPinningResolver dnsPinning,
-            @Value("${hot-items.60s.timeout-ms:8000}") long fallbackTimeout) {
+            DnsPinningResolver dnsPinning) {
         this.analysisSettings = analysisSettings;
         this.repo = repo;
         this.dnsPinning = dnsPinning;
-        this.timeout = Duration.ofMillis(15000); // listModels/verifyModel 用 15s/10s
         this.json = new ObjectMapperHolder();
     }
 

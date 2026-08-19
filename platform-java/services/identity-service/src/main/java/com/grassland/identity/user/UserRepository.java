@@ -1,11 +1,15 @@
 package com.grassland.identity.user;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 @Component
 public class UserRepository {
+    private static final Logger log = LoggerFactory.getLogger(UserRepository.class);
+
     private final DatabaseClient db;
 
     public UserRepository(DatabaseClient db) {
@@ -29,7 +33,7 @@ public class UserRepository {
             .then()
             .onErrorResume(e -> {
                 // 记录日志但不抛异常，避免影响登录成功主流程
-                System.err.println("Failed to upgrade password hash for user " + userId + ": " + e.getMessage());
+                log.warn("Failed to upgrade password hash for user {}: {}", userId, e.getMessage());
                 return Mono.empty();
             });
     }

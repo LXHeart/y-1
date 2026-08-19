@@ -28,7 +28,7 @@ class ModelListingServiceTest {
     private final AnalysisSettingsService analysisSettings = mock(AnalysisSettingsService.class);
 
     private ModelListingService service(DnsPinningResolver resolver) {
-        return new ModelListingService(analysisSettings, repo, resolver, 8000);
+        return new ModelListingService(analysisSettings, repo, resolver);
     }
 
     private static DnsPinningResolver resolverResolving(String host, String ip)
