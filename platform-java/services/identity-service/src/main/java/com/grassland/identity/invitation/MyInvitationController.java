@@ -1,8 +1,8 @@
 package com.grassland.identity.invitation;
 
 import com.grassland.identity.auth.IdentityException;
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.membership.MembershipRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.store.StoreMembershipRepository;

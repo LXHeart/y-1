@@ -9,7 +9,7 @@ import static org.mockito.Mockito.doReturn;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.IdentityItSupport;
-import com.grassland.identity.event.EventContractException;
+import com.grassland.messaging.EventContractException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;

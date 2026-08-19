@@ -2,8 +2,8 @@ package com.grassland.identity.permission;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.organization.PermissionTier;
 import java.time.Instant;
 import java.util.List;

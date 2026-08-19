@@ -9,7 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.grassland.identity.event.EventContractException;
+import com.grassland.messaging.EventContractException;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.event.InboxRepository;
 import com.grassland.identity.notify.mail.MailOutboxEnqueuer;

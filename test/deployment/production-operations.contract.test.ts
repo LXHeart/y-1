@@ -347,15 +347,28 @@ describe('Production release and recovery contracts', () => {
   })
 
   it('locks the complete domain metric coverage to the services that own outbox or Kafka consumers', () => {
-    const outboxServices = ['identity-service', 'marketplace-service', 'finance-service', 'trust-service', 'intelligence-service']
-    for (const service of outboxServices) {
-      const source = readFileSync(resolve(
+    // 2026-08-20：identity/finance/trust/intelligence 四服务的 OutboxPublisher 下沉到
+    // platform-messaging 共享库，backlog 指标单源在共享 publisher；四服务 build 必须依赖该库。
+    // marketplace 链为独立实现（String claimToken / fail-fast 校验 / 业务查询），仍读自己的 metrics 类。
+    const sharedPublisher = readFileSync(resolve(
+      REPOSITORY_ROOT,
+      'platform-java/platform-messaging/src/main/java/com/grassland/messaging/outbox/OutboxPublisher.java',
+    ), 'utf8')
+    expect(sharedPublisher).toContain('grassland.outbox.pending')
+    expect(sharedPublisher).toContain('grassland.outbox.oldest.pending.age')
+    for (const service of ['identity-service', 'finance-service', 'trust-service', 'intelligence-service']) {
+      const build = readFileSync(resolve(
         REPOSITORY_ROOT,
-        `platform-java/services/${service}/src/main/java/${service === 'identity-service' ? 'com/grassland/identity/event/OutboxPublisher.java' : service === 'marketplace-service' ? 'com/grassland/marketplace/event/OutboxPublisherMetrics.java' : service === 'finance-service' ? 'com/grassland/finance/event/OutboxPublisher.java' : service === 'trust-service' ? 'com/grassland/trust/event/OutboxPublisher.java' : 'com/grassland/intelligence/event/OutboxPublisher.java'}`,
+        `platform-java/services/${service}/build.gradle.kts`,
       ), 'utf8')
-      expect(source).toContain('grassland.outbox.pending')
-      expect(source).toContain('grassland.outbox.oldest.pending.age')
+      expect(build).toContain('project(":platform-messaging")')
     }
+    const marketplaceMetrics = readFileSync(resolve(
+      REPOSITORY_ROOT,
+      'platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/event/OutboxPublisherMetrics.java',
+    ), 'utf8')
+    expect(marketplaceMetrics).toContain('grassland.outbox.pending')
+    expect(marketplaceMetrics).toContain('grassland.outbox.oldest.pending.age')
     const rules = readFileSync(resolve(REPOSITORY_ROOT, 'platform-java/deploy/observability/prometheus/rules/platform-messaging.yml'), 'utf8')
     expect(rules).toContain('kafka_consumer_records_lag_max{job=~"identity-service|marketplace-service"}')
     expect(rules).toContain('GrasslandKafkaConsumerLagMetricsMissing')

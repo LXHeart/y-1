@@ -5,7 +5,7 @@ import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.media.MediaStatus;
 import com.grassland.intelligence.media.MediaPurpose;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.media.MediaLifecycleEvents;
 import com.grassland.storage.ObjectStorageAdapter;
 import java.time.Instant;

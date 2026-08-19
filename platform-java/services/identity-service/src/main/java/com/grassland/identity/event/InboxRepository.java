@@ -1,5 +1,7 @@
 package com.grassland.identity.event;
 
+import com.grassland.messaging.EventContractException;
+
 import com.grassland.identity.notification.NotificationEventConsumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.r2dbc.core.DatabaseClient;

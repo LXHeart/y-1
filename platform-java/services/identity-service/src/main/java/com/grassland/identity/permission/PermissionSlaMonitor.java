@@ -1,7 +1,7 @@
 package com.grassland.identity.permission;
 
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;

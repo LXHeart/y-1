@@ -1,4 +1,4 @@
-package com.grassland.identity.event;
+package com.grassland.messaging.outbox;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,15 +13,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
 import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-@Component
+/**
+ * outbox → Kafka 可靠发布器：claim → send（等 ack）→ markPublished，失败按位移指数退避。
+ *
+ * <p>纯类（无 Spring 注解）：调度属性名 {@code <svc>.outbox.poll-interval-ms} 是各服务
+ * 私有配置面，由服务侧 {@code OutboxMessagingConfig} 的调度 bean 以
+ * {@code @Scheduled(fixedDelayString = "${<svc>.outbox.poll-interval-ms:2000}")} 驱动
+ * {@link #publishPending()}。{@code kafka == null}（无 Kafka 环境，如测试）时静默跳过，
+ * 与原实现一致。
+ *
+ * <p>指标名跨服务共享（{@code grassland.outbox.*}）——每服务独立 MeterRegistry/端点，
+ * 无冲突；告警规则按服务 job 维度区分。原四份逐字相同的拷贝 2026-08-20 下沉到本库。
+ */
 public class OutboxPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
@@ -30,7 +38,8 @@ public class OutboxPublisher {
     private final OutboxRepository repository;
     private final KafkaTemplate<String, String> kafka;
     private final ObjectMapper mapper;
-    private final OutboxProperties properties;
+    private final OutboxSettings settings;
+    private final String owner;
     private final AtomicBoolean isPublishing = new AtomicBoolean();
     private final AtomicLong pendingGauge = new AtomicLong();
     private final AtomicLong oldestPendingAgeGauge = new AtomicLong();
@@ -41,13 +50,13 @@ public class OutboxPublisher {
     private final Counter overlapCounter;
     private final Timer publishDuration;
 
-    @Autowired
     public OutboxPublisher(
             OutboxRepository repository,
-            @Autowired(required = false) KafkaTemplate<String, String> kafka,
-            MeterRegistry meterRegistry,
-            OutboxProperties properties) {
-        this(repository, kafka, new ObjectMapper().findAndRegisterModules(), meterRegistry, properties);
+            KafkaTemplate<String, String> kafka,
+            OutboxSettings settings,
+            String owner,
+            MeterRegistry meterRegistry) {
+        this(repository, kafka, new ObjectMapper().findAndRegisterModules(), meterRegistry, settings, owner);
     }
 
     OutboxPublisher(
@@ -55,11 +64,13 @@ public class OutboxPublisher {
             KafkaTemplate<String, String> kafka,
             ObjectMapper mapper,
             MeterRegistry meterRegistry,
-            OutboxProperties properties) {
+            OutboxSettings settings,
+            String owner) {
         this.repository = repository;
         this.kafka = kafka;
         this.mapper = mapper.copy().findAndRegisterModules();
-        this.properties = properties;
+        this.settings = settings;
+        this.owner = owner;
         attemptsCounter = Counter.builder("grassland.outbox.publish.attempts").register(meterRegistry);
         successCounter = Counter.builder("grassland.outbox.publish.success").register(meterRegistry);
         failuresCounter = Counter.builder("grassland.outbox.publish.failures").register(meterRegistry);
@@ -72,9 +83,8 @@ public class OutboxPublisher {
                 .register(meterRegistry);
     }
 
-    @Scheduled(fixedDelayString = "${identity.outbox.poll-interval-ms:2000}")
     public void publishPending() {
-        if (!properties.enabled() || kafka == null) {
+        if (!settings.enabled() || kafka == null) {
             return;
         }
         if (!isPublishing.compareAndSet(false, true)) {
@@ -83,10 +93,10 @@ public class OutboxPublisher {
         }
 
         UUID claimToken = UUID.randomUUID();
-        repository.claimBatch(properties.batchSize(), claimToken, properties.claimLease())
-                .flatMap(this::publishClaimed, properties.maxConcurrency())
+        repository.claimBatch(settings.batchSize(), claimToken, settings.claimLease())
+                .flatMap(this::publishClaimed, settings.maxConcurrency())
                 .then()
-                .doOnError(error -> log.error("Failed to process identity outbox batch", error))
+                .doOnError(error -> log.error("Failed to process {} outbox batch", owner, error))
                 .onErrorResume(error -> Mono.empty())
                 .then(refreshBacklogMetrics())
                 .doFinally(signal -> isPublishing.set(false))
@@ -98,10 +108,10 @@ public class OutboxPublisher {
         attemptsCounter.increment();
         return Mono.fromCallable(() -> buildEnvelope(row))
                 .flatMap(message -> Mono.fromCallable(
-                                () -> kafka.send(properties.topic(), row.aggregateId(), message))
+                                () -> kafka.send(settings.topic(), row.aggregateId(), message))
                         .subscribeOn(Schedulers.boundedElastic())
                         .flatMap(Mono::fromFuture)
-                        .timeout(properties.ackTimeout()))
+                        .timeout(settings.ackTimeout()))
                 .then(markPublished(row))
                 .onErrorResume(error -> markFailure(row, error))
                 .doFinally(signal -> publishDuration.record(
@@ -120,7 +130,7 @@ public class OutboxPublisher {
                 })
                 .onErrorResume(error -> {
                     markFailuresCounter.increment();
-                    log.warn("Failed to mark identity outbox event published: eventId={}", row.eventId());
+                    log.warn("Failed to mark {} outbox event published: eventId={}", owner, row.eventId());
                     return Mono.<Void>empty();
                 });
     }
@@ -139,8 +149,8 @@ public class OutboxPublisher {
                 })
                 .onErrorResume(markError -> {
                     markFailuresCounter.increment();
-                    log.warn("Failed to mark identity outbox retry: eventId={}, errorCode={}",
-                            row.eventId(), errorCode);
+                    log.warn("Failed to mark {} outbox retry: eventId={}, errorCode={}",
+                            owner, row.eventId(), errorCode);
                     return Mono.<Void>empty();
                 });
     }
@@ -153,7 +163,7 @@ public class OutboxPublisher {
                     pendingGauge.set(backlog.getT1());
                     oldestPendingAgeGauge.set(backlog.getT2());
                 })
-                .doOnError(error -> log.warn("Failed to refresh identity outbox metrics"))
+                .doOnError(error -> log.warn("Failed to refresh {} outbox metrics", owner))
                 .onErrorResume(error -> Mono.empty())
                 .then();
     }
@@ -167,8 +177,8 @@ public class OutboxPublisher {
     private long backoffMillis(int attemptCount) {
         int exponent = Math.max(0, Math.min(attemptCount - 1, 62));
         long multiplier = 1L << exponent;
-        long initial = properties.initialBackoffMs();
-        long maximum = properties.maxBackoffMs();
+        long initial = settings.initialBackoffMs();
+        long maximum = settings.maxBackoffMs();
         if (multiplier > maximum / initial) {
             return maximum;
         }

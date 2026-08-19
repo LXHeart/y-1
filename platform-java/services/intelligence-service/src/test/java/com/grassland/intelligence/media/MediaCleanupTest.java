@@ -13,7 +13,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.grassland.storage.ObjectStorageAdapter;
 import com.grassland.storage.StoredObject;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;

@@ -1,7 +1,7 @@
 package com.grassland.intelligence.contentlibrary;
 
 import com.grassland.identity.assertion.BackendRole;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;

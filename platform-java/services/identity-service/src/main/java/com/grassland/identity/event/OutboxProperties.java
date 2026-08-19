@@ -1,8 +1,12 @@
 package com.grassland.identity.event;
 
-import java.time.Duration;
+import com.grassland.messaging.outbox.OutboxSettings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+/**
+ * 薄绑定层：只负责 identity.outbox 前缀与默认 topic；
+ * 默认值回退与钳制规则单源在 {@link OutboxSettings}（platform-messaging）。
+ */
 @ConfigurationProperties(prefix = "identity.outbox")
 public record OutboxProperties(
         String topic,
@@ -16,27 +20,12 @@ public record OutboxProperties(
         long maxBackoffMs) {
 
     public OutboxProperties {
-        if (topic == null || topic.isBlank()) {
-            topic = "grassland.identity.events";
-        }
-        pollIntervalMs = positive(pollIntervalMs, 2_000);
-        batchSize = Math.max(batchSize, 1);
-        maxConcurrency = Math.max(maxConcurrency, 1);
-        ackTimeoutMs = positive(ackTimeoutMs, 10_000);
-        claimLeaseMs = Math.max(positive(claimLeaseMs, 300_000), ackTimeoutMs);
-        initialBackoffMs = positive(initialBackoffMs, 1_000);
-        maxBackoffMs = Math.max(positive(maxBackoffMs, 60_000), initialBackoffMs);
+        topic = topic == null || topic.isBlank() ? "grassland.identity.events" : topic;
     }
 
-    public Duration ackTimeout() {
-        return Duration.ofMillis(ackTimeoutMs);
-    }
-
-    public Duration claimLease() {
-        return Duration.ofMillis(claimLeaseMs);
-    }
-
-    private static long positive(long value, long fallback) {
-        return value > 0 ? value : fallback;
+    public OutboxSettings settings() {
+        return new OutboxSettings(
+                topic, enabled, pollIntervalMs, batchSize, maxConcurrency,
+                ackTimeoutMs, claimLeaseMs, initialBackoffMs, maxBackoffMs);
     }
 }

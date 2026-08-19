@@ -1,6 +1,6 @@
 package com.grassland.intelligence.media;
 
-import com.grassland.intelligence.event.EventEnvelope;
+import com.grassland.messaging.EventEnvelope;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;

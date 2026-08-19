@@ -1,7 +1,7 @@
 package com.grassland.trust.risk;
 
-import com.grassland.trust.event.EventEnvelope;
-import com.grassland.trust.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.trust.risk.RiskModels.CaseActionRequest;
 import com.grassland.trust.risk.RiskModels.Evaluation;
 import com.grassland.trust.risk.RiskModels.RegisterSignalRequest;

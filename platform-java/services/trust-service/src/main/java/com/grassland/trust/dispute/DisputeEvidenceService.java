@@ -2,8 +2,8 @@ package com.grassland.trust.dispute;
 
 import com.grassland.trust.adjudication.CaseEvidenceRedactor;
 import com.grassland.trust.audit.DisputeAuditRepository;
-import com.grassland.trust.event.EventEnvelope;
-import com.grassland.trust.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;

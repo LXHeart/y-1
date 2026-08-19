@@ -1,7 +1,7 @@
 package com.grassland.intelligence.media;
 
 import com.grassland.storage.ObjectStorageAdapter;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;

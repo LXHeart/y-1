@@ -1,8 +1,8 @@
 package com.grassland.identity.membership;
 
 import com.grassland.identity.auth.IdentityException;
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;

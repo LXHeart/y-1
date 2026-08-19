@@ -1,7 +1,7 @@
 package com.grassland.finance.account;
 
-import com.grassland.finance.event.EventEnvelope;
-import com.grassland.finance.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.finance.security.FinanceCallerResolver;
 import com.grassland.finance.security.FinanceException;
 import java.time.Instant;

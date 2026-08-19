@@ -16,7 +16,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.trust.adjudication.AdjudicationProperties;
 import com.grassland.trust.dispute.DisputeCase;
 import com.grassland.trust.dispute.DisputeCaseRepository;
-import com.grassland.trust.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.trust.judge.Judge;
 import com.grassland.trust.judge.JudgeEligibilityService;
 import com.grassland.trust.judge.JudgeRepository;
@@ -277,7 +277,7 @@ class AdjudicationActivityImplTest {
         assertThat(rewarding.tallyVotes("d1", 1)).isEqualTo(
                 TallyResult.decided(5, 2, 0, 7, "for_merchant"));
 
-        java.util.List<com.grassland.trust.event.EventEnvelope> appended = new java.util.ArrayList<>();
+        java.util.List<com.grassland.messaging.EventEnvelope> appended = new java.util.ArrayList<>();
         when(outbox.append(any())).thenAnswer(inv -> {
             appended.add(inv.getArgument(0));
             return Mono.empty();
@@ -287,7 +287,7 @@ class AdjudicationActivityImplTest {
                 .filter(e -> "JudgeVoteRewarded".equals(e.eventType())).count();
         assertThat(rewards).isEqualTo(3);
         assertThat(appended.stream().anyMatch(e -> "DisputeDecided".equals(e.eventType()))).isTrue();
-        com.grassland.trust.event.EventEnvelope reward = appended.stream()
+        com.grassland.messaging.EventEnvelope reward = appended.stream()
                 .filter(e -> "JudgeVoteRewarded".equals(e.eventType())).findFirst().orElseThrow();
         assertThat(reward.payload().get("credits")).isEqualTo(20);
         assertThat(reward.payload().get("round")).isEqualTo(1);

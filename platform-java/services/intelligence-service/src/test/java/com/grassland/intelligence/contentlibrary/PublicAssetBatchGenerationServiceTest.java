@@ -15,7 +15,7 @@ import com.grassland.intelligence.articleimage.FrozenImageGenerationConfigResolv
 import com.grassland.intelligence.articleimage.GeneratedImage;
 import com.grassland.intelligence.articleimage.ImageGenerationClient;
 import com.grassland.intelligence.articleimage.ImageGenerationConfig;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.storage.ObjectStorageAdapter;

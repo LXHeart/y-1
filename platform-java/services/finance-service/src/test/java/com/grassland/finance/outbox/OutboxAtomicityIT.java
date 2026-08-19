@@ -5,8 +5,8 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doReturn;
 
 import com.grassland.finance.FinanceItSupport;
-import com.grassland.finance.event.EventEnvelope;
-import com.grassland.finance.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;

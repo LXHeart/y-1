@@ -7,8 +7,8 @@ import static org.mockito.Mockito.doReturn;
 
 import com.grassland.trust.TrustItSupport;
 import com.grassland.trust.dispute.DisputeCaseRepository;
-import com.grassland.trust.event.EventEnvelope;
-import com.grassland.trust.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.trust.judge.JudgeRepository;
 import java.util.List;
 import java.util.Map;

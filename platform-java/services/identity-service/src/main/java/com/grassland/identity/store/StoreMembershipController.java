@@ -1,8 +1,8 @@
 package com.grassland.identity.store;
 
 import com.grassland.identity.auth.IdentityException;
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
 import java.time.Instant;

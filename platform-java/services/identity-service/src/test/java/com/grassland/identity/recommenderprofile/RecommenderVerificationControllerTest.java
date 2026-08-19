@@ -8,7 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.grassland.identity.assertion.BackendRole;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.identityprofile.IdentityProfileRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.user.AuthUser;

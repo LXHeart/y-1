@@ -19,7 +19,7 @@ import com.grassland.intelligence.credits.CreditCharge;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.credits.CreditsCentsPolicyProperties;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import java.time.LocalDate;
 import java.util.Optional;

@@ -1,4 +1,4 @@
-package com.grassland.finance.event;
+package com.grassland.messaging.outbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,11 +25,17 @@ import org.springframework.kafka.support.SendResult;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import static org.mockito.Mockito.lenient;
+
+/**
+ * 原四服务各自一份的 OutboxPublisherTest 收敛为单份（diff 仅 topic 字面量）。
+ * 覆盖：ack 门禁、5 字段 wire 信封、重叠轮询守卫、并发上限、指数退避封顶与错误码口径。
+ */
 @ExtendWith(MockitoExtension.class)
 @SuppressWarnings("unchecked")
 class OutboxPublisherTest {
 
-    private static final String TOPIC = "grassland.finance.events";
+    private static final String TOPIC = "grassland.test.events";
 
     @Mock
     private OutboxRepository repository;
@@ -43,16 +49,18 @@ class OutboxPublisherTest {
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        OutboxProperties properties = new OutboxProperties(
+        OutboxSettings settings = new OutboxSettings(
                 TOPIC, true, 2_000, 10, 1, 5_000, 60_000, 100, 250);
         publisher = new OutboxPublisher(
                 repository,
                 kafka,
                 new ObjectMapper().findAndRegisterModules(),
                 meterRegistry,
-                properties);
-        when(repository.pendingCount()).thenReturn(Mono.just(1L));
-        when(repository.oldestPendingAgeSeconds()).thenReturn(Mono.just(12L));
+                settings,
+                "test");
+        // lenient：跳过型用例不触达 backlog 刷新，无需该 stub。
+        lenient().when(repository.pendingCount()).thenReturn(Mono.just(1L));
+        lenient().when(repository.oldestPendingAgeSeconds()).thenReturn(Mono.just(12L));
     }
 
     @Test
@@ -160,12 +168,23 @@ class OutboxPublisherTest {
         assertThat(meterRegistry.get("grassland.outbox.publish.failures").counter().count()).isEqualTo(1.0);
     }
 
+    @Test
+    void publishPending_skipsWhenDisabledOrKafkaAbsent() {
+        OutboxSettings disabled = new OutboxSettings(TOPIC, false, 2_000, 10, 1, 5_000, 60_000, 100, 250);
+        new OutboxPublisher(repository, null, disabled, "test", meterRegistry).publishPending();
+        new OutboxPublisher(repository, kafka, disabled, "test", meterRegistry).publishPending();
+        OutboxSettings enabled = new OutboxSettings(TOPIC, true, 2_000, 10, 1, 5_000, 60_000, 100, 250);
+        new OutboxPublisher(repository, null, enabled, "test", meterRegistry).publishPending();
+
+        verify(repository, never()).claimBatch(any(Integer.class), any(UUID.class), any(Duration.class));
+    }
+
     private static OutboxRepository.OutboxRow row(String suffix, UUID claimToken, int attemptCount) {
         return new OutboxRepository.OutboxRow(
                 "d7440f7c-7d40-4e77-9f25-6cc9c58b758" + suffix,
                 "evt-" + suffix,
-                "IdentityChanged",
-                "Identity",
+                "DomainChanged",
+                "Domain",
                 "aggregate-" + suffix,
                 "{\"text\":\"quote \\\" and 中文\"}",
                 claimToken,

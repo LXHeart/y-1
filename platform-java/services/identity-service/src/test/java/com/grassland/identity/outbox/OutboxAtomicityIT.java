@@ -5,8 +5,8 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doReturn;
 
 import com.grassland.identity.IdentityItSupport;
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;

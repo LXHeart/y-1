@@ -1,5 +1,8 @@
 package com.grassland.intelligence.event;
 
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.intelligence.IntelligenceItSupport;

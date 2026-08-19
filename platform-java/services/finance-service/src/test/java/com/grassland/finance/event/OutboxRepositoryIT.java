@@ -1,5 +1,8 @@
 package com.grassland.finance.event;
 
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.finance.FinanceItSupport;

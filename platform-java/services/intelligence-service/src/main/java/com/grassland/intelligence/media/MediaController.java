@@ -3,7 +3,7 @@ package com.grassland.intelligence.media;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.speech.SpeechAudioPolicy;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.storage.ObjectStorageAdapter;
 import com.grassland.storage.PresignRequest;
 import com.grassland.storage.StoredObject;

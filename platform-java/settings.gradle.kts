@@ -23,6 +23,7 @@ include(
     "platform-identity-assertion",
     "platform-http",
     "platform-reporting",
+    "platform-messaging",
     "services:database-bootstrap",
     "services:edge-bff",
     "services:identity-service",

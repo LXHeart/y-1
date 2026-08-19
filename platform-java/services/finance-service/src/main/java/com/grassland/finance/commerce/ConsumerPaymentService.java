@@ -1,8 +1,8 @@
 package com.grassland.finance.commerce;
 
 import com.grassland.finance.account.AccountRepository;
-import com.grassland.finance.event.EventEnvelope;
-import com.grassland.finance.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.finance.ledger.LedgerService;
 import com.grassland.finance.payment.PaymentProviderAdapter;
 import com.grassland.finance.provider.ProviderOperationRepository;

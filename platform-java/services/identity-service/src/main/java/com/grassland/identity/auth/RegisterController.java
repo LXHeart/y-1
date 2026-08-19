@@ -1,8 +1,8 @@
 package com.grassland.identity.auth;
 
 import com.grassland.identity.admin.FinanceCreditsAdminClient;
-import com.grassland.identity.event.EventEnvelope;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.identityprofile.IdentityProfile;
 import com.grassland.identity.identityprofile.IdentityProfileRepository;
 import com.grassland.identity.identityprofile.IdentityType;

@@ -2,7 +2,7 @@ package com.grassland.identity.notification;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.identity.event.EventContractException;
+import com.grassland.messaging.EventContractException;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.event.InboxRepository;
 import com.grassland.identity.notify.mail.MailOutboxEnqueuer;

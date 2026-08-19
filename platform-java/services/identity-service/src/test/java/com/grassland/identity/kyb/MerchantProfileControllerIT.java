@@ -9,7 +9,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 
 import com.grassland.identity.IdentityItSupport;
-import com.grassland.identity.event.OutboxRepository;
+import com.grassland.messaging.outbox.OutboxRepository;
 import java.util.Base64;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;

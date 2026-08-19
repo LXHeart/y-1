@@ -1,6 +1,6 @@
 package com.grassland.identity.notification;
 
-import com.grassland.identity.event.EventContractException;
+import com.grassland.messaging.EventContractException;
 import java.time.Duration;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;

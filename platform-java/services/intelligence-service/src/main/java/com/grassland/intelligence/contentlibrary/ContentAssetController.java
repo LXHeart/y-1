@@ -1,7 +1,7 @@
 package com.grassland.intelligence.contentlibrary;
 
-import com.grassland.intelligence.event.EventEnvelope;
-import com.grassland.intelligence.event.OutboxRepository;
+import com.grassland.messaging.EventEnvelope;
+import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.media.MediaStatus;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
