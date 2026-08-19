@@ -16,12 +16,18 @@ import com.grassland.identity.kyb.KybMediaRetentionReceipt;
 import com.grassland.identity.recommenderprofile.AvatarMediaClient;
 import com.grassland.identity.recommenderprofile.AvatarMediaDownload;
 import com.grassland.identity.recommenderprofile.AvatarMediaMetadata;
+import com.grassland.identity.store.ResolvedMedia;
+import com.grassland.identity.store.StoreMediaClient;
+import com.grassland.identity.store.StoreMediaUploadTicket;
 import java.net.URI;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import reactor.core.publisher.Mono;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
@@ -62,6 +68,9 @@ public abstract class IdentityItSupport {
 
     @MockitoBean
     protected BrandLogoMediaClient brandLogoMediaClient;
+
+    @MockitoBean
+    protected StoreMediaClient storeMediaClient;
 
     /** 共享单例容器：类加载即启动一次，全程不重启 → 端口稳定。 */
     public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -164,6 +173,33 @@ public abstract class IdentityItSupport {
         when(brandLogoMediaClient.logoUrlFailSoft(anyString(), anyString())).thenAnswer(invocation -> {
             String mediaId = invocation.getArgument(0);
             return Mono.just("https://cdn.example.com/brand-logo/" + mediaId);
+        });
+    }
+
+    /**
+     * 门店媒体默认替身（#42 D2/D5）：开票放行 + 批量换 URL 全量命中，避免打真 intelligence。
+     * 默认全命中；测 fail-closed/503 分支必须在用例内覆盖本 stub。
+     */
+    @BeforeEach
+    void stubStoreMedia() {
+        when(storeMediaClient.createTicket(anyString(), anyString(), anyString(), anyString(), anyLong()))
+                .thenAnswer(invocation -> {
+                    UUID ticketId = UUID.randomUUID();
+                    return Mono.just(new StoreMediaUploadTicket(ticketId,
+                            "media/store_media/" + ticketId,
+                            URI.create("https://upload.test/store-media/" + ticketId), "PUT",
+                            java.util.Map.of("Content-Type", invocation.getArgument(3)),
+                            Instant.now().plusSeconds(300)));
+                });
+        when(storeMediaClient.downloadUrls(anyString(), anyString(), any())).thenAnswer(invocation -> {
+            List<String> mediaIds = invocation.getArgument(2);
+            java.util.Map<String, ResolvedMedia> resolved = new LinkedHashMap<>();
+            for (String mediaId : mediaIds) {
+                resolved.put(mediaId, new ResolvedMedia("image/png", 1024L,
+                        "https://cdn.example.com/store-media/" + mediaId,
+                        Instant.now().plusSeconds(3600)));
+            }
+            return Mono.just(resolved);
         });
     }
 
