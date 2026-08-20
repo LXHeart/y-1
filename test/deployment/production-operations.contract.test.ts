@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '../..')
 const BACKUP_SCRIPT = resolve(REPOSITORY_ROOT, 'scripts/backup-restore-drill.sh')
@@ -183,6 +183,9 @@ afterEach(() => {
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+// 全文件为 exec 重型部署契约（validator/compose 渲染）：统一 45s 执行预算。
+vi.setConfig({ testTimeout: 45_000 })
 
 describe('Production release and recovery contracts', () => {
   it('authorizes native library access for every Java 25 container', () => {
