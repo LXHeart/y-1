@@ -40,10 +40,19 @@ export interface CreateMediaUploadTicketInput {
   ttlSeconds?: number
 }
 
+/** 门店媒体内容安全审核结论（缺口清偿之五）：confirm 响应回带，blocked 会被公开端点过滤。 */
+export interface MediaModeration {
+  status: 'pass' | 'review' | 'blocked'
+  findings: Array<{ category: string; severity: string; advice?: string }>
+  runId: string | null
+  moderatedAt: string | null
+}
+
 /**
  * confirm（第三步）的响应 = media 完整元数据。
  *
  * `status` 走到 `active` 才算正式资产；此前是 `pending`（临时对象，会被清理任务回收）。
+ * 门店媒体的 `moderation` 仅在 confirm 触发审核且有结论时出现（未审无此字段）。
  */
 export interface MediaMetadata {
   id: string
@@ -60,6 +69,7 @@ export interface MediaMetadata {
   createdAt: string | null
   expiresAt: string | null
   deletedAt: string | null
+  moderation?: MediaModeration | null
 }
 
 // ---------- 门店媒体库（任务书 #42）----------
@@ -148,6 +158,29 @@ export interface StorePublicMedia {
 export interface StoreMediaManageList {
   storeId: string
   items: StoreMediaManageItem[]
+}
+
+// ---------- 门店媒体审核人工复核队列（缺口清偿之五遗留清偿）----------
+
+/** 人工复核队列单项（GET /api/admin/store-media-moderation，CONTENT_REVIEWER）。 */
+export interface StoreMediaModerationQueueItem {
+  mediaId: string
+  status: 'pass' | 'review' | 'blocked'
+  findings: Array<{ category: string; severity: string; advice?: string }>
+  model: string | null
+  runId: string | null
+  moderatedAt: string | null
+  /** 人工裁决留痕（V39）；自动审核行为 null。 */
+  reviewedBy: string | null
+  reviewedAt: string | null
+  reviewNote: string | null
+  mimeType: string | null
+  sizeBytes: number
+  organizationId: string | null
+  storeId: string | null
+  createdAt: string | null
+  /** 5 分钟短时预览 URL（object_key 不外泄）；对象缺失/存储未启时为 null。 */
+  downloadUrl: string | null
 }
 
 // ---------- 内容素材库（PRD §4.8）----------

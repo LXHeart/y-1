@@ -51,6 +51,11 @@
         @click="activeSection = 'public-assets'">
         公共素材
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'store-media'"
+        :class="{ active: activeSection === 'store-media' }"
+        @click="activeSection = 'store-media'">
+        门店媒体
+      </button>
     </div>
 
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
@@ -229,6 +234,10 @@
       <PublicAssetsAdminPanel />
     </div>
 
+    <div v-else-if="activeSection === 'store-media'" class="admin-panel" role="tabpanel">
+      <StoreMediaModerationAdminPanel />
+    </div>
+
     <div v-else-if="activeSection === 'ai-models'" class="admin-panel" role="tabpanel">
       <AiPlatformModelsPanel />
     </div>
@@ -330,6 +339,7 @@ import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
+import StoreMediaModerationAdminPanel from './components/StoreMediaModerationAdminPanel.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import { useAuth } from '../../composables/useAuth'
 import { request } from '../../composables/grassland-http'
@@ -361,7 +371,7 @@ const reviewerOnly = computed(() => Boolean(currentUser.value)
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
 const activeSection = ref<
-  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'public-assets' | 'audit'
+  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

@@ -18,7 +18,7 @@ import type {
   SpeechLanguage, SpeechTranscription,
   WithdrawalAccount, CreateWithdrawalAccountInput,
   StoreProfile, CreateStoreProfileInput,
-  StoreMediaKind, StoreMediaManageList,
+  StoreMediaKind, StoreMediaManageList, StoreMediaModerationQueueItem,
   KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
   RecommenderVerificationRequest, Task,
   RiskCase, RiskCaseAction, RiskCaseDetail, RiskCaseQuery, RiskSignal, RiskSignalQuery,
@@ -600,6 +600,26 @@ export function useGrasslandGovernance(run: RunFn) {
       return confirmed.id
     })
 
+  /**
+   * 门店媒体审核人工复核队列（CONTENT_REVIEWER；缺口清偿之五遗留清偿）。
+   * 默认 review（待复核）；pass/blocked 用于复查人工裁决史。
+   */
+  const listStoreMediaModerationQueue = (status: 'review' | 'pass' | 'blocked' = 'review') =>
+    run(() => request<{ status: string; items: StoreMediaModerationQueueItem[] }>(
+      `/api/admin/store-media-moderation?status=${status}`))
+
+  /**
+   * 人工裁决：approve→pass（恢复公开展示）/ reject→blocked（公开端点过滤，驳回必填 note）。
+   * 乐观锁=moderatedAt 期望值（列表项回带的 moderatedAt），不匹配后端 409。
+   */
+  const reviewStoreMediaModeration = (
+    mediaId: string, decision: 'approve' | 'reject', expectedModeratedAt: string, note?: string,
+  ) => run(() => request<{ mediaId: string; status: string }>(
+    `/api/admin/store-media-moderation/${encodeURIComponent(mediaId)}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, expectedModeratedAt, note: note?.trim() || undefined }),
+    }))
+
   // ---------- KYB：审核申请（平台管理员）----------
 
   /** 列出所有 KYB 审核申请（管理员专用）。 */
@@ -704,6 +724,7 @@ export function useGrasslandGovernance(run: RunFn) {
     submitWithdrawalAccount, setDefaultWithdrawalAccount, deleteWithdrawalAccount,
     getStoreProfile, createStoreProfile, submitStoreProfile,
     getStoreMedia, bindStoreMedia, unbindStoreMedia, reorderStoreMedia, uploadStoreMediaFile,
+    listStoreMediaModerationQueue, reviewStoreMediaModeration,
     listKybVerifications, getKybVerificationDetail, getKybAttachmentDownload, reviewKybVerification,
     listRecommenderVerifications, reviewRecommenderVerification,
     newOperationId,
