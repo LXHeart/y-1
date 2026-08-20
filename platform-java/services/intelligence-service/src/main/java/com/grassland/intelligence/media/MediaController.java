@@ -58,6 +58,8 @@ import reactor.core.scheduler.Schedulers;
 public class MediaController {
 
 	private static final Logger log = LoggerFactory.getLogger(MediaController.class);
+	private static final com.fasterxml.jackson.databind.ObjectMapper MODERATION_MAPPER =
+			new com.fasterxml.jackson.databind.ObjectMapper();
 	private static final Set<String> ALLOWED_MIME_TYPES = Set.of("image/jpeg", "image/png", "image/webp", "image/gif",
 			"video/mp4", "video/quicktime", "video/webm", "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav",
 			"audio/webm", "audio/ogg", "application/pdf", "text/csv");
@@ -102,6 +104,7 @@ public class MediaController {
 
 	private final IntelligenceCallerResolver callers;
 	private final MediaReferenceRepository mediaRefs;
+	private final StoreMediaModerationService storeMediaModeration;
 	private final KybMediaRetentionRepository kybRetentions;
 	private final OutboxRepository outbox;
 	private final ObjectStorageAdapter storage;
@@ -113,7 +116,8 @@ public class MediaController {
 	private final long maxTotalBytesPerOwner;
 
 	public MediaController(IntelligenceCallerResolver callers, MediaReferenceRepository mediaRefs,
-			KybMediaRetentionRepository kybRetentions, OutboxRepository outbox, ObjectStorageAdapter storage,
+			StoreMediaModerationService storeMediaModeration, KybMediaRetentionRepository kybRetentions,
+			OutboxRepository outbox, ObjectStorageAdapter storage,
 			TransactionalOperator transactions, @Value("${media.upload-url-ttl-seconds:900}") long uploadUrlTtlSeconds,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
 			@Value("${media.max-object-bytes:20971520}") long maxObjectBytes,
@@ -121,6 +125,7 @@ public class MediaController {
 			@Value("${media.max-total-bytes-per-owner:419430400}") long maxTotalBytesPerOwner) {
 		this.callers = callers;
 		this.mediaRefs = mediaRefs;
+		this.storeMediaModeration = storeMediaModeration;
 		this.kybRetentions = kybRetentions;
 		this.outbox = outbox;
 		this.storage = storage;
@@ -167,12 +172,26 @@ public class MediaController {
 				.flatMap(caller -> createStoreMediaPending(caller, body)).map(MediaController::success);
 	}
 
-	/** 第三步：取得 finalizing 所有权，以临时 key 校验对象，再服务端写入从未暴露 PUT 权限的最终 key。 */
+	/**
+	 * 第三步：取得 finalizing 所有权，以临时 key 校验对象，再服务端写入从未暴露 PUT 权限的最终 key。
+	 *
+	 * <p>门店媒体（#42 D9 登记，缺口清偿之五）：confirm 后对图片跑一次多模态内容安全审核并把结论带回
+	 * 响应（advisory——审核不可用不阻断 confirm，未审/视频无 moderation 字段）。
+	 */
 	@PostMapping("/{id}/confirm")
 	public Mono<Map<String, Object>> confirm(@PathVariable String id, ServerWebExchange exchange) {
 		UUID mediaId = parseId(id);
 		return callers.resolve(exchange.getRequest()).flatMap(caller -> owned(mediaId, caller.accountId()))
-				.flatMap(this::confirmOwned).map(MediaController::toMetadata).map(MediaController::success);
+				.flatMap(ref -> confirmOwned(ref).flatMap(active ->
+						storeMediaModeration
+								.moderateOnce(active, Mono.<byte[]>defer(() -> getObject(active.objectKey())))
+								.onErrorResume(error -> {
+									log.warn("store media moderation skipped mediaId={}", active.id(), error);
+									return Mono.empty();
+								})
+								.map(row -> toMetadata(active, row))
+								.defaultIfEmpty(toMetadata(active))))
+				.map(MediaController::success);
 	}
 
 	/** 授权签名读：只给 owner 的 active、未过期资产签发短时 GET URL。 */
@@ -819,9 +838,28 @@ public class MediaController {
 	}
 
 	private static MediaMetadataResponse toMetadata(MediaReference ref) {
+		return toMetadata(ref, null);
+	}
+
+	private static MediaMetadataResponse toMetadata(MediaReference ref,
+			StoreMediaModerationRepository.ModerationRow moderation) {
 		return new MediaMetadataResponse(ref.id(), ref.ownerAccountId(), ref.organizationId(), ref.purpose(),
 				ref.domainType(), ref.domainId(), ref.mimeType(), ref.sizeBytes(), ref.checksum(), ref.source(),
-				ref.status().db(), ref.createdAt(), ref.expiresAt(), ref.deletedAt());
+				ref.status().db(), ref.createdAt(), ref.expiresAt(), ref.deletedAt(),
+				moderation == null ? null : moderationView(moderation));
+	}
+
+	/** 审核结论视图：findings 为 JSON 数组节点（服务本地 ObjectMapper——intelligence 无全局 bean）。 */
+	private static MediaMetadataResponse.ModerationView moderationView(
+			StoreMediaModerationRepository.ModerationRow row) {
+		com.fasterxml.jackson.databind.JsonNode findings;
+		try {
+			findings = MODERATION_MAPPER.readTree(row.findingsJson() == null ? "[]" : row.findingsJson());
+		} catch (Exception error) {
+			findings = MODERATION_MAPPER.createArrayNode();
+		}
+		return new MediaMetadataResponse.ModerationView(
+				row.status(), findings, row.runId(), row.moderatedAt());
 	}
 
 	/** 服务间断点（Slice 11 Stage 1）的附件元数据视图：仅暴露中转读所需字段，含 ownerAccountId 供 IDOR 守卫。 */
@@ -871,7 +909,12 @@ public class MediaController {
 
 	public record MediaMetadataResponse(UUID id, String ownerAccountId, String organizationId, String purpose,
 			String domainType, String domainId, String mimeType, long sizeBytes, String checksum, String source,
-			String status, Instant createdAt, Instant expiresAt, Instant deletedAt) {
+			String status, Instant createdAt, Instant expiresAt, Instant deletedAt, ModerationView moderation) {
+
+		/** 门店媒体内容安全审核结论（缺口清偿之五）：status ∈ pass/review/blocked，blocked 会被公开端点过滤。 */
+		public record ModerationView(String status, com.fasterxml.jackson.databind.JsonNode findings, String runId,
+				Instant moderatedAt) {
+		}
 	}
 
 	public record MediaReadResponse(UUID id, String purpose, String domainType, String domainId, String mimeType,

@@ -272,8 +272,9 @@ public class MediaReferenceRepository {
     }
 
     /**
-     * 门店媒体批量换 URL 的四重过滤查询（#42 D5）：单条 SQL {@code id = ANY(:ids)} +
-     * purpose ∧ organization_id ∧ domain_type='store' ∧ domain_id=storeId ∧ active ∧ 未过期，
+     * 门店媒体批量换 URL 的四重过滤查询（#42 D5）+ 审核过滤（缺口清偿之五）：单条 SQL
+     * {@code id = ANY(:ids)} + purpose ∧ organization_id ∧ domain_type='store' ∧ domain_id=storeId ∧
+     * active ∧ 未过期 ∧ 未被审核拦截（LEFT JOIN {@code store_media_moderation}，blocked 缺席），
      * 仅返回通过过滤的子集（不逐项 findById）。过滤失败的 id 直接缺席，调用方据此实现子集语义。
      */
     public Flux<MediaReference> findActiveStoreMedia(
@@ -281,16 +282,19 @@ public class MediaReferenceRepository {
         if (ids.isEmpty()) {
             return Flux.empty();
         }
+        String columns = "m." + SELECT_COLS.replace(", ", ", m.");
         return db.sql("""
-                SELECT %s FROM media_reference
-                WHERE id = ANY(CAST(:ids AS uuid[]))
-                  AND purpose = :purpose
-                  AND organization_id = :organizationId
-                  AND domain_type = 'store'
-                  AND domain_id = :storeId
-                  AND status = 'active'
-                  AND (expires_at IS NULL OR expires_at > now())
-                """.formatted(SELECT_COLS))
+                SELECT %s FROM media_reference m
+                LEFT JOIN store_media_moderation s ON s.media_reference_id = m.id
+                WHERE m.id = ANY(CAST(:ids AS uuid[]))
+                  AND m.purpose = :purpose
+                  AND m.organization_id = :organizationId
+                  AND m.domain_type = 'store'
+                  AND m.domain_id = :storeId
+                  AND m.status = 'active'
+                  AND (m.expires_at IS NULL OR m.expires_at > now())
+                  AND (s.media_reference_id IS NULL OR s.status <> 'blocked')
+                """.formatted(columns))
                 .bind("ids", ids.stream().map(UUID::toString).toArray(String[]::new))
                 .bind("purpose", purpose)
                 .bind("organizationId", organizationId)
