@@ -137,3 +137,84 @@ describe('HomeView 热点面板', () => {
     expect(wrapper.find('.empty-title').text()).toBe('暂无热点数据')
   })
 })
+
+describe('HomeView 热点时间范围（缺口清偿之八：今天/本周）', () => {
+  test('切「今天」请求 history 端点并渲染聚合条目（出现次数）；切回「实时」回实时端点', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/api/homepage/hot-items/history')) {
+        return {
+          ok: true, status: 200,
+          headers: { get: (): string => 'application/json' },
+          json: async () => ({
+            success: true,
+            data: {
+              range: 'today', since: '2026-08-20T00:00:00Z', snapshotCount: 4,
+              groups: [{
+                platform: 'douyin', label: '抖音',
+                items: [{ rank: 1, title: '今日聚合热点', hotValue: '999', occurrences: 3 }],
+              }],
+            },
+          }),
+          text: async () => '',
+        }
+      }
+      return {
+        ok: true, status: 200,
+        headers: { get: (): string => 'application/json' },
+        json: async () => HOT_ITEMS_BODY,
+        text: async () => '',
+      }
+    }))
+
+    const wrapper = mount(HomeView)
+    await flushPromises()
+    expect(urls.some((url) => url === '/api/homepage/hot-items')).toBe(true)
+
+    const todayTab = wrapper.findAll('.hot-range-tab').find((btn) => btn.text() === '今天')
+    expect(todayTab).toBeDefined()
+    await todayTab!.trigger('click')
+    await flushPromises()
+
+    expect(urls.some((url) => url === '/api/homepage/hot-items/history?range=today')).toBe(true)
+    expect(wrapper.text()).toContain('今日聚合热点')
+    expect(wrapper.text()).toContain('出现 3 次')
+    expect(wrapper.text()).toContain('4 份')
+
+    const liveTab = wrapper.findAll('.hot-range-tab').find((btn) => btn.text() === '实时')
+    await liveTab!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('测试热点话题')
+  })
+
+  test('历史窗口无归档时展示引导提示', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/homepage/hot-items/history')) {
+        return {
+          ok: true, status: 200,
+          headers: { get: (): string => 'application/json' },
+          json: async () => ({
+            success: true,
+            data: { range: 'today', since: '2026-08-20T00:00:00Z', snapshotCount: 0, groups: [] },
+          }),
+          text: async () => '',
+        }
+      }
+      return {
+        ok: true, status: 200,
+        headers: { get: (): string => 'application/json' },
+        json: async () => HOT_ITEMS_BODY,
+        text: async () => '',
+      }
+    }))
+
+    const wrapper = mount(HomeView)
+    await flushPromises()
+    await wrapper.findAll('.hot-range-tab').find((btn) => btn.text() === '今天')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('暂无历史归档')
+    expect(wrapper.text()).toContain('切回「实时」')
+  })
+})

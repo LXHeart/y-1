@@ -56,6 +56,7 @@ function normalizeHotItem(value: unknown): HomepageHotItem | null {
     tags: normalizeTags(value.tags),
     validUntil: normalizeOptionalString(value.validUntil),
     expired: typeof value.expired === 'boolean' ? value.expired : undefined,
+    occurrences: typeof value.occurrences === 'number' && value.occurrences > 0 ? value.occurrences : undefined,
   }
 }
 
@@ -153,6 +154,8 @@ export function useHomepageHotItems() {
   const filters = ref<HomepageHotFilters>({})
   const loading = ref(false)
   const error = ref('')
+  /** 最近一次历史查询覆盖的快照数（实时榜为 0；0 = 窗口内尚无归档）。 */
+  const snapshotCount = ref(0)
   let requestEpoch = 0
 
   async function loadHotItems(nextFilters: HomepageHotFilters = filters.value): Promise<void> {
@@ -177,12 +180,49 @@ export function useHomepageHotItems() {
       provider.value = normalizedData.provider
       fetchedAt.value = normalizedData.fetchedAt ?? ''
       taxonomy.value = normalizedData.taxonomy ?? null
+      snapshotCount.value = 0
     } catch (requestError: unknown) {
       if (requestId !== requestEpoch) return
       items.value = []
       groups.value = []
       fetchedAt.value = ''
       error.value = requestError instanceof Error ? requestError.message : '加载全网热点失败'
+    } finally {
+      if (requestId === requestEpoch) loading.value = false
+    }
+  }
+
+  /** 历史聚合（缺口清偿之八，PRD §4.3 时间范围）：range=today|week；空归档时 groups 空 + snapshotCount=0。 */
+  async function loadHistory(range: 'today' | 'week'): Promise<void> {
+    const requestId = ++requestEpoch
+    loading.value = true
+    error.value = ''
+
+    try {
+      const data = await request<unknown>(`/api/homepage/hot-items/history?range=${range}`, undefined, {
+        fallbackError: '加载热点历史失败',
+      })
+      if (!isPlainObject(data) || !Array.isArray(data.groups)) {
+        throw new Error('加载热点历史失败')
+      }
+      if (requestId !== requestEpoch) return
+
+      const historyGroups = data.groups
+        .map((group: unknown) => normalizeGroup(group))
+        .filter((group): group is HomepageHotItemGroup => group !== null)
+      items.value = []
+      groups.value = historyGroups
+      provider.value = '60s'
+      fetchedAt.value = normalizeOptionalString(data.since) ?? ''
+      taxonomy.value = null
+      snapshotCount.value = typeof data.snapshotCount === 'number' ? data.snapshotCount : 0
+    } catch (requestError: unknown) {
+      if (requestId !== requestEpoch) return
+      items.value = []
+      groups.value = []
+      fetchedAt.value = ''
+      snapshotCount.value = 0
+      error.value = requestError instanceof Error ? requestError.message : '加载热点历史失败'
     } finally {
       if (requestId === requestEpoch) loading.value = false
     }
@@ -197,6 +237,8 @@ export function useHomepageHotItems() {
     filters,
     loading,
     error,
+    snapshotCount,
     loadHotItems,
+    loadHistory,
   }
 }

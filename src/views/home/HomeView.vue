@@ -66,6 +66,24 @@
       </section>
 
       <template v-else-if="hasContent">
+        <div class="hot-range-switch" role="tablist" aria-label="热点时间范围">
+          <button
+            v-for="option in HOT_RANGE_OPTIONS"
+            :key="option.value"
+            class="hot-range-tab"
+            :class="{ 'hot-range-tab-active': hotRange === option.value }"
+            role="tab"
+            :aria-selected="hotRange === option.value"
+            type="button"
+            :disabled="loading"
+            @click="switchHotRange(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+        <p v-if="hotRange !== 'live'" class="hot-range-note">
+          {{ hotRange === 'today' ? '今日' : '最近 7 天' }}聚合自历史快照{{ snapshotCount > 0 ? `（${snapshotCount} 份）` : '，暂无归档' }}
+        </p>
         <div v-if="showTabs" class="hot-tabs" role="tablist">
           <button
             v-for="group in groups"
@@ -93,6 +111,7 @@
               <div class="hot-meta-row">
                 <span v-if="item.hotValue" class="hot-value">热度 {{ item.hotValue }}</span>
                 <span v-if="item.sourceLabel" class="hot-source">{{ item.sourceLabel }}</span>
+                <span v-if="hotRange !== 'live' && item.occurrences" class="hot-source">出现 {{ item.occurrences }} 次</span>
               </div>
             </div>
             <img v-if="item.cover" class="hot-cover" :src="item.cover" :alt="item.title">
@@ -104,8 +123,10 @@
       </template>
 
       <section v-else class="empty-card hot-empty">
-        <h3 class="empty-title">暂无热点数据</h3>
-        <p class="empty-copy">当前没有可展示的热点内容，稍后可点击刷新重试。</p>
+        <h3 class="empty-title">{{ hotRange === 'live' ? '暂无热点数据' : '暂无历史归档' }}</h3>
+        <p class="empty-copy">{{ hotRange === 'live'
+          ? '当前没有可展示的热点内容，稍后可点击刷新重试。'
+          : '历史快照随实时榜单刷新逐步积累（约每 2 小时一份），可先切回「实时」查看。' }}</p>
       </section>
     </section>
   </div>
@@ -133,7 +154,26 @@ const emit = defineEmits<{
   'open-creation': [entry: CreationEntry]
 }>()
 
-const { items, groups, provider, fetchedAt, loading, error, loadHotItems } = useHomepageHotItems()
+const { items, groups, provider, fetchedAt, loading, error, snapshotCount, loadHotItems, loadHistory }
+  = useHomepageHotItems()
+
+type HotRange = 'live' | 'today' | 'week'
+const HOT_RANGE_OPTIONS: ReadonlyArray<{ value: HotRange; label: string }> = [
+  { value: 'live', label: '实时' },
+  { value: 'today', label: '今天' },
+  { value: 'week', label: '本周' },
+]
+const hotRange = ref<HotRange>('live')
+
+async function switchHotRange(range: HotRange): Promise<void> {
+  if (hotRange.value === range || loading.value) return
+  hotRange.value = range
+  if (range === 'live') {
+    await loadHotItems()
+    return
+  }
+  await loadHistory(range)
+}
 
 const hotFetchedNote = computed(() => {
   if (!fetchedAt.value) return ''
@@ -446,6 +486,40 @@ onMounted(() => {
   min-height: 34px;
   padding: 0 12px;
   font-size: 0.82rem;
+}
+
+.hot-range-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.hot-range-tab {
+  padding: 4px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.hot-range-tab-active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  font-weight: 600;
+}
+
+.hot-range-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hot-range-note {
+  margin: 0 0 8px;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
 }
 
 .hot-tabs {

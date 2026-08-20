@@ -17,6 +17,8 @@ export interface HomepageHotItem {
   tags?: HomepageHotTags
   validUntil?: string
   expired?: boolean
+  /** 历史聚合（缺口清偿之八）：窗口内出现过的快照数；实时榜无此字段。 */
+  occurrences?: number
 }
 
 export interface HomepageHotItemGroup {
