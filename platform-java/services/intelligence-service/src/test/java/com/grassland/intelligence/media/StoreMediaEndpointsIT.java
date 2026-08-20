@@ -1,10 +1,15 @@
 package com.grassland.intelligence.media;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static com.grassland.identity.assertion.TestAssertionHelper.registerServiceKeyring;
 import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
 import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
 import java.net.URI;
@@ -16,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,6 +36,9 @@ import org.testcontainers.containers.wait.strategy.Wait;
 /** 任务书 #42 Stage 1：门店媒体代开票据 + 批量换 URL 端点（四重过滤子集语义）端到端验证。 */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class StoreMediaEndpointsIT {
+
+    /** 多模态审核走平台 Qwen（ai.qwen.*）；默认不打桩（unmatched 404 → advisory 未审）。 */
+    static final WireMockServer QWEN = new WireMockServer(0);
 
     private static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:16-alpine");
@@ -46,8 +55,16 @@ class StoreMediaEndpointsIT {
     private static final byte[] MP4 = new byte[] {'m', 'p', '4', '-', 't', 'e', 's', 't'};
 
     static {
+        QWEN.start();
         POSTGRES.start();
         MINIO.start();
+    }
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    @BeforeEach
+    void resetQwen() {
+        QWEN.resetAll();
     }
 
     @DynamicPropertySource
@@ -62,7 +79,9 @@ class StoreMediaEndpointsIT {
         r.add("identity-assertion.enabled", () -> "true");
         registerServiceKeyring(r, "intelligence");
         r.add("intelligence.outbox.enabled", () -> "false");
-        r.add("ai.qwen.base-url", () -> "https://example.com");
+        r.add("ai.qwen.base-url", QWEN::baseUrl);
+        // WireMock 是 http://localhost → 放行环回明文（与 IntelligenceItSupport 同口径）
+        r.add("ai.platform-model.allow-insecure-loopback", () -> "true");
         r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
         r.add("object-storage.enabled", () -> "true");
         r.add("object-storage.endpoint", () -> minioUrl);
@@ -86,6 +105,9 @@ class StoreMediaEndpointsIT {
 
     @Autowired
     private MediaReferenceRepository mediaRefs;
+
+    @Autowired
+    private StoreMediaModerationRepository storeMediaModeration;
 
     /** #42 D2/D12：两端点缺断言 401；浏览器（终端用户）会话直连与非 identity 服务 principal 一律 403。 */
     @Test
@@ -413,6 +435,100 @@ class StoreMediaEndpointsIT {
                 .header("X-Grassland-Identity", signService(org, "identity"))
                 .bodyValue(Map.of("storeId", UUID.randomUUID().toString(), "mediaIds", duplicatedFifty))
                 .exchange().expectStatus().isOk();
+    }
+
+    /** 缺口清偿之五：confirm 门店图片触发多模态审核，pass 结论落库并随 confirm 响应返回。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void confirmRunsMultimodalModerationAndReturnsVerdict() throws Exception {
+        stubQwenModeration("pass");
+        String owner = "acct-" + UUID.randomUUID();
+        String org = UUID.randomUUID().toString();
+        String storeId = UUID.randomUUID().toString();
+
+        Map<String, Object> envelope = client().post().uri("/api/media/store-media-upload-tickets")
+                .header("X-Grassland-Identity", signService(org, "identity"))
+                .bodyValue(Map.of("ownerAccountId", owner, "storeId", storeId,
+                        "contentType", "image/png", "sizeBytes", PNG.length))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+        UUID mediaId = UUID.fromString((String) ticket.get("id"));
+        put(URI.create((String) ticket.get("uploadUrl")), PNG, "image/png");
+
+        client().post().uri("/api/media/{id}/confirm", mediaId)
+                .header("X-Grassland-Identity", sign(owner, org))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.status").isEqualTo("active")
+                .jsonPath("$.data.moderation.status").isEqualTo("pass");
+
+        var row = storeMediaModeration.find(mediaId).block();
+        assertThat(row).isNotNull();
+        assertThat(row.status()).isEqualTo("pass");
+        // 图片以 data URL 形态送审（多模态 vision 输入）
+        QWEN.verify(com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor(
+                        com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo("/chat/completions"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.containing("data:image/png;base64,")));
+    }
+
+    /** blocked 结论：公开换 URL 端点过滤该媒体（四重过滤 → 五重），绑定链路同样 fail-closed。 */
+    @Test
+    void blockedModerationExcludesMediaFromPublicDownloads() throws Exception {
+        stubQwenModeration("blocked");
+        String owner = "acct-" + UUID.randomUUID();
+        String org = UUID.randomUUID().toString();
+        String storeId = UUID.randomUUID().toString();
+        UUID mediaId = createConfirmedStoreMedia(owner, org, storeId, "image/png", PNG);
+
+        var row = storeMediaModeration.find(mediaId).block();
+        assertThat(row).isNotNull();
+        assertThat(row.status()).isEqualTo("blocked");
+
+        List<String> ids = requestDownloadIds(org, storeId, List.of(mediaId));
+        assertThat(ids).isEmpty();
+    }
+
+    /** 视频本期不送审（无帧抽取设施）：confirm 无审核行、公开端点照常放行。 */
+    @Test
+    void videoConfirmSkipsModeration() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = UUID.randomUUID().toString();
+        String storeId = UUID.randomUUID().toString();
+        UUID mediaId = createConfirmedStoreMedia(owner, org, storeId, "video/mp4", MP4);
+
+        assertThat(storeMediaModeration.find(mediaId).block()).isNull();
+        List<String> ids = requestDownloadIds(org, storeId, List.of(mediaId));
+        assertThat(ids).containsExactly(mediaId.toString());
+        QWEN.verify(0, com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor(
+                com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo("/chat/completions")));
+    }
+
+    /** 审核模型不可用（Qwen 404）：advisory 降级——confirm 仍成功、无审核行、公开端点不拦截。 */
+    @Test
+    void moderationUnavailableDegradesAdvisively() throws Exception {
+        String owner = "acct-" + UUID.randomUUID();
+        String org = UUID.randomUUID().toString();
+        String storeId = UUID.randomUUID().toString();
+        UUID mediaId = createConfirmedStoreMedia(owner, org, storeId, "image/png", PNG);
+
+        assertThat(storeMediaModeration.find(mediaId).block()).isNull();
+        List<String> ids = requestDownloadIds(org, storeId, List.of(mediaId));
+        assertThat(ids).containsExactly(mediaId.toString());
+    }
+
+    private void stubQwenModeration(String verdict) throws Exception {
+        Map<String, Object> content = new java.util.LinkedHashMap<>();
+        content.put("verdict", verdict);
+        content.put("findings", verdict.equals("pass") ? List.of()
+                : List.of(Map.of("category", "pornographic", "severity", "high", "advice", "画面含违规内容")));
+        Map<String, Object> response = Map.of(
+                "id", "chatcmpl-moderation",
+                "choices", List.of(Map.of("message", Map.of("content", mapper.writeValueAsString(content)))));
+        QWEN.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody(mapper.writeValueAsString(response))));
     }
 
     /** identity 服务断言三步上传并 confirm 一条门店媒体，返回 media id。 */
