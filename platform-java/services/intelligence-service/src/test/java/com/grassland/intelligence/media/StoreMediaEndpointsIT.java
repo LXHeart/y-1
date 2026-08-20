@@ -522,6 +522,90 @@ class StoreMediaEndpointsIT {
 		assertThat(ids).containsExactly(mediaId.toString());
 	}
 
+	/**
+	 * 人工复核队列闭环（遗留清偿）：模型输出不可解析 → review 行进队列（带 findings 与预览 URL）→ 审核员 approve → pass
+	 * 恢复公开展示；旧 expectedModeratedAt 重放被 409 拒。
+	 */
+	@Test
+	@SuppressWarnings("unchecked")
+	void reviewQueueListsAndDecidesUnparseableRows() throws Exception {
+		stubQwenRawContent("这不是 JSON，模型闲聊");
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		String storeId = UUID.randomUUID().toString();
+		UUID mediaId = createConfirmedStoreMedia(owner, org, storeId, "image/png", PNG);
+
+		var row = storeMediaModeration.find(mediaId).block();
+		assertThat(row).isNotNull();
+		assertThat(row.status()).isEqualTo("review");
+
+		Map<String, Object> envelope = client().get().uri("/api/admin/store-media-moderation")
+				.header("X-Grassland-Identity", signWithRole("reviewer-1", null, "content_reviewer")).exchange()
+				.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+		assertThat(data.get("status")).isEqualTo("review");
+		List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+		var queued = items.stream().filter(item -> mediaId.toString().equals(item.get("mediaId"))).findFirst();
+		assertThat(queued).isPresent();
+		assertThat(queued.get().get("storeId")).isEqualTo(storeId);
+		assertThat((List<Map<String, Object>>) queued.get().get("findings")).isNotEmpty();
+		assertThat((String) queued.get().get("downloadUrl")).isNotBlank();
+
+		client().post().uri("/api/admin/store-media-moderation/{id}/review", mediaId)
+				.header("X-Grassland-Identity", signWithRole("reviewer-1", null, "content_reviewer"))
+				.bodyValue(Map.of("decision", "approve", "expectedModeratedAt", row.moderatedAt().toString()))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pass");
+
+		// pass 恢复公开展示
+		assertThat(requestDownloadIds(org, storeId, List.of(mediaId))).containsExactly(mediaId.toString());
+		// 旧 expectedModeratedAt（裁决后已刷新）重放 → 409
+		client().post().uri("/api/admin/store-media-moderation/{id}/review", mediaId)
+				.header("X-Grassland-Identity", signWithRole("reviewer-1", null, "content_reviewer"))
+				.bodyValue(Map.of("decision", "approve", "expectedModeratedAt", row.moderatedAt().toString()))
+				.exchange().expectStatus().isEqualTo(409);
+	}
+
+	/** 人工驳回：review → blocked 拦截公开展示，且驳回必须带原因。 */
+	@Test
+	void reviewRejectBlocksMediaAndRequiresNote() throws Exception {
+		stubQwenRawContent("又不是 JSON");
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		String storeId = UUID.randomUUID().toString();
+		UUID mediaId = createConfirmedStoreMedia(owner, org, storeId, "image/png", PNG);
+		var row = storeMediaModeration.find(mediaId).block();
+		assertThat(row).isNotNull();
+
+		// 无 note 驳回 → 400
+		client().post().uri("/api/admin/store-media-moderation/{id}/review", mediaId)
+				.header("X-Grassland-Identity", signWithRole("reviewer-2", null, "content_reviewer"))
+				.bodyValue(Map.of("decision", "reject", "expectedModeratedAt", row.moderatedAt().toString())).exchange()
+				.expectStatus().isBadRequest();
+
+		client().post().uri("/api/admin/store-media-moderation/{id}/review", mediaId)
+				.header("X-Grassland-Identity", signWithRole("reviewer-2", null, "content_reviewer"))
+				.bodyValue(Map.of("decision", "reject", "note", "画面含违禁品暗示", "expectedModeratedAt",
+						row.moderatedAt().toString()))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("blocked");
+
+		assertThat(requestDownloadIds(org, storeId, List.of(mediaId))).isEmpty();
+	}
+
+	/** 复核端点门禁与校验：未登录 401、普通用户 403、status 非法 400、未知媒体 404。 */
+	@Test
+	void reviewQueueGuardsAndValidation() throws Exception {
+		client().get().uri("/api/admin/store-media-moderation").exchange().expectStatus().isUnauthorized();
+		client().get().uri("/api/admin/store-media-moderation").header("X-Grassland-Identity", sign("acct-plain", null))
+				.exchange().expectStatus().isForbidden();
+		client().get().uri("/api/admin/store-media-moderation?status=oops")
+				.header("X-Grassland-Identity", signWithRole("reviewer-3", null, "content_reviewer")).exchange()
+				.expectStatus().isBadRequest();
+		client().post().uri("/api/admin/store-media-moderation/{id}/review", UUID.randomUUID())
+				.header("X-Grassland-Identity", signWithRole("reviewer-3", null, "content_reviewer"))
+				.bodyValue(Map.of("decision", "approve", "expectedModeratedAt", Instant.now().toString())).exchange()
+				.expectStatus().isNotFound();
+	}
+
 	private void stubQwenModeration(String verdict) throws Exception {
 		Map<String, Object> content = new java.util.LinkedHashMap<>();
 		content.put("verdict", verdict);
@@ -531,6 +615,14 @@ class StoreMediaEndpointsIT {
 						: List.of(Map.of("category", "pornographic", "severity", "high", "advice", "画面含违规内容")));
 		Map<String, Object> response = Map.of("id", "chatcmpl-moderation", "choices",
 				List.of(Map.of("message", Map.of("content", mapper.writeValueAsString(content)))));
+		QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(aResponse().withStatus(200)
+				.withHeader("Content-Type", "application/json").withBody(mapper.writeValueAsString(response))));
+	}
+
+	/** 桩模型返回任意原始文本（不可解析 → review，人工复核队列入口态）。 */
+	private void stubQwenRawContent(String rawContent) throws Exception {
+		Map<String, Object> response = Map.of("id", "chatcmpl-moderation", "choices",
+				List.of(Map.of("message", Map.of("content", rawContent))));
 		QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(aResponse().withStatus(200)
 				.withHeader("Content-Type", "application/json").withBody(mapper.writeValueAsString(response))));
 	}
@@ -598,10 +690,15 @@ class StoreMediaEndpointsIT {
 	}
 
 	private String sign(String accountId, String organizationId) {
+		return signWithRole(accountId, organizationId, null);
+	}
+
+	/** 带平台角色的用户断言（16 参构造器，对齐 IntelligenceItSupport.signWithRole 口径）。 */
+	private String signWithRole(String accountId, String organizationId, String role) {
 		Instant now = Instant.now();
 		return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(accountId, "merchant",
 				"sid-" + accountId, organizationId, null, "cookie-session", "level1", null, "request", "trace",
-				"grassland-intelligence", now, now.plusSeconds(60), null, null));
+				"grassland-intelligence", now, now.plusSeconds(60), null, null, role));
 	}
 
 	private String signService(String organizationId, String principal) {
