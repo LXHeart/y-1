@@ -434,8 +434,11 @@ watch(authLoadError, (message) => {
 onMounted(() => {
   const query = new URLSearchParams(window.location.search)
   if (query.get('view') === 'commerce' || query.has('package')) {
-    if (route.path === '/' || route.path === '') {
-      router.replace('/commerce')
+    // 兜底 path 判断必须包含 /ai-center：router 把 / 默认重定向到 /ai-center 的守卫
+    // 先于本 onMounted 执行（e2e 实测深链曾因此静默落在创作中心）。
+    // query 原样带上——ConsumerCommerceView 从 URL 读 package/recommender（归因参数），丢了即断链。
+    if (route.path === '/' || route.path === '' || route.path === '/ai-center') {
+      router.replace({ name: 'commerce', query: { ...route.query } })
     }
   }
   // 邀请直达深链：邮件/口头转发的站内链接（不携带邀请 id——被邀请人登录后按自己邮箱看到全部待接受邀请，
