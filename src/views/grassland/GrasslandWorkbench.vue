@@ -28,24 +28,15 @@ import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import StoreMediaGallery from './components/StoreMediaGallery.vue'
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
 import { useWorkbenchEngagements } from './composables/useWorkbenchEngagements'
+import { useWorkbenchSession } from './composables/useWorkbenchSession'
 import { useWorkbenchTaskDrafts } from './composables/useWorkbenchTaskDrafts'
 import { useWorkbenchTaskHall } from './composables/useWorkbenchTaskHall'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
-import { yuanToCents } from '../../lib/money'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
-import type {
-  FinanceAccount,
-  Organization,
-  OrganizationAccessScope,
-  MembershipRole,
-  Store,
-  StoreAccessScope,
-  Task,
-  TaskApplication,
-} from '../../types/grassland'
+import type { TaskApplication } from '../../types/grassland'
 
 /**
  * 草场工作台——Java 微服务域的第一个前端驱动（P0-1）。
@@ -55,6 +46,10 @@ import type {
  *   推荐官：浏览任务大厅 → 报名 → 查看自己的报名 → 对已接受的履约开争议
  *
  * 交互要点：accept/confirm 是**异步 202**，UI 必须轮询到终态才能给结论（这是与旧 Express 同步端点的关键差异）。
+ *
+ * 结构：五个视图 composable（./composables/）按域持有状态与操作，本组件只做跨域编排——
+ * 账号级重置/初始化 watch、通知锚点滚动与导航落点（会跨视角调用 switchSide/selectTask）。
+ * session → engagements 的「换组织/切视角后重拉任务」以回调注入（见 useWorkbenchSession 头注）。
  */
 
 const grassland = useGrassland()
@@ -66,20 +61,26 @@ const emit = defineEmits<{
 /** 平台 admin 才看得到审核队列。真正的门禁在服务端（identity 查 app_users.role）。 */
 const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
 
-type Side = 'merchant' | 'recommender'
-
-const side = ref<Side>('merchant')
-const orgs = ref<Organization[]>([])
-const stores = ref<Store[]>([])
-const storeScopes = ref<StoreAccessScope[]>([])
-const organizationAccessIds = ref<Set<string>>(new Set())
-const organizationRoles = ref<Map<string, MembershipRole>>(new Map())
-const hasMerchantIdentity = ref(false)
-const activeOrgId = ref('')
-/** Empty means legacy organization-level task scope; otherwise the selected store. */
-const selectedStoreId = ref('')
-const account = ref<FinanceAccount | null>(null)
 const notice = ref('')
+
+function setNotice(message: string): void {
+  notice.value = message
+}
+
+// session 先建（taskHall/engagements/drafts 依赖其 side/orgId/storeId refs）。它对履约域
+// refreshTasks 的依赖是**晚绑定 thunk**：engagements 在下方才创建，但该回调只在异步函数的
+// await 之后被调用（setup 同步路径不触达），届时 const 必已完成初始化。
+const {
+  side, orgs, stores, organizationAccessIds, managerStoreScopes,
+  activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
+  activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
+  canManageAiBudget, canPublishBounty, balanceYuan,
+  loadOrganizations, initForAccount, createOrg, refreshAccount, changeOrganization,
+  provision, credit, switchSide, reset: resetSession,
+} = useWorkbenchSession(grassland, {
+  setNotice,
+  refreshTasks: () => engagements.refreshTasks(),
+})
 
 const { activeDisputeId, deferredDisputeRequestId, dispute, reset: resetDisputes } = useWorkbenchDisputes(
   grassland, setNotice,
@@ -90,6 +91,9 @@ const {
   apply, loadFeed, useCurrentLocation, handleFeedFilterUpdate, reset: resetTaskHall,
 } = useWorkbenchTaskHall(grassland, side, setNotice)
 
+const engagements = useWorkbenchEngagements(grassland, setNotice, {
+  side, activeOrgId, selectedStoreId, feedItems, refreshAccount,
+})
 const {
   tasks, applications, selectedTaskId, selectedTask,
   outcomes, taskContextLoadingAppId,
@@ -103,37 +107,14 @@ const {
   taskStatusLabel, statusLabel, selectTask, loadRecommendations, inviteRecommended,
   accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
   contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
-  withdrawApp, reset: resetEngagements,
-} = useWorkbenchEngagements(grassland, setNotice, {
-  side, activeOrgId, selectedStoreId, feedItems, refreshAccount,
-})
+  withdrawApp,
+} = engagements
 
 const {
   taskForm, editingDraft, revisingTask,
   publishTask, saveDraft, editDraft, editPublished, resetTaskForm,
   updateCommissionLadder, handleTaskFormUpdate, handleTaskFormStoreChange, reset: resetTaskDrafts,
 } = useWorkbenchTaskDrafts(grassland, setNotice, { activeOrgId, selectedStoreId, refreshTasks })
-
-const newOrgName = ref('')
-const creditAmountYuan = ref(1000)
-
-// ---------- 任务书 #22：推荐官钱包余额 ----------
-const walletBalanceCents = ref<number | null>(null)
-
-const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.value) || null)
-const managerStoreScopes = computed(() => storeScopes.value.filter((scope) => scope.role === 'manager'))
-const activeOrgHasOrganizationAccess = computed(() => organizationAccessIds.value.has(activeOrgId.value))
-const activeOrganizationRole = computed(() => organizationRoles.value.get(activeOrgId.value) ?? null)
-const canManageAiBudget = computed(() =>
-  activeOrganizationRole.value === 'owner' || activeOrganizationRole.value === 'admin',
-)
-const canPublishBounty = computed(() => activeOrg.value?.permissionTier === 'finance_transaction')
-const balanceYuan = computed(() =>
-  account.value ? (account.value.balanceCents / 100).toFixed(2) : '—')
-
-function setNotice(message: string): void {
-  notice.value = message
-}
 
 async function openAcceptedTaskCreation(application: TaskApplication): Promise<void> {
   const task = selectedTask.value
@@ -169,141 +150,16 @@ async function openAcceptedTaskCreation(application: TaskApplication): Promise<v
   })
 }
 
-// ---------- 初始化 ----------
-
-async function loadOrganizations(
-  knownOrganizations?: Organization[], knownStoreScopes?: StoreAccessScope[],
-  knownOrganizationScopes?: OrganizationAccessScope[],
-): Promise<void> {
-  const [organizationResult, scopeResult, organizationScopeResult] = await Promise.all([
-    knownOrganizations ?? grassland.listOrganizations(),
-    knownStoreScopes ?? grassland.listMyStoreScopes(),
-    knownOrganizationScopes ?? grassland.listMyOrganizationScopes(),
-  ])
-  if (organizationResult === null && scopeResult === null && organizationScopeResult === null) return
-
-  const organizationList = Array.isArray(organizationResult) ? organizationResult : []
-  storeScopes.value = Array.isArray(scopeResult) ? scopeResult : []
-  organizationAccessIds.value = new Set(organizationList.map((organization) => organization.id))
-  const organizationScopes = Array.isArray(organizationScopeResult) ? organizationScopeResult : []
-  organizationRoles.value = new Map(
-    organizationScopes.map((scope) => [scope.organizationId, scope.role]),
-  )
-
-  const merged = [...organizationList]
-  for (const scope of storeScopes.value.filter((item) => item.role === 'manager')) {
-    if (merged.some((organization) => organization.id === scope.organizationId)) continue
-    merged.push({
-      id: scope.organizationId,
-      name: scope.organizationName,
-      ownerAccountId: '',
-      permissionTier: scope.permissionTier,
-      industry: null,
-      createdAt: null,
-    })
-  }
-  orgs.value = merged
-  if (!merged.some((organization) => organization.id === activeOrgId.value)) {
-    activeOrgId.value = merged[0]?.id ?? ''
-  }
-  // 无条件刷新：此前只在「首次选中组织」时拉数据，导致重新进入草场标签页时
-  // 列表仍是旧的（App.vue 用 <component :is> 复用组件，onMounted 不必然重跑，
-  // 且期间可能有新任务）。浏览器实测发现：后端 3 个任务、UI 只显示 2 个。
-  if (activeOrgId.value) {
-    await loadActiveOrganizationStores()
-    await refreshAccount()
-    await refreshTasks()
-  }
-}
-
-async function loadActiveOrganizationStores(): Promise<void> {
-  if (!activeOrgId.value) {
-    stores.value = []
-    selectedStoreId.value = ''
-    return
-  }
-  if (activeOrgHasOrganizationAccess.value) {
-    stores.value = (await grassland.listStores(activeOrgId.value)) ?? []
-  } else {
-    stores.value = managerStoreScopes.value
-      .filter((scope) => scope.organizationId === activeOrgId.value)
-      .map((scope) => ({
-        id: scope.storeId,
-        organizationId: scope.organizationId,
-        name: scope.storeName,
-        status: scope.storeStatus,
-        createdAt: null,
-      }))
-  }
-  if (!activeOrgHasOrganizationAccess.value
-      && !stores.value.some((store) => store.id === selectedStoreId.value)) {
-    selectedStoreId.value = stores.value[0]?.id ?? ''
-  }
-}
-
-/**
- * 初始化先读取已开通身份，再激活与之对应的当前 session 身份。
- *
- * 推荐官-only 账号若沿用默认 merchant，会产生一个可预期却会出现在浏览器 console 的 409；
- * 无身份账号保留 merchant onboarding 界面，但不因打开工作台暗中开通/激活 merchant。
- */
-async function initForAccount(): Promise<void> {
-  // 只激活已开通的身份：推荐官-only 账号不应因默认 merchant 视图收到可预期的 409。
-  // merchant 优先保留双身份账号的既有工作台入口；无身份则留在 merchant onboarding，但不暗中开户/激活。
-  const [identities, organizations, scopes, organizationScopes] = await Promise.all([
-    grassland.listIdentities(),
-    grassland.listOrganizations(),
-    grassland.listMyStoreScopes(),
-    grassland.listMyOrganizationScopes(),
-  ])
-  if (identities === null) return
-
-  hasMerchantIdentity.value = identities.some((identity) => identity.identityType === 'merchant')
-  storeScopes.value = Array.isArray(scopes) ? scopes : []
-  const hasManagerScope = storeScopes.value.some((scope) => scope.role === 'manager')
-  const initialIdentity = hasMerchantIdentity.value
-    ? 'merchant'
-    : hasManagerScope
-      ? null
-      : identities.some((identity) => identity.identityType === 'recommender')
-        ? 'recommender'
-        : null
-  if (hasManagerScope && !hasMerchantIdentity.value) side.value = 'merchant'
-  if (initialIdentity) {
-    side.value = initialIdentity
-    await grassland.activateIdentity(initialIdentity)
-    grassland.clearError()  // 已知身份的激活失败由后续具体操作给出更明确的错误
-  }
-  await loadOrganizations(
-    Array.isArray(organizations) ? organizations : [],
-    Array.isArray(scopes) ? scopes : [],
-    Array.isArray(organizationScopes) ? organizationScopes : [],
-  )
-  // 任务书 #22：推荐官侧加载钱包余额，供任务大厅对霸王餐押金任务做报名软提示（不阻断）。
-  walletBalanceCents.value = null
-  if (identities.some((identity) => identity.identityType === 'recommender')) {
-    void grassland.getMyWallet().then((wallet) => {
-      walletBalanceCents.value = wallet ? wallet.balanceCents : 0
-    })
-  }
-}
+// ---------- 账号级编排：重置 + 初始化 ----------
 
 /** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
 function resetAccountState(): void {
-  resetDisputes()
-  orgs.value = []
-  stores.value = []
-  storeScopes.value = []
-  organizationAccessIds.value = new Set()
-  organizationRoles.value = new Map()
-  hasMerchantIdentity.value = false
-  activeOrgId.value = ''
-  selectedStoreId.value = ''
-  account.value = null
   notice.value = ''
-  resetEngagements()
+  resetSession()
+  engagements.reset()
   resetTaskHall()
   resetTaskDrafts()
+  resetDisputes()
 }
 
 /**
@@ -324,88 +180,7 @@ watch(() => currentUser.value?.id, (accountId) => {
 // 注：openIdentity 对商家需带 org。挂载时 org 尚未加载，故此处只做激活；
 // 未开通的情况留给 switchSide（那时 activeOrgId 已就绪）。
 
-// ---------- 商家：组织 / 账户 ----------
-
-async function createOrg(): Promise<void> {
-  if (!newOrgName.value.trim()) return
-  const created = await grassland.createOrganization(newOrgName.value.trim())
-  if (!created) return
-  newOrgName.value = ''
-  setNotice(`组织「${created.name}」已创建（等级 ${created.permissionTier}）`)
-  await loadOrganizations()
-}
-
-async function refreshAccount(): Promise<void> {
-  if (!activeOrgId.value || !activeOrgHasOrganizationAccess.value) {
-    account.value = null
-    return
-  }
-  // 账户可能尚未开通（404）→ 静默，由「开通账户」按钮处理
-  const existing = await grassland.getAccount(activeOrgId.value)
-  account.value = existing
-  if (existing) grassland.clearError()
-}
-
-async function changeOrganization(): Promise<void> {
-  selectedStoreId.value = ''
-  await loadActiveOrganizationStores()
-  await refreshAccount()
-  await refreshTasks()
-}
-
-async function provision(): Promise<void> {
-  const created = await grassland.provisionAccount()
-  if (!created) return
-  account.value = created
-  setNotice('资金账户已开通')
-}
-
-async function credit(): Promise<void> {
-  if (!activeOrgId.value) return
-  const updated = await grassland.creditAccount(activeOrgId.value, yuanToCents(creditAmountYuan.value))
-  if (!updated) return
-  account.value = updated
-  setNotice(`已充值 ¥${creditAmountYuan.value}`)
-}
-
-
-/** 切换视角。活动身份按 session 隔离，必须同步切后端，否则 requireMerchant/requireRecommender 会 403。
- *
- * 关键：**激活失败必须回滚 UI**。此前无论成败都切视角，账号若未开通对应身份，
- * 会出现「UI 显示推荐官、后端仍是商家、所有操作 403」且用户看不出原因（浏览器实测发现）。
- * 未开通时后端返回 409，这里自动尝试开通一次（推荐官无需 org，可直接开通）。
- */
-async function switchSide(next: Side): Promise<void> {
-  const previous = side.value
-  side.value = next
-
-  if (next === 'merchant' && !hasMerchantIdentity.value && managerStoreScopes.value.length > 0) {
-    grassland.clearError()
-    await refreshTasks()
-    return
-  }
-
-  let activated = await grassland.activateIdentity(next)
-  if (activated === null) {
-    // 多半是「未开通该身份」——推荐官不需要 org，可就地开通后重试
-    const opened = await grassland.openIdentity(
-      next, next === 'merchant' ? activeOrgId.value || undefined : undefined)
-    if (opened !== null) {
-      activated = await grassland.activateIdentity(next)
-    }
-  }
-
-  if (activated === null) {
-    side.value = previous  // 回滚，避免 UI 与后端身份不一致
-    setNotice('')
-    return
-  }
-
-  grassland.clearError()
-  if (next === 'merchant') {
-    await refreshTasks()
-  }
-}
+// ---------- 通知落点编排（跨视角，须在组件层组合各域）----------
 
 /**
  * 通知落点（草场 Slice 12 Stage 4）。`App.vue` provide 一个锚点 id，本组件滚到对应卡片后置空
@@ -478,7 +253,6 @@ watch(grasslandNavigationTarget, async (target) => {
     grasslandNavigationTarget.value = null
   }
 }, { immediate: true })
-
 </script>
 
 <template>
