@@ -101,7 +101,7 @@ const {
   storePublicProfile, storePublicProfileLoading, storePublicProfileError,
   applicantReputation, applicantProfile, levelFilter, rateFilterPct,
   recommendations, recommendationsLoading, invitingAccountId, confirmedAppIds,
-  selectedAppIds, batchLoading,
+  selectedAppIds,
   filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled,
   refreshTasks, publishDraft, closeTaskAction, cancelTaskAction,
   taskStatusLabel, statusLabel, selectTask, loadRecommendations, inviteRecommended,
