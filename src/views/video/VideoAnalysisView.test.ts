@@ -144,3 +144,110 @@ describe('VideoAnalysisView 重定位文案', () => {
     }
   })
 })
+
+describe('视频复刻分镜接线（PRD §4.4）', () => {
+  function stubRecreationFlow() {
+    const analyzeBodies: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { body?: string }) => {
+      if (url === '/api/douyin/session') {
+        return jsonResponse({ success: true, data: { status: 'missing', hasPersistedSession: false } })
+      }
+      if (url === '/api/douyin/extract-video') {
+        return jsonResponse({ success: true, data: {
+          sourceUrl: 'https://v.douyin.com/example', proxyVideoUrl: '/api/douyin/proxy/example',
+          downloadVideoUrl: '/api/douyin/download/example', downloadAudioUrl: '/api/douyin/audio/example',
+          usedSession: false, fetchStage: 'page_json', title: '夏日饮品实拍',
+        } })
+      }
+      if (url === '/api/douyin/analyze-video') {
+        analyzeBodies.push(init?.body ?? '')
+        return jsonResponse({ success: true, data: {
+          scenes: [
+            {
+              shotDescription: '中景正面视角，镜头缓慢推进',
+              characterDescription: '年轻女性博主',
+              actionMovement: '举起饮品',
+              dialogueVoiceover: '这杯太好喝了',
+              sceneEnvironment: '明亮门店吧台',
+            },
+          ],
+          overallStyle: '日系清新',
+          runId: 'chatcmpl-r',
+        } })
+      }
+      if (url.startsWith('/api/creation-generations')) {
+        return jsonResponse({ success: true, data: { items: [] } })
+      }
+      return jsonResponse({ success: true, data: null })
+    }))
+    return analyzeBodies
+  }
+
+  test('提取成功后出现复刻入口；分镜分析以 mode=recreation 调用并渲染分镜面板', async () => {
+    const analyzeBodies = stubRecreationFlow()
+
+    const wrapper = mount(VideoAnalysisView)
+    await flushPromises()
+
+    expect(wrapper.find('.recreation-card').exists()).toBe(false)
+
+    await wrapper.get('#video-input').setValue('7.54 复制打开抖音 https://v.douyin.com/example')
+    await wrapper.get('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.recreation-card').exists()).toBe(true)
+    expect(wrapper.find('.recreation-panel').exists()).toBe(false)
+
+    const recreationButton = wrapper.findAll('button')
+      .find((button) => button.text().includes('生成复刻分镜'))
+    expect(recreationButton).toBeDefined()
+    await recreationButton!.trigger('click')
+    await flushPromises()
+
+    expect(analyzeBodies).toHaveLength(1)
+    expect(JSON.parse(analyzeBodies[0])).toMatchObject({
+      proxyVideoUrl: '/api/douyin/proxy/example',
+      mode: 'recreation',
+    })
+    expect(wrapper.find('.recreation-panel').exists()).toBe(true)
+    expect(wrapper.get('.style-text').text()).toBe('日系清新')
+    expect(wrapper.get('.scene-field .field-value').text())
+      .toBe('中景正面视角，镜头缓慢推进')
+    wrapper.unmount()
+  })
+
+  test('分镜分析失败展示错误且不渲染分镜面板', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/douyin/session') {
+        return jsonResponse({ success: true, data: { status: 'missing', hasPersistedSession: false } })
+      }
+      if (url === '/api/douyin/extract-video') {
+        return jsonResponse({ success: true, data: {
+          sourceUrl: 'https://v.douyin.com/example', proxyVideoUrl: '/api/douyin/proxy/example',
+          downloadVideoUrl: '/api/douyin/download/example', downloadAudioUrl: '/api/douyin/audio/example',
+          usedSession: false, fetchStage: 'page_json', title: '夏日饮品实拍',
+        } })
+      }
+      if (url === '/api/douyin/analyze-video') {
+        return jsonResponse({ success: false, error: '复刻分析暂不支持分段视频' })
+      }
+      return jsonResponse({ success: true, data: null })
+    }))
+
+    const wrapper = mount(VideoAnalysisView)
+    await flushPromises()
+
+    await wrapper.get('#video-input').setValue('7.54 复制打开抖音 https://v.douyin.com/example')
+    await wrapper.get('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    const recreationButton = wrapper.findAll('button')
+      .find((button) => button.text().includes('生成复刻分镜'))
+    await recreationButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.recreation-error').text()).toBe('复刻分析暂不支持分段视频')
+    expect(wrapper.find('.recreation-panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

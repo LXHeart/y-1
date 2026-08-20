@@ -111,6 +111,31 @@
         @retry-analysis="handleRetryBilibiliAnalysis"
       />
 
+      <section v-if="currentProxyVideoUrl" class="recreation-card glass-card">
+        <div class="recreation-head">
+          <div>
+            <p class="recreation-kicker">视频复刻 · 仅参考结构</p>
+            <h2>复刻分镜与参考图</h2>
+            <p>把参考视频拆成独立分镜场景，逐场景生成 AI 参考图；结果只作创作参考，不复刻原文。</p>
+          </div>
+          <button
+            class="btn-primary"
+            type="button"
+            :disabled="recreationLoading"
+            @click="handleAnalyzeRecreation"
+          >
+            {{ recreationLoading ? '分镜分析中…' : recreationResult ? '重新生成分镜' : '生成复刻分镜' }}
+          </button>
+        </div>
+        <p v-if="recreationError" class="recreation-error">{{ recreationError }}</p>
+        <VideoRecreationPanel
+          v-if="recreationResult"
+          :scenes="recreationResult.scenes"
+          :overall-style="recreationResult.overallStyle"
+          :task-context="taskExecutionContext"
+        />
+      </section>
+
       <section v-if="referenceTarget && currentAnalysis" class="reference-handoff glass-card">
         <div>
           <p class="reference-handoff-kicker">发布目标</p>
@@ -142,11 +167,13 @@ import { computed, ref, watch } from 'vue'
 import BilibiliParsePanel from '../../components/BilibiliParsePanel.vue'
 import DouyinParsePanel from '../../components/DouyinParsePanel.vue'
 import DouyinSessionPanel from '../../components/DouyinSessionPanel.vue'
+import VideoRecreationPanel from '../../components/VideoRecreationPanel.vue'
 import { useBilibiliParse } from '../../composables/useBilibiliParse'
 import { useBilibiliVideoAnalysis } from '../../composables/useBilibiliVideoAnalysis'
 import { useDouyinParse } from '../../composables/useDouyinParse'
 import { useDouyinSession } from '../../composables/useDouyinSession'
 import { useDouyinVideoAnalysis } from '../../composables/useDouyinVideoAnalysis'
+import { useVideoRecreationScenes } from '../../composables/useVideoRecreationScenes'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { VideoTaskExecutionContext } from '../../types/video-recreation'
 
@@ -254,6 +281,14 @@ const {
   logout: logoutDouyinSession,
 } = useDouyinSession()
 
+const {
+  result: recreationResult,
+  loading: recreationLoading,
+  error: recreationError,
+  analyzeScenes,
+  reset: resetRecreation,
+} = useVideoRecreationScenes()
+
 const isCurrentPlatformParseLoading = computed(() => {
   return activePlatform.value === 'douyin' ? parseLoading.value : bilibiliParseLoading.value
 })
@@ -278,6 +313,9 @@ const currentAnalysis = computed(() => activePlatform.value === 'douyin'
 const currentExtractedTitle = computed(() => activePlatform.value === 'douyin'
   ? extractedVideo.value?.title
   : bilibiliExtractedVideo.value?.title)
+const currentProxyVideoUrl = computed(() => activePlatform.value === 'douyin'
+  ? extractedVideo.value?.proxyVideoUrl
+  : bilibiliExtractedVideo.value?.proxyVideoUrl)
 const referenceTarget = computed(() => {
   const handoff = props.creationHandoff
   if (!handoff || handoff.workflowId !== 'reference-analyze') return null
@@ -340,6 +378,7 @@ async function handleRetryBilibiliAnalysis(): Promise<void> {
 
 async function handleExtractDouyinVideo(): Promise<void> {
   resetAnalysis()
+  resetRecreation()
   const data = await extractVideo(videoInput.value)
   if (!data) {
     showSessionPanel.value = shouldAutoOpenSessionPanel(parseError.value)
@@ -350,7 +389,13 @@ async function handleExtractDouyinVideo(): Promise<void> {
 
 async function handleExtractBilibiliVideo(): Promise<void> {
   resetBilibiliAnalysis()
+  resetRecreation()
   await extractBilibiliVideo(videoInput.value)
+}
+
+async function handleAnalyzeRecreation(): Promise<void> {
+  if (!currentProxyVideoUrl.value || recreationLoading.value) return
+  await analyzeScenes(activePlatform.value, currentProxyVideoUrl.value, taskExecutionContext.value)
 }
 
 async function handleExtractVideo(): Promise<void> {
@@ -369,6 +414,7 @@ function handleSwitchPlatform(platform: SupportedPlatform): void {
   resetBilibiliAnalysis()
   resetParse()
   resetBilibiliParse()
+  resetRecreation()
 }
 
 function handleReset(): void {
@@ -378,6 +424,7 @@ function handleReset(): void {
   resetBilibiliAnalysis()
   resetParse()
   resetBilibiliParse()
+  resetRecreation()
 }
 
 watch(() => props.creationHandoff, (handoff) => {
@@ -426,6 +473,61 @@ watch(() => props.creationHandoff, (handoff) => {
   justify-content: space-between;
   gap: 16px;
   padding: 18px;
+}
+
+.recreation-card {
+  display: grid;
+  gap: var(--space-md);
+  padding: 18px;
+}
+
+.recreation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.recreation-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.recreation-kicker,
+.recreation-head h2,
+.recreation-head p {
+  margin: 0;
+}
+
+.recreation-kicker {
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.recreation-head h2 {
+  font-size: 1.05rem;
+}
+
+.recreation-head p:not(.recreation-kicker) {
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  max-width: 56ch;
+}
+
+.recreation-error {
+  margin: 0;
+  color: var(--color-danger, #b42318);
+  font-size: 0.84rem;
+}
+
+@media (max-width: 640px) {
+  .recreation-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .reference-handoff-kicker,
