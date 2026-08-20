@@ -38,7 +38,7 @@ class ApplicationAutoAcceptDispatcherTest {
 
     private final TaskRepository tasks = mock(TaskRepository.class);
     private final TaskApplicationRepository apps = mock(TaskApplicationRepository.class);
-    private final ApplicationController acceptController = mock(ApplicationController.class);
+    private final ApplicationAcceptanceService acceptanceService = mock(ApplicationAcceptanceService.class);
     private final ReputationService reputationService = mock(ReputationService.class);
 
     @Test
@@ -53,12 +53,12 @@ class ApplicationAutoAcceptDispatcherTest {
         ReputationSnapshot low = snapshot(RecommenderLevel.LV2, 50);
         when(reputationService.snapshots(anyCollection()))
                 .thenReturn(Mono.just(Map.of("rec-high", high, "rec-low", low)));
-        when(acceptController.acceptForDispatcher(task, qualified, high)).thenReturn(Mono.just("accepted"));
+        when(acceptanceService.acceptForDispatcher(task, qualified, high)).thenReturn(Mono.just("accepted"));
 
         assertThat(dispatcher().processTasks().block()).isEqualTo(1);
 
-        verify(acceptController).acceptForDispatcher(task, qualified, high);
-        verify(acceptController, never()).acceptForDispatcher(any(), eq(belowLevel), any());
+        verify(acceptanceService).acceptForDispatcher(task, qualified, high);
+        verify(acceptanceService, never()).acceptForDispatcher(any(), eq(belowLevel), any());
     }
 
     @Test
@@ -73,14 +73,14 @@ class ApplicationAutoAcceptDispatcherTest {
         ReputationSnapshot w90 = snapshot(RecommenderLevel.LV4, 90);
         when(reputationService.snapshots(anyCollection()))
                 .thenReturn(Mono.just(Map.of("rec-w10", w10, "rec-w90", w90)));
-        when(acceptController.acceptForDispatcher(task, weight10, w10)).thenReturn(Mono.just("accepted"));
-        when(acceptController.acceptForDispatcher(task, weight90, w90)).thenReturn(Mono.just("accepted"));
+        when(acceptanceService.acceptForDispatcher(task, weight10, w10)).thenReturn(Mono.just("accepted"));
+        when(acceptanceService.acceptForDispatcher(task, weight90, w90)).thenReturn(Mono.just("accepted"));
 
         assertThat(dispatcher().processTasks().block()).isEqualTo(1);
 
-        var order = inOrder(acceptController);
-        order.verify(acceptController).acceptForDispatcher(task, weight90, w90);
-        order.verify(acceptController).acceptForDispatcher(task, weight10, w10);
+        var order = inOrder(acceptanceService);
+        order.verify(acceptanceService).acceptForDispatcher(task, weight90, w90);
+        order.verify(acceptanceService).acceptForDispatcher(task, weight10, w10);
     }
 
     @Test
@@ -97,15 +97,15 @@ class ApplicationAutoAcceptDispatcherTest {
         ReputationSnapshot s3 = snapshot(RecommenderLevel.LV3, 10);
         when(reputationService.snapshots(anyCollection()))
                 .thenReturn(Mono.just(Map.of("rec-1", s1, "rec-2", s2, "rec-3", s3)));
-        when(acceptController.acceptForDispatcher(task, first, s1)).thenReturn(Mono.just("accepted"));
-        when(acceptController.acceptForDispatcher(task, second, s2)).thenReturn(Mono.just("slots_full"));
+        when(acceptanceService.acceptForDispatcher(task, first, s1)).thenReturn(Mono.just("accepted"));
+        when(acceptanceService.acceptForDispatcher(task, second, s2)).thenReturn(Mono.just("slots_full"));
 
         assertThat(dispatcher().processTasks().block()).isEqualTo(1);
 
         // 名额满后本轮不再对该任务剩余 pending 空转 claim（下轮扫描再试）。
-        verify(acceptController).acceptForDispatcher(task, first, s1);
-        verify(acceptController).acceptForDispatcher(task, second, s2);
-        verify(acceptController, never()).acceptForDispatcher(any(), eq(third), any());
+        verify(acceptanceService).acceptForDispatcher(task, first, s1);
+        verify(acceptanceService).acceptForDispatcher(task, second, s2);
+        verify(acceptanceService, never()).acceptForDispatcher(any(), eq(third), any());
     }
 
     @Test
@@ -117,7 +117,7 @@ class ApplicationAutoAcceptDispatcherTest {
         ReputationSnapshot snapshot = snapshot(RecommenderLevel.LV4, 40);
         when(reputationService.snapshots(anyCollection()))
                 .thenReturn(Mono.just(Map.of("rec-c", snapshot)));
-        when(acceptController.acceptForDispatcher(task, app, snapshot)).thenReturn(Mono.just("compensated"));
+        when(acceptanceService.acceptForDispatcher(task, app, snapshot)).thenReturn(Mono.just("compensated"));
 
         // 两轮必须共用同一 dispatcher 实例——冷却 map 是实例态。
         ApplicationAutoAcceptDispatcher dispatcher = dispatcher();
@@ -125,7 +125,7 @@ class ApplicationAutoAcceptDispatcherTest {
 
         // 第二轮：资金不足补偿回 pending 的报名仍在冷却窗口（60s）内，不得重复派发 Saga。
         assertThat(dispatcher.processTasks().block()).isEqualTo(1);
-        verify(acceptController, times(1)).acceptForDispatcher(task, app, snapshot);
+        verify(acceptanceService, times(1)).acceptForDispatcher(task, app, snapshot);
     }
 
     @Test
@@ -140,11 +140,11 @@ class ApplicationAutoAcceptDispatcherTest {
         ReputationSnapshot snapshot = snapshot(RecommenderLevel.LV3, 30);
         when(reputationService.snapshots(anyCollection()))
                 .thenReturn(Mono.just(Map.of("rec-h", snapshot)));
-        when(acceptController.acceptForDispatcher(healthy, app, snapshot)).thenReturn(Mono.just("accepted"));
+        when(acceptanceService.acceptForDispatcher(healthy, app, snapshot)).thenReturn(Mono.just("accepted"));
 
         assertThat(dispatcher().processTasks().block()).isEqualTo(1);
 
-        verify(acceptController).acceptForDispatcher(healthy, app, snapshot);
+        verify(acceptanceService).acceptForDispatcher(healthy, app, snapshot);
     }
 
     @Test
@@ -154,21 +154,21 @@ class ApplicationAutoAcceptDispatcherTest {
         when(apps.findByTaskId(task.id(), "pending", null, null, 200)).thenReturn(Flux.empty());
 
         assertThat(dispatcher().processTasks().block()).isEqualTo(1);
-        verifyNoInteractions(reputationService, acceptController);
+        verifyNoInteractions(reputationService, acceptanceService);
     }
 
     @Test
     void disabledDispatcherDoesNotReadQueue() {
         assertThat(new ApplicationAutoAcceptDispatcher(
-                tasks, apps, acceptController, reputationService, false, 50)
+                tasks, apps, acceptanceService, reputationService, false, 50)
                 .processTasks().block()).isZero();
-        verifyNoInteractions(tasks, apps, acceptController, reputationService);
+        verifyNoInteractions(tasks, apps, acceptanceService, reputationService);
     }
 
     // ---- helpers ----
 
     private ApplicationAutoAcceptDispatcher dispatcher() {
-        return new ApplicationAutoAcceptDispatcher(tasks, apps, acceptController, reputationService, true, 50);
+        return new ApplicationAutoAcceptDispatcher(tasks, apps, acceptanceService, reputationService, true, 50);
     }
 
     /** 全参构造（21 字段）：仅本测试关心的 status/autoAcceptMinLevel 有值。 */

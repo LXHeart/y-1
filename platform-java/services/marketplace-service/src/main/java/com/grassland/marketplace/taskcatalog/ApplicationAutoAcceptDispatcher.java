@@ -31,7 +31,7 @@ public class ApplicationAutoAcceptDispatcher {
 
     private final TaskRepository tasks;
     private final TaskApplicationRepository apps;
-    private final ApplicationController acceptController;
+    private final ApplicationAcceptanceService acceptanceService;
     private final ReputationService reputationService;
     private final boolean enabled;
     private final int scanLimit;
@@ -41,13 +41,13 @@ public class ApplicationAutoAcceptDispatcher {
     private static final long COOLDOWN_SECONDS = 60;
 
     public ApplicationAutoAcceptDispatcher(
-            TaskRepository tasks, TaskApplicationRepository apps, ApplicationController acceptController,
+            TaskRepository tasks, TaskApplicationRepository apps, ApplicationAcceptanceService acceptanceService,
             ReputationService reputationService,
             @Value("${marketplace.applications.auto-accept-enabled:true}") boolean enabled,
             @Value("${marketplace.applications.auto-accept-scan-limit:50}") int scanLimit) {
         this.tasks = tasks;
         this.apps = apps;
-        this.acceptController = acceptController;
+        this.acceptanceService = acceptanceService;
         this.reputationService = reputationService;
         this.enabled = enabled;
         this.scanLimit = Math.max(1, Math.min(scanLimit, 200));
@@ -77,7 +77,7 @@ public class ApplicationAutoAcceptDispatcher {
                 .collectList()
                 .flatMap(pendingApps -> {
                     if (pendingApps.isEmpty()) return Mono.just(0);
-                    // 按声誉权重排序（复用 ApplicationController 的排序逻辑）
+                    // 按声誉权重排序（与列表端点的 owner 视图排序一致：权重降序）
                     return reputationService.snapshots(
                                     pendingApps.stream().map(TaskApplication::recommenderAccountId).toList())
                             .map(snapshots -> pendingApps.stream()
@@ -118,7 +118,7 @@ public class ApplicationAutoAcceptDispatcher {
                     }
 
                     // 达标 → 调共享 accept 内核
-                    return acceptController.acceptForDispatcher(task, app, snapshot)
+                    return acceptanceService.acceptForDispatcher(task, app, snapshot)
                             .map(outcome -> {
                                 if ("compensated".equals(outcome)) {
                                     compensatedCooldown.put(app.id(), Instant.now());
