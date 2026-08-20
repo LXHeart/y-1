@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { formatCents, formatSignedCents, formatYuan } from './money'
+import { formatCents, formatSignedCents, formatYuan, yuanToCents } from './money'
+
+describe('money conversion', () => {
+  it('converts yuan input to integer cents with rounding', () => {
+    expect(yuanToCents(0)).toBe(0)
+    expect(yuanToCents(1000)).toBe(100000)
+    expect(yuanToCents(19.99)).toBe(1999)  // 19.99 * 100 = 1998.9999… 须四舍五入而非截断
+    expect(yuanToCents(0.005)).toBe(1)
+  })
+})
 
 describe('money formatting', () => {
   it('formats whole and fractional cents', () => {

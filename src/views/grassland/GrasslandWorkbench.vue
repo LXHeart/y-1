@@ -38,6 +38,7 @@ import StoreMediaGallery from './components/StoreMediaGallery.vue'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
+import { yuanToCents } from '../../lib/money'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
 import type {
@@ -220,10 +221,6 @@ const allPendingSelected = computed(() =>
 const batchButtonsDisabled = computed(() =>
   batchLoading.value || selectedAppIds.value.size === 0 || grassland.loading.value,
 )
-
-function yuanToCents(yuan: number): number {
-  return Math.round(yuan * 100)
-}
 
 function setNotice(message: string): void {
   notice.value = message
