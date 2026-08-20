@@ -36,6 +36,7 @@ import RecommenderRecommendations from './components/RecommenderRecommendations.
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import StoreMediaGallery from './components/StoreMediaGallery.vue'
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
+import { useWorkbenchTaskHall } from './composables/useWorkbenchTaskHall'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
@@ -100,6 +101,11 @@ const { activeDisputeId, deferredDisputeRequestId, dispute, reset: resetDisputes
   grassland, setNotice,
 )
 
+const {
+  applyNote, feedItems, feedHasMore, feedLoading, feedFilters, locating,
+  apply, loadFeed, useCurrentLocation, handleFeedFilterUpdate, reset: resetTaskHall,
+} = useWorkbenchTaskHall(grassland, side, setNotice)
+
 /** 每个 application 的异步结局（accept 预留 / confirm 结算），key = applicationId。 */
 const outcomes = ref<Record<string, string>>({})
 const taskContextLoadingAppId = ref('')
@@ -123,7 +129,6 @@ const editingDraft = ref<{ id: string; version: number } | null>(null)
  * 修订走不同端点、冻结资金字段、保存语义不同（已发布→出新版本，不是存草稿），混在一个标志里要靠 status 二次判分支，易错。
  */
 const revisingTask = ref<{ id: string; version: number } | null>(null)
-const applyNote = ref('')
 /** 商家拒绝理由按 application 独立保存，避免多条报名共用输入串值。 */
 const contestReasons = ref<Record<string, string>>({})
 /**
@@ -132,17 +137,7 @@ const contestReasons = ref<Record<string, string>>({})
  */
 const confirmedMetricInputs = ref<Record<string, string>>({})
 
-// ---------- 推荐官：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）----------
-const feedItems = ref<Task[]>([])
-const feedCursor = ref('')
-const feedHasMore = ref(false)
-const feedLoading = ref(false)
-const feedFilters = ref({
-  q: '', platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
-  latitude: null as number | null, longitude: null as number | null,
-})
-const locating = ref(false)
-/** 推荐官钱包余额（分，任务书 #22：霸王餐押金任务的报名软提示）；null = 未加载。 */
+// ---------- 任务书 #22：推荐官钱包余额 ----------
 const walletBalanceCents = ref<number | null>(null)
 
 // ---------- 任务书 #24：任务详情携带门店公开块 ----------
@@ -407,9 +402,7 @@ function resetAccountState(): void {
   recommendations.value = null
   recommendationsLoading.value = false
   invitingAccountId.value = ''
-  feedItems.value = []
-  feedCursor.value = ''
-  feedHasMore.value = false
+  resetTaskHall()
   editingDraft.value = null
   revisingTask.value = null
 }
@@ -1070,61 +1063,6 @@ async function confirm(app: TaskApplication): Promise<void> {
 
 // ---------- 推荐官 ----------
 
-async function apply(taskId: string): Promise<void> {
-  const created = await grassland.applyToTask(taskId, applyNote.value.trim() || undefined)
-  if (!created) return
-  applyNote.value = ''
-  setNotice('报名已提交，等待商家处理')
-}
-
-/** 加载全局大厅 feed（reset=true 重新查首页；否则按游标加载更多）。 */
-async function loadFeed(reset = false): Promise<void> {
-  if (feedLoading.value) return
-  if (feedFilters.value.maxDistanceKm > 0
-      && (feedFilters.value.latitude == null || feedFilters.value.longitude == null)) {
-    setNotice('请先允许获取当前位置，再使用距离筛选')
-    return
-  }
-  feedLoading.value = true
-  const page = await grassland.listTaskFeed({
-    q: feedFilters.value.q.trim() || undefined,
-    platform: feedFilters.value.platform.trim() || undefined,
-    contentForm: feedFilters.value.contentForm.trim() || undefined,
-    minBountyCents: feedFilters.value.minBountyYuan > 0 ? yuanToCents(feedFilters.value.minBountyYuan) : undefined,
-    latitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.latitude! : undefined,
-    longitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.longitude! : undefined,
-    maxDistanceKm: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.maxDistanceKm : undefined,
-    cursor: reset ? undefined : (feedCursor.value || undefined),
-    limit: 20,
-  })
-  feedLoading.value = false
-  if (!page) return
-  feedItems.value = reset || !feedCursor.value ? page.items : [...feedItems.value, ...page.items]
-  feedCursor.value = page.nextCursor || ''
-  feedHasMore.value = page.hasMore
-  grassland.clearError()
-}
-
-function useCurrentLocation(): void {
-  if (!navigator.geolocation || locating.value) {
-    if (!navigator.geolocation) setNotice('当前浏览器不支持定位')
-    return
-  }
-  locating.value = true
-  navigator.geolocation.getCurrentPosition((position) => {
-    feedFilters.value.latitude = position.coords.latitude
-    feedFilters.value.longitude = position.coords.longitude
-    if (feedFilters.value.maxDistanceKm <= 0) feedFilters.value.maxDistanceKm = 5
-    locating.value = false
-    setNotice('已获取当前位置，可按距离查询任务')
-  }, (positionError) => {
-    locating.value = false
-    setNotice(positionError.code === positionError.PERMISSION_DENIED
-      ? '定位权限被拒绝，请在浏览器设置中允许定位'
-      : '暂时无法获取位置，请稍后重试')
-  }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 })
-}
-
 /** 推荐官撤销本人 pending 报名（GL-P1-TASK-001：前端原缺入口）。 */
 async function withdrawApp(app: TaskApplication): Promise<void> {
   const withdrawn = await grassland.withdrawApplication(selectedTaskId.value, app.id)
@@ -1173,16 +1111,6 @@ async function switchSide(next: Side): Promise<void> {
     await refreshTasks()
   }
 }
-
-/**
- * 切到推荐官视角时加载全局任务大厅 feed 首页（GL-P1-TASK-001 Stage 2）。
- * 仅在尚未加载时触发，避免每次来回切换都重拉；用户可点「查询」强制刷新。
- */
-watch(side, async (s) => {
-  if (s === 'recommender' && feedItems.value.length === 0) {
-    await loadFeed(true)
-  }
-})
 
 /**
  * 通知落点（草场 Slice 12 Stage 4）。`App.vue` provide 一个锚点 id，本组件滚到对应卡片后置空
@@ -1277,10 +1205,6 @@ function handleTaskFormUpdate(field: string, value: string | number | null): voi
 async function handleTaskFormStoreChange(storeId: string): Promise<void> {
   selectedStoreId.value = storeId
   await refreshTasks()
-}
-
-function handleFeedFilterUpdate(field: string, value: string | number): void {
-  ;(feedFilters.value as Record<string, string | number>)[field] = value
 }
 </script>
 
