@@ -82,6 +82,22 @@ describe('EngagementSubmissionPanel 列表', () => {
     expect(wrapper.text()).toContain('退回原因：缺少门店实拍')
   })
 
+  test('评论任务展示评论文本；运营判违规时带「平台判违规」标记（之九遗留清偿）', async () => {
+    stubFetch([[{ ...SUBMITTED, commentText: '这家店的桂花拿铁真的很惊艳！', commentFlagged: true }]])
+    const wrapper = mountPanel('merchant')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('评论：这家店的桂花拿铁真的很惊艳！')
+    expect(wrapper.text()).toContain('平台判违规')
+
+    // 无标记时只展示文本，不出违规 tag
+    stubFetch([[{ ...SUBMITTED, commentText: '正常评论' }]])
+    const clean = mountPanel('merchant')
+    await flushPromises()
+    expect(clean.text()).toContain('评论：正常评论')
+    expect(clean.text()).not.toContain('平台判违规')
+  })
+
   test('商家侧空列表明确说明「在此之前无法确认履约」', async () => {
     stubFetch([[]])
     const wrapper = mountPanel('merchant')

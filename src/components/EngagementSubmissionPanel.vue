@@ -251,6 +251,10 @@ async function reject(submission: EngagementSubmission): Promise<void> {
           </span>
         </div>
         <p v-if="s.note" class="sub-meta">说明：{{ s.note }}</p>
+        <p v-if="s.commentText" class="sub-meta">
+          评论：{{ s.commentText }}
+          <span v-if="s.commentFlagged" class="sub-tag sub-flagged">平台判违规</span>
+        </p>
         <p v-if="s.reviewNote" class="sub-meta sub-reject">退回原因：{{ s.reviewNote }}</p>
 
         <ul v-if="s.verification?.checks?.length" class="sub-checks">
@@ -352,6 +356,7 @@ async function reject(submission: EngagementSubmission): Promise<void> {
 .sub-submitted { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
 .sub-accepted { background: color-mix(in srgb, var(--color-success) 22%, transparent); }
 .sub-rejected { background: color-mix(in srgb, var(--color-danger) 22%, transparent); }
+.sub-flagged { background: color-mix(in srgb, var(--color-danger) 22%, transparent); color: var(--color-danger); margin-left: 6px; }
 .sub-verify-passed { background: color-mix(in srgb, var(--color-success) 22%, transparent); }
 .sub-verify-failed { background: color-mix(in srgb, var(--color-danger) 22%, transparent); }
 .sub-verify-inconclusive { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }

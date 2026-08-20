@@ -348,6 +348,47 @@ describe('OpsConsole', () => {
     expect(JSON.parse(call?.body || '{}')).toEqual({ status: 'failed', note: '证据不足' })
   })
 
+  test('评论复核：词库存疑队列可判违规（必填原因）与确认无问题', async () => {
+    const { wrapper, calls } = await mountConsole([
+      { match: '/api/ops/cases', data: [] },
+      { match: '/api/ops/comment-reviews', data: {
+        status: 'open',
+        items: [{
+          submissionId: 's-9', commentText: '加我薇信买同款', status: 'open',
+          findings: [{ category: 'contact', severity: 'medium', advice: '疑似站外导流用语' }],
+          taskId: 't-9', taskTitle: '小红书探店种草', platform: 'xiaohongshu',
+          recommenderAccountId: 'rec-9', submissionStatus: 'submitted',
+          submittedAt: '2026-08-20T03:00:00Z', createdAt: '2026-08-20T03:00:00Z',
+        }],
+      } },
+      { match: '/api/ops/comment-reviews/s-9/review', data: {
+        submissionId: 's-9', status: 'violation', reviewerAccountId: 'ops-1', reviewNote: '站外导流',
+      } },
+    ])
+
+    await wrapper.findAll('.ops-tab').find((b) => b.text() === '评论复核')!.trigger('click')
+    await flushPromises()
+
+    const panels = wrapper.findAll('.ops-panel')
+    const panel = panels[panels.length - 1]
+    expect(panel.text()).toContain('小红书探店种草')
+    expect(panel.text()).toContain('加我薇信买同款')
+    expect(panel.text()).toContain('contact(medium)')
+
+    // 判违规必须带原因
+    await panel.findAll('button').find((b) => b.text() === '判违规')!.trigger('click')
+    expect(wrapper.text()).toContain('判定违规必须填写原因')
+    expect(calls.find((c) => c.url.includes('/api/ops/comment-reviews/s-9/review'))).toBeUndefined()
+
+    await panel.find('input[placeholder="复核备注（判违规必填）"]').setValue('站外导流')
+    await panel.findAll('button').find((b) => b.text() === '判违规')!.trigger('click')
+    await flushPromises()
+
+    const call = calls.find((c) => c.url.includes('/api/ops/comment-reviews/s-9/review'))
+    expect(call?.method).toBe('POST')
+    expect(JSON.parse(call?.body || '{}')).toEqual({ decision: 'violation', note: '站外导流' })
+  })
+
   test('坏 checks JSON 不炸 UI（后端字段是字符串，直接遍历会逐字符展开）', async () => {
     const { wrapper } = await mountConsole([
       { match: '/api/ops/cases', data: [] },

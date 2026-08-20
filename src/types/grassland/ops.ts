@@ -120,6 +120,28 @@ export interface OpsPendingVerification {
   submittedAt: string | null
 }
 
+/**
+ * 评论人工复核队列（缺口清偿之九遗留清偿）：词库 advisory（low/medium）命中的评论提交。
+ * 运营复核 confirmed=无问题 / violation=违规（经交付物列表 commentFlagged 透出给商家）。
+ */
+export interface OpsCommentReview {
+  submissionId: string
+  commentText: string
+  /** 词库 advisory 明细快照。 */
+  findings: Array<{ category: string; severity: string; advice?: string }>
+  status: 'open' | 'confirmed' | 'violation'
+  taskId: string
+  taskTitle: string
+  platform: string | null
+  recommenderAccountId: string
+  submissionStatus: string
+  submittedAt: string | null
+  createdAt: string | null
+  reviewerAccountId?: string | null
+  reviewNote?: string | null
+  reviewedAt?: string | null
+}
+
 /** 核验明细单项（`OpsPendingVerification.checks` parse 后的元素）。 */
 /** 字段名对齐 marketplace `ApplicationController.checksToMaps`（camelCase，非 snake_case）。 */
 export interface OpsVerificationCheck {

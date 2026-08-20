@@ -18,6 +18,10 @@ export interface EngagementSubmission {
   contentUrl: string
   /** 互动任务的推荐官平台账号标识（任务书 #23）；其余任务为 null。 */
   platformHandle?: string | null
+  /** 评论任务的评论文本（缺口清偿之九）；其余任务为 null。 */
+  commentText?: string | null
+  /** 该评论已被运营人工复核判违规（之九遗留清偿）；无复核行/未判/无问题时缺省。 */
+  commentFlagged?: boolean
   note: string | null
   status: SubmissionStatus
   /** 商家退回原因。 */

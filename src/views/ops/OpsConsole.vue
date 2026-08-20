@@ -10,6 +10,7 @@ import type {
   OpsCaseStatus,
   OpsDltMessage,
   OpsPendingVerification,
+  OpsCommentReview,
 } from '../../types/grassland'
 
 const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
@@ -29,7 +30,7 @@ const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
 
 const grassland = useGrassland()
 
-type Tab = 'cases' | 'dlt' | 'pending'
+type Tab = 'cases' | 'dlt' | 'pending' | 'comments'
 const tab = ref<Tab>('cases')
 
 const cases = ref<OpsCase[]>([])
@@ -61,6 +62,10 @@ const dltLoaded = ref(false)
 const pending = ref<OpsPendingVerification[]>([])
 const pendingLoaded = ref(false)
 const pendingNotes = ref<Record<string, string>>({})
+
+const comments = ref<OpsCommentReview[]>([])
+const commentsLoaded = ref(false)
+const commentNotes = ref<Record<string, string>>({})
 
 const SOURCE_LABEL: Record<OpsCaseSourceKind, string> = {
   settlement_blocked: '对账阻断',
@@ -154,6 +159,28 @@ async function overridePending(row: OpsPendingVerification, status: 'passed' | '
   }
 }
 
+async function refreshComments(): Promise<void> {
+  const result = await grassland.listOpsCommentReviews()
+  if (result) comments.value = [...result.items]
+  commentsLoaded.value = true
+}
+
+async function reviewComment(row: OpsCommentReview, decision: 'confirmed' | 'violation'): Promise<void> {
+  const note = (commentNotes.value[row.submissionId] || '').trim()
+  if (decision === 'violation' && !note) {
+    say('判定违规必须填写原因', true)
+    return
+  }
+  const result = await grassland.reviewOpsComment(row.submissionId, decision, note || undefined)
+  if (result) {
+    commentNotes.value[row.submissionId] = ''
+    say(decision === 'violation' ? '已判定违规，商家侧将看到标记' : '已复核确认无问题')
+    await refreshComments()
+  } else {
+    say(grassland.error.value || '评论复核失败', true)
+  }
+}
+
 onMounted(refreshCases)
 
 async function switchTab(next: Tab): Promise<void> {
@@ -162,6 +189,7 @@ async function switchTab(next: Tab): Promise<void> {
   grassland.clearError()
   if (next === 'dlt' && !dltLoaded.value) await refreshDlt()
   if (next === 'pending' && !pendingLoaded.value) await refreshPending()
+  if (next === 'comments' && !commentsLoaded.value) await refreshComments()
 }
 
 async function openDetail(id: string): Promise<void> {
@@ -303,6 +331,10 @@ function checksOf(row: OpsPendingVerification) {
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'pending' }"
         :aria-selected="tab === 'pending'" @click="switchTab('pending')"
       >待判定核验</button>
+      <button
+        type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'comments' }"
+        :aria-selected="tab === 'comments'" @click="switchTab('comments')"
+      >评论复核</button>
     </nav>
 
     <p v-if="grassland.error.value" class="ops-alert ops-err" role="alert">{{ grassland.error.value }}</p>
@@ -458,6 +490,50 @@ function checksOf(row: OpsPendingVerification) {
       </section>
     </div>
 
+    <!-- ---------- 评论复核（之九遗留清偿） ---------- -->
+    <div v-if="tab === 'comments'" class="ops-panel">
+      <div class="ops-filters">
+        <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshComments">刷新</button>
+      </div>
+      <p class="ops-hint">
+        评论提交时内容安全词库存疑（low/medium，未达拦截线）的条目。复核结论独立记录：
+        判违规只在商家交付物列表打标记（平台内容安全 ≠ 业务验收，接不接受仍由商家决定）。
+      </p>
+      <p v-if="commentsLoaded && comments.length === 0" class="ops-hint">当前没有待复核的评论。</p>
+
+      <section v-for="row in comments" :key="row.submissionId" class="ops-item">
+        <div class="ops-item-head">
+          <strong>{{ row.taskTitle }}</strong>
+          <span class="ops-pos">推荐官 <code>{{ shortId(row.recommenderAccountId) }}</code> · {{ row.platform || '-' }}</span>
+        </div>
+        <dl class="ops-meta">
+          <div><dt>评论文本</dt><dd class="ops-comment-text">{{ row.commentText }}</dd></div>
+          <div><dt>词库命中</dt><dd>{{ row.findings.map((f) => `${f.category}(${f.severity})`).join('、') || '-' }}</dd></div>
+          <div><dt>交付状态</dt><dd>{{ row.submissionStatus }}</dd></div>
+          <div><dt>提交时间</dt><dd>{{ time(row.submittedAt) }}</dd></div>
+        </dl>
+        <div class="ops-actions ops-review-actions">
+          <input
+            v-model="commentNotes[row.submissionId]"
+            class="ops-review-note"
+            type="text"
+            maxlength="500"
+            placeholder="复核备注（判违规必填）"
+          />
+          <button
+            type="button"
+            :disabled="grassland.loading.value"
+            @click="reviewComment(row, 'confirmed')"
+          >确认无问题</button>
+          <button
+            type="button"
+            class="ops-danger"
+            :disabled="grassland.loading.value"
+            @click="reviewComment(row, 'violation')"
+          >判违规</button>
+        </div>
+      </section>
+    </div>
     <!-- ---------- 详情抽屉 ---------- -->
     <div
       v-if="detail"
