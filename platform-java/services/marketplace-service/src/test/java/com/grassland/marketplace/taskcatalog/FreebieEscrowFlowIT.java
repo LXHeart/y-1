@@ -76,18 +76,152 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 
     // ---------- 发布契约（XOR + funding 闸门） ----------
 
+    // ---------- 任务书 #46 组合模式：bounty + deposit 可同设 ----------
+
     @Test
-    void freebieAndBountyBothSetRejected() {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("organizationId", UUID.randomUUID().toString());
-        body.put("title", "混合资金任务");
-        body.put("bountyCents", 500L);
-        body.put("freebieDepositCents", 100L);
+    void combinedBountyAndDepositPublishes() {
+        String org = UUID.randomUUID().toString();
         client().post().uri("/api/tasks")
-                .header(H, sign(UUID.randomUUID().toString(), "merchant",
-                        (String) body.get("organizationId"), "finance_transaction"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
-                .exchange().expectStatus().isBadRequest();
+                .header(H, sign(UUID.randomUUID().toString(), "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("organizationId", org, "title", "组合资金任务",
+                        "bountyCents", 500L, "freebieDepositCents", 100L))
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.bountyCents").isEqualTo(500L)
+                .jsonPath("$.data.freebieDepositCents").isEqualTo(100L);
+    }
+
+    @Test
+    void ladderWithDepositStillRejected() {
+        // 任务书 #46 D2：XOR 收窄为阶梯 × 押金（D-02 阶梯只对 bounty 腿定义）
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> ladder = Map.of("policyVersion", "ladder-v1", "metricKey", "likes",
+                "tiers", List.of(Map.of("threshold", 100, "payoutCents", 5000L)));
+        client().post().uri("/api/tasks")
+                .header(H, sign(UUID.randomUUID().toString(), "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("organizationId", org, "title", "阶梯押金任务",
+                        "bountyCents", 500L, "freebieDepositCents", 100L,
+                        "requirements", Map.of("commissionLadder", ladder)))
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("阶梯佣金不能与霸王餐押金同时启用");
+    }
+
+    @Test
+    void combinedAcceptReservesBothLegs() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishCombinedTask(merchant, org, 500L, 100L);
+        String app = apply(recommender, task);
+
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), eq(recommender)))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.freebieReserve(eq(org), eq(app), eq(100L), eq(recommender), eq(merchant)))
+                .thenReturn(Mono.just(ReserveResult.reserved(100L)));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        // 任务书 #46 D3：两腿顺序预留（金额取自 task_application 冻结快照，非 Saga 单值）
+        verify(financeClient).reserve(org, app, 500L, recommender);
+        verify(financeClient).freebieReserve(org, app, 100L, recommender, merchant);
+        TaskApplication accepted = applicationRepo.findById(app).block();
+        assertThat(accepted.bountyCents()).isEqualTo(500L);
+        assertThat(accepted.freebieDepositCents()).isEqualTo(100L);
+    }
+
+    @Test
+    void combinedDepositLegFailureRollsBackBountyLeg() {
+        // D3：后腿余额不足 → 就地回滚已成功 bounty 腿，回 insufficient，无部分预留
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishCombinedTask(merchant, org, 500L, 100L);
+        String app = apply(recommender, task);
+
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), eq(recommender)))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.release(org, app)).thenReturn(Mono.empty());
+        when(financeClient.freebieReserve(eq(org), eq(app), eq(100L), eq(recommender), eq(merchant)))
+                .thenReturn(Mono.just(ReserveResult.insufficientFunds()));
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "compensated");
+
+        verify(financeClient).release(org, app);
+        verify(financeClient, never()).freebieRefund(org, app);
+        assertThat(appStatus(app)).isEqualTo("pending");
+    }
+
+    @Test
+    void combinedConfirmRefundsDepositAndCapturesBounty() {
+        // D4：结算双腿——押金退推荐官 + 赏金 capture
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishCombinedTask(merchant, org, 500L, 100L);
+        String app = apply(recommender, task);
+
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), eq(recommender)))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.freebieReserve(eq(org), eq(app), eq(100L), eq(recommender), eq(merchant)))
+                .thenReturn(Mono.just(ReserveResult.reserved(100L)));
+        when(financeClient.freebieRefund(org, app)).thenReturn(Mono.empty());
+        when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        submit(recommender, task, app);
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitSettlement(merchant, task, app, "settled");
+
+        verify(financeClient, timeout(3_000)).freebieRefund(org, app);
+        verify(financeClient, timeout(3_000)).capture(org, app);
+        assertThat(outboxCountForApp("EngagementSettled", app)).isEqualTo(1);
+    }
+
+    @Test
+    void combinedCancelRefundsBothLegsWithDirectionBoth() {
+        // D5：商家取消两腿都退，refundDirection=both
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishCombinedTask(merchant, org, 500L, 100L);
+        String app = apply(recommender, task);
+
+        when(financeClient.reserve(eq(org), eq(app), eq(500L), eq(recommender)))
+                .thenReturn(Mono.just(ReserveResult.reserved(500L)));
+        when(financeClient.freebieReserve(eq(org), eq(app), eq(100L), eq(recommender), eq(merchant)))
+                .thenReturn(Mono.just(ReserveResult.reserved(100L)));
+        when(financeClient.freebieRefund(org, app)).thenReturn(Mono.empty());
+        when(financeClient.release(org, app)).thenReturn(Mono.empty());
+
+        client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isAccepted();
+        awaitReservation(merchant, task, app, "accepted");
+
+        client().post().uri("/api/tasks/" + task + "/cancel")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", taskVersion(task)))
+                .exchange().expectStatus().isOk();
+
+        verify(financeClient, timeout(3_000)).freebieRefund(org, app);
+        verify(financeClient, timeout(3_000)).release(org, app);
+        assertThat(appStatus(app)).isEqualTo("refunded");
+        assertThat(outboxPayloadFieldForApp("EngagementRefundedOnCancel", app, "refundDirection"))
+                .isEqualTo("both");
     }
 
     @Test
@@ -284,6 +418,21 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
     }
 
     // ---------- helpers ----------
+
+    private String publishCombinedTask(String merchant, String org, long bountyCents, long depositCents) {
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("organizationId", org, "title", "组合资金任务",
+                        "bountyCents", bountyCents, "freebieDepositCents", depositCents))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+        db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()) "
+                        + "WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId).then().block();
+        return taskId;
+    }
 
     private String publishFreebieTask(String merchant, String org, long depositCents) {
         Map<String, Object> resp = client().post().uri("/api/tasks")

@@ -106,35 +106,59 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     public ReserveResult reserveFunds(AcceptanceInput input) {
         log.info("reserveFunds START org={} ref={} amount={}", input.organizationId(), input.applicationId(), input.amountCents());
         try {
-            // 收款/出资方从报名记录现查，而不是加进 AcceptanceInput——workflow 入参变更会影响在途实例的反序列化，
-            // 而这里本来就要读库，多取一个字段是零成本。beginAcceptance 已按 claim 时金额刷新快照（ADR-D12）。
+            // 收款/出资方与两腿金额从报名记录现查（claim 时 beginAcceptance 已刷新快照，ADR-D12 D7 pinning），
+            // 而不是加进 AcceptanceInput——workflow 入参变更会影响在途实例的反序列化，而这里本来就要读库。
+            // 任务书 #46 组合模式：bounty 腿（商家预留）与 freebie 腿（推荐官预付押金）顺序执行，
+            // 后腿余额不足时前腿已成功 → 就地回滚前腿（finance 端点幂等）再回 insufficient，
+            // 让 compensation 无部分预留可退；瞬态失败抛异常由 Temporal 整体重试（两腿幂等键=engagementRef）。
             TaskApplication app = apps.findById(input.applicationId()).block();
             if (app == null) {
                 throw new IllegalStateException("报名不存在: " + input.applicationId());
             }
-            ReserveResult r;
-            if (app.freebieDepositCents() > 0) {
-                // ADR-D12：霸王餐押金方向——从推荐官钱包预付托管（金额取 input.amountCents = claim 时押金）。
-                // taskOwner 供 finance Compensated 双方通知；任务缺失时置 null（finance 端可空防御）。
-                Task task = tasks.findById(input.taskId()).block();
-                String taskOwner = task == null ? null : task.ownerAccountId();
-                r = finance.freebieReserve(input.organizationId(), input.applicationId(),
-                        input.amountCents(), app.recommenderAccountId(), taskOwner).block();
-            } else {
-                String payee = app.recommenderAccountId();
-                int commissionBonusBps = app.commissionBonusBpsAtAccept() == null
-                        ? 0 : app.commissionBonusBpsAtAccept();
-                r = commissionBonusBps == 0
-                        ? finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee).block()
-                        : finance.reserve(input.organizationId(), input.applicationId(), input.amountCents(), payee,
-                                commissionBonusBps).block();
+            long bounty = app.bountyCents();
+            long deposit = app.freebieDepositCents();
+            boolean bountyReserved = false;
+            if (bounty > 0) {
+                ReserveResult bountyResult = reserveBountyLeg(input, app, bounty);
+                if (!bountyResult.reserved()) {
+                    return ReserveResult.insufficientFunds();
+                }
+                bountyReserved = true;
             }
+            if (deposit > 0) {
+                ReserveResult depositResult = reserveFreebieLeg(input, app, deposit);
+                if (!depositResult.reserved()) {
+                    if (bountyReserved) {
+                        finance.release(input.organizationId(), input.applicationId()).block();
+                    }
+                    return ReserveResult.insufficientFunds();
+                }
+            }
+            ReserveResult r = ReserveResult.reserved(bounty + deposit);
             log.info("reserveFunds RESULT {}", r);
             return r;
         } catch (RuntimeException e) {
             log.error("reserveFunds FAILED ref={}", input.applicationId(), e);
             throw e;
         }
+    }
+
+    private ReserveResult reserveBountyLeg(AcceptanceInput input, TaskApplication app, long bounty) {
+        String payee = app.recommenderAccountId();
+        int commissionBonusBps = app.commissionBonusBpsAtAccept() == null
+                ? 0 : app.commissionBonusBpsAtAccept();
+        return commissionBonusBps == 0
+                ? finance.reserve(input.organizationId(), input.applicationId(), bounty, payee).block()
+                : finance.reserve(input.organizationId(), input.applicationId(), bounty, payee,
+                        commissionBonusBps).block();
+    }
+
+    /** ADR-D12：霸王餐押金方向——从推荐官钱包预付托管；taskOwner 供 finance Compensated 双方通知。 */
+    private ReserveResult reserveFreebieLeg(AcceptanceInput input, TaskApplication app, long deposit) {
+        Task task = tasks.findById(input.taskId()).block();
+        String taskOwner = task == null ? null : task.ownerAccountId();
+        return finance.freebieReserve(input.organizationId(), input.applicationId(),
+                deposit, app.recommenderAccountId(), taskOwner).block();
     }
 
     @Override
@@ -171,13 +195,17 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     public void compensateAcceptance(AcceptanceInput input, ReserveResult reserve, String reason) {
         if (reserve.reserved()) {
             // 生命周期端点幂等：已终态(409)/不存在(404) 由 client 映射为成功；瞬态失败抛异常→Temporal 重试本 activity。
-            // 跨服务调用，不进本地事务（与本地 revertReserving+outbox 原子性正交）。按资金来源分支退还（ADR-D12）：
-            // freebie 押金退回推荐官钱包（激活失败不是推荐官的失败），bounty 走既有 release 退商家。
+            // 跨服务调用，不进本地事务（与本地 revertReserving+outbox 原子性正交）。
+            // 任务书 #46 组合模式：两腿都可能已预留，按报名冻结快照各自退还——freebie 押金先退推荐官
+            // （激活失败不是推荐官的失败），bounty 再 release 退商家；无该腿时端点幂等为无害 no-op。
             TaskApplication escrowApp = apps.findById(input.applicationId()).block();
-            if (escrowApp != null && escrowApp.freebieDepositCents() > 0) {
-                finance.freebieRefund(input.organizationId(), input.applicationId()).block();
-            } else {
-                finance.release(input.organizationId(), input.applicationId()).block();
+            if (escrowApp != null) {
+                if (escrowApp.freebieDepositCents() > 0) {
+                    finance.freebieRefund(input.organizationId(), input.applicationId()).block();
+                }
+                if (escrowApp.bountyCents() > 0) {
+                    finance.release(input.organizationId(), input.applicationId()).block();
+                }
             }
         }
         TaskApplication app = apps.findById(input.applicationId()).block();

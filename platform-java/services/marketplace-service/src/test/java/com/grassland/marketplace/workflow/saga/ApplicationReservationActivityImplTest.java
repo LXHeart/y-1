@@ -137,7 +137,7 @@ class ApplicationReservationActivityImplTest {
     /** 预留时要把**收款推荐官**一并告知 finance，否则 capture 阶段无从分账（钱会停在平台账上）。 */
     @Test
     void reserveFunds_delegatesToFinanceWithPayee() {
-        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(appWithBounty("reserving", 500L)));
         when(finance.reserve(eq(ORG), eq(APP_ID), eq(500L), eq(RECOMMENDER)))
                 .thenReturn(Mono.just(ReserveResult.reserved(500)));
 
@@ -197,7 +197,7 @@ class ApplicationReservationActivityImplTest {
     void compensate_releasesAndRevertsWhenReserved() {
         when(finance.release(ORG, APP_ID)).thenReturn(Mono.empty());
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(1)));  // 事件 payload 的 taskOwnerId 现查
-        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(appWithBounty("reserving", 500L)));
         when(apps.revertReserving(APP_ID, TASK_ID)).thenReturn(Mono.just(app("pending")));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
@@ -232,9 +232,14 @@ class ApplicationReservationActivityImplTest {
         return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null, null, 0L, null, null);
     }
 
+    /** 任务书 #46：reserveFunds/compensate 金额改从报名冻结快照读——bounty 腿用例需快照带赏金。 */
+    private TaskApplication appWithBounty(String status, long bountyCents) {
+        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT, null, null, null, null, bountyCents, null, null);
+    }
+
     private TaskApplication app(String status, int commissionBonusBps) {
         return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT,
-                null, null, null, null, 0L, null, null, null, null, null, null, null,
+                null, null, null, null, 500L, null, null, null, null, null, null, null,
                 3, 1L, 2, commissionBonusBps, false);
     }
 }

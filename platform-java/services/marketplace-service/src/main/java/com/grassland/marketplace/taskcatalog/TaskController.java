@@ -257,10 +257,15 @@ public class TaskController {
                 .reduce(0, Integer::sum);
     }
 
+    /** 任务书 #46 组合模式：两腿各自退还——押金退推荐官（商家取消不是推荐官的失败），赏金 release 返商家。 */
     private Mono<Void> refundOnCancel(Task task, TaskApplication app) {
-        return app.freebieDepositCents() > 0
+        Mono<Void> freebieLeg = app.freebieDepositCents() > 0
                 ? finance.freebieRefund(task.organizationId(), app.id())
-                : finance.release(task.organizationId(), app.id());
+                : Mono.empty();
+        Mono<Void> bountyLeg = app.bountyCents() > 0
+                ? finance.release(task.organizationId(), app.id())
+                : Mono.empty();
+        return freebieLeg.then(bountyLeg);
     }
 
     /**
@@ -783,7 +788,8 @@ public class TaskController {
         payload.put("recommenderAccountId", app.recommenderAccountId());
         payload.put("taskOwnerId", task.ownerAccountId());
         payload.put("reason", "merchant_cancel");
-        payload.put("refundDirection", app.freebieDepositCents() > 0 ? "recommender" : "merchant");
+        payload.put("refundDirection", app.freebieDepositCents() > 0 && app.bountyCents() > 0 ? "both"
+                : app.freebieDepositCents() > 0 ? "recommender" : "merchant");
         String eventId = UUID.nameUUIDFromBytes(
                 ("EngagementRefundedOnCancel:" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(eventId, "EngagementRefundedOnCancel", "TaskApplication",

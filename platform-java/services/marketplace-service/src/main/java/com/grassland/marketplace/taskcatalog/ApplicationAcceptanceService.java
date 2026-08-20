@@ -127,7 +127,7 @@ public class ApplicationAcceptanceService {
         String workflowId = monetary ? "accept-" + app.id() + "-" + commandId : null;
         AcceptanceCommand proposed = new AcceptanceCommand(
                 commandId, merchant.accountId(), idempotencyKey, task.id(), app.id(), workflowId,
-                task.ownerAccountId(), task.organizationId(), TaskFunds.fundsOrZero(task),
+                task.ownerAccountId(), task.organizationId(), TaskFunds.commandAmountCents(task),
                 monetary ? "pending_dispatch" : "accepted", null, null, null, null, null);
 
         Mono<AcceptanceClaim> write = acceptanceCommands.create(proposed)
