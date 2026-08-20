@@ -99,6 +99,36 @@ class ReservationReconciliationIT extends FinanceItSupport {
                 .jsonPath("$.data.reservation.status").isEqualTo("released");
     }
 
+    /** 任务书 #46 组合模式：同 engagement 两腿并存，reconcile 对两腿各自落定（主结果取 bounty 腿）。 */
+    @Test
+    void combinedLegsReconcileBothFundsReservationAndFreebieEscrow() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1_000);
+        reserve(merchant, org, ref, 600);
+        // freebie 腿：推荐官钱包预付 100（先经真实资金流给推荐官充值）
+        fundWallet(merchant, org, recommender, 600);
+        client().post().uri("/internal/freebie/reserve")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("engagementRef", ref, "recommenderAccountId", recommender,
+                        "taskOwnerAccountId", merchant, "organizationId", org, "amountCents", 100))
+                .exchange().expectStatus().isCreated();
+
+        reconcile(org, ref, "for_merchant")
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.outcome").isEqualTo("repaired")
+                .jsonPath("$.data.reason").isEqualTo("released");
+
+        // bounty 腿 released（返商家），freebie 腿 compensated（补商家 org）
+        assertThat(reservationStatus(ref)).isEqualTo("released");
+        assertThat(escrowStatusOf(ref)).isEqualTo("compensated");
+    }
+
     @Test
     void missingReservationIsExplicitAndDoesNotReturn404() {
         String org = UUID.randomUUID().toString();
@@ -187,6 +217,31 @@ class ReservationReconciliationIT extends FinanceItSupport {
         client().post().uri("/api/finance/reservations/" + ref + "/release")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
                 .exchange().expectStatus().isOk();
+    }
+
+    /** 走真实资金流给推荐官钱包充值：商家预留→capture 分账入推荐官（镜像 FreebieEscrowControllerIT）。 */
+    private void fundWallet(String merchant, String org, String recommender, long amount) {
+        String fundingRef = "eng-" + UUID.randomUUID();
+        credit(merchant, org, amount + 400);
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("engagementRef", fundingRef, "amountCents", amount,
+                        "payeeAccountId", recommender))
+                .exchange().expectStatus().isCreated();
+        client().post().uri("/api/finance/reservations/" + fundingRef + "/capture")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isOk();
+    }
+
+    private String reservationStatus(String ref) {
+        return db.sql("SELECT status FROM funds_reservation WHERE engagement_ref = :ref")
+                .bind("ref", ref).map(row -> row.get("status", String.class)).one().block();
+    }
+
+    private String escrowStatusOf(String ref) {
+        return db.sql("SELECT status FROM freebie_escrow WHERE engagement_ref = :ref")
+                .bind("ref", ref).map(row -> row.get("status", String.class)).one().block();
     }
 
     private long balanceOf(String org) {

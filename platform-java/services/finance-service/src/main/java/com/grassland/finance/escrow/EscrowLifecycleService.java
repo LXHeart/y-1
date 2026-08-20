@@ -76,13 +76,19 @@ public class EscrowLifecycleService {
 				default -> Mono.error(new FinanceException(400, "未知终局判决"));
 			};
 		})
-				// ADR-D12：无 funds_reservation 时回落到霸王餐押金对账（freebie 任务没有商家预留，
-				// 归因矩阵反向：for_merchant → 补偿商家、for_recommender → 退推荐官）。调用方零改动。
+				// 任务书 #46 组合模式：一个 engagement 两腿并存（funds_reservation + freebie_escrow），
+				// bounty 腿对账后继续对 freebie 腿（归因矩阵反向：for_merchant → 补偿商家、
+				// for_recommender → 退推荐官）；freebie 腿缺失/已终态由其 reconcile 幂等语义吸收
+				// （missing / verified），主结果仍取 bounty 腿。
+				.flatMap(bountyResult -> freebies
+						.reconcile(organizationId, engagementRef, finalDecision)
+						.thenReturn(bountyResult))
+				// ADR-D12：无 funds_reservation 时整体回落到霸王餐押金对账（freebie 任务没有商家预留）。
 				// 两表皆缺保持既有契约 reason=reservation_missing（ReservationReconciliationIT 锁定）。
-				.switchIfEmpty(Mono.defer(() -> freebies.reconcile(organizationId, engagementRef, finalDecision))
+				.switchIfEmpty(Mono.defer(() -> freebies.reconcile(organizationId, engagementRef, finalDecision)
 						.map(outcome -> "missing".equals(outcome.outcome())
 								? new ReconciliationResult("missing", "reservation_missing", null)
-								: new ReconciliationResult(outcome.outcome(), outcome.reason(), null)));
+								: new ReconciliationResult(outcome.outcome(), outcome.reason(), null))));
 	}
 
 	private Mono<ReconciliationResult> reconcileForMerchant(FundsReservation reservation) {
