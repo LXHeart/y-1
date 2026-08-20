@@ -395,3 +395,7 @@ homepage:
     validity-hours:
       60s: ${HOMEPAGE_HOT_ITEMS_VALIDITY_HOURS_60S:24}
       alapi: ${HOMEPAGE_HOT_ITEMS_VALIDITY_HOURS_ALAPI:6}
+    # 历史快照保留窗口与归档节流（缺口清偿之八/V40）：同 provider 窗口内只归档一份——
+    # alapi per-token 刷新下多用户打出近似同榜，不节流会把 occurrences 放大一个数量级；0=关闭节流。
+    snapshot-retention-days: ${HOMEPAGE_HOT_ITEMS_SNAPSHOT_RETENTION_DAYS:14}
+    snapshot-min-interval-seconds: ${HOMEPAGE_HOT_ITEMS_SNAPSHOT_MIN_INTERVAL_SECONDS:300}
