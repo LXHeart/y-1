@@ -29,4 +29,10 @@ public final class AnalyticsModels {
     public record RecommenderReport(String recommenderAccountId, int conversions,
                                     long attributedRevenueCents, long recommenderRevenueCents) {}
     public record EventRegistration(Event event, boolean created) {}
+
+    /** 营销看板时间序列单桶（PRD §2.4 按日/周/月）：bucket 为北京时间桶起标签（日/周=YYYY-MM-DD，周为周一；月=YYYY-MM-DD 月首）。 */
+    public record SeriesBucket(
+            String bucket, int orders, int paidOrders, int redeemedOrders, int refundedOrders,
+            long grossGmvCents, long refundedGmvCents, long merchantRevenueCents,
+            long recommenderRevenueCents, int exposures, int interactions, int conversions) {}
 }

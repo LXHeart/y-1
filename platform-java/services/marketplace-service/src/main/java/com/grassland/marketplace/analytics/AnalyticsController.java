@@ -14,6 +14,9 @@ import com.grassland.marketplace.taskcatalog.TaskResourceAuthorization;
 import com.grassland.reporting.ReportFormat;
 import com.grassland.reporting.ReportRenderer;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.LinkedHashMap;
@@ -214,6 +217,131 @@ public class AnalyticsController {
         body.put("settledBountyCents", report.settledBountyCents()); body.put("attribution", report.attribution());
         body.put("advice", advice); body.put("alerts", alerts);
         return body;
+    }
+
+    /** 营销看板时间序列（商家视角，PRD §2.4 按日/周/月）。 */
+    @GetMapping("/api/analytics/series")
+    public Mono<ResponseEntity<Map<String, Object>>> seriesMerchant(
+            @RequestParam String organizationId, @RequestParam(required = false) String storeId,
+            @RequestParam Instant from, @RequestParam Instant to,
+            @RequestParam(defaultValue = "day") String granularity, ServerHttpRequest request) {
+        SeriesQuery query = SeriesQuery.parse(organizationId, blank(storeId), from, to, granularity);
+        return callers.requireUser(request)
+                .flatMap(caller -> authorization.requireScope(caller, organizationId, blank(storeId), "staff")
+                        .then(seriesResponse(query)));
+    }
+
+    /** 营销看板时间序列（运营视角，FINANCE/RISK）。 */
+    @GetMapping("/api/admin/analytics/series")
+    public Mono<ResponseEntity<Map<String, Object>>> seriesAdmin(
+            @RequestParam String organizationId, @RequestParam(required = false) String storeId,
+            @RequestParam Instant from, @RequestParam Instant to,
+            @RequestParam(defaultValue = "day") String granularity, ServerHttpRequest request) {
+        SeriesQuery query = SeriesQuery.parse(organizationId, blank(storeId), from, to, granularity);
+        return callers.requireRole(request, BackendRole.FINANCE, BackendRole.RISK)
+                .then(seriesResponse(query));
+    }
+
+    private Mono<ResponseEntity<Map<String, Object>>> seriesResponse(SeriesQuery query) {
+        return analytics.series(query.organizationId(), query.storeId(), query.from(), query.to(),
+                        query.sqlField())
+                .collectList()
+                .map(found -> ResponseEntity.ok(success(seriesBody(query, found))));
+    }
+
+    private static Map<String, Object> seriesBody(SeriesQuery query, List<AnalyticsModels.SeriesBucket> found) {
+        Map<String, AnalyticsModels.SeriesBucket> byBucket = new LinkedHashMap<>();
+        found.forEach(bucket -> byBucket.put(bucket.bucket(), bucket));
+        List<Map<String, Object>> buckets = new ArrayList<>();
+        for (LocalDate cursor = query.firstBucket(); !cursor.isAfter(query.lastBucket());
+                cursor = query.next(cursor)) {
+            String label = cursor.toString();
+            AnalyticsModels.SeriesBucket bucket = byBucket.get(label);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("bucket", label);
+            row.put("orders", bucket == null ? 0 : bucket.orders());
+            row.put("paidOrders", bucket == null ? 0 : bucket.paidOrders());
+            row.put("redeemedOrders", bucket == null ? 0 : bucket.redeemedOrders());
+            row.put("refundedOrders", bucket == null ? 0 : bucket.refundedOrders());
+            row.put("grossGmvCents", bucket == null ? 0L : bucket.grossGmvCents());
+            row.put("refundedGmvCents", bucket == null ? 0L : bucket.refundedGmvCents());
+            row.put("netGmvCents", bucket == null ? 0L
+                    : bucket.grossGmvCents() - bucket.refundedGmvCents());
+            row.put("merchantRevenueCents", bucket == null ? 0L : bucket.merchantRevenueCents());
+            row.put("recommenderRevenueCents", bucket == null ? 0L : bucket.recommenderRevenueCents());
+            row.put("exposures", bucket == null ? 0 : bucket.exposures());
+            row.put("interactions", bucket == null ? 0 : bucket.interactions());
+            row.put("conversions", bucket == null ? 0 : bucket.conversions());
+            buckets.add(row);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("organizationId", query.organizationId());
+        if (query.storeId() != null) body.put("storeId", query.storeId());
+        body.put("granularity", query.granularity());
+        body.put("from", query.from().toString());
+        body.put("to", query.to().toString());
+        body.put("buckets", buckets);
+        return body;
+    }
+
+    /** 序列查询参数：粒度解析、窗口校验（from < to、桶数上限）与北京时间桶轴遍历。 */
+    record SeriesQuery(String organizationId, String storeId, Instant from, Instant to,
+                       String granularity, LocalDate firstBucket, LocalDate lastBucket) {
+        private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+        private static final int MAX_BUCKETS = 400;
+
+        static SeriesQuery parse(String organizationId, String storeId, Instant from, Instant to,
+                String granularity) {
+            requireUuid(organizationId, "organizationId");
+            if (!java.util.Set.of("day", "week", "month").contains(granularity)) {
+                throw new MarketplaceException(400, "granularity 仅支持 day/week/month");
+            }
+            if (from == null || to == null) {
+                throw new MarketplaceException(400, "时间序列必须提供 from 与 to");
+            }
+            if (!from.isBefore(to)) {
+                throw new MarketplaceException(400, "to 必须晚于 from");
+            }
+            LocalDate first = from.atZone(ZONE).toLocalDate();
+            // [from, to) 左闭右开：最后一个可能含数据的桶是 to-1ns 所在日期（to 恰为当地零点时归属前一天）。
+            LocalDate last = to.minusNanos(1).atZone(ZONE).toLocalDate();
+            int count = bucketCount(first, last, granularity);
+            if (count > MAX_BUCKETS) {
+                throw new MarketplaceException(400, "时间跨度的桶数超过上限（" + MAX_BUCKETS + "）");
+            }
+            return new SeriesQuery(organizationId, storeId, from, to, granularity,
+                    truncate(first, granularity), truncate(last, granularity));
+        }
+
+        String sqlField() { return granularity; }
+
+        LocalDate next(LocalDate cursor) {
+            return switch (granularity) {
+                case "month" -> cursor.plusMonths(1);
+                case "week" -> cursor.plusWeeks(1);
+                default -> cursor.plusDays(1);
+            };
+        }
+
+        /** 对齐到粒度桶起点（周对齐周一，与 Postgres date_trunc('week') 一致）。 */
+        private static LocalDate truncate(LocalDate date, String granularity) {
+            return switch (granularity) {
+                case "month" -> date.withDayOfMonth(1);
+                case "week" -> date.with(java.time.DayOfWeek.MONDAY);
+                default -> date;
+            };
+        }
+
+        private static int bucketCount(LocalDate first, LocalDate last, String granularity) {
+            long count = switch (granularity) {
+                case "month" -> java.time.temporal.ChronoUnit.MONTHS.between(truncate(first, granularity),
+                        truncate(last, granularity)) + 1;
+                case "week" -> java.time.temporal.ChronoUnit.WEEKS.between(truncate(first, granularity),
+                        truncate(last, granularity)) + 1;
+                default -> java.time.temporal.ChronoUnit.DAYS.between(first, last) + 1;
+            };
+            return count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count;
+        }
     }
 
     private Mono<Void> validateTaskScope(RecordEventRequest body) {

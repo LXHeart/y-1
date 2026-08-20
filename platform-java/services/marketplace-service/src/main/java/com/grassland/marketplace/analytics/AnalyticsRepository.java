@@ -193,6 +193,68 @@ public class AnalyticsRepository {
                 value(row.get("attributed", Long.class)), value(row.get("revenue", Long.class)))).all();
     }
 
+    /**
+     * 营销看板时间序列（PRD §2.4 按日/周/月）：consumer_order（按 created_at）与归因事件
+     * （按 occurred_at）在 {@code field}（day/week/month）粒度上按北京时间切桶对齐；
+     * 只返回有数据的桶，空桶补零由 controller 层完成。settled bounty 不入序列（结算时间与
+     * 经营时间轴错位，仍只在总量报表体现）。
+     */
+    public Flux<AnalyticsModels.SeriesBucket> series(
+            String organizationId, String storeId, Instant from, Instant to, String field) {
+        var spec = db.sql("""
+                WITH order_series AS (
+                    SELECT to_char(date_trunc(CAST(:field AS text), created_at AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM-DD') bucket,
+                           COUNT(*)::int orders,
+                           COUNT(*) FILTER (WHERE status IN ('paid','redeeming','redeemed','refunded'))::int paid,
+                           COUNT(*) FILTER (WHERE status='redeemed')::int redeemed,
+                           COUNT(*) FILTER (WHERE status='refunded')::int refunded,
+                           COALESCE(SUM(price_cents) FILTER (WHERE status IN ('paid','redeeming','redeemed','refunded')),0)::bigint gross,
+                           COALESCE(SUM(price_cents) FILTER (WHERE status='refunded'),0)::bigint refund_gmv,
+                           COALESCE(SUM(merchant_amount_cents) FILTER (WHERE status <> 'refunded'),0)::bigint merchant_revenue,
+                           COALESCE(SUM(recommender_amount_cents) FILTER (WHERE status <> 'refunded'),0)::bigint recommender_revenue
+                    FROM consumer_order
+                    WHERE organization_id=CAST(:org AS uuid)
+                      AND (:store IS NULL OR store_id=CAST(:store AS uuid))
+                      AND created_at >= :fromAt AND created_at < :toAt
+                    GROUP BY 1
+                ), event_series AS (
+                    SELECT to_char(date_trunc(CAST(:field AS text), occurred_at AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM-DD') bucket,
+                           COUNT(*) FILTER (WHERE event_type='exposure')::int exposures,
+                           COUNT(*) FILTER (WHERE event_type='interaction')::int interactions,
+                           COUNT(*) FILTER (WHERE event_type='conversion')::int conversions
+                    FROM marketing_attribution_event
+                    WHERE organization_id=CAST(:org AS uuid)
+                      AND (:store IS NULL OR store_id=CAST(:store AS uuid))
+                      AND occurred_at >= :fromAt AND occurred_at < :toAt
+                    GROUP BY 1
+                )
+                SELECT COALESCE(o.bucket, e.bucket) bucket,
+                       COALESCE(o.orders, 0)::int orders,
+                       COALESCE(o.paid, 0)::int paid,
+                       COALESCE(o.redeemed, 0)::int redeemed,
+                       COALESCE(o.refunded, 0)::int refunded,
+                       COALESCE(o.gross, 0)::bigint gross,
+                       COALESCE(o.refund_gmv, 0)::bigint refund_gmv,
+                       COALESCE(o.merchant_revenue, 0)::bigint merchant_revenue,
+                       COALESCE(o.recommender_revenue, 0)::bigint recommender_revenue,
+                       COALESCE(e.exposures, 0)::int exposures,
+                       COALESCE(e.interactions, 0)::int interactions,
+                       COALESCE(e.conversions, 0)::int conversions
+                FROM order_series o FULL JOIN event_series e ON o.bucket = e.bucket
+                ORDER BY bucket
+                """).bind("org", organizationId).bind("field", field);
+        spec = bindNullable(spec, "store", storeId);
+        spec = spec.bind("fromAt", from.atOffset(ZoneOffset.UTC)).bind("toAt", to.atOffset(ZoneOffset.UTC));
+        return spec.map(row -> new AnalyticsModels.SeriesBucket(
+                row.get("bucket", String.class),
+                integer(row.get("orders", Integer.class)), integer(row.get("paid", Integer.class)),
+                integer(row.get("redeemed", Integer.class)), integer(row.get("refunded", Integer.class)),
+                value(row.get("gross", Long.class)), value(row.get("refund_gmv", Long.class)),
+                value(row.get("merchant_revenue", Long.class)), value(row.get("recommender_revenue", Long.class)),
+                integer(row.get("exposures", Integer.class)), integer(row.get("interactions", Integer.class)),
+                integer(row.get("conversions", Integer.class)))).all();
+    }
+
     static void validate(RecordEventRequest request) {
         if (request == null || blank(request.idempotencyKey()) || blank(request.eventType()) || blank(request.organizationId())) {
             throw new IllegalArgumentException("idempotencyKey、eventType、organizationId 不能为空");
