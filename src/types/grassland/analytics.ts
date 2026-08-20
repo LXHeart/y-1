@@ -98,3 +98,38 @@ export interface AnalyticsQuery {
   from?: string
   to?: string
 }
+
+export type AnalyticsGranularity = 'day' | 'week' | 'month'
+
+/** 营销看板时间序列单桶（PRD §2.4 按日/周/月）；bucket 为北京时间桶起标签（周为周一）。 */
+export interface AnalyticsSeriesBucket {
+  bucket: string
+  orders: number
+  paidOrders: number
+  redeemedOrders: number
+  refundedOrders: number
+  grossGmvCents: number
+  refundedGmvCents: number
+  netGmvCents: number
+  merchantRevenueCents: number
+  recommenderRevenueCents: number
+  exposures: number
+  interactions: number
+  conversions: number
+}
+
+export interface AnalyticsSeries {
+  organizationId: string
+  storeId?: string
+  granularity: AnalyticsGranularity
+  from: string
+  to: string
+  buckets: AnalyticsSeriesBucket[]
+}
+
+/** 序列端点要求有界窗口（from/to 必填）。 */
+export interface AnalyticsSeriesQuery extends Omit<AnalyticsQuery, 'from' | 'to'> {
+  from: string
+  to: string
+  granularity: AnalyticsGranularity
+}

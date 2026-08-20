@@ -17,7 +17,7 @@ import type {
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
   BatchOperationResponse,
   FinanceAccount,
-  AnalyticsQuery, MerchantAnalyticsDashboard,
+  AnalyticsQuery, AnalyticsSeries, AnalyticsSeriesQuery, MerchantAnalyticsDashboard,
 } from '../types/grassland'
 
 export function useGrasslandMarketplace(run: RunFn) {
@@ -27,6 +27,18 @@ export function useGrasslandMarketplace(run: RunFn) {
     if (input.from) qs.set('from', input.from)
     if (input.to) qs.set('to', input.to)
     return run(() => request<MerchantAnalyticsDashboard>(`/api/tasks/analytics?${qs}`))
+  }
+
+  /** 营销看板时间序列（PRD §2.4 按日/周/月，商家 staff 鉴权；from/to 必填有界窗口）。 */
+  const getAnalyticsSeries = (input: AnalyticsSeriesQuery) => {
+    const qs = new URLSearchParams({
+      organizationId: input.organizationId,
+      from: input.from,
+      to: input.to,
+      granularity: input.granularity,
+    })
+    if (input.storeId) qs.set('storeId', input.storeId)
+    return run(() => request<AnalyticsSeries>(`/api/analytics/series?${qs}`))
   }
   // ---------- marketplace：履约交付物 ----------
 
@@ -503,7 +515,7 @@ export function useGrasslandMarketplace(run: RunFn) {
     }))
 
   return {
-    getMerchantAnalytics,
+    getMerchantAnalytics, getAnalyticsSeries,
     submitDeliverable, listDeliverables, rejectDeliverable, runVerificationChecks,
     getTaskContext, createCreationContext, listVerificationRuns,
     createMediaUploadTicket, confirmMediaUpload, uploadEngagementAttachment, uploadAvatar,

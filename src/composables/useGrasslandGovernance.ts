@@ -22,7 +22,7 @@ import type {
   KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
   RecommenderVerificationRequest, Task,
   RiskCase, RiskCaseAction, RiskCaseDetail, RiskCaseQuery, RiskSignal, RiskSignalQuery,
-  AnalyticsQuery, BusinessAnalyticsReport, RecommenderAnalyticsReport,
+  AnalyticsQuery, AnalyticsSeries, AnalyticsSeriesQuery, BusinessAnalyticsReport, RecommenderAnalyticsReport,
 } from '../types/grassland'
 
 export function useGrasslandGovernance(run: RunFn) {
@@ -61,6 +61,13 @@ export function useGrasslandGovernance(run: RunFn) {
   const getAdminRecommenderAnalytics = (input: AnalyticsQuery) => {
     const qs = analyticsParams(input)
     return run(() => request<RecommenderAnalyticsReport[]>(`/api/admin/analytics/recommenders?${qs}`))
+  }
+
+  /** 运营侧营销看板时间序列（PRD §2.4 按日/周/月，FINANCE/RISK）。 */
+  const getAdminAnalyticsSeries = (input: AnalyticsSeriesQuery) => {
+    const qs = analyticsParams(input)
+    qs.set('granularity', input.granularity)
+    return run(() => request<AnalyticsSeries>(`/api/admin/analytics/series?${qs}`))
   }
 
   function analyticsParams(input: AnalyticsQuery): URLSearchParams {
@@ -679,7 +686,7 @@ export function useGrasslandGovernance(run: RunFn) {
 
   return {
     listRiskCases, getRiskCase, actOnRiskCase, listRiskSignals,
-    getAdminBusinessAnalytics, getAdminRecommenderAnalytics,
+    getAdminBusinessAnalytics, getAdminRecommenderAnalytics, getAdminAnalyticsSeries,
     openDispute, getDisputeRequest, startAdjudication, getAdjudication, appealDispute,
     enrollAsJudge, getMyJudgeStatus, leaveJudgePool,
     listAdminJudges, getAdminJudge, updateJudgeAdmission, castVote, finalDecision,
