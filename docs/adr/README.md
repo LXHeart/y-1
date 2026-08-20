@@ -22,6 +22,7 @@
 | [ADR-D01](D01-psp-escrow-compliance.md) | 支付、托管、分账、退款、付款、对账供应商及合规模式 | 部分采纳 | 真实支付、退款、结算、核销分账（根决策） |
 | [ADR-D02](D02-fund-model-combinations.md) | 三种任务资金模式是否组合及合法组合规则 | 已采纳 | Finance Product Policy |
 | [ADR-D03](D03-merchant-confirmation-timeout.md) | 商家确认超时、拒绝、失联、恶意拖延规则 | 已采纳 | Marketplace、Trust、Finance、Temporal |
+| [ADR-D04](D04-platform-verification-methods.md) | 各发布平台核实方法与官方数据源接入 | 部分采纳（P1 骨架） | Marketplace 核验、Intelligence 官方数据适配 |
 | [ADR-D06](D06-dispute-fund-handling.md) | 争议对已付款、已分账或已退款资金的处置 | 已采纳 | Trust、Finance |
 | [ADR-D07](D07-commerce-order-snapshot.md) | 商品/套餐、定价、库存、有效期和订单快照归属 | 已采纳 | Marketplace/Commerce |
 | [ADR-D10](D10-data-retention-redaction.md) | 数据保留、删除、导出、审计、证据脱敏和地域要求 | 已采纳（阈值 provisional） | 所有服务 |

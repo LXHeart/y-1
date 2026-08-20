@@ -80,6 +80,7 @@ const CHECK_TYPE_LABEL: Record<string, string> = {
   evidence_completeness: '凭证完整性',
   ai_visual: 'AI 视觉',
   interaction_screenshot: '互动截图核验',
+  official_data: '官方数据核验',
 }
 
 const pending = computed(() => submissions.value.find((s) => s.status === 'submitted') || null)
