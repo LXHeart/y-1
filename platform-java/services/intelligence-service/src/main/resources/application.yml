@@ -389,6 +389,17 @@ hot-items:
     base-url: ${ALAPI_BASE_URL:https://v3.alapi.cn}
     timeout-ms: ${ALAPI_TIMEOUT_MS:8000}
 
+# 官方数据源防腐层网关（P1 骨架，ADR-D04）：默认关（fail-closed——bean 不装配，内部端点回
+# configured:false，marketplace 省略 official_data 检查项）。启用需 base-url（认证网关地址，
+# 由部署侧实现官方 API 代理，契约见 ADR-D04）+ token（网关凭据，env/SOPS 注入不入库）。
+verification:
+  official:
+    gateway:
+      enabled: ${VERIFICATION_OFFICIAL_GATEWAY_ENABLED:false}
+      base-url: ${VERIFICATION_OFFICIAL_GATEWAY_BASE_URL:}
+      token: ${VERIFICATION_OFFICIAL_GATEWAY_TOKEN:}
+      timeout-ms: ${VERIFICATION_OFFICIAL_GATEWAY_TIMEOUT_MS:8000}
+
 # 任务书 #35：热点价值有效期与缓存 TTL 分离；前者决定默认是否展示，后者决定何时刷新上游。
 homepage:
   hot-items:
