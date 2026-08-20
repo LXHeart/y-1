@@ -1,19 +1,20 @@
 package com.grassland.trust.config;
 
-import java.net.URI;
-import java.util.Map;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
-import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import com.grassland.database.FlywayBootstrap;
 
 /**
- * trust DB 地基（草场 Epic 6 Slice 6A）：从 {@code DATABASE_URL} 派生 JDBC {@link DataSource} 供 Flyway 用。
- * 复刻 finance 的 {@code FinanceDataSourceConfig}，差异：条件属性 {@code trust.datasource.from-database-url}；
- * Flyway 历史表 {@code trust_flyway_schema}（与 identity/marketplace/finance 历史隔离，四服务共用 neon public schema）。
+ * 从 DATABASE_URL 派生 JDBC DataSource + 手动 Flyway（骨架单源在 platform-database，
+ * 2026-08-20 下沉；本类只声明服务方言：条件属性名 / 历史表 / locations 覆盖 / 锁口径）。
+ *
+ * <p>与 R2dbcConnectionFactoryConfig 并存：业务读写走 R2DBC，schema 迁移走 JDBC
+ * （Flyway 不支持 R2DBC）；Spring Boot FlywayAutoConfiguration 在纯 R2DBC 应用下不触发。
+ * historyTable=trust_flyway_schema；共库多服务并发迁移，transactional lock 按既有口径关闭。
  */
 @Configuration
 @ConditionalOnProperty(name = "trust.datasource.from-database-url", havingValue = "true")
@@ -21,63 +22,16 @@ public class TrustDataSourceConfig {
 
     @Bean
     DataSource dataSource(Environment env) {
-        String databaseUrl = env.getProperty("DATABASE_URL");
-        if (databaseUrl == null || databaseUrl.isBlank()) {
-            throw new IllegalStateException("trust-service needs DATABASE_URL for Flyway JDBC DataSource");
-        }
-        JdbcParts parts = parse(databaseUrl);
-        PGSimpleDataSource ds = new PGSimpleDataSource();
-        ds.setURL(parts.jdbcUrl());
-        ds.setUser(parts.user());
-        ds.setPassword(parts.password());
-        return ds;
+        return FlywayBootstrap.dataSource(env.getProperty("DATABASE_URL"), "trust-service");
     }
 
+    /** initMethod=migrate：bean 初始化即迁移；baseline 兼容非空 legacy 库。 */
     @Bean(initMethod = "migrate")
-    Flyway flyway(DataSource dataSource) {
-        return Flyway.configure()
-                .dataSource(dataSource)
-                .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
-                .locations("classpath:db/migration")
-                .table("trust_flyway_schema")
-                .baselineOnMigrate(true)
-                .baselineVersion("0")
-                .load();
+    Flyway flyway(DataSource dataSource, Environment env) {
+        return FlywayBootstrap.flyway(
+                dataSource,
+                "trust_flyway_schema",
+                "classpath:db/migration",
+                true);
     }
-
-    static JdbcParts parse(String databaseUrl) {
-        int schemeEnd = databaseUrl.indexOf("://");
-        String rest = schemeEnd >= 0 ? databaseUrl.substring(schemeEnd + 3) : databaseUrl;
-        URI uri = URI.create("http://" + rest);
-        String userInfo = uri.getRawUserInfo();
-        String user = "";
-        String password = "";
-        if (userInfo != null) {
-            int colon = userInfo.indexOf(':');
-            user = colon < 0 ? userInfo : userInfo.substring(0, colon);
-            password = colon < 0 ? "" : userInfo.substring(colon + 1);
-        }
-        String portPart = uri.getPort() > 0 ? ":" + uri.getPort() : "";
-        String queryPart = toJdbcQuery(uri.getRawQuery());
-        String jdbcUrl = "jdbc:postgresql://" + uri.getHost() + portPart + uri.getPath() + queryPart;
-        return new JdbcParts(jdbcUrl, user, password);
-    }
-
-    private static String toJdbcQuery(String rawQuery) {
-        if (rawQuery == null || rawQuery.isBlank()) {
-            return "";
-        }
-        StringBuilder qb = new StringBuilder();
-        String sep = "?";
-        for (String param : rawQuery.split("&")) {
-            if (param.startsWith("channel_binding")) {
-                continue;
-            }
-            qb.append(sep).append(param);
-            sep = "&";
-        }
-        return qb.toString();
-    }
-
-    record JdbcParts(String jdbcUrl, String user, String password) {}
 }

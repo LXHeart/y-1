@@ -23,6 +23,7 @@ dependencies {
     implementation(project(":platform-identity-assertion"))
     implementation(project(":platform-http"))
     implementation(project(":platform-messaging"))
+    implementation(project(":platform-database"))
     testImplementation(testFixtures(project(":platform-identity-assertion")))
     // GL-P3-MERCHANT-001：KYB 敏感字段（法人身份证号/银行账号）信封加密。
     implementation(project(":platform-crypto"))
