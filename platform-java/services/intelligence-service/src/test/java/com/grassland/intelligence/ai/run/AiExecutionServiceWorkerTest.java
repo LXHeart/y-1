@@ -283,8 +283,10 @@ class AiExecutionServiceWorkerTest {
 		when(budgetService.releaseReservation(reservation)).thenReturn(Mono.just(true));
 		when(compensationRepository.enqueue(eq(runId), any(UUID.class), eq("acct-1"), eq("ai_run_embedding"), any()))
 				.thenReturn(Mono.empty());
-		when(outbox.append(any())).thenReturn(Mono.empty());
-		when(compensationDispatcher.dispatchRun(runId)).thenReturn(Mono.empty());
+		// 取消竞态的两侧路径都可能走：dispose 早于补偿落盘则这两个 stub 不被调用
+		// （Mockito 严格模式会把时序差当 UnnecessaryStubbing，CI 慢 runner 两轮实测 flake）。
+		org.mockito.Mockito.lenient().when(outbox.append(any())).thenReturn(Mono.empty());
+		org.mockito.Mockito.lenient().when(compensationDispatcher.dispatchRun(runId)).thenReturn(Mono.empty());
 
 		var subscription = execution
 				.prepareExecution("acct-1", "org-1", "retrieval", CreditFeature.AI_RUN_EMBEDDING, 40, 0, true)

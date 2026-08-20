@@ -18,69 +18,74 @@ import org.testcontainers.containers.PostgreSQLContainer;
 /**
  * finance 集成测试公共基座。草场 Epic 4 Slice 4D。
  *
- * <p>单例 testcontainers postgres（全程不重启，端口稳定）；{@code finance.datasource.from-database-url=true}
- * 触发 {@code FinanceDataSourceConfig} → Flyway V1 建 finance_account/finance_outbox；{@code identity-assertion} 注入 signer。
- * 提供 {@link #sign} 签断言（镜像 MarketplaceItSupport）。
+ * <p>
+ * 单例 testcontainers
+ * postgres（全程不重启，端口稳定）；{@code finance.datasource.from-database-url=true} 触发
+ * {@code FinanceDataSourceConfig} → Flyway V1 建
+ * finance_account/finance_outbox；{@code identity-assertion} 注入 signer。 提供
+ * {@link #sign} 签断言（镜像 MarketplaceItSupport）。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class FinanceItSupport {
 
-    public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+	public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
-    static {
-        POSTGRES.start();
-    }
+	static {
+		POSTGRES.start();
+	}
 
-    @LocalServerPort
-    protected int port;
+	@LocalServerPort
+	protected int port;
 
-    @Autowired
-    protected IdentityAssertionSigner signer;
+	@Autowired
+	protected IdentityAssertionSigner signer;
 
-    @Autowired
-    protected DatabaseClient db;
+	@Autowired
+	protected DatabaseClient db;
 
-    @DynamicPropertySource
-    static void props(DynamicPropertyRegistry r) {
-        String dbUrl = "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword()
-                + "@" + POSTGRES.getHost() + ":" + POSTGRES.getMappedPort(5432) + "/" + POSTGRES.getDatabaseName();
-        r.add("finance.datasource.from-database-url", () -> "true");
-        r.add("DATABASE_URL", () -> dbUrl);
-        r.add("management.server.port", () -> "0");
-        r.add("finance.outbox.enabled", () -> "false");
-        r.add("identity-assertion.enabled", () -> "true");
-        registerServiceKeyring(r, "finance");
-    }
+	@DynamicPropertySource
+	static void props(DynamicPropertyRegistry r) {
+		String dbUrl = "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword() + "@"
+				+ POSTGRES.getHost() + ":" + POSTGRES.getMappedPort(5432) + "/" + POSTGRES.getDatabaseName();
+		r.add("finance.datasource.from-database-url", () -> "true");
+		r.add("DATABASE_URL", () -> dbUrl);
+		r.add("management.server.port", () -> "0");
+		r.add("finance.outbox.enabled", () -> "false");
+		r.add("identity-assertion.enabled", () -> "true");
+		registerServiceKeyring(r, "finance");
+	}
 
-    protected WebTestClient client() {
-        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
-    }
+	protected WebTestClient client() {
+		// responseTimeout 30s：默认 5s 在 CI 慢 runner 负载下偶发超时
+		// （MerchantBillControllerIT xlsx 导出两轮 CI 实测 flake；对齐 identity/intelligence
+		// 基座口径）。
+		return WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+				.responseTimeout(java.time.Duration.ofSeconds(30)).build();
+	}
 
-    /** 签一个带 org/tier 的断言（merchant 用于开户；其它 activeType 用于 403 场景）。 */
-    protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
-        Instant now = Instant.now();
-        return userSigner("edge-bff", "grassland-finance").sign(new IdentityAssertion(
-                accountId, activeIdentityType, "sid-" + accountId, organizationId, permissionTier,
-                "cookie-session", "level1", null, "r", "t",
-                "grassland-finance", now, now.plusSeconds(60), null, null));
-    }
+	/** 签一个带 org/tier 的断言（merchant 用于开户；其它 activeType 用于 403 场景）。 */
+	protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
+		Instant now = Instant.now();
+		return userSigner("edge-bff", "grassland-finance").sign(new IdentityAssertion(accountId, activeIdentityType,
+				"sid-" + accountId, organizationId, permissionTier, "cookie-session", "level1", null, "r", "t",
+				"grassland-finance", now, now.plusSeconds(60), null, null));
+	}
 
-    /** 签一个服务间断言（HLD 11.1 服务身份，Slice 4F）：callerKind=service + principal，带 org 上下文。 */
-    protected String signService(String organizationId, String principal) {
-        Instant now = Instant.now();
-        return serviceSigner(principal, "grassland-finance").sign(new IdentityAssertion(
-                "service:" + principal, null, null, organizationId, null,
-                "service", "internal", null, "r", "t",
-                "grassland-finance", now, now.plusSeconds(30),
-                "service", principal));
-    }
+	/**
+	 * 签一个服务间断言（HLD 11.1 服务身份，Slice 4F）：callerKind=service + principal，带 org 上下文。
+	 */
+	protected String signService(String organizationId, String principal) {
+		Instant now = Instant.now();
+		return serviceSigner(principal, "grassland-finance").sign(
+				new IdentityAssertion("service:" + principal, null, null, organizationId, null, "service", "internal",
+						null, "r", "t", "grassland-finance", now, now.plusSeconds(30), "service", principal));
+	}
 
-    /** 签一个平台后台角色断言，用于财务管理端点。 */
-    protected String signRole(String accountId, String role) {
-        Instant now = Instant.now();
-        return userSigner("edge-bff", "grassland-finance").sign(new IdentityAssertion(
-                accountId, null, "sid-" + accountId, null, null,
-                "cookie-session", "level2", now, "r", "t",
-                "grassland-finance", now, now.plusSeconds(60), null, null, role));
-    }
+	/** 签一个平台后台角色断言，用于财务管理端点。 */
+	protected String signRole(String accountId, String role) {
+		Instant now = Instant.now();
+		return userSigner("edge-bff", "grassland-finance")
+				.sign(new IdentityAssertion(accountId, null, "sid-" + accountId, null, null, "cookie-session", "level2",
+						now, "r", "t", "grassland-finance", now, now.plusSeconds(60), null, null, role));
+	}
 }
