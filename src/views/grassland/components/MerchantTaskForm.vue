@@ -54,8 +54,8 @@
     </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>赏金 ¥<input :value="form.bountyYuan" type="number" min="0" :disabled="freebieActive || !canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>霸王餐押金 ¥<input :value="form.freebieDepositYuan" type="number" min="0" :disabled="bountyActive || ladderEnabled || !canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>赏金 ¥<input :value="form.bountyYuan" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>霸王餐押金 ¥<input :value="form.freebieDepositYuan" type="number" min="0" :disabled="ladderEnabled || !canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>报名截止 <input :value="form.applicationDeadline" type="datetime-local" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
       <label>最低等级
         <select :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
@@ -101,7 +101,7 @@
       <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
       <button v-if="editingDraft || revisingTask" type="button" :disabled="loading" @click="$emit('reset-form')">取消编辑</button>
     </div>
-    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。霸王餐押金与赏金<b>二选一</b>：押金任务由推荐官报名被接受时从钱包预付进平台托管，达标（核实+确认）全额返还推荐官，未达标补偿商家。</p>
+    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。霸王餐押金可与赏金<b>组合</b>（任务书 #46）：押金由推荐官报名被接受时从钱包预付进平台托管，达标（核实+确认）全额返还推荐官，未达标补偿商家；赏金腿照常由商家出资、结算付推荐官。阶梯佣金仍不可与押金同设。</p>
   </article>
 </template>
 
@@ -148,7 +148,7 @@ const props = defineProps<{
   loading: boolean
 }>()
 
-/** XOR 交互（任务书 #22 B4）：其一 >0 时另一输入禁用，避免同时填导致后端 400。 */
+/** 任务书 #46：赏金与押金可组合（两腿独立）；仍互斥的是阶梯 × 押金（#25）。 */
 /** 任务书 #23 R6：contentForm=interaction 时展示目标链接 + 动作类型两个必填字段。 */
 /** 任务书 #25：阶梯佣金（赏金模式）与霸王餐押金互斥——freebie>0 禁用阶梯开关，阶梯启用禁用押金输入。 */
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
@@ -159,9 +159,14 @@ const ladderForm = computed<CommissionLadderFormData>(
   () => props.form.commissionLadder ?? emptyCommissionLadderForm(),
 )
 const ladderEnabled = computed(() => ladderForm.value.enabled)
-const fundingHint = computed(() => freebieActive.value
-  ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ¥${props.form.freebieDepositYuan}，达标全额返还（与赏金互斥）`
-  : '赏金模式：商家出资托管，结算时打给推荐官（与霸王餐押金互斥）')
+const fundingHint = computed(() => {
+  if (bountyActive.value && freebieActive.value) {
+    return `组合模式：赏金 ¥${props.form.bountyYuan} 由商家出资托管，押金 ¥${props.form.freebieDepositYuan} 由推荐官预付、达标全额返还（两腿独立结算）`
+  }
+  return freebieActive.value
+    ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ¥${props.form.freebieDepositYuan}，达标全额返还`
+    : '赏金模式：商家出资托管，结算时打给推荐官；可与霸王餐押金组合（押金退推荐官、赏金付推荐官）'
+})
 
 const emit = defineEmits<{
   'update:field': [field: string, value: string | number | null]

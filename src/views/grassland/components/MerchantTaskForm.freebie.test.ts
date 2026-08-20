@@ -32,33 +32,43 @@ function bountyInput(wrapper: ReturnType<typeof mountForm>) {
     && i.attributes('type') === 'number' && i.element.closest('label')?.textContent?.includes('赏金'))!
 }
 
-describe('MerchantTaskForm 霸王餐押金 XOR 交互（任务书 #22）', () => {
-  test('押金 >0 时赏金输入禁用并显示押金模式提示', () => {
+describe('MerchantTaskForm 资金组合交互（任务书 #46：赏金与押金可同设）', () => {
+  test('押金 >0 时赏金输入仍可编辑（组合放开），显示押金模式提示', () => {
     const wrapper = mountForm({ ...baseForm, freebieDepositYuan: 100 })
     const labels = wrapper.findAll('label')
     const bountyLabel = labels.find((l) => l.text().includes('赏金'))!
     const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
 
-    expect(bountyLabel.find('input').attributes('disabled')).toBeDefined()
+    expect(bountyLabel.find('input').attributes('disabled')).toBeUndefined()
     expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
     expect(wrapper.text()).toContain('霸王餐押金模式')
     expect(wrapper.text()).toContain('达标全额返还')
   })
 
-  test('赏金 >0 时押金输入禁用并显示赏金模式提示', () => {
+  test('赏金 >0 时押金输入仍可编辑，显示赏金模式提示（含可组合说明）', () => {
     const wrapper = mountForm({ ...baseForm, bountyYuan: 50 })
     const labels = wrapper.findAll('label')
     const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
 
-    expect(depositLabel.find('input').attributes('disabled')).toBeDefined()
+    expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
     expect(wrapper.text()).toContain('赏金模式')
+    expect(wrapper.text()).toContain('可与霸王餐押金组合')
   })
 
-  test('两者都为 0 时互不禁用，无资金模式提示', () => {
-    const wrapper = mountForm({ ...baseForm })
+  test('两者都 >0 时显示组合模式提示（两腿独立结算）', () => {
+    const wrapper = mountForm({ ...baseForm, bountyYuan: 50, freebieDepositYuan: 100 })
     const labels = wrapper.findAll('label')
+    const bountyLabel = labels.find((l) => l.text().includes('赏金'))!
     const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
+
+    expect(bountyLabel.find('input').attributes('disabled')).toBeUndefined()
     expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('组合模式')
+    expect(wrapper.text()).toContain('两腿独立结算')
+  })
+
+  test('两者都为 0 时无资金模式提示', () => {
+    const wrapper = mountForm({ ...baseForm })
     expect(wrapper.text()).not.toContain('霸王餐押金模式')
     void bountyInput
   })
