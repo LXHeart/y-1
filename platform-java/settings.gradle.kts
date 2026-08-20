@@ -25,6 +25,7 @@ include(
     "platform-reporting",
     "platform-messaging",
     "platform-database",
+    "platform-financial",
     "services:database-bootstrap",
     "services:edge-bff",
     "services:identity-service",

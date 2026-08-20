@@ -1,7 +1,7 @@
 package com.grassland.finance;
 
 import com.grassland.finance.event.OutboxProperties;
-import com.grassland.finance.credits.CreditsCentsPolicyProperties;
+import com.grassland.financial.CreditsCentsPolicyProperties;
 import io.r2dbc.spi.ConnectionFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -16,17 +16,17 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 @EnableConfigurationProperties({OutboxProperties.class, CreditsCentsPolicyProperties.class})
 @SpringBootApplication
 public class FinanceServiceApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(FinanceServiceApplication.class, args);
-    }
+	public static void main(String[] args) {
+		SpringApplication.run(FinanceServiceApplication.class, args);
+	}
 
-    @Bean
-    ReactiveTransactionManager financeReactiveTransactionManager(ConnectionFactory connectionFactory) {
-        return new R2dbcTransactionManager(connectionFactory);
-    }
+	@Bean
+	ReactiveTransactionManager financeReactiveTransactionManager(ConnectionFactory connectionFactory) {
+		return new R2dbcTransactionManager(connectionFactory);
+	}
 
-    @Bean
-    TransactionalOperator financeTransactionalOperator(ReactiveTransactionManager transactionManager) {
-        return TransactionalOperator.create(transactionManager);
-    }
+	@Bean
+	TransactionalOperator financeTransactionalOperator(ReactiveTransactionManager transactionManager) {
+		return TransactionalOperator.create(transactionManager);
+	}
 }

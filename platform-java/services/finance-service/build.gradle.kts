@@ -18,6 +18,7 @@ dependencies {
     implementation(project(":platform-reporting"))
     implementation(project(":platform-messaging"))
     implementation(project(":platform-database"))
+    implementation(project(":platform-financial"))
     testImplementation(testFixtures(project(":platform-identity-assertion")))
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-kafka")

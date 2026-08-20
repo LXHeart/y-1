@@ -6,11 +6,12 @@ import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.credits.CreditCharge;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
-import com.grassland.intelligence.credits.CreditsCentsPolicyProperties;
+import com.grassland.financial.CreditsCentsPolicyProperties;
 import com.grassland.intelligence.credits.InsufficientCreditsException;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
+import com.grassland.intelligence.credits.CreditsPolicyStatus;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.creationcontext.FrozenAiConfigResolver;
 import java.time.Instant;
@@ -181,7 +182,7 @@ public class AiExecutionService {
 			String runType, String priceTableVersion, UUID contextSnapshotId, boolean billablePlatformUsage) {
 
 		Optional<String> activeMoneyPolicy = billablePlatformUsage && feature != null
-				? creditsCentsPolicy.activeVersion()
+				? CreditsPolicyStatus.activeVersion(creditsCentsPolicy)
 				: Optional.empty();
 		String moneyPolicyVersion = activeMoneyPolicy.orElse(null);
 		boolean chargeRequired = billablePlatformUsage && feature != null;

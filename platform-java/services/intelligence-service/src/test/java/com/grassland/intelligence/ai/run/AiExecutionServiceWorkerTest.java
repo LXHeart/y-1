@@ -18,7 +18,7 @@ import com.grassland.intelligence.creationcontext.FrozenAiConfigResolver;
 import com.grassland.intelligence.credits.CreditCharge;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
-import com.grassland.intelligence.credits.CreditsCentsPolicyProperties;
+import com.grassland.financial.CreditsCentsPolicyProperties;
 import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import java.time.LocalDate;
@@ -77,7 +77,9 @@ class AiExecutionServiceWorkerTest {
 	@Test
 	void pricedPlatformRunReservesConvertedUsageUnderFrozenPolicy() {
 		passthroughTransactions();
-		when(creditsCentsPolicy.activeVersion()).thenReturn(Optional.of("money-v1"));
+		when(creditsCentsPolicy.status())
+				.thenReturn(com.grassland.financial.CreditsCentsPolicyProperties.Status.ACTIVE);
+		when(creditsCentsPolicy.version()).thenReturn("money-v1");
 		ProviderResolution provider = ProviderResolution.platform(UUID.randomUUID(), "qwen", "https://example.invalid",
 				"priced-model", 4, null);
 		UUID runId = UUID.randomUUID();
@@ -108,7 +110,9 @@ class AiExecutionServiceWorkerTest {
 	@Test
 	void pricedModelWithZeroEstimateStillCreatesUsageReservation() {
 		passthroughTransactions();
-		when(creditsCentsPolicy.activeVersion()).thenReturn(Optional.of("money-v1"));
+		when(creditsCentsPolicy.status())
+				.thenReturn(com.grassland.financial.CreditsCentsPolicyProperties.Status.ACTIVE);
+		when(creditsCentsPolicy.version()).thenReturn("money-v1");
 		ProviderResolution provider = ProviderResolution.platform(UUID.randomUUID(), "qwen", "https://example.invalid",
 				"priced-model", 4, null);
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
@@ -150,7 +154,7 @@ class AiExecutionServiceWorkerTest {
 		assertThat(result.allowed()).isTrue();
 		assertThat(result.context().creditCompensationRequired()).isFalse();
 		assertThat(result.context().creditsCentsPolicyVersion()).isNull();
-		verify(creditsCentsPolicy, never()).activeVersion();
+		verify(creditsCentsPolicy, never()).status();
 		verify(credits, never()).reserveUsage(any(), any(), any(), anyLong(), any());
 		verify(credits, never()).consume(any(), any(), any());
 	}
@@ -258,7 +262,9 @@ class AiExecutionServiceWorkerTest {
 		ProviderResolution provider = ProviderResolution.platform(UUID.randomUUID(), "sandbox",
 				"https://sandbox.invalid", "sandbox-embedding-v1", 4, null);
 		CountDownLatch chargeHandoffEntered = new CountDownLatch(1);
-		when(creditsCentsPolicy.activeVersion()).thenReturn(Optional.of("money-v1"));
+		when(creditsCentsPolicy.status())
+				.thenReturn(com.grassland.financial.CreditsCentsPolicyProperties.Status.ACTIVE);
+		when(creditsCentsPolicy.version()).thenReturn("money-v1");
 		doAnswer(invocation -> Flux
 				.from((Publisher<?>) invocation.getArgument(0, TransactionCallback.class).doInTransaction(null)))
 				.when(transactions).execute(any());

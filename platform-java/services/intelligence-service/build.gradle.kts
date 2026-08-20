@@ -18,6 +18,7 @@ dependencies {
     implementation(project(":platform-http"))
     implementation(project(":platform-messaging"))
     implementation(project(":platform-database"))
+    implementation(project(":platform-financial"))
     testImplementation(testFixtures(project(":platform-identity-assertion")))
     implementation(project(":platform-storage"))
     implementation(project(":platform-crypto"))
