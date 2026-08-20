@@ -40,11 +40,13 @@ final class VerificationPrompts {
      * ① 截图内容与目标帖子匹配；② 动作状态可见（已赞/已藏/已关注标记）；③ 截图账号与申报的账号标识一致。
      */
     static String buildInteraction(String taskTitle, String taskDescription, String platform,
-                                   String targetUrl, String actionType, String platformHandle) {
+                                   String targetUrl, String actionType, String platformHandle,
+                                   String commentText) {
         String action = switch (actionType == null ? "" : actionType) {
             case "like" -> "点赞";
             case "favorite" -> "收藏";
             case "follow" -> "关注";
+            case "comment" -> "评论";
             default -> "互动";
         };
         StringBuilder sb = new StringBuilder();
@@ -58,11 +60,18 @@ final class VerificationPrompts {
         }
         sb.append("互动目标链接：").append(nonNull(targetUrl)).append('\n');
         sb.append("要求的动作：已").append(action).append('\n');
-        sb.append("推荐官申报的平台账号标识：").append(nonNull(platformHandle)).append("\n\n");
-        sb.append("下面附一张推荐官上传的截图。请逐项判断：\n");
+        sb.append("推荐官申报的平台账号标识：").append(nonNull(platformHandle)).append('\n');
+        if (commentText != null && !commentText.isBlank()) {
+            sb.append("推荐官申报的评论内容：").append(commentText.trim()).append('\n');
+        }
+        sb.append("\n下面附一张推荐官上传的截图。请逐项判断：\n");
         sb.append("1. 截图内容是否与上述互动目标（帖子/账号）匹配；\n");
-        sb.append("2. 「已").append(action).append("」的动作状态是否在截图中可见（如已点亮的高亮标记）；\n");
-        sb.append("3. 执行动作的账号是否与申报的账号标识一致。\n\n");
+        sb.append("2. 「已").append(action).append("」的动作状态是否在截图中可见（如已点亮的高亮标记、评论已发出）；\n");
+        sb.append("3. 执行动作的账号是否与申报的账号标识一致。\n");
+        if (commentText != null && !commentText.isBlank()) {
+            sb.append("4. 截图中可见的评论内容是否与申报的评论内容一致（语义一致即可，不要求逐字）。\n");
+        }
+        sb.append('\n');
         sb.append("判定标准：\n");
         sb.append("- passed：三项均成立，截图是真实的已").append(action).append("证据。\n");
         sb.append("- failed：任一项明显不成立（目标不符、未").append(action).append("、账号不一致，或截图明显造假）。\n");

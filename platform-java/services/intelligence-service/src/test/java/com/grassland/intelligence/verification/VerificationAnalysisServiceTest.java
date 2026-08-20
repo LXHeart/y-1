@@ -65,7 +65,7 @@ class VerificationAnalysisServiceTest {
     void interactionPromptCarriesContextAndCriteria() {
         String prompt = VerificationPrompts.buildInteraction(
                 "给笔记点赞", null, "xiaohongshu",
-                "https://www.xiaohongshu.com/post/1", "like", "@seedhunter");
+                "https://www.xiaohongshu.com/post/1", "like", "@seedhunter", null);
 
         assertThat(prompt).contains("https://www.xiaohongshu.com/post/1");
         assertThat(prompt).contains("已点赞");
@@ -79,10 +79,36 @@ class VerificationAnalysisServiceTest {
     @DisplayName("follow/favorite 动作类型映射为中文动作词")
     void interactionPromptMapsActionTypes() {
         assertThat(VerificationPrompts.buildInteraction("t", null, null,
-                "https://www.douyin.com/video/1", "follow", "@a"))
+                "https://www.douyin.com/video/1", "follow", "@a", null))
                 .contains("已关注");
         assertThat(VerificationPrompts.buildInteraction("t", null, null,
-                "https://www.douyin.com/video/1", "favorite", "@a"))
+                "https://www.douyin.com/video/1", "favorite", "@a", null))
                 .contains("已收藏");
     }
+
+// ---------- 缺口清偿之九：评论动作与评论文本一致性判定 ----------
+
+@Test
+void interactionPromptIncludesCommentActionAndFourthCheck() {
+    String prompt = VerificationPrompts.buildInteraction(
+            "评论互动任务", null, "xiaohongshu",
+            "https://www.xiaohongshu.com/post/1", "comment", "@seedhunter",
+            "这家店的桂花拿铁真的很惊艳！");
+
+    org.assertj.core.api.Assertions.assertThat(prompt)
+            .contains("已评论")
+            .contains("推荐官申报的评论内容：这家店的桂花拿铁真的很惊艳！")
+            .contains("4. 截图中可见的评论内容是否与申报的评论内容一致");
+}
+
+@Test
+void interactionPromptWithoutCommentKeepsThreeChecks() {
+    String prompt = VerificationPrompts.buildInteraction(
+            "点赞任务", null, "douyin", "https://v.douyin.com/x", "like", "@fan", null);
+
+    org.assertj.core.api.Assertions.assertThat(prompt)
+            .contains("已点赞")
+            .doesNotContain("申报的评论内容")
+            .doesNotContain("4. 截图中可见的评论内容");
+}
 }

@@ -80,8 +80,10 @@ public class VerificationController {
         if ("interaction".equals(mode) && (targetUrl == null || actionType == null || platformHandle == null)) {
             throw new IllegalArgumentException("interaction 模式必须提供 targetUrl / actionType / platformHandle");
         }
+        // 缺口清偿之九：评论任务的申报评论文本（可选；评论核验第 4 判定项）。
+        String commentText = optionalString(body, "commentText", 500);
         return new VerificationAnalysisRequest(List.copyOf(mediaIds), taskTitle, taskDescription, platform,
-                mode, targetUrl, actionType, platformHandle);
+                mode, targetUrl, actionType, platformHandle, commentText);
     }
 
     @SuppressWarnings("unchecked")

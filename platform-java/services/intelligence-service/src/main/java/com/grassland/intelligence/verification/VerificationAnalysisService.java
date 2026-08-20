@@ -86,7 +86,8 @@ public class VerificationAnalysisService {
         }
         String prompt = request.interactionMode()
                 ? VerificationPrompts.buildInteraction(request.taskTitle(), request.taskDescription(),
-                        request.platform(), request.targetUrl(), request.actionType(), request.platformHandle())
+                        request.platform(), request.targetUrl(), request.actionType(), request.platformHandle(),
+                        request.commentText())
                 : VerificationPrompts.build(
                         request.taskTitle(), request.taskDescription(), request.platform());
         return Flux.fromIterable(request.mediaIds())

@@ -22,17 +22,30 @@ public record VerificationAnalysisRequest(
         /** interaction 模式上下文：被互动的目标链接 / 动作类型（like|favorite|follow）/ 推荐官平台账号标识。 */
         String targetUrl,
         String actionType,
-        String platformHandle) {
+        String platformHandle,
+        /** 缺口清偿之九：评论任务申报的评论文本（≤500；评论核验第 4 判定项）。 */
+        String commentText) {
 
     public VerificationAnalysisRequest {
         mediaIds = mediaIds == null ? List.of() : List.copyOf(mediaIds);
         mode = mode == null || mode.isBlank() ? "visual" : mode.trim().toLowerCase();
+        if (commentText != null && commentText.isBlank()) {
+            commentText = null;
+        }
     }
 
     /** 兼容任务书 #23 之前的四参构造调用方（既有测试）；visual 模式。 */
     public VerificationAnalysisRequest(List<UUID> mediaIds, String taskTitle,
                                        String taskDescription, String platform) {
-        this(mediaIds, taskTitle, taskDescription, platform, null, null, null, null);
+        this(mediaIds, taskTitle, taskDescription, platform, null, null, null, null, null);
+    }
+
+    /** 兼容缺口清偿之九之前的 interaction 构造调用方（既有测试）；无评论文本。 */
+    public VerificationAnalysisRequest(List<UUID> mediaIds, String taskTitle, String taskDescription,
+                                       String platform, String mode, String targetUrl, String actionType,
+                                       String platformHandle) {
+        this(mediaIds, taskTitle, taskDescription, platform, mode, targetUrl, actionType,
+                platformHandle, null);
     }
 
     public boolean interactionMode() {
