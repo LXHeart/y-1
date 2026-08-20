@@ -36,6 +36,10 @@ allprojects {
     }
 
     tasks.withType<Test>().configureEach {
+        // CI 控制台默认截断异常堆栈（只留 3 帧），跨轮 flake 根因排查需要完整帧。
+        testLogging {
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
         inputs.files(mockitoAgent)
         // IT 套件规模（intelligence 800+ 项、多 Spring 上下文缓存 + Testcontainers）已超 Gradle 默认 512m，
         // 全量运行会出现 context 解析 OOM；统一放宽到 2g。

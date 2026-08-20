@@ -217,8 +217,9 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('支付处理中')
-    // formatTime 用本地化格式渲染截止时间（12:30Z 在本地时区为 8:30 PM），锁时间部分即可
-    expect(wrapper.get('.payment-hint').text()).toContain('8:30:00')
+    // formatTime 按运行环境本地时区渲染（12:30Z 在 +08 为 8:30 PM、在 UTC 为 12:30 PM），
+    // 期望值同源计算，不写死偏移（CI runner 是 UTC）。
+    expect(wrapper.get('.payment-hint').text()).toContain(new Date('2026-08-17T12:30:00Z').toLocaleTimeString())
     expect(wrapper.get('.payment-hint').text()).toContain('超时订单将自动关闭')
     // 未超时的失败单仍如实展示后台错误（重试仍在进行）
     expect(wrapper.text()).toContain('处理暂未完成')
@@ -272,7 +273,7 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('支付正在后台重试')
-    expect(wrapper.text()).toContain('9:00:00')
+    expect(wrapper.text()).toContain(new Date('2026-08-17T13:00:00Z').toLocaleTimeString())
     expect(wrapper.text()).toContain('超时将自动关闭')
   })
 })
