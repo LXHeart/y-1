@@ -37,6 +37,7 @@ public class HomepageHotService {
     private final HotItemsAlapiService alapi;
     private final HotTopicsCacheRepository cacheRepo;
     private final HotTopicClassifier classifier;
+    private final HotItemsHistoryService history;
     @Value("${homepage.hot-items.validity-hours.60s:24}")
     private long sixtySValidityHours = 24;
     @Value("${homepage.hot-items.validity-hours.alapi:6}")
@@ -53,13 +54,15 @@ public class HomepageHotService {
             HotItems60sService sixtyS,
             HotItemsAlapiService alapi,
             HotTopicsCacheRepository cacheRepo,
-            HotTopicClassifier classifier) {
+            HotTopicClassifier classifier,
+            HotItemsHistoryService history) {
         this.homepageSettings = homepageSettings;
         this.settingsRepo = settingsRepo;
         this.sixtyS = sixtyS;
         this.alapi = alapi;
         this.cacheRepo = cacheRepo;
         this.classifier = classifier;
+        this.history = history;
     }
 
     /** accountId 可为 null（未登录）→ 用平台默认 settings（provider=60s）。 */
@@ -115,8 +118,11 @@ public class HomepageHotService {
                         return Mono.error(new IntelligenceException(502, "获取全网热点失败，请稍后再试"));
                     }
                     List<HotItemGroup> classified = classifyGroups(groups);
-                    return cacheRepo.persist(toJson(classified))
+                    String groupsJson = toJson(classified);
+                    // 历史快照归档（缺口清偿之八）：失败只影响「今天/本周」，不影响实时响应。
+                    return cacheRepo.persist(groupsJson)
                             .onErrorResume(e -> Mono.empty()) // 缓存写失败不影响响应
+                            .then(history.archive(groupsJson, fetchedAt))
                             .thenReturn(build60s(classified, fetchedAt, filter));
                 });
     }

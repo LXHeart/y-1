@@ -23,10 +23,24 @@ public class HomepageController {
 
     private final IntelligenceCallerResolver callers;
     private final HomepageHotService hotService;
+    private final HotItemsHistoryService hotHistory;
 
-    public HomepageController(IntelligenceCallerResolver callers, HomepageHotService hotService) {
+    public HomepageController(IntelligenceCallerResolver callers, HomepageHotService hotService,
+                              HotItemsHistoryService hotHistory) {
         this.callers = callers;
         this.hotService = hotService;
+        this.hotHistory = hotHistory;
+    }
+
+    /** 热点历史聚合（缺口清偿之八 / PRD §4.3 时间范围）：range=today|week，公开无鉴权（对齐 hot-items）。 */
+    @GetMapping("/api/homepage/hot-items/history")
+    public Mono<ResponseEntity<Map<String, Object>>> hotItemsHistory(
+            @RequestParam(defaultValue = "today") String range) {
+        if (!"today".equals(range) && !"week".equals(range)) {
+            throw new IntelligenceException(400, "range 仅支持 today/week");
+        }
+        return hotHistory.history(range)
+                .map(result -> ResponseEntity.ok(Map.of("success", true, "data", result)));
     }
 
     @GetMapping("/api/homepage/hot-items")

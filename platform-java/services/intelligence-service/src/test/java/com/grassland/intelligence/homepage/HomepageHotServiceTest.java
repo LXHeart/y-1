@@ -40,6 +40,7 @@ class HomepageHotServiceTest {
     private HotTopicsCacheRepository cacheRepo;
     private HotTopicClassifier classifier;
     private HomepageHotService service;
+    private HotItemsHistoryService history;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -51,7 +52,12 @@ class HomepageHotServiceTest {
         alapi = mock(HotItemsAlapiService.class);
         cacheRepo = mock(HotTopicsCacheRepository.class);
         classifier = new HotTopicClassifier(new HotTopicTaxonomy());
-        service = new HomepageHotService(homepageSettings, settingsRepo, sixtyS, alapi, cacheRepo, classifier);
+        history = org.mockito.Mockito.mock(HotItemsHistoryService.class);
+        org.mockito.Mockito.when(history.archive(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(java.time.Instant.class)))
+                .thenReturn(reactor.core.publisher.Mono.empty());
+        service = new HomepageHotService(homepageSettings, settingsRepo, sixtyS, alapi, cacheRepo, classifier,
+                history);
     }
 
     @Test
