@@ -7,8 +7,6 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.marketplace.reputation.ReputationSnapshot;
-import com.grassland.marketplace.workflow.IntelligenceMediaClient;
-import com.grassland.marketplace.workflow.saga.ConfirmationWorkflowStarter;
 import com.grassland.marketplace.workflow.saga.MerchantContestCoordinator;
 import com.grassland.marketplace.workflow.saga.SettlementWorkflowStarter;
 import java.time.Instant;
@@ -19,7 +17,6 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -66,20 +63,15 @@ public class ApplicationController {
     private final ApplicationAcceptanceService acceptance;
     private final OutboxRepository outbox;
     private final SubmissionRepository submissions;
-    private final SubmissionAttachmentRepository attachments;
-    private final IntelligenceMediaClient mediaClient;
+    private final EngagementSubmissionService submissionService;
     private final EngagementVerificationService verificationService;
     private final EngagementVerificationRepository verifications;
     private final RatingRepository ratings;
-    private final ConfirmationWorkflowStarter confirmationWorkflows;
     private final MerchantContestCoordinator contests;
     private final com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations;
     private final SettlementWorkflowStarter settlementWorkflows;
     private final ReputationService reputationService;
     private final TaskRecommenderInvitationRepository recommenderInvitations;
-    private final long confirmationWindowSeconds;
-    private final long confirmationReminderLeadSeconds;
-    private final int supplementCap;
     private final TransactionalOperator transactions;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
@@ -90,18 +82,13 @@ public class ApplicationController {
                                  ApplicationAcceptanceService acceptance,
                                  OutboxRepository outbox,
                                  SubmissionRepository submissions,
-                                 SubmissionAttachmentRepository attachments,
-                                 IntelligenceMediaClient mediaClient,
+                                 EngagementSubmissionService submissionService,
                                  EngagementVerificationService verificationService,
                                  EngagementVerificationRepository verifications,
                                  RatingRepository ratings,
-                                 ConfirmationWorkflowStarter confirmationWorkflows,
                                  MerchantContestCoordinator contests,
                                  com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
                                  SettlementWorkflowStarter settlementWorkflows,
-                                 @Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
-                                 @Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
-                                 @Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap,
                                  TransactionalOperator transactions, ReputationService reputationService,
                                  TaskRecommenderInvitationRepository recommenderInvitations) {
         this.callers = callers;
@@ -113,18 +100,13 @@ public class ApplicationController {
         this.acceptance = acceptance;
         this.outbox = outbox;
         this.submissions = submissions;
-        this.attachments = attachments;
-        this.mediaClient = mediaClient;
+        this.submissionService = submissionService;
         this.verificationService = verificationService;
         this.verifications = verifications;
         this.ratings = ratings;
-        this.confirmationWorkflows = confirmationWorkflows;
         this.contests = contests;
         this.reconciliations = reconciliations;
         this.settlementWorkflows = settlementWorkflows;
-        this.confirmationWindowSeconds = confirmationWindowSeconds;
-        this.confirmationReminderLeadSeconds = Math.max(0, confirmationReminderLeadSeconds);
-        this.supplementCap = Math.max(0, supplementCap);
         this.transactions = transactions;
         this.reputationService = reputationService;
         this.recommenderInvitations = recommenderInvitations;
@@ -233,14 +215,14 @@ public class ApplicationController {
                                 .filter(task -> !"cancelled".equals(task.status()))
                                 .switchIfEmpty(fail(409, "任务已取消，不能提交履约"))
                                 // 任务书 #23 R3：互动任务必填平台账号标识（核验要比对截图账号）。
-                                .flatMap(task -> validateInteractionSubmission(task, body.platformHandle())
+                                .flatMap(task -> EngagementSubmissionService.requireInteractionHandle(task, body.platformHandle())
                                 // 校验在事务外：逐个 mediaId 经 intelligence 取 metadata，过滤 owner==提交人（IDOR 守卫）。
-                                .then(validateAttachments(task.organizationId(),
+                                .then(submissionService.validateAttachments(task.organizationId(),
                                                 caller.accountId(), appId, body.mediaIds()))
-                                        .flatMap(atts -> workSubmitDeliverable(app, appId, caller,
+                                        .flatMap(atts -> submissionService.submit(app, appId, caller,
                                                         body.contentUrl(), body.note(), atts, task.ownerAccountId(),
                                                         body.platformHandle())
-                                                .flatMap(created -> startConfirmationWorkflow(task, app, created)
+                                                .flatMap(created -> submissionService.startConfirmation(task, app, created)
                                                         // DB 提交已成功，Temporal 瞬时失败不把提交回成 5xx；dispatcher 扫未标记行补启。
                                                         .onErrorResume(failure -> {
                                                             log.warn("confirmation workflow initial start failed submission={} app={}",
@@ -267,30 +249,14 @@ public class ApplicationController {
             @PathVariable String id, @PathVariable String appId, ServerHttpRequest request) {
         return callers.resolve(request)
                 .flatMap(caller -> loadSubmissionScoped(id, appId, caller)
-                        .flatMap(task -> submissions.findByApplication(appId).collectList()
-                                .flatMap(list -> {
-                                    if (list.isEmpty()) {
-                                        return Mono.just(ApplicationBodies.ok(Map.<String, Object>of("submissions", List.of())));
-                                    }
-                                    List<String> submissionIds = list.stream().map(EngagementSubmission::id).toList();
-                                    Mono<List<EngagementSubmissionAttachment>> attsM =
-                                            attachments.findBySubmissionIds(submissionIds).collectList();
-                                    Mono<List<EngagementVerification>> verifsM =
-                                            verifications.findBySubmissions(submissionIds).collectList();
-                                    return Mono.zip(attsM, verifsM)
-                                            .map(t -> ApplicationBodies.ok(Map.<String, Object>of("submissions",
-                                                    list.stream().map(s -> ApplicationBodies.submissionWithRows(s,
-                                                            t.getT1().stream().filter(a -> a.submissionId().equals(s.id())).toList(),
-                                                            t.getT2().stream().filter(v -> v.submissionId().equals(s.id()))
-                                                                    .findFirst().orElse(null)))
-                                                            .toList())));
-                                })));
+                        .flatMap(task -> submissionService.list(appId)
+                                .map(rows -> ApplicationBodies.ok(Map.of("submissions", rows)))));
     }
 
     /**
      * 取某附件的短时下载 URL（草场 Slice 11 Stage 2）。可见性与 listSubmissions 一致（owner 或提交人），
-     * 再由 {@link SubmissionAttachmentRepository#findOne} 证 media 确挂该 submission（JOIN 限定 application，防跨履约越权），
-     * 最后经 {@link IntelligenceMediaClient} 中转取 intelligence 签发的 presigned URL。media 已删/不可用 → 404。
+     * 挂接核验与 presigned URL 中转在 {@link EngagementSubmissionService#downloadUrl}（JOIN 限定 application，
+     * 防跨履约越权）。media 已删/不可用 → 404。
      */
     @GetMapping("/api/tasks/{id}/applications/{appId}/submissions/{submissionId}/attachments/{mediaId}/download-url")
     public Mono<ResponseEntity<Map<String, Object>>> attachmentDownloadUrl(
@@ -298,12 +264,8 @@ public class ApplicationController {
             @PathVariable UUID mediaId, ServerHttpRequest request) {
         return callers.resolve(request)
                 .flatMap(caller -> loadSubmissionScoped(id, appId, caller)
-                        .flatMap(task -> attachments.findOne(appId, submissionId, mediaId.toString())
-                                .switchIfEmpty(fail(404, "附件未挂接到该交付物"))
-                                .flatMap(att -> mediaClient.downloadUrl(
-                                                task.organizationId(), mediaId, "application", appId)
-                                        .switchIfEmpty(fail(404, "附件已不可用"))
-                                        .map(dl -> ApplicationBodies.ok(ApplicationBodies.download(dl))))));
+                        .flatMap(task -> submissionService.downloadUrl(task, appId, submissionId, mediaId)
+                                .map(dl -> ApplicationBodies.ok(dl))));
     }
 
     /** 商家退回补交：submitted → rejected（带原因）。退回后推荐官可修改重交。
@@ -317,22 +279,8 @@ public class ApplicationController {
         return callers.requireUser(request)
                 .flatMap(merchant -> loadManageableTask(id, merchant)
                         .flatMap(task -> loadAcceptedApp(id, appId)
-                                // 先校验 submissionId 存在且属于本 application，再判补证上限：
-                                // 顺序反了会对「不存在/不属于本履约」的 id 回 409「补证次数已达上限」，
-                                // 把调用方引向「去确认履约或开争议」，而真实原因只是 id 写错（应 404）。
-                                .flatMap(app -> submissions.findById(submissionId)
-                                        .filter(s -> appId.equals(s.applicationId()))
-                                        .switchIfEmpty(fail(404, "交付物不存在"))
-                                        .flatMap(target -> submissions.countRejectedByApplication(appId))
-                                        .flatMap(rejectedCount -> rejectedCount >= supplementCap
-                                                ? Mono.<ResponseEntity<Map<String, Object>>>error(new MarketplaceException(
-                                                        409, "补证次数已达上限，请确认履约或发起争议"))
-                                                : submissions.review(submissionId, SubmissionStatus.REJECTED, note)
-                                                        .switchIfEmpty(fail(409, "该交付物已处理"))
-                                                        .flatMap(rejected -> outbox
-                                                                .append(ApplicationEvents.submissionEnvelope("DeliverableRejected", app, rejected, List.of(), task.ownerAccountId()))
-                                                                .thenReturn(rejected))
-                                                        .map(rejected -> ApplicationBodies.ok(ApplicationBodies.toBody(rejected)))))));
+                                .flatMap(app -> submissionService.reject(task, app, submissionId, note)
+                                        .map(rejected -> ApplicationBodies.ok(ApplicationBodies.toBody(rejected))))));
     }
 
     /**
@@ -541,21 +489,6 @@ public class ApplicationController {
         return settlementWorkflows.start(task, app)
         .map(wid -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of("success", true, "data",
                 Map.of("workflowId", wid, "applicationId", app.id(), "status", "settling"))));
-    }
-
-    /**
-     * 启商家确认窗口 Saga（D-03）：推荐官提交履约即起，3 天（dev 5s）到期未操作 → 自动确认结算。
-     *
-     * <p>fire-and-forget（同 {@code startSettlementWorkflow}）；submitDeliverable 响应仍是 201（提交回执），
-     * 窗口状态经 {@code GET .../confirmation} 轮询。{@code workflowId = "confirm-" + appId}、双击去重
-     * （{@code WorkflowExecutionAlreadyStarted} → 复用）。阻塞 WorkflowClient 调用包 {@code boundedElastic}。
-     */
-    private Mono<String> startConfirmationWorkflow(Task task, TaskApplication app, EngagementSubmission submission) {
-        return confirmationWorkflows.start(
-                        app.id(), submission.id(), task.organizationId(),
-                        confirmationWindowSeconds, confirmationReminderLeadSeconds)
-                .flatMap(workflowId -> submissions.markConfirmationWorkflowStarted(submission.id())
-                        .thenReturn(workflowId));
     }
 
     /**
@@ -874,68 +807,6 @@ public class ApplicationController {
                                                     ? new MarketplaceException(403, "无权查看该履约的交付物")
                                                     : error);
                         }));
-    }
-
-    /**
-     * 校验附件（事务外）：逐个 mediaId 经 intelligence 取 metadata。intelligence 已过滤
-     * purpose=engagement_attachment && active && 未过期（不符→404→empty）；这里再做 IDOR 守卫——
-     * owner 必须是提交人本人，否则 403。media 不可用→404。无附件→空列表。
-     */
-    private Mono<List<AttachmentInput>> validateAttachments(
-            String orgId, String ownerAccountId, String applicationId, List<UUID> mediaIds) {
-        if (mediaIds.isEmpty()) {
-            return Mono.just(List.of());
-        }
-        return Flux.fromIterable(mediaIds)
-                .concatMap(mediaId -> mediaClient.metadata(
-                                orgId, mediaId, "application", applicationId)
-                        .switchIfEmpty(fail(404, "附件不存在或已不可用"))
-                        .filter(m -> ownerAccountId.equals(m.ownerAccountId()))
-                        .switchIfEmpty(fail(403, "不能挂接他人的附件"))
-                        .filter(m -> "application".equals(m.domainType())
-                                && applicationId.equals(m.domainId()))
-                        .switchIfEmpty(fail(404, "附件不属于当前报名"))
-                        .map(m -> new AttachmentInput(
-                                mediaId, m.mimeType(), m.sizeBytes(), m.domainType(), m.domainId(),
-                                m.checksum(), m.status(), 1)))
-                .collectList();
-    }
-
-    /** 任务书 #23 R3：contentForm=interaction 的任务提交必须带 platformHandle（其余任务忽略该字段）。 */
-    private Mono<Void> validateInteractionSubmission(Task task, String platformHandle) {
-        if (TaskRequirements.isInteractionForm(task.contentForm())
-                && (platformHandle == null || platformHandle.isBlank())) {
-            return Mono.error(new MarketplaceException(400, "点赞互动任务必须填写平台账号标识"));
-        }
-        return Mono.empty();
-    }
-
-    /**
-     * 原子提交交付物（7C 事务）：create + attach + outbox 同一 R2DBC 事务，outbox 挂 attach 之后。
-     * 任一内层失败（含附件冲突 empty→409）→ 整事务回滚，零残留（无孤儿 submission/附件/事件）。
-     */
-    private Mono<EngagementSubmission> workSubmitDeliverable(TaskApplication app, String appId, Caller caller,
-                                                             String contentUrl, String note,
-                                                             List<AttachmentInput> attachmentInputs,
-                                                             String taskOwnerId, String platformHandle) {
-        return transactions.transactional(
-                submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle)
-                        .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
-                        .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
-                        .flatMap(created -> outbox
-                                .append(ApplicationEvents.submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs, taskOwnerId))
-                                .then(apps.setConfirmDeadline(app.id(), app.taskId(), confirmationWindowSeconds))
-                                .then(outbox.append(ApplicationEvents.confirmationEnvelope(
-                                        "ConfirmationWindowEntered", app, created.id(), taskOwnerId)))
-                                .thenReturn(created)));
-    }
-
-    private Mono<List<EngagementSubmissionAttachment>> attachAll(String submissionId, List<AttachmentInput> inputs) {
-        if (inputs.isEmpty()) {
-            return Mono.just(List.of());
-        }
-        return attachments.attach(submissionId, inputs)
-                .switchIfEmpty(fail(409, "附件重复，请勿重复挂接相同附件"));
     }
 
     private record RankedApplication(TaskApplication application, ReputationSnapshot snapshot) {}
