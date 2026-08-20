@@ -46,6 +46,8 @@ describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #
     expect(interaction.find('input[placeholder*="互动目标链接"]').exists()).toBe(true)
     expect(interaction.findAll('select').some((s) => s.text().includes('点赞')
       && s.text().includes('收藏') && s.text().includes('关注'))).toBe(true)
+    // 缺口清偿之九：评论动作类型可选
+    expect(interaction.findAll('select').some((s) => s.text().includes('评论'))).toBe(true)
   })
 
   test('互动字段变更发出 update:field 事件', async () => {

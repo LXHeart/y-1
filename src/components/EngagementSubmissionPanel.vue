@@ -27,6 +27,8 @@ const props = defineProps<{
   role: 'merchant' | 'recommender'
   /** 任务书 #23：互动任务（contentForm=interaction）展示平台账号标识输入与截图提示。 */
   taskContentForm?: string | null
+  /** 缺口清偿之九：actionType=comment 时展示评论文本输入（必填 ≤500）。 */
+  interactionActionType?: string | null
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
@@ -49,6 +51,8 @@ const submissions = ref<EngagementSubmission[]>([])
 const notice = ref('')
 const contentUrl = ref('')
 const platformHandle = ref('')
+/** 缺口清偿之九：评论任务的评论文本（≤500，必填；提交时后端 L1 词库审核）。 */
+const commentText = ref('')
 const note = ref('')
 const rejectNote = ref('')
 const staged = ref<StagedAttachment[]>([])
@@ -80,9 +84,11 @@ const CHECK_TYPE_LABEL: Record<string, string> = {
 
 const pending = computed(() => submissions.value.find((s) => s.status === 'submitted') || null)
 const interactionTask = computed(() => props.taskContentForm === 'interaction')
+const commentTask = computed(() => interactionTask.value && props.interactionActionType === 'comment')
 const canSubmit = computed(
   () => !pending.value && !uploading.value && contentUrl.value.trim().length > 0
-    && (!interactionTask.value || platformHandle.value.trim().length > 0))
+    && (!interactionTask.value || platformHandle.value.trim().length > 0)
+  && (!commentTask.value || commentText.value.trim().length > 0))
 const stagedFull = computed(() => staged.value.length >= MAX_ATTACHMENTS)
 
 function formatSize(bytes: number | null): string {
@@ -186,11 +192,13 @@ async function submit(): Promise<void> {
     props.taskId, props.applicationId, contentUrl.value.trim(),
     note.value.trim() || undefined,
     staged.value.map((item) => item.mediaId),
-    interactionTask.value ? platformHandle.value.trim() : undefined)
+    interactionTask.value ? platformHandle.value.trim() : undefined,
+    commentTask.value ? commentText.value.trim() : undefined)
   if (!created) return
   contentUrl.value = ''
   note.value = ''
   platformHandle.value = ''
+  commentText.value = ''
   staged.value = []
   notice.value = '已提交，等待商家核验'
   await refresh()
@@ -277,6 +285,14 @@ async function reject(submission: EngagementSubmission): Promise<void> {
         <input v-model="contentUrl" :placeholder="interactionTask
           ? '互动目标链接（https://…）' : '发布链接（https://…）'" />
         <input v-if="interactionTask" v-model="platformHandle" placeholder="平台账号标识（必填，如 @xxx）" />
+        <textarea
+          v-if="commentTask"
+          v-model="commentText"
+          rows="3"
+          maxlength="500"
+          placeholder="评论内容（必填，≤500 字；提交时将做内容安全检查）"
+          aria-label="评论内容"
+        ></textarea>
       </div>
 
       <ul v-if="staged.length > 0" class="sub-atts">

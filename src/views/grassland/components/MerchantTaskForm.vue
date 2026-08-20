@@ -16,7 +16,7 @@
           <option value="image">图文种草</option>
           <option value="video">视频种草</option>
           <option value="article">文章</option>
-          <option value="interaction">点赞互动</option>
+          <option value="interaction">互动</option>
         </select>
       </label>
     </div>
@@ -27,6 +27,7 @@
           <option value="like">点赞</option>
           <option value="favorite">收藏</option>
           <option value="follow">关注</option>
+          <option value="comment">评论</option>
         </select>
       </label>
     </div>

@@ -551,6 +551,7 @@ watch(grasslandNavigationTarget, async (target) => {
                 <EngagementSubmissionPanel
                   :task-id="selectedTaskId" :application-id="a.id" role="merchant"
                   :task-content-form="selectedTask?.contentForm ?? null"
+                  :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
                 />
                 <EngagementRatingPanel
                   :task-id="selectedTaskId" :application-id="a.id" role="merchant"
@@ -648,6 +649,7 @@ watch(grasslandNavigationTarget, async (target) => {
             <EngagementSubmissionPanel
               :task-id="selectedTaskId" :application-id="a.id" role="recommender"
               :task-content-form="selectedTask?.contentForm ?? null"
+              :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
             />
             <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
             <EngagementRatingPanel

@@ -34,7 +34,7 @@ export interface TaskRequirements {
   interaction?: TaskInteraction | null
 }
 
-/** 点赞互动配置（任务书 #23）：被互动的目标链接 + 动作类型（like|favorite|follow，评论后置）。 */
+/** 互动配置（任务书 #23 + 缺口清偿之九）：目标链接 + 动作类型（like|favorite|follow|comment）。 */
 export interface TaskInteraction {
   targetUrl: string
   actionType: 'like' | 'favorite' | 'follow' | string

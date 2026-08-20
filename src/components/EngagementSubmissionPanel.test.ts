@@ -377,3 +377,31 @@ describe('EngagementSubmissionPanel 履约核验（Verification v1）', () => {
     expect(wrapper.findAll('button').some((b) => b.text() === '重新核验')).toBe(false)
   })
 })
+
+describe('EngagementSubmissionPanel 评论类互动（缺口清偿之九）', () => {
+  test('actionType=comment 的任务展示评论文本输入并随提交携带', async () => {
+    const { calls } = stubFetch([[]])
+    const wrapper = mount(EngagementSubmissionPanel, {
+      props: {
+        taskId: 'task-1', applicationId: 'app-1', role: 'recommender',
+        taskContentForm: 'interaction', interactionActionType: 'comment',
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('textarea[aria-label="评论内容"]').exists()).toBe(true)
+    await wrapper.find('input[placeholder^="互动目标链接"]').setValue('https://www.xiaohongshu.com/post/9')
+    await wrapper.find('input[placeholder*="平台账号标识"]').setValue('@seedhunter')
+    await wrapper.find('textarea[aria-label="评论内容"]').setValue('这家店的桂花拿铁真的很惊艳！')
+    await wrapper.findAll('button').find((b) => b.text().includes('提交'))!.trigger('click')
+    await flushPromises()
+
+    const submission = calls.find((c) => c.method === 'POST' && String(c.url).endsWith('/submissions'))
+    expect(submission).toBeDefined()
+    expect(JSON.parse(submission!.body as string)).toMatchObject({
+      contentUrl: 'https://www.xiaohongshu.com/post/9',
+      platformHandle: '@seedhunter',
+      commentText: '这家店的桂花拿铁真的很惊艳！',
+    })
+  })
+})

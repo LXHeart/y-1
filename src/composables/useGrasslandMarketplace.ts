@@ -49,7 +49,7 @@ export function useGrasslandMarketplace(run: RunFn) {
    */
   const submitDeliverable = (
     taskId: string, applicationId: string, contentUrl: string, note?: string, mediaIds?: string[],
-    platformHandle?: string,
+    platformHandle?: string, commentText?: string,
   ) =>
     run(() => request<EngagementSubmission>(
       `/api/tasks/${taskId}/applications/${applicationId}/submissions`, {
@@ -57,10 +57,11 @@ export function useGrasslandMarketplace(run: RunFn) {
         body: JSON.stringify({
           contentUrl,
           ...(note ? { note } : {}),
+          // 任务书 #23：互动任务必填（后端分支校验），其余任务省略；评论文本为缺口清偿之九专属。
+          ...(platformHandle ? { platformHandle } : {}),
+          ...(commentText ? { commentText } : {}),
           // 空数组也不发：后端 mediaIds 省略与 [] 等价，少发一个字段少一处 400 风险。
           ...(mediaIds && mediaIds.length > 0 ? { mediaIds } : {}),
-          // 任务书 #23：互动任务必填（后端分支校验），其余任务省略。
-          ...(platformHandle ? { platformHandle } : {}),
         }),
       }))
 
