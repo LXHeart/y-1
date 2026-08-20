@@ -24,5 +24,9 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    // 浏览器矩阵（第八批工程项）：同一套 spec 三引擎跑——WebKit/Firefox 对 cookie 属性、
+    // CORS 预检、SVG/字体渲染的差异在此暴露。单引擎调试用 --project=<name>。
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
 })

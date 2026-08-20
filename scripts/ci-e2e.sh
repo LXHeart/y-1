@@ -56,6 +56,9 @@ export TEMPORAL_MTLS_KEY_FILE=
 export TEMPORAL_MTLS_SERVER_NAME=
 export TEMPORAL_NAMESPACE=default
 export IDENTITY_ACCESS_TOKEN_SECRET="$(openssl rand -hex 32)"
+# 三浏览器矩阵共享 127.0.0.1：登录防滥用限流放宽到矩阵口径（隔离栈自建 Redis，默认值不动生产）。
+export IDENTITY_SECURITY_LOGIN_RATE_LIMIT_IP_MAX=200
+export IDENTITY_SECURITY_LOGIN_RATE_LIMIT_ACCOUNT_IP_MAX=100
 export IDENTITY_KYB_MEDIA_VALIDATION_TIMEOUT_MS=10000
 export CRYPTO_KEK_BASE64="$(openssl rand -base64 32 | tr -d '\n')"
 export SESSION_SECRET="$(openssl rand -hex 32)"
@@ -148,7 +151,8 @@ fi
 
 dc run --rm database-bootstrap
 
-dc up -d --build
+# 镜像只构建一次；栈的 up/wait/seed 在 per-engine 循环里做（见下）
+dc build
 
 wait_for_public_endpoint() {
   local path="$1"
@@ -168,9 +172,7 @@ wait_for_public_endpoint() {
   return 1
 }
 
-wait_for_public_endpoint /health 200
-wait_for_public_endpoint /api/auth/captcha 200
-
+# 栈的 up/wait/seed 由 per-engine 循环里的 reset_stack 统一做（三引擎各自干净状态）。
 wait_for_java_schema() {
   local max_attempts="${1:-120}"
   local attempts=0
@@ -190,13 +192,28 @@ wait_for_java_schema() {
   return 1
 }
 
-wait_for_java_schema 120
-DATABASE_URL="$HOST_DATABASE_URL" npm run e2e:seed:auth
-DATABASE_URL="$HOST_DATABASE_URL" npx tsx scripts/e2e-seed.ts
+# 浏览器矩阵（第八批工程项）：三引擎共享同一套 spec，但**每引擎重置栈**——specs 断言
+# 新播种的干净状态（空任务列表等），同栈连跑三遍会被前一引擎写入的状态污染。
+E2E_ENGINES="${E2E_ENGINES:-chromium firefox webkit}"
 
-wait_for_public_endpoint /api/tasks/feed 401
-wait_for_public_endpoint /api/finance/wallets/me 401
-wait_for_public_endpoint /api/trust/disputes 405
-wait_for_public_endpoint /api/media/media 404
+reset_stack() {
+  dc down --volumes --remove-orphans >/dev/null 2>&1 || true
+  mkdir -p test-artifacts
+  dc up -d > test-artifacts/compose-up.log 2>&1
+  wait_for_public_endpoint /health 200
+  wait_for_public_endpoint /api/auth/captcha 200
+  wait_for_java_schema 120
+  DATABASE_URL="$HOST_DATABASE_URL" npm run e2e:seed:auth >/dev/null
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx scripts/e2e-seed.ts >/dev/null
+  wait_for_public_endpoint /api/tasks/feed 401
+  wait_for_public_endpoint /api/finance/wallets/me 401
+  wait_for_public_endpoint /api/trust/disputes 405
+  wait_for_public_endpoint /api/media/media 404
+}
 
-BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" npm run e2e
+for engine in $E2E_ENGINES; do
+  echo "==> e2e engine: ${engine}"
+  reset_stack
+  BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" \
+    npm run e2e -- --project="${engine}"
+done

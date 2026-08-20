@@ -107,8 +107,8 @@ jobs:
           java-version: '25'
           cache: gradle
       - run: npm ci
-      - name: Install Chromium for Playwright
-        run: npx playwright install --with-deps chromium
+      - name: Install browser matrix for Playwright
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Restore packaged Java services
         uses: actions/download-artifact@v4
         with:

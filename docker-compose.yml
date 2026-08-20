@@ -125,6 +125,10 @@ services:
       # 移动端 token 认证（GL-P3-IDENTITY-001）。secret 留空 = 移动端登录/刷新/撤销一律 503
       # （fail-closed），Web cookie 路径不受影响。启用时须与 edge-bff 验签方同值。
       IDENTITY_ACCESS_TOKEN_SECRET: ${IDENTITY_ACCESS_TOKEN_SECRET:-}
+      # 登录防滥用限流（LoginRateLimiter）：默认生产口径；隔离 e2e 三浏览器矩阵共享 127.0.0.1，
+      # 需在 ci-e2e.sh 里放宽（只影响 e2e 栈，默认值不动）。
+      IDENTITY_SECURITY_LOGIN_RATE_LIMIT_IP_MAX: ${IDENTITY_SECURITY_LOGIN_RATE_LIMIT_IP_MAX:-10}
+      IDENTITY_SECURITY_LOGIN_RATE_LIMIT_ACCOUNT_IP_MAX: ${IDENTITY_SECURITY_LOGIN_RATE_LIMIT_ACCOUNT_IP_MAX:-5}
       IDENTITY_ACCESS_TOKEN_KID: ${IDENTITY_ACCESS_TOKEN_KID:-access-token-v1}
       IDENTITY_ACCESS_TOKEN_TTL_SECONDS: ${IDENTITY_ACCESS_TOKEN_TTL_SECONDS:-900}
       IDENTITY_REFRESH_TOKEN_TTL_DAYS: ${IDENTITY_REFRESH_TOKEN_TTL_DAYS:-30}
@@ -226,6 +230,8 @@ services:
       # docker 服务发现需要 socket；日志文件读取需要容器目录（Docker Desktop VM 内路径，可直挂）。
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # 位置持久化：容器重建不回放整段历史（长存活容器回放会被 Loki 按批拒绝，见 loki.yml）。
+      - promtail_data:/positions
     depends_on:
       loki:
         condition: service_started
@@ -901,6 +907,7 @@ services:
       retries: 12
 
 volumes:
+  promtail_data:
   intelligence_media_data:
   minio_data:
   temporal_dev_data:
