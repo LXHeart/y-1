@@ -1,4 +1,4 @@
-package com.grassland.intelligence.bilibili;
+package com.grassland.intelligence.mediaplatform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,23 +9,22 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Bilibili 视频复刻（分镜场景）结果归一（移植 legacy {@code providers/types.ts} 的
+ * 视频复刻（分镜场景）结果归一（移植 legacy {@code providers/types.ts} 的
  * {@code normalizeVideoRecreationResult} + {@code normalizeScene}）。
  *
  * <p>Qwen content → 剥代码块围栏 + JSON → {@code scenes} 数组（必须非空）逐项归一：每场景至少
  * {@code shot_description}/{@code character_description}/{@code scene_environment} 之一非空才保留，
  * 其余字段缺失回空串。输出 {@code {scenes:[...], overallStyle?, runId?}}。空场景 → 502。
  *
- * <p>注意：本期为「内部能力」（legacy {@code analyzeBilibiliVideoForRecreation} 无路由/无调用方），
- * 仅银行化 Java 侧的复刻分析能力，暂不暴露 HTTP 端点。
+ * <p>抖音 / Bilibili 复刻分析共用（两平台提示词与归一规则同源，见 {@link VideoAnalysisPrompts#recreation()}）。
  */
-public final class BilibiliRecreationResultNormalizer {
+public final class VideoRecreationResultNormalizer {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final java.util.regex.Pattern CODE_FENCE =
             java.util.regex.Pattern.compile("```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?\\s*```");
 
-    private BilibiliRecreationResultNormalizer() {}
+    private VideoRecreationResultNormalizer() {}
 
     public static Map<String, Object> normalize(String content, String runId) {
         JsonNode record = parseContentObject(content);

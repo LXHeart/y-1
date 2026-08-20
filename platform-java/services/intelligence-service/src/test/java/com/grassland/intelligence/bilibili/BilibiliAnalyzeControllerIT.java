@@ -124,6 +124,58 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("mode=recreation + progressive+≤60s → 200 + scenes 归一 + 扣积分（复刻分镜）")
+    void recreationModeReturnsScenes() throws Exception {
+        stubQwenRecreation();
+        stubCreditsOk();
+
+        String token = tokenCodec.create(new BilibiliMediaTarget.Progressive(
+                "https://upos-sz-mirrorali.bilivideo.com/p.mp4", HEADERS, "file.mp4", 30L));
+
+        client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token, "mode", "recreation"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.scenes[0].shotDescription").isEqualTo("中景正面视角，镜头缓慢推进")
+                .jsonPath("$.data.overallStyle").isEqualTo("日系暖色")
+                .jsonPath("$.data.runId").isEqualTo("chatcmpl-r");
+
+        QWEN.verify(postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("短视频分镜分析师")));
+        LEGACY.verify(postRequestedFor(urlEqualTo("/internal/credits/consume"))
+                .withRequestBody(containing("\"feature\":\"video_analysis\"")));
+    }
+
+    @Test
+    @DisplayName("mode=recreation + DASH → 422 暂不支持分段视频")
+    void recreationModeRejectsDash() {
+        String token = tokenCodec.create(new BilibiliMediaTarget.Dash(
+                "https://upos-sz-mirrorali.bilivideo.com/v.m4s",
+                "https://upos-sz-mirrorali.bilivideo.com/a.m4s", HEADERS, "file.mp4", 20L));
+
+        client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/" + token, "mode", "recreation"))
+                .exchange()
+                .expectStatus().isEqualTo(422)
+                .expectBody().jsonPath("$.error").isEqualTo("复刻分析暂不支持分段视频");
+    }
+
+    @Test
+    @DisplayName("mode 非法值 → 400")
+    void invalidModeReturns400() {
+        client().post().uri("/api/bilibili/analyze-video").contentType(MediaType.APPLICATION_JSON)
+                .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
+                .bodyValue(Map.of("proxyVideoUrl", "/api/bilibili/proxy/x", "mode", "both"))
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("分析模式无效");
+    }
+
+    @Test
     @DisplayName("缺少时长 → 422")
     void missingDurationReturns422() {
         String token = tokenCodec.create(new BilibiliMediaTarget.Progressive(
@@ -240,6 +292,25 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
         String contentJson = mapper.writeValueAsString(content);
         Map<String, Object> response = Map.of(
                 "id", "chatcmpl-1",
+                "choices", java.util.List.of(Map.of("message", Map.of("content", contentJson))));
+        QWEN.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody(mapper.writeValueAsString(response))));
+    }
+
+    private void stubQwenRecreation() throws Exception {
+        Map<String, Object> scene = new LinkedHashMap<>();
+        scene.put("shot_description", "中景正面视角，镜头缓慢推进");
+        scene.put("character_description", "年轻女性博主");
+        scene.put("action_movement", "夹起牛肉面");
+        scene.put("dialogue_voiceover", "汤底浓郁");
+        scene.put("scene_environment", "面馆内部，暖黄灯光");
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("scenes", java.util.List.of(scene));
+        content.put("overall_style", "日系暖色");
+        String contentJson = mapper.writeValueAsString(content);
+        Map<String, Object> response = Map.of(
+                "id", "chatcmpl-r",
                 "choices", java.util.List.of(Map.of("message", Map.of("content", contentJson))));
         QWEN.stubFor(post(urlEqualTo("/chat/completions"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")

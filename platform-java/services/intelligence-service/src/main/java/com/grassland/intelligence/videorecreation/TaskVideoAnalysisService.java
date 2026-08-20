@@ -6,6 +6,7 @@ import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisPrompts;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
+import com.grassland.intelligence.mediaplatform.VideoRecreationResultNormalizer;
 import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,24 @@ public class TaskVideoAnalysisService {
                                         ContentPart.text(VideoAnalysisPrompts.analysis())))),
                         4096, CreditFeature.VIDEO_ANALYSIS,
                         completion -> VideoAnalysisResultNormalizer.normalize(
+                                completion.content(), null)));
+    }
+
+    /** 任务模式复刻分镜分析：同一冻结快照，换用 recreation 提示词与场景归一。 */
+    public Mono<Map<String, Object>> analyzeShortRecreation(
+            String publicVideoUrl,
+            String accountId,
+            VideoRecreationTaskRequest task,
+            ServerWebExchange exchange) {
+        return creationContexts.bind(task.contextSnapshotId(), accountId, task.targetPlatform())
+                .flatMap(binding -> frozenText.execute(
+                        exchange, binding.snapshot().id(), List.of(
+                                binding.promptContext(),
+                                ChatMessage.user(List.of(
+                                        ContentPart.video(publicVideoUrl),
+                                        ContentPart.text(VideoAnalysisPrompts.recreation())))),
+                        4096, CreditFeature.VIDEO_ANALYSIS,
+                        completion -> VideoRecreationResultNormalizer.normalize(
                                 completion.content(), null)));
     }
 

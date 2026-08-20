@@ -6,6 +6,7 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisPrompts;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
+import com.grassland.intelligence.mediaplatform.VideoRecreationResultNormalizer;
 import com.grassland.intelligence.mediaplatform.PlatformMediaService;
 import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -112,6 +113,48 @@ public class DouyinAnalysisService {
                         .map(DouyinAnalysisOutcome::new)
                         .doFinally(signal -> ids.forEach(media::remove)))
                 .doFinally(signal -> media.remove(sourceId)));
+    }
+
+    /** 复刻分镜场景分析（{@code POST /api/douyin/analyze-video} body {@code mode:"recreation"}）。与 Bilibili 路径共用提示词与归一。 */
+    public Mono<DouyinAnalysisOutcome> analyzeForRecreation(String proxyVideoUrl, String accountId) {
+        String token = extractToken(proxyVideoUrl);
+        DouyinMediaTarget target = tokenCodec.parse(token);
+        long duration = assertAnalysisDuration(target.durationSeconds());
+
+        if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
+            throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+        }
+        if (duration > maxSingleSegmentSeconds) {
+            throw new IntelligenceException(422, "复刻分析暂不支持分段视频");
+        }
+        List<ContentPart> parts = List.of(ContentPart.video(buildPublicProxyUrl(token)),
+                ContentPart.text(VideoAnalysisPrompts.recreation()));
+        return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
+                .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
+                        .map(meta -> new DouyinAnalysisOutcome(
+                                VideoRecreationResultNormalizer.normalize(meta.content(), meta.runId())))
+                        // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
+                        .onErrorResume(error -> credits.refund(charge, "抖音复刻分析失败自动退回")
+                                .then(Mono.error(error))));
+    }
+
+    /** 任务模式复刻分镜分析：短视频走冻结快照执行；长视频与独立模式同限。 */
+    public Mono<DouyinAnalysisOutcome> analyzeTaskForRecreation(
+            String proxyVideoUrl,
+            String accountId,
+            VideoRecreationTaskRequest task,
+            ServerWebExchange exchange) {
+        String token = extractToken(proxyVideoUrl);
+        DouyinMediaTarget target = tokenCodec.parse(token);
+        long duration = assertAnalysisDuration(target.durationSeconds());
+        if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
+            throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+        }
+        if (duration > maxSingleSegmentSeconds) {
+            throw new IntelligenceException(422, "复刻分析暂不支持分段视频");
+        }
+        return taskAnalysis.analyzeShortRecreation(buildPublicProxyUrl(token), accountId, task, exchange)
+                .map(DouyinAnalysisOutcome::new);
     }
 
     private Mono<DouyinAnalysisOutcome> analyzeTarget(String token, DouyinMediaTarget target, long duration) {

@@ -6,6 +6,7 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisPrompts;
 import com.grassland.intelligence.mediaplatform.VideoAnalysisResultNormalizer;
+import com.grassland.intelligence.mediaplatform.VideoRecreationResultNormalizer;
 import com.grassland.intelligence.mediaplatform.PlatformMediaService;
 import com.grassland.intelligence.mediaplatform.VideoSegmentAnalysisService;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -23,7 +24,7 @@ import reactor.core.publisher.Mono;
 
 /**
  * Bilibili 视频分析编排（草场 Slice 13 Stage 5）。移植 legacy {@code bilibili-video-analysis.service.ts} 的
- * {@code analyzeBilibiliVideoByProxyUrl}（content 提取）与 {@code analyzeBilibiliVideoForRecreation}（复刻场景，无路由）。
+ * {@code analyzeBilibiliVideoByProxyUrl}（content 提取）与 {@code analyzeBilibiliVideoForRecreation}（复刻场景）。
  *
  * <p><b>Java 分析路径</b>：
  * <ul>
@@ -112,8 +113,9 @@ public class BilibiliAnalysisService {
     }
 
     /**
-     * 复刻分镜场景分析（无路由——legacy {@code analyzeBilibiliVideoForRecreation} 为 dead code，此处仅银行化 Java 能力）。
-     * 与 {@link #analyze} 同路由决策；Java 路径用 {@link VideoAnalysisPrompts#recreation()} + 复刻归一。
+     * 复刻分镜场景分析（{@code POST /api/bilibili/analyze-video} body {@code mode:"recreation"}）。
+     * 与 {@link #analyze} 同路由决策；Java 路径用 {@link VideoAnalysisPrompts#recreation()} + 复刻归一；
+     * legacy {@code analyzeBilibiliVideoForRecreation} 在切流期无路由，本方法即其正式暴露。
      */
     public Mono<BilibiliAnalysisOutcome> analyzeForRecreation(String proxyVideoUrl, String accountId) {
         String token = extractToken(proxyVideoUrl);
@@ -129,10 +131,27 @@ public class BilibiliAnalysisService {
         return credits.consume(accountId, CreditFeature.VIDEO_ANALYSIS)
                 .flatMap(charge -> ai.completeMultimodalMeta(parts, timeout)
                         .map(meta -> new BilibiliAnalysisOutcome(
-                                BilibiliRecreationResultNormalizer.normalize(meta.content(), meta.runId())))
+                                VideoRecreationResultNormalizer.normalize(meta.content(), meta.runId())))
                         // 上游失败：退回已扣积分后仍向调用方抛原始错误（GL-P0-BILL-002）
                         .onErrorResume(error -> credits.refund(charge, "Bilibili 复刻分析失败自动退回")
                                 .then(Mono.error(error))));
+    }
+
+    /** 任务模式复刻分镜分析：短 progressive 走冻结快照执行；DASH/长视频与独立模式同限。 */
+    public Mono<BilibiliAnalysisOutcome> analyzeTaskForRecreation(
+            String proxyVideoUrl,
+            String accountId,
+            VideoRecreationTaskRequest task,
+            ServerWebExchange exchange) {
+        String token = extractToken(proxyVideoUrl);
+        BilibiliMediaTarget target = tokenCodec.parse(token);
+        long duration = assertAnalysisDuration(target.durationSeconds());
+        assertJavaConfigured();
+        if (!(target instanceof BilibiliMediaTarget.Progressive) || duration > maxSingleSegmentSeconds) {
+            throw new IntelligenceException(422, "复刻分析暂不支持分段视频");
+        }
+        return taskAnalysis.analyzeShortRecreation(buildPublicProxyUrl(token), accountId, task, exchange)
+                .map(BilibiliAnalysisOutcome::new);
     }
 
     private void assertJavaConfigured() {

@@ -1,4 +1,4 @@
-package com.grassland.intelligence.bilibili;
+package com.grassland.intelligence.mediaplatform;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -9,9 +9,9 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** {@link BilibiliRecreationResultNormalizer} 单测：内部（无 HTTP 路由）复刻场景能力的结果归一与 runId 语义。 */
-@DisplayName("BilibiliRecreationResultNormalizer（内部复刻场景能力）")
-class BilibiliRecreationResultNormalizerTest {
+/** {@link VideoRecreationResultNormalizer} 单测：抖音/Bilibili 共用复刻分镜场景的结果归一与 runId 语义。 */
+@DisplayName("VideoRecreationResultNormalizer（复刻分镜场景归一）")
+class VideoRecreationResultNormalizerTest {
 
     @Test
     @DisplayName("归一有效场景、丢弃空场景，并以 meta runId 兜底")
@@ -29,7 +29,7 @@ class BilibiliRecreationResultNormalizerTest {
                 }
                 ```""";
 
-        Map<String, Object> result = BilibiliRecreationResultNormalizer.normalize(content, "chatcmpl-recreation");
+        Map<String, Object> result = VideoRecreationResultNormalizer.normalize(content, "chatcmpl-recreation");
 
         assertThat(result).containsEntry("overallStyle", "日系暖色");
         assertThat(result).containsEntry("runId", "chatcmpl-recreation");
@@ -44,7 +44,7 @@ class BilibiliRecreationResultNormalizerTest {
         String content = """
                 { "run_id": "upstream", "scenes": [ { "shot_description": "镜头" } ] }""";
 
-        Map<String, Object> result = BilibiliRecreationResultNormalizer.normalize(content, "meta");
+        Map<String, Object> result = VideoRecreationResultNormalizer.normalize(content, "meta");
 
         assertThat(result).containsEntry("runId", "upstream");
     }
@@ -52,7 +52,7 @@ class BilibiliRecreationResultNormalizerTest {
     @Test
     @DisplayName("空 scenes → 502")
     void emptyScenesReturn502() {
-        assertThatThrownBy(() -> BilibiliRecreationResultNormalizer.normalize("{\"scenes\": []}", null))
+        assertThatThrownBy(() -> VideoRecreationResultNormalizer.normalize("{\"scenes\": []}", null))
                 .isInstanceOf(IntelligenceException.class)
                 .satisfies(error -> assertThat(((IntelligenceException) error).status()).isEqualTo(502));
     }
