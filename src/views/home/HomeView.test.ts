@@ -157,14 +157,14 @@ describe('HomeView 热点时间范围（缺口清偿之八：今天/本周）', 
               }],
             },
           }),
-          text: async () => '',
+          text: async (): Promise<string> => '',
         }
       }
       return {
         ok: true, status: 200,
         headers: { get: (): string => 'application/json' },
         json: async () => HOT_ITEMS_BODY,
-        text: async () => '',
+        text: async (): Promise<string> => '',
       }
     }))
 
@@ -198,14 +198,14 @@ describe('HomeView 热点时间范围（缺口清偿之八：今天/本周）', 
             success: true,
             data: { range: 'today', since: '2026-08-20T00:00:00Z', snapshotCount: 0, groups: [] },
           }),
-          text: async () => '',
+          text: async (): Promise<string> => '',
         }
       }
       return {
         ok: true, status: 200,
         headers: { get: (): string => 'application/json' },
         json: async () => HOT_ITEMS_BODY,
-        text: async () => '',
+        text: async (): Promise<string> => '',
       }
     }))
 
