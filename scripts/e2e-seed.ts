@@ -170,7 +170,12 @@ async function ensureLv5Reputation(
       `WITH new_tasks AS (
          INSERT INTO task(id, owner_account_id, organization_id, title, status, published_at)
          SELECT gen_random_uuid(), $2::uuid, $3::uuid,
-                $4::text || $1::text || ':' || sequence::text, 'closed', now()
+                $4::text || $1::text || ':' || sequence::text, 'closed',
+                -- 回拨到上月末：发布配额按 published_at 的自然月计数（TaskRepository
+                -- countCreatedThisMonthByOrganization），700 条 Lv5 种子任务若落在本月会
+                -- 烧尽组织 500/月配额，令首个发布任务的 e2e 撞 409（2026-08-20 实测）。
+                -- 声誉的 30 天活跃窗口读 application 的时间戳，不受回拨影响。
+                date_trunc('month', now()) - interval '1 day'
            FROM generate_series(1, $5::int) AS sequence
          RETURNING id
        ), new_applications AS (
