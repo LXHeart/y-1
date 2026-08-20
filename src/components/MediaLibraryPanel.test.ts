@@ -479,3 +479,70 @@ describe('MediaLibraryPanel 语义搜索（#33）', () => {
     expect(wrapper.text()).toContain('请求失败（502）')
   })
 })
+
+describe('MediaLibraryPanel 素材版本比较（PRD §4.8 历史快照）', () => {
+  function stubPersonalWithVersions() {
+    vi.stubGlobal('fetch', mockFetch({
+      '/api/content-assets?libraryType=personal': { items: [
+        { id: 'p1', mediaId: 'm1', libraryType: 'personal', category: 'copy',
+          title: '改后文案', tags: [], status: 'active', version: 2,
+          createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-08T00:00:00Z' },
+      ] },
+      '/api/content-assets/p1/versions': { items: [
+        { version: 1, title: '原始文案', category: 'copy', tags: ['初稿'],
+          snapshottedAt: '2026-08-07T10:00:00Z', snapshottedBy: null,
+          mimeType: 'text/plain', sizeBytes: 256 },
+        { version: 2, title: '改后文案', category: 'campaign', tags: [],
+          snapshottedAt: '2026-08-08T10:00:00Z', snapshottedBy: 'u1',
+          mimeType: 'text/plain', sizeBytes: 512 },
+      ] },
+      '/api/me/identities': [],
+    }))
+  }
+
+  test('个人 tab 点「版本」展开快照对比，变更字段高亮', async () => {
+    stubPersonalWithVersions()
+
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+
+    expect(wrapper.find('.cavh').exists()).toBe(false)
+
+    const versionButton = wrapper.findAll('button').find((b) => b.text() === '版本')
+    expect(versionButton).toBeDefined()
+    await versionButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.cavh').exists()).toBe(true)
+    const compare = wrapper.get('[data-testid="asset-version-compare"]')
+    expect(compare.text()).toContain('原始文案')
+    expect(compare.text()).toContain('改后文案')
+    // 标题行 v1≠v2 应高亮，媒体类型行相同不高亮
+    const changed = wrapper.findAll('.cavh-changed').map((row) => row.text())
+    expect(changed.some((text) => text.includes('标题'))).toBe(true)
+    expect(changed.some((text) => text.includes('媒体类型'))).toBe(false)
+    expect(wrapper.text()).toContain('快照操作人')
+
+    await wrapper.findAll('button').find((b) => b.text() === '收起版本')!.trigger('click')
+    expect(wrapper.find('.cavh').exists()).toBe(false)
+  })
+
+  test('公共 tab（只读）不出现版本入口', async () => {
+    vi.stubGlobal('fetch', mockFetch({
+      '/api/content-assets': { items: [
+        { id: 'a1', mediaId: 'm1', libraryType: 'public', category: 'scene',
+          title: '行业背景图', tags: [], status: 'active', version: 1,
+          createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' },
+      ] },
+      '/api/me/identities': [],
+    }))
+
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: false } })
+    await flushPromises()
+    await wrapper.findAll('button[role="tab"]').find((b) => b.text().includes('公共'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('行业背景图')
+    expect(wrapper.findAll('button').some((b) => b.text() === '版本')).toBe(false)
+  })
+})

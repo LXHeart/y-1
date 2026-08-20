@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import { useAuth } from '../composables/useAuth'
+import ContentAssetVersionHistory from './ContentAssetVersionHistory.vue'
 import MediaUploader from './MediaUploader.vue'
 import type {
   ContentAsset,
@@ -334,6 +335,16 @@ function toggleSelection(assetId: string): void {
   emit('selection-change', [...next])
 }
 
+/** 素材历史快照对比：仅管理权限可见（个人库 owner / 商家库管理范围），与后端 versions 端点口径一致。 */
+const canManageAsset = computed(() =>
+  activeTab.value === 'personal'
+  || (activeTab.value === 'merchant' && canManageCurrentMerchantScope.value))
+const versionHistoryAssetId = ref('')
+
+function toggleVersionHistory(assetId: string): void {
+  versionHistoryAssetId.value = versionHistoryAssetId.value === assetId ? '' : assetId
+}
+
 async function download(asset: ContentAsset): Promise<void> {
   const dl = await grassland.getContentAssetDownloadUrl(asset.id)
   if (dl) window.open(dl.downloadUrl, '_blank', 'noopener,noreferrer')
@@ -513,6 +524,11 @@ function formatSize(bytes: number | null | undefined): string {
         </label>
         <div class="lib-card-actions">
           <button type="button" :disabled="grassland.loading.value" @click="download(asset)">下载</button>
+          <button v-if="canManageAsset" type="button"
+            :aria-expanded="versionHistoryAssetId === asset.id"
+            @click="toggleVersionHistory(asset.id)">
+            {{ versionHistoryAssetId === asset.id ? '收起版本' : '版本' }}
+          </button>
           <template v-if="activeTab === 'merchant' && canManageCurrentMerchantScope">
             <button type="button" :disabled="grassland.loading.value" @click="grant(asset)">授权推荐官</button>
             <button type="button" :disabled="grassland.loading.value" @click="remove(asset)">删除</button>
@@ -520,6 +536,7 @@ function formatSize(bytes: number | null | undefined): string {
           <button v-else-if="activeTab === 'personal'" type="button" :disabled="grassland.loading.value"
             @click="remove(asset)">删除</button>
         </div>
+        <ContentAssetVersionHistory v-if="versionHistoryAssetId === asset.id" :asset="asset" />
       </li>
     </ul>
 
