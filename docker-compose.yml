@@ -46,6 +46,12 @@ services:
       context: ./platform-java
       dockerfile: services/identity-service/Dockerfile
     environment:
+      # 本地 tracing 开关（默认关）：OTEL_TRACING_ENABLED=true + observability profile 起 Tempo
+      # 即可在 Grafana 查链路；endpoint 默认指向本地 Tempo，生产 overlay 以 :? 强制外部 endpoint。
+      OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}
+      OTEL_EXPORT_ENABLED: ${OTEL_EXPORT_ENABLED:-false}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}
       SERVER_PORT: "8082"
       DATABASE_URL: ${DATABASE_URL:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
@@ -225,6 +231,18 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # 本地 trace 后端（观测三支柱补齐 tracing）：Tempo 自带 OTLP 接收器，Java 服务开启
+  # OTEL_TRACING_ENABLED=true 后直连 http://tempo:4317（基座 compose 已为六服务预置该
+  # endpoint 默认值）。生产 trace 走外部 HTTPS collector，不跑本地 Tempo。
+  tempo:
+    profiles: ["observability"]
+    image: grafana/tempo:2.9.0
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./platform-java/deploy/observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    restart: unless-stopped
+
   # 统一 Java Edge BFF 入口。Nginx 的 /api 与 /health 只指向本服务；
   # RouteManifest 未命中、method 不匹配或 flag=false 均在 Edge 返回 404。
   edge-bff:
@@ -232,6 +250,12 @@ services:
       context: ./platform-java
       dockerfile: services/edge-bff/Dockerfile
     environment:
+      # 本地 tracing 开关（默认关）：OTEL_TRACING_ENABLED=true + observability profile 起 Tempo
+      # 即可在 Grafana 查链路；endpoint 默认指向本地 Tempo，生产 overlay 以 :? 强制外部 endpoint。
+      OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}
+      OTEL_EXPORT_ENABLED: ${OTEL_EXPORT_ENABLED:-false}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}
       SERVER_PORT: "8080"
       IDENTITY_SERVICE_BASE_URL: http://identity-service:8082
       MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
@@ -371,6 +395,12 @@ services:
     # 容器间调用走服务名（MARKETPLACE_SERVICE_BASE_URL=http://marketplace-service:8083）。
     # 对外入口只有 Nginx；edge-bff 的宿主端口仅绑定 loopback 供本地调试。
     environment:
+      # 本地 tracing 开关（默认关）：OTEL_TRACING_ENABLED=true + observability profile 起 Tempo
+      # 即可在 Grafana 查链路；endpoint 默认指向本地 Tempo，生产 overlay 以 :? 强制外部 endpoint。
+      OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}
+      OTEL_EXPORT_ENABLED: ${OTEL_EXPORT_ENABLED:-false}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}
       SERVER_PORT: "8083"
       DATABASE_URL: ${DATABASE_URL:-}
       MARKETPLACE_DATASOURCE_FROM_DATABASE_URL: "true"
@@ -461,6 +491,12 @@ services:
       dockerfile: services/finance-service/Dockerfile
     # 不发布宿主端口（GL-P0-SEC-002）：仅 Docker 网络内可达，同 identity-service。
     environment:
+      # 本地 tracing 开关（默认关）：OTEL_TRACING_ENABLED=true + observability profile 起 Tempo
+      # 即可在 Grafana 查链路；endpoint 默认指向本地 Tempo，生产 overlay 以 :? 强制外部 endpoint。
+      OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}
+      OTEL_EXPORT_ENABLED: ${OTEL_EXPORT_ENABLED:-false}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}
       SERVER_PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-}
       FINANCE_DATASOURCE_FROM_DATABASE_URL: "true"
@@ -519,6 +555,12 @@ services:
       dockerfile: services/trust-service/Dockerfile
     # 不发布宿主端口（GL-P0-SEC-002）：仅 Docker 网络内可达，同 identity-service。
     environment:
+      # 本地 tracing 开关（默认关）：OTEL_TRACING_ENABLED=true + observability profile 起 Tempo
+      # 即可在 Grafana 查链路；endpoint 默认指向本地 Tempo，生产 overlay 以 :? 强制外部 endpoint。
+      OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}
+      OTEL_EXPORT_ENABLED: ${OTEL_EXPORT_ENABLED:-false}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}
       SERVER_PORT: "8085"
       DATABASE_URL: ${DATABASE_URL:-}
       TRUST_DATASOURCE_FROM_DATABASE_URL: "true"
@@ -583,6 +625,12 @@ services:
     init: true
     # 不发布宿主端口（GL-P0-SEC-002）：仅 Docker 网络内可达，同 identity-service。
     environment:
+      # 本地 tracing 开关（默认关）：OTEL_TRACING_ENABLED=true + observability profile 起 Tempo
+      # 即可在 Grafana 查链路；endpoint 默认指向本地 Tempo，生产 overlay 以 :? 强制外部 endpoint。
+      OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}
+      OTEL_EXPORT_ENABLED: ${OTEL_EXPORT_ENABLED:-false}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}
       SERVER_PORT: "8086"
       DATABASE_URL: ${DATABASE_URL:-}
       INTELLIGENCE_DATASOURCE_FROM_DATABASE_URL: "true"
@@ -856,3 +904,4 @@ volumes:
   alertmanager_data:
   grafana_data:
   loki_data:
+  tempo_data:

@@ -27,6 +27,15 @@ require_text "$COLLECTOR_CONFIG" 'health_check:' "local OTLP collector must expo
 require_text "$ROOT_DIR/scripts/local-otel-trace-smoke.sh" '/v1/traces' "local OTLP smoke must send traces through the HTTP receiver"
 require_text "$ROOT_DIR/scripts/local-otel-trace-smoke.sh" 'Trace ID' "local OTLP smoke must verify collector delivery logs"
 
+# 本地 trace 后端（Tempo）：接收器、Grafana 数据源、基座 compose 接线与默认关的开关。
+TEMPO_CONFIG="$OBS_DIR/tempo/tempo.yml"
+require_text "$TEMPO_CONFIG" 'protocols:' "local Tempo must receive OTLP"
+require_text "$OBS_DIR/grafana/provisioning/datasources/tempo.yml" 'type: tempo' "Grafana must provision the Tempo datasource"
+require_text "$ROOT_DIR/docker-compose.yml" 'grafana/tempo:' "base compose must run local Tempo under the observability profile"
+require_text "$ROOT_DIR/docker-compose.yml" 'OTEL_TRACING_ENABLED: ${OTEL_TRACING_ENABLED:-false}' "service tracing must default off in the base compose"
+require_text "$ROOT_DIR/docker-compose.yml" 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://tempo:4317}' "base compose tracing endpoint must default to local Tempo"
+require_text "$ROOT_DIR/docker-compose.production.yml" 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:?' "production must force an explicit external traces endpoint"
+
 for service in edge-bff identity-service marketplace-service finance-service trust-service intelligence-service; do
   require_text "$PROMETHEUS" "job_name: $service" "Prometheus must scrape $service"
   build_file="$JAVA_SERVICES_DIR/$service/build.gradle.kts"

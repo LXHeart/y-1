@@ -1,0 +1,26 @@
+# 本地观测栈 Tempo（trace 后端，profile=observability）。
+# Tempo 自带 OTLP 接收器（4317/4318）——Java 服务开启 OTEL_TRACING_ENABLED 后直连
+# tempo:4317，不经独立文件里的 debug collector（那是 isolated 冒烟工具，刻意不组网）。
+# 生产不跑本地 Tempo：trace 经外部 HTTPS collector（生产 overlay 强制显式 endpoint）。
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/traces
+
+usage_report:
+  reporting_enabled: false
