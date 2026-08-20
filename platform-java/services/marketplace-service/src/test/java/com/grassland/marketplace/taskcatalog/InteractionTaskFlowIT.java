@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -53,6 +54,17 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 
     @MockitoBean
     private TrustDisputeClient trustDisputeClient;
+
+    @MockitoBean
+    private com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubCommentSafety() {
+        // 默认放行（fail-open 语义等价）；blocked 用例单独覆写
+        org.mockito.Mockito.when(commentSafety.guard(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any()))
+                .thenReturn(reactor.core.publisher.Mono.empty());
+    }
 
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private SubmissionAttachmentRepository attachmentRepo;
@@ -110,10 +122,14 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
         Map<String, Object> ssrf = interactionBodyWith(
                 "http://127.0.0.1:8080/admin", "like");
         createTask(merchant, org, ssrf).expectStatus().isBadRequest();
-        // 非法动作类型（评论不做）→ 400
-        Map<String, Object> comment = interactionBodyWith(
+        // 非法动作类型（受控值外）→ 400；comment 自缺口清偿之九起合法
+        Map<String, Object> badAction = interactionBodyWith(
+                "https://www.xiaohongshu.com/post/1", "share");
+        createTask(merchant, org, badAction).expectStatus().isBadRequest();
+        Map<String, Object> orgMismatch = interactionBodyWith(
                 "https://www.xiaohongshu.com/post/1", "comment");
-        createTask(merchant, org, comment).expectStatus().isBadRequest();
+        orgMismatch.put("organizationId", org);
+        createTask(merchant, org, orgMismatch).expectStatus().isCreated();
     }
 
     // ---------- R3：提交契约 ----------
@@ -170,7 +186,7 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
                 .thenReturn(Mono.just(mediaMeta(mediaId, recommender, app)));
         stubLinkPassed();
         when(verificationClient.analyzeInteraction(eq(org), eq(List.of(mediaId)), anyString(), any(), any(),
-                eq("https://www.xiaohongshu.com/post/1"), eq("like"), eq("@seedhunter")))
+                eq("https://www.xiaohongshu.com/post/1"), eq("like"), eq("@seedhunter"), any()))
                 .thenReturn(Mono.just(new VerificationAnalysis("passed",
                         List.of(new IntelligenceVerificationClient.MediaResult(mediaId, "passed", "三项均成立")))));
 
@@ -187,7 +203,8 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
         String submission = (String) ((Map<String, Object>) resp.get("data")).get("id");
 
         verify(verificationClient, timeout(8_000)).analyzeInteraction(eq(org), eq(List.of(mediaId)),
-                anyString(), any(), any(), eq("https://www.xiaohongshu.com/post/1"), eq("like"), eq("@seedhunter"));
+                anyString(), any(), any(), eq("https://www.xiaohongshu.com/post/1"), eq("like"), eq("@seedhunter"),
+                isNull());
         verify(verificationClient, never()).analyze(anyString(), anyList(), anyString(), any(), any());
         String checks = awaitRunChecks(submission);
         assertThat(checks).contains("\"interaction_screenshot\"").contains("passed");
@@ -209,7 +226,7 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
                 .thenReturn(Mono.just(mediaMeta(mediaId, recommender, app)));
         stubLinkPassed();
         when(verificationClient.analyzeInteraction(anyString(), anyList(), anyString(), any(), any(),
-                anyString(), anyString(), anyString()))
+                anyString(), anyString(), anyString(), any()))
                 .thenReturn(Mono.just(new VerificationAnalysis("inconclusive",
                         List.of(new IntelligenceVerificationClient.MediaResult(mediaId, "inconclusive", "截图模糊")))));
 
@@ -258,8 +275,82 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
                 .exchange();
     }
 
+    // ---------- 缺口清偿之九：评论类互动 ----------
+
+    @Test
+    void commentTaskSubmissionPersistsCommentText() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishInteractionTask(merchant, org, "comment");
+        String app = applyAndAccept(recommender, task, merchant, org);
+        stubLinkPassed();
+
+        submitRaw(recommender, task, app, "@seedhunter", "这家店的桂花拿铁真的很惊艳！")
+                .expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.commentText").isEqualTo("这家店的桂花拿铁真的很惊艳！");
+
+        String saved = db.sql("SELECT comment_text FROM engagement_submission"
+                        + " WHERE application_id = CAST(:app AS uuid) ORDER BY created_at DESC LIMIT 1")
+                .bind("app", app).map(r -> r.get("comment_text", String.class)).one().block();
+        assertThat(saved).isEqualTo("这家店的桂花拿铁真的很惊艳！");
+    }
+
+    @Test
+    void commentTaskRequiresCommentText() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishInteractionTask(merchant, org, "comment");
+        String app = applyAndAccept(recommender, task, merchant, org);
+        stubLinkPassed();
+
+        submitRaw(recommender, task, app, "@seedhunter", null)
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("评论互动任务必须填写评论内容");
+    }
+
+    @Test
+    void nonCommentTaskRejectsCommentText() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishInteractionTask(merchant, org, "like");
+        String app = applyAndAccept(recommender, task, merchant, org);
+        stubLinkPassed();
+
+        submitRaw(recommender, task, app, "@seedhunter", "不该带的评论文本")
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("仅评论互动任务可提交评论内容");
+    }
+
+    @Test
+    void blockedCommentRejectedBySafetyGuard() {
+        String merchant = UUID.randomUUID().toString();
+        String orgId = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String task = publishInteractionTask(merchant, orgId, "comment");
+        String app = applyAndAccept(recommender, task, merchant, orgId);
+        stubLinkPassed();
+        org.mockito.Mockito.when(commentSafety.guard(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any()))
+                .thenReturn(reactor.core.publisher.Mono.error(
+                        new com.grassland.marketplace.security.MarketplaceException(
+                                400, "评论内容未通过内容安全检查，请修改后提交")));
+
+        submitRaw(recommender, task, app, "@seedhunter", "违规内容")
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("评论内容未通过内容安全检查，请修改后提交");
+    }
+
     private String publishInteractionTask(String merchant, String org) {
-        Map<String, Object> resp = createTask(merchant, org, interactionBody(org)).expectStatus().isCreated()
+        return publishInteractionTask(merchant, org, "like");
+    }
+
+    private String publishInteractionTask(String merchant, String org, String actionType) {
+        Map<String, Object> body = interactionBodyWith("https://www.xiaohongshu.com/post/1", actionType);
+        body.put("organizationId", org);  // 与签发断言同 org，否则 requireScope 403
+        Map<String, Object> resp = createTask(merchant, org, body).expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
         db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()) "
@@ -284,11 +375,19 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 
     private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec submitRaw(
             String recommender, String task, String app, String platformHandle) {
+        return submitRaw(recommender, task, app, platformHandle, null);
+    }
+
+    private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec submitRaw(
+            String recommender, String task, String app, String platformHandle, String commentText) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("contentUrl", "https://www.xiaohongshu.com/post/1");
-        body.put("note", "已完成点赞");
+        body.put("note", "已完成互动");
         if (platformHandle != null) {
             body.put("platformHandle", platformHandle);
+        }
+        if (commentText != null) {
+            body.put("commentText", commentText);
         }
         return client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
                 .header(H, sign(recommender, "recommender"))

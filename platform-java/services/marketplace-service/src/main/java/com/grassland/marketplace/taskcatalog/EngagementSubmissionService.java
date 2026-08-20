@@ -67,6 +67,30 @@ public class EngagementSubmissionService {
     }
 
     /**
+     * 缺口清偿之九：评论类互动的评论文本契约——actionType=comment 必填 ≤500 字；非 comment 任务
+     * 携带该字段一律 400（评论文本是互动任务专属证据，不与其它内容形式混用）。
+     */
+    public static Mono<Void> requireCommentText(Task task, String commentText) {
+        TaskRequirements.Interaction interaction =
+                task.requirements() == null ? null : task.requirements().interaction();
+        boolean commentTask = TaskRequirements.isInteractionForm(task.contentForm())
+                && interaction != null && "comment".equals(interaction.actionType());
+        if (commentTask && (commentText == null || commentText.isBlank())) {
+            return Mono.error(new MarketplaceException(400, "评论互动任务必须填写评论内容"));
+        }
+        if (commentText != null && !commentText.isBlank()) {
+            if (!commentTask) {
+                return Mono.error(new MarketplaceException(400, "仅评论互动任务可提交评论内容"));
+            }
+            if (commentText.trim().length() > CreateSubmissionRequest.MAX_COMMENT_TEXT) {
+                return Mono.error(new MarketplaceException(
+                        400, "评论内容最多 " + CreateSubmissionRequest.MAX_COMMENT_TEXT + " 字"));
+            }
+        }
+        return Mono.empty();
+    }
+
+    /**
      * 校验附件（事务外）：逐个 mediaId 经 intelligence 取 metadata。intelligence 已过滤
      * purpose=engagement_attachment && active && 未过期（不符→404→empty）；这里再做 IDOR 守卫——
      * owner 必须是提交人本人，否则 403。media 不可用→404。无附件→空列表。
@@ -98,9 +122,11 @@ public class EngagementSubmissionService {
     public Mono<EngagementSubmission> submit(TaskApplication app, String appId, Caller caller,
                                              String contentUrl, String note,
                                              List<AttachmentInput> attachmentInputs,
-                                             String taskOwnerId, String platformHandle) {
+                                             String taskOwnerId, String platformHandle,
+                                             String commentText) {
+        String normalizedComment = commentText == null || commentText.isBlank() ? null : commentText.trim();
         return transactions.transactional(
-                submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle)
+                submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle, normalizedComment)
                         .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
                         .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
                         .flatMap(created -> outbox

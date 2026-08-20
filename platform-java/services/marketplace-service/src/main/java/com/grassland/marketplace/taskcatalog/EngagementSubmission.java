@@ -22,7 +22,9 @@ public record EngagementSubmission(
         Instant createdAt,
         /** D-03 确认窗口 Temporal workflow 启动成功/AlreadyStarted 的时刻；null 由 dispatcher 补启。 */
         Instant confirmationWorkflowStartedAt,
-        String platformHandle
+        String platformHandle,
+        /** 缺口清偿之九：评论任务的推荐官评论文本（≤500；提交链路已过 L1 词库审核）。 */
+        String commentText
 ) {
     public boolean isPending() {
         return SubmissionStatus.SUBMITTED.dbValue().equalsIgnoreCase(status);
@@ -34,6 +36,15 @@ public record EngagementSubmission(
             String note, String status, String reviewNote, Instant reviewedAt, Instant createdAt,
             Instant confirmationWorkflowStartedAt) {
         this(id, applicationId, recommenderAccountId, contentUrl, note, status, reviewNote,
-                reviewedAt, createdAt, confirmationWorkflowStartedAt, null);
+                reviewedAt, createdAt, confirmationWorkflowStartedAt, null, null);
+    }
+
+    /** 兼容 V46 之前的全参构造调用方（既有测试）；无评论文本。 */
+    public EngagementSubmission(
+            String id, String applicationId, String recommenderAccountId, String contentUrl,
+            String note, String status, String reviewNote, Instant reviewedAt, Instant createdAt,
+            Instant confirmationWorkflowStartedAt, String platformHandle) {
+        this(id, applicationId, recommenderAccountId, contentUrl, note, status, reviewNote,
+                reviewedAt, createdAt, confirmationWorkflowStartedAt, platformHandle, null);
     }
 }

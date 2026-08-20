@@ -49,6 +49,7 @@ public class ApplicationController {
     private final ApplicationLifecycleService lifecycle;
     private final EngagementSubmissionService submissionService;
     private final EngagementVerificationService verificationService;
+    private final com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety;
     private final EngagementDecisionService decisions;
 
     public ApplicationController(MarketplaceCallerResolver callers, TaskRepository tasks,
@@ -58,6 +59,7 @@ public class ApplicationController {
                                  ApplicationLifecycleService lifecycle,
                                  EngagementSubmissionService submissionService,
                                  EngagementVerificationService verificationService,
+            com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety,
                                  EngagementDecisionService decisions) {
         this.callers = callers;
         this.tasks = tasks;
@@ -67,6 +69,7 @@ public class ApplicationController {
         this.lifecycle = lifecycle;
         this.submissionService = submissionService;
         this.verificationService = verificationService;
+        this.commentSafety = commentSafety;
         this.decisions = decisions;
     }
 
@@ -139,13 +142,16 @@ public class ApplicationController {
                                 .filter(task -> !"cancelled".equals(task.status()))
                                 .switchIfEmpty(fail(409, "任务已取消，不能提交履约"))
                                 // 任务书 #23 R3：互动任务必填平台账号标识（核验要比对截图账号）。
+                                // 缺口清偿之九：评论任务评论文本契约（必填 ≤500 / 非评论任务拒绝）。
                                 .flatMap(task -> EngagementSubmissionService.requireInteractionHandle(task, body.platformHandle())
+                                        .then(EngagementSubmissionService.requireCommentText(task, body.commentText()))
+                                        .then(commentSafety.guard(task, body.commentText()))
                                 // 校验在事务外：逐个 mediaId 经 intelligence 取 metadata，过滤 owner==提交人（IDOR 守卫）。
                                 .then(submissionService.validateAttachments(task.organizationId(),
                                                 caller.accountId(), appId, body.mediaIds()))
                                         .flatMap(atts -> submissionService.submit(app, appId, caller,
                                                         body.contentUrl(), body.note(), atts, task.ownerAccountId(),
-                                                        body.platformHandle())
+                                                        body.platformHandle(), body.commentText())
                                                 .flatMap(created -> submissionService.startConfirmation(task, app, created)
                                                         // DB 提交已成功，Temporal 瞬时失败不把提交回成 5xx；dispatcher 扫未标记行补启。
                                                         .onErrorResume(failure -> {

@@ -165,7 +165,8 @@ public class EngagementVerificationService {
                 .toList();
         return verificationClient.analyzeInteraction(task.organizationId(), mediaIds,
                         task.title(), task.description(), task.platform(),
-                        config.targetUrl(), config.actionType(), submission.platformHandle())
+                        config.targetUrl(), config.actionType(), submission.platformHandle(),
+                        submission.commentText())
                 .map(a -> List.of(new CheckOutcome("interaction_screenshot", a.status(),
                         aiVisualDetail(a), Instant.now())))
                 .onErrorResume(e -> Mono.just(List.of(new CheckOutcome("interaction_screenshot",

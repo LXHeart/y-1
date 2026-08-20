@@ -111,6 +111,7 @@ final class ApplicationBodies {
         m.put("reviewedAt", submission.reviewedAt() == null ? null : submission.reviewedAt().toString());
         m.put("createdAt", submission.createdAt() == null ? null : submission.createdAt().toString());
         m.put("platformHandle", submission.platformHandle());
+        m.put("commentText", submission.commentText());
         return m;
     }
 

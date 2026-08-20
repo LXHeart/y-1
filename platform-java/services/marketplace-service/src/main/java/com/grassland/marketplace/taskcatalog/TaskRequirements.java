@@ -87,7 +87,7 @@ public record TaskRequirements(
 
     /**
      * 互动配置块（ADR-D13 R2）。{@code targetUrl} 复用核验引擎既有 {@link LinkUrlGuard}（SSRF/私网拒绝），
-     * 不新写一套；{@code actionType} 受控 like|favorite|follow（评论不做——UGC moderation 后置）。
+     * 不新写一套；{@code actionType} 受控 like|favorite|follow|comment（评论为缺口清偿之九，提交侧 L1 词库审核）。
      * v1 单目标单次动作。
      */
     public record Interaction(String targetUrl, String actionType) {
@@ -99,8 +99,9 @@ public record TaskRequirements(
             }
             LinkUrlGuard.validate(targetUrl);  // http(s)、无凭据、私网/环回拒绝（同核验引擎守卫）
             if (actionType != null) actionType = actionType.trim().toLowerCase();
-            if (!"like".equals(actionType) && !"favorite".equals(actionType) && !"follow".equals(actionType)) {
-                throw new IllegalArgumentException("动作类型必须是 like / favorite / follow");
+            if (!"like".equals(actionType) && !"favorite".equals(actionType) && !"follow".equals(actionType)
+                    && !"comment".equals(actionType)) {
+                throw new IllegalArgumentException("动作类型必须是 like / favorite / follow / comment");
             }
         }
     }

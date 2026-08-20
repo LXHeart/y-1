@@ -16,7 +16,8 @@ import java.util.UUID;
  * 上限 {@link #MAX_MEDIA}、去重、超量→400（IllegalArgumentException→400）。提交时逐个经 intelligence 校验
  * （purpose=engagement_attachment && active && owner==提交人）后才挂接。
  */
-public record CreateSubmissionRequest(String contentUrl, String note, List<UUID> mediaIds, String platformHandle) {
+public record CreateSubmissionRequest(String contentUrl, String note, List<UUID> mediaIds, String platformHandle,
+                                        String commentText) {
 
     /** 履约附件数量上限。 */
     public static final int MAX_MEDIA = 6;
@@ -24,9 +25,17 @@ public record CreateSubmissionRequest(String contentUrl, String note, List<UUID>
     /** 平台账号标识上限（任务书 #23 R3）。 */
     public static final int MAX_PLATFORM_HANDLE = 64;
 
+    /** 评论类互动评论文本上限（缺口清偿之九）。 */
+    public static final int MAX_COMMENT_TEXT = 500;
+
     /** 兼容 V41 之前的构造调用方（既有测试）。 */
     public CreateSubmissionRequest(String contentUrl, String note, List<UUID> mediaIds) {
-        this(contentUrl, note, mediaIds, null);
+        this(contentUrl, note, mediaIds, null, null);
+    }
+
+    /** 兼容 V41 单字段扩展前的构造调用方（既有测试）。 */
+    public CreateSubmissionRequest(String contentUrl, String note, List<UUID> mediaIds, String platformHandle) {
+        this(contentUrl, note, mediaIds, platformHandle, null);
     }
 
     public CreateSubmissionRequest {

@@ -85,11 +85,23 @@ public class IntelligenceVerificationClient {
     public Mono<VerificationAnalysis> analyzeInteraction(String orgId, List<UUID> mediaIds,
                                                          String taskTitle, String taskDescription, String platform,
                                                          String targetUrl, String actionType, String platformHandle) {
+        return analyzeInteraction(orgId, mediaIds, taskTitle, taskDescription, platform,
+                targetUrl, actionType, platformHandle, null);
+    }
+
+    /** 缺口清偿之九：评论任务透传申报评论文本（核验第 4 判定项——截图评论与文本一致）。 */
+    public Mono<VerificationAnalysis> analyzeInteraction(String orgId, List<UUID> mediaIds,
+                                                         String taskTitle, String taskDescription, String platform,
+                                                         String targetUrl, String actionType, String platformHandle,
+                                                         String commentText) {
         Map<String, Object> body = analyzeBody(mediaIds, taskTitle, taskDescription, platform);
         body.put("mode", "interaction");
         body.put("targetUrl", targetUrl);
         body.put("actionType", actionType);
         body.put("platformHandle", platformHandle);
+        if (commentText != null && !commentText.isBlank()) {
+            body.put("commentText", commentText);
+        }
         return webClient.post()
                 .uri("/api/verification/analyze")
                 .header(headerName, issuer.issueForOrg(orgId, "grassland-intelligence"))

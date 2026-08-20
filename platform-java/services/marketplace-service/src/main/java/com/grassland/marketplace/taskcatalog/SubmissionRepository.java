@@ -22,7 +22,8 @@ public class SubmissionRepository {
 
     private static final String SELECT_COLS =
             "id::text, application_id::text, recommender_account_id::text, content_url, note, status,"
-                    + " review_note, reviewed_at, created_at, confirmation_workflow_started_at, platform_handle";
+                    + " review_note, reviewed_at, created_at, confirmation_workflow_started_at, platform_handle,"
+                    + " comment_text";
 
     private final DatabaseClient db;
 
@@ -39,6 +40,12 @@ public class SubmissionRepository {
      */
     public Mono<EngagementSubmission> create(String applicationId, String recommenderAccountId,
                                              String contentUrl, String note, String platformHandle) {
+        return create(applicationId, recommenderAccountId, contentUrl, note, platformHandle, null);
+    }
+
+    public Mono<EngagementSubmission> create(String applicationId, String recommenderAccountId,
+                                             String contentUrl, String note, String platformHandle,
+                                             String commentText) {
         var spec = db.sql("""
                 WITH eligible AS (
                     SELECT a.id
@@ -51,8 +58,8 @@ public class SubmissionRepository {
                     FOR SHARE OF t
                 )
                 INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,
-                                                 platform_handle)
-                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note, :handle
+                                                 platform_handle, comment_text)
+                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note, :handle, :comment
                 FROM eligible
                 RETURNING %s
                 """.formatted(SELECT_COLS))
@@ -60,15 +67,15 @@ public class SubmissionRepository {
                 .bind("app", applicationId).bind("rec", recommenderAccountId).bind("url", contentUrl);
         spec = bindNullable(spec, "note", note);
         spec = bindNullable(spec, "handle", platformHandle);
+        spec = bindNullable(spec, "comment", commentText);
         return spec.map(SubmissionRepository::map).one()
                 .onErrorResume(DataIntegrityViolationException.class, e -> Mono.empty());
     }
 
-
     /** 兼容 V41 之前的两参重载（既有测试）；无平台账号标识。 */
     public Mono<EngagementSubmission> create(String applicationId, String recommenderAccountId,
                                              String contentUrl, String note) {
-        return create(applicationId, recommenderAccountId, contentUrl, note, null);
+        return create(applicationId, recommenderAccountId, contentUrl, note, null, null);
     }
 
     public Mono<EngagementSubmission> findById(String submissionId) {
@@ -146,7 +153,8 @@ public class SubmissionRepository {
                 toInstant(row.get("reviewed_at", OffsetDateTime.class)),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("confirmation_workflow_started_at", OffsetDateTime.class)),
-                row.get("platform_handle", String.class)
+                row.get("platform_handle", String.class),
+                row.get("comment_text", String.class)
         );
     }
 
