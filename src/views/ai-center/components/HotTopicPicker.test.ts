@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import HotTopicPicker from '../views/ai-center/components/HotTopicPicker.vue'
-import type { HomepageHotTaxonomy } from '../types/homepage-hot'
+import HotTopicPicker from './HotTopicPicker.vue'
+import type { HomepageHotTaxonomy } from '../../../types/homepage-hot'
 
 enableAutoUnmount(afterEach)
 

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import AdminView from '../views/admin/AdminView.vue'
+import AdminView from '../../views/admin/AdminView.vue'
 
 enableAutoUnmount(afterEach)
 

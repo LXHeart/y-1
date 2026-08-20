@@ -2,8 +2,8 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
-import ArticleCreationView from '../views/article/ArticleCreationView.vue'
-import type { CreationHandoff } from '../types/ai-creation'
+import ArticleCreationView from '../../views/article/ArticleCreationView.vue'
+import type { CreationHandoff } from '../../types/ai-creation'
 
 /**
  * ArticleCreationView 特征测试（重构安全网）。

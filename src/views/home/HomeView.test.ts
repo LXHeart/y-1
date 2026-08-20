@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import HomeView from '../views/home/HomeView.vue'
+import HomeView from '../../views/home/HomeView.vue'
 
 /**
  * HomeView 特征测试（重构安全网）。

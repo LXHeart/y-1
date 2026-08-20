@@ -2,11 +2,11 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
-import GrasslandWorkbench from '../views/grassland/GrasslandWorkbench.vue'
-import MerchantTaskForm from '../views/grassland/components/MerchantTaskForm.vue'
-import { useAuth } from '../composables/useAuth'
-import type { AuthUser } from '../types/auth'
-import type { Task } from '../types/grassland'
+import GrasslandWorkbench from '../../views/grassland/GrasslandWorkbench.vue'
+import MerchantTaskForm from '../../views/grassland/components/MerchantTaskForm.vue'
+import { useAuth } from '../../composables/useAuth'
+import type { AuthUser } from '../../types/auth'
+import type { Task } from '../../types/grassland'
 
 /**
  * 工作台**登录态**回归测试。

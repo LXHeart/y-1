@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import VideoAnalysisView from '../views/video/VideoAnalysisView.vue'
-import type { AiContentFormId, AiPlatformId, CreationHandoff } from '../types/ai-creation'
+import VideoAnalysisView from '../../views/video/VideoAnalysisView.vue'
+import type { AiContentFormId, AiPlatformId, CreationHandoff } from '../../types/ai-creation'
 
 /**
  * VideoAnalysisView 特征测试。

@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import AiCreationCenter from '../views/ai-center/AiCreationCenter.vue'
-import CreationAssistantPanel from './CreationAssistantPanel.vue'
-import type { CreationEntry } from '../types/ai-creation'
+import AiCreationCenter from '../../views/ai-center/AiCreationCenter.vue'
+import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
+import type { CreationEntry } from '../../types/ai-creation'
 
 enableAutoUnmount(afterEach)
 beforeEach(() => {
