@@ -55,7 +55,7 @@ class CommentSafetyControllerTest {
                 .thenReturn(Mono.just(callerForMarketplace()));
         when(safety.checkShallow("轻微问题评论"))
                 .thenReturn(new SafetyReport(List.of(
-                        new SafetyReport.Finding("absolute_claims", "low", "最好", 0, "", false)),
+                        new SafetyReport.Finding("absolute_claims", "low", "最好", 0, "建议改写", false)),
                         "lexicon-v1", false, List.of()));
 
         client().post().uri("/internal/content-safety/comment-check")
@@ -63,7 +63,12 @@ class CommentSafetyControllerTest {
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.data.blocked").isEqualTo(false)
-                .jsonPath("$.data.findings").isEqualTo(1);
+                .jsonPath("$.data.findings").isEqualTo(1)
+                // advisory 明细（遗留清偿）：供 marketplace 落人工复核队列；matched 词不下发
+                .jsonPath("$.data.details[0].category").isEqualTo("absolute_claims")
+                .jsonPath("$.data.details[0].severity").isEqualTo("low")
+                .jsonPath("$.data.details[0].advice").isEqualTo("建议改写")
+                .jsonPath("$.data.details[0].match").doesNotExist();
     }
 
     @Test

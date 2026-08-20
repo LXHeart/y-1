@@ -15,7 +15,8 @@ import reactor.core.publisher.Mono;
  *
  * <p>只跑词库层（{@link ContentSafetyChecker#checkCached}）——提交是低频高敏操作，L1 + 商家人审
  * 截图足够；LLM 深检留给生成流。blocked 语义：存在 severity=high 命中；low/medium 命中不拦
- * （advisory，ADR-D16 D6），计数返回供调用方日志。
+ * （advisory，ADR-D16 D6）。advisory 明细（category/severity/advice）随行返回——marketplace
+ * 据此落人工复核队列（之九遗留清偿）；matched 词不下发（明细够排序与展示，减少敏感词流转）。
  */
 @RestController
 public class CommentSafetyController {
@@ -50,6 +51,15 @@ public class CommentSafetyController {
                     data.put("blocked", blocked);
                     data.put("findings", report.findings().size());
                     data.put("lexiconVersion", report.lexiconVersion());
+                    data.put("details", report.findings().stream()
+                            .map(finding -> {
+                                Map<String, Object> detail = new LinkedHashMap<>();
+                                detail.put("category", finding.category());
+                                detail.put("severity", finding.severity());
+                                detail.put("advice", finding.advice());
+                                return (Map<String, Object>) detail;
+                            })
+                            .toList());
                     return Map.<String, Object>of("success", true, "data", data);
                 });
     }
