@@ -335,6 +335,125 @@ describe('GrasslandWorkbench 商家 contest', () => {
   })
 })
 
+describe('GrasslandWorkbench 接受报名预留失败（compensated）', () => {
+  // UI 实测清单遗留项：浏览器实测轮账户余额始终充足，compensated 分支从未在 UI 呈现过。
+  test('资金型 accept 202 后轮询到 compensated/insufficient_funds，行内显示「未接受：账户余额不足」', async () => {
+    const application = {
+      id: 'app-pending', taskId: 'task-1', recommenderAccountId: 'acct-rec',
+      status: 'pending', note: null, reviewedByAccountId: null, decidedAt: null, createdAt: null,
+    }
+    const task = {
+      id: 'task-1', ownerAccountId: 'acct-1', organizationId: 'org-1', title: '赏金任务',
+      description: '突出门店招牌', status: 'published', contentForm: '图文', platform: '小红书', maxSlots: 1,
+      bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
+      publishedAt: null, cancelledAt: null,
+    }
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.includes('status=published')) {
+        data = [task]
+      } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
+        data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
+      } else if (url === '/api/tasks/task-1/applications') {
+        data = [application]
+      } else if (url === '/api/tasks/task-1/applications/app-pending/reservation') {
+        // accept 返回 202 后首次轮询即到终态：预留失败、报名被补偿回 pending
+        data = { applicationId: 'app-pending', status: 'compensated', reason: 'insufficient_funds' }
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 0 }
+      } else if (url.startsWith('/api/reputation/')) {
+        data = { accountId: 'acct-rec', level: 'Lv1', levelTitle: '新锐', acceptedCount: 0, completedCount: 0, completionRate: 0, ratingCount: 0, averageScore: null, averageResponseSeconds: null }
+      } else if (url.includes('/profile')) {
+        data = { accountId: 'acct-rec', displayName: null, bio: null, contentTags: [], domainTags: [], socialAccounts: [], updatedAt: null }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+    await wrapper.find('button.gl-link').trigger('click')
+    await flushPromises()
+
+    const acceptButton = wrapper.findAll('button').find((item) => item.text() === '接受')!
+    await acceptButton.trigger('click')
+    await flushPromises()
+
+    expect(calls.some(([url, init]) => url === '/api/tasks/task-1/applications/app-pending/accept' && init?.method === 'POST')).toBe(true)
+    // 关键呈现：商家看到「未接受 + 原因」，而不是永久停在「处理中…」或误显「已接受」
+    expect(wrapper.get('td.gl-outcome').text()).toBe('未接受：账户余额不足')
+    expect(wrapper.text()).not.toContain('已接受（资金已预留）')
+    expect(wrapper.text()).not.toContain('处理中…')
+  })
+})
+
+describe('GrasslandWorkbench 确认履约结算暂扣（held）', () => {
+  // UI 实测清单遗留项：held 分支（确认履约时存在未终局争议）此前未在 UI 呈现过。
+  test('confirm 202 后轮询到 held/open_dispute，行内显示「结算暂停：存在未终局争议」', async () => {
+    const application = {
+      id: 'app-accepted', taskId: 'task-1', recommenderAccountId: 'acct-rec',
+      status: 'accepted', note: null, reviewedByAccountId: null, decidedAt: null, createdAt: null,
+    }
+    const task = {
+      id: 'task-1', ownerAccountId: 'acct-1', organizationId: 'org-1', title: '待确认任务',
+      description: '突出门店招牌', status: 'published', contentForm: '图文', platform: '小红书', maxSlots: 1,
+      bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
+      publishedAt: null, cancelledAt: null,
+    }
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.includes('status=published')) {
+        data = [task]
+      } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
+        data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
+      } else if (url === '/api/tasks/task-1/applications') {
+        data = [application]
+      } else if (url === '/api/tasks/task-1/applications/app-accepted/settlement') {
+        // confirm 返回 202 后首次轮询即到终态：结算被未终局争议暂扣
+        data = { applicationId: 'app-accepted', status: 'held', reason: 'open_dispute' }
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      } else if (url.startsWith('/api/reputation/')) {
+        data = { accountId: 'acct-rec', level: 'Lv1', levelTitle: '新锐', acceptedCount: 1, completedCount: 0, completionRate: 0, ratingCount: 0, averageScore: null, averageResponseSeconds: null }
+      } else if (url.includes('/profile')) {
+        data = { accountId: 'acct-rec', displayName: null, bio: null, contentTags: [], domainTags: [], socialAccounts: [], updatedAt: null }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+    await wrapper.find('button.gl-link').trigger('click')
+    await flushPromises()
+
+    const confirmButton = wrapper.findAll('button').find((item) => item.text() === '确认履约')!
+    await confirmButton.trigger('click')
+    await flushPromises()
+
+    expect(calls.some(([url, init]) => url === '/api/tasks/task-1/applications/app-accepted/confirm' && init?.method === 'POST')).toBe(true)
+    expect(wrapper.get('td.gl-outcome').text()).toBe('结算暂停：存在未终局争议')
+    expect(wrapper.text()).not.toContain('已结算（资金已确认扣款）')
+    expect(wrapper.text()).not.toContain('结算中…')
+  })
+})
+
 describe('GrasslandWorkbench deferred 争议', () => {
   beforeEach(() => {
     vi.useFakeTimers()
