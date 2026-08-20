@@ -59,6 +59,16 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 	@MockitoBean
 	private com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety;
 
+	@MockitoBean
+	private com.grassland.marketplace.workflow.IntelligenceOfficialVerificationClient officialClient;
+
+	@org.junit.jupiter.api.BeforeEach
+	void stubOfficialClient() {
+		// P1 骨架（ADR-D04）默认态：官方数据源未配置 → 检查项省略
+		when(officialClient.fetchOfficialData(any(), any(), any(), any(), any()))
+				.thenReturn(reactor.core.publisher.Mono.empty());
+	}
+
 	@org.junit.jupiter.api.BeforeEach
 	void stubCommentSafety() {
 		// 默认放行（fail-open 语义等价）；blocked 用例单独覆写
@@ -284,6 +294,50 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 						+ " WHERE application_id = CAST(:app AS uuid) ORDER BY created_at DESC LIMIT 1")
 				.bind("app", app).map(r -> r.get("comment_text", String.class)).one().block();
 		assertThat(saved).isEqualTo("这家店的桂花拿铁真的很惊艳！");
+	}
+
+	/**
+	 * P1 骨架（ADR-D04）——official_data 检查项三态：数据齐备（账号一致+已发布+评论可见）= passed 且 detail
+	 * 带归一指标；账号不一致 = failed；未配置（默认 stub empty）= 检查项省略。
+	 */
+	@Test
+	@SuppressWarnings("unchecked")
+	void officialDataCheckTriStatesFromGatewayData() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		String task = publishInteractionTask(merchant, org, "comment");
+		String app = applyAndAccept(recommender, task, merchant, org);
+		stubLinkPassed();
+
+		// 数据齐备 → passed（detail 带指标）
+		when(officialClient.fetchOfficialData(any(), any(), any(), any(), any())).thenReturn(reactor.core.publisher.Mono
+				.just(new com.grassland.marketplace.workflow.IntelligenceOfficialVerificationClient.OfficialData(null,
+						true, true, true, Map.of("likes", 120L, "comments", 3L))));
+		Map<String, Object> created = submitRaw(recommender, task, app, "@seedhunter", "官方数据核验用评论").expectStatus()
+				.isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		String submission = ((Map<String, Object>) created.get("data")).get("id").toString();
+		client().get().uri("/api/tasks/{t}/applications/{a}/submissions", task, app)
+				.header(H, sign(merchant, "merchant", org, "basic_publish")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.submissions[0].verification.checks[?(@.type=='official_data')].status")
+				.isEqualTo("passed");
+
+		// 账号不一致 → failed
+		when(officialClient.fetchOfficialData(any(), any(), any(), any(), any())).thenReturn(reactor.core.publisher.Mono
+				.just(new com.grassland.marketplace.workflow.IntelligenceOfficialVerificationClient.OfficialData(null,
+						false, true, null, Map.of())));
+		client().post()
+				.uri("/api/tasks/{t}/applications/{a}/submissions/{s}/verification/checks", task, app, submission)
+				.header(H, sign(merchant, "merchant", org, "basic_publish")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.checks[?(@.type=='official_data')].status").isEqualTo("failed");
+
+		// 未配置（默认 empty）→ 检查项省略：重新核验后 checks 里无 official_data
+		when(officialClient.fetchOfficialData(any(), any(), any(), any(), any()))
+				.thenReturn(reactor.core.publisher.Mono.empty());
+		client().post()
+				.uri("/api/tasks/{t}/applications/{a}/submissions/{s}/verification/checks", task, app, submission)
+				.header(H, sign(merchant, "merchant", org, "basic_publish")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.checks[?(@.type=='official_data')]").doesNotExist();
 	}
 
 	@Test
