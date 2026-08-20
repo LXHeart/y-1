@@ -41,1247 +41,1095 @@ import reactor.core.publisher.Mono;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class MediaControllerIT {
 
-    private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16-alpine");
-    private static final GenericContainer<?> MINIO = new GenericContainer<>("minio/minio:latest")
-            .withCommand("server", "/data")
-            .withExposedPorts(9000)
-            .withEnv("MINIO_ROOT_USER", "minioadmin")
-            .withEnv("MINIO_ROOT_PASSWORD", "minioadmin")
-            .waitingFor(Wait.forHttp("/minio/health/live").forPort(9000));
-
-    private static final byte[] PNG =
-            new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
-    private static final byte[] WAV =
-            new byte[] {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E'};
-
-    static {
-        POSTGRES.start();
-        MINIO.start();
-    }
-
-    @DynamicPropertySource
-    static void props(DynamicPropertyRegistry r) {
-        String dbUrl = "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword()
-                + "@" + POSTGRES.getHost() + ":" + POSTGRES.getMappedPort(5432)
-                + "/" + POSTGRES.getDatabaseName();
-        String minioUrl = "http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000);
-        r.add("intelligence.datasource.from-database-url", () -> "true");
-        r.add("DATABASE_URL", () -> dbUrl);
-        r.add("management.server.port", () -> "0");
-        r.add("identity-assertion.enabled", () -> "true");
-        registerServiceKeyring(r, "intelligence");
-        r.add("intelligence.outbox.enabled", () -> "false");
-        r.add("ai.qwen.base-url", () -> "https://example.com");
-        r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
-        r.add("object-storage.enabled", () -> "true");
-        r.add("object-storage.endpoint", () -> minioUrl);
-        r.add("object-storage.public-base-url", () -> minioUrl);
-        r.add("object-storage.access-key", () -> "minioadmin");
-        r.add("object-storage.secret-key", () -> "minioadmin");
-        r.add("object-storage.bucket", () -> "grassland-media-it");
-        r.add("object-storage.auto-create-bucket", () -> "true");
-        r.add("media.cleanup-interval-ms", () -> "3600000");
-        r.add("media.max-objects-per-owner", () -> "1");
-        r.add("media.max-total-bytes-per-owner", () -> "16");
-        r.add("article-images.generated.cleanup-interval-ms", () -> "3600000");
-    }
-
-    @LocalServerPort
-    private int port;
-
-    @Autowired
-    private IdentityAssertionSigner signer;
-
-    @MockitoSpyBean
-    private MediaReferenceRepository mediaRefs;
-
-    @MockitoSpyBean
-    private ObjectStorageAdapter storage;
-
-    @Autowired
-    private DatabaseClient db;
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void uploadConfirmSignedReadDeleteRoundTrip() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = "org-" + UUID.randomUUID();
-        WebTestClient client = client();
-
-        Map<String, Object> ticketEnvelope = client.post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, org))
-                .bodyValue(Map.of(
-                        "contentType", "image/png",
-                        "purpose", "engagement_attachment",
-                        "domainType", "application",
-                        "domainId", "app-123",
-                        "sizeBytes", PNG.length,
-                        "ttlSeconds", 3600))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class)
-                .returnResult().getResponseBody();
-        assertThat(ticketEnvelope).isNotNull();
-        Map<String, Object> ticket = (Map<String, Object>) ticketEnvelope.get("data");
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        String uploadKey = (String) ticket.get("objectKey");
-        URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
-        assertThat(uploadKey).startsWith("media-pending/");
-
-        HttpResponse<Void> put = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(uploadUrl)
-                        .header("Content-Type", "image/png")
-                        .PUT(HttpRequest.BodyPublishers.ofByteArray(PNG))
-                        .build(),
-                HttpResponse.BodyHandlers.discarding());
-        assertThat(put.statusCode()).isEqualTo(200);
-
-        client.post().uri("/api/media/{id}/confirm", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.data.status").isEqualTo("active")
-                .jsonPath("$.data.ownerAccountId").isEqualTo(owner)
-                .jsonPath("$.data.organizationId").isEqualTo(org)
-                .jsonPath("$.data.domainType").isEqualTo("application")
-                .jsonPath("$.data.domainId").isEqualTo("app-123")
-                .jsonPath("$.data.sizeBytes").isEqualTo(PNG.length)
-                .jsonPath("$.data.checksum").isEqualTo(MediaChecksums.sha256(PNG));
-
-        MediaReference active = mediaRefs.findById(mediaId).block();
-        assertThat(active).isNotNull();
-        assertThat(active.objectKey()).startsWith("media/engagement_attachment/");
-        assertThat(active.objectKey()).isNotEqualTo(uploadKey);
-        assertThat(active.uploadKey()).isEqualTo(uploadKey);
-
-        // 原 presigned PUT 仍在有效期内，但只能覆盖临时 key；最终资产从未暴露 PUT 凭据。
-        byte[] replacement = new byte[PNG.length];
-        HttpResponse<Void> reusedPut = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(uploadUrl)
-                        .header("Content-Type", "image/png")
-                        .PUT(HttpRequest.BodyPublishers.ofByteArray(replacement))
-                        .build(),
-                HttpResponse.BodyHandlers.discarding());
-        assertThat(reusedPut.statusCode()).isEqualTo(200);
-
-        Map<String, Object> readEnvelope = client.get().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class)
-                .returnResult().getResponseBody();
-        assertThat(readEnvelope).isNotNull();
-        Map<String, Object> read = (Map<String, Object>) readEnvelope.get("data");
-        URI downloadUrl = URI.create((String) read.get("downloadUrl"));
-        // 图片类型：签名读 URL 不注入 response-content-disposition，浏览器内联渲染。
-        assertThat(downloadUrl.toString()).doesNotContain("response-content-disposition");
-        HttpResponse<byte[]> download = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(downloadUrl).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertThat(download.statusCode()).isEqualTo(200);
-        assertThat(download.body()).isEqualTo(PNG);
-
-        client.get().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign("other-" + UUID.randomUUID(), null))
-                .exchange().expectStatus().isNotFound();
-
-        client.delete().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.deleted").isEqualTo(true);
-
-        MediaReference deleted = mediaRefs.findById(mediaId).block();
-        assertThat(deleted).isNotNull();
-        assertThat(deleted.status()).isEqualTo(MediaStatus.DELETED);
-        assertThat(deleted.deletedAt()).isNotNull();
-        Long deletedRows = db.sql("""
-                        SELECT COUNT(*)::bigint AS c FROM media_reference
-                        WHERE id=CAST(:id AS uuid) AND status='deleted' AND upload_key IS NULL
-                        """)
-                .bind("id", mediaId.toString()).map(row -> row.get("c", Long.class)).one().block();
-        assertThat(deletedRows).isEqualTo(1L);
-        List<String> mediaEvents = db.sql("""
-                        SELECT event_type FROM intelligence_outbox
-                        WHERE aggregate_type = 'media_reference' AND aggregate_id = :id
-                        ORDER BY created_at, id
-                        """)
-                .bind("id", mediaId.toString())
-                .map(row -> row.get("event_type", String.class)).all().collectList().block();
-        assertThat(mediaEvents).containsExactly("MediaUploadReserved", "MediaActivated", "MediaDeleted");
-        client.get().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isNotFound();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void signedReadInjectsContentDispositionForNonImageTypes() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        // 8 字节 "%PDF-1.5"；media 路径仅校验 size + MIME 字符串（无 magic-byte），任意同长度字节即可。
-        byte[] pdf = new byte[] {0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x35};
-        WebTestClient client = client();
-
-        Map<String, Object> ticketEnvelope = client.post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of(
-                        "contentType", "application/pdf",
-                        "purpose", "user_upload",
-                        "sizeBytes", pdf.length,
-                        "ttlSeconds", 3600))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class)
-                .returnResult().getResponseBody();
-        assertThat(ticketEnvelope).isNotNull();
-        Map<String, Object> ticket = (Map<String, Object>) ticketEnvelope.get("data");
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
-
-        HttpResponse<Void> put = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(uploadUrl)
-                        .header("Content-Type", "application/pdf")
-                        .PUT(HttpRequest.BodyPublishers.ofByteArray(pdf))
-                        .build(),
-                HttpResponse.BodyHandlers.discarding());
-        assertThat(put.statusCode()).isEqualTo(200);
-
-        client.post().uri("/api/media/{id}/confirm", mediaId)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.status").isEqualTo("active");
-
-        Map<String, Object> readEnvelope = client.get().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class)
-                .returnResult().getResponseBody();
-        assertThat(readEnvelope).isNotNull();
-        Map<String, Object> read = (Map<String, Object>) readEnvelope.get("data");
-        URI downloadUrl = URI.create((String) read.get("downloadUrl"));
-
-        // 非图片类型：签名读 URL 注入 attachment; filename=<id>.pdf，强制浏览器下载而非内联渲染。
-        assertThat(downloadUrl.getRawQuery()).contains("response-content-disposition");
-        assertThat(downloadUrl.getRawQuery()).contains("attachment");
-        assertThat(downloadUrl.getRawQuery()).contains(mediaId + ".pdf");
-
-        HttpResponse<byte[]> download = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(downloadUrl).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertThat(download.statusCode()).isEqualTo(200);
-        assertThat(download.body()).isEqualTo(pdf);
-        assertThat(download.headers().firstValue("Content-Disposition").orElse(""))
-                .isEqualTo("attachment; filename=\"" + mediaId + ".pdf\"");
-    }
-
-    @Test
-    void endpointsRequireAuthAndRejectUnsafePurposeOrMime() {
-        client().post().uri("/api/media/upload-tickets")
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "user_upload", "sizeBytes", 1))
-                .exchange().expectStatus().isUnauthorized();
-
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
-                .bodyValue(Map.of("contentType", "image/svg+xml", "purpose", "user_upload", "sizeBytes", 1))
-                .exchange().expectStatus().isBadRequest();
-
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "article_generated", "sizeBytes", 1))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    @Test
-    void speechAudioTicketAllowsOnlySupportedAudioMimeTypesAndEnforcesItsSizeCap() {
-        for (String mime : List.of(
-                "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg")) {
-            client().post().uri("/api/media/upload-tickets")
-                    .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
-                    .bodyValue(Map.of("contentType", mime, "purpose", "speech_audio", "sizeBytes", WAV.length))
-                    .exchange().expectStatus().isOk()
-                    .expectBody()
-                    .jsonPath("$.data.id").exists();
-        }
-
-        for (String mime : List.of("application/pdf", "video/mp4")) {
-            client().post().uri("/api/media/upload-tickets")
-                    .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
-                    .bodyValue(Map.of("contentType", mime, "purpose", "speech_audio", "sizeBytes", WAV.length))
-                    .exchange().expectStatus().isBadRequest();
-        }
-
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
-                .bodyValue(Map.of("contentType", "audio/wav", "purpose", "speech_audio",
-                        "sizeBytes", 25L * 1024 * 1024 + 1))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void speechAudioConfirmChecksTheSignatureAgainstTheDeclaredMimeType() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> valid = createSpeechTicket(owner, "audio/wav", WAV.length);
-        UUID validId = UUID.fromString((String) valid.get("id"));
-        put(URI.create((String) valid.get("uploadUrl")), WAV, "audio/wav");
-
-        client().post().uri("/api/media/{id}/confirm", validId)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.data.status").isEqualTo("active")
-                .jsonPath("$.data.purpose").isEqualTo("speech_audio");
-
-        String mismatchOwner = "acct-" + UUID.randomUUID();
-        Map<String, Object> mismatch = createSpeechTicket(mismatchOwner, "audio/mpeg", WAV.length);
-        UUID mismatchId = UUID.fromString((String) mismatch.get("id"));
-        put(URI.create((String) mismatch.get("uploadUrl")), WAV, "audio/mpeg");
-
-        client().post().uri("/api/media/{id}/confirm", mismatchId)
-                .header("X-Grassland-Identity", sign(mismatchOwner, null))
-                .exchange().expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.error").isEqualTo("语音音频文件签名与 MIME 不一致");
-        assertThat(mediaRefs.findById(mismatchId).block().status()).isEqualTo(MediaStatus.DELETED);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void temporaryObjectCleanupFailureLogDoesNotExposeStorageDetails() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> ticket = createSpeechTicket(owner, "audio/wav", WAV.length);
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        String uploadKey = (String) ticket.get("objectKey");
-        put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/wav");
-
-        String sensitiveStorageMessage = "upstream body at /private/storage/path";
-        doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).deleteObject(uploadKey);
-        ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(MediaController.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            client().post().uri("/api/media/{id}/confirm", mediaId)
-                    .header("X-Grassland-Identity", sign(owner, null))
-                    .exchange().expectStatus().isOk()
-                    .expectBody().jsonPath("$.data.status").isEqualTo("active");
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
-
-        ILoggingEvent cleanupWarning = appender.list.stream()
-                .filter(event -> event.getFormattedMessage().contains("temporary object deletion"))
-                .findFirst()
-                .orElseThrow();
-        assertThat(cleanupWarning.getFormattedMessage())
-                .contains(mediaId.toString(), "failureStage=storage_delete_after_confirm",
-                        "exceptionType=IllegalStateException")
-                .doesNotContain(uploadKey, sensitiveStorageMessage);
-        assertThat(cleanupWarning.getThrowableProxy()).isNull();
-        assertThat(mediaRefs.findById(mediaId).block().status()).isEqualTo(MediaStatus.ACTIVE);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void invalidUploadCleanupFailureLogDoesNotExposeStorageDetails() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> ticket = createSpeechTicket(owner, "audio/mpeg", WAV.length);
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        String uploadKey = (String) ticket.get("objectKey");
-        put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/mpeg");
-
-        String sensitiveStorageMessage = "upstream body at /private/storage/path";
-        doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).deleteObject(uploadKey);
-        ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(MediaController.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            client().post().uri("/api/media/{id}/confirm", mediaId)
-                    .header("X-Grassland-Identity", sign(owner, null))
-                    .exchange().expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.error").isEqualTo("语音音频文件签名与 MIME 不一致");
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
-
-        ILoggingEvent cleanupWarning = appender.list.stream()
-                .filter(event -> event.getFormattedMessage().contains("delete finalization deferred"))
-                .findFirst()
-                .orElseThrow();
-        assertThat(cleanupWarning.getFormattedMessage())
-                .contains(mediaId.toString(), "failureStage=delete_finalization",
-                        "exceptionType=IllegalStateException")
-                .doesNotContain(uploadKey, sensitiveStorageMessage);
-        assertThat(cleanupWarning.getThrowableProxy()).isNull();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void finalizingReleaseFailureLogDoesNotExposeStorageDetails() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> ticket = createSpeechTicket(owner, "audio/wav", WAV.length);
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        String uploadKey = (String) ticket.get("objectKey");
-        put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/wav");
-
-        String sensitiveStorageMessage = "upstream response body at /private/storage/path";
-        String sensitiveReleaseMessage = "release failure details at /private/release/path";
-        doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).getObject(uploadKey);
-        doReturn(Mono.<Boolean>error(new IllegalStateException(sensitiveReleaseMessage)))
-                .when(mediaRefs).releaseFinalize(mediaId);
-        ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(MediaController.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            client().post().uri("/api/media/{id}/confirm", mediaId)
-                    .header("X-Grassland-Identity", sign(owner, null))
-                    .exchange().expectStatus().is5xxServerError();
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
-
-        ILoggingEvent releaseWarning = appender.list.stream()
-                .filter(event -> event.getFormattedMessage().contains("finalizing release failed"))
-                .findFirst()
-                .orElseThrow();
-        assertThat(releaseWarning.getFormattedMessage())
-                .contains(mediaId.toString(), "failureStage=release_finalize",
-                        "exceptionType=IllegalStateException")
-                .doesNotContain(uploadKey, sensitiveStorageMessage, sensitiveReleaseMessage);
-        assertThat(releaseWarning.getThrowableProxy()).isNull();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void confirmMissingObjectReturnsNotFoundAndKeepsPendingAuditRow() {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of("contentType", "application/pdf", "purpose", "user_upload", "sizeBytes", 10))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
-        UUID id = UUID.fromString((String) data.get("id"));
-
-        client().post().uri("/api/media/{id}/confirm", id)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().expectStatus().isNotFound();
-
-        MediaReference pending = mediaRefs.findById(id).block();
-        assertThat(pending).isNotNull();
-        assertThat(pending.status()).isEqualTo(MediaStatus.PENDING);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void concurrentConfirmHasSingleWinnerAndBothCallsConverge() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> ticket = createTicket(owner, PNG.length);
-        UUID id = UUID.fromString((String) ticket.get("id"));
-        URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
-        put(uploadUrl, PNG);
-
-        CountDownLatch start = new CountDownLatch(1);
-        CompletableFuture<Integer> first = CompletableFuture.supplyAsync(() -> confirmStatus(owner, id, start));
-        CompletableFuture<Integer> second = CompletableFuture.supplyAsync(() -> confirmStatus(owner, id, start));
-        start.countDown();
-
-        assertThat(List.of(first.get(), second.get())).allMatch(status -> status == 200 || status == 409);
-        client().post().uri("/api/media/{id}/confirm", id)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.status").isEqualTo("active");
-        assertThat(mediaRefs.findById(id).block().status()).isEqualTo(MediaStatus.ACTIVE);
-    }
-
-    @Test
-    void quotaReservationIsAtomicForConcurrentTickets() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        CountDownLatch start = new CountDownLatch(1);
-        CompletableFuture<Integer> first = CompletableFuture.supplyAsync(() -> ticketStatus(owner, 10, start));
-        CompletableFuture<Integer> second = CompletableFuture.supplyAsync(() -> ticketStatus(owner, 10, start));
-        start.countDown();
-
-        assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(200, 429);
-        Long count = db.sql("""
-                        SELECT COUNT(*)::bigint AS c FROM media_reference
-                        WHERE owner_account_id=:owner AND status='pending'
-                        """)
-                .bind("owner", owner).map(row -> row.get("c", Long.class)).one().block();
-        assertThat(count).isEqualTo(1L);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void confirmAndDeleteRemoveBothTemporaryAndFinalKeysFromStorage() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> ticket = createTicket(owner, PNG.length);
-        UUID id = UUID.fromString((String) ticket.get("id"));
-        URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
-        put(uploadUrl, PNG);
-        MediaReference pending = mediaRefs.findById(id).block();
-        assertThat(pending).isNotNull();
-        assertThat(storage.headObject(pending.uploadKey())).isPresent();
-
-        client().post().uri("/api/media/{id}/confirm", id)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().expectStatus().isOk();
-
-        MediaReference active = mediaRefs.findById(id).block();
-        assertThat(active).isNotNull();
-        assertThat(storage.headObject(active.objectKey())).isPresent();
-        // confirm 服务端翻转后立即删除临时对象，旧 PUT URL 无法再覆盖最终资产。
-        assertThat(storage.headObject(pending.uploadKey())).isEmpty();
-
-        client().delete().uri("/api/media/{id}", id)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().expectStatus().isOk();
-
-        assertThat(mediaRefs.findById(id).block().status()).isEqualTo(MediaStatus.DELETED);
-        assertThat(storage.headObject(active.objectKey())).isEmpty();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void oversizedPutBodyRejectedAtIngestionBySignedContentLength() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> ticket = createTicket(owner, 4);
-        URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
-        // 票据签的是 4 字节 Content-Length；PUT 一个远大于此的 body 必须被存储后端拒绝，
-        // 防止攻击者用小票据在 media-pending/ 堆积超配额对象（confirm 前的 DoS）。
-        byte[] oversized = new byte[1024];
-        HttpResponse<Void> resp = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(uploadUrl)
-                        .header("Content-Type", "image/png")
-                        .PUT(HttpRequest.BodyPublishers.ofByteArray(oversized))
-                        .build(),
-                HttpResponse.BodyHandlers.discarding());
-        assertThat(resp.statusCode()).isNotEqualTo(200);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void serviceMetadataReturnsAttachmentMetadataForMarketplaceService() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = "org-" + UUID.randomUUID();
-        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
-        WebTestClient client = client();
-
-        Map<String, Object> envelope = client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        assertThat(envelope).isNotNull();
-        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
-        assertThat(data.get("id")).isEqualTo(mediaId.toString());
-        assertThat(data.get("ownerAccountId")).isEqualTo(owner);
-        assertThat(data.get("purpose")).isEqualTo("engagement_attachment");
-        assertThat(data.get("status")).isEqualTo("active");
-        assertThat(data.get("mimeType")).isEqualTo("image/png");
-        assertThat(data.get("sizeBytes")).isEqualTo(PNG.length);
-        assertThat(data.get("expiresAt")).isNotNull();
-    }
-
-    @Test
-    void serviceMetadataRejectsAttachmentFromDifferentApplicationDomain() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = "org-" + UUID.randomUUID();
-        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
-
-        client().get().uri(URI.create("/api/media/" + mediaId
-                        + "/metadata?domainType=application&domainId=other-app"))
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void kybMetadataReturnsOwnershipOrganizationDomainAndStateOnlyToIdentityService() {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = UUID.randomUUID().toString();
-        UUID mediaId = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                Instant.now().plusSeconds(3600), "merchant_kyb", org);
-
-        Map<String, Object> envelope = client().get().uri("/api/media/{id}/kyb-metadata", mediaId)
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
-        assertThat(data).containsEntry("ownerAccountId", owner)
-                .containsEntry("organizationId", org)
-                .containsEntry("purpose", "merchant_kyb")
-                .containsEntry("domainType", "merchant_kyb")
-                .containsEntry("domainId", org)
-                .containsEntry("status", "active")
-                .containsEntry("mimeType", "image/png")
-                .containsEntry("sizeBytes", PNG.length);
-
-        client().get().uri("/api/media/{id}/kyb-metadata", mediaId)
-                .header("X-Grassland-Identity", signService(org, "marketplace"))
-                .exchange().expectStatus().isForbidden();
-        client().get().uri("/api/media/{id}/kyb-metadata", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isForbidden();
-    }
-
-    @Test
-    void kybMetadataIsScopedToSignedOrganizationAndUsableEvidence() {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = UUID.randomUUID().toString();
-        UUID live = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                null, "merchant_kyb", org);
-
-        client().get().uri("/api/media/{id}/kyb-metadata", live)
-                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity"))
-                .exchange().expectStatus().isNotFound();
-
-        for (UUID unusable : List.of(
-                insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE,
-                        null, "merchant_kyb", org),
-                insertMedia(owner, org, "merchant_kyb", MediaStatus.PENDING,
-                        null, "merchant_kyb", org),
-                insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                        Instant.now().minusSeconds(30), "merchant_kyb", org),
-                insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                        null, "merchant_kyb", UUID.randomUUID().toString()))) {
-            client().get().uri("/api/media/{id}/kyb-metadata", unusable)
-                    .header("X-Grassland-Identity", signService(org, "identity"))
-                    .exchange().expectStatus().isNotFound();
-        }
-    }
-
-    @Test
-    void kybDownloadUrlIsScopedToSignedOrganizationAndUsableEvidence() {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = UUID.randomUUID().toString();
-        UUID live = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                null, "merchant_kyb", org);
-
-        client().get().uri("/api/media/{id}/kyb-download-url", live)
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .exchange().expectStatus().isOk();
-        client().get().uri("/api/media/{id}/kyb-download-url", live)
-                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity"))
-                .exchange().expectStatus().isNotFound();
-        client().get().uri("/api/media/{id}/kyb-download-url", live)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isForbidden();
-
-        for (UUID unusable : List.of(
-                insertMedia(owner, org, "merchant_kyb", MediaStatus.PENDING,
-                        null, "merchant_kyb", org),
-                insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                        Instant.now().minusSeconds(30), "merchant_kyb", org),
-                insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE,
-                        null, "merchant_kyb", org))) {
-            client().get().uri("/api/media/{id}/kyb-download-url", unusable)
-                    .header("X-Grassland-Identity", signService(org, "identity"))
-                    .exchange().expectStatus().isNotFound();
-        }
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void identityCanIssueRetainedKybUploadForTargetOrganizationAndDownloadIt() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String targetOrg = UUID.randomUUID().toString();
-        Map<String, Object> envelope = client().post().uri("/api/media/kyb-upload-tickets")
-                .header("X-Grassland-Identity", signService(targetOrg, "identity"))
-                .bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        put(URI.create((String) ticket.get("uploadUrl")), PNG);
-
-        // 用户当前活动组织可以不同；票据的目标组织由 identity 的已鉴权组织上下文决定。
-        client().post().uri("/api/media/{id}/confirm", mediaId)
-                .header("X-Grassland-Identity", sign(owner, UUID.randomUUID().toString()))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.organizationId").isEqualTo(targetOrg)
-                .jsonPath("$.data.purpose").isEqualTo("merchant_kyb")
-                .jsonPath("$.data.expiresAt").doesNotExist();
-
-        Map<String, Object> downloadEnvelope = client().get()
-                .uri("/api/media/{id}/kyb-download-url", mediaId)
-                .header("X-Grassland-Identity", signService(targetOrg, "identity"))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> download = (Map<String, Object>) downloadEnvelope.get("data");
-        HttpResponse<byte[]> bytes = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create((String) download.get("downloadUrl"))).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertThat(bytes.statusCode()).isEqualTo(200);
-        assertThat(bytes.body()).isEqualTo(PNG);
-
-        UUID attachmentToken = UUID.randomUUID();
-        client().post().uri("/api/media/{id}/kyb-retentions", mediaId)
-                .header("X-Grassland-Identity", signService(targetOrg, "identity"))
-                .bodyValue(Map.of("referenceId", attachmentToken.toString()))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.retained").isEqualTo(true);
-
-        // KYB 证据被附件 token 留存后，owner 不能绕过 identity 直接删除。
-        client().delete().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign(owner, targetOrg))
-                .exchange().expectStatus().isEqualTo(409);
-        MediaReference retained = mediaRefs.findById(mediaId).block();
-        assertThat(retained).isNotNull();
-        assertThat(retained.status()).isEqualTo(MediaStatus.ACTIVE);
-        assertThat(storage.headObject(retained.objectKey())).isPresent();
-
-        client().delete().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, attachmentToken)
-                .header("X-Grassland-Identity", signService(targetOrg, "identity"))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.released").isEqualTo(true);
-
-        client().delete().uri("/api/media/{id}", mediaId)
-                .header("X-Grassland-Identity", sign(owner, targetOrg))
-                .exchange().expectStatus().isOk();
-        assertThat(mediaRefs.findById(mediaId).block().status()).isEqualTo(MediaStatus.DELETED);
-    }
-
-    @Test
-    void identityCanAcquireIdempotentKybLeaseButUsersAndOtherOrganizationsCannot() {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = UUID.randomUUID().toString();
-        UUID mediaId = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE,
-                null, "merchant_kyb", org);
-        UUID referenceId = UUID.randomUUID();
-        Map<String, Object> request = Map.of(
-                "referenceType", "attachment",
-                "mode", "lease",
-                "leaseSeconds", 3600);
-
-        client().put().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, referenceId)
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(request)
-                .exchange().expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.data.referenceId").isEqualTo(referenceId.toString())
-                .jsonPath("$.data.referenceType").isEqualTo("attachment")
-                .jsonPath("$.data.leaseUntil").isNotEmpty();
-
-        client().put().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, referenceId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .bodyValue(request)
-                .exchange().expectStatus().isForbidden();
-        client().put().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, referenceId)
-                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity"))
-                .bodyValue(request)
-                .exchange().expectStatus().isNotFound();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void kybUploadRejectsUnsuitableMimeAndSpoofedFileSignature() throws Exception {
-        String org = UUID.randomUUID().toString();
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
-                .bodyValue(Map.of("purpose", "merchant_kyb", "contentType", "image/png",
-                        "sizeBytes", PNG.length, "domainType", "merchant_kyb", "domainId", org))
-                .exchange().expectStatus().isBadRequest();
-
-        client().post().uri("/api/media/kyb-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
-                        "contentType", "video/mp4", "sizeBytes", 8))
-                .exchange().expectStatus().isBadRequest();
-
-        String owner = "acct-" + UUID.randomUUID();
-        Map<String, Object> envelope = client().post().uri("/api/media/kyb-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        put(URI.create((String) ticket.get("uploadUrl")), new byte[PNG.length]);
-
-        client().post().uri("/api/media/{id}/confirm", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    @Test
-    void serviceMetadataRejectsUserAssertionAndNonMarketplacePrincipal() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = "org-" + UUID.randomUUID();
-        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
-        WebTestClient client = client();
-
-        // 终端用户断言（callerKind=null）→ 403：服务间断点不对浏览器/终端用户开放
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isEqualTo(403);
-
-        // 已受信服务断言但 principal 不是 marketplace → 403
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .exchange().expectStatus().isEqualTo(403);
-
-        // 缺断言 → 401
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
-                .exchange().expectStatus().isUnauthorized();
-    }
-
-    @Test
-    void serviceMetadataReturnsNotFoundForNonAttachmentInactiveExpiredOrMissing() {
-        String org = "org-" + UUID.randomUUID();
-        WebTestClient client = client();
-
-        // 非 engagement_attachment 用途（user_upload pending）→ 404
-        UUID userUploadId = UUID.fromString(
-                (String) createTicket("acct-a-" + UUID.randomUUID(), PNG.length).get("id"));
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", userUploadId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-
-        // engagement_attachment 但 pending（未 confirm）→ 404
-        UUID pendingId = UUID.fromString((String) createAttachmentTicket(
-                "acct-b-" + UUID.randomUUID(), org, PNG.length).get("id"));
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", pendingId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-
-        // engagement_attachment active 但已过期 → 404
-        UUID expiredId = insertMedia("acct-c-" + UUID.randomUUID(), org,
-                "engagement_attachment", MediaStatus.ACTIVE, Instant.now().minusSeconds(60));
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", expiredId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-
-        // 不存在的 id → 404（存在性不可探测）
-        client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", UUID.randomUUID())
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void serviceDownloadUrlReturnsPresignedUrlServingOriginalBytes() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = "org-" + UUID.randomUUID();
-        UUID mediaId = createActiveAttachment(owner, org, PNG.length);
-        WebTestClient client = client();
-
-        Map<String, Object> envelope = client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", mediaId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        assertThat(envelope).isNotNull();
-        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
-        URI downloadUrl = URI.create((String) data.get("downloadUrl"));
-        assertThat(data.get("expiresAt")).isNotNull();
-
-        // 真 GET presigned URL 对 MinIO：200 + 原始字节（与 owner-only read 同源签名语义）
-        HttpResponse<byte[]> download = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(downloadUrl).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertThat(download.statusCode()).isEqualTo(200);
-        assertThat(download.body()).isEqualTo(PNG);
-    }
-
-    @Test
-    void serviceDownloadUrlReturnsNotFoundForExpiredOrDeletedAndRejectsUser() throws Exception {
-        String org = "org-" + UUID.randomUUID();
-        WebTestClient client = client();
-
-        // 已过期 active → 404（download-url 在 presign 前就被 serviceAttachment 过滤掉）
-        UUID expiredId = insertMedia("acct-a-" + UUID.randomUUID(), org,
-                "engagement_attachment", MediaStatus.ACTIVE, Instant.now().minusSeconds(60));
-        client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", expiredId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-
-        // media 被删后 → 404
-        String ownerB = "acct-b-" + UUID.randomUUID();
-        UUID liveId = createActiveAttachment(ownerB, org, PNG.length);
-        client.delete().uri("/api/media/{id}", liveId)
-                .header("X-Grassland-Identity", sign(ownerB, org))
-                .exchange().expectStatus().isOk();
-        client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", liveId)
-                .header("X-Grassland-Identity", signService(org))
-                .exchange().expectStatus().isNotFound();
-
-        // 用户断言 → 403（download-url 同 metadata 的 service gate）
-        String ownerC = "acct-c-" + UUID.randomUUID();
-        UUID liveId2 = createActiveAttachment(ownerC, org, PNG.length);
-        client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", liveId2)
-                .header("X-Grassland-Identity", sign(ownerC, org))
-                .exchange().expectStatus().isEqualTo(403);
-    }
-
-    /** 任务书 #29+#30 D6：头像票据只收图片 MIME；放行 avatar 用途（不在 ARTICLE_GENERATED/MERCHANT_KYB 黑名单）。 */
-    @Test
-    void avatarTicketAllowsImageOnly() {
-        String owner = "acct-" + UUID.randomUUID();
-        // 图片 MIME → 开票成功
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "avatar", "sizeBytes", PNG.length))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").exists();
-        // 非图片 MIME → 400
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of("contentType", "application/pdf", "purpose", "avatar", "sizeBytes", PNG.length))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    /** 头像元数据/下载端点：仅 identity 服务 principal 可调，放行 purpose=avatar + active + 未过期。 */
-    @Test
-    void avatarMetadataAndDownloadScopedToIdentityAndUsable() {
-        String owner = "acct-" + UUID.randomUUID();
-        UUID live = insertMedia(owner, null, "avatar", MediaStatus.ACTIVE, null, null, null);
-
-        // identity principal → 元数据与下载 URL 均可得
-        Map<String, Object> envelope = client().get().uri("/api/media/{id}/avatar-metadata", live)
-                .header("X-Grassland-Identity", signService(null, "identity"))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
-        assertThat(data).containsEntry("ownerAccountId", owner)
-                .containsEntry("purpose", "avatar")
-                .containsEntry("status", "active");
-        client().get().uri("/api/media/{id}/avatar-download-url", live)
-                .header("X-Grassland-Identity", signService(null, "identity"))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.downloadUrl").exists();
-
-        // 非 identity 服务 / 终端用户 → 403
-        client().get().uri("/api/media/{id}/avatar-metadata", live)
-                .header("X-Grassland-Identity", signService(null, "marketplace"))
-                .exchange().expectStatus().isForbidden();
-        client().get().uri("/api/media/{id}/avatar-metadata", live)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().expectStatus().isForbidden();
-
-        // 非 avatar / pending / 已过期 → 404
-        for (UUID unusable : List.of(
-                insertMedia(owner, null, "user_upload", MediaStatus.ACTIVE, null, null, null),
-                insertMedia(owner, null, "avatar", MediaStatus.PENDING, null, null, null),
-                insertMedia(owner, null, "avatar", MediaStatus.ACTIVE, Instant.now().minusSeconds(30), null, null))) {
-            client().get().uri("/api/media/{id}/avatar-metadata", unusable)
-                    .header("X-Grassland-Identity", signService(null, "identity"))
-                    .exchange().expectStatus().isNotFound();
-        }
-    }
-
-    /** #32 D5/D6：品牌 Logo 票据只能由 identity 服务断言代开，落 pending 行 org 级四元组（purpose/domain_type/domain_id/owner）。 */
-    @Test
-    @SuppressWarnings("unchecked")
-    void brandLogoTicketIssuedByIdentityServiceCreatesOrgScopedPendingRow() {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = UUID.randomUUID().toString();
-
-        Map<String, Object> envelope = client().post().uri("/api/media/brand-logo-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        assertThat(envelope).isNotNull();
-        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
-        assertThat(ticket.get("id")).isNotNull();
-        assertThat((String) ticket.get("uploadUrl")).startsWith("http");
-
-        MediaReference pending = mediaRefs.findById(UUID.fromString((String) ticket.get("id"))).block();
-        assertThat(pending).isNotNull();
-        assertThat(pending.ownerAccountId()).isEqualTo(owner);
-        assertThat(pending.organizationId()).isEqualTo(org);
-        assertThat(pending.purpose()).isEqualTo("brand_logo");
-        assertThat(pending.domainType()).isEqualTo("brand_logo");
-        assertThat(pending.domainId()).isEqualTo(org);
-        assertThat(pending.status()).isEqualTo(MediaStatus.PENDING);
-    }
-
-    /** #32 D5：品牌 Logo 仅 PNG/JPEG/WebP 图片（gif/pdf 等一律 400）。 */
-    @Test
-    void brandLogoTicketRejectsNonImageMime() {
-        String org = UUID.randomUUID().toString();
-        for (String mime : List.of("image/gif", "application/pdf")) {
-            client().post().uri("/api/media/brand-logo-upload-tickets")
-                    .header("X-Grassland-Identity", signService(org, "identity"))
-                    .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
-                            "contentType", mime, "sizeBytes", PNG.length))
-                    .exchange()
-                    .expectStatus().isBadRequest()
-                    .expectBody()
-                    .jsonPath("$.error").isEqualTo("品牌 Logo 仅支持 PNG、JPEG 或 WebP 图片");
-        }
-    }
-
-    /** #32 D5：sizeBytes 独立大小帽 2MB，超帽或 <1 → 400。 */
-    @Test
-    void brandLogoTicketEnforcesTwoMegabyteCap() {
-        String org = UUID.randomUUID().toString();
-        client().post().uri("/api/media/brand-logo-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
-                        "contentType", "image/png", "sizeBytes", 2L * 1024 * 1024 + 1))
-                .exchange().expectStatus().isBadRequest();
-        client().post().uri("/api/media/brand-logo-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(),
-                        "contentType", "image/png", "sizeBytes", 0))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    /** #32 D5：brand_logo 进客户端自助开票黑名单，浏览器直连 /upload-tickets 申领被拒。 */
-    @Test
-    void brandLogoPurposeBlockedFromClientSelfServiceTickets() {
-        String org = UUID.randomUUID().toString();
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "brand_logo",
-                        "sizeBytes", PNG.length, "domainType", "brand_logo", "domainId", org))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    /** #42 D2：store_media 进客户端自助开票黑名单，浏览器直连 /upload-tickets 申领被拒（只能经 identity 门店端点拿票）。 */
-    @Test
-    void storeMediaPurposeBlockedFromClientSelfServiceTickets() {
-        String org = UUID.randomUUID().toString();
-        client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "store_media",
-                        "sizeBytes", PNG.length, "domainType", "store", "domainId", UUID.randomUUID().toString()))
-                .exchange().expectStatus().isBadRequest();
-    }
-
-    /** #32 D7：brand-logo-url 仅放行本 org 的 active、未过期、白名单 MIME 品牌 Logo；他 org/不存在/边缘态统一 404。 */
-    @Test
-    @SuppressWarnings("unchecked")
-    void brandLogoUrlServesActiveLogoOnlyToOwningOrganizationService() throws Exception {
-        String owner = "acct-" + UUID.randomUUID();
-        String org = UUID.randomUUID().toString();
-        Map<String, Object> envelope = client().post().uri("/api/media/brand-logo-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
-        UUID mediaId = UUID.fromString((String) ticket.get("id"));
-        put(URI.create((String) ticket.get("uploadUrl")), PNG);
-        client().post().uri("/api/media/{id}/confirm", mediaId)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.status").isEqualTo("active");
-
-        Map<String, Object> downloadEnvelope = client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        Map<String, Object> download = (Map<String, Object>) downloadEnvelope.get("data");
-        assertThat(download.get("downloadUrl")).isNotNull();
-        HttpResponse<byte[]> bytes = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create((String) download.get("downloadUrl"))).GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertThat(bytes.statusCode()).isEqualTo(200);
-        assertThat(bytes.body()).isEqualTo(PNG);
-
-        // 他 org 的 identity 断言 → 404；不存在 id → 404（存在性不可探测）
-        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
-                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity"))
-                .exchange().expectStatus().isNotFound();
-        client().get().uri("/api/media/{id}/brand-logo-url", UUID.randomUUID())
-                .header("X-Grassland-Identity", signService(org, "identity"))
-                .exchange().expectStatus().isNotFound();
-
-        // 非 brand_logo 用途 / pending / 已过期 / domain 不符 / 非白名单 MIME → 404
-        for (UUID unusable : List.of(
-                insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE, null, "brand_logo", org),
-                insertMedia(owner, org, "brand_logo", MediaStatus.PENDING, null, "brand_logo", org),
-                insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE,
-                        Instant.now().minusSeconds(30), "brand_logo", org),
-                insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE,
-                        null, "brand_logo", UUID.randomUUID().toString()),
-                insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE,
-                        null, "brand_logo", org, "application/pdf"))) {
-            client().get().uri("/api/media/{id}/brand-logo-url", unusable)
-                    .header("X-Grassland-Identity", signService(org, "identity"))
-                    .exchange().expectStatus().isNotFound();
-        }
-    }
-
-    /** #32 D6/D7：两个新端点缺断言 → 401；终端用户断言或非 identity 服务 principal → 403。 */
-    @Test
-    void brandLogoEndpointsRequireIdentityServiceAssertion() {
-        String org = UUID.randomUUID().toString();
-        UUID mediaId = UUID.randomUUID();
-        Map<String, Object> body = Map.of(
-                "ownerAccountId", "acct-" + UUID.randomUUID(),
-                "contentType", "image/png", "sizeBytes", PNG.length);
-
-        client().post().uri("/api/media/brand-logo-upload-tickets")
-                .bodyValue(body)
-                .exchange().expectStatus().isUnauthorized();
-        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
-                .exchange().expectStatus().isUnauthorized();
-
-        client().post().uri("/api/media/brand-logo-upload-tickets")
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
-                .bodyValue(body)
-                .exchange().expectStatus().isForbidden();
-        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
-                .header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
-                .exchange().expectStatus().isForbidden();
-
-        client().post().uri("/api/media/brand-logo-upload-tickets")
-                .header("X-Grassland-Identity", signService(org, "marketplace"))
-                .bodyValue(body)
-                .exchange().expectStatus().isForbidden();
-        client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
-                .header("X-Grassland-Identity", signService(org, "marketplace"))
-                .exchange().expectStatus().isForbidden();
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> createTicket(String owner, int sizeBytes) {
-        Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "user_upload", "sizeBytes", sizeBytes))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        return (Map<String, Object>) envelope.get("data");
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> createSpeechTicket(String owner, String contentType, int sizeBytes) {
-        Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of("contentType", contentType, "purpose", "speech_audio", "sizeBytes", sizeBytes))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        return (Map<String, Object>) envelope.get("data");
-    }
-
-    /** 申请 engagement_attachment 上传凭据（pending，未 confirm）。 */
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> createAttachmentTicket(String owner, String org, int sizeBytes) {
-        Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, org))
-                .bodyValue(Map.of(
-                        "contentType", "image/png",
-                        "purpose", "engagement_attachment",
-                        "domainType", "application",
-                        "domainId", "app-1",
-                        "sizeBytes", sizeBytes,
-                        "ttlSeconds", 3600))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        return (Map<String, Object>) envelope.get("data");
-    }
-
-    /** 三步上传一个 active 的 engagement_attachment 附件，返回 media id。 */
-    private UUID createActiveAttachment(String owner, String org, int sizeBytes) throws Exception {
-        Map<String, Object> ticket = createAttachmentTicket(owner, org, sizeBytes);
-        UUID id = UUID.fromString((String) ticket.get("id"));
-        put(URI.create((String) ticket.get("uploadUrl")), PNG);
-        client().post().uri("/api/media/{id}/confirm", id)
-                .header("X-Grassland-Identity", sign(owner, org))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.status").isEqualTo("active");
-        return id;
-    }
-
-    /** 直接落一条 media_reference 行（绕过上传/配额），用于构造 active+过期等边缘态做服务端点过滤验证。 */
-    private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt) {
-        return insertMedia(owner, org, purpose, status, expiresAt, "application", "app-1");
-    }
-
-    private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt,
-                             String domainType, String domainId) {
-        return insertMedia(owner, org, purpose, status, expiresAt, domainType, domainId, "image/png");
-    }
-
-    private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt,
-                             String domainType, String domainId, String mimeType) {
-        UUID id = UUID.randomUUID();
-        MediaReference ref = new MediaReference(
-                id, owner, org, purpose, domainType, domainId,
-                "media/" + purpose + "/" + id, null, mimeType, PNG.length,
-                MediaChecksums.sha256(PNG), "upload", status,
-                Instant.now().minusSeconds(120), expiresAt, null);
-        mediaRefs.insert(ref).block();
-        return id;
-    }
-
-    private void put(URI uploadUrl, byte[] content) throws Exception {
-        put(uploadUrl, content, "image/png");
-    }
-
-    private void put(URI uploadUrl, byte[] content, String contentType) throws Exception {
-        HttpResponse<Void> response = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(uploadUrl)
-                        .header("Content-Type", contentType)
-                        .PUT(HttpRequest.BodyPublishers.ofByteArray(content))
-                        .build(),
-                HttpResponse.BodyHandlers.discarding());
-        assertThat(response.statusCode()).isEqualTo(200);
-    }
-
-    private int confirmStatus(String owner, UUID id, CountDownLatch start) {
-        await(start);
-        return client().post().uri("/api/media/{id}/confirm", id)
-                .header("X-Grassland-Identity", sign(owner, null))
-                .exchange().returnResult(Void.class).getStatus().value();
-    }
-
-    private int ticketStatus(String owner, int sizeBytes, CountDownLatch start) {
-        await(start);
-        return client().post().uri("/api/media/upload-tickets")
-                .header("X-Grassland-Identity", sign(owner, null))
-                .bodyValue(Map.of("contentType", "image/png", "purpose", "user_upload", "sizeBytes", sizeBytes))
-                .exchange().returnResult(Void.class).getStatus().value();
-    }
-
-    private static void await(CountDownLatch latch) {
-        try {
-            latch.await();
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(error);
-        }
-    }
-
-    private WebTestClient client() {
-        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
-    }
-
-    private String sign(String accountId, String organizationId) {
-        Instant now = Instant.now();
-        return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(
-                accountId, "recommender", "sid-" + accountId, organizationId, null,
-                "cookie-session", "level1", null, "request", "trace",
-                "grassland-intelligence", now, now.plusSeconds(60), null, null));
-    }
-
-    /** 造一个 marketplace 服务断言（callerKind=service + principal=marketplace + org 上下文），镜像 ServiceAssertionIssuer.issueForOrg。 */
-    private String signService(String organizationId) {
-        return signService(organizationId, "marketplace");
-    }
-
-    private String signService(String organizationId, String principal) {
-        Instant now = Instant.now();
-        return serviceSigner(principal, "grassland-intelligence").sign(new IdentityAssertion(
-                "service:" + principal, null, null, organizationId, null,
-                "service", "internal", null, "request", "trace",
-                "grassland-intelligence", now, now.plusSeconds(30),
-                "service", principal));
-    }
+	private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+	private static final GenericContainer<?> MINIO = new GenericContainer<>("minio/minio:latest")
+			.withCommand("server", "/data").withExposedPorts(9000).withEnv("MINIO_ROOT_USER", "minioadmin")
+			.withEnv("MINIO_ROOT_PASSWORD", "minioadmin").waitingFor(Wait.forHttp("/minio/health/live").forPort(9000));
+
+	private static final byte[] PNG = new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+	private static final byte[] WAV = new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E'};
+
+	static {
+		POSTGRES.start();
+		MINIO.start();
+	}
+
+	@DynamicPropertySource
+	static void props(DynamicPropertyRegistry r) {
+		String dbUrl = "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword() + "@"
+				+ POSTGRES.getHost() + ":" + POSTGRES.getMappedPort(5432) + "/" + POSTGRES.getDatabaseName();
+		String minioUrl = "http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000);
+		r.add("intelligence.datasource.from-database-url", () -> "true");
+		r.add("DATABASE_URL", () -> dbUrl);
+		r.add("management.server.port", () -> "0");
+		r.add("identity-assertion.enabled", () -> "true");
+		registerServiceKeyring(r, "intelligence");
+		r.add("intelligence.outbox.enabled", () -> "false");
+		r.add("ai.qwen.base-url", () -> "https://example.com");
+		r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
+		r.add("object-storage.enabled", () -> "true");
+		r.add("object-storage.endpoint", () -> minioUrl);
+		r.add("object-storage.public-base-url", () -> minioUrl);
+		r.add("object-storage.access-key", () -> "minioadmin");
+		r.add("object-storage.secret-key", () -> "minioadmin");
+		r.add("object-storage.bucket", () -> "grassland-media-it");
+		r.add("object-storage.auto-create-bucket", () -> "true");
+		r.add("media.cleanup-interval-ms", () -> "3600000");
+		r.add("media.max-objects-per-owner", () -> "1");
+		r.add("media.max-total-bytes-per-owner", () -> "16");
+		r.add("article-images.generated.cleanup-interval-ms", () -> "3600000");
+	}
+
+	@LocalServerPort
+	private int port;
+
+	@Autowired
+	private IdentityAssertionSigner signer;
+
+	@MockitoSpyBean
+	private MediaReferenceRepository mediaRefs;
+
+	@MockitoSpyBean
+	private ObjectStorageAdapter storage;
+
+	@Autowired
+	private DatabaseClient db;
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void uploadConfirmSignedReadDeleteRoundTrip() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = "org-" + UUID.randomUUID();
+		WebTestClient client = client();
+
+		Map<String, Object> ticketEnvelope = client.post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign(owner, org))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "engagement_attachment", "domainType",
+						"application", "domainId", "app-123", "sizeBytes", PNG.length, "ttlSeconds", 3600))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		assertThat(ticketEnvelope).isNotNull();
+		Map<String, Object> ticket = (Map<String, Object>) ticketEnvelope.get("data");
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		String uploadKey = (String) ticket.get("objectKey");
+		URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
+		assertThat(uploadKey).startsWith("media-pending/");
+
+		HttpResponse<Void> put = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(uploadUrl).header("Content-Type", "image/png")
+						.PUT(HttpRequest.BodyPublishers.ofByteArray(PNG)).build(),
+						HttpResponse.BodyHandlers.discarding());
+		assertThat(put.statusCode()).isEqualTo(200);
+
+		client.post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, org))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active")
+				.jsonPath("$.data.ownerAccountId").isEqualTo(owner).jsonPath("$.data.organizationId").isEqualTo(org)
+				.jsonPath("$.data.domainType").isEqualTo("application").jsonPath("$.data.domainId").isEqualTo("app-123")
+				.jsonPath("$.data.sizeBytes").isEqualTo(PNG.length).jsonPath("$.data.checksum")
+				.isEqualTo(MediaChecksums.sha256(PNG));
+
+		MediaReference active = mediaRefs.findById(mediaId).block();
+		assertThat(active).isNotNull();
+		assertThat(active.objectKey()).startsWith("media/engagement_attachment/");
+		assertThat(active.objectKey()).isNotEqualTo(uploadKey);
+		assertThat(active.uploadKey()).isEqualTo(uploadKey);
+
+		// 原 presigned PUT 仍在有效期内，但只能覆盖临时 key；最终资产从未暴露 PUT 凭据。
+		byte[] replacement = new byte[PNG.length];
+		HttpResponse<Void> reusedPut = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(uploadUrl).header("Content-Type", "image/png")
+						.PUT(HttpRequest.BodyPublishers.ofByteArray(replacement)).build(),
+						HttpResponse.BodyHandlers.discarding());
+		assertThat(reusedPut.statusCode()).isEqualTo(200);
+
+		Map<String, Object> readEnvelope = client.get().uri("/api/media/{id}", mediaId)
+				.header("X-Grassland-Identity", sign(owner, org)).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		assertThat(readEnvelope).isNotNull();
+		Map<String, Object> read = (Map<String, Object>) readEnvelope.get("data");
+		URI downloadUrl = URI.create((String) read.get("downloadUrl"));
+		// 图片类型：签名读 URL 不注入 response-content-disposition，浏览器内联渲染。
+		assertThat(downloadUrl.toString()).doesNotContain("response-content-disposition");
+		HttpResponse<byte[]> download = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(downloadUrl).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+		assertThat(download.statusCode()).isEqualTo(200);
+		assertThat(download.body()).isEqualTo(PNG);
+
+		client.get().uri("/api/media/{id}", mediaId)
+				.header("X-Grassland-Identity", sign("other-" + UUID.randomUUID(), null)).exchange().expectStatus()
+				.isNotFound();
+
+		client.delete().uri("/api/media/{id}", mediaId).header("X-Grassland-Identity", sign(owner, org)).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.deleted").isEqualTo(true);
+
+		MediaReference deleted = mediaRefs.findById(mediaId).block();
+		assertThat(deleted).isNotNull();
+		assertThat(deleted.status()).isEqualTo(MediaStatus.DELETED);
+		assertThat(deleted.deletedAt()).isNotNull();
+		Long deletedRows = db.sql("""
+				SELECT COUNT(*)::bigint AS c FROM media_reference
+				WHERE id=CAST(:id AS uuid) AND status='deleted' AND upload_key IS NULL
+				""").bind("id", mediaId.toString()).map(row -> row.get("c", Long.class)).one().block();
+		assertThat(deletedRows).isEqualTo(1L);
+		List<String> mediaEvents = db.sql("""
+				SELECT event_type FROM intelligence_outbox
+				WHERE aggregate_type = 'media_reference' AND aggregate_id = :id
+				ORDER BY created_at, id
+				""").bind("id", mediaId.toString()).map(row -> row.get("event_type", String.class)).all().collectList()
+				.block();
+		assertThat(mediaEvents).containsExactly("MediaUploadReserved", "MediaActivated", "MediaDeleted");
+		client.get().uri("/api/media/{id}", mediaId).header("X-Grassland-Identity", sign(owner, org)).exchange()
+				.expectStatus().isNotFound();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void signedReadInjectsContentDispositionForNonImageTypes() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		// 8 字节 "%PDF-1.5"；media 路径仅校验 size + MIME 字符串（无 magic-byte），任意同长度字节即可。
+		byte[] pdf = new byte[]{0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x35};
+		WebTestClient client = client();
+
+		Map<String, Object> ticketEnvelope = client.post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", "application/pdf", "purpose", "user_upload", "sizeBytes", pdf.length,
+						"ttlSeconds", 3600))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		assertThat(ticketEnvelope).isNotNull();
+		Map<String, Object> ticket = (Map<String, Object>) ticketEnvelope.get("data");
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
+
+		HttpResponse<Void> put = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(uploadUrl).header("Content-Type", "application/pdf")
+						.PUT(HttpRequest.BodyPublishers.ofByteArray(pdf)).build(),
+						HttpResponse.BodyHandlers.discarding());
+		assertThat(put.statusCode()).isEqualTo(200);
+
+		client.post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, null))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active");
+
+		Map<String, Object> readEnvelope = client.get().uri("/api/media/{id}", mediaId)
+				.header("X-Grassland-Identity", sign(owner, null)).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		assertThat(readEnvelope).isNotNull();
+		Map<String, Object> read = (Map<String, Object>) readEnvelope.get("data");
+		URI downloadUrl = URI.create((String) read.get("downloadUrl"));
+
+		// 非图片类型：签名读 URL 注入 attachment; filename=<id>.pdf，强制浏览器下载而非内联渲染。
+		assertThat(downloadUrl.getRawQuery()).contains("response-content-disposition");
+		assertThat(downloadUrl.getRawQuery()).contains("attachment");
+		assertThat(downloadUrl.getRawQuery()).contains(mediaId + ".pdf");
+
+		HttpResponse<byte[]> download = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(downloadUrl).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+		assertThat(download.statusCode()).isEqualTo(200);
+		assertThat(download.body()).isEqualTo(pdf);
+		assertThat(download.headers().firstValue("Content-Disposition").orElse(""))
+				.isEqualTo("attachment; filename=\"" + mediaId + ".pdf\"");
+	}
+
+	@Test
+	void endpointsRequireAuthAndRejectUnsafePurposeOrMime() {
+		client().post().uri("/api/media/upload-tickets")
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "user_upload", "sizeBytes", 1)).exchange()
+				.expectStatus().isUnauthorized();
+
+		client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+				.bodyValue(Map.of("contentType", "image/svg+xml", "purpose", "user_upload", "sizeBytes", 1)).exchange()
+				.expectStatus().isBadRequest();
+
+		client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "article_generated", "sizeBytes", 1))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	@Test
+	void speechAudioTicketAllowsOnlySupportedAudioMimeTypesAndEnforcesItsSizeCap() {
+		for (String mime : List.of("audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg")) {
+			client().post().uri("/api/media/upload-tickets")
+					.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+					.bodyValue(Map.of("contentType", mime, "purpose", "speech_audio", "sizeBytes", WAV.length))
+					.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.id").exists();
+		}
+
+		for (String mime : List.of("application/pdf", "video/mp4")) {
+			client().post().uri("/api/media/upload-tickets")
+					.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null))
+					.bodyValue(Map.of("contentType", mime, "purpose", "speech_audio", "sizeBytes", WAV.length))
+					.exchange().expectStatus().isBadRequest();
+		}
+
+		client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), null)).bodyValue(Map.of("contentType",
+						"audio/wav", "purpose", "speech_audio", "sizeBytes", 25L * 1024 * 1024 + 1))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void speechAudioConfirmChecksTheSignatureAgainstTheDeclaredMimeType() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> valid = createSpeechTicket(owner, "audio/wav", WAV.length);
+		UUID validId = UUID.fromString((String) valid.get("id"));
+		put(URI.create((String) valid.get("uploadUrl")), WAV, "audio/wav");
+
+		client().post().uri("/api/media/{id}/confirm", validId).header("X-Grassland-Identity", sign(owner, null))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active")
+				.jsonPath("$.data.purpose").isEqualTo("speech_audio");
+
+		String mismatchOwner = "acct-" + UUID.randomUUID();
+		Map<String, Object> mismatch = createSpeechTicket(mismatchOwner, "audio/mpeg", WAV.length);
+		UUID mismatchId = UUID.fromString((String) mismatch.get("id"));
+		put(URI.create((String) mismatch.get("uploadUrl")), WAV, "audio/mpeg");
+
+		client().post().uri("/api/media/{id}/confirm", mismatchId)
+				.header("X-Grassland-Identity", sign(mismatchOwner, null)).exchange().expectStatus().isBadRequest()
+				.expectBody().jsonPath("$.error").isEqualTo("语音音频文件签名与 MIME 不一致");
+		assertThat(mediaRefs.findById(mismatchId).block().status()).isEqualTo(MediaStatus.DELETED);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void temporaryObjectCleanupFailureLogDoesNotExposeStorageDetails() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> ticket = createSpeechTicket(owner, "audio/wav", WAV.length);
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		String uploadKey = (String) ticket.get("objectKey");
+		put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/wav");
+
+		String sensitiveStorageMessage = "upstream body at /private/storage/path";
+		doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).deleteObject(uploadKey);
+		ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory
+				.getLogger(MediaController.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			client().post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, null))
+					.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active");
+		} finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+
+		ILoggingEvent cleanupWarning = appender.list.stream()
+				.filter(event -> event.getFormattedMessage().contains("temporary object deletion")).findFirst()
+				.orElseThrow();
+		assertThat(cleanupWarning.getFormattedMessage()).contains(mediaId.toString(),
+				"failureStage=storage_delete_after_confirm", "exceptionType=IllegalStateException")
+				.doesNotContain(uploadKey, sensitiveStorageMessage);
+		assertThat(cleanupWarning.getThrowableProxy()).isNull();
+		assertThat(mediaRefs.findById(mediaId).block().status()).isEqualTo(MediaStatus.ACTIVE);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void invalidUploadCleanupFailureLogDoesNotExposeStorageDetails() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> ticket = createSpeechTicket(owner, "audio/mpeg", WAV.length);
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		String uploadKey = (String) ticket.get("objectKey");
+		put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/mpeg");
+
+		String sensitiveStorageMessage = "upstream body at /private/storage/path";
+		doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).deleteObject(uploadKey);
+		ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory
+				.getLogger(MediaController.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			client().post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, null))
+					.exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.error")
+					.isEqualTo("语音音频文件签名与 MIME 不一致");
+		} finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+
+		ILoggingEvent cleanupWarning = appender.list.stream()
+				.filter(event -> event.getFormattedMessage().contains("delete finalization deferred")).findFirst()
+				.orElseThrow();
+		assertThat(cleanupWarning.getFormattedMessage())
+				.contains(mediaId.toString(), "failureStage=delete_finalization", "exceptionType=IllegalStateException")
+				.doesNotContain(uploadKey, sensitiveStorageMessage);
+		assertThat(cleanupWarning.getThrowableProxy()).isNull();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void finalizingReleaseFailureLogDoesNotExposeStorageDetails() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> ticket = createSpeechTicket(owner, "audio/wav", WAV.length);
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		String uploadKey = (String) ticket.get("objectKey");
+		put(URI.create((String) ticket.get("uploadUrl")), WAV, "audio/wav");
+
+		String sensitiveStorageMessage = "upstream response body at /private/storage/path";
+		String sensitiveReleaseMessage = "release failure details at /private/release/path";
+		doThrow(new IllegalStateException(sensitiveStorageMessage)).when(storage).getObject(uploadKey);
+		doReturn(Mono.<Boolean>error(new IllegalStateException(sensitiveReleaseMessage))).when(mediaRefs)
+				.releaseFinalize(mediaId);
+		ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) LoggerFactory
+				.getLogger(MediaController.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			client().post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, null))
+					.exchange().expectStatus().is5xxServerError();
+		} finally {
+			logger.detachAppender(appender);
+			appender.stop();
+		}
+
+		ILoggingEvent releaseWarning = appender.list.stream()
+				.filter(event -> event.getFormattedMessage().contains("finalizing release failed")).findFirst()
+				.orElseThrow();
+		assertThat(releaseWarning.getFormattedMessage())
+				.contains(mediaId.toString(), "failureStage=release_finalize", "exceptionType=IllegalStateException")
+				.doesNotContain(uploadKey, sensitiveStorageMessage, sensitiveReleaseMessage);
+		assertThat(releaseWarning.getThrowableProxy()).isNull();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void confirmMissingObjectReturnsNotFoundAndKeepsPendingAuditRow() {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", "application/pdf", "purpose", "user_upload", "sizeBytes", 10))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+		UUID id = UUID.fromString((String) data.get("id"));
+
+		client().post().uri("/api/media/{id}/confirm", id).header("X-Grassland-Identity", sign(owner, null)).exchange()
+				.expectStatus().isNotFound();
+
+		MediaReference pending = mediaRefs.findById(id).block();
+		assertThat(pending).isNotNull();
+		assertThat(pending.status()).isEqualTo(MediaStatus.PENDING);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void concurrentConfirmHasSingleWinnerAndBothCallsConverge() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> ticket = createTicket(owner, PNG.length);
+		UUID id = UUID.fromString((String) ticket.get("id"));
+		URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
+		put(uploadUrl, PNG);
+
+		CountDownLatch start = new CountDownLatch(1);
+		CompletableFuture<Integer> first = CompletableFuture.supplyAsync(() -> confirmStatus(owner, id, start));
+		CompletableFuture<Integer> second = CompletableFuture.supplyAsync(() -> confirmStatus(owner, id, start));
+		start.countDown();
+
+		assertThat(List.of(first.get(), second.get())).allMatch(status -> status == 200 || status == 409);
+		client().post().uri("/api/media/{id}/confirm", id).header("X-Grassland-Identity", sign(owner, null)).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active");
+		assertThat(mediaRefs.findById(id).block().status()).isEqualTo(MediaStatus.ACTIVE);
+	}
+
+	@Test
+	void quotaReservationIsAtomicForConcurrentTickets() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		CountDownLatch start = new CountDownLatch(1);
+		CompletableFuture<Integer> first = CompletableFuture.supplyAsync(() -> ticketStatus(owner, 10, start));
+		CompletableFuture<Integer> second = CompletableFuture.supplyAsync(() -> ticketStatus(owner, 10, start));
+		start.countDown();
+
+		assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(200, 429);
+		Long count = db.sql("""
+				SELECT COUNT(*)::bigint AS c FROM media_reference
+				WHERE owner_account_id=:owner AND status='pending'
+				""").bind("owner", owner).map(row -> row.get("c", Long.class)).one().block();
+		assertThat(count).isEqualTo(1L);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void confirmAndDeleteRemoveBothTemporaryAndFinalKeysFromStorage() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> ticket = createTicket(owner, PNG.length);
+		UUID id = UUID.fromString((String) ticket.get("id"));
+		URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
+		put(uploadUrl, PNG);
+		MediaReference pending = mediaRefs.findById(id).block();
+		assertThat(pending).isNotNull();
+		assertThat(storage.headObject(pending.uploadKey())).isPresent();
+
+		client().post().uri("/api/media/{id}/confirm", id).header("X-Grassland-Identity", sign(owner, null)).exchange()
+				.expectStatus().isOk();
+
+		MediaReference active = mediaRefs.findById(id).block();
+		assertThat(active).isNotNull();
+		assertThat(storage.headObject(active.objectKey())).isPresent();
+		// confirm 服务端翻转后立即删除临时对象，旧 PUT URL 无法再覆盖最终资产。
+		assertThat(storage.headObject(pending.uploadKey())).isEmpty();
+
+		client().delete().uri("/api/media/{id}", id).header("X-Grassland-Identity", sign(owner, null)).exchange()
+				.expectStatus().isOk();
+
+		assertThat(mediaRefs.findById(id).block().status()).isEqualTo(MediaStatus.DELETED);
+		assertThat(storage.headObject(active.objectKey())).isEmpty();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void oversizedPutBodyRejectedAtIngestionBySignedContentLength() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> ticket = createTicket(owner, 4);
+		URI uploadUrl = URI.create((String) ticket.get("uploadUrl"));
+		// 票据签的是 4 字节 Content-Length；PUT 一个远大于此的 body 必须被存储后端拒绝，
+		// 防止攻击者用小票据在 media-pending/ 堆积超配额对象（confirm 前的 DoS）。
+		byte[] oversized = new byte[1024];
+		HttpResponse<Void> resp = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(uploadUrl).header("Content-Type", "image/png")
+						.PUT(HttpRequest.BodyPublishers.ofByteArray(oversized)).build(),
+						HttpResponse.BodyHandlers.discarding());
+		assertThat(resp.statusCode()).isNotEqualTo(200);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void serviceMetadataReturnsAttachmentMetadataForMarketplaceService() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = "org-" + UUID.randomUUID();
+		UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+		WebTestClient client = client();
+
+		Map<String, Object> envelope = client.get()
+				.uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		assertThat(envelope).isNotNull();
+		Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+		assertThat(data.get("id")).isEqualTo(mediaId.toString());
+		assertThat(data.get("ownerAccountId")).isEqualTo(owner);
+		assertThat(data.get("purpose")).isEqualTo("engagement_attachment");
+		assertThat(data.get("status")).isEqualTo("active");
+		assertThat(data.get("mimeType")).isEqualTo("image/png");
+		assertThat(data.get("sizeBytes")).isEqualTo(PNG.length);
+		assertThat(data.get("expiresAt")).isNotNull();
+	}
+
+	@Test
+	void serviceMetadataRejectsAttachmentFromDifferentApplicationDomain() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = "org-" + UUID.randomUUID();
+		UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+
+		// 刻意用字符串模板而非 uri(URI.create(相对路径))：WebClient 对 URI 对象不做 baseUrl
+		// 合并（仅字符串模板走 UriBuilderFactory），相对 URI 会打到裸 localhost:80——
+		// CI runner 上 localhost 解析为 [::1] 且 80 无监听，Connection refused（连续三轮 1/968
+		// 同点 flake 的根因；本地恰好命中回环栈行为差异而偶过）。
+		client().get().uri("/api/media/{id}/metadata?domainType=application&domainId=other-app", mediaId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void kybMetadataReturnsOwnershipOrganizationDomainAndStateOnlyToIdentityService() {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		UUID mediaId = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, Instant.now().plusSeconds(3600),
+				"merchant_kyb", org);
+
+		Map<String, Object> envelope = client().get().uri("/api/media/{id}/kyb-metadata", mediaId)
+				.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+		assertThat(data).containsEntry("ownerAccountId", owner).containsEntry("organizationId", org)
+				.containsEntry("purpose", "merchant_kyb").containsEntry("domainType", "merchant_kyb")
+				.containsEntry("domainId", org).containsEntry("status", "active").containsEntry("mimeType", "image/png")
+				.containsEntry("sizeBytes", PNG.length);
+
+		client().get().uri("/api/media/{id}/kyb-metadata", mediaId)
+				.header("X-Grassland-Identity", signService(org, "marketplace")).exchange().expectStatus()
+				.isForbidden();
+		client().get().uri("/api/media/{id}/kyb-metadata", mediaId).header("X-Grassland-Identity", sign(owner, org))
+				.exchange().expectStatus().isForbidden();
+	}
+
+	@Test
+	void kybMetadataIsScopedToSignedOrganizationAndUsableEvidence() {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		UUID live = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, null, "merchant_kyb", org);
+
+		client().get().uri("/api/media/{id}/kyb-metadata", live)
+				.header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity")).exchange()
+				.expectStatus().isNotFound();
+
+		for (UUID unusable : List.of(
+				insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE, null, "merchant_kyb", org),
+				insertMedia(owner, org, "merchant_kyb", MediaStatus.PENDING, null, "merchant_kyb", org),
+				insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, Instant.now().minusSeconds(30),
+						"merchant_kyb", org),
+				insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, null, "merchant_kyb",
+						UUID.randomUUID().toString()))) {
+			client().get().uri("/api/media/{id}/kyb-metadata", unusable)
+					.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus()
+					.isNotFound();
+		}
+	}
+
+	@Test
+	void kybDownloadUrlIsScopedToSignedOrganizationAndUsableEvidence() {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		UUID live = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, null, "merchant_kyb", org);
+
+		client().get().uri("/api/media/{id}/kyb-download-url", live)
+				.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus().isOk();
+		client().get().uri("/api/media/{id}/kyb-download-url", live)
+				.header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity")).exchange()
+				.expectStatus().isNotFound();
+		client().get().uri("/api/media/{id}/kyb-download-url", live).header("X-Grassland-Identity", sign(owner, org))
+				.exchange().expectStatus().isForbidden();
+
+		for (UUID unusable : List.of(
+				insertMedia(owner, org, "merchant_kyb", MediaStatus.PENDING, null, "merchant_kyb", org),
+				insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, Instant.now().minusSeconds(30),
+						"merchant_kyb", org),
+				insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE, null, "merchant_kyb", org))) {
+			client().get().uri("/api/media/{id}/kyb-download-url", unusable)
+					.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus()
+					.isNotFound();
+		}
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void identityCanIssueRetainedKybUploadForTargetOrganizationAndDownloadIt() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String targetOrg = UUID.randomUUID().toString();
+		Map<String, Object> envelope = client().post().uri("/api/media/kyb-upload-tickets")
+				.header("X-Grassland-Identity", signService(targetOrg, "identity"))
+				.bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		put(URI.create((String) ticket.get("uploadUrl")), PNG);
+
+		// 用户当前活动组织可以不同；票据的目标组织由 identity 的已鉴权组织上下文决定。
+		client().post().uri("/api/media/{id}/confirm", mediaId)
+				.header("X-Grassland-Identity", sign(owner, UUID.randomUUID().toString())).exchange().expectStatus()
+				.isOk().expectBody().jsonPath("$.data.organizationId").isEqualTo(targetOrg).jsonPath("$.data.purpose")
+				.isEqualTo("merchant_kyb").jsonPath("$.data.expiresAt").doesNotExist();
+
+		Map<String, Object> downloadEnvelope = client().get().uri("/api/media/{id}/kyb-download-url", mediaId)
+				.header("X-Grassland-Identity", signService(targetOrg, "identity")).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> download = (Map<String, Object>) downloadEnvelope.get("data");
+		HttpResponse<byte[]> bytes = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create((String) download.get("downloadUrl"))).GET().build(),
+				HttpResponse.BodyHandlers.ofByteArray());
+		assertThat(bytes.statusCode()).isEqualTo(200);
+		assertThat(bytes.body()).isEqualTo(PNG);
+
+		UUID attachmentToken = UUID.randomUUID();
+		client().post().uri("/api/media/{id}/kyb-retentions", mediaId)
+				.header("X-Grassland-Identity", signService(targetOrg, "identity"))
+				.bodyValue(Map.of("referenceId", attachmentToken.toString())).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.retained").isEqualTo(true);
+
+		// KYB 证据被附件 token 留存后，owner 不能绕过 identity 直接删除。
+		client().delete().uri("/api/media/{id}", mediaId).header("X-Grassland-Identity", sign(owner, targetOrg))
+				.exchange().expectStatus().isEqualTo(409);
+		MediaReference retained = mediaRefs.findById(mediaId).block();
+		assertThat(retained).isNotNull();
+		assertThat(retained.status()).isEqualTo(MediaStatus.ACTIVE);
+		assertThat(storage.headObject(retained.objectKey())).isPresent();
+
+		client().delete().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, attachmentToken)
+				.header("X-Grassland-Identity", signService(targetOrg, "identity")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.released").isEqualTo(true);
+
+		client().delete().uri("/api/media/{id}", mediaId).header("X-Grassland-Identity", sign(owner, targetOrg))
+				.exchange().expectStatus().isOk();
+		assertThat(mediaRefs.findById(mediaId).block().status()).isEqualTo(MediaStatus.DELETED);
+	}
+
+	@Test
+	void identityCanAcquireIdempotentKybLeaseButUsersAndOtherOrganizationsCannot() {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		UUID mediaId = insertMedia(owner, org, "merchant_kyb", MediaStatus.ACTIVE, null, "merchant_kyb", org);
+		UUID referenceId = UUID.randomUUID();
+		Map<String, Object> request = Map.of("referenceType", "attachment", "mode", "lease", "leaseSeconds", 3600);
+
+		client().put().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, referenceId)
+				.header("X-Grassland-Identity", signService(org, "identity")).bodyValue(request).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.referenceId").isEqualTo(referenceId.toString())
+				.jsonPath("$.data.referenceType").isEqualTo("attachment").jsonPath("$.data.leaseUntil").isNotEmpty();
+
+		client().put().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, referenceId)
+				.header("X-Grassland-Identity", sign(owner, org)).bodyValue(request).exchange().expectStatus()
+				.isForbidden();
+		client().put().uri("/api/media/{id}/kyb-retentions/{referenceId}", mediaId, referenceId)
+				.header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity"))
+				.bodyValue(request).exchange().expectStatus().isNotFound();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void kybUploadRejectsUnsuitableMimeAndSpoofedFileSignature() throws Exception {
+		String org = UUID.randomUUID().toString();
+		client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+				.bodyValue(Map.of("purpose", "merchant_kyb", "contentType", "image/png", "sizeBytes", PNG.length,
+						"domainType", "merchant_kyb", "domainId", org))
+				.exchange().expectStatus().isBadRequest();
+
+		client().post().uri("/api/media/kyb-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "identity")).bodyValue(Map.of("ownerAccountId",
+						"acct-" + UUID.randomUUID(), "contentType", "video/mp4", "sizeBytes", 8))
+				.exchange().expectStatus().isBadRequest();
+
+		String owner = "acct-" + UUID.randomUUID();
+		Map<String, Object> envelope = client().post().uri("/api/media/kyb-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "identity"))
+				.bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		put(URI.create((String) ticket.get("uploadUrl")), new byte[PNG.length]);
+
+		client().post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, org))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	@Test
+	void serviceMetadataRejectsUserAssertionAndNonMarketplacePrincipal() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = "org-" + UUID.randomUUID();
+		UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+		WebTestClient client = client();
+
+		// 终端用户断言（callerKind=null）→ 403：服务间断点不对浏览器/终端用户开放
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
+				.header("X-Grassland-Identity", sign(owner, org)).exchange().expectStatus().isEqualTo(403);
+
+		// 已受信服务断言但 principal 不是 marketplace → 403
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId)
+				.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus().isEqualTo(403);
+
+		// 缺断言 → 401
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", mediaId).exchange()
+				.expectStatus().isUnauthorized();
+	}
+
+	@Test
+	void serviceMetadataReturnsNotFoundForNonAttachmentInactiveExpiredOrMissing() {
+		String org = "org-" + UUID.randomUUID();
+		WebTestClient client = client();
+
+		// 非 engagement_attachment 用途（user_upload pending）→ 404
+		UUID userUploadId = UUID.fromString((String) createTicket("acct-a-" + UUID.randomUUID(), PNG.length).get("id"));
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", userUploadId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+
+		// engagement_attachment 但 pending（未 confirm）→ 404
+		UUID pendingId = UUID
+				.fromString((String) createAttachmentTicket("acct-b-" + UUID.randomUUID(), org, PNG.length).get("id"));
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", pendingId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+
+		// engagement_attachment active 但已过期 → 404
+		UUID expiredId = insertMedia("acct-c-" + UUID.randomUUID(), org, "engagement_attachment", MediaStatus.ACTIVE,
+				Instant.now().minusSeconds(60));
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", expiredId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+
+		// 不存在的 id → 404（存在性不可探测）
+		client.get().uri("/api/media/{id}/metadata?domainType=application&domainId=app-1", UUID.randomUUID())
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void serviceDownloadUrlReturnsPresignedUrlServingOriginalBytes() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = "org-" + UUID.randomUUID();
+		UUID mediaId = createActiveAttachment(owner, org, PNG.length);
+		WebTestClient client = client();
+
+		Map<String, Object> envelope = client.get()
+				.uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", mediaId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		assertThat(envelope).isNotNull();
+		Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+		URI downloadUrl = URI.create((String) data.get("downloadUrl"));
+		assertThat(data.get("expiresAt")).isNotNull();
+
+		// 真 GET presigned URL 对 MinIO：200 + 原始字节（与 owner-only read 同源签名语义）
+		HttpResponse<byte[]> download = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(downloadUrl).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+		assertThat(download.statusCode()).isEqualTo(200);
+		assertThat(download.body()).isEqualTo(PNG);
+	}
+
+	@Test
+	void serviceDownloadUrlReturnsNotFoundForExpiredOrDeletedAndRejectsUser() throws Exception {
+		String org = "org-" + UUID.randomUUID();
+		WebTestClient client = client();
+
+		// 已过期 active → 404（download-url 在 presign 前就被 serviceAttachment 过滤掉）
+		UUID expiredId = insertMedia("acct-a-" + UUID.randomUUID(), org, "engagement_attachment", MediaStatus.ACTIVE,
+				Instant.now().minusSeconds(60));
+		client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", expiredId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+
+		// media 被删后 → 404
+		String ownerB = "acct-b-" + UUID.randomUUID();
+		UUID liveId = createActiveAttachment(ownerB, org, PNG.length);
+		client.delete().uri("/api/media/{id}", liveId).header("X-Grassland-Identity", sign(ownerB, org)).exchange()
+				.expectStatus().isOk();
+		client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", liveId)
+				.header("X-Grassland-Identity", signService(org)).exchange().expectStatus().isNotFound();
+
+		// 用户断言 → 403（download-url 同 metadata 的 service gate）
+		String ownerC = "acct-c-" + UUID.randomUUID();
+		UUID liveId2 = createActiveAttachment(ownerC, org, PNG.length);
+		client.get().uri("/api/media/{id}/download-url?domainType=application&domainId=app-1", liveId2)
+				.header("X-Grassland-Identity", sign(ownerC, org)).exchange().expectStatus().isEqualTo(403);
+	}
+
+	/**
+	 * 任务书 #29+#30 D6：头像票据只收图片 MIME；放行 avatar 用途（不在 ARTICLE_GENERATED/MERCHANT_KYB
+	 * 黑名单）。
+	 */
+	@Test
+	void avatarTicketAllowsImageOnly() {
+		String owner = "acct-" + UUID.randomUUID();
+		// 图片 MIME → 开票成功
+		client().post().uri("/api/media/upload-tickets").header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "avatar", "sizeBytes", PNG.length)).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.id").exists();
+		// 非图片 MIME → 400
+		client().post().uri("/api/media/upload-tickets").header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", "application/pdf", "purpose", "avatar", "sizeBytes", PNG.length))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	/** 头像元数据/下载端点：仅 identity 服务 principal 可调，放行 purpose=avatar + active + 未过期。 */
+	@Test
+	void avatarMetadataAndDownloadScopedToIdentityAndUsable() {
+		String owner = "acct-" + UUID.randomUUID();
+		UUID live = insertMedia(owner, null, "avatar", MediaStatus.ACTIVE, null, null, null);
+
+		// identity principal → 元数据与下载 URL 均可得
+		Map<String, Object> envelope = client().get().uri("/api/media/{id}/avatar-metadata", live)
+				.header("X-Grassland-Identity", signService(null, "identity")).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+		assertThat(data).containsEntry("ownerAccountId", owner).containsEntry("purpose", "avatar")
+				.containsEntry("status", "active");
+		client().get().uri("/api/media/{id}/avatar-download-url", live)
+				.header("X-Grassland-Identity", signService(null, "identity")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.downloadUrl").exists();
+
+		// 非 identity 服务 / 终端用户 → 403
+		client().get().uri("/api/media/{id}/avatar-metadata", live)
+				.header("X-Grassland-Identity", signService(null, "marketplace")).exchange().expectStatus()
+				.isForbidden();
+		client().get().uri("/api/media/{id}/avatar-metadata", live).header("X-Grassland-Identity", sign(owner, null))
+				.exchange().expectStatus().isForbidden();
+
+		// 非 avatar / pending / 已过期 → 404
+		for (UUID unusable : List.of(insertMedia(owner, null, "user_upload", MediaStatus.ACTIVE, null, null, null),
+				insertMedia(owner, null, "avatar", MediaStatus.PENDING, null, null, null),
+				insertMedia(owner, null, "avatar", MediaStatus.ACTIVE, Instant.now().minusSeconds(30), null, null))) {
+			client().get().uri("/api/media/{id}/avatar-metadata", unusable)
+					.header("X-Grassland-Identity", signService(null, "identity")).exchange().expectStatus()
+					.isNotFound();
+		}
+	}
+
+	/**
+	 * #32 D5/D6：品牌 Logo 票据只能由 identity 服务断言代开，落 pending 行 org
+	 * 级四元组（purpose/domain_type/domain_id/owner）。
+	 */
+	@Test
+	@SuppressWarnings("unchecked")
+	void brandLogoTicketIssuedByIdentityServiceCreatesOrgScopedPendingRow() {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+
+		Map<String, Object> envelope = client().post().uri("/api/media/brand-logo-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "identity"))
+				.bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		assertThat(envelope).isNotNull();
+		Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+		assertThat(ticket.get("id")).isNotNull();
+		assertThat((String) ticket.get("uploadUrl")).startsWith("http");
+
+		MediaReference pending = mediaRefs.findById(UUID.fromString((String) ticket.get("id"))).block();
+		assertThat(pending).isNotNull();
+		assertThat(pending.ownerAccountId()).isEqualTo(owner);
+		assertThat(pending.organizationId()).isEqualTo(org);
+		assertThat(pending.purpose()).isEqualTo("brand_logo");
+		assertThat(pending.domainType()).isEqualTo("brand_logo");
+		assertThat(pending.domainId()).isEqualTo(org);
+		assertThat(pending.status()).isEqualTo(MediaStatus.PENDING);
+	}
+
+	/** #32 D5：品牌 Logo 仅 PNG/JPEG/WebP 图片（gif/pdf 等一律 400）。 */
+	@Test
+	void brandLogoTicketRejectsNonImageMime() {
+		String org = UUID.randomUUID().toString();
+		for (String mime : List.of("image/gif", "application/pdf")) {
+			client().post().uri("/api/media/brand-logo-upload-tickets")
+					.header("X-Grassland-Identity", signService(org, "identity"))
+					.bodyValue(Map.of("ownerAccountId", "acct-" + UUID.randomUUID(), "contentType", mime, "sizeBytes",
+							PNG.length))
+					.exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.error")
+					.isEqualTo("品牌 Logo 仅支持 PNG、JPEG 或 WebP 图片");
+		}
+	}
+
+	/** #32 D5：sizeBytes 独立大小帽 2MB，超帽或 <1 → 400。 */
+	@Test
+	void brandLogoTicketEnforcesTwoMegabyteCap() {
+		String org = UUID.randomUUID().toString();
+		client().post().uri("/api/media/brand-logo-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "identity")).bodyValue(Map.of("ownerAccountId",
+						"acct-" + UUID.randomUUID(), "contentType", "image/png", "sizeBytes", 2L * 1024 * 1024 + 1))
+				.exchange().expectStatus().isBadRequest();
+		client().post().uri("/api/media/brand-logo-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "identity")).bodyValue(Map.of("ownerAccountId",
+						"acct-" + UUID.randomUUID(), "contentType", "image/png", "sizeBytes", 0))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	/** #32 D5：brand_logo 进客户端自助开票黑名单，浏览器直连 /upload-tickets 申领被拒。 */
+	@Test
+	void brandLogoPurposeBlockedFromClientSelfServiceTickets() {
+		String org = UUID.randomUUID().toString();
+		client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "brand_logo", "sizeBytes", PNG.length,
+						"domainType", "brand_logo", "domainId", org))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	/**
+	 * #42 D2：store_media 进客户端自助开票黑名单，浏览器直连 /upload-tickets 申领被拒（只能经 identity
+	 * 门店端点拿票）。
+	 */
+	@Test
+	void storeMediaPurposeBlockedFromClientSelfServiceTickets() {
+		String org = UUID.randomUUID().toString();
+		client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "store_media", "sizeBytes", PNG.length,
+						"domainType", "store", "domainId", UUID.randomUUID().toString()))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	/**
+	 * #32 D7：brand-logo-url 仅放行本 org 的 active、未过期、白名单 MIME 品牌 Logo；他 org/不存在/边缘态统一
+	 * 404。
+	 */
+	@Test
+	@SuppressWarnings("unchecked")
+	void brandLogoUrlServesActiveLogoOnlyToOwningOrganizationService() throws Exception {
+		String owner = "acct-" + UUID.randomUUID();
+		String org = UUID.randomUUID().toString();
+		Map<String, Object> envelope = client().post().uri("/api/media/brand-logo-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "identity"))
+				.bodyValue(Map.of("ownerAccountId", owner, "contentType", "image/png", "sizeBytes", PNG.length))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> ticket = (Map<String, Object>) envelope.get("data");
+		UUID mediaId = UUID.fromString((String) ticket.get("id"));
+		put(URI.create((String) ticket.get("uploadUrl")), PNG);
+		client().post().uri("/api/media/{id}/confirm", mediaId).header("X-Grassland-Identity", sign(owner, org))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active");
+
+		Map<String, Object> downloadEnvelope = client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+				.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> download = (Map<String, Object>) downloadEnvelope.get("data");
+		assertThat(download.get("downloadUrl")).isNotNull();
+		HttpResponse<byte[]> bytes = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create((String) download.get("downloadUrl"))).GET().build(),
+				HttpResponse.BodyHandlers.ofByteArray());
+		assertThat(bytes.statusCode()).isEqualTo(200);
+		assertThat(bytes.body()).isEqualTo(PNG);
+
+		// 他 org 的 identity 断言 → 404；不存在 id → 404（存在性不可探测）
+		client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+				.header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "identity")).exchange()
+				.expectStatus().isNotFound();
+		client().get().uri("/api/media/{id}/brand-logo-url", UUID.randomUUID())
+				.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus().isNotFound();
+
+		// 非 brand_logo 用途 / pending / 已过期 / domain 不符 / 非白名单 MIME → 404
+		for (UUID unusable : List.of(
+				insertMedia(owner, org, "user_upload", MediaStatus.ACTIVE, null, "brand_logo", org),
+				insertMedia(owner, org, "brand_logo", MediaStatus.PENDING, null, "brand_logo", org),
+				insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE, Instant.now().minusSeconds(30), "brand_logo",
+						org),
+				insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE, null, "brand_logo",
+						UUID.randomUUID().toString()),
+				insertMedia(owner, org, "brand_logo", MediaStatus.ACTIVE, null, "brand_logo", org,
+						"application/pdf"))) {
+			client().get().uri("/api/media/{id}/brand-logo-url", unusable)
+					.header("X-Grassland-Identity", signService(org, "identity")).exchange().expectStatus()
+					.isNotFound();
+		}
+	}
+
+	/** #32 D6/D7：两个新端点缺断言 → 401；终端用户断言或非 identity 服务 principal → 403。 */
+	@Test
+	void brandLogoEndpointsRequireIdentityServiceAssertion() {
+		String org = UUID.randomUUID().toString();
+		UUID mediaId = UUID.randomUUID();
+		Map<String, Object> body = Map.of("ownerAccountId", "acct-" + UUID.randomUUID(), "contentType", "image/png",
+				"sizeBytes", PNG.length);
+
+		client().post().uri("/api/media/brand-logo-upload-tickets").bodyValue(body).exchange().expectStatus()
+				.isUnauthorized();
+		client().get().uri("/api/media/{id}/brand-logo-url", mediaId).exchange().expectStatus().isUnauthorized();
+
+		client().post().uri("/api/media/brand-logo-upload-tickets")
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org)).bodyValue(body).exchange()
+				.expectStatus().isForbidden();
+		client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+				.header("X-Grassland-Identity", sign("acct-" + UUID.randomUUID(), org)).exchange().expectStatus()
+				.isForbidden();
+
+		client().post().uri("/api/media/brand-logo-upload-tickets")
+				.header("X-Grassland-Identity", signService(org, "marketplace")).bodyValue(body).exchange()
+				.expectStatus().isForbidden();
+		client().get().uri("/api/media/{id}/brand-logo-url", mediaId)
+				.header("X-Grassland-Identity", signService(org, "marketplace")).exchange().expectStatus()
+				.isForbidden();
+	}
+
+	@SuppressWarnings("unchecked")
+	private Map<String, Object> createTicket(String owner, int sizeBytes) {
+		Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "user_upload", "sizeBytes", sizeBytes))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		return (Map<String, Object>) envelope.get("data");
+	}
+
+	@SuppressWarnings("unchecked")
+	private Map<String, Object> createSpeechTicket(String owner, String contentType, int sizeBytes) {
+		Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", contentType, "purpose", "speech_audio", "sizeBytes", sizeBytes))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		return (Map<String, Object>) envelope.get("data");
+	}
+
+	/** 申请 engagement_attachment 上传凭据（pending，未 confirm）。 */
+	@SuppressWarnings("unchecked")
+	private Map<String, Object> createAttachmentTicket(String owner, String org, int sizeBytes) {
+		Map<String, Object> envelope = client().post().uri("/api/media/upload-tickets")
+				.header("X-Grassland-Identity", sign(owner, org))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "engagement_attachment", "domainType",
+						"application", "domainId", "app-1", "sizeBytes", sizeBytes, "ttlSeconds", 3600))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		return (Map<String, Object>) envelope.get("data");
+	}
+
+	/** 三步上传一个 active 的 engagement_attachment 附件，返回 media id。 */
+	private UUID createActiveAttachment(String owner, String org, int sizeBytes) throws Exception {
+		Map<String, Object> ticket = createAttachmentTicket(owner, org, sizeBytes);
+		UUID id = UUID.fromString((String) ticket.get("id"));
+		put(URI.create((String) ticket.get("uploadUrl")), PNG);
+		client().post().uri("/api/media/{id}/confirm", id).header("X-Grassland-Identity", sign(owner, org)).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("active");
+		return id;
+	}
+
+	/** 直接落一条 media_reference 行（绕过上传/配额），用于构造 active+过期等边缘态做服务端点过滤验证。 */
+	private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt) {
+		return insertMedia(owner, org, purpose, status, expiresAt, "application", "app-1");
+	}
+
+	private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt,
+			String domainType, String domainId) {
+		return insertMedia(owner, org, purpose, status, expiresAt, domainType, domainId, "image/png");
+	}
+
+	private UUID insertMedia(String owner, String org, String purpose, MediaStatus status, Instant expiresAt,
+			String domainType, String domainId, String mimeType) {
+		UUID id = UUID.randomUUID();
+		MediaReference ref = new MediaReference(id, owner, org, purpose, domainType, domainId,
+				"media/" + purpose + "/" + id, null, mimeType, PNG.length, MediaChecksums.sha256(PNG), "upload", status,
+				Instant.now().minusSeconds(120), expiresAt, null);
+		mediaRefs.insert(ref).block();
+		return id;
+	}
+
+	private void put(URI uploadUrl, byte[] content) throws Exception {
+		put(uploadUrl, content, "image/png");
+	}
+
+	private void put(URI uploadUrl, byte[] content, String contentType) throws Exception {
+		HttpResponse<Void> response = HttpClient.newHttpClient()
+				.send(HttpRequest.newBuilder(uploadUrl).header("Content-Type", contentType)
+						.PUT(HttpRequest.BodyPublishers.ofByteArray(content)).build(),
+						HttpResponse.BodyHandlers.discarding());
+		assertThat(response.statusCode()).isEqualTo(200);
+	}
+
+	private int confirmStatus(String owner, UUID id, CountDownLatch start) {
+		await(start);
+		return client().post().uri("/api/media/{id}/confirm", id).header("X-Grassland-Identity", sign(owner, null))
+				.exchange().returnResult(Void.class).getStatus().value();
+	}
+
+	private int ticketStatus(String owner, int sizeBytes, CountDownLatch start) {
+		await(start);
+		return client().post().uri("/api/media/upload-tickets").header("X-Grassland-Identity", sign(owner, null))
+				.bodyValue(Map.of("contentType", "image/png", "purpose", "user_upload", "sizeBytes", sizeBytes))
+				.exchange().returnResult(Void.class).getStatus().value();
+	}
+
+	private static void await(CountDownLatch latch) {
+		try {
+			latch.await();
+		} catch (InterruptedException error) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(error);
+		}
+	}
+
+	private WebTestClient client() {
+		return WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+				.responseTimeout(java.time.Duration.ofSeconds(30)).build();
+	}
+
+	private String sign(String accountId, String organizationId) {
+		Instant now = Instant.now();
+		return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(accountId, "recommender",
+				"sid-" + accountId, organizationId, null, "cookie-session", "level1", null, "request", "trace",
+				"grassland-intelligence", now, now.plusSeconds(60), null, null));
+	}
+
+	/**
+	 * 造一个 marketplace 服务断言（callerKind=service + principal=marketplace + org 上下文），镜像
+	 * ServiceAssertionIssuer.issueForOrg。
+	 */
+	private String signService(String organizationId) {
+		return signService(organizationId, "marketplace");
+	}
+
+	private String signService(String organizationId, String principal) {
+		Instant now = Instant.now();
+		return serviceSigner(principal, "grassland-intelligence").sign(new IdentityAssertion("service:" + principal,
+				null, null, organizationId, null, "service", "internal", null, "request", "trace",
+				"grassland-intelligence", now, now.plusSeconds(30), "service", principal));
+	}
 }
