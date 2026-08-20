@@ -98,6 +98,8 @@ class JavaRouteManifestGateTest {
                 route("GET", "/api/admin/trust/judges", "trust"),
                 route("GET", "/api/content-assets", "intelligence"),
                 route("POST", "/api/admin/content-assets/review", "intelligence"),
+                route("GET", "/api/admin/store-media-moderation", "intelligence"),
+                route("POST", "/api/admin/store-media-moderation/media-1/review", "intelligence"),
                 route("POST", "/api/creation-assistant/score", "intelligence"),
                 route("GET", "/api/creation-drafts/draft-1", "intelligence"),
                 route("GET", "/api/creation-generations/generation-1", "intelligence"),

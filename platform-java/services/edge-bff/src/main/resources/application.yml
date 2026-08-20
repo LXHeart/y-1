@@ -214,6 +214,11 @@ edge:
     - path: /api/admin/content-assets
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_CONTENT_ASSETS_INTELLIGENCE:true}
+    # 门店媒体审核人工复核队列（缺口清偿之五遗留：/api/admin/store-media-moderation + /{mediaId}/review）
+    # → intelligence。精确前缀，不抢其它 /api/admin/*（同 content-assets 口径）。
+    - path: /api/admin/store-media-moderation
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_STORE_MEDIA_MODERATION_INTELLIGENCE:true}
     # 智能创作助手（PRD §4.9 / Slice 15）→ intelligence。/api/creation-assistant 全部 5 个 SSE 端点
     #（score/suggest/guide/task-coverage/topic-from-hot）。
     - path: /api/creation-assistant
