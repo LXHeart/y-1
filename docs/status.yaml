@@ -28,7 +28,7 @@
   },
   "quality": {
     "frontendCoverageThresholds": {
-      "statements": 68, "branches": 74, "functions": 53, "lines": 68
+      "statements": 76, "branches": 76, "functions": 58, "lines": 76
     },
     "changedExecutableLinesThreshold": 80
   }

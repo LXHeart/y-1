@@ -21,10 +21,12 @@ export default defineConfig({
       exclude: ['**/*.test.ts'],
       thresholds: {
         // Node 后端退役后基线只统计前端源码；新增/修改代码仍要求 >=80%。
-        statements: 68,
-        branches: 74,
-        functions: 53,
-        lines: 68,
+        // 2026-08-20 按实测回调（原 68/74/53/68 为初始保守值；实测 78.35/78.08/60.57/78.35，
+        // 留 2-3 点 CI 波动余量）。
+        statements: 76,
+        branches: 76,
+        functions: 58,
+        lines: 76,
       },
     },
   },
