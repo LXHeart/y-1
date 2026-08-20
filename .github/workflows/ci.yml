@@ -52,7 +52,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      # fetch-depth: 0——spotless ratchetFrom 需要 origin/main ref 可解析
+      #（浅克隆下 ref 缺失会退化为全量检查，1400+ 存量文件被误判为需格式化）。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

@@ -9,30 +9,30 @@ class DatabaseUrlsTest {
 
 	@Test
 	void parsesUserPasswordHostPortAndDatabase() {
-		var parts = DatabaseUrls.parse("postgres://lxh:secret@db.example.com:55432/grassland");
+		var parts = DatabaseUrls.parse("postgres://lxh:test-secret@db.example.com:55432/grassland");
 		assertThat(parts.jdbcUrl()).isEqualTo("jdbc:postgresql://db.example.com:55432/grassland");
 		assertThat(parts.user()).isEqualTo("lxh");
-		assertThat(parts.password()).isEqualTo("secret");
+		assertThat(parts.password()).isEqualTo("test-secret");
 	}
 
 	@Test
 	void omitsPortSegmentForPortlessNeonPoolerUrlInsteadOfWritingMinusOne() {
-		var parts = DatabaseUrls.parse("postgres://lxh:secret@pooler.neon.tech/grassland");
+		var parts = DatabaseUrls.parse("postgres://lxh:test-secret@pooler.neon.tech/grassland");
 		assertThat(parts.jdbcUrl()).isEqualTo("jdbc:postgresql://pooler.neon.tech/grassland");
 	}
 
 	@Test
 	void keepsPasswordContainingAtSign() {
-		var parts = DatabaseUrls.parse("postgres://lxh:Aa@111111@db.example.com/grassland");
+		var parts = DatabaseUrls.parse("postgres://lxh:test-Aa@111111@db.example.com/grassland");
 		assertThat(parts.user()).isEqualTo("lxh");
-		assertThat(parts.password()).isEqualTo("Aa@111111");
+		assertThat(parts.password()).isEqualTo("test-Aa@111111");
 		assertThat(parts.jdbcUrl()).isEqualTo("jdbc:postgresql://db.example.com/grassland");
 	}
 
 	@Test
 	void keepsSslmodeButDropsChannelBindingQueryParams() {
 		var parts = DatabaseUrls
-				.parse("postgres://lxh:secret@db.example.com/grassland?sslmode=require&channel_binding=require");
+				.parse("postgres://lxh:test-secret@db.example.com/grassland?sslmode=require&channel_binding=require");
 		assertThat(parts.jdbcUrl()).isEqualTo("jdbc:postgresql://db.example.com/grassland?sslmode=require");
 	}
 
