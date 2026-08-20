@@ -114,7 +114,10 @@ public abstract class IntelligenceItSupport {
 	}
 
 	protected WebTestClient client() {
-		return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+		// responseTimeout 30s：默认 5s 在 CI 慢 runner + testcontainers 负载下偶发超时
+		// （StorePublicProfileControllerIT 曾 1/524 flake）。
+		return WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+				.responseTimeout(java.time.Duration.ofSeconds(30)).build();
 	}
 
 	/** 签一个断言（org/tier/role 为 null——冒烟端点只需任意登录用户）。 */

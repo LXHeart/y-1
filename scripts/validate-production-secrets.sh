@@ -25,8 +25,8 @@ done
 
 if [[ -n "$ENV_FILE" ]]; then
   [[ ! -L "$ENV_FILE" ]] || { echo "production env file must not be a symbolic link" >&2; exit 1; }
-  env_mode="$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)"
-  if [[ -n "$env_mode" ]] && (( 8#$env_mode & 077 )); then
+  env_mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE" 2>/dev/null || true)"
+  if [[ "$env_mode" =~ ^[0-7]+$ ]] && (( 8#$env_mode & 077 )); then
     echo "production env file must not be group/world accessible (mode $env_mode)" >&2
     exit 1
   fi
@@ -169,13 +169,13 @@ check_secret_file() {
   [[ -r "$path" ]] || { fail "$name file is not readable: $path"; return; }
   [[ "$(cd "$(dirname "$path")" && pwd)/$(basename "$path")" != "$example" ]] || fail "$name still points to the repository example"
   local mode
-  mode="$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null || true)"
-  [[ -z "$mode" || $((8#$mode & 077)) -eq 0 ]] || fail "$name file must not be group/world accessible (mode $mode)"
+  mode="$(stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null || true)"
+  [[ ! "$mode" =~ ^[0-7]+$ || $((8#$mode & 077)) -eq 0 ]] || fail "$name file must not be group/world accessible (mode $mode)"
 }
 
 if [[ -r "${TEMPORAL_MTLS_KEY_FILE:-}" ]]; then
-  temporal_key_mode="$(stat -f '%Lp' "$TEMPORAL_MTLS_KEY_FILE" 2>/dev/null || stat -c '%a' "$TEMPORAL_MTLS_KEY_FILE" 2>/dev/null || true)"
-  [[ -z "$temporal_key_mode" || $((8#$temporal_key_mode & 077)) -eq 0 ]] \
+  temporal_key_mode="$(stat -c '%a' "$TEMPORAL_MTLS_KEY_FILE" 2>/dev/null || stat -f '%Lp' "$TEMPORAL_MTLS_KEY_FILE" 2>/dev/null || true)"
+  [[ ! "$temporal_key_mode" =~ ^[0-7]+$ || $((8#$temporal_key_mode & 077)) -eq 0 ]] \
     || fail "TEMPORAL_MTLS_KEY_FILE must not be group/world accessible (mode $temporal_key_mode)"
 fi
 

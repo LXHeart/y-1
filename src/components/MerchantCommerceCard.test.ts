@@ -104,7 +104,9 @@ describe('MerchantCommerceCard', () => {
     expect(body.totalStock).toBe(5)
     expect(body.inventorySlots).toHaveLength(2)
     expect(body.inventorySlots[0]).toMatchObject({ totalStock: 3 })
-    expect(body.inventorySlots[0].slotStart).toBe('2026-09-01T02:00:00.000Z')
+    // 组件按浏览器本地时区转 ISO（datetime input 语义）；期望值同源计算，
+    // 不写死 +08 偏移（CI runner 是 UTC）。
+    expect(body.inventorySlots[0].slotStart).toBe(new Date('2026-09-01T10:00').toISOString())
   })
 
   it('售后裁定：回显消费者申诉并按部分金额裁定退款', async () => {
