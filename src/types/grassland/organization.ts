@@ -356,6 +356,19 @@ export interface StoreMembership {
  * `brandLogoMediaReferenceId`（跨服务逻辑引用，无 FK），保存时原样回传。
  * 响应里另有 `organizationId`，调用方本来就有，这里不重复建模。
  */
+/**
+ * 组织品牌资料公开消费视图（缺口清偿之六）：`GET /api/organizations/{orgId}/public-brand-profile`。
+ * 大厅/任务详情公开品牌信息；白名单字段——无内部媒体 id 与乐观锁版本，全字段可空（未填资料）。
+ */
+export interface PublicBrandProfile {
+  organizationId: string
+  brandName: string | null
+  description: string | null
+  industry: Industry | null
+  /** 短时 presigned 展示 URL；未配置 Logo 或解析失败为 null（fail-soft），仅供即时渲染不持久化。 */
+  logoUrl: string | null
+}
+
 export interface BrandProfile {
   brandName: string | null
   brandLogoMediaReferenceId: string | null

@@ -9,7 +9,7 @@ import type {
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
   Membership, LoginSession, OrgInvitation, MyInvitation,
-  InvitationAcceptResult, Store, StoreMembership, StoreRole, StorePublicProfile, StorePublicMedia,
+  InvitationAcceptResult, Store, StoreMembership, StoreRole, PublicBrandProfile, StorePublicProfile, StorePublicMedia,
   MediaUploadTicket, MediaMetadata, BrandProfile, SaveBrandProfileInput,
   AccountClosureCheck, AccountClosureRequest, PersonalDataExport, PiiLifecycleAudit,
 } from '../types/grassland'
@@ -244,6 +244,11 @@ export function useGrasslandIdentity(run: RunFn) {
   const getStorePublicProfile = (storeId: string) =>
     run(() => request<StorePublicProfile>(`/api/stores/${storeId}/public-profile`))
 
+  /** 组织品牌资料公开消费（缺口清偿之六）：白名单字段，未登录可读。 */
+  const getPublicBrandProfile = (organizationId: string) =>
+    run(() => request<PublicBrandProfile>(
+      `/api/organizations/${organizationId}/public-brand-profile`))
+
   /**
    * 门店公开媒体画廊（任务书 #42 D4/D5）：未登录也放行；store/org 非 active → 404。
    * `groups` 四类白名单（不含 uploadedBy/organizationId/createdAt）；单项被上游过滤静默缺席；
@@ -336,7 +341,7 @@ export function useGrasslandIdentity(run: RunFn) {
     requestAccountClosure, listPiiLifecycleAudit,
     inviteMember, listInvitations, revokeInvitation,
     listMyInvitations, acceptInvitation, declineInvitation,
-    listStores, createStore, getStorePublicProfile, getStorePublicMedia, listStoreMemberships, addStoreMembership,
+    listStores, createStore, getStorePublicProfile, getPublicBrandProfile, getStorePublicMedia, listStoreMemberships, addStoreMembership,
     removeStoreMembership,
     getBrandProfile, updateBrandProfile, uploadBrandLogo,
   }

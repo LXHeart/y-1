@@ -24,6 +24,7 @@ import MerchantTaskForm from './components/MerchantTaskForm.vue'
 import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
+import BrandPublicProfilePanel from './components/BrandPublicProfilePanel.vue'
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import StoreMediaGallery from './components/StoreMediaGallery.vue'
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
@@ -607,6 +608,9 @@ watch(grasslandNavigationTarget, async (target) => {
         :loading="storePublicProfileLoading"
         :error="storePublicProfileError"
       />
+
+      <!-- 缺口清偿之六：选中任务的品牌公开资料（#32 D9 公开消费） -->
+      <BrandPublicProfilePanel :organization-id="selectedTask?.organizationId ?? null" />
 
       <!-- 任务书 #42：门店公开媒体画廊（按需拉取，URL 过期 onerror 重拉一次） -->
       <StoreMediaGallery :store-id="selectedTask?.storeId ?? null" />
