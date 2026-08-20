@@ -31,3 +31,8 @@ limits_config:
   # 容器重启补推旧日志时拒绝超过 7 天的样本，避免乱序污染索引。
   reject_old_samples: true
   reject_old_samples_max_age: 168h
+  # 注意：ingester 另有「落后流内最新 ~1h 的样本整批拒绝（entry too far behind）」的流内
+  # 乱序防线——promtail 重建后回放长存活容器（38h+）的历史日志会触发整批 400（该窗口由
+  # max_chunk_age 派生，但不接受 limits/ingester 层的此字段覆盖）。缓解 = promtail positions
+  # 持久化卷（重建不整段回放）+ 冒烟断言用新建 obs 容器自身的日志（tempo 查询请求会打
+  # 含 traceId 的 info 日志，天然是确定性触发；见 scripts/local-observability-smoke.sh）。

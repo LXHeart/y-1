@@ -5,7 +5,8 @@ server:
   http_listen_port: 9080
 
 positions:
-  filename: /tmp/positions.yaml
+  # 持久卷（compose promtail_data）——容器重建不丢位置，避免整段历史回放。
+  filename: /positions/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
@@ -23,10 +24,19 @@ scrape_configs:
       - source_labels: [__meta_docker_compose_project]
         regex: y-1
         action: keep
+      # 标签名用 Loki 3.5 规范化后的 OTLP 约定名（service_name/container_name）——
+      # 旧名 service/container 会在推送时被 Loki 3.4+ 的标签规范化改名丢弃，查询侧查不到。
       - source_labels: [__meta_docker_compose_service]
-        target_label: service
+        target_label: service_name
       - source_labels: [__meta_docker_container_name]
         regex: "/(.*)"
-        target_label: container
+        target_label: container_name
       - source_labels: [__meta_docker_container_log_stream]
         target_label: stream
+    # 回放/积压的老日志在客户端丢弃：Loki 的 max_chunk_age/2 流内乱序防线会把整批
+    # push 400（同批新鲜日志一并丢失），且该防线不可经 limits/ingester 配置放宽
+    # （见 loki.yml 注释与 grafana/loki#5936）。本地栈只关心近期日志。
+    pipeline_stages:
+      - drop:
+          older_than: 1h
+          drop_counter_reason: "local_dev_recent_only"
