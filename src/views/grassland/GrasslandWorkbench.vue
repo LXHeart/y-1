@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { computed, inject, nextTick, ref, watch, type Ref } from 'vue'
 import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
@@ -35,6 +35,7 @@ import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import StoreMediaGallery from './components/StoreMediaGallery.vue'
+import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
@@ -94,12 +95,10 @@ const tasks = ref<Task[]>([])
 const applications = ref<TaskApplication[]>([])
 const selectedTaskId = ref('')
 const notice = ref('')
-/** 当前查看的争议 id——即时开案或 deferred promotion 后挂载审判看板。 */
-const activeDisputeId = ref('')
-/** 待客服案终局的推荐官异议 request；requestId 与 disputeId 严格分离。 */
-const deferredDisputeRequestId = ref('')
-let deferredPollTimer: ReturnType<typeof setTimeout> | null = null
-const DEFERRED_POLL_MS = 3000
+
+const { activeDisputeId, deferredDisputeRequestId, dispute, reset: resetDisputes } = useWorkbenchDisputes(
+  grassland, setNotice,
+)
 
 /** 每个 application 的异步结局（accept 预留 / confirm 结算），key = applicationId。 */
 const outcomes = ref<Record<string, string>>({})
@@ -381,8 +380,7 @@ async function initForAccount(): Promise<void> {
 
 /** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
 function resetAccountState(): void {
-  clearDeferredPoll()
-  deferredDisputeRequestId.value = ''
+  resetDisputes()
   orgs.value = []
   stores.value = []
   storeScopes.value = []
@@ -1138,56 +1136,7 @@ async function withdrawApp(app: TaskApplication): Promise<void> {
   }
 }
 
-function clearDeferredPoll(): void {
-  if (deferredPollTimer !== null) {
-    clearTimeout(deferredPollTimer)
-    deferredPollTimer = null
-  }
-}
-
-function scheduleDeferredPoll(requestId: string): void {
-  clearDeferredPoll()
-  deferredPollTimer = setTimeout(async () => {
-    deferredPollTimer = null
-    // 账号/视角切换或新请求已替代旧请求时，不让过期回调继续更新 UI。
-    if (deferredDisputeRequestId.value !== requestId) return
-    const request = await grassland.getDisputeRequest(requestId)
-    if (deferredDisputeRequestId.value !== requestId) return
-    if (!request) {
-      // 暂时失败保留 durable request，低频重试；error 同时给用户可见。
-      scheduleDeferredPoll(requestId)
-      return
-    }
-    if (request.status === 'promoted' && request.disputeId) {
-      deferredDisputeRequestId.value = ''
-      activeDisputeId.value = request.disputeId
-      setNotice('普通争议已自动开启并进入七官审判流程')
-      return
-    }
-    scheduleDeferredPoll(requestId)
-  }, DEFERRED_POLL_MS)
-}
-
-onBeforeUnmount(clearDeferredPoll)
-
-async function dispute(app: TaskApplication): Promise<void> {
-  const opened = await grassland.openDispute(app.id, '履约存在争议')
-  if (!opened) return
-  if (opened.kind === 'deferred') {
-    activeDisputeId.value = ''
-    deferredDisputeRequestId.value = opened.request.requestId
-    setNotice('异议已记录，客服案终局后自动开普通争议')
-    scheduleDeferredPoll(opened.request.requestId)
-    return
-  }
-  clearDeferredPoll()
-  deferredDisputeRequestId.value = ''
-  activeDisputeId.value = opened.dispute.id
-  setNotice(`争议已开启（状态 ${opened.dispute.status}），结算将被暂停`)
-}
-
-/**
- * 切换视角。活动身份按 session 隔离，必须同步切后端，否则 requireMerchant/requireRecommender 会 403。
+/** 切换视角。活动身份按 session 隔离，必须同步切后端，否则 requireMerchant/requireRecommender 会 403。
  *
  * 关键：**激活失败必须回滚 UI**。此前无论成败都切视角，账号若未开通对应身份，
  * 会出现「UI 显示推荐官、后端仍是商家、所有操作 403」且用户看不出原因（浏览器实测发现）。
