@@ -195,7 +195,8 @@ function openHotTopicCreation(title: string): void {
   })
 }
 
-const showTabs = computed(() => groups.value.length > 0 && provider.value === '60s')
+// 60s 实时榜按平台分 tab；历史模式恒为 groups 形态（alapi 按站点分组），也分 tab 展示
+const showTabs = computed(() => groups.value.length > 0 && (provider.value === '60s' || hotRange.value !== 'live'))
 
 const activeItems = computed(() => {
   if (showTabs.value) {

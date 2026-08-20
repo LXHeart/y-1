@@ -212,7 +212,8 @@ export function useHomepageHotItems() {
         .filter((group): group is HomepageHotItemGroup => group !== null)
       items.value = []
       groups.value = historyGroups
-      provider.value = '60s'
+      // 历史端点按调用方 provider 分源回带（V40）；无该字段按 60s 兜底
+      provider.value = data.provider === 'alapi' ? 'alapi' : '60s'
       fetchedAt.value = normalizeOptionalString(data.since) ?? ''
       taxonomy.value = null
       snapshotCount.value = typeof data.snapshotCount === 'number' ? data.snapshotCount : 0

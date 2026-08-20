@@ -217,4 +217,44 @@ describe('HomeView 热点时间范围（缺口清偿之八：今天/本周）', 
     expect(wrapper.text()).toContain('暂无历史归档')
     expect(wrapper.text()).toContain('切回「实时」')
   })
+
+  test('alapi 用户的历史按站点分组渲染（provider 分源，V40）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/homepage/hot-items/history')) {
+        return {
+          ok: true, status: 200,
+          headers: { get: (): string => 'application/json' },
+          json: async () => ({
+            success: true,
+            data: {
+              range: 'week', provider: 'alapi', since: '2026-08-14T00:00:00Z', snapshotCount: 2,
+              groups: [
+                { platform: 'xiaohongshu', label: '小红书', items: [{ rank: 1, title: '本周穿搭热', occurrences: 2 }] },
+                { platform: 'douyin', label: '抖音', items: [{ rank: 1, title: '本周抖音热', occurrences: 1 }] },
+              ],
+            },
+          }),
+          text: async (): Promise<string> => '',
+        }
+      }
+      return {
+        ok: true, status: 200,
+        headers: { get: (): string => 'application/json' },
+        json: async () => HOT_ITEMS_BODY,
+        text: async (): Promise<string> => '',
+      }
+    }))
+
+    const wrapper = mount(HomeView)
+    await flushPromises()
+    await wrapper.findAll('.hot-range-tab').find((btn) => btn.text() === '本周')!.trigger('click')
+    await flushPromises()
+
+    // 历史模式 groups 形态按站点分 tab（不再因 provider=alapi 隐藏 tab）
+    const siteTab = wrapper.findAll('.hot-tab').find((btn) => btn.text().includes('小红书'))
+    expect(siteTab).toBeDefined()
+    expect(wrapper.text()).toContain('本周穿搭热')
+    await siteTab!.trigger('click')
+    expect(wrapper.text()).toContain('本周穿搭热')
+  })
 })
