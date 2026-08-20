@@ -251,3 +251,56 @@ describe('视频复刻分镜接线（PRD §4.4）', () => {
     wrapper.unmount()
   })
 })
+
+describe('抖音热点选题接线（PRD §4.3）', () => {
+  test('抖音 tab 展开热点面板；「带入提取」回填链接到输入框', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/douyin/session') {
+        return jsonResponse({ success: true, data: { status: 'missing', hasPersistedSession: false } })
+      }
+      if (url === '/api/douyin/hot-items') {
+        return jsonResponse({ success: true, data: { items: [
+          { rank: 1, title: '夏日饮品测评', hotValue: '12345', url: 'https://www.douyin.com/video/1', source: '60sapi' },
+        ] } })
+      }
+      return jsonResponse({ success: true, data: null })
+    }))
+
+    const wrapper = mount(VideoAnalysisView)
+    await flushPromises()
+
+    expect(wrapper.find('.hot-panel').exists()).toBe(false)
+    expect(fetch).not.toHaveBeenCalledWith('/api/douyin/hot-items', {})
+
+    const toggle = wrapper.findAll('button')
+      .find((button) => button.text().includes('展开抖音热点选题'))
+    expect(toggle).toBeDefined()
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.hot-panel').exists()).toBe(true)
+    expect(wrapper.get('.hot-title a').text()).toBe('夏日饮品测评')
+
+    await wrapper.get('.hot-use').trigger('click')
+    expect((wrapper.get('#video-input').element as HTMLTextAreaElement).value)
+      .toBe('https://www.douyin.com/video/1')
+
+    const collapse = wrapper.findAll('button')
+      .find((button) => button.text().includes('收起抖音热点选题'))
+    await collapse!.trigger('click')
+    expect(wrapper.find('.hot-panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  test('切到 B 站 tab 后不渲染抖音热点入口', async () => {
+    const wrapper = mount(VideoAnalysisView)
+    await flushPromises()
+
+    const bilibiliTab = wrapper.findAll('.platform-tab').find((tab) => tab.text() === 'B 站')
+    await bilibiliTab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((button) => button.text().includes('抖音热点选题'))).toBe(false)
+    wrapper.unmount()
+  })
+})

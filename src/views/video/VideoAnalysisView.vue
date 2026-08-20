@@ -67,6 +67,15 @@
           v-if="activePlatform === 'douyin'"
           class="toggle-link"
           :disabled="parseLoading"
+          @click="showHotPanel = !showHotPanel"
+        >
+          {{ showHotPanel ? '收起抖音热点选题' : '展开抖音热点选题' }}
+        </button>
+
+        <button
+          v-if="activePlatform === 'douyin'"
+          class="toggle-link"
+          :disabled="parseLoading"
           @click="showSessionPanel = !showSessionPanel"
         >
           {{ showSessionPanel ? '收起登录增强' : '抖音解析失败时再尝试登录增强' }}
@@ -81,6 +90,11 @@
         @start="startDouyinSession"
         @refresh="refreshDouyinSession"
         @logout="logoutDouyinSession"
+      />
+
+      <DouyinHotItemsPanel
+        v-if="activePlatform === 'douyin' && showHotPanel"
+        @use-link="handleUseHotLink"
       />
     </section>
 
@@ -165,6 +179,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import BilibiliParsePanel from '../../components/BilibiliParsePanel.vue'
+import DouyinHotItemsPanel from '../../components/DouyinHotItemsPanel.vue'
 import DouyinParsePanel from '../../components/DouyinParsePanel.vue'
 import DouyinSessionPanel from '../../components/DouyinSessionPanel.vue'
 import VideoRecreationPanel from '../../components/VideoRecreationPanel.vue'
@@ -237,6 +252,7 @@ const emptyCopyByPlatform: Record<SupportedPlatform, string> = {
 const activePlatform = ref<SupportedPlatform>('douyin')
 const videoInput = ref('')
 const showSessionPanel = ref(false)
+const showHotPanel = ref(false)
 const hydratedCreationRevision = ref<number | null>(null)
 const taskExecutionContext = ref<VideoTaskExecutionContext | undefined>()
 
@@ -398,6 +414,11 @@ async function handleAnalyzeRecreation(): Promise<void> {
   await analyzeScenes(activePlatform.value, currentProxyVideoUrl.value, taskExecutionContext.value)
 }
 
+function handleUseHotLink(url: string): void {
+  if (!url) return
+  videoInput.value = url
+}
+
 async function handleExtractVideo(): Promise<void> {
   if (activePlatform.value === 'douyin') {
     await handleExtractDouyinVideo()
@@ -410,6 +431,7 @@ function handleSwitchPlatform(platform: SupportedPlatform): void {
   activePlatform.value = platform
   videoInput.value = ''
   showSessionPanel.value = false
+  showHotPanel.value = false
   resetAnalysis()
   resetBilibiliAnalysis()
   resetParse()
@@ -420,6 +442,7 @@ function handleSwitchPlatform(platform: SupportedPlatform): void {
 function handleReset(): void {
   videoInput.value = ''
   showSessionPanel.value = false
+  showHotPanel.value = false
   resetAnalysis()
   resetBilibiliAnalysis()
   resetParse()
