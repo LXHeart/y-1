@@ -154,8 +154,7 @@ describe('App AI 创作中心集成', () => {
     installFetchStub()
     const wrapper = await mountApp()
 
-    // TODO(phase3): AiCreationCenter 迁移到 views/ 后恢复 data-platform_id 断言
-    // expect(wrapper.findAll('[data-platform_id]')).toHaveLength(9)
+    // 9 个平台入口的断言在 AiCreationCenter.test.ts 对真实组件覆盖（属性已更名 data-platform-id）
     expect(wrapper.get('.brand-title').text()).toBe('AI 内容创作中心')
     expect(wrapper.get('nav[aria-label="功能选择"]').attributes('role')).toBeUndefined()
     expect(wrapper.find('.legacy-tools-menu').exists()).toBe(false)
@@ -198,18 +197,24 @@ describe('App AI 创作中心集成', () => {
     useAuth().currentUser.value = null
   })
 
-  // TODO(phase3): AiCreationCenter 迁移后恢复——需要真实组件验证 KeepAlive 缓存重建
-  test.skip('登录账号变化时重建 KeepAlive 缓存，清除上一账号的创作页面状态', async () => {
+  // KeepAlive 缓存按 creationContextEpoch 键控（DefaultLayout），账号变化时整体重建——
+  // 与旧版差异：不再断言组件内部选中态（App.test 里 AiCreationCenter 是 mock），
+  // 断言实例重建 + 非商城视图换账号回落 /ai-center，二者合起来即「清除上一账号页面状态」。
+  test('登录账号变化时重建 KeepAlive 缓存，清除上一账号的创作页面状态', async () => {
     installFetchStub()
     const wrapper = await mountApp()
-    await wrapper.get('[data-platform_id="xiaohongshu"]').trigger('click')
     const previousCenter = wrapper.getComponent(AiCreationCenter).vm
 
-    useAuth().currentUser.value = { id: 'account-b', email: 'b@example.com', role: 'user' }
+    // 先离开创作中心（实例进 KeepAlive 缓存）
+    await router.push('/article')
+    await flushPromises()
+    expect(wrapper.findComponent(AiCreationCenter).exists()).toBe(false)
+
+    useAuth().currentUser.value = { id: 'account-b', email: 'b@example.com', role: 'user', roles: [] }
     await flushPromises()
 
+    expect(router.currentRoute.value.path).toBe('/ai-center')
     expect(wrapper.getComponent(AiCreationCenter).vm).not.toBe(previousCenter)
-    expect(wrapper.find('[data-platform_id="xiaohongshu"].selected').exists()).toBe(false)
     useAuth().currentUser.value = null
   })
 
