@@ -195,6 +195,34 @@ services:
     depends_on:
       prometheus:
         condition: service_started
+      loki:
+        condition: service_started
+    restart: unless-stopped
+
+  # 本地日志聚合（观测三支柱补齐 logging）：Promtail 经 docker 服务发现收集本项目容器
+  # stdout → Loki → Grafana（datasources/loki.yml 已 provision）。生产不跑本地 Loki——
+  # 生产 overlay 以 LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs 输出结构化 JSON，由部署侧收集器接管。
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.5.1
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./platform-java/deploy/observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    restart: unless-stopped
+
+  promtail:
+    profiles: ["observability"]
+    image: grafana/promtail:3.5.1
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./platform-java/deploy/observability/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      # docker 服务发现需要 socket；日志文件读取需要容器目录（Docker Desktop VM 内路径，可直挂）。
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      loki:
+        condition: service_started
     restart: unless-stopped
 
   # 统一 Java Edge BFF 入口。Nginx 的 /api 与 /health 只指向本服务；
@@ -827,3 +855,4 @@ volumes:
   prometheus_data:
   alertmanager_data:
   grafana_data:
+  loki_data:

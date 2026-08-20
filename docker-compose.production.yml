@@ -41,6 +41,12 @@ x-otel-production: &otel-production
   OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:?OTel trace sampling probability is required}
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:?OTLP traces endpoint is required}
 
+x-structured-logging: &structured-logging
+  # Boot 4.1 原生结构化日志：生产容器 stdout 输出 ECS JSON（Loki/ELK 可直接索引）。
+  # service.name 按服务单独设置（各服务 env 内），聚合后可按服务过滤；
+  # 本地开发保持人类可读的默认格式（不设此变量）。
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+
 services:
   frontend:
     <<: *production-resources
@@ -57,12 +63,14 @@ services:
   edge-bff:
     <<: *production-resources
     environment:
-      <<: *otel-production
+      <<: [*otel-production, *structured-logging]
+      LOGGING_STRUCTURED_ECS_SERVICE_NAME: edge-bff
 
   identity-service:
     <<: *production-resources
     environment:
-      <<: [*kafka-production, *otel-production]
+      <<: [*kafka-production, *otel-production, *structured-logging]
+      LOGGING_STRUCTURED_ECS_SERVICE_NAME: identity-service
     volumes:
       - *kafka-volume
     depends_on: !override
@@ -72,7 +80,8 @@ services:
   marketplace-service:
     <<: *production-resources
     environment:
-      <<: [*kafka-production, *temporal-production, *otel-production]
+      <<: [*kafka-production, *temporal-production, *otel-production, *structured-logging]
+      LOGGING_STRUCTURED_ECS_SERVICE_NAME: marketplace-service
     volumes:
       - *kafka-volume
       - type: bind
@@ -90,7 +99,8 @@ services:
   finance-service:
     <<: *production-resources
     environment:
-      <<: [*kafka-production, *otel-production]
+      <<: [*kafka-production, *otel-production, *structured-logging]
+      LOGGING_STRUCTURED_ECS_SERVICE_NAME: finance-service
       # Production must select an explicitly implemented external custodian/PSP
       # adapter. The Java default is sandbox, which is intentionally forbidden here.
       FINANCE_PSP_MODE: ${FINANCE_PSP_MODE:?FINANCE_PSP_MODE is required}
@@ -109,7 +119,8 @@ services:
   trust-service:
     <<: *production-resources
     environment:
-      <<: [*kafka-production, *temporal-production, *otel-production]
+      <<: [*kafka-production, *temporal-production, *otel-production, *structured-logging]
+      LOGGING_STRUCTURED_ECS_SERVICE_NAME: trust-service
     volumes:
       - *kafka-volume
       - type: bind
@@ -127,7 +138,8 @@ services:
   intelligence-service:
     <<: *production-resources
     environment:
-      <<: [*kafka-production, *otel-production]
+      <<: [*kafka-production, *otel-production, *structured-logging]
+      LOGGING_STRUCTURED_ECS_SERVICE_NAME: intelligence-service
       QWEN_BASE_URL: ${QWEN_BASE_URL:?QWEN_BASE_URL is required}
       QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required}
       AI_PROVIDER_ALLOW_SANDBOX: "false"

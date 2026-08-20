@@ -1,0 +1,32 @@
+# 本地观测栈 Promtail：docker 服务发现收集本 compose 项目的容器 stdout。
+# 行内容不做解析直接入库——本地开发是默认（人类可读）格式；生产 ECS JSON 由
+# 部署侧收集器解析。service/container 标签经 relabel 注入，Grafana 按标签过滤。
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: grassland-docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project"]
+    relabel_configs:
+      # 只收本项目容器（compose project 名固定 y-1，见根目录目录名/默认 project 规则）。
+      - source_labels: [__meta_docker_compose_project]
+        regex: y-1
+        action: keep
+      - source_labels: [__meta_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream

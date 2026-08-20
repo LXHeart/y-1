@@ -1,0 +1,33 @@
+# 本地观测栈 Loki（单机开发配置，profile=observability）。
+# 生产不跑本地 Loki——生产容器以 ECS JSON 输出到 stdout（见 docker-compose.production.yml
+# 的 LOGGING_STRUCTURED_FORMAT_CONSOLE），由部署侧的日志收集器接管。
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-04-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # 容器重启补推旧日志时拒绝超过 7 天的样本，避免乱序污染索引。
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
