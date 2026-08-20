@@ -73,7 +73,8 @@ class IdentityAuthorizationManifestTest {
 
     private static boolean isReviewedPublicPath(String path) {
         return path.startsWith("/api/auth/")
-                || path.matches("/api/stores/[^/]+/public-(?:profile|media)");
+                || path.matches("/api/stores/[^/]+/public-(?:profile|media)")
+                || path.matches("/api/organizations/[^/]+/public-brand-profile");
     }
 
     private static Set<String> fullPaths(Class<?> controller, RequestMapping methodMapping) {

@@ -40,6 +40,7 @@ public final class IdentityAuthorizationManifest {
                 "auth.LogoutController",
                 "auth.RegisterController",
                 "auth.SendCodeController",
+                "brand.PublicBrandProfileController",
                 "store.StorePublicMediaController",
                 "store.StorePublicProfileController");
         register(policies, TOKEN_AUTHENTICATED,

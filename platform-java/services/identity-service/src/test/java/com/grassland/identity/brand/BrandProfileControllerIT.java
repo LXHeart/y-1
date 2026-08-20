@@ -32,6 +32,74 @@ class BrandProfileControllerIT extends IdentityItSupport {
                 .fetch().rowsUpdated().block();
     }
 
+    // ---------- 公开消费端点（缺口清偿之六，#32 D9） ----------
+
+    private String publicUri(String orgId) {
+        return "/api/organizations/" + orgId + "/public-brand-profile";
+    }
+
+    @Test
+    @DisplayName("公开读取：未登录 200 白名单字段 + logoUrl（mock）；不泄露媒体 id 与 version")
+    void publicBrandProfileServesWhitelistedFieldsWithoutLogin() {
+        var owner = seedAccount("brand-public-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "公开品牌主体");
+        String mediaId = UUID.randomUUID().toString();
+
+        client().put().uri(uri(orgId)).contentType(MediaType.APPLICATION_JSON)
+                .header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue(Map.of("brandName", "草原咖啡", "description", "社区精品咖啡",
+                        "industry", "catering", "brandLogoMediaReferenceId", mediaId,
+                        "expectedVersion", 0))
+                .exchange().expectStatus().isOk();
+
+        when(brandLogoMediaClient.logoUrlFailSoft(mediaId, orgId))
+                .thenReturn(Mono.just("https://cdn.example.com/logo.png"));
+        // 无 Cookie：公开端点未登录放行
+        client().get().uri(publicUri(orgId))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.organizationId").isEqualTo(orgId)
+                .jsonPath("$.data.brandName").isEqualTo("草原咖啡")
+                .jsonPath("$.data.description").isEqualTo("社区精品咖啡")
+                .jsonPath("$.data.industry").isEqualTo("catering")
+                .jsonPath("$.data.logoUrl").isEqualTo("https://cdn.example.com/logo.png")
+                .jsonPath("$.data.brandLogoMediaReferenceId").doesNotExist()
+                .jsonPath("$.data.version").doesNotExist();
+    }
+
+    @Test
+    @DisplayName("公开读取：无资料行回全 null；logo fail-soft 置空")
+    void publicBrandProfileReturnsNullFieldsWhenProfileAbsent() {
+        var owner = seedAccount("brand-public-empty-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "无资料主体");
+
+        client().get().uri(publicUri(orgId))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.organizationId").isEqualTo(orgId)
+                .jsonPath("$.data.brandName").isEqualTo(null)
+                .jsonPath("$.data.description").isEqualTo(null)
+                .jsonPath("$.data.industry").isEqualTo(null)
+                .jsonPath("$.data.logoUrl").isEqualTo(null);
+    }
+
+    @Test
+    @DisplayName("公开 gate：组织不存在/非 UUID/非 active → 404")
+    void publicBrandProfileRejectsUnknownOrInactiveOrganization() {
+        client().get().uri(publicUri(UUID.randomUUID().toString()))
+                .exchange().expectStatus().isNotFound()
+                .expectBody().jsonPath("$.error").isEqualTo("组织不存在");
+        client().get().uri(publicUri("not-a-uuid"))
+                .exchange().expectStatus().isNotFound();
+
+        var owner = seedAccount("brand-public-suspended-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "停用主体");
+        db.sql("UPDATE organization SET status='suspended' WHERE id=CAST(:org AS uuid)")
+                .bind("org", orgId).fetch().rowsUpdated().block();
+        client().get().uri(publicUri(orgId))
+                .exchange().expectStatus().isNotFound();
+    }
+
     @Test
     @DisplayName("权限矩阵：owner/admin 可 PUT；member 只读（GET 200 回显版本，PUT 403 权限不足）；未登录 401")
     void permissionMatrix() {
