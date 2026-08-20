@@ -42,476 +42,454 @@ import reactor.core.publisher.Mono;
  * 审判 HTTP 入口（草场 Epic 6 Slice 6C Phase B / HLD §5.5、§9.3、§10.5）。
  *
  * <ul>
- *   <li>POST /api/trust/disputes/{id}/adjudicate — 启动审判（当事方 + org 自查；<b>同步</b>抽 panel-size 官 + open→voting +
- *       outbox {@code DisputeAssigned}；202 新启 / 200 幂等返回当前态）。<br>
- *       <b>Phase B 注</b>：本轮同步抽签分配面板；Phase C 将替换为 {@code DisputeAdjudicationWorkflow}
- *       （{@code WorkflowClient.start}，timer → tally → 重开/上诉/终审 loop）。投票窗口到期 tally/decide/reopen 随 Phase C。</li>
- *   <li>POST /api/trust/disputes/{id}/votes — 审判官投票（{@code requireJudge} + 面板成员自查 + 当前轮；
- *       幂等 UNIQUE，每官每轮一票不可改；201 新投 / 200 既有；返回累计 tally）。</li>
- *   <li>GET /api/trust/disputes/{id}/adjudication — 审判状态轮询（当事方 + org 自查 / marketplace 服务 /
- *       <b>本轮面板审判官</b>——快照已脱敏，审判官是其目标读者，否则「能投票却看不见案情」）：
- *       {status, round, panel{size,voted}, tallies{...,majority}, decision, appealState, finalDecision}。
- *       默认脱敏——不暴露审判官 account_id / 个票 rationale（D-10）。</li>
+ * <li>POST /api/trust/disputes/{id}/adjudicate — 启动审判（当事方 + org 自查；<b>同步</b>抽
+ * panel-size 官 + open→voting + outbox {@code DisputeAssigned}；202 新启 / 200
+ * 幂等返回当前态）。<br>
+ * <b>Phase B 注</b>：本轮同步抽签分配面板；Phase C 将替换为 {@code DisputeAdjudicationWorkflow}
+ * （{@code WorkflowClient.start}，timer → tally → 重开/上诉/终审 loop）。投票窗口到期
+ * tally/decide/reopen 随 Phase C。</li>
+ * <li>POST /api/trust/disputes/{id}/votes — 审判官投票（{@code requireJudge} + 面板成员自查
+ * + 当前轮； 幂等 UNIQUE，每官每轮一票不可改；201 新投 / 200 既有；返回累计 tally）。</li>
+ * <li>GET /api/trust/disputes/{id}/adjudication — 审判状态轮询（当事方 + org 自查 /
+ * marketplace 服务 / <b>本轮面板审判官</b>——快照已脱敏，审判官是其目标读者，否则「能投票却看不见案情」）： {status,
+ * round, panel{size,voted}, tallies{...,majority}, decision, appealState,
+ * finalDecision}。 默认脱敏——不暴露审判官 account_id / 个票 rationale（D-10）。</li>
  * </ul>
  *
- * <p>身份靠 {@link TrustCallerResolver}；错误统一由 {@code TrustErrorHandler} 处理。
+ * <p>
+ * 身份靠 {@link TrustCallerResolver}；错误统一由 {@code TrustErrorHandler} 处理。
  */
 @RestController
 public class AdjudicationController {
 
-    private final TrustCallerResolver callers;
-    private final DisputeCaseRepository disputes;
-    private final JudgeRepository judges;
-    private final JudgeEligibilityService judgeEligibility;
-    private final OutboxRepository outbox;
-    private final AdjudicationProperties props;
-    private final AdjudicationWorkflowStarter workflowStarter;
-    /** 读争议的受众口径（当事方 / marketplace 服务 / 本轮面板审判官 / 客服），见 {@link DisputeAudience}。 */
-    private final DisputeAudience audience;
-    private final TransactionalOperator transactions;
-    private final MerchantRejectionFinalizer merchantRejectionFinalizer;
-    private final DisputeEvidenceRepository evidenceRepo;
-    private final CaseEvidenceRedactor evidenceRedactor;
-    private final DisputeEvidenceAccessAuditRepository evidenceAccessAudit;
+	private final TrustCallerResolver callers;
+	private final DisputeCaseRepository disputes;
+	private final JudgeRepository judges;
+	private final JudgeEligibilityService judgeEligibility;
+	private final OutboxRepository outbox;
+	private final AdjudicationProperties props;
+	private final AdjudicationWorkflowStarter workflowStarter;
+	/** 读争议的受众口径（当事方 / marketplace 服务 / 本轮面板审判官 / 客服），见 {@link DisputeAudience}。 */
+	private final DisputeAudience audience;
+	private final TransactionalOperator transactions;
+	private final MerchantRejectionFinalizer merchantRejectionFinalizer;
+	private final DisputeEvidenceRepository evidenceRepo;
+	private final CaseEvidenceRedactor evidenceRedactor;
+	private final DisputeEvidenceAccessAuditRepository evidenceAccessAudit;
 
-    public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes,
-                                  JudgeRepository judges, JudgeEligibilityService judgeEligibility,
-                                  OutboxRepository outbox, AdjudicationProperties props,
-                                  AdjudicationWorkflowStarter workflowStarter, DisputeAudience audience,
-                                  TransactionalOperator transactions,
-                                  MerchantRejectionFinalizer merchantRejectionFinalizer,
-                                  DisputeEvidenceRepository evidenceRepo, CaseEvidenceRedactor evidenceRedactor,
-                                  DisputeEvidenceAccessAuditRepository evidenceAccessAudit) {
-        this.audience = audience;
-        this.callers = callers;
-        this.disputes = disputes;
-        this.judges = judges;
-        this.judgeEligibility = judgeEligibility;
-        this.outbox = outbox;
-        this.props = props;
-        this.workflowStarter = workflowStarter;
-        this.transactions = transactions;
-        this.merchantRejectionFinalizer = merchantRejectionFinalizer;
-        this.evidenceRepo = evidenceRepo;
-        this.evidenceRedactor = evidenceRedactor;
-        this.evidenceAccessAudit = evidenceAccessAudit;
-    }
+	public AdjudicationController(TrustCallerResolver callers, DisputeCaseRepository disputes, JudgeRepository judges,
+			JudgeEligibilityService judgeEligibility, OutboxRepository outbox, AdjudicationProperties props,
+			AdjudicationWorkflowStarter workflowStarter, DisputeAudience audience, TransactionalOperator transactions,
+			MerchantRejectionFinalizer merchantRejectionFinalizer, DisputeEvidenceRepository evidenceRepo,
+			CaseEvidenceRedactor evidenceRedactor, DisputeEvidenceAccessAuditRepository evidenceAccessAudit) {
+		this.audience = audience;
+		this.callers = callers;
+		this.disputes = disputes;
+		this.judges = judges;
+		this.judgeEligibility = judgeEligibility;
+		this.outbox = outbox;
+		this.props = props;
+		this.workflowStarter = workflowStarter;
+		this.transactions = transactions;
+		this.merchantRejectionFinalizer = merchantRejectionFinalizer;
+		this.evidenceRepo = evidenceRepo;
+		this.evidenceRedactor = evidenceRedactor;
+		this.evidenceAccessAudit = evidenceAccessAudit;
+	}
 
-    @PostMapping("/api/trust/disputes/{id}/adjudicate")
-    public Mono<ResponseEntity<Map<String, Object>>> adjudicate(@PathVariable String id, ServerHttpRequest request) {
-        return callers.requireMerchantOrRecommender(request)
-                .filter(caller -> caller.organizationId() != null)
-                .switchIfEmpty(fail(403, "无组织归属，无法启动审判"))
-                .flatMap(caller -> disputes.findById(id)
-                        .switchIfEmpty(fail(404, "争议不存在"))
-                        .flatMap(d -> {
-                            if (!d.organizationId().equals(caller.organizationId())) {
-                                return fail(403, "无权操作该争议");
-                            }
-                            if ("final".equals(d.status())) {
-                                return fail(409, "争议已终局");
-                            }
-                            if ("merchant_rejection".equals(d.kind())) {
-                                return fail(409, "商家履约异议直送客服终审，不进入审判面板");
-                            }
-                            // GL-P2-TRUST-001：争议开启后需等待 48h（可配）才可启动审判
-                            if (props.adjudicationWindowEnabled() != 0 && d.createdAt() != null && !isAdjudicationWindowElapsed(d)) {
-                                long remainingSeconds = props.adjudicationWindowSecondsEffective()
-                                        - Duration.between(d.createdAt(), Instant.now()).toSeconds();
-                                return fail(409, String.format("争议开启后需等待 %d 小时才可启动审判，还剩约 %d 小时",
-                                        props.adjudicationWindowSecondsEffective() / 3600,
-                                        remainingSeconds / 3600 + 1));
-                            }
-                            // 新启争议：先抽面板（fail-fast：无可用审判官 → 503，争议保持 open 可重试），
-                            //   再 open→voting + 写面板 + 发事件；避免「先翻 voting 再抽签失败」的半提交。
-                            // 已审判（voting/decided/appealed）：幂等——补齐缺失面板（自愈）后返回当前态。
-                            // 而后启动 DisputeAdjudicationWorkflow（24h Timer→tally→重开/上诉/终审 lifecycle）。
-                            boolean fresh = "open".equals(d.status());
-                            String workflowId = "adjudicate-" + d.id();
-                            Mono<DisputeCase> outcome = fresh
-                                    ? startFreshAdjudication(d)
-                                    : ensurePanelAndEvent(d, d.round()).thenReturn(d);
-                            return outcome
-                                    .flatMap(voting -> workflowStarter.start(voting.id()).thenReturn(voting))
-                                    .flatMap(this::snapshot)
-                                    .map(snap -> ResponseEntity.status(fresh ? HttpStatus.ACCEPTED : HttpStatus.OK)
-                                            .body(adjudicateBody(snap, workflowId)));
-                        }));
-    }
+	@PostMapping("/api/trust/disputes/{id}/adjudicate")
+	public Mono<ResponseEntity<Map<String, Object>>> adjudicate(@PathVariable String id, ServerHttpRequest request) {
+		return callers.requireMerchantOrRecommender(request).filter(caller -> caller.organizationId() != null)
+				.switchIfEmpty(fail(403, "无组织归属，无法启动审判"))
+				.flatMap(caller -> disputes.findById(id).switchIfEmpty(fail(404, "争议不存在")).flatMap(d -> {
+					if (!d.organizationId().equals(caller.organizationId())) {
+						return fail(403, "无权操作该争议");
+					}
+					if ("final".equals(d.status())) {
+						return fail(409, "争议已终局");
+					}
+					if ("merchant_rejection".equals(d.kind())) {
+						return fail(409, "商家履约异议直送客服终审，不进入审判面板");
+					}
+					// GL-P2-TRUST-001：争议开启后需等待 48h（可配）才可启动审判
+					if (props.adjudicationWindowEnabled() != 0 && d.createdAt() != null
+							&& !isAdjudicationWindowElapsed(d)) {
+						long remainingSeconds = props.adjudicationWindowSecondsEffective()
+								- Duration.between(d.createdAt(), Instant.now()).toSeconds();
+						return fail(409, String.format("争议开启后需等待 %d 小时才可启动审判，还剩约 %d 小时",
+								props.adjudicationWindowSecondsEffective() / 3600, remainingSeconds / 3600 + 1));
+					}
+					// 新启争议：先抽面板（fail-fast：无可用审判官 → 503，争议保持 open 可重试），
+					// 再 open→voting + 写面板 + 发事件；避免「先翻 voting 再抽签失败」的半提交。
+					// 已审判（voting/decided/appealed）：幂等——补齐缺失面板（自愈）后返回当前态。
+					// 而后启动 DisputeAdjudicationWorkflow（24h Timer→tally→重开/上诉/终审 lifecycle）。
+					boolean fresh = "open".equals(d.status());
+					String workflowId = "adjudicate-" + d.id();
+					Mono<DisputeCase> outcome = fresh
+							? startFreshAdjudication(d)
+							: ensurePanelAndEvent(d, d.round()).thenReturn(d);
+					return outcome.flatMap(voting -> workflowStarter.start(voting.id()).thenReturn(voting))
+							.flatMap(this::snapshot)
+							.map(snap -> ResponseEntity.status(fresh ? HttpStatus.ACCEPTED : HttpStatus.OK)
+									.body(adjudicateBody(snap, workflowId)));
+				}));
+	}
 
-    private Map<String, Object> adjudicateBody(Map<String, Object> snap, String workflowId) {
-        Map<String, Object> data = new LinkedHashMap<>(snap);
-        data.put("workflowId", workflowId);
-        return Map.of("success", true, "data", data);
-    }
+	private Map<String, Object> adjudicateBody(Map<String, Object> snap, String workflowId) {
+		Map<String, Object> data = new LinkedHashMap<>(snap);
+		data.put("workflowId", workflowId);
+		return Map.of("success", true, "data", data);
+	}
 
-    /** 新启：抽面板 → open→voting → 写面板 + 发 DisputeAssigned。抽签失败先于状态翻转 → 争议保持 open。 */
-    private Mono<DisputeCase> startFreshAdjudication(DisputeCase d) {
-        return drawPanelAccounts(d.organizationId(), props.panelSize())
-                .flatMap(accountIds -> transactions.transactional(
-                        judges.lockPanel(d.id(), 1)
-                                .then(judges.countPanel(d.id(), 1))
-                                .flatMap(existing -> existing == 0
-                                        ? disputes.startAdjudication(d.id(), 1)
-                                        : fail(503, "审判面板状态已变化，请重试"))
-                                .flatMap(voting -> judges.assignPanel(d.id(), 1, accountIds)
-                                        .flatMap(inserted -> requireCompletePanel(inserted, accountIds.size()))
-                                        .then(judges.countPanel(d.id(), 1))
-                                        .flatMap(count -> requireCompletePanel(count, props.panelSize()))
-                                        .then(Mono.defer(() -> outbox.append(
-                                                assignedEnvelope(voting, 1, accountIds.size()))))
-                                        .thenReturn(voting))));
-    }
+	/** 新启：抽面板 → open→voting → 写面板 + 发 DisputeAssigned。抽签失败先于状态翻转 → 争议保持 open。 */
+	private Mono<DisputeCase> startFreshAdjudication(DisputeCase d) {
+		return drawPanelAccounts(d.organizationId(), props.panelSize()).flatMap(accountIds -> transactions
+				.transactional(judges.lockPanel(d.id(), 1).then(judges.countPanel(d.id(), 1)).flatMap(
+						existing -> existing == 0 ? disputes.startAdjudication(d.id(), 1) : fail(503, "审判面板状态已变化，请重试"))
+						.flatMap(voting -> judges.assignPanel(d.id(), 1, accountIds)
+								.flatMap(inserted -> requireCompletePanel(inserted, accountIds.size()))
+								.then(judges.countPanel(d.id(), 1))
+								.flatMap(count -> requireCompletePanel(count, props.panelSize()))
+								.then(Mono.defer(() -> outbox.append(assignedEnvelope(voting, 1, accountIds.size()))))
+								.thenReturn(voting))));
+	}
 
-    /** 抽完整 panel，并向 marketplace 实时复验每个候选的有效 Lv5 资格。 */
-    private Mono<List<String>> drawPanelAccounts(String orgId, int size) {
-        return drawPanelAccounts(orgId, size, Set.of());
-    }
+	/** 抽完整 panel，并向 marketplace 实时复验每个候选的有效 Lv5 资格。 */
+	private Mono<List<String>> drawPanelAccounts(String orgId, int size) {
+		return drawPanelAccounts(orgId, size, Set.of());
+	}
 
-    private Mono<List<String>> drawPanelAccounts(String orgId, int size, Set<String> excludedAccountIds) {
-        return judgeEligibility.drawVerifiedPool(
-                        props.judgeEligibilityTier(), orgId, size, excludedAccountIds)
-                .map(pool -> pool.stream().map(Judge::accountId).toList());
-    }
+	private Mono<List<String>> drawPanelAccounts(String orgId, int size, Set<String> excludedAccountIds) {
+		return judgeEligibility.drawVerifiedPool(props.judgeEligibilityTier(), orgId, size, excludedAccountIds)
+				.map(pool -> pool.stream().map(Judge::accountId).toList());
+	}
 
-    /** 幂等保证该轮面板严格达到 panel-size；残缺面板补位，并发请求由事务级 advisory lock 串行化。 */
-    private Mono<Void> ensurePanelAndEvent(DisputeCase d, int round) {
-        int panelSize = props.panelSize();
-        return judges.findPanelAccountIds(d.id(), round).collectList()
-                .flatMap(existing -> {
-                    if (existing.size() == panelSize) {
-                        return Mono.empty();
-                    }
-                    if (existing.size() > panelSize) {
-                        return fail(503, "审判面板人数异常，请联系平台处理");
-                    }
-                    int missing = panelSize - existing.size();
-                    return drawPanelAccounts(d.organizationId(), missing, Set.copyOf(existing))
-                            .flatMap(newAccounts -> transactions.transactional(
-                                    judges.lockPanel(d.id(), round)
-                                            .then(judges.findPanelAccountIds(d.id(), round).collectList())
-                                            .flatMap(current -> completePanelUnderLock(
-                                                    d, round, existing, current, newAccounts, panelSize))));
-                });
-    }
+	/** 幂等保证该轮面板严格达到 panel-size；残缺面板补位，并发请求由事务级 advisory lock 串行化。 */
+	private Mono<Void> ensurePanelAndEvent(DisputeCase d, int round) {
+		int panelSize = props.panelSize();
+		return judges.findPanelAccountIds(d.id(), round).collectList().flatMap(existing -> {
+			if (existing.size() == panelSize) {
+				return Mono.empty();
+			}
+			if (existing.size() > panelSize) {
+				return fail(503, "审判面板人数异常，请联系平台处理");
+			}
+			int missing = panelSize - existing.size();
+			return drawPanelAccounts(d.organizationId(), missing, Set.copyOf(existing))
+					.flatMap(newAccounts -> transactions.transactional(judges.lockPanel(d.id(), round)
+							.then(judges.findPanelAccountIds(d.id(), round).collectList())
+							.flatMap(current -> completePanelUnderLock(d, round, existing, current, newAccounts,
+									panelSize))));
+		});
+	}
 
-    private Mono<Void> completePanelUnderLock(DisputeCase dispute, int round,
-                                              List<String> observedAccounts, List<String> currentAccounts,
-                                              List<String> newAccounts, int panelSize) {
-        if (currentAccounts.size() == panelSize) {
-            return Mono.empty();
-        }
-        if (currentAccounts.size() > panelSize || !sameAccounts(observedAccounts, currentAccounts)) {
-            return fail(503, "审判面板状态已变化，请重试");
-        }
-        return judges.assignPanel(dispute.id(), round, newAccounts)
-                .flatMap(inserted -> requireCompletePanel(inserted, newAccounts.size()))
-                .then(judges.countPanel(dispute.id(), round))
-                .flatMap(count -> requireCompletePanel(count, panelSize))
-                .then(Mono.defer(() -> outbox.append(
-                        assignedEnvelope(dispute, round, panelSize))));
-    }
+	private Mono<Void> completePanelUnderLock(DisputeCase dispute, int round, List<String> observedAccounts,
+			List<String> currentAccounts, List<String> newAccounts, int panelSize) {
+		if (currentAccounts.size() == panelSize) {
+			return Mono.empty();
+		}
+		if (currentAccounts.size() > panelSize || !sameAccounts(observedAccounts, currentAccounts)) {
+			return fail(503, "审判面板状态已变化，请重试");
+		}
+		return judges.assignPanel(dispute.id(), round, newAccounts)
+				.flatMap(inserted -> requireCompletePanel(inserted, newAccounts.size()))
+				.then(judges.countPanel(dispute.id(), round)).flatMap(count -> requireCompletePanel(count, panelSize))
+				.then(Mono.defer(() -> outbox.append(assignedEnvelope(dispute, round, panelSize))));
+	}
 
-    private static boolean sameAccounts(List<String> left, List<String> right) {
-        return left.size() == right.size() && Set.copyOf(left).equals(Set.copyOf(right));
-    }
+	private static boolean sameAccounts(List<String> left, List<String> right) {
+		return left.size() == right.size() && Set.copyOf(left).equals(Set.copyOf(right));
+	}
 
-    private Mono<Void> requireCompletePanel(int inserted, int expected) {
-        return inserted == expected
-                ? Mono.empty()
-                : fail(503, "审判官资格已变化，请重试抽签");
-    }
+	private Mono<Void> requireCompletePanel(int inserted, int expected) {
+		return inserted == expected ? Mono.empty() : fail(503, "审判官资格已变化，请重试抽签");
+	}
 
-    @PostMapping("/api/trust/disputes/{id}/votes")
-    public Mono<ResponseEntity<Map<String, Object>>> castVote(@PathVariable String id,
-                                                              @RequestBody CastVoteRequest body, ServerHttpRequest request) {
-        VoteChoice choice = VoteChoice.fromDb(body.vote());  // 非法 → IllegalArgumentException → 400
-        return callers.requireJudge(request)
-                // 分配时已固化 marketplace 资格快照；投票只复查本地可撤销门禁，避免上游波动阻断在途案件。
-                .filterWhen(caller -> judges.findByAccountId(caller.accountId())
-                        .map(judge -> judge.active() && judge.opsAdmitted())
-                        .defaultIfEmpty(false))
-                .switchIfEmpty(fail(403, "当前无有效审判官资格"))
-                .flatMap(judge -> transactions.transactional(disputes.findByIdForUpdate(id)
-                        .switchIfEmpty(fail(404, "争议不存在"))
-                        .flatMap(d -> {
-                            if (!"voting".equals(d.status()) || "escalated".equals(d.appealState())) {
-                                return fail(409, "该争议当前不在投票阶段");
-                            }
-                            int round = d.round();
-                            return judges.isPanelMember(id, round, judge.accountId())
-                                    .filter(Boolean::booleanValue)
-                                    .switchIfEmpty(fail(403, "不在本轮审判面板"))
-                                    .then(judges.recordVote(id, round, judge.accountId(), choice.dbValue(), body.rationale())
-                                            .<VoteResult>map(v -> new VoteResult(v, true))
-                                            .switchIfEmpty(judges.findVote(id, round, judge.accountId())
-                                                    .<VoteResult>map(v -> new VoteResult(v, false))
-                                                    .switchIfEmpty(fail(403, "当前无有效审判官资格"))))
-                                    .flatMap(result -> judges.tallyVotes(id, round)
-                                            .map(tally -> ResponseEntity.status(result.inserted() ? HttpStatus.CREATED : HttpStatus.OK)
-                                                    .body(Map.of("success", true, "data", voteBody(result.vote(), round, tally)))));
-                        })));
-    }
+	@PostMapping("/api/trust/disputes/{id}/votes")
+	public Mono<ResponseEntity<Map<String, Object>>> castVote(@PathVariable String id,
+			@RequestBody CastVoteRequest body, ServerHttpRequest request) {
+		VoteChoice choice = VoteChoice.fromDb(body.vote()); // 非法 → IllegalArgumentException → 400
+		return callers.requireJudge(request)
+				// 分配时已固化 marketplace 资格快照；投票只复查本地可撤销门禁，避免上游波动阻断在途案件。
+				.filterWhen(caller -> judges.findByAccountId(caller.accountId())
+						.map(judge -> judge.active() && judge.opsAdmitted()).defaultIfEmpty(false))
+				.switchIfEmpty(fail(403, "当前无有效审判官资格")).flatMap(judge -> transactions
+						.transactional(disputes.findByIdForUpdate(id).switchIfEmpty(fail(404, "争议不存在")).flatMap(d -> {
+							if (!"voting".equals(d.status()) || "escalated".equals(d.appealState())) {
+								return fail(409, "该争议当前不在投票阶段");
+							}
+							int round = d.round();
+							return judges.isPanelMember(id, round, judge.accountId()).filter(Boolean::booleanValue)
+									.switchIfEmpty(fail(403, "不在本轮审判面板"))
+									.then(judges
+											.recordVote(
+													id, round, judge.accountId(), choice.dbValue(), body.rationale())
+											.<VoteResult>map(v -> new VoteResult(v, true))
+											.switchIfEmpty(judges.findVote(id, round, judge.accountId())
+													.<VoteResult>map(v -> new VoteResult(v, false))
+													.switchIfEmpty(fail(403, "当前无有效审判官资格"))))
+									.flatMap(result -> judges.tallyVotes(id, round)
+											.map(tally -> ResponseEntity
+													.status(result.inserted() ? HttpStatus.CREATED : HttpStatus.OK)
+													.body(Map.of("success", true, "data",
+															voteBody(result.vote(), round, tally)))));
+						})));
+	}
 
-    @GetMapping("/api/trust/disputes/{id}/adjudication")
-    public Mono<ResponseEntity<Map<String, Object>>> getAdjudication(@PathVariable String id, ServerHttpRequest request) {
-        return callers.resolvePartyOrService(request, TrustCallerResolver.MARKETPLACE_SERVICE)
-                .flatMap(caller -> disputes.findById(id)
-                        .switchIfEmpty(fail(404, "争议不存在"))
-                        // 受众口径统一在 DisputeAudience（当事方 / marketplace 服务 / 本轮面板审判官 / 客服）。
-                        // 不要在此就地展开——「读争议是谁的权限」只应有一个答案，见该类 javadoc 记的四次同类缺陷。
-                        .filterWhen(d -> audience.canRead(caller, d))
-                        .switchIfEmpty(fail(403, "无权查询该争议"))
-                        // GL-P2-TRUST-001 T2：快照附加<b>脱敏</b>证据（审判官/客服只看 redactedRef + caption，
-                        // 不见 raw/uploader），并在<b>受限访问者（面板审判官/客服）</b>查看时写证据访问审计（D-10）。
-                        .flatMap(d -> snapshot(d).flatMap(snap -> attachEvidence(snap, d, caller)))
-                        .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
-    }
+	@GetMapping("/api/trust/disputes/{id}/adjudication")
+	public Mono<ResponseEntity<Map<String, Object>>> getAdjudication(@PathVariable String id,
+			ServerHttpRequest request) {
+		return callers.resolvePartyOrService(request, TrustCallerResolver.MARKETPLACE_SERVICE)
+				.flatMap(caller -> disputes.findById(id).switchIfEmpty(fail(404, "争议不存在"))
+						// 受众口径统一在 DisputeAudience（当事方 / marketplace 服务 / 本轮面板审判官 / 客服）。
+						// 不要在此就地展开——「读争议是谁的权限」只应有一个答案，见该类 javadoc 记的四次同类缺陷。
+						.filterWhen(d -> audience.canRead(caller, d)).switchIfEmpty(fail(403, "无权查询该争议"))
+						// GL-P2-TRUST-001 T2：快照附加<b>脱敏</b>证据（审判官/客服只看 redactedRef + caption，
+						// 不见 raw/uploader），并在<b>受限访问者（面板审判官/客服）</b>查看时写证据访问审计（D-10）。
+						.flatMap(d -> snapshot(d).flatMap(snap -> attachEvidence(snap, d, caller)))
+						.map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
+	}
 
-    @PostMapping("/api/trust/disputes/{id}/appeal")
-    public Mono<ResponseEntity<Map<String, Object>>> appeal(@PathVariable String id,
-                                                            @RequestBody(required = false) AppealRequest body,
-                                                            ServerHttpRequest request) {
-        return callers.requireMerchantOrRecommender(request)
-                .flatMap(caller -> disputes.findById(id)
-                        .switchIfEmpty(fail(404, "争议不存在"))
-                        .flatMap(d -> {
-                            if (!d.organizationId().equals(caller.organizationId())) {
-                                return fail(403, "无权操作该争议");
-                            }
-                            // 仅 decided 态可上诉（= 在上诉窗口内；workflow Timer 控制 decided→final，过期则不可上诉）。
-                            if (!"decided".equals(d.status())) {
-                                return fail(409, "该争议当前不可上诉");
-                            }
-                            return transactions.transactional(
-                                    disputes.fileAppeal(id, caller.accountId())  // 幂等：dispute_id PK
-                                            .filter(Boolean::booleanValue)
-                                            .switchIfEmpty(fail(409, "该争议已上诉"))
-                                            .then(disputes.markAppealed(id))             // decided→appealed
-                                            .switchIfEmpty(fail(409, "上诉失败：状态已变"))
-                                            .flatMap(appealed -> outbox.append(disputeEnvelope("DisputeAppealed", appealed))
-                                                    .thenReturn(appealed)))
-                                    .flatMap(this::snapshot)
-                                    .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)));
-                        }));
-    }
+	@PostMapping("/api/trust/disputes/{id}/appeal")
+	public Mono<ResponseEntity<Map<String, Object>>> appeal(@PathVariable String id,
+			@RequestBody(required = false) AppealRequest body, ServerHttpRequest request) {
+		return callers.requireMerchantOrRecommender(request)
+				.flatMap(caller -> disputes.findById(id).switchIfEmpty(fail(404, "争议不存在")).flatMap(d -> {
+					if (!d.organizationId().equals(caller.organizationId())) {
+						return fail(403, "无权操作该争议");
+					}
+					// 仅 decided 态可上诉（= 在上诉窗口内；workflow Timer 控制 decided→final，过期则不可上诉）。
+					if (!"decided".equals(d.status())) {
+						return fail(409, "该争议当前不可上诉");
+					}
+					return transactions.transactional(disputes.fileAppeal(id, caller.accountId()) // 幂等：dispute_id PK
+							.filter(Boolean::booleanValue).switchIfEmpty(fail(409, "该争议已上诉"))
+							.then(disputes.markAppealed(id)) // decided→appealed
+							.switchIfEmpty(fail(409, "上诉失败：状态已变"))
+							.flatMap(appealed -> outbox.append(disputeEnvelope("DisputeAppealed", appealed))
+									.thenReturn(appealed)))
+							.flatMap(this::snapshot)
+							.map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap)));
+				}));
+	}
 
-    @PostMapping("/api/trust/disputes/{id}/final-decision")
-    public Mono<ResponseEntity<Map<String, Object>>> finalDecision(@PathVariable String id,
-                                                                   @RequestBody FinalDecisionRequest body,
-                                                                   ServerHttpRequest request) {
-        return callers.requireCustomerService(request)
-                // MFA 近期性：断言 reauthenticatedAt 须在窗口内（HLD §11.2 客服覆盖判决须重新认证）。
-                .filter(cs -> cs.reauthenticatedAt() != null
-                        && Duration.between(cs.reauthenticatedAt(), Instant.now()).toMinutes() <= CS_MFA_WINDOW_MINUTES)
-                .switchIfEmpty(fail(403, "需要客服近期重新认证（MFA）"))
-                .flatMap(cs -> disputes.findById(id)
-                        .switchIfEmpty(fail(404, "争议不存在"))
-                        // 客服终审范围：已上诉（panel 判决+上诉）或升级（超轮无判决，appeal_state=escalated）；
-                        // 或 merchant_rejection（D-03 §2 商家拒绝核实通过履约，open 态直送客服，不走面板）。
-                        .filter(d -> "appealed".equals(d.status())
-                                || ("voting".equals(d.status()) && "escalated".equals(d.appealState()))
-                                || ("open".equals(d.status()) && "merchant_rejection".equals(d.kind())))
-                        .switchIfEmpty(fail(409, "该争议不在客服终审范围"))
-                        .flatMap(d -> "merchant_rejection".equals(d.kind())
-                                ? merchantRejectionFinalizer.finalizeCase(d, body.decision(), cs.accountId())
-                                        .map(MerchantRejectionFinalizer.Finalization::finalized)
-                                : transactions.transactional(
-                                        disputes.forceFinalize(id, body.decision(), cs.accountId())
-                                                .switchIfEmpty(fail(409, "争议已终局"))
-                                                .flatMap(fin -> outbox.append(
-                                                        disputeEnvelope("DisputeFinalized", fin)).thenReturn(fin))))
-                        .flatMap(this::snapshot)
-                        .map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
-    }
+	@PostMapping("/api/trust/disputes/{id}/final-decision")
+	public Mono<ResponseEntity<Map<String, Object>>> finalDecision(@PathVariable String id,
+			@RequestBody FinalDecisionRequest body, ServerHttpRequest request) {
+		return callers.requireCustomerService(request)
+				// MFA 近期性：断言 reauthenticatedAt 须在窗口内（HLD §11.2 客服覆盖判决须重新认证）。
+				.filter(cs -> cs.reauthenticatedAt() != null
+						&& Duration.between(cs.reauthenticatedAt(), Instant.now()).toMinutes() <= CS_MFA_WINDOW_MINUTES)
+				.switchIfEmpty(fail(403, "需要客服近期重新认证（MFA）"))
+				.flatMap(cs -> disputes.findById(id).switchIfEmpty(fail(404, "争议不存在"))
+						// 客服终审范围：已上诉（panel 判决+上诉）或升级（超轮无判决，appeal_state=escalated）；
+						// 或 merchant_rejection（D-03 §2 商家拒绝核实通过履约，open 态直送客服，不走面板）。
+						.filter(d -> "appealed".equals(d.status())
+								|| ("voting".equals(d.status()) && "escalated".equals(d.appealState()))
+								|| ("open".equals(d.status()) && "merchant_rejection".equals(d.kind())))
+						.switchIfEmpty(fail(409, "该争议不在客服终审范围"))
+						.flatMap(d -> "merchant_rejection".equals(d.kind())
+								? merchantRejectionFinalizer.finalizeCase(d, body.decision(), cs.accountId())
+										.map(MerchantRejectionFinalizer.Finalization::finalized)
+								: transactions.transactional(disputes.forceFinalize(id, body.decision(), cs.accountId())
+										.switchIfEmpty(fail(409, "争议已终局"))
+										.flatMap(fin -> outbox.append(disputeEnvelope("DisputeFinalized", fin))
+												.thenReturn(fin))))
+						.flatMap(this::snapshot).map(snap -> ResponseEntity.ok(Map.of("success", true, "data", snap))));
+	}
 
-    /** 通用争议事件信封（确定性 type-3 eventId：eventType:disputeId:round）。
-     *  {@code openedByAccountId}/{@code openedByRole} 供 identity 通知中心解析收件人（Slice 12 Stage 3）；
-     *  争议对方账号不在 DisputeCase 内（仅 engagementRef 引用），故本期只携带开启人 + 组织。 */
-    private EventEnvelope disputeEnvelope(String eventType, DisputeCase d) {
-        String eventId = UUID.nameUUIDFromBytes(
-                (eventType + ":" + d.id() + ":" + d.round()).getBytes(StandardCharsets.UTF_8)).toString();
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("disputeId", d.id());
-        payload.put("engagementRef", d.engagementRef());
-        payload.put("organizationId", d.organizationId());
-        payload.put("openedByAccountId", d.openedByAccountId());
-        payload.put("openedByRole", d.openedByRole());
-        payload.put("round", d.round());
-        payload.put("status", d.status());
-        if (d.finalDecision() != null) {
-            payload.put("finalDecision", d.finalDecision());
-        }
-        return new EventEnvelope(eventId, eventType, "DisputeCase",
-                d.id(), d.version(), Instant.now(), null, payload);
-    }
+	/**
+	 * 通用争议事件信封（确定性 type-3 eventId：eventType:disputeId:round）。
+	 * {@code openedByAccountId}/{@code openedByRole} 供 identity 通知中心解析收件人（Slice 12
+	 * Stage 3）； 争议对方账号不在 DisputeCase 内（仅 engagementRef 引用），故本期只携带开启人 + 组织。
+	 */
+	private EventEnvelope disputeEnvelope(String eventType, DisputeCase d) {
+		String eventId = UUID
+				.nameUUIDFromBytes((eventType + ":" + d.id() + ":" + d.round()).getBytes(StandardCharsets.UTF_8))
+				.toString();
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("disputeId", d.id());
+		payload.put("engagementRef", d.engagementRef());
+		payload.put("organizationId", d.organizationId());
+		payload.put("openedByAccountId", d.openedByAccountId());
+		payload.put("openedByRole", d.openedByRole());
+		payload.put("round", d.round());
+		payload.put("status", d.status());
+		if (d.finalDecision() != null) {
+			payload.put("finalDecision", d.finalDecision());
+		}
+		return new EventEnvelope(eventId, eventType, "DisputeCase", d.id(), d.version(), Instant.now(), null, payload);
+	}
 
-    /** GL-P2-TRUST-001：检查争议开启后是否已过审判启动窗口。 */
-    private boolean isAdjudicationWindowElapsed(DisputeCase d) {
-        if (d.createdAt() == null) {
-            return true;  // 防御：无创建时间则跳过校验
-        }
-        Instant deadline = d.createdAt().plusSeconds(props.adjudicationWindowSecondsEffective());
-        return Instant.now().isAfter(deadline) || Instant.now().equals(deadline);
-    }
+	/** GL-P2-TRUST-001：检查争议开启后是否已过审判启动窗口。 */
+	private boolean isAdjudicationWindowElapsed(DisputeCase d) {
+		if (d.createdAt() == null) {
+			return true; // 防御：无创建时间则跳过校验
+		}
+		Instant deadline = d.createdAt().plusSeconds(props.adjudicationWindowSecondsEffective());
+		return Instant.now().isAfter(deadline) || Instant.now().equals(deadline);
+	}
 
-    // ---------- helpers ----------
+	// ---------- helpers ----------
 
-    /** 客服终审 MFA 近期性窗口（HLD §11.2：覆盖判决须近期重新认证）。 */
-    private static final int CS_MFA_WINDOW_MINUTES = 5;
+	/** 客服终审 MFA 近期性窗口（HLD §11.2：覆盖判决须近期重新认证）。 */
+	private static final int CS_MFA_WINDOW_MINUTES = 5;
 
-    private EventEnvelope assignedEnvelope(DisputeCase d, int round, int panelSize) {
-        String eventId = UUID.nameUUIDFromBytes(
-                ("DisputeAssigned:" + d.id() + ":" + round).getBytes(StandardCharsets.UTF_8)).toString();
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("disputeId", d.id());
-        payload.put("engagementRef", d.engagementRef());
-        payload.put("organizationId", d.organizationId());
-        payload.put("openedByAccountId", d.openedByAccountId());
-        payload.put("openedByRole", d.openedByRole());
-        payload.put("round", round);
-        payload.put("panelSize", panelSize);
-        return new EventEnvelope(eventId, "DisputeAssigned", "DisputeCase",
-                d.id(), d.version(), Instant.now(), null, payload);
-    }
+	private EventEnvelope assignedEnvelope(DisputeCase d, int round, int panelSize) {
+		String eventId = UUID
+				.nameUUIDFromBytes(("DisputeAssigned:" + d.id() + ":" + round).getBytes(StandardCharsets.UTF_8))
+				.toString();
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("disputeId", d.id());
+		payload.put("engagementRef", d.engagementRef());
+		payload.put("organizationId", d.organizationId());
+		payload.put("openedByAccountId", d.openedByAccountId());
+		payload.put("openedByRole", d.openedByRole());
+		payload.put("round", round);
+		payload.put("panelSize", panelSize);
+		return new EventEnvelope(eventId, "DisputeAssigned", "DisputeCase", d.id(), d.version(), Instant.now(), null,
+				payload);
+	}
 
-    /** 审判状态快照（脱敏：不含审判官 account_id / 个票 rationale）。 */
-    private Mono<Map<String, Object>> snapshot(DisputeCase d) {
-        Map<String, Object> base = new LinkedHashMap<>();
-        base.put("id", d.id());
-        base.put("reason", evidenceRedactor.maskText(d.reason()));
-        base.put("openedByAlias", evidenceRedactor.pseudonym(d.id(), d.openedByAccountId()));
-        base.put("status", d.status());
-        base.put("round", d.round());
-        base.put("decision", d.decision());
-        base.put("appealState", d.appealState());
-        base.put("finalDecision", d.finalDecision());
-        base.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());
-        base.put("window", windowInfo(d));
-        if (d.round() <= 0) {
-            base.put("panel", Map.of("size", 0, "voted", 0));
-            base.put("tallies", emptyTally());
-            return Mono.just(base);
-        }
-        return judges.tallyVotes(d.id(), d.round()).map(tally -> {
-            base.put("panel", Map.of("size", tally.panelSize(), "voted", tally.cast()));
-            base.put("tallies", tallyMap(tally));
-            return base;
-        });
-    }
+	/** 审判状态快照（脱敏：不含审判官 account_id / 个票 rationale）。 */
+	private Mono<Map<String, Object>> snapshot(DisputeCase d) {
+		Map<String, Object> base = new LinkedHashMap<>();
+		base.put("id", d.id());
+		base.put("reason", evidenceRedactor.maskText(d.reason()));
+		base.put("openedByAlias", evidenceRedactor.pseudonym(d.id(), d.openedByAccountId()));
+		base.put("status", d.status());
+		base.put("round", d.round());
+		base.put("decision", d.decision());
+		base.put("appealState", d.appealState());
+		base.put("finalDecision", d.finalDecision());
+		base.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());
+		base.put("window", windowInfo(d));
+		if (d.round() <= 0) {
+			base.put("panel", Map.of("size", 0, "voted", 0));
+			base.put("tallies", emptyTally());
+			return Mono.just(base);
+		}
+		return judges.tallyVotes(d.id(), d.round()).map(tally -> {
+			base.put("panel", Map.of("size", tally.panelSize(), "voted", tally.cast()));
+			base.put("tallies", tallyMap(tally));
+			return base;
+		});
+	}
 
-    /**
-     * GL-P2-TRUST-001 T2：快照附加脱敏证据 + 受限访问审计。
-     *
-     * <p>证据经 {@link CaseEvidenceRedactor} 脱敏后放入 {@code snap.evidence}（审判官/客服安全视图）。
-     * 当查看者是<b>受限访问者</b>（本轮面板审判官 / 客服）时，为每条被查看的证据 append 一条
-     * {@code dispute_evidence_access_audit}（D-10：证据是受限展示对象，须留访问痕迹）。当事方查看自身争议
-     * 证据不记（是自己的数据）。
-     */
-    private Mono<Map<String, Object>> attachEvidence(Map<String, Object> snap, DisputeCase d,
-                                                     TrustCallerResolver.Caller caller) {
-        return evidenceRepo.listByDispute(d.id()).collectList().flatMap(evidence -> {
-            snap.put("evidence", evidenceRedactor.redact(evidence));
-            snap.put("evidenceSummary", evidenceRedactor.summary(evidence));
-            if (evidence.isEmpty()) {
-                return Mono.just(snap);
-            }
-            boolean cs = caller.isCustomerService();
-            Mono<Boolean> shouldAudit = cs ? Mono.just(true) : isJudgeViewer(caller, d);
-            return shouldAudit.flatMap(audit -> audit
-                    ? Flux.fromIterable(evidence).concatMap(e -> evidenceAccessAudit.append(
-                            e.id(), d.id(), caller.accountId(), cs ? "customer_service" : "judge", "adjudication"))
-                            .then(Mono.just(snap))
-                    : Mono.just(snap));
-        });
-    }
+	/**
+	 * GL-P2-TRUST-001 T2：快照附加脱敏证据 + 受限访问审计。
+	 *
+	 * <p>
+	 * 证据经 {@link CaseEvidenceRedactor} 脱敏后放入 {@code snap.evidence}（审判官/客服安全视图）。
+	 * 当查看者是<b>受限访问者</b>（本轮面板审判官 / 客服）时，为每条被查看的证据 append 一条
+	 * {@code dispute_evidence_access_audit}（D-10：证据是受限展示对象，须留访问痕迹）。当事方查看自身争议
+	 * 证据不记（是自己的数据）。
+	 */
+	private Mono<Map<String, Object>> attachEvidence(Map<String, Object> snap, DisputeCase d,
+			TrustCallerResolver.Caller caller) {
+		return evidenceRepo.listByDispute(d.id()).collectList().flatMap(evidence -> {
+			snap.put("evidence", evidenceRedactor.redact(evidence));
+			snap.put("evidenceSummary", evidenceRedactor.summary(evidence));
+			if (evidence.isEmpty()) {
+				return Mono.just(snap);
+			}
+			boolean cs = caller.isCustomerService();
+			Mono<Boolean> shouldAudit = cs ? Mono.just(true) : isJudgeViewer(caller, d);
+			return shouldAudit.flatMap(audit -> audit
+					? Flux.fromIterable(evidence)
+							.concatMap(e -> evidenceAccessAudit.append(e.id(), d.id(), caller.accountId(),
+									cs ? "customer_service" : "judge", "adjudication"))
+							.then(Mono.just(snap))
+					: Mono.just(snap));
+		});
+	}
 
-    /** 查看者是否为本轮面板审判官（推荐官 + 在 panel 上 + 已开审 round>0）。 */
-    private Mono<Boolean> isJudgeViewer(TrustCallerResolver.Caller caller, DisputeCase d) {
-        if (!caller.isRecommender() || d.round() <= 0) {
-            return Mono.just(false);
-        }
-        return judges.isPanelMember(d.id(), d.round(), caller.accountId());
-    }
+	/** 查看者是否为本轮面板审判官（推荐官 + 在 panel 上 + 已开审 round>0）。 */
+	private Mono<Boolean> isJudgeViewer(TrustCallerResolver.Caller caller, DisputeCase d) {
+		if (!caller.isRecommender() || d.round() <= 0) {
+			return Mono.just(false);
+		}
+		return judges.isPanelMember(d.id(), d.round(), caller.accountId());
+	}
 
-    /**
-     * 当前阶段的时间窗信息（可观测性）——UI 据此显示「还剩多久」，
-     * 否则用户看到 {@code voting} 不知要等 1 分钟还是 24 小时。
-     *
-     * <p>窗口起点用 {@code updatedAt}（每次状态迁移刷新，即当前阶段的进入时刻）。
-     * {@code remainingSeconds} 为估算值：真正的到期由 Temporal Timer 驱动，
-     * 二者可能有秒级偏差（workflow 重放/重试），故仅作展示不作判定依据。
-     */
-    private Map<String, Object> windowInfo(DisputeCase d) {
-        Map<String, Object> w = new LinkedHashMap<>();
-        String phase;
-        long durationSeconds;
-        switch (d.status() == null ? "" : d.status()) {
-            case "voting" -> {
-                phase = "vote";
-                durationSeconds = props.voteWindowSecondsEffective();
-            }
-            case "decided" -> {
-                phase = "appeal";
-                durationSeconds = props.appealWindowSecondsEffective();
-            }
-            default -> {
-                // open（未开庭）/ appealed（等客服，无固定窗口）/ final（已结束）
-                phase = "none";
-                durationSeconds = 0;
-            }
-        }
-        w.put("phase", phase);
-        w.put("durationSeconds", durationSeconds);
-        if (durationSeconds > 0 && d.updatedAt() != null) {
-            Instant deadline = d.updatedAt().plusSeconds(durationSeconds);
-            w.put("startedAt", d.updatedAt().toString());
-            w.put("deadline", deadline.toString());
-            w.put("remainingSeconds", Math.max(0, Duration.between(Instant.now(), deadline).toSeconds()));
-        } else {
-            w.put("startedAt", null);
-            w.put("deadline", null);
-            w.put("remainingSeconds", null);
-        }
-        return w;
-    }
+	/**
+	 * 当前阶段的时间窗信息（可观测性）——UI 据此显示「还剩多久」， 否则用户看到 {@code voting} 不知要等 1 分钟还是 24 小时。
+	 *
+	 * <p>
+	 * 窗口起点用 {@code updatedAt}（每次状态迁移刷新，即当前阶段的进入时刻）。 {@code remainingSeconds}
+	 * 为估算值：真正的到期由 Temporal Timer 驱动， 二者可能有秒级偏差（workflow 重放/重试），故仅作展示不作判定依据。
+	 */
+	private Map<String, Object> windowInfo(DisputeCase d) {
+		Map<String, Object> w = new LinkedHashMap<>();
+		String phase;
+		long durationSeconds;
+		switch (d.status() == null ? "" : d.status()) {
+			case "voting" -> {
+				phase = "vote";
+				durationSeconds = props.voteWindowSecondsEffective();
+			}
+			case "decided" -> {
+				phase = "appeal";
+				durationSeconds = props.appealWindowSecondsEffective();
+			}
+			default -> {
+				// open（未开庭）/ appealed（等客服，无固定窗口）/ final（已结束）
+				phase = "none";
+				durationSeconds = 0;
+			}
+		}
+		w.put("phase", phase);
+		w.put("durationSeconds", durationSeconds);
+		if (durationSeconds > 0 && d.updatedAt() != null) {
+			Instant deadline = d.updatedAt().plusSeconds(durationSeconds);
+			w.put("startedAt", d.updatedAt().toString());
+			w.put("deadline", deadline.toString());
+			w.put("remainingSeconds", Math.max(0, Duration.between(Instant.now(), deadline).toSeconds()));
+		} else {
+			w.put("startedAt", null);
+			w.put("deadline", null);
+			w.put("remainingSeconds", null);
+		}
+		return w;
+	}
 
-    private Map<String, Object> voteBody(JudgeVote v, int round, VoteTally tally) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("disputeId", v.disputeId());
-        m.put("round", round);
-        m.put("vote", v.vote());
-        m.put("rationale", v.rationale());
-        m.put("votedAt", v.votedAt() == null ? null : v.votedAt().toString());
-        m.put("tallies", tallyMap(tally));
-        return m;
-    }
+	private Map<String, Object> voteBody(JudgeVote v, int round, VoteTally tally) {
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("disputeId", v.disputeId());
+		m.put("round", round);
+		m.put("vote", v.vote());
+		m.put("rationale", v.rationale());
+		m.put("votedAt", v.votedAt() == null ? null : v.votedAt().toString());
+		m.put("tallies", tallyMap(tally));
+		return m;
+	}
 
-    private Map<String, Object> tallyMap(VoteTally t) {
-        // LinkedHashMap：majority 可空（平票/不足时 null），Map.of 不允许 null 值。
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("forMerchant", t.forMerchant());
-        m.put("forRecommender", t.forRecommender());
-        m.put("abstain", t.abstain());
-        m.put("panelSize", t.panelSize());
-        m.put("majority", t.hasMajorityForMerchant() ? "for_merchant"
-                : t.hasMajorityForRecommender() ? "for_recommender" : null);
-        return m;
-    }
+	private Map<String, Object> tallyMap(VoteTally t) {
+		// LinkedHashMap：majority 可空（平票/不足时 null），Map.of 不允许 null 值。
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("forMerchant", t.forMerchant());
+		m.put("forRecommender", t.forRecommender());
+		m.put("abstain", t.abstain());
+		m.put("panelSize", t.panelSize());
+		m.put("majority",
+				t.hasMajorityForMerchant() ? "for_merchant" : t.hasMajorityForRecommender() ? "for_recommender" : null);
+		return m;
+	}
 
-    private Map<String, Object> emptyTally() {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("forMerchant", 0);
-        m.put("forRecommender", 0);
-        m.put("abstain", 0);
-        m.put("panelSize", 0);
-        m.put("majority", null);
-        return m;
-    }
+	private Map<String, Object> emptyTally() {
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("forMerchant", 0);
+		m.put("forRecommender", 0);
+		m.put("abstain", 0);
+		m.put("panelSize", 0);
+		m.put("majority", null);
+		return m;
+	}
 
-    private record VoteResult(JudgeVote vote, boolean inserted) {}
+	private record VoteResult(JudgeVote vote, boolean inserted) {
+	}
 
-    private static <T> Mono<T> fail(int status, String message) {
-        return Mono.error(new TrustException(status, message));
-    }
+	private static <T> Mono<T> fail(int status, String message) {
+		return Mono.error(new TrustException(status, message));
+	}
 }

@@ -58,6 +58,9 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: gradle
+      - name: Java format gate (ratcheted to origin/main)
+        working-directory: platform-java
+        run: ./gradlew spotlessCheck
       - name: Run all Gradle tests and package every service
         working-directory: platform-java
         run: >-

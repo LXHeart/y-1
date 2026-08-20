@@ -31,4 +31,5 @@ temporal-testing = { module = "io.temporal:temporal-testing", version.ref = "tem
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 
 [plugins]
+spotless = { id = "com.diffplug.spotless", version = "7.2.1" }
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

@@ -12,47 +12,44 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.scheduling.annotation.Scheduled;
 
 /**
- * 事务 outbox 接线：逻辑单源在 platform-messaging，这里只声明本服务的
- * 表名、配置前缀与日志 owner。调度属性名 finance.outbox.poll-interval-ms
- * 是服务私有配置面，@Scheduled 注解必须留在服务侧。
+ * 事务 outbox 接线：逻辑单源在 platform-messaging，这里只声明本服务的 表名、配置前缀与日志 owner。调度属性名
+ * finance.outbox.poll-interval-ms 是服务私有配置面，@Scheduled 注解必须留在服务侧。
  */
 @Configuration
 public class OutboxMessagingConfig {
 
-    @Bean
-    public OutboxRepository outboxRepository(DatabaseClient db) {
-        return new OutboxRepository(db, OutboxSchema.standard("finance_outbox"));
-    }
+	@Bean
+	public OutboxRepository outboxRepository(DatabaseClient db) {
+		return new OutboxRepository(db, OutboxSchema.standard("finance_outbox"));
+	}
 
-    @Bean
-    public OutboxPublisher outboxPublisher(
-            OutboxRepository repository,
-            ObjectProvider<KafkaTemplate<String, String>> kafka,
-            MeterRegistry meterRegistry,
-            OutboxProperties properties) {
-        return new OutboxPublisher(
-                repository, kafka.getIfAvailable(), properties.settings(), "finance", meterRegistry);
-    }
+	@Bean
+	public OutboxPublisher outboxPublisher(OutboxRepository repository,
+			ObjectProvider<KafkaTemplate<String, String>> kafka, MeterRegistry meterRegistry,
+			OutboxProperties properties) {
+		return new OutboxPublisher(repository, kafka.getIfAvailable(), properties.settings(), "finance", meterRegistry);
+	}
 
-    /**
-     * 驱动 {@link OutboxPublisher#publishPending()} 的调度壳（原 @Component publisher 的 @Scheduled）。
-     */
-    static class OutboxPublishScheduler {
+	/**
+	 * 驱动 {@link OutboxPublisher#publishPending()} 的调度壳（原 @Component publisher
+	 * 的 @Scheduled）。
+	 */
+	static class OutboxPublishScheduler {
 
-        private final OutboxPublisher publisher;
+		private final OutboxPublisher publisher;
 
-        OutboxPublishScheduler(OutboxPublisher publisher) {
-            this.publisher = publisher;
-        }
+		OutboxPublishScheduler(OutboxPublisher publisher) {
+			this.publisher = publisher;
+		}
 
-        @Scheduled(fixedDelayString = "${finance.outbox.poll-interval-ms:2000}")
-        void publishPending() {
-            publisher.publishPending();
-        }
-    }
+		@Scheduled(fixedDelayString = "${finance.outbox.poll-interval-ms:2000}")
+		void publishPending() {
+			publisher.publishPending();
+		}
+	}
 
-    @Bean
-    public OutboxPublishScheduler outboxPublishScheduler(OutboxPublisher publisher) {
-        return new OutboxPublishScheduler(publisher);
-    }
+	@Bean
+	public OutboxPublishScheduler outboxPublishScheduler(OutboxPublisher publisher) {
+		return new OutboxPublishScheduler(publisher);
+	}
 }

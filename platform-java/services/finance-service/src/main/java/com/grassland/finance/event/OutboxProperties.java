@@ -4,28 +4,19 @@ import com.grassland.messaging.outbox.OutboxSettings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 薄绑定层：只负责 finance.outbox 前缀与默认 topic；
- * 默认值回退与钳制规则单源在 {@link OutboxSettings}（platform-messaging）。
+ * 薄绑定层：只负责 finance.outbox 前缀与默认 topic； 默认值回退与钳制规则单源在
+ * {@link OutboxSettings}（platform-messaging）。
  */
 @ConfigurationProperties(prefix = "finance.outbox")
-public record OutboxProperties(
-        String topic,
-        boolean enabled,
-        long pollIntervalMs,
-        int batchSize,
-        int maxConcurrency,
-        long ackTimeoutMs,
-        long claimLeaseMs,
-        long initialBackoffMs,
-        long maxBackoffMs) {
+public record OutboxProperties(String topic, boolean enabled, long pollIntervalMs, int batchSize, int maxConcurrency,
+		long ackTimeoutMs, long claimLeaseMs, long initialBackoffMs, long maxBackoffMs) {
 
-    public OutboxProperties {
-        topic = topic == null || topic.isBlank() ? "grassland.finance.events" : topic;
-    }
+	public OutboxProperties {
+		topic = topic == null || topic.isBlank() ? "grassland.finance.events" : topic;
+	}
 
-    public OutboxSettings settings() {
-        return new OutboxSettings(
-                topic, enabled, pollIntervalMs, batchSize, maxConcurrency,
-                ackTimeoutMs, claimLeaseMs, initialBackoffMs, maxBackoffMs);
-    }
+	public OutboxSettings settings() {
+		return new OutboxSettings(topic, enabled, pollIntervalMs, batchSize, maxConcurrency, ackTimeoutMs, claimLeaseMs,
+				initialBackoffMs, maxBackoffMs);
+	}
 }

@@ -6,6 +6,7 @@ import org.gradle.testing.jacoco.tasks.JacocoReport
 plugins {
     base
     alias(libs.plugins.spring.boot) apply false
+    alias(libs.plugins.spotless) apply false
 }
 
 allprojects {
@@ -61,5 +62,18 @@ allprojects {
     }
     tasks.matching { it.name == "test" }.configureEach {
         finalizedBy(tasks.matching { it.name == "jacocoTestReport" })
+    }
+
+    // Java 格式化门禁（2026-08-20）：ratchetFrom 只格式化相对基线变更的文件，
+    // 存量 1400+ 文件零 churn。eclipse JDT 格式器（不依赖 javac 内部 API，
+    // JDK 25 免疫——palantir 格式器在 25 上 NoSuchMethodError 崩溃，等其适配后可换）。
+    apply(plugin = "com.diffplug.spotless")
+    plugins.withId("java") {
+        configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+            ratchetFrom("origin/main")
+            java {
+                eclipse()
+            }
+        }
     }
 }

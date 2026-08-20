@@ -20,76 +20,77 @@ import reactor.core.publisher.Mono;
 
 /** Refreshes permission recommendations after asynchronous KYB OCR finishes. */
 @Component
-@ConditionalOnProperty(prefix = "identity.permission.auto-review", name = "enabled",
-        havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "identity.permission.auto-review", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PermissionAutoReviewReconciler {
 
-    private static final Logger log = LoggerFactory.getLogger(PermissionAutoReviewReconciler.class);
+	private static final Logger log = LoggerFactory.getLogger(PermissionAutoReviewReconciler.class);
 
-    private final MerchantPermissionRequestRepository requests;
-    private final PermissionAutomaticReviewer reviewer;
-    private final PermissionRequestAuditRepository audits;
-    private final OutboxRepository outbox;
-    private final TransactionalOperator transactions;
-    private final ObjectMapper mapper = new ObjectMapper();
-    private final AtomicBoolean polling = new AtomicBoolean();
+	private final MerchantPermissionRequestRepository requests;
+	private final PermissionAutomaticReviewer reviewer;
+	private final PermissionRequestAuditRepository audits;
+	private final OutboxRepository outbox;
+	private final TransactionalOperator transactions;
+	private final ObjectMapper mapper = new ObjectMapper();
+	private final AtomicBoolean polling = new AtomicBoolean();
 
-    public PermissionAutoReviewReconciler(MerchantPermissionRequestRepository requests,
-                                          PermissionAutomaticReviewer reviewer,
-                                          PermissionRequestAuditRepository audits,
-                                          OutboxRepository outbox,
-                                          TransactionalOperator transactions) {
-        this.requests = requests;
-        this.reviewer = reviewer;
-        this.audits = audits;
-        this.outbox = outbox;
-        this.transactions = transactions;
-    }
+	public PermissionAutoReviewReconciler(MerchantPermissionRequestRepository requests,
+			PermissionAutomaticReviewer reviewer, PermissionRequestAuditRepository audits, OutboxRepository outbox,
+			TransactionalOperator transactions) {
+		this.requests = requests;
+		this.reviewer = reviewer;
+		this.audits = audits;
+		this.outbox = outbox;
+		this.transactions = transactions;
+	}
 
-    @Scheduled(fixedDelayString = "${identity.permission.auto-review.poll-interval-ms:5000}")
-    public void poll() {
-        if (!polling.compareAndSet(false, true)) return;
-        processBatch(100).then()
-                .doOnError(error -> log.error("permission auto review reconciliation failed", error))
-                .doFinally(signal -> polling.set(false))
-                .subscribe();
-    }
+	@Scheduled(fixedDelayString = "${identity.permission.auto-review.poll-interval-ms:5000}")
+	public void poll() {
+		if (!polling.compareAndSet(false, true))
+			return;
+		processBatch(100).then().doOnError(error -> log.error("permission auto review reconciliation failed", error))
+				.doFinally(signal -> polling.set(false)).subscribe();
+	}
 
-    reactor.core.publisher.Flux<MerchantPermissionRequest> processBatch(int limit) {
-        return requests.findAwaitingAutomaticReview(limit).concatMap(this::reconcile);
-    }
+	reactor.core.publisher.Flux<MerchantPermissionRequest> processBatch(int limit) {
+		return requests.findAwaitingAutomaticReview(limit).concatMap(this::reconcile);
+	}
 
-    private Mono<MerchantPermissionRequest> reconcile(MerchantPermissionRequest request) {
-        PermissionTier tier = PermissionTier.fromDb(request.requestedTier());
-        Industry industry = Industry.fromDb(request.industry());
-        return reviewer.evaluate(request.organizationId(), tier, industry, parseIds(request.attachmentIds()))
-                .flatMap(auto -> unchanged(request, auto)
-                        ? Mono.empty()
-                        : transactions.transactional(requests.updateAutomaticReview(
-                                        request.id(), request.version(), auto)
-                                .flatMap(updated -> audits.append(updated.id(), updated.organizationId(), null, "system",
-                                                "automatic_review_updated", request.status(), updated.status(), auto.resultJson())
-                                        .then(outbox.append(new EventEnvelope(UUID.randomUUID().toString(),
-                                                "PermissionAutoReviewUpdated", "MerchantPermissionRequest",
-                                                updated.id(), 1, Instant.now(), null,
-                                                Map.of("organizationId", updated.organizationId(),
-                                                        "status", updated.autoReviewStatus()))))
-                                        .thenReturn(updated))));
-    }
+	private Mono<MerchantPermissionRequest> reconcile(MerchantPermissionRequest request) {
+		PermissionTier tier = PermissionTier.fromDb(request.requestedTier());
+		Industry industry = Industry.fromDb(request.industry());
+		return reviewer.evaluate(request.organizationId(), tier, industry, parseIds(request.attachmentIds()))
+				.flatMap(
+						auto -> unchanged(request, auto)
+								? Mono.empty()
+								: transactions.transactional(requests
+										.updateAutomaticReview(request.id(), request.version(), auto)
+										.flatMap(updated -> audits
+												.append(updated.id(), updated.organizationId(), null, "system",
+														"automatic_review_updated", request.status(), updated.status(),
+														auto.resultJson())
+												.then(outbox.append(new EventEnvelope(
+														UUID.randomUUID().toString(), "PermissionAutoReviewUpdated",
+														"MerchantPermissionRequest", updated.id(), 1, Instant.now(),
+														null, Map.of("organizationId", updated.organizationId(),
+																"status", updated.autoReviewStatus()))))
+												.thenReturn(updated))));
+	}
 
-    private static boolean unchanged(MerchantPermissionRequest request, PermissionAutoReview auto) {
-        return java.util.Objects.equals(auto.status(), request.autoReviewStatus())
-                && java.util.Objects.equals(auto.mode(), request.reviewMode())
-                && java.util.Objects.equals(auto.riskLevel(), request.riskLevel())
-                && java.util.Objects.equals(auto.resultJson(), request.autoReviewResult());
-    }
+	private static boolean unchanged(MerchantPermissionRequest request, PermissionAutoReview auto) {
+		return java.util.Objects.equals(auto.status(), request.autoReviewStatus())
+				&& java.util.Objects.equals(auto.mode(), request.reviewMode())
+				&& java.util.Objects.equals(auto.riskLevel(), request.riskLevel())
+				&& java.util.Objects.equals(auto.resultJson(), request.autoReviewResult());
+	}
 
-    private List<String> parseIds(String json) {
-        if (json == null || json.isBlank()) return List.of();
-        try {
-            return mapper.readValue(json, new TypeReference<>() {});
-        } catch (Exception error) {
-            throw new IllegalStateException("permission attachment_ids is invalid", error);
-        }
-    }
+	private List<String> parseIds(String json) {
+		if (json == null || json.isBlank())
+			return List.of();
+		try {
+			return mapper.readValue(json, new TypeReference<>() {
+			});
+		} catch (Exception error) {
+			throw new IllegalStateException("permission attachment_ids is invalid", error);
+		}
+	}
 }
