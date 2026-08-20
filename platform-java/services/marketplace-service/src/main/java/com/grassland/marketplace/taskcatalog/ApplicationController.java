@@ -19,7 +19,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -185,17 +184,17 @@ public class ApplicationController {
                                                                     new MarketplaceException(409, "已报名该任务")))
                                                             .switchIfEmpty(transactions.transactional(
                                                                     apps.create(id, rec.accountId(), note,
-                                                                            bountyOrZero(task), freebieDepositOrZero(task))
+                                                                            TaskFunds.bountyOrZero(task), TaskFunds.freebieDepositOrZero(task))
                                                                             .switchIfEmpty(Mono.error(new MarketplaceException(409, "已报名该任务")))
                                                                             .flatMap(created -> recommenderInvitations
                                                                                     .markApplied(id, rec.accountId())
-                                                                                    .then(outbox.append(envelope(
+                                                                                    .then(outbox.append(ApplicationEvents.envelope(
                                                                                             "ApplicationSubmitted", created,
                                                                                             task.ownerAccountId())))
                                                                                     .thenReturn(created))))));
                         })
                         .map(app -> ResponseEntity.status(HttpStatus.CREATED)
-                                .body(Map.of("success", true, "data", toBody(app)))));
+                                .body(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
     }
 
     @PostMapping("/api/tasks/{id}/applications/{appId}/accept")
@@ -209,26 +208,6 @@ public class ApplicationController {
                                         .map(response -> new AcceptanceOutcome(response, false)))
                                 .switchIfEmpty(claimAcceptance(task, appId, merchant, idempotencyKey))))
                 .map(AcceptanceOutcome::response);
-    }
-
-    /** 资金型任务（Slice 4F + ADR-D12）：bounty &gt;0（商家出资赏金）或 freebie deposit &gt;0（推荐官押金）。 */
-    private boolean isMonetary(Task task) {
-        return (task.bountyCents() != null && task.bountyCents() > 0) || task.isFreebie();
-    }
-
-    /** task.bountyCents 归一为 long（null → 0）。accept/create 冻结赏金快照用。 */
-    private static long bountyOrZero(Task task) {
-        return task.bountyCents() == null ? 0L : task.bountyCents();
-    }
-
-    /** task.freebieDepositCents 归一为 long（null → 0，ADR-D12）。 */
-    private static long freebieDepositOrZero(Task task) {
-        return task.freebieDepositCents() == null ? 0L : task.freebieDepositCents();
-    }
-
-    /** Saga 金额（XOR 保证至多一边 &gt;0）：bounty 优先，否则押金。AcceptanceCommand.amountCents / AcceptanceInput 同源。 */
-    private static long fundsOrZero(Task task) {
-        return bountyOrZero(task) > 0 ? bountyOrZero(task) : freebieDepositOrZero(task);
     }
 
     /**
@@ -259,12 +238,12 @@ public class ApplicationController {
     private Mono<AcceptanceOutcome> claimAcceptance(
             Task task, TaskApplication app, Caller merchant, String idempotencyKey,
             ReputationEntitlementSnapshot entitlement) {
-        boolean monetary = isMonetary(task);
+        boolean monetary = TaskFunds.isMonetary(task);
         String commandId = UUID.randomUUID().toString();
         String workflowId = monetary ? "accept-" + app.id() + "-" + commandId : null;
         AcceptanceCommand proposed = new AcceptanceCommand(
                 commandId, merchant.accountId(), idempotencyKey, task.id(), app.id(), workflowId,
-                task.ownerAccountId(), task.organizationId(), fundsOrZero(task),
+                task.ownerAccountId(), task.organizationId(), TaskFunds.fundsOrZero(task),
                 monetary ? "pending_dispatch" : "accepted", null, null, null, null, null);
 
         Mono<AcceptanceClaim> write = acceptanceCommands.create(proposed)
@@ -273,11 +252,11 @@ public class ApplicationController {
                         .then(monetary
                                 // claim 时刷新 provisional 金额快照（claim-time 权威；apply 时写入的值可能已被修订覆盖）
                                 ? apps.beginAcceptance(app.id(), task.id(), merchant.accountId(), entitlement,
-                                        bountyOrZero(task), freebieDepositOrZero(task))
+                                        TaskFunds.bountyOrZero(task), TaskFunds.freebieDepositOrZero(task))
                                 : apps.accept(app.id(), task.id(), merchant.accountId(),
-                                        bountyOrZero(task), entitlement))
+                                        TaskFunds.bountyOrZero(task), entitlement))
                         .switchIfEmpty(fail(409, "该报名已处理"))
-                        .flatMap(accepted -> outbox.append(envelope(
+                        .flatMap(accepted -> outbox.append(ApplicationEvents.envelope(
                                         monetary ? "ApplicationAcceptanceStarted" : "ApplicationAccepted",
                                         accepted, task.ownerAccountId()))
                                 .thenReturn(accepted))
@@ -297,11 +276,11 @@ public class ApplicationController {
                         ? dispatchAcceptance(claim.command())
                                 .map(response -> new AcceptanceOutcome(response, false))
                         : Mono.just(new AcceptanceOutcome(ResponseEntity.ok(Map.of(
-                                "success", true, "data", toBody(claim.application()))), claim.taskClosed())));
+                                "success", true, "data", ApplicationBodies.toBody(claim.application()))), claim.taskClosed())));
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> dispatchAcceptance(AcceptanceCommand command) {
-        ResponseEntity<Map<String, Object>> accepted = acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED);
+        ResponseEntity<Map<String, Object>> accepted = ApplicationBodies.acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED);
         return acceptanceWorkflows.start(command)
                 .flatMap(ignored -> acceptanceCommands.markStarted(command.id()).thenReturn(accepted))
                 .onErrorResume(failure -> {
@@ -318,27 +297,14 @@ public class ApplicationController {
         }
         return switch (command.status()) {
             case "pending_dispatch", "started" -> Mono.just(
-                    acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED));
+                    ApplicationBodies.acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED));
             case "accepted" -> apps.findById(applicationId)
-                    .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app))))
+                    .map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app))))
                     .switchIfEmpty(fail(409, "接受请求结果不可用"));
             case "compensated", "aborted" -> Mono.just(
-                    acceptanceResponse(command, command.status(), HttpStatus.OK));
+                    ApplicationBodies.acceptanceResponse(command, command.status(), HttpStatus.OK));
             default -> fail(409, "接受请求状态无效");
         };
-    }
-
-    private ResponseEntity<Map<String, Object>> acceptanceResponse(
-            AcceptanceCommand command, String status, HttpStatus httpStatus) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("commandId", command.id());
-        data.put("workflowId", command.workflowId());
-        data.put("applicationId", command.applicationId());
-        data.put("status", status);
-        if (command.failureReason() != null) {
-            data.put("reason", command.failureReason());
-        }
-        return ResponseEntity.status(httpStatus).body(Map.of("success", true, "data", data));
     }
 
     private static String acceptanceIdempotencyKey(ServerHttpRequest request) {
@@ -369,14 +335,14 @@ public class ApplicationController {
         // 幂等检查：dispatcher 重启重跑时复用既有结局
         return acceptanceCommands.findByActorAndKey(null, idempotencyKey)
                 .flatMap(existing -> switch (existing.status()) {
-                    case "pending_dispatch", "started" -> Mono.just(isMonetary(task) ? "reserving" : "accepted");
+                    case "pending_dispatch", "started" -> Mono.just(TaskFunds.isMonetary(task) ? "reserving" : "accepted");
                     case "accepted" -> Mono.just("accepted");
                     case "compensated" -> Mono.just("compensated");
                     case "aborted" -> Mono.just("aborted");
                     default -> Mono.just("unknown");
                 })
                 .switchIfEmpty(claimAcceptance(task, app, systemCaller, idempotencyKey, entitlement)
-                        .map(outcome -> isMonetary(task) ? "reserving" : "accepted"))
+                        .map(outcome -> TaskFunds.isMonetary(task) ? "reserving" : "accepted"))
                 .onErrorResume(MarketplaceException.class, e -> {
                     if (e.status() == 409 && "名额已满".equals(e.getMessage())) {
                         return Mono.just("slots_full");
@@ -454,15 +420,15 @@ public class ApplicationController {
     private Mono<ResponseEntity<Map<String, Object>>> reservationOutcome(TaskApplication app) {
         String status = app.status();
         if (ApplicationStatus.ACCEPTED.dbValue().equals(status)) {
-            return taskClosed(app.taskId()).map(closed -> ok(reservationBody("accepted", null, closed)));
+            return taskClosed(app.taskId()).map(closed -> ApplicationBodies.ok(ApplicationBodies.reservationBody("accepted", null, closed)));
         }
         if (ApplicationStatus.RESERVING.dbValue().equals(status)) {
-            return taskClosed(app.taskId()).map(closed -> ok(reservationBody("reserving", null, closed)));
+            return taskClosed(app.taskId()).map(closed -> ApplicationBodies.ok(ApplicationBodies.reservationBody("reserving", null, closed)));
         }
         // pending（含补偿回退）或其它：查最近 ApplicationReservationFailed 事件的 reason
         return taskClosed(app.taskId()).flatMap(closed -> outbox.latestReservationFailureReason(app.id())
-                .map(reason -> ok(reservationBody("compensated", reason, closed)))
-                .defaultIfEmpty(ok(reservationBody(status, null, closed))));  // 无失败记录 → 原状态（pending 等）
+                .map(reason -> ApplicationBodies.ok(ApplicationBodies.reservationBody("compensated", reason, closed)))
+                .defaultIfEmpty(ApplicationBodies.ok(ApplicationBodies.reservationBody(status, null, closed))));  // 无失败记录 → 原状态（pending 等）
     }
 
     /** 任务是否已关闭（#26 D12；任务行不可得防御性回 false）。 */
@@ -470,17 +436,6 @@ public class ApplicationController {
         return tasks.findById(taskId)
                 .map(task -> TaskStatus.CLOSED.dbValue().equals(task.status()))
                 .defaultIfEmpty(false);
-    }
-
-    /** 预留结局响应体：status + 可选 reason + taskClosed（#26 D12）。 */
-    private Map<String, Object> reservationBody(String status, String reason, boolean closed) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("status", status);
-        if (reason != null) {
-            m.put("reason", reason);
-        }
-        m.put("taskClosed", closed);
-        return m;
     }
 
     /**
@@ -526,7 +481,7 @@ public class ApplicationController {
                                                         .thenReturn(created))
                                                 .map(created -> ResponseEntity.status(HttpStatus.CREATED)
                                                         .body(Map.of("success", true,
-                                                                "data", submissionBodyWithInputs(created, atts))))))));
+                                                                "data", ApplicationBodies.submissionWithInputs(created, atts))))))));
     }
 
     /** 列交付物（含历史）及其附件。商家（任务 owner）与本人推荐官可见。 */
@@ -538,7 +493,7 @@ public class ApplicationController {
                         .flatMap(task -> submissions.findByApplication(appId).collectList()
                                 .flatMap(list -> {
                                     if (list.isEmpty()) {
-                                        return Mono.just(ok(Map.<String, Object>of("submissions", List.of())));
+                                        return Mono.just(ApplicationBodies.ok(Map.<String, Object>of("submissions", List.of())));
                                     }
                                     List<String> submissionIds = list.stream().map(EngagementSubmission::id).toList();
                                     Mono<List<EngagementSubmissionAttachment>> attsM =
@@ -546,8 +501,8 @@ public class ApplicationController {
                                     Mono<List<EngagementVerification>> verifsM =
                                             verifications.findBySubmissions(submissionIds).collectList();
                                     return Mono.zip(attsM, verifsM)
-                                            .map(t -> ok(Map.<String, Object>of("submissions",
-                                                    list.stream().map(s -> submissionBodyWithRows(s,
+                                            .map(t -> ApplicationBodies.ok(Map.<String, Object>of("submissions",
+                                                    list.stream().map(s -> ApplicationBodies.submissionWithRows(s,
                                                             t.getT1().stream().filter(a -> a.submissionId().equals(s.id())).toList(),
                                                             t.getT2().stream().filter(v -> v.submissionId().equals(s.id()))
                                                                     .findFirst().orElse(null)))
@@ -571,7 +526,7 @@ public class ApplicationController {
                                 .flatMap(att -> mediaClient.downloadUrl(
                                                 task.organizationId(), mediaId, "application", appId)
                                         .switchIfEmpty(fail(404, "附件已不可用"))
-                                        .map(dl -> ok(downloadBody(dl))))));
+                                        .map(dl -> ApplicationBodies.ok(ApplicationBodies.download(dl))))));
     }
 
     /** 商家退回补交：submitted → rejected（带原因）。退回后推荐官可修改重交。
@@ -598,9 +553,9 @@ public class ApplicationController {
                                                 : submissions.review(submissionId, SubmissionStatus.REJECTED, note)
                                                         .switchIfEmpty(fail(409, "该交付物已处理"))
                                                         .flatMap(rejected -> outbox
-                                                                .append(submissionEnvelope("DeliverableRejected", app, rejected, List.of(), task.ownerAccountId()))
+                                                                .append(ApplicationEvents.submissionEnvelope("DeliverableRejected", app, rejected, List.of(), task.ownerAccountId()))
                                                                 .thenReturn(rejected))
-                                                        .map(rejected -> ok(toBody(rejected)))))));
+                                                        .map(rejected -> ApplicationBodies.ok(ApplicationBodies.toBody(rejected)))))));
     }
 
     /**
@@ -617,7 +572,7 @@ public class ApplicationController {
                                 .flatMap(app -> {
                                     if (app.contestRequestedAt() != null) {
                                         // durable claim 已落：重复请求继续未完成的 trust/本地/SLA 步骤。
-                                        return contests.dispatch(app, task).map(this::contestedResponse);
+                                        return contests.dispatch(app, task).map(ApplicationBodies::contestedResponse);
                                     }
                                     if (app.confirmedAt() != null) {
                                         return fail(409, "该履约已确认，不能再发起拒绝");
@@ -637,17 +592,8 @@ public class ApplicationController {
                                                                     .switchIfEmpty(fail(409, "该履约状态已变"))))
                                                     .then(Mono.defer(() -> apps.findById(app.id())))
                                                     .flatMap(claimed -> contests.dispatch(claimed, task))
-                                                    .map(this::contestedResponse));
+                                                    .map(ApplicationBodies::contestedResponse));
                                 })));
-    }
-
-    private ResponseEntity<Map<String, Object>> contestedResponse(TaskApplication app) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("applicationId", app.id());
-        data.put("status", "contested");
-        data.put("reason", app.rejectionReason());
-        data.put("disputeId", app.merchantRejectionDisputeId());
-        return ok(data);
     }
 
     /** 商家确认履约 → 启结算窗口。
@@ -725,18 +671,14 @@ public class ApplicationController {
                 .flatMap(acceptedSubmission -> apps.confirm(appId, taskId, confirmedMetricValue)
                         .switchIfEmpty(Mono.error(new ConfirmationConflict("该报名未接受或已确认"))))
                 .flatMap(confirmed -> outbox
-                        .append(envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
+                        .append(ApplicationEvents.envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
                         .thenReturn(confirmed));
-    }
-
-    private ResponseEntity<Map<String, Object>> confirmedResponse(TaskApplication app) {
-        return ok(Map.of("applicationId", app.id(), "status", "confirmed"));
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> resumeConfirmedSettlement(
             Task task, TaskApplication application) {
         return settlementWorkflows.start(task, application)
-                .thenReturn(confirmedResponse(application));
+                .thenReturn(ApplicationBodies.confirmedResponse(application));
     }
 
     /**
@@ -761,10 +703,10 @@ public class ApplicationController {
                                                 merchant.accountId(), body.score(), body.comment())
                                         .switchIfEmpty(fail(409, "该履约已评价过"))
                                         .flatMap(rating -> outbox
-                                                .append(ratingEnvelope(app, rating))
+                                                .append(ApplicationEvents.ratingEnvelope(app, rating))
                                                 .thenReturn(rating))
                                         .map(rating -> ResponseEntity.status(HttpStatus.CREATED)
-                                                .body(Map.of("success", true, "data", toBody(rating)))))));
+                                                .body(Map.of("success", true, "data", ApplicationBodies.toBody(rating)))))));
     }
 
     /** 查该履约的评分。商家（任务 owner）与本人推荐官可见；未评价 → {@code data: null}（不是 404）。 */
@@ -789,8 +731,8 @@ public class ApplicationController {
                                         }
                                         return ratings.findByApplication(appId)
                                                 .map(rating -> ResponseEntity.ok(Map.<String, Object>of(
-                                                        "success", true, "data", toBody(rating))))
-                                                .defaultIfEmpty(ResponseEntity.ok(nullData()));
+                                                        "success", true, "data", ApplicationBodies.toBody(rating))))
+                                                .defaultIfEmpty(ResponseEntity.ok(ApplicationBodies.nullData()));
                                     });
                                 })));
     }
@@ -862,21 +804,21 @@ public class ApplicationController {
 
     private ResponseEntity<Map<String, Object>> confirmationOutcome(TaskApplication app) {
         if (app.contestRequestedAt() != null && app.merchantRejectedAt() == null) {
-            return ok(Map.of("applicationId", app.id(), "status", "contest_pending", "reason",
+            return ApplicationBodies.ok(Map.of("applicationId", app.id(), "status", "contest_pending", "reason",
                     app.rejectionReason() == null ? "" : app.rejectionReason()));
         }
         if (app.merchantRejectedAt() != null) {
-            return contestedResponse(app);
+            return ApplicationBodies.contestedResponse(app);
         }
         if (app.confirmedAt() != null) {
-            return ok(Map.of("status", "confirmed"));
+            return ApplicationBodies.ok(Map.of("status", "confirmed"));
         }
         if (app.merchantConfirmDeadlineAt() == null) {
-            return ok(Map.of("status", "not_entered"));
+            return ApplicationBodies.ok(Map.of("status", "not_entered"));
         }
         long remainingSeconds = Math.max(0,
                 java.time.Duration.between(Instant.now(), app.merchantConfirmDeadlineAt()).toSeconds());
-        return ok(Map.of(
+        return ApplicationBodies.ok(Map.of(
                 "status", "awaiting_confirmation",
                 "deadline", app.merchantConfirmDeadlineAt().toString(),
                 "remainingSeconds", remainingSeconds));
@@ -895,16 +837,16 @@ public class ApplicationController {
         if (app.merchantRejectedAt() != null) {
             return reconciliations.findLatestForApplication(app.id())
                     .map(this::reconciliationOutcome)
-                    .switchIfEmpty(Mono.just(contestedResponse(app)));
+                    .switchIfEmpty(Mono.just(ApplicationBodies.contestedResponse(app)));
         }
         if (app.confirmedAt() == null) {
-            return Mono.just(ok(Map.of("status", "not_confirmed")));
+            return Mono.just(ApplicationBodies.ok(Map.of("status", "not_confirmed")));
         }
         return reconciliations.findLatestForApplication(app.id())
                 .map(this::reconciliationOutcome)
                 .switchIfEmpty(outbox.latestSettlementStatus(app.id())
-                        .map(this::ok)
-                        .defaultIfEmpty(ok(Map.of("status", "settling"))));
+                        .map(ApplicationBodies::ok)
+                        .defaultIfEmpty(ApplicationBodies.ok(Map.of("status", "settling"))));
     }
 
     private ResponseEntity<Map<String, Object>> reconciliationOutcome(
@@ -913,11 +855,11 @@ public class ApplicationController {
             case "reconciled" -> {
                 String reason = rec.finalDecision() == null || rec.finalDecision().isBlank()
                         ? "adjudication" : "adjudication:" + rec.finalDecision();
-                yield ok(Map.of("status", "settled", "reason", reason));
+                yield ApplicationBodies.ok(Map.of("status", "settled", "reason", reason));
             }
-            case "blocked" -> ok(Map.of("status", "held",
+            case "blocked" -> ApplicationBodies.ok(Map.of("status", "held",
                     "reason", rec.reason() == null ? "blocked" : rec.reason()));
-            default -> ok(Map.of("status", "held", "reason", "reconciliation_pending"));
+            default -> ApplicationBodies.ok(Map.of("status", "held", "reason", "reconciliation_pending"));
         };
     }
 
@@ -940,9 +882,9 @@ public class ApplicationController {
                                 .flatMap(app -> apps.reject(appId, id, merchant.accountId())
                                         .switchIfEmpty(fail(409, "该报名已处理")))
                                 .flatMap(app -> outbox
-                                        .append(envelope("ApplicationRejected", app, task.ownerAccountId()))
+                                        .append(ApplicationEvents.envelope("ApplicationRejected", app, task.ownerAccountId()))
                                         .thenReturn(app)))
-                        .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
+                        .map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
     }
 
     /**
@@ -962,7 +904,7 @@ public class ApplicationController {
                                             .flatMap(existing -> replayBatchAccept(existing, id, appId))
                                             .switchIfEmpty(claimAcceptance(task, appId, merchant, itemKey)
                                                     .map(claim -> {
-                                                        String outcome = isMonetary(task) ? "reserving" : "accepted";
+                                                        String outcome = TaskFunds.isMonetary(task) ? "reserving" : "accepted";
                                                         @SuppressWarnings("unchecked")
                                                         Map<String, Object> data = claim.response().getBody() != null
                                                                 ? (Map<String, Object>) claim.response().getBody().get("data") : null;
@@ -1019,7 +961,7 @@ public class ApplicationController {
                                         .filter(app -> ApplicationStatus.PENDING.dbValue().equals(app.status()))
                                         .flatMap(app -> apps.reject(appId, id, merchant.accountId())
                                                 .flatMap(rejected -> outbox.append(
-                                                                envelope("ApplicationRejected", rejected, task.ownerAccountId()))
+                                                                ApplicationEvents.envelope("ApplicationRejected", rejected, task.ownerAccountId()))
                                                         .thenReturn(BatchItemResult.ofOutcome(appId, "rejected")))
                                                 .switchIfEmpty(Mono.just(BatchItemResult.failed(appId, "该报名已处理"))))
                                         .switchIfEmpty(Mono.defer(() -> apps.findById(appId)
@@ -1058,9 +1000,9 @@ public class ApplicationController {
                                     .flatMap(task -> transactions.transactional(
                                             apps.withdraw(appId, id, rec.accountId())
                                                     .switchIfEmpty(fail(409, "该报名已处理"))
-                                                    .flatMap(withdrawn -> outbox.append(envelope("ApplicationWithdrawn", withdrawn, task.ownerAccountId())).thenReturn(withdrawn))));
+                                                    .flatMap(withdrawn -> outbox.append(ApplicationEvents.envelope("ApplicationWithdrawn", withdrawn, task.ownerAccountId())).thenReturn(withdrawn))));
                         })
-                        .map(app -> ResponseEntity.ok(Map.of("success", true, "data", toBody(app)))));
+                        .map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
     }
 
     /**
@@ -1086,7 +1028,7 @@ public class ApplicationController {
                                 if (!canManage) {
                                     return apps.findByTaskId(id, status, createdAfter, createdBefore, limit)
                                             .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
-                                            .map(this::toBody).collectList()
+                                            .map(ApplicationBodies::toBody).collectList()
                                             .map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
                                 }
                                 return apps.findByTaskId(id, status, createdAfter, createdBefore, limit)
@@ -1107,7 +1049,8 @@ public class ApplicationController {
                                                             return left.application().id()
                                                                     .compareTo(right.application().id());
                                                         })
-                                                        .map(this::toRankedBody).toList()))
+                                                        .map(ranked -> ApplicationBodies.ranked(
+                                                                ranked.application(), ranked.snapshot())).toList()))
                                         .flatMap(visible -> taskProgress(id, task)
                                                 .map(stats -> ResponseEntity.ok(Map.of("success", true,
                                                         "data", visible, "stats", stats))));
@@ -1173,77 +1116,6 @@ public class ApplicationController {
             return Mono.just(false);
         }
         return acceptanceCounters.occupied(task.id()).map(occupied -> occupied >= max);
-    }
-
-    /** outbox 事件信封。{@code taskOwnerId} 携带任务归属（apply/withdraw/accept/reject 全携带），
-     *  供 identity 通知中心解析商家侧收件人（Slice 12 Stage 3）；与 {@code recommenderAccountId} 合计覆盖争议双方。 */
-    private EventEnvelope envelope(String eventType, TaskApplication app, String taskOwnerId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("taskId", app.taskId());
-        payload.put("applicationId", app.id());
-        payload.put("recommenderAccountId", app.recommenderAccountId());
-        payload.put("status", app.status());
-        if (taskOwnerId != null) {
-            payload.put("taskOwnerId", taskOwnerId);
-        }
-        return new EventEnvelope(UUID.randomUUID().toString(), eventType, "TaskApplication",
-                app.id(), 1, Instant.now(), null, payload);
-    }
-
-    private EventEnvelope confirmationEnvelope(
-            String eventType, TaskApplication app, String submissionId, String taskOwnerId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("taskId", app.taskId());
-        payload.put("applicationId", app.id());
-        payload.put("submissionId", submissionId);
-        payload.put("recommenderAccountId", app.recommenderAccountId());
-        payload.put("status", app.status());
-        if (taskOwnerId != null) {
-            payload.put("taskOwnerId", taskOwnerId);
-        }
-        String eventId = UUID.nameUUIDFromBytes(
-                (eventType + ":" + submissionId).getBytes(StandardCharsets.UTF_8)).toString();
-        return new EventEnvelope(eventId, eventType, "TaskApplication",
-                app.id(), 1, Instant.now(), null, payload);
-    }
-
-    private ResponseEntity<Map<String, Object>> ok(Map<String, Object> data) {
-        return ResponseEntity.ok(Map.of("success", true, "data", data));
-    }
-
-    /** 交付物事件：带上 application 与交付物两侧的关键字段（含附件 mediaIds + taskOwnerId），供下游（核实引擎/通知）消费。 */
-    private EventEnvelope submissionEnvelope(String eventType, TaskApplication app, EngagementSubmission submission,
-                                             List<AttachmentInput> attachments, String taskOwnerId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("taskId", app.taskId());
-        payload.put("applicationId", app.id());
-        payload.put("recommenderAccountId", app.recommenderAccountId());
-        payload.put("submissionId", submission.id());
-        payload.put("contentUrl", submission.contentUrl());
-        payload.put("status", submission.status());
-        if (taskOwnerId != null) {
-            payload.put("taskOwnerId", taskOwnerId);
-        }
-        if (!attachments.isEmpty()) {
-            payload.put("mediaIds", attachments.stream().map(a -> a.mediaId().toString()).toList());
-        }
-        return new EventEnvelope(UUID.randomUUID().toString(), eventType, "EngagementSubmission",
-                submission.id(), 1, Instant.now(), null, payload);
-    }
-
-    private Map<String, Object> toBody(EngagementSubmission submission) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", submission.id());
-        m.put("applicationId", submission.applicationId());
-        m.put("recommenderAccountId", submission.recommenderAccountId());
-        m.put("contentUrl", submission.contentUrl());
-        m.put("note", submission.note());
-        m.put("status", submission.status());
-        m.put("reviewNote", submission.reviewNote());
-        m.put("reviewedAt", submission.reviewedAt() == null ? null : submission.reviewedAt().toString());
-        m.put("createdAt", submission.createdAt() == null ? null : submission.createdAt().toString());
-        m.put("platformHandle", submission.platformHandle());
-        return m;
     }
 
     /** 加载报名→任务并校验可见性（owner 或提交人）：不存在/越界→404，无权→403。返回 Task（取 orgId）。 */
@@ -1314,9 +1186,9 @@ public class ApplicationController {
                         .switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
                         .flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
                         .flatMap(created -> outbox
-                                .append(submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs, taskOwnerId))
+                                .append(ApplicationEvents.submissionEnvelope("DeliverableSubmitted", app, created, attachmentInputs, taskOwnerId))
                                 .then(apps.setConfirmDeadline(app.id(), app.taskId(), confirmationWindowSeconds))
-                                .then(outbox.append(confirmationEnvelope(
+                                .then(outbox.append(ApplicationEvents.confirmationEnvelope(
                                         "ConfirmationWindowEntered", app, created.id(), taskOwnerId)))
                                 .thenReturn(created)));
     }
@@ -1327,117 +1199,6 @@ public class ApplicationController {
         }
         return attachments.attach(submissionId, inputs)
                 .switchIfEmpty(fail(409, "附件重复，请勿重复挂接相同附件"));
-    }
-
-    /** 交付物响应（提交回执）：带附件列表，附件元数据取自校验阶段的快照。 */
-    private Map<String, Object> submissionBodyWithInputs(EngagementSubmission submission, List<AttachmentInput> inputs) {
-        Map<String, Object> m = toBody(submission);
-        m.put("attachments", inputs.stream().map(this::attachmentInputBody).toList());
-        return m;
-    }
-
-    /** 交付物响应（列表）：带附件列表 + 核验记录（有则附）。附件元数据取自挂接时快照的 DB 行。 */
-    private Map<String, Object> submissionBodyWithRows(EngagementSubmission submission,
-                                                       List<EngagementSubmissionAttachment> rows,
-                                                       EngagementVerification verification) {
-        Map<String, Object> m = toBody(submission);
-        m.put("attachments", rows.stream().map(this::attachmentRowBody).toList());
-        if (verification != null) {
-            m.put("verification", verificationBody(verification));
-        }
-        return m;
-    }
-
-    private Map<String, Object> attachmentInputBody(AttachmentInput a) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("mediaId", a.mediaId());
-        m.put("mimeType", a.mimeType());
-        m.put("sizeBytes", a.sizeBytes());
-        m.put("domainType", a.domainType());
-        m.put("domainId", a.domainId());
-        m.put("checksum", a.checksum());
-        m.put("mediaStatus", a.status());
-        return m;
-    }
-
-    private Map<String, Object> attachmentRowBody(EngagementSubmissionAttachment a) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("mediaId", a.mediaReferenceId());
-        m.put("mimeType", a.mimeType());
-        m.put("sizeBytes", a.sizeBytes());
-        m.put("domainType", a.mediaDomainType());
-        m.put("domainId", a.mediaDomainId());
-        m.put("checksum", a.mediaChecksum());
-        m.put("mediaStatus", a.mediaStatusSnapshot());
-        return m;
-    }
-
-    private Map<String, Object> downloadBody(IntelligenceMediaClient.MediaDownload dl) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("downloadUrl", dl.downloadUrl().toString());
-        m.put("expiresAt", dl.expiresAt().toString());
-        return m;
-    }
-
-    /** 评分事件：带上被评人与分数，供下游（声誉/风控）消费。 */
-    private EventEnvelope ratingEnvelope(TaskApplication app, EngagementRating rating) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("taskId", app.taskId());
-        payload.put("applicationId", app.id());
-        payload.put("recommenderAccountId", rating.recommenderAccountId());
-        payload.put("ratedByAccountId", rating.ratedByAccountId());
-        payload.put("score", rating.score());
-        return new EventEnvelope(UUID.randomUUID().toString(), "EngagementRated", "EngagementRating",
-                rating.id(), 1, Instant.now(), null, payload);
-    }
-
-    private Map<String, Object> toBody(EngagementRating rating) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", rating.id());
-        m.put("applicationId", rating.applicationId());
-        m.put("taskId", rating.taskId());
-        m.put("recommenderAccountId", rating.recommenderAccountId());
-        m.put("ratedByAccountId", rating.ratedByAccountId());
-        m.put("score", rating.score());
-        m.put("comment", rating.comment());
-        m.put("createdAt", rating.createdAt() == null ? null : rating.createdAt().toString());
-        return m;
-    }
-
-    /** {@code {success:true, data:null}}——Map.of 不收 null 值，故手写。 */
-    private static Map<String, Object> nullData() {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("success", true);
-        m.put("data", null);
-        return m;
-    }
-
-    private Map<String, Object> toBody(TaskApplication app) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", app.id());
-        m.put("taskId", app.taskId());
-        m.put("recommenderAccountId", app.recommenderAccountId());
-        m.put("status", app.status());
-        m.put("note", app.note());
-        m.put("reviewedByAccountId", app.reviewedByAccountId());
-        m.put("decidedAt", app.decidedAt() == null ? null : app.decidedAt().toString());
-        m.put("createdAt", app.createdAt() == null ? null : app.createdAt().toString());
-        m.put("reputationLevelAtAccept", app.reputationLevelAtAccept());
-        m.put("reputationPolicyVersionAtAccept", app.reputationPolicyVersionAtAccept());
-        m.put("settlementDelayDaysAtAccept", app.settlementDelayDaysAtAccept());
-        m.put("commissionBonusBpsAtAccept", app.commissionBonusBpsAtAccept());
-        m.put("premiumSupportAtAccept", app.premiumSupportAtAccept());
-        m.put("confirmedMetricValue", app.confirmedMetricValue());
-        return m;
-    }
-
-    private Map<String, Object> toRankedBody(RankedApplication ranked) {
-        Map<String, Object> body = toBody(ranked.application());
-        body.put("reputationLevel", ranked.snapshot().evaluation().effectiveLevel().number());
-        body.put("reputationTitle", ranked.snapshot().policy()
-                .ruleFor(ranked.snapshot().evaluation().effectiveLevel()).title());
-        body.put("taskPriorityWeight", ranked.snapshot().evaluation().taskPriorityWeight());
-        return body;
     }
 
     private static ReputationEntitlementSnapshot entitlementSnapshot(ReputationSnapshot snapshot) {
@@ -1466,7 +1227,7 @@ public class ApplicationController {
                                         .switchIfEmpty(fail(404, "交付物不存在"))
                                         .flatMap(submission -> runAndRecordVerification(
                                                         task, app, submission, merchant.accountId())
-                                                .map(v -> ok(verificationBody(v)))))));
+                                                .map(v -> ApplicationBodies.ok(ApplicationBodies.verification(v)))))));
     }
 
     /** Immutable task context for task-mode creation and verification replay. */
@@ -1480,7 +1241,7 @@ public class ApplicationController {
                             : loadManageableTask(id, caller).then();
                     return authorized.then(apps.findTaskContextSnapshot(appId))
                             .switchIfEmpty(fail(409, "任务上下文快照尚未生成"))
-                            .map(json -> ok(parseContext(json)));
+                            .map(json -> ApplicationBodies.ok(ApplicationBodies.parsedJson(json)));
                 }));
     }
 
@@ -1494,27 +1255,10 @@ public class ApplicationController {
                             ? Mono.empty() : loadManageableTask(id, caller).then();
                     return authorized.then(submissions.findByApplication(appId)
                                     .filter(s -> s.id().equals(submissionId)).hasElements())
-                            .flatMap(exists -> exists ? verifications.findRuns(submissionId, 50).map(this::runBody)
-                                    .collectList().map(runs -> ok(Map.of("runs", runs)))
+                            .flatMap(exists -> exists ? verifications.findRuns(submissionId, 50).map(ApplicationBodies::run)
+                                    .collectList().map(runs -> ApplicationBodies.ok(Map.of("runs", runs)))
                                     : fail(404, "交付物不存在"));
                 }));
-    }
-
-    private Map<String, Object> runBody(EngagementVerificationRun run) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("id", run.id()); body.put("runNumber", run.runNumber());
-        body.put("engineVersion", run.engineVersion()); body.put("status", run.status());
-        body.put("taskContext", parseChecks(run.taskContextJson()));
-        body.put("evidenceSnapshot", parseChecks(run.evidenceJson()));
-        body.put("checks", parseChecks(run.checksJson())); body.put("triggeredBy", run.triggeredBy());
-        body.put("createdAt", run.createdAt() == null ? null : run.createdAt().toString());
-        return body;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> parseContext(String json) {
-        try { return mapper.readValue(json, Map.class); }
-        catch (JsonProcessingException e) { throw new IllegalStateException("任务上下文快照损坏", e); }
     }
 
     /** 跑自动核验并原子落记录（7C 事务：upsert + outbox，outbox 挂 upsert 之后；任一失败零残留）。 */
@@ -1715,28 +1459,6 @@ public class ApplicationController {
                 ("VerificationChecked:" + submission.id()).getBytes(StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(eventId, "VerificationChecked", "EngagementSubmission",
                 submission.id(), 1, Instant.now(), null, payload);
-    }
-
-    private Map<String, Object> verificationBody(EngagementVerification v) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("submissionId", v.submissionId());
-        m.put("status", v.status());
-        m.put("checks", parseChecks(v.checksJson()));
-        m.put("runId", v.latestRunId());
-        m.put("engineVersion", v.engineVersion());
-        m.put("taskContext", v.taskContextSnapshotJson() == null ? null : parseChecks(v.taskContextSnapshotJson()));
-        m.put("evidenceSnapshot", v.evidenceSnapshotJson() == null ? null : parseChecks(v.evidenceSnapshotJson()));
-        m.put("lastCheckedAt", v.lastCheckedAt() == null ? null : v.lastCheckedAt().toString());
-        return m;
-    }
-
-    /** checksJson 是 jsonb 读出的 JSON 文本；解析回结构化对象，避免响应里二次转义。坏 JSON → 原样字符串。 */
-    private Object parseChecks(String json) {
-        try {
-            return mapper.readValue(json, Object.class);
-        } catch (JsonProcessingException e) {
-            return json;
-        }
     }
 
     /** 单项核验明细（聚合前的原子结果）。 */
