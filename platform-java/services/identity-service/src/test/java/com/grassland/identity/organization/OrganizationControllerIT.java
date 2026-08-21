@@ -119,7 +119,8 @@ class OrganizationControllerIT {
     }
 
     private WebTestClient client() {
-        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+                .responseTimeout(java.time.Duration.ofSeconds(30)).build();
     }
 
     @SuppressWarnings("unchecked")

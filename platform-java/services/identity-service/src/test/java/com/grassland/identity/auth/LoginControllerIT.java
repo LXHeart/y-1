@@ -45,7 +45,11 @@ class LoginControllerIT {
         }
     }
 
-    private WebTestClient client() { return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build(); }
+    private WebTestClient client() {
+        // responseTimeout 30s：默认 5s 在 CI 慢 runner 负载下偶发超时（与 IdentityItSupport/FinanceItSupport 同口径）
+        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+                .responseTimeout(java.time.Duration.ofSeconds(30)).build();
+    }
 
     @Test
     void loginSuccessReturnsUserAndSetCookie() {
