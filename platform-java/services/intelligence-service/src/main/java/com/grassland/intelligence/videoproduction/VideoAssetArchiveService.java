@@ -32,16 +32,19 @@ public class VideoAssetArchiveService {
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 	private final VideoGenerationProperties properties;
+	private final com.grassland.intelligence.media.StoreMediaModerationService moderation;
 	private final WebClient client;
 
 	public VideoAssetArchiveService(MediaReferenceRepository mediaRefs,
 			ObjectProvider<ObjectStorageAdapter> storageProvider, OutboxRepository outbox,
-			TransactionalOperator transactions, VideoGenerationProperties properties) {
+			TransactionalOperator transactions, VideoGenerationProperties properties,
+			com.grassland.intelligence.media.StoreMediaModerationService moderation) {
 		this.mediaRefs = mediaRefs;
 		this.storageProvider = storageProvider;
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.properties = properties;
+		this.moderation = moderation;
 		this.client = ManagedWebClientFactory
 				.builder(VideoAssetArchiveService.class, properties.getRequestTimeout(), (int) MAX_BYTES).build();
 	}
@@ -87,6 +90,8 @@ public class VideoAssetArchiveService {
 								bytes.length, VideoArchiveChecksums.sha256(bytes), "generated", MediaStatus.ACTIVE,
 								Instant.now(), null, null))
 						.flatMap(active -> outbox.append(MediaLifecycleEvents.activated(active)).thenReturn(active))))
+				// AI 生成结果多模态审核（任务书 #45 登记）：异步 advisory 送审，失败静默不影响归档/结算。
+				.doOnNext(active -> moderation.moderateGeneratedAsync(active, bytes))
 				.thenReturn("/api/media/" + mediaId);
 	}
 

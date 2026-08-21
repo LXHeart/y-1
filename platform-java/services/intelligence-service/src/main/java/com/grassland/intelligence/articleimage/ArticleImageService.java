@@ -39,6 +39,7 @@ public class ArticleImageService {
     private final ImageGenerationClient generation;
     private final GeneratedImageStore store;
     private final MediaReferenceRepository mediaRefs;
+    private final com.grassland.intelligence.media.StoreMediaModerationService moderation;
     private final Duration generatedTtl;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -48,12 +49,14 @@ public class ArticleImageService {
             ImageGenerationClient generation,
             GeneratedImageStore store,
             MediaReferenceRepository mediaRefs,
+            com.grassland.intelligence.media.StoreMediaModerationService moderation,
             @Value("${article-images.generated.ttl-seconds:1800}") long generatedTtlSeconds) {
         this.ai = ai;
         this.search = search;
         this.generation = generation;
         this.store = store;
         this.mediaRefs = mediaRefs;
+        this.moderation = moderation;
         this.generatedTtl = Duration.ofSeconds(generatedTtlSeconds);
     }
 
@@ -146,7 +149,10 @@ public class ArticleImageService {
                 null,
                 Instant.now().plus(generatedTtl),
                 null);
-        return Mono.defer(() -> mediaRefs.insert(media))
+        return Mono.defer(() -> mediaRefs.insert(media)
+                        // AI 生成结果多模态审核（任务书 #45 登记）：登记成功后异步 advisory 送审，
+                        // 失败静默不影响生成响应（受审 purpose 由审核服务自身 gate）。
+                        .doOnNext(active -> moderation.moderateGeneratedAsync(active, bytes)))
                 .retry(2)
                 .doOnError(error -> log.error(
                         "generated image media registration failed: imageId={}, objectKey={}",

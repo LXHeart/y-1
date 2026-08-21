@@ -40,6 +40,8 @@ class ArticleImageServiceTest {
     private GeneratedImageStore store;
     @Mock
     private MediaReferenceRepository mediaRefs;
+    @Mock
+    private com.grassland.intelligence.media.StoreMediaModerationService moderation;
 
     @Captor
     private ArgumentCaptor<MediaReference> mediaCaptor;
@@ -48,7 +50,7 @@ class ArticleImageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ArticleImageService(ai, search, generation, store, mediaRefs, 1800);
+        service = new ArticleImageService(ai, search, generation, store, mediaRefs, moderation, 1800);
     }
 
     @Test
@@ -125,5 +127,35 @@ class ArticleImageServiceTest {
         assertThat(response).isNotNull();
         assertThat(response.imageUrl()).endsWith(id);
         verify(mediaRefs, never()).insert(any());
+    }
+
+    /** AI 生成结果多模态审核钩子（任务书 #45）：登记成功即异步送审；本地兜底不送。 */
+    @Test
+    void registeredGeneratedImageFiresModerationHookWithOriginalBytes() {
+        String b64 = Base64.getEncoder().encodeToString(PNG);
+        String id = UUID.randomUUID().toString();
+        when(generation.generate(any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
+        when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, "k")));
+        when(mediaRefs.insert(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0, MediaReference.class)));
+
+        service.generate(
+                new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
+                new MediaOwner("acct-1", null)).block();
+
+        org.mockito.ArgumentCaptor<byte[]> bytes =
+                org.mockito.ArgumentCaptor.forClass(byte[].class);
+        verify(moderation).moderateGeneratedAsync(mediaCaptor.capture(), bytes.capture());
+        assertThat(mediaCaptor.getValue().purpose()).isEqualTo("article_generated");
+        assertThat(mediaCaptor.getValue().id()).isEqualTo(UUID.fromString(id));
+        assertThat(bytes.getValue()).isEqualTo(PNG);
+
+        // 本地兜底（managed=false）无 media 行 → 不送审
+        org.mockito.Mockito.clearInvocations(moderation);
+        when(store.store(b64)).thenReturn(
+                Mono.just(new GeneratedImageStore.StoredRef(id, id + ".png", false)));
+        service.generate(
+                new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
+                new MediaOwner("acct-1", null)).block();
+        verify(moderation, never()).moderateGeneratedAsync(any(), any());
     }
 }
