@@ -54,6 +54,14 @@ export interface UpdateAiProviderKeyInput {
   model?: string
 }
 
+/** 组织 BYOK 回退策略（ADR-D17 / D-11）：无行=默认不允许。 */
+export interface AiOrgByokPolicyState {
+  configured: boolean
+  allowPlatformFallback: boolean
+  version: number
+  updatedAt: string | null
+}
+
 export type PlatformModelRole = 'primary' | 'backup'
 export type PlatformModelHealth = 'healthy' | 'degraded' | 'unhealthy'
 

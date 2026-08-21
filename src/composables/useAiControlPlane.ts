@@ -1,4 +1,5 @@
 import type {
+  AiOrgByokPolicyState,
   AiProviderKey,
   AiRun,
   CreateAiProviderKeyInput,
@@ -66,6 +67,36 @@ export function useAiControlPlane() {
     method: 'DELETE',
   })
 
+  // ---------- 组织级 BYOK（ADR-D17）----------
+
+  const orgKeysPath = (organizationId: string) =>
+    `/api/ai/organizations/${encodeURIComponent(organizationId)}/keys`
+  const listOrgKeys = (organizationId: string) => request<AiProviderKey[]>(orgKeysPath(organizationId))
+  const createOrgKey = (organizationId: string, input: CreateAiProviderKeyInput) =>
+    request<AiProviderKey>(orgKeysPath(organizationId), { method: 'POST', body: jsonBody(input) })
+  const updateOrgKey = (organizationId: string, id: string, input: UpdateAiProviderKeyInput) =>
+    request<AiProviderKey>(`${orgKeysPath(organizationId)}/${encodeURIComponent(id)}`, {
+      method: 'PUT', body: jsonBody(input),
+    })
+  const rotateOrgKey = (organizationId: string, id: string, apiKey: string) =>
+    request<AiProviderKey>(`${orgKeysPath(organizationId)}/${encodeURIComponent(id)}/key`, {
+      method: 'PUT', body: jsonBody({ apiKey }),
+    })
+  const disableOrgKey = (organizationId: string, id: string) =>
+    request<void>(`${orgKeysPath(organizationId)}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+  /** 策略端点走 {success, data} 信封（组织管理域约定），这里解包 data。 */
+  const orgPolicyPath = (organizationId: string) =>
+    `/api/ai/organizations/${encodeURIComponent(organizationId)}/byok-policy`
+  const getOrgByokPolicy = (organizationId: string) =>
+    request<{ data: AiOrgByokPolicyState }>(orgPolicyPath(organizationId)).then((body) => body.data)
+  const saveOrgByokPolicy = (
+    organizationId: string,
+    input: { expectedVersion: number; allowPlatformFallback: boolean },
+  ) => request<{ data: AiOrgByokPolicyState }>(orgPolicyPath(organizationId), {
+    method: 'PUT', body: jsonBody(input),
+  }).then((body) => body.data)
+
   const listModels = () => request<PlatformModelConfig[]>('/api/admin/ai/models')
   const createModel = (input: CreatePlatformModelInput) => request<PlatformModelConfig>('/api/admin/ai/models', {
     method: 'POST', body: jsonBody(input),
@@ -83,6 +114,13 @@ export function useAiControlPlane() {
     updateKey,
     rotateKey,
     disableKey,
+    listOrgKeys,
+    createOrgKey,
+    updateOrgKey,
+    rotateOrgKey,
+    disableOrgKey,
+    getOrgByokPolicy,
+    saveOrgByokPolicy,
     listModels,
     createModel,
     updateModel,

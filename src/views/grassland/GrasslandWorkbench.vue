@@ -17,6 +17,7 @@ import RecommenderIncomeStatsCard from '../../components/RecommenderIncomeStatsC
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import OrgTeamCard from '../../components/OrgTeamCard.vue'
 import AiOrgBudgetPanel from '../../components/AiOrgBudgetPanel.vue'
+import AiOrgProviderKeysPanel from '../../components/AiOrgProviderKeysPanel.vue'
 import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
@@ -329,9 +330,14 @@ watch(grasslandNavigationTarget, async (target) => {
         <OrgTeamCard :org-id="activeOrg.id" />
       </article>
 
-      <!-- 组织 AI 预算仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
+      <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
       <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
         <AiOrgBudgetPanel :organization-id="activeOrg.id" />
+      </article>
+
+      <!-- 组织级 BYOK（ADR-D17）：组织密钥管理 + 回退策略开关，同款 owner/admin 门禁 -->
+      <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
+        <AiOrgProviderKeysPanel :organization-id="activeOrg.id" />
       </article>
 
       <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
