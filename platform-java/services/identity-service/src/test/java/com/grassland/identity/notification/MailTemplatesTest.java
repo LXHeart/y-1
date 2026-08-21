@@ -31,6 +31,24 @@ class MailTemplatesTest {
     }
 
     @Test
+    void budgetThresholdAlertProducesWalletMail() {
+        // 组织 AI 预算告警属资金类高价值：WALLET 类入邮件（去重由事件侧三闸保证）
+        MailTemplate warning = MailTemplates.mailTemplate("AiOrgBudgetThresholdCrossed",
+                payload(Map.of("organizationId", "org-1", "ruleKey", "daily_tokens", "level", "warning",
+                        "window", "daily", "unit", "tokens", "periodKey", "2026-08-21",
+                        "usage", 80, "limit", 100)));
+        assertThat(warning).isNotNull();
+        assertThat(warning.category()).isEqualTo("wallet");
+        assertThat(warning.subject()).contains("接近上限");
+        MailTemplate exceeded = MailTemplates.mailTemplate("AiOrgBudgetThresholdCrossed",
+                payload(Map.of("organizationId", "org-1", "ruleKey", "daily_cents", "level", "exceeded",
+                        "window", "daily", "unit", "cents", "periodKey", "2026-08-21",
+                        "usage", 105, "limit", 100)));
+        assertThat(exceeded).isNotNull();
+        assertThat(exceeded.subject()).contains("已超限");
+    }
+
+    @Test
     void permissionEventProducesNoMail_highValueSubsetExcludesPermission() {
         // 权限审批频次高、价值低 → 不发邮件（高价值子集决策）
         assertThat(MailTemplates.mailTemplate("PermissionRequested",

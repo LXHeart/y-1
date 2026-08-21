@@ -78,6 +78,22 @@ public class ExternalNotificationEventConsumer {
         return handle(record, acknowledgment, groupId, "identity-notification-finance-consumer");
     }
 
+    /** intelligence topic（组织 AI 预算阈值告警，任务书 #37 登记项）：首个该 topic 消费者。 */
+    @KafkaListener(
+            topics = "${identity.notification-consumer.external.intelligence-topic:grassland.intelligence.events}",
+            groupId = "${identity.notification-consumer.external.intelligence-group-id:"
+                    + "identity-notification-intelligence-consumer}",
+            autoStartup = "${identity.notification-consumer.external.auto-startup:true}",
+            containerFactory = "notificationKafkaListenerContainerFactory")
+    public Mono<Void> onIntelligenceEvent(
+            ConsumerRecord<String, String> record,
+            Acknowledgment acknowledgment,
+            @org.springframework.messaging.handler.annotation.Header(
+                    name = org.springframework.kafka.support.KafkaHeaders.GROUP_ID,
+                    required = false) String groupId) {
+        return handle(record, acknowledgment, groupId, "identity-notification-intelligence-consumer");
+    }
+
     /** consumerName 取实际 group-id（配置可改），header 缺失时回落到该 topic 的默认名。 */
     private Mono<Void> handle(
             ConsumerRecord<String, String> record,

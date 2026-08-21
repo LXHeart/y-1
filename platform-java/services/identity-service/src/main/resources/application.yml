@@ -233,6 +233,9 @@ identity:
       trust-group-id: ${IDENTITY_NOTIFICATION_TRUST_GROUP:identity-notification-trust-consumer}
       finance-topic: ${IDENTITY_NOTIFICATION_FINANCE_TOPIC:grassland.finance.events}
       finance-group-id: ${IDENTITY_NOTIFICATION_FINANCE_GROUP:identity-notification-finance-consumer}
+      # 组织 AI 预算阈值告警（任务书 #37 登记项）：intelligence topic 首个消费者。
+      intelligence-topic: ${IDENTITY_NOTIFICATION_INTELLIGENCE_TOPIC:grassland.intelligence.events}
+      intelligence-group-id: ${IDENTITY_NOTIFICATION_INTELLIGENCE_GROUP:identity-notification-intelligence-consumer}
 
 # 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
 # identity 验证 edge-bff 用户断言（回退 cookie）及 trust/marketplace/intelligence 服务断言。

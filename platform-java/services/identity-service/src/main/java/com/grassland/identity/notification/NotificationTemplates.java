@@ -173,6 +173,10 @@ public final class NotificationTemplates {
             case "JudgeVoteRewarded" -> new Template(
                     NotificationCategory.DISPUTE, "审判奖励已到账",
                     "你参与的一轮审判已终局，投票奖励积分已发放到你的账户", LINK_DISPUTES, judgeRewardPayload(payload));
+            // ADR-D18：审判官现金佣金（WALLET 类，入推荐官钱包可提现；收件人=judgeAccountId payload 直读）。
+            case "JudgeVoteCommissionRewarded" -> new Template(
+                    NotificationCategory.WALLET, "审判现金佣金已到账",
+                    "你参与的一轮审判已终局，投票现金佣金已发放到你的钱包", LINK_WALLET, judgeCommissionPayload(payload));
             // ---------- finance：钱包与资金 ----------
             case "FundsReserved" -> new Template(
                     NotificationCategory.WALLET, "任务报酬已托管",
@@ -200,6 +204,19 @@ public final class NotificationTemplates {
             case "FreebieCompensated" -> new Template(
                     NotificationCategory.ENGAGEMENT, "霸王餐押金已补偿商家",
                     "该履约未达标终局，推荐官预付的押金已补偿给商家", LINK_ENGAGEMENTS, walletPayload(payload));
+            // ---------- intelligence：组织 AI 预算阈值告警（任务书 #37 登记项）----------
+            // 收件人=组织 owner/admin（resolver 查本地 membership）；WALLET 类走邮件高价值子集。
+            case "AiOrgBudgetThresholdCrossed" -> {
+                boolean exceeded = "exceeded".equals(stringField(payload, "level"));
+                boolean monthly = "monthly".equals(stringField(payload, "window"));
+                boolean cents = "cents".equals(stringField(payload, "unit"));
+                String dimension = (monthly ? "本月" : "今日") + (cents ? "消费金额" : "调用量");
+                String title = exceeded ? "组织 AI 预算已超限" : "组织 AI 预算接近上限";
+                String body = exceeded
+                        ? "组织 AI " + dimension + "已超过设定的上限，相关 AI 能力可能已被硬停，请调整预算或检查用量"
+                        : "组织 AI " + dimension + "已达到预警阈值，请关注组织用量";
+                yield new Template(NotificationCategory.WALLET, title, body, LINK_PERMISSION, budgetAlertPayload(payload));
+            }
             default -> null;
         };
     }
@@ -227,6 +244,15 @@ public final class NotificationTemplates {
         return map;
     }
 
+    /** 审判现金佣金 payload（ADR-D18）：争议定位 + 分数；不泄露其他审判官账号。 */
+    private static Map<String, Object> judgeCommissionPayload(JsonNode payload) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        putIfText(map, payload, "disputeId");
+        putIfNumber(map, payload, "round");
+        putIfNumber(map, payload, "amountCents");
+        return map;
+    }
+
     /** 审判奖励 payload：争议定位 + 积分数；不泄露其他审判官账号（D7）。 */
     private static Map<String, Object> judgeRewardPayload(JsonNode payload) {
         Map<String, Object> map = new LinkedHashMap<>();
@@ -246,6 +272,20 @@ public final class NotificationTemplates {
 
     private static Map<String, Object> orgPayload(JsonNode payload) {
         return singleKeyPayload(payload, "organizationId");
+    }
+
+    /** 预算阈值告警 payload：组织 + 规则维度 + 等级 + 用量/上限（前端组织管理区渲染）。 */
+    private static Map<String, Object> budgetAlertPayload(JsonNode payload) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        putIfText(map, payload, "organizationId");
+        putIfText(map, payload, "ruleKey");
+        putIfText(map, payload, "level");
+        putIfText(map, payload, "window");
+        putIfText(map, payload, "unit");
+        putIfText(map, payload, "periodKey");
+        putIfNumber(map, payload, "usage");
+        putIfNumber(map, payload, "limit");
+        return map;
     }
 
     private static Map<String, Object> grantedPayload(JsonNode payload) {

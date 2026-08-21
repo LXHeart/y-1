@@ -114,6 +114,45 @@ class NotificationInboxIT extends IdentityItSupport {
 	}
 
 	@Test
+	void budgetThresholdAlertNotifiesOrgManagersWithWalletTemplateAndMail() {
+		var owner = seedAccount("budget-owner@example.com");
+		var admin = seedAccount("budget-admin@example.com");
+		var member = seedAccount("budget-member@example.com");
+		String orgId = UUID.randomUUID().toString();
+		seedMember(orgId, owner.accountId(), "owner");
+		seedMember(orgId, admin.accountId(), "admin");
+		seedMember(orgId, member.accountId(), "member");
+
+		ConsumerRecord<String, String> record = envelope("evt-budget-1", "AiOrgBudgetThresholdCrossed", orgId,
+				Map.of("organizationId", orgId, "ruleKey", "daily_cents", "level", "exceeded",
+						"window", "daily", "unit", "cents", "periodKey", "2026-08-21",
+						"usage", 105, "limit", 100));
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+
+		assertThat(unreadFor(owner.accountId())).as("owner 被通知").isEqualTo(1);
+		assertThat(unreadFor(admin.accountId())).as("admin 被通知").isEqualTo(1);
+		assertThat(unreadFor(member.accountId())).as("普通成员不接收预算告警").isZero();
+
+		// WALLET 类属邮件高价值子集：owner/admin 各入队一封
+		Long mailCount = db.sql("SELECT COUNT(*) FROM mail_outbox WHERE source_event_id = :eventId")
+				.bind("eventId", "evt-budget-1").map(r -> r.get(0, Long.class)).one().block();
+		assertThat(mailCount).isEqualTo(2);
+
+		// 同 eventId 重投幂等（inbox 双闸）
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
+	}
+
+	@Test
+	void budgetThresholdAlertWithMalformedOrgIdYieldsNoRecipients() {
+		ConsumerRecord<String, String> record = envelope("evt-budget-2", "AiOrgBudgetThresholdCrossed", "not-a-uuid",
+				Map.of("organizationId", "not-a-uuid", "ruleKey", "daily_tokens", "level", "warning",
+						"window", "daily", "unit", "tokens", "periodKey", "2026-08-21",
+						"usage", 80, "limit", 100));
+		// 非法组织 id 不抛错重试：PROCESSED + 零通知（防御，不阻塞分区）
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+	}
+
+	@Test
 	void permissionReviewedLooksUpRequesterByAggregateId() {
 		var requester = seedAccount("inbox-requester@example.com");
 		String orgId = UUID.randomUUID().toString();

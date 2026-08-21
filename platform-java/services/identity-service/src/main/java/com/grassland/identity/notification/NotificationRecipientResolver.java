@@ -58,6 +58,14 @@ public class NotificationRecipientResolver {
                     findPermissionRequester(envelope.aggregateId())
                             .map(java.util.List::of)
                             .defaultIfEmpty(java.util.List.of());
+            // intelligence：组织 AI 预算阈值告警（任务书 #37 登记项）——收件人=组织 owner/admin。
+            // 系统触发无操作者，不排除本人；组织 id 非法则空收件人（不重投阻塞分区）。
+            case "AiOrgBudgetThresholdCrossed" ->
+                    text(payload, "organizationId")
+                            .filter(NotificationRecipientResolver::isUuidText)
+                            .flatMapMany(this::findOrgManagerAccountIds)
+                            .collectList()
+                            .defaultIfEmpty(java.util.List.of());
             default -> Mono.just(externalRecipients(envelope.eventType(), payload));
         };
     }
@@ -108,8 +116,8 @@ public class NotificationRecipientResolver {
             case "DisputeAssigned", "AdjudicationReopened", "DisputeDecided",
                     "DisputeAppealed", "AdjudicationEscalated", "DisputeFinalized" ->
                     accountIds(payload, "openedByAccountId");
-            // 审判官投票奖励（任务书 #31 / ADR-D15）：收件人 = 投票审判官（payload 直读，不反查）。
-            case "JudgeVoteRewarded" -> accountIds(payload, "judgeAccountId");
+            // 审判官投票奖励（任务书 #31 / ADR-D15）/ 现金佣金（ADR-D18）：收件人 = 投票审判官（payload 直读，不反查）。
+            case "JudgeVoteRewarded", "JudgeVoteCommissionRewarded" -> accountIds(payload, "judgeAccountId");
             // 资金：payeeAccountId 是用户账号（不是 finance ledger account）。
             case "FundsReserved", "FundsCaptured", "FundsReleased", "FundsReversed", "AccountCredited" ->
                     accountIds(payload, "payeeAccountId");
@@ -158,6 +166,15 @@ public class NotificationRecipientResolver {
                 .bind("email", email.trim())
                 .map(row -> row.get("id", String.class))
                 .one();
+    }
+
+    private static boolean isUuidText(String value) {
+        try {
+            java.util.UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException error) {
+            return false;
+        }
     }
 
     private Flux<String> findOrgManagerAccountIds(String organizationId) {
