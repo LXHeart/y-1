@@ -416,6 +416,10 @@ public class CommerceRepository {
 				UPDATE consumer_order o
 				   SET status = 'refund_pending',
 				       refund_operation_id = COALESCE(refund_operation_id, 'commerce-refund:' || o.id::text),
+				       -- markRefunded 守卫 refund_requested_amount_cents 非空；到期自动退款=全额退剩余，
+				       -- 缺此列会永久卡在 refund_pending（finance 幂等空转、订单状态不落）
+				       refund_requested_amount_cents = COALESCE(refund_requested_amount_cents,
+				           o.price_cents - o.refunded_amount_cents),
 				       version = version + 1, updated_at = now()
 				  FROM candidates WHERE o.id = candidates.id
 				RETURNING %s
