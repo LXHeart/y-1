@@ -457,7 +457,8 @@ public class AiExecutionService {
 		if (adjustedInput > Integer.MAX_VALUE) {
 			throw new IntelligenceException(502, "AI provider usage 超出支持范围");
 		}
-		return new TextCompletionResult(completion.content(), (int) adjustedInput, completion.outputTokens());
+		return new TextCompletionResult(completion.content(), (int) adjustedInput, completion.outputTokens(),
+				completion.providerRunId());
 	}
 
 	/** BYOK 密钥解密（同步）。平台 run 返回 null；无 KEK 抛 503（fail-closed，平台 run 不受影响）。 */
