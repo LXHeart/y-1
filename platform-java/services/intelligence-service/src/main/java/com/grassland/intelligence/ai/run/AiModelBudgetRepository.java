@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -99,6 +100,17 @@ public class AiModelBudgetRepository {
                 .bind("provider", ORGANIZATION_PROVIDER)
                 .map(AiModelBudgetRepository::map)
                 .one();
+    }
+
+    /** 列出全部组织全局预算行（阈值告警扫描用；只扫管理入口维护的组织全局行）。 */
+    public Flux<AiModelBudget> listOrganizationBudgetRows() {
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM ai_model_budget"
+                        + " WHERE capability=:capability AND provider=:provider AND enabled=true")
+                .bind("capability", ORGANIZATION_CAPABILITY)
+                .bind("provider", ORGANIZATION_PROVIDER)
+                .map(AiModelBudgetRepository::map)
+                .all();
     }
 
     /** expectedVersion=0 时创建；并发创建由唯一键 + DO NOTHING 转成 empty。 */

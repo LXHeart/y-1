@@ -89,9 +89,14 @@ intelligence:
     batch-size: ${INTELLIGENCE_OUTBOX_BATCH_SIZE:50}
     max-concurrency: ${INTELLIGENCE_OUTBOX_MAX_CONCURRENCY:8}
     ack-timeout-ms: ${INTELLIGENCE_OUTBOX_ACK_TIMEOUT_MS:10000}
-    claim-lease-ms: ${INTELLIGENCE_OUTBOX_CLAIM_LEASE_MS:300000}
-    initial-backoff-ms: ${INTELLIGENCE_OUTBOX_INITIAL_BACKOFF_MS:1000}
-    max-backoff-ms: ${INTELLIGENCE_OUTBOX_MAX_BACKOFF_MS:60000}
+  claim-lease-ms: ${INTELLIGENCE_OUTBOX_CLAIM_LEASE_MS:300000}
+  initial-backoff-ms: ${INTELLIGENCE_OUTBOX_INITIAL_BACKOFF_MS:1000}
+  max-backoff-ms: ${INTELLIGENCE_OUTBOX_MAX_BACKOFF_MS:60000}
+  budget-alert:
+    enabled: ${INTELLIGENCE_BUDGET_ALERT_ENABLED:true}
+    poll-interval-ms: ${INTELLIGENCE_BUDGET_ALERT_POLL_INTERVAL_MS:60000}
+    warn-threshold-percent: ${INTELLIGENCE_BUDGET_ALERT_WARN_THRESHOLD_PERCENT:80}
+
 
 # 内部身份断言（GL-P0-ASSERT-001 keyring 模式）：
 # intelligence 验证 edge-bff 用户断言 + marketplace 服务断言。
