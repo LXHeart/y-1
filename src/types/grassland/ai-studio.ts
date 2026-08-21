@@ -64,6 +64,8 @@ export interface SpeechTranscriptionItem {
   status: string
   detectedLanguage: string | null
   transcriptText: string | null
+  /** 句级时间戳（provider verbose_json segments；sandbox/不支持分段时缺失 → 前端回落启发式分轴） */
+  segments?: Array<{ start: number; end: number; text: string }>
   createdAt: string
 }
 

@@ -26,72 +26,76 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 class OpenAiCompatibleSpeechRecognitionProviderTest {
 
-    private WireMockServer server;
-    private OpenAiCompatibleSpeechRecognitionProvider provider;
+	private WireMockServer server;
+	private OpenAiCompatibleSpeechRecognitionProvider provider;
 
-    @BeforeEach
-    void setUp() {
-        server = new WireMockServer(0);
-        server.start();
-        OpenAiCompatibleHttpClientFactory clients = mock(OpenAiCompatibleHttpClientFactory.class);
-        when(clients.create(eq(OpenAiCompatibleSpeechRecognitionProvider.class), any(), any(), anyInt()))
-                .thenReturn(WebClient.builder().baseUrl(server.baseUrl() + "/").build());
-        provider = new OpenAiCompatibleSpeechRecognitionProvider(
-                new SpeechProviderProperties(
-                        "openai-compatible", server.baseUrl(), "platform-secret-key-1234", "whisper-1",
-                        "/audio/transcriptions", Duration.ofSeconds(5), 65_536, 0, 0, 1),
-                clients);
-    }
+	@BeforeEach
+	void setUp() {
+		server = new WireMockServer(0);
+		server.start();
+		OpenAiCompatibleHttpClientFactory clients = mock(OpenAiCompatibleHttpClientFactory.class);
+		when(clients.create(eq(OpenAiCompatibleSpeechRecognitionProvider.class), any(), any(), anyInt()))
+				.thenReturn(WebClient.builder().baseUrl(server.baseUrl() + "/").build());
+		provider = new OpenAiCompatibleSpeechRecognitionProvider(
+				new SpeechProviderProperties("openai-compatible", server.baseUrl(), "platform-secret-key-1234",
+						"whisper-1", "/audio/transcriptions", Duration.ofSeconds(5), 65_536, 0, 0, 1),
+				clients);
+	}
 
-    @AfterEach
-    void tearDown() {
-        server.stop();
-    }
+	@AfterEach
+	void tearDown() {
+		server.stop();
+	}
 
-    @Test
-    void sendsMultipartAndParsesUsageWithoutLeakingBearer() {
-        server.stubFor(post(urlEqualTo("/audio/transcriptions")).willReturn(aResponse()
-                .withStatus(200).withHeader("Content-Type", "application/json")
-                .withBody("""
-                        {"text":"hello world","language":"en","duration":1.2,
-                         "usage":{"input_tokens":4,"output_tokens":2}}
-                        """)));
-        ProviderInvocation invocation = new ProviderInvocation(
-                "openai-compatible", server.baseUrl(), "whisper-1", "runtime-secret-key-5678", false);
+	@Test
+	void sendsMultipartAndParsesUsageWithoutLeakingBearer() {
+		server.stubFor(post(urlEqualTo("/audio/transcriptions"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody("""
+						{"text":"hello world","language":"en","duration":1.2,
+						 "usage":{"input_tokens":4,"output_tokens":2},
+						 "segments":[{"start":0.0,"end":1.5,"text":"hello"},
+						             {"start":1.5,"end":3.2,"text":"world"},
+						             {"start":9.9,"text":"missing end, skipped"}]}
+						""")));
+		ProviderInvocation invocation = new ProviderInvocation("openai-compatible", server.baseUrl(), "whisper-1",
+				"runtime-secret-key-5678", false);
 
-        SpeechRecognitionProvider.Result result = provider.transcribe(new SpeechRecognitionProvider.Command(
-                UUID.randomUUID(), "checksum", "en-US", 1_100,
-                new byte[] {'R', 'I', 'F', 'F'}, "audio/wav", invocation)).block(Duration.ofSeconds(5));
+		SpeechRecognitionProvider.Result result = provider
+				.transcribe(new SpeechRecognitionProvider.Command(UUID.randomUUID(), "checksum", "en-US", 1_100,
+						new byte[]{'R', 'I', 'F', 'F'}, "audio/wav", invocation))
+				.block(Duration.ofSeconds(5));
 
-        assertThat(result.text()).isEqualTo("hello world");
-        assertThat(result.detectedLanguage()).isEqualTo("en");
-        assertThat(result.inputTokens()).isEqualTo(4);
-        assertThat(result.outputTokens()).isEqualTo(2);
-        assertThat(result.billedSeconds()).isEqualTo(2);
-        assertThat(result.sandbox()).isFalse();
-        server.verify(postRequestedFor(urlEqualTo("/audio/transcriptions"))
-                .withHeader("Authorization", equalTo("Bearer runtime-secret-key-5678")));
-        String multipart = server.getAllServeEvents().getFirst().getRequest().getBodyAsString();
-        assertThat(multipart)
-                .contains("name=\"file\"", "name=\"model\"", "whisper-1")
-                .contains("name=\"language\"", "en")
-                .contains("name=\"response_format\"", "verbose_json");
-    }
+		assertThat(result.text()).isEqualTo("hello world");
+		assertThat(result.detectedLanguage()).isEqualTo("en");
+		assertThat(result.inputTokens()).isEqualTo(4);
+		assertThat(result.outputTokens()).isEqualTo(2);
+		assertThat(result.billedSeconds()).isEqualTo(2);
+		// 句级时间戳（任务书 #41 尾条）：segments[] 解析，缺字段的条目静默跳过
+		assertThat(result.segments()).hasSize(2);
+		assertThat(result.segments().get(1).startSeconds()).isEqualTo(1.5);
+		assertThat(result.segments().get(1).endSeconds()).isEqualTo(3.2);
+		assertThat(result.segments().get(1).text()).isEqualTo("world");
+		assertThat(result.sandbox()).isFalse();
+		server.verify(postRequestedFor(urlEqualTo("/audio/transcriptions")).withHeader("Authorization",
+				equalTo("Bearer runtime-secret-key-5678")));
+		String multipart = server.getAllServeEvents().getFirst().getRequest().getBodyAsString();
+		assertThat(multipart).contains("name=\"file\"", "name=\"model\"", "whisper-1")
+				.contains("name=\"language\"", "en").contains("name=\"response_format\"", "verbose_json");
+	}
 
-    @Test
-    void sanitizesProviderErrorBody() {
-        server.stubFor(post(urlEqualTo("/audio/transcriptions")).willReturn(aResponse()
-                .withStatus(500).withBody("upstream-secret-detail")));
-        ProviderInvocation invocation = new ProviderInvocation(
-                "openai-compatible", server.baseUrl(), "whisper-1", "runtime-secret-key-5678", false);
+	@Test
+	void sanitizesProviderErrorBody() {
+		server.stubFor(post(urlEqualTo("/audio/transcriptions"))
+				.willReturn(aResponse().withStatus(500).withBody("upstream-secret-detail")));
+		ProviderInvocation invocation = new ProviderInvocation("openai-compatible", server.baseUrl(), "whisper-1",
+				"runtime-secret-key-5678", false);
 
-        assertThatThrownBy(() -> provider.transcribe(new SpeechRecognitionProvider.Command(
-                        UUID.randomUUID(), "checksum", "auto", 1_000,
-                        new byte[] {1}, "audio/wav", invocation)).block(Duration.ofSeconds(5)))
-                .isInstanceOfSatisfying(IntelligenceException.class, error -> {
-                    assertThat(error.code()).isEqualTo("provider_failure");
-                    assertThat(error.getMessage()).doesNotContain("upstream-secret-detail")
-                            .doesNotContain("runtime-secret-key-5678");
-                });
-    }
+		assertThatThrownBy(() -> provider.transcribe(new SpeechRecognitionProvider.Command(UUID.randomUUID(),
+				"checksum", "auto", 1_000, new byte[]{1}, "audio/wav", invocation)).block(Duration.ofSeconds(5)))
+				.isInstanceOfSatisfying(IntelligenceException.class, error -> {
+					assertThat(error.code()).isEqualTo("provider_failure");
+					assertThat(error.getMessage()).doesNotContain("upstream-secret-detail")
+							.doesNotContain("runtime-secret-key-5678");
+				});
+	}
 }

@@ -311,10 +311,25 @@ async function onAudioSelected(e: Event) {
   if (result) {
     transcriptionResult.value = result as unknown as SpeechTranscriptionItem
     transcriptionIdForStorage = result.id
-    if (result.text) {
-      cues.value = autoSplitSubtitles(result.text, (result as any).durationMs || 30000)
-      persistCues()
-    }
+    applyTranscriptionCues(result as unknown as SpeechTranscriptionItem)
+  }
+}
+
+/** 有句级时间戳（provider segments）直接成轴；缺失时回落字数占比启发式（可手动校准）。 */
+function applyTranscriptionCues(item: SpeechTranscriptionItem): void {
+  if (item.segments?.length) {
+    cues.value = item.segments.map((segment, index) => ({
+      id: `cue-${index + 1}`,
+      start: Math.round(segment.start * 10) / 10,
+      end: Math.round(segment.end * 10) / 10,
+      text: segment.text,
+    }))
+    persistCues()
+    return
+  }
+  if (item.transcriptText) {
+    cues.value = autoSplitSubtitles(item.transcriptText, item.durationMs || 30000)
+    restoreCues()
   }
 }
 
@@ -325,9 +340,8 @@ async function loadTranscriptionList() {
 
 function selectTranscription(item: SpeechTranscriptionItem) {
   transcriptionIdForStorage = item.id
-  if (item.transcriptText && item.durationMs > 0) {
-    cues.value = autoSplitSubtitles(item.transcriptText, item.durationMs)
-    restoreCues()
+  if ((item.segments?.length ?? 0) > 0 || (item.transcriptText && item.durationMs > 0)) {
+    applyTranscriptionCues(item)
   }
 }
 
