@@ -550,14 +550,14 @@ function handleResetAll(): void {
 .video-production {
   max-width: 800px;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: var(--space-lg) var(--space-md);
 }
 
 .steps-bar {
   display: flex;
   justify-content: center;
-  gap: 32px;
-  margin-bottom: 24px;
+  gap: var(--space-xl);
+  margin-bottom: var(--space-lg);
 }
 
 .step-dot {
@@ -591,8 +591,8 @@ function handleResetAll(): void {
 }
 
 .step-active .step-num {
-  background: var(--color-accent, #6366f1);
-  border-color: var(--color-accent, #6366f1);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
   color: #fff;
 }
 
@@ -603,11 +603,11 @@ function handleResetAll(): void {
 
 .step-label {
   font-size: 12px;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
 }
 
 .upload-area {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .hidden-input {
@@ -624,21 +624,21 @@ function handleResetAll(): void {
   border-radius: 12px;
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
   font-size: 14px;
 }
 
 .drop-zone:hover,
 .drop-zone-active {
-  border-color: var(--color-accent, #6366f1);
+  border-color: var(--color-accent);
   background: rgba(99, 102, 241, 0.05);
 }
 
 .preview-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
 }
 
 .preview-item {
@@ -713,11 +713,11 @@ function handleResetAll(): void {
 }
 
 .input-method-toggle:hover {
-  color: var(--color-accent, #6366f1);
+  color: var(--color-accent);
 }
 
 .toggle-caret {
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
   font-size: 12px;
 }
 
@@ -746,13 +746,13 @@ function handleResetAll(): void {
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
   font-size: 13px;
   cursor: pointer;
 }
 
 .reference-platform-tab-active {
-  background: var(--color-accent, #6366f1);
+  background: var(--color-accent);
   color: #fff;
 }
 
@@ -771,7 +771,7 @@ function handleResetAll(): void {
 .reference-input:focus,
 .topic-input:focus {
   outline: none;
-  border-color: var(--color-accent, #6366f1);
+  border-color: var(--color-accent);
 }
 
 .action-row-start {
@@ -812,24 +812,25 @@ function handleResetAll(): void {
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .form-field label {
   font-size: 13px;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
 }
 
 .form-field input,
 .form-field select,
 .form-field textarea {
+  min-height: 38px;
   padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -843,7 +844,7 @@ function handleResetAll(): void {
 .form-field select:focus,
 .form-field textarea:focus {
   outline: none;
-  border-color: var(--color-accent, #6366f1);
+  border-color: var(--color-accent);
 }
 
 .form-field-wide {
@@ -852,8 +853,8 @@ function handleResetAll(): void {
 
 .script-thumbnails {
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
   overflow-x: auto;
 }
 
@@ -868,7 +869,7 @@ function handleResetAll(): void {
 
 .stream-area {
   position: relative;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .stream-textarea {
@@ -886,11 +887,11 @@ function handleResetAll(): void {
 
 .stream-textarea:focus {
   outline: none;
-  border-color: var(--color-accent, #6366f1);
+  border-color: var(--color-accent);
 }
 
 .stream-loading {
-  border-color: var(--color-accent, #6366f1);
+  border-color: var(--color-accent);
 }
 
 .stream-badge {
@@ -901,14 +902,14 @@ function handleResetAll(): void {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--color-accent, #6366f1);
+  color: var(--color-accent);
 }
 
 .stream-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-accent, #6366f1);
+  background: var(--color-accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
@@ -918,7 +919,7 @@ function handleResetAll(): void {
 }
 
 .progress-area {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .progress-bar-track {
@@ -932,7 +933,7 @@ function handleResetAll(): void {
 .progress-bar-fill {
   height: 100%;
   border-radius: 3px;
-  background: var(--color-accent, #6366f1);
+  background: var(--color-accent);
   transition: width 0.3s ease;
 }
 
@@ -944,13 +945,13 @@ function handleResetAll(): void {
   width: 100%;
   max-width: 480px;
   border-radius: 12px;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .error-hint {
-  color: #f87171;
+  color: var(--color-danger);
   font-size: 13px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-sm);
 }
 
 .action-row {
@@ -963,7 +964,7 @@ function handleResetAll(): void {
   padding: 8px 20px;
   border-radius: 8px;
   border: none;
-  background: var(--color-accent, #6366f1);
+  background: var(--color-accent);
   color: #fff;
   font-size: 14px;
   cursor: pointer;
@@ -1001,7 +1002,7 @@ function handleResetAll(): void {
   gap: 4px;
   background: none;
   border: none;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
   font-size: 13px;
   cursor: pointer;
   padding: 0;
@@ -1019,12 +1020,12 @@ function handleResetAll(): void {
 }
 
 .card-head {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .eyebrow {
   font-size: 12px;
-  color: var(--color-accent, #6366f1);
+  color: var(--color-accent);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
@@ -1038,7 +1039,7 @@ function handleResetAll(): void {
 
 .field-note {
   font-size: 13px;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text-muted);
 }
 
 .lightbox-overlay {

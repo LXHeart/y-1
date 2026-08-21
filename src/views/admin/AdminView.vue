@@ -189,7 +189,7 @@
         <div><h3>账本流水</h3><p>双录账本（journal/posting），按组织筛选。真实 PSP 接入前仅 sandbox 流水。</p></div>
         <button class="refresh-btn" type="button" :disabled="journalLoading" @click="loadJournals">刷新</button>
       </div>
-      <div class="ops-filters" style="margin-bottom: 12px;">
+      <div class="ops-filters">
         <label>组织 ID
           <input v-model="journalOrgFilter" type="text" placeholder="留空 = 全量" @keyup.enter="loadJournals" />
         </label>
@@ -763,7 +763,7 @@ function formatBytes(value: number | null): string {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .panel-toolbar h3,
@@ -771,7 +771,11 @@ function formatBytes(value: number | null): string {
   margin: 0;
 }
 
-.search-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.search-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-xs); }
+/* 财务对账的组织筛选行（类名与运营处置台同名，但 scoped 不跨组件，须本地定义） */
+.ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.ops-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
+.ops-filters input { min-height: 32px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; }
 .search-toolbar input { min-width: min(320px, 64vw); min-height: 34px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); }
 
 .panel-toolbar h3 {
@@ -902,7 +906,7 @@ function formatBytes(value: number | null): string {
 
 .user-table th {
   text-align: left;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-md);
   font-weight: 600;
   color: var(--color-text-muted);
   border-bottom: 1px solid var(--color-border);
@@ -910,7 +914,7 @@ function formatBytes(value: number | null): string {
 }
 
 .user-table td {
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-md);
   color: var(--color-text);
   border-bottom: 1px solid var(--color-border);
 }

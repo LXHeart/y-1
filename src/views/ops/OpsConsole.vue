@@ -699,15 +699,17 @@ function checksOf(row: OpsPendingVerification) {
 </template>
 
 <style scoped>
-.ops { display: flex; flex-direction: column; gap: 14px; }
+.ops { display: flex; flex-direction: column; gap: var(--space-md); }
 .ops-head { display: flex; justify-content: space-between; align-items: flex-start; }
 .ops-title { margin: 0; font-size: 17px; }
 .ops-desc { margin: 4px 0 0; font-size: 12px; opacity: 0.62; }
 .ops-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--color-border); }
 .ops-tab { padding: 7px 14px; border: none; background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; opacity: 0.65; border-bottom: 2px solid transparent; }
 .ops-tab-on { opacity: 1; border-bottom-color: var(--color-accent, currentColor); }
-.ops-panel { display: flex; flex-direction: column; gap: 10px; }
-.ops-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.ops-panel { display: flex; flex-direction: column; gap: var(--space-sm); }
+/* 筛选行控件统一高度：主按钮与次要按钮/下拉不得出现 12px 级高度差（视觉审查 ⑤） */
+.ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; font-size: 12px; }
+.ops-filters select, .ops-filters button { min-height: 32px; }
 .ops-filters label { display: flex; align-items: center; gap: 6px; opacity: 0.8; }
 .ops-check { cursor: pointer; }
 .ops-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
@@ -726,7 +728,7 @@ function checksOf(row: OpsPendingVerification) {
 .ops-st-approved, .ops-st-succeeded, .ops-st-replayed { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 .ops-st-rejected, .ops-st-failed { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
 .ops-time { font-size: 11px; opacity: 0.6; white-space: nowrap; }
-.ops-item { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.ops-item { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: 8px; }
 .ops-item-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
 .ops-pos { font-size: 11px; opacity: 0.65; }
 .ops-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0; }
@@ -769,6 +771,6 @@ button { padding: 6px 14px; border: 1px solid var(--color-border); background: t
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .ops-danger { color: var(--color-danger); }
-.ops-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
+.ops-quiet { opacity: 0.75; font-size: 12px; padding: 5px 12px; }
 code { font-size: 11px; }
 </style>

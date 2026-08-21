@@ -879,7 +879,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .status-card,
 .progress-card {
   display: grid;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .control-card {
@@ -896,11 +896,11 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .result-steps,
 .result-steps-head {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .section-head {
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .section-kicker,

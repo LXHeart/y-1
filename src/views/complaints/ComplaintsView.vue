@@ -122,3 +122,127 @@ function time(value: string | null): string {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-'
 }
 </script>
+
+<!-- 本页此前完全依赖兄弟视图的 scoped 类名（.panel/.field 等各自定义），
+     实际渲染是浏览器默认样式——视觉审查 ⑥⑫ 的根因。样式全部走设计 token。 -->
+<style scoped>
+.complaints-view { display: grid; gap: var(--space-lg); }
+
+.section-header { display: grid; gap: var(--space-xs); }
+.section-title {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+.section-desc { margin: 0; font-size: 0.88rem; color: var(--color-text-muted); }
+
+.complaints-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+.panel {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.panel h3 { margin: 0; font-size: 1rem; color: var(--color-text); }
+
+.field { display: grid; gap: var(--space-xs); font-size: 0.88rem; color: var(--color-text-secondary); }
+.field select,
+.field input,
+.field textarea {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+.field textarea { resize: vertical; }
+
+.form-error {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+.form-notice {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+}
+
+.complaint-form button[type="submit"] {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--gradient-accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.complaint-form button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.quiet {
+  justify-self: start;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+.quiet:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.hint { margin: 0; color: var(--color-text-muted); font-size: 0.86rem; }
+
+.complaint-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-md); }
+.complaint-item {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
+}
+.complaint-item-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.complaint-item-head strong { font-size: 0.94rem; }
+.status { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+.status[data-status="open"] { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+.status[data-status="processing"] { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, transparent); }
+.status[data-status="resolved"] { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+.status[data-status="dismissed"] { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); }
+
+.meta { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); }
+.desc { margin: 0; font-size: 0.9rem; color: var(--color-text); }
+.resolution {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+@media (max-width: 960px) {
+  .complaints-grid { grid-template-columns: 1fr; }
+}
+</style>

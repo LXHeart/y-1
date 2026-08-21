@@ -700,8 +700,8 @@ watch(grasslandNavigationTarget, async (target) => {
 </template>
 
 <style scoped>
-.grassland { display: flex; flex-direction: column; gap: 16px; }
-.gl-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.grassland { display: flex; flex-direction: column; gap: var(--space-md); }
+.gl-header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-md); flex-wrap: wrap; }
 .gl-header h2 { margin: 0; font-size: 20px; }
 .gl-sub { margin: 4px 0 0; font-size: 13px; opacity: 0.7; }
 .gl-side-switch { display: flex; gap: 4px; }
@@ -715,10 +715,10 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-alert-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .gl-sub-block { margin-top: 10px; }
 .gl-sub-block h5 { margin: 0; font-size: 12px; opacity: 0.75; }
-.gl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.gl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md); }
 .gl-card {
   border: 1px solid var(--color-border); border-radius: 10px;
-  padding: 14px; display: flex; flex-direction: column; gap: 10px;
+  padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm);
 }
 .gl-card-wide { grid-column: 1 / -1; }
 .gl-card h3 { margin: 0; font-size: 15px; }
