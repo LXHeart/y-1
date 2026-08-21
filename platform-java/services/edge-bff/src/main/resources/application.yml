@@ -274,6 +274,11 @@ edge:
     - path: /api/ops
       upstream: marketplace
       enabled: ${EDGE_ROUTE_OPS_MARKETPLACE:true}
+    # 用户举报/投诉工单（PRD §11.8）→ marketplace。/api/complaints（提交/我的投诉）；
+    # 处置台走上方 /api/ops 前缀。
+    - path: /api/complaints
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_COMPLAINTS_MARKETPLACE:true}
     # 推荐官声誉（PRD 五/六）→ marketplace。声誉指标全部从撮合事实派生，故落在 marketplace 而非 identity。
     - path: /api/reputation
       upstream: marketplace
