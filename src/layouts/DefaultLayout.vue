@@ -368,7 +368,7 @@ import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from '../types/settings'
 
-type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'moments' | 'image-gen' | 'comedy' | 'video-production' | 'commerce' | 'grassland' | 'ops' | 'admin'
+type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'moments' | 'image-gen' | 'comedy' | 'video-production' | 'complaints' | 'commerce' | 'grassland' | 'ops' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 const route = useRoute()
 const router = useRouter()

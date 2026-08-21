@@ -71,7 +71,9 @@ async function loadPage(reset: boolean): Promise<void> {
       limit: 20,
       before: reset ? undefined : nextBefore.value || undefined,
     })
-    items.value = reset ? page.items : [...items.value, ...page.items]
+    // 兜底：上游缺 items（异常 envelope/桩数据）时按空页处理，避免渲染层炸 undefined.length
+    const fresh = page.items ?? []
+    items.value = reset ? fresh : [...items.value, ...fresh]
     nextBefore.value = page.nextBefore || null
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '生成记录加载失败'

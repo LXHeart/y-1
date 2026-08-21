@@ -55,6 +55,7 @@ function dataFor(url: string): unknown {
   if (url === '/api/me/invitations') return []
   if (url.startsWith('/api/tasks/feed')) return { items: [], nextCursor: null, hasMore: false }
   if (url.startsWith('/api/tasks')) return []
+  if (url.startsWith('/api/creation-generations')) return { items: [], nextBefore: null }
   if (url.startsWith('/api/finance/accounts')) return { organizationId: 'org-1', balanceCents: 100000 }
   return {}
 }
