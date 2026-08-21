@@ -37,6 +37,9 @@ class ContentSafetyStreamIntegrationIT extends IntelligenceItSupport {
     private AiCapabilityAdapter ai;
 
     @MockitoBean
+    private com.grassland.intelligence.ai.run.FrozenTextExecutionService frozenText;
+
+    @MockitoBean
     private CreditsClient credits;
 
     @BeforeEach
@@ -114,12 +117,15 @@ class ContentSafetyStreamIntegrationIT extends IntelligenceItSupport {
     @Test
     @DisplayName("朋友圈文案（JSON 请求 SSE）：copy 提取 → safety 帧追加")
     void momentsStreamAppendsSafetyFrame() {
-        // moments 的 completeText 需要 {copy,...} JSON（parseResult 校验）——单独 stub。
-        when(ai.completeText(any(TextCompletionCommand.class)))
-                .thenReturn(Mono.just("{\"copy\":\"" + GENERATED + "\",\"imageOrder\":[],\"captions\":[]}"));
+        // moments 独立模式已迁执行环（GL-P3-AI-001 尾巴清偿）——桩环出口返回含命中词的 copy。
+        when(frozenText.executeIndependent(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any()))
+                .thenReturn(Mono.just(new com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<>(
+                        new com.grassland.intelligence.moments.MomentsGenerationService.MomentsResult(
+                                GENERATED, java.util.List.of(), java.util.List.of()),
+                        null, "qwen", "qwen-plus", 1, false)));
         String stream = run("/api/moments-generation/generate",
                 Map.of("topic", "甜品店开业", "style", "lifestyle"));
-        // moments 独立模式经 completeText（非流式）→ service result 帧 copy → controller 流尾 safety 帧
+        // moments 独立模式经执行环（非流式聚合）→ service result 帧 copy → controller 流尾 safety 帧
         assertThat(stream).contains("\"type\":\"safety\"");
         assertThat(stream).contains("absolute_claims");
     }
