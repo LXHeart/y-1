@@ -114,7 +114,7 @@ async function recheck(): Promise<void> {
 .sfp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sfp-chip { font-size: 11px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
 .sfp-chip-high { background: color-mix(in srgb, var(--color-danger) 18%, transparent); color: var(--color-danger); }
-.sfp-chip-medium { background: color-mix(in srgb, var(--color-warning, #d97706) 18%, transparent); color: var(--color-warning, #d97706); }
+.sfp-chip-medium { background: color-mix(in srgb, var(--color-warning) 18%, transparent); color: var(--color-warning); }
 .sfp-chip-low { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-accent); }
 .sfp-match { font-size: 12px; word-break: break-all; }
 .sfp-deep { font-size: 10px; opacity: 0.6; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }

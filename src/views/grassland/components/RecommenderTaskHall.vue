@@ -35,10 +35,10 @@
           <td>{{ t.store ? [t.store.storeName, t.store.city].filter(Boolean).join(' · ') : '—' }}</td>
           <td>{{ t.platform || '—' }}</td>
           <td>
-            <span v-if="t.contentForm === 'interaction'" class="gl-tag gl-tag-freebie">点赞互动</span>
+            <span v-if="t.contentForm === 'interaction'" class="badge badge-warning">点赞互动</span>
             <!-- 任务书 #25：阶梯任务先看档位规则，再显示最高赏金（= 最高档可预留金额） -->
             <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" />
-            <span v-if="t.freebieDepositCents" class="gl-tag gl-tag-freebie"
+            <span v-if="t.freebieDepositCents" class="badge badge-warning"
                   :title="`报名被接受时从钱包预付 ¥${(t.freebieDepositCents / 100).toFixed(2)}，达标全额返还`">
               霸王餐 · 需预付 ¥{{ (t.freebieDepositCents / 100).toFixed(2) }} · 达标全额返还
             </span>
@@ -102,19 +102,9 @@ select {
   letter-spacing: 0;
 }
 
-.gl-tag-freebie {
-  display: inline-block;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--color-warning, #d97706) 16%, transparent);
-  color: var(--color-warning, #d97706);
-  white-space: nowrap;
-}
-
 .gl-freebie-warn {
   margin: 4px 0 0;
-  color: var(--color-danger, #dc2626);
+  color: var(--color-danger);
   font-size: 12px;
 }
 </style>

@@ -14,6 +14,8 @@
   --color-accent-warm: #f59e0b;
   --color-danger: #ef6b6b;
   --color-success: #34d399;
+  --color-warning: #f59e0b;
+  --color-info: #60a5fa;
   --color-overlay: rgba(7, 9, 16, 0.75);
   --color-surface-highlight: rgba(139, 92, 246, 0.08);
   --color-border-accent: rgba(139, 92, 246, 0.24);
@@ -82,6 +84,8 @@
   --color-accent-warm: #f59e0b;
   --color-danger: #dc5b5b;
   --color-success: #10b981;
+  --color-warning: #b45309;
+  --color-info: #2563eb;
   --color-overlay: rgba(20, 16, 40, 0.36);
   --color-surface-highlight: rgba(124, 58, 237, 0.06);
   --color-border-accent: rgba(124, 58, 237, 0.2);
@@ -164,6 +168,28 @@ img {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
+
+/* 状态徽标基类：状态/金额/等级等小标签统一走这套，色相语义固定
+   （neutral 灰、success 绿、warning 琥珀、danger 红、info 蓝、accent 紫），
+   页面不得再自造高饱和实底标签。 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.badge-neutral { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); }
+.badge-success { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+.badge-warning { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+.badge-danger { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
+.badge-info { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, transparent); }
+.badge-accent { color: var(--color-accent-2); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 
 .fade-in {
   animation: fade-in var(--duration-normal) var(--ease-out);

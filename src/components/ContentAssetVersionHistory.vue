@@ -141,5 +141,5 @@ onMounted(async () => {
 .cavh-grid { display: grid; grid-template-columns: 84px 1fr 1fr; gap: 6px; padding: 3px 4px; border-radius: 4px; }
 .cavh-compare-head { font-weight: 600; opacity: 0.85; }
 .cavh-field { opacity: 0.7; }
-.cavh-changed { background: color-mix(in srgb, var(--color-warning, #b36b00) 12%, transparent); }
+.cavh-changed { background: color-mix(in srgb, var(--color-warning) 12%, transparent); }
 </style>

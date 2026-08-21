@@ -20,7 +20,7 @@
 
       <div v-if="offer" class="offer-card">
         <div class="offer-main">
-          <span class="status-chip">{{ offer.status === 'published' ? '可购买' : offer.status }}</span>
+          <span class="badge" :class="offer.status === 'published' ? 'badge-success' : 'badge-neutral'">{{ offer.status === 'published' ? '可购买' : offer.status }}</span>
           <h3>{{ offer.title }}</h3>
           <p>{{ offer.description || '门店到店套餐' }}</p>
           <dl>
@@ -54,7 +54,7 @@
       <div v-else class="order-list">
         <section v-for="order in orders" :key="order.id" class="order-card">
           <header>
-            <div><strong>{{ order.packageTitle }}</strong><span>{{ statusLabel(order.status) }}</span></div>
+            <div><strong>{{ order.packageTitle }}</strong><span class="badge" :class="statusClass(order.status)">{{ statusLabel(order.status) }}</span></div>
             <b>¥{{ yuan(order.priceCents) }}</b>
           </header>
           <p class="meta">
@@ -331,12 +331,20 @@ function statusLabel(status: ConsumerOrder['status']): string {
   return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '核销分账中', redeemed: '已核销',
     refund_pending: '退款处理中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[status]
 }
+
+/** 订单状态徽标语义色：完成绿 / 进行中琥珀 / 异常红 / 终态灰。 */
+function statusClass(status: ConsumerOrder['status']): string {
+  if (status === 'paid' || status === 'redeeming' || status === 'redeemed') return 'badge-success'
+  if (status === 'pending_payment' || status === 'refund_pending' || status === 'partially_refunded') return 'badge-warning'
+  if (status === 'after_sales_disputed' || status === 'payment_failed' || status === 'cancelled') return 'badge-danger'
+  return 'badge-neutral'
+}
 </script>
 
 <style scoped>
 .commerce-view { display: grid; gap: 16px; }
 .commerce-hero, .panel-head, .lookup-row, .offer-card, .order-card > header, .actions, .review-box { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.commerce-hero { padding: 20px; border-radius: 18px; color: white; background: linear-gradient(135deg, #1f7a55, #5865d8); }
+.commerce-hero { padding: 20px; border-radius: 18px; color: white; background: var(--gradient-accent); }
 .commerce-hero h2, .panel h3, .order-card p { margin: 0; }
 .commerce-hero p { margin: 4px 0 0; opacity: .82; }
 .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
@@ -357,14 +365,14 @@ dt, small, .meta { font-size: 12px; opacity: .68; } dd { margin: 4px 0 0; font-w
 .slot-picker label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; font-size: 13px; }
 .slot-picker label.soldout { opacity: .45; }
 .buy-box { width: 220px; padding: 16px; display: grid; align-content: center; gap: 10px; border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
-.status-chip, .order-card header span { display: inline-flex; padding: 3px 8px; margin-left: 8px; border-radius: 999px; font-size: 12px; background: #daf4e7; color: #196644; }
+.order-card header span { margin-left: var(--space-xs); }
 .notice { margin: 0; padding: 10px 14px; border-radius: 10px; }.notice.error, .inline-error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }.notice.ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
-.payment-hint { margin: 0; font-size: 13px; color: #8a6116; background: color-mix(in srgb, #e0a020 12%, transparent); padding: 8px 12px; border-radius: 8px; }
+.payment-hint { margin: 0; font-size: 13px; color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, transparent); padding: 8px 12px; border-radius: 8px; }
 .order-list { display: grid; gap: 12px; margin-top: 14px; }
 .order-card { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: 12px; }
-.redeem-box { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 10px; background: #f7fbf8; color: #173b2d; }
+.redeem-box { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 10px; background: color-mix(in srgb, var(--color-success) 7%, transparent); color: var(--color-text); }
 .redeem-box img { width: 96px; height: 96px; }.redeem-box div { display: grid; gap: 5px; }.redeem-box code { font-size: 16px; font-weight: 800; }
-.dispute-box { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: color-mix(in srgb, #a05b00 10%, transparent); }
+.dispute-box { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
 .dispute-box.resolved { background: color-mix(in srgb, var(--color-success) 10%, transparent); }
 .dispute-box.rejected { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
 .dispute-box p { margin: 0; }

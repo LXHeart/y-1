@@ -839,15 +839,15 @@ function formatBytes(value: number | null): string {
 }
 
 .approve-btn {
-  border: 1px solid rgba(22, 163, 74, 0.35);
-  background: rgba(22, 163, 74, 0.08);
-  color: #15803d;
+  border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  color: var(--color-success);
 }
 
 .reject-btn {
-  border: 1px solid rgba(220, 38, 38, 0.3);
-  background: rgba(220, 38, 38, 0.07);
-  color: #b91c1c;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  color: var(--color-danger);
 }
 
 .section-header {
@@ -878,8 +878,8 @@ function formatBytes(value: number | null): string {
 .error-msg {
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  background: rgba(239, 107, 107, 0.1);
-  border: 1px solid rgba(239, 107, 107, 0.2);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
   font-size: 0.86rem;
   margin: 0;
@@ -949,8 +949,8 @@ function formatBytes(value: number | null): string {
 }
 
 .role-admin {
-  background: rgba(245, 158, 11, 0.15);
-  color: #d97706;
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
 }
 
 .role-user {

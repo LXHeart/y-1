@@ -424,13 +424,13 @@ watch(grasslandNavigationTarget, async (target) => {
             <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }" @click="selectTask(t.id)">
               {{ t.title }}
             </button>
-            <span class="gl-tag">{{ taskStatusLabel(t.status) }}</span>
-            <span v-if="t.bountyCents" class="gl-tag gl-tag-money">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
+            <span class="badge badge-neutral">{{ taskStatusLabel(t.status) }}</span>
+            <span v-if="t.bountyCents" class="badge badge-success">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
             <!-- 任务书 #25：阶梯任务在状态/赏金标签旁展示 compact 档位摘要（赏金 = 最高档预留） -->
             <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" compact />
-            <span v-if="t.minRecommenderLevel > 1" class="gl-tag">Lv{{ t.minRecommenderLevel }}+</span>
-            <span v-if="t.autoAcceptMinLevel" class="gl-tag gl-tag-auto-accept">Lv{{ t.autoAcceptMinLevel }}+ 自动通过中</span>
-            <span v-if="t.storeId" class="gl-tag">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>
+            <span v-if="t.minRecommenderLevel > 1" class="badge badge-neutral">Lv{{ t.minRecommenderLevel }}+</span>
+            <span v-if="t.autoAcceptMinLevel" class="badge badge-info">Lv{{ t.autoAcceptMinLevel }}+ 自动通过中</span>
+            <span v-if="t.storeId" class="badge badge-neutral">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>
             <!-- 草稿：编辑 / 提交审核 / 取消 -->
             <template v-if="t.status === 'draft'">
               <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
@@ -738,8 +738,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-list li { display: flex; align-items: center; gap: 8px; }
 .gl-link { border: none; background: none; padding: 2px 0; cursor: pointer; text-align: left; font-size: 13px; text-decoration: underline; }
 .gl-link.active { font-weight: 600; }
-.gl-tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--color-surface-strong); }
-.gl-tag-money { background: color-mix(in srgb, var(--color-success) 16%, transparent); color: var(--color-success); }
 .gl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .gl-table th, .gl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
 .gl-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -751,7 +749,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-filter { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .gl-filter label { display: flex; align-items: center; gap: 6px; opacity: 0.85; }
 .gl-filter select { padding: 4px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-.gl-tag-auto-accept { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-accent); }
 .gl-batch-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; font-size: 13px; }
 .gl-batch-select-all { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .gl-th-check { width: 32px; }

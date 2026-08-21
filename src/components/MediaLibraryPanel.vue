@@ -596,7 +596,7 @@ function formatSize(bytes: number | null | undefined): string {
 .lib-semantic-search input { flex: 1; }
 .lib-semantic-fallback {
   margin: 0; padding: 6px 10px; border-radius: 6px; font-size: 12px;
-  background: color-mix(in srgb, var(--color-warning, #b36b00) 12%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
 .lib-empty { margin: 0; font-size: 13px; opacity: 0.6; }
 </style>

@@ -950,7 +950,7 @@ textarea { resize: vertical; min-height: 76px; }
 .primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: #fff; font-weight: 700; }
 .secondary-command { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }
 .primary-command:disabled { opacity: 0.45; cursor: not-allowed; }
-.planned-state { color: var(--color-warning, #a16207); font-size: 0.82rem; }
+.planned-state { color: var(--color-warning); font-size: 0.82rem; }
 .error-state { margin: 0; color: var(--color-danger); font-size: 0.84rem; }
 @media (max-width: 760px) {
   .platform-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
