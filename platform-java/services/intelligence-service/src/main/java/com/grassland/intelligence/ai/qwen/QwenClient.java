@@ -41,12 +41,13 @@ public class QwenClient implements AiCapabilityAdapter {
     private final WebClient webClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public QwenClient(PlatformModelConfig config) {
+    public QwenClient(PlatformModelConfig config, com.grassland.intelligence.ai.DnsPinningResolver dnsPinning) {
         this.config = config;
-        this.webClient = ManagedWebClientFactory.builder(
-                        QwenClient.class,
-                        config.connectTimeout(), config.readTimeout(), 256 * 1024)
-                .build();
+        // GL-P3-AI-001 尾巴：平台默认 Qwen 通道同样固定连接地址——创建时解析一次（env 固定表
+        // 优先），连接期不再走系统 DNS，与 BYOK/平台 provider 执行路径同口径。
+        this.webClient = com.grassland.intelligence.ai.OpenAiCompatibleHttpClientFactory.pinnedPlatformClient(
+                QwenClient.class, config.baseUrl(), dnsPinning,
+                config.readTimeout(), 256 * 1024);
     }
 
     @Override

@@ -47,7 +47,8 @@ class QwenClientTest {
         env.setProperty("ai.qwen.base-url", wireMock.baseUrl());
         env.setProperty("ai.qwen.api-key", "sk-test");
         env.setProperty("ai.qwen.model", "qwen-plus");
-        client = new QwenClient(new PlatformModelConfig(env));
+        client = new QwenClient(new PlatformModelConfig(env),
+                com.grassland.intelligence.ai.DnsPinningResolver.create());
     }
 
     @AfterAll

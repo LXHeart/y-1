@@ -59,6 +59,17 @@ public final class ManagedWebClientFactory {
 
     public static WebClient.Builder builder(
             Class<?> owner, Duration connectTimeout, Duration responseTimeout, int maxResponseBytes) {
+        return builder(owner, connectTimeout, responseTimeout, maxResponseBytes, null);
+    }
+
+    /**
+     * 带 Netty 地址解析器的构建入口：调用方（DNS pinning 场景）以固定地址解析替换系统 DNS，
+     * 关闭「URL 校验后、连接前」的 DNS rebinding TOCTOU 窗口；{@code resolver} 为 null 时与
+     * 四参版完全一致。
+     */
+    public static WebClient.Builder builder(
+            Class<?> owner, Duration connectTimeout, Duration responseTimeout, int maxResponseBytes,
+            io.netty.resolver.AddressResolverGroup<?> resolver) {
         String clientName = normalizeName(owner.getSimpleName());
         Duration boundedConnectTimeout = requirePositive(connectTimeout, "connectTimeout");
         Duration boundedTimeout = requirePositive(responseTimeout, "responseTimeout");
@@ -76,6 +87,9 @@ public final class ManagedWebClientFactory {
                 .responseTimeout(boundedTimeout)
                 .compress(true)
                 .followRedirect(false);
+        if (resolver != null) {
+            httpClient = httpClient.resolver(resolver);
+        }
         return WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .exchangeStrategies(EXCHANGE_STRATEGIES.computeIfAbsent(

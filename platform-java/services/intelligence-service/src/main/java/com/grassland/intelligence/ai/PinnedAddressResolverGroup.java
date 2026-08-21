@@ -16,7 +16,7 @@ import java.util.List;
  * 确保校验后的请求不会再次走系统 DNS，关闭 DNS rebinding 的 TOCTOU 窗口。
  * 解析时还会拒绝与预期不符的 host，防止连接被重定向到其它目标。
  */
-final class PinnedAddressResolverGroup extends AddressResolverGroup<InetSocketAddress> {
+public final class PinnedAddressResolverGroup extends AddressResolverGroup<InetSocketAddress> {
 
     private final String expectedHost;
     private final List<InetAddress> addresses;
@@ -24,6 +24,14 @@ final class PinnedAddressResolverGroup extends AddressResolverGroup<InetSocketAd
     PinnedAddressResolverGroup(String expectedHost, List<InetAddress> addresses) {
         this.expectedHost = expectedHost;
         this.addresses = List.copyOf(addresses);
+    }
+
+    /** 平台 provider 出站固定入口（GL-P3-AI-001 尾巴）：host 校验 + 地址集合固定。 */
+    public static PinnedAddressResolverGroup forHost(String expectedHost, List<InetAddress> addresses) {
+        if (expectedHost == null || expectedHost.isBlank() || addresses == null || addresses.isEmpty()) {
+            throw new IllegalArgumentException("expectedHost and addresses are required");
+        }
+        return new PinnedAddressResolverGroup(expectedHost, addresses);
     }
 
     @Override

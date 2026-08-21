@@ -102,7 +102,9 @@ public class TextCompletionClient {
 
     private WebClient platformClient(String baseUrl) {
         platformProviderPolicy.validateBaseUrl(baseUrl);
-        return ManagedWebClientFactory.create(TextCompletionClient.class, withTrailingSlash(baseUrl));
+        // GL-P3-AI-001 尾巴：平台路径同样固定连接地址（env 固定表优先，否则创建时解析一次）
+        return com.grassland.intelligence.ai.OpenAiCompatibleHttpClientFactory.pinnedPlatformClient(
+                TextCompletionClient.class, baseUrl, dnsPinning, timeout, 2 * 1024 * 1024);
     }
 
     private WebClient pinnedByokClient(String baseUrl) {
