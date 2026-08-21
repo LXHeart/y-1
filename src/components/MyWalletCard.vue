@@ -25,6 +25,7 @@ const ENTRY_LABEL: Record<WalletEntryType, string> = {
   clawback: '争议冲正扣回',
   freebie_reserve: '霸王餐押金预付',
   freebie_refund: '霸王餐押金返还',
+  judge_commission: '审判现金佣金',
 }
 
 const balanceYuan = computed(() =>

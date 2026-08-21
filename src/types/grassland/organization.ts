@@ -399,7 +399,7 @@ export interface SaveBrandProfileInput {
 
 /** 钱包流水类型。金额符号由类型决定：入账为正，提现/冲正/押金预付为负。 */
 export type WalletEntryType = 'task_payout' | 'commerce_commission' | 'withdrawal' | 'clawback'
-  | 'freebie_reserve' | 'freebie_refund'
+  | 'freebie_reserve' | 'freebie_refund' | 'judge_commission'
 
 /**
  * 钱包流水行。
@@ -437,6 +437,7 @@ export interface WalletMonthlyIncome {
   commerceCommissionCents: number
   withdrawalCents: number
   clawbackCents: number
+  judgeCommissionCents: number
   grossCents: number
   feeCents: number
   netCents: number

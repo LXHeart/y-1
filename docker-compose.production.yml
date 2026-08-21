@@ -110,6 +110,9 @@ services:
       FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:?FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR is required}
       FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:?FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR is required}
       FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:?FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION is required}
+      # ADR-D15 积分 / ADR-D18 现金佣金：生产消费端与金额须显式配置（现金启用前须财务批准；
+      # 默认积分路径关闭会静默丢激励事件，故消费端默认 true、金额走 trust 默认/显式注入）。
+      FINANCE_JUDGE_REWARD_CONSUMER_ENABLED: ${FINANCE_JUDGE_REWARD_CONSUMER_ENABLED:-true}
     volumes:
       - *kafka-volume
     depends_on: !override
@@ -121,6 +124,9 @@ services:
     environment:
       <<: [*kafka-production, *temporal-production, *otel-production, *structured-logging]
       LOGGING_STRUCTURED_ECS_SERVICE_NAME: trust-service
+      # ADR-D15：每票积分默认 20；ADR-D18：每票现金佣金默认 0=关闭——生产启用现金须财务批准后显式注入。
+      TRUST_JUDGE_REWARD_CREDITS_PER_VOTE: ${TRUST_JUDGE_REWARD_CREDITS_PER_VOTE:-20}
+      TRUST_JUDGE_COMMISSION_CENTS_PER_VOTE: ${TRUST_JUDGE_COMMISSION_CENTS_PER_VOTE:-0}
     volumes:
       - *kafka-volume
       - type: bind

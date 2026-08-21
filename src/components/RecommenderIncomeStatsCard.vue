@@ -82,7 +82,7 @@ watch([from, to], () => {
     <table v-else class="ris-table">
       <thead>
         <tr>
-          <th>月份</th><th>任务佣金</th><th>到店佣金</th><th>提现</th><th>冲正</th>
+          <th>月份</th><th>任务佣金</th><th>到店佣金</th><th>审判佣金</th><th>提现</th><th>冲正</th>
           <th>毛额</th><th>平台抽成</th><th>净额</th>
         </tr>
       </thead>
@@ -91,6 +91,7 @@ watch([from, to], () => {
           <td>{{ m.month }}</td>
           <td>{{ formatCents(m.taskPayoutCents) }}</td>
           <td>{{ formatCents(m.commerceCommissionCents) }}</td>
+          <td>{{ formatCents(m.judgeCommissionCents) }}</td>
           <td>{{ formatSignedCents(m.withdrawalCents) }}</td>
           <td>{{ formatSignedCents(m.clawbackCents) }}</td>
           <td>{{ formatCents(m.grossCents) }}</td>

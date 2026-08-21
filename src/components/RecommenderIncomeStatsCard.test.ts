@@ -27,6 +27,7 @@ const STATISTICS = {
     commerceCommissionCents: 1200,
     withdrawalCents: -2000,
     clawbackCents: -1000,
+    judgeCommissionCents: 300,
     grossCents: 9800,
     feeCents: 600,
     netCents: 6200,
