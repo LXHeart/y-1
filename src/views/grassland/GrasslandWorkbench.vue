@@ -18,6 +18,7 @@ import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import OrgTeamCard from '../../components/OrgTeamCard.vue'
 import AiOrgBudgetPanel from '../../components/AiOrgBudgetPanel.vue'
 import OrgCreationAuditPanel from '../../components/OrgCreationAuditPanel.vue'
+import RecommenderShareCard from '../../components/RecommenderShareCard.vue'
 import AiOrgProviderKeysPanel from '../../components/AiOrgProviderKeysPanel.vue'
 import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
@@ -582,6 +583,11 @@ watch(grasslandNavigationTarget, async (target) => {
       <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
       <article class="gl-card gl-card-wide">
         <MyRecommenderProfileCard />
+      </article>
+
+      <!-- 推广链接/二维码生成（消费者归因闭环的推荐官侧入口） -->
+      <article class="gl-card gl-card-wide">
+        <RecommenderShareCard />
       </article>
 
       <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
