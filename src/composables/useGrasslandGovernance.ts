@@ -8,7 +8,7 @@ import type {
   DisputeCase, DeferredDisputeRequest, AdjudicationSnapshot, OpenDisputeResult,
   Judge, JudgeVote, VoteChoice, AdminJudge, AdminJudgePage, UpdateJudgeAdmissionInput,
   OpsCase, OpsCaseStatus, OpsCaseDetail, OpsCaseAction, OpsActionKind, OpsDltMessage,
-  OpsPendingVerification, OpsCommentReview,
+  OpsPendingVerification, OpsCommentReview, OpsComplaint,
   MerchantProfile, CreateMerchantProfileInput, MerchantAttachment, MerchantAttachmentType,
   MediaUploadTicket, MediaMetadata,
   ContentAsset, ContentAssetCategory, ContentAssetGrant, ContentAssetVersion, ContentLibraryType,
@@ -241,6 +241,18 @@ export function useGrasslandGovernance(run: RunFn) {
     run(() => request<Record<string, unknown>>(
       `/api/ops/pending-verifications/${encodeURIComponent(submissionId)}/override`,
       { method: 'POST', body: JSON.stringify({ status, note }) },
+    ))
+
+  /** 投诉工单处置台（PRD §11.8）：队列按状态（默认 open）。 */
+  const listOpsComplaints = (status: 'open' | 'processing' | 'resolved' | 'dismissed' = 'open') =>
+    run(() => request<{ status: string; items: OpsComplaint[] }>(
+      `/api/ops/complaints?status=${status}`))
+
+  /** 处置投诉：action ∈ processing/resolved/dismissed；办结类必填 note。 */
+  const handleOpsComplaint = (id: string, action: 'processing' | 'resolved' | 'dismissed', note?: string) =>
+    run(() => request<Record<string, unknown>>(
+      `/api/ops/complaints/${encodeURIComponent(id)}/handle`,
+      { method: 'POST', body: JSON.stringify({ action, note: note?.trim() || undefined }) },
     ))
 
   /** 履约自由文本复核队列（之九遗留清偿 + 履约硬门槛）：词库 advisory 命中的评论/备注；默认 open，可查复核史。 */
@@ -731,6 +743,7 @@ export function useGrasslandGovernance(run: RunFn) {
     executeOpsAction, listOpsDlt, executeOpsDltAction,
     listOpsPendingVerifications, overrideOpsVerification,
     listOpsCommentReviews, reviewOpsComment,
+    listOpsComplaints, handleOpsComplaint,
     getMerchantProfile, createMerchantProfile, updateMerchantProfile, submitMerchantProfile,
     listMerchantAttachments, uploadMerchantAttachment, deleteMerchantAttachment,
     uploadContentAssetFile, listContentAssets, recommendContentAssets, createContentAsset, getContentAsset,

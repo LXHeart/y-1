@@ -164,3 +164,27 @@ export function parseVerificationChecks(raw: string | null | undefined): OpsVeri
     return []
   }
 }
+
+/** 投诉工单（PRD §11.8 / marketplace V49）：用户侧通用举报，客服处置台承接。 */
+export interface OpsComplaint {
+  id: string
+  reporterAccountId: string
+  targetType: 'task' | 'submission' | 'content' | 'order' | 'user' | 'other'
+  targetId: string | null
+  reason: 'spam' | 'fraud' | 'inappropriate_content' | 'rights_infringement' | 'other'
+  description: string
+  status: 'open' | 'processing' | 'resolved' | 'dismissed'
+  handlerAccountId?: string | null
+  resolutionNote?: string | null
+  createdAt: string | null
+  handledAt?: string | null
+}
+
+export const OPS_COMPLAINT_TARGET_LABELS: Record<OpsComplaint['targetType'], string> = {
+  task: '任务', submission: '履约交付物', content: '内容', order: '订单', user: '用户', other: '其他',
+}
+
+export const OPS_COMPLAINT_REASON_LABELS: Record<OpsComplaint['reason'], string> = {
+  spam: '垃圾信息', fraud: '涉嫌欺诈', inappropriate_content: '违规内容',
+  rights_infringement: '侵权', other: '其他',
+}

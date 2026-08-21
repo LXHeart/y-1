@@ -69,6 +69,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/grassland/GrasslandWorkbench.vue'),
       },
       {
+        path: 'complaints',
+        name: 'complaints',
+        component: () => import('../views/complaints/ComplaintsView.vue'),
+      },
+      {
         path: 'ops',
         name: 'ops',
         component: () => import('../views/ops/OpsConsole.vue'),

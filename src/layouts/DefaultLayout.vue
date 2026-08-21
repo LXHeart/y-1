@@ -221,6 +221,19 @@
           </svg>
           视频制作
         </button>
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentViewName === 'complaints' }"
+          :aria-current="currentViewName === 'complaints' ? 'page' : undefined"
+          type="button"
+          @click="navigateTo('complaints')"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 2a4.5 4.5 0 00-4.5 4.5c0 1.4.6 2.6 1.6 3.4V12l1.7-1h2.4l1.7 1V9.9a4.5 4.5 0 00-.9-7.9A4.5 4.5 0 008 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <path d="M6.2 6.5h3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          举报投诉
+        </button>
         </div>
         <button
           class="nav-tab"

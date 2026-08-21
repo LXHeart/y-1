@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useGrassland } from '../../composables/useGrassland'
-import { parseVerificationChecks } from '../../types/grassland'
+import { parseVerificationChecks, OPS_COMPLAINT_REASON_LABELS, OPS_COMPLAINT_TARGET_LABELS } from '../../types/grassland'
 import type {
   OpsActionKind,
   OpsCase,
+  OpsComplaint,
   OpsCaseDetail,
   OpsCaseSourceKind,
   OpsCaseStatus,
@@ -30,7 +31,7 @@ const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
 
 const grassland = useGrassland()
 
-type Tab = 'cases' | 'dlt' | 'pending' | 'comments'
+type Tab = 'cases' | 'dlt' | 'pending' | 'comments' | 'complaints'
 const tab = ref<Tab>('cases')
 
 const cases = ref<OpsCase[]>([])
@@ -181,6 +182,34 @@ async function reviewComment(row: OpsCommentReview, decision: 'confirmed' | 'vio
   }
 }
 
+const TARGET_LABELS = OPS_COMPLAINT_TARGET_LABELS
+const REASON_LABELS = OPS_COMPLAINT_REASON_LABELS
+const complaints = ref<OpsComplaint[]>([])
+const complaintsLoaded = ref(false)
+const complaintNotes = ref<Record<string, string>>({})
+
+async function refreshComplaints(): Promise<void> {
+  const result = await grassland.listOpsComplaints()
+  if (result) complaints.value = [...result.items]
+  complaintsLoaded.value = true
+}
+
+async function handleComplaint(row: OpsComplaint, action: 'processing' | 'resolved' | 'dismissed'): Promise<void> {
+  const note = (complaintNotes.value[row.id] || '').trim()
+  if (action !== 'processing' && !note) {
+    say('办结/不成立必须填写结论', true)
+    return
+  }
+  const result = await grassland.handleOpsComplaint(row.id, action, note || undefined)
+  if (result) {
+    complaintNotes.value[row.id] = ''
+    say(action === 'processing' ? '已受理' : action === 'resolved' ? '已办结' : '已判定不成立')
+    await refreshComplaints()
+  } else {
+    say(grassland.error.value || '投诉处置失败', true)
+  }
+}
+
 onMounted(refreshCases)
 
 async function switchTab(next: Tab): Promise<void> {
@@ -190,6 +219,7 @@ async function switchTab(next: Tab): Promise<void> {
   if (next === 'dlt' && !dltLoaded.value) await refreshDlt()
   if (next === 'pending' && !pendingLoaded.value) await refreshPending()
   if (next === 'comments' && !commentsLoaded.value) await refreshComments()
+  if (next === 'complaints' && !complaintsLoaded.value) await refreshComplaints()
 }
 
 async function openDetail(id: string): Promise<void> {
@@ -335,6 +365,10 @@ function checksOf(row: OpsPendingVerification) {
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'comments' }"
         :aria-selected="tab === 'comments'" @click="switchTab('comments')"
       >评论复核</button>
+      <button
+        type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'complaints' }"
+        :aria-selected="tab === 'complaints'" @click="switchTab('complaints')"
+      >投诉工单</button>
     </nav>
 
     <p v-if="grassland.error.value" class="ops-alert ops-err" role="alert">{{ grassland.error.value }}</p>
@@ -531,6 +565,52 @@ function checksOf(row: OpsPendingVerification) {
             :disabled="grassland.loading.value"
             @click="reviewComment(row, 'violation')"
           >判违规</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- ---------- 投诉工单（PRD §11.8） ---------- -->
+    <div v-if="tab === 'complaints'" class="ops-panel">
+      <div class="ops-filters">
+        <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshComplaints">刷新</button>
+      </div>
+      <p class="ops-hint">
+        用户提交的通用举报（任务/交付物/内容/订单/用户）。交易争议仍走争议流程（审判官），
+        这里是客服处置通道：受理 → 办结（附结论，举报人可见）/ 不成立。
+      </p>
+      <p v-if="complaintsLoaded && complaints.length === 0" class="ops-hint">当前没有待受理的投诉。</p>
+
+      <section v-for="row in complaints" :key="row.id" class="ops-item">
+        <div class="ops-item-head">
+          <strong>{{ TARGET_LABELS[row.targetType] || row.targetType }}{{ row.targetId ? ' · ' + row.targetId : '' }}</strong>
+          <span class="ops-pos">举报人 <code>{{ shortId(row.reporterAccountId) }}</code> · {{ REASON_LABELS[row.reason] || row.reason }} · {{ time(row.createdAt) }}</span>
+        </div>
+        <p class="ops-hint">{{ row.description }}</p>
+        <p v-if="row.resolutionNote" class="ops-hint">处置结论：{{ row.resolutionNote }}</p>
+        <div class="ops-actions ops-review-actions">
+          <input
+            v-model="complaintNotes[row.id]"
+            class="ops-review-note"
+            type="text"
+            maxlength="500"
+            placeholder="处置结论（办结/不成立必填）"
+          />
+          <button
+            type="button"
+            :disabled="grassland.loading.value || row.status === 'resolved' || row.status === 'dismissed'"
+            @click="handleComplaint(row, 'processing')"
+          >受理</button>
+          <button
+            type="button"
+            :disabled="grassland.loading.value"
+            @click="handleComplaint(row, 'resolved')"
+          >办结</button>
+          <button
+            type="button"
+            class="ops-danger"
+            :disabled="grassland.loading.value"
+            @click="handleComplaint(row, 'dismissed')"
+          >不成立</button>
         </div>
       </section>
     </div>
