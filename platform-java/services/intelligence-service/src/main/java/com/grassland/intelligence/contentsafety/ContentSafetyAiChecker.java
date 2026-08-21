@@ -29,9 +29,6 @@ import reactor.core.publisher.Mono;
 @Component
 public class ContentSafetyAiChecker {
 
-    /** ADR-D16 D5：长文本阈值——≥ 此长度的文本才跑 L2（短文本仅 L1）。 */
-    static final int DEEP_CHECK_MIN_CHARS = 200;
-
     private static final Logger log = LoggerFactory.getLogger(ContentSafetyAiChecker.class);
     private static final int MAX_OUTPUT_TOKENS = 1024;
 
@@ -39,17 +36,20 @@ public class ContentSafetyAiChecker {
     private final TextCompletionClient textClient;
     private final PlatformModelConfig platformDefaults;
     private final PlatformConcurrencyLimiter concurrencyLimiter;
+    private final ContentSafetyProperties properties;
     private final DeepCheckJsonParser parser = new DeepCheckJsonParser();
 
     public ContentSafetyAiChecker(
             AiExecutionService executions,
             TextCompletionClient textClient,
             PlatformModelConfig platformDefaults,
-            PlatformConcurrencyLimiter concurrencyLimiter) {
+            PlatformConcurrencyLimiter concurrencyLimiter,
+            ContentSafetyProperties properties) {
         this.executions = executions;
         this.textClient = textClient;
         this.platformDefaults = platformDefaults;
         this.concurrencyLimiter = concurrencyLimiter;
+        this.properties = properties;
     }
 
     /**
@@ -57,7 +57,8 @@ public class ContentSafetyAiChecker {
      * 输入经 rubric prompt（类目清单 + 语境判定 + 结构化 JSON），输出折叠为 deep findings。
      */
     public Mono<List<Finding>> deepCheck(ServerWebExchange exchange, String text) {
-        if (text == null || text.length() < DEEP_CHECK_MIN_CHARS) {
+        // ADR-D16 D5：长文本阈值（content-safety.deep-check-min-chars，默认 200）——短文本仅 L1。
+        if (text == null || text.length() < properties.getDeepCheckMinChars()) {
             return Mono.empty();
         }
         List<ChatMessage> messages = List.of(

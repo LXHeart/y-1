@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,11 +22,12 @@ import reactor.core.publisher.Mono;
 public class OriginalityChecker {
 
     private static final Logger log = LoggerFactory.getLogger(OriginalityChecker.class);
-    private static final int MAX_HAMMING_DISTANCE = 16;
     private final ContentFingerprintRepository repository;
+    private final ContentSafetyProperties properties;
 
-    public OriginalityChecker(ContentFingerprintRepository repository) {
+    public OriginalityChecker(ContentFingerprintRepository repository, ContentSafetyProperties properties) {
         this.repository = repository;
+        this.properties = properties;
     }
 
     public Mono<List<Finding>> checkAndRecord(String text, Context context) {
@@ -82,19 +84,20 @@ public class OriginalityChecker {
         return Long.bitCount(left ^ right);
     }
 
-    private static java.util.Optional<Match> closest(long hash, List<Fingerprint> candidates) {
+    private Optional<Match> closest(long hash, List<Fingerprint> candidates) {
         Match best = null;
+        int maxDistance = properties.getOriginality().getMaxHammingDistance();
         for (Fingerprint candidate : candidates) {
             int distance = hammingDistance(hash, candidate.simhash());
-            if (distance <= MAX_HAMMING_DISTANCE && (best == null || distance < best.distance())) {
+            if (distance <= maxDistance && (best == null || distance < best.distance())) {
                 best = new Match(candidate, distance);
             }
         }
-        return java.util.Optional.ofNullable(best);
+        return Optional.ofNullable(best);
     }
 
-    private static List<Finding> lowOriginality(FingerprintValue value) {
-        if (value.repetitionRate() <= 0.30d) return List.of();
+    private List<Finding> lowOriginality(FingerprintValue value) {
+        if (value.repetitionRate() <= properties.getOriginality().getMaxRepetitionRate()) return List.of();
         int percent = (int) Math.round(value.repetitionRate() * 100d);
         return List.of(new Finding(
                 "low_originality", "low", percent + "% 文内重复", -1,
