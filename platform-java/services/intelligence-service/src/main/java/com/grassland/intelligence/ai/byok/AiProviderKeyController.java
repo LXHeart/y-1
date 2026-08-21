@@ -28,8 +28,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * AI Provider BYOK 密钥管理 API（GL-P3-AI-001 Phase 1）。当前只支持个人 BYOK；组织级
- * BYOK 在组织角色与管理策略具备权威校验前保持关闭。
+ * AI Provider BYOK 密钥管理 API（GL-P3-AI-001 Phase 1）。个人作用域；组织级 BYOK 由
+ * {@link AiOrgProviderKeyController} 承载（ADR-D17，组织 admin 门禁）。
  *
  * <p>端点：
  * <ul>
@@ -82,7 +82,7 @@ public class AiProviderKeyController {
                     String maskedHint = MaskedKey.mask(body.apiKey());
 
                     AiProviderKey key = AiProviderKey.forCreate(
-                            null,  // 组织级 BYOK 暂未开放，避免普通成员替整个组织切换密钥
+                            null,  // 组织密钥必须走 AiOrgProviderKeyController（admin 门禁），此处强制个人作用域
                             caller.accountId(),
                             body.capability(),
                             body.provider(),
