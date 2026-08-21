@@ -112,6 +112,24 @@ class VideoProviderAdapterContractTest {
                 .hasMessageContaining("响应 JSON 无效");
     }
 
+    @Test
+    void sandboxProviderSucceedsImmediatelyWithOpaqueNonRoutableReference() {
+        SandboxVideoGenerationProvider provider = new SandboxVideoGenerationProvider();
+        VideoGenerationProvider.ProviderCommand command = command();
+        VideoGenerationProvider.ProviderResult submitted = provider.submit(command).block();
+        assertThat(submitted.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.SUCCEEDED);
+        assertThat(submitted.providerTaskId()).isEqualTo("sandbox:" + command.jobId());
+        assertThat(submitted.progress()).isEqualTo(100);
+        assertThat(submitted.durationSeconds()).isEqualTo(command.durationSeconds());
+        // 占位符仅由 VideoAssetArchiveService 内部消费，不得形如可路由 API 路径
+        assertThat(submitted.resultUrl()).isEqualTo("sandbox://video/" + command.jobId());
+        assertThat(submitted.resultUrl()).doesNotStartWith("/").doesNotStartWith("http");
+
+        VideoGenerationProvider.ProviderResult polled = provider.poll("sandbox:task-sb-1", 6).block();
+        assertThat(polled.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.SUCCEEDED);
+        assertThat(polled.resultUrl()).isEqualTo("sandbox://video/task-sb-1");
+    }
+
     private static VideoGenerationProvider.ProviderCommand command() {
         return new VideoGenerationProvider.ProviderCommand(
                 UUID.randomUUID(), "video-01", "生成一段视频", List.of("AAAA"), 6, "9:16");
