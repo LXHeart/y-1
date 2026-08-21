@@ -686,7 +686,9 @@ class StoreMediaEndpointsIT {
 	}
 
 	private WebTestClient client() {
-		return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+		// responseTimeout 30s：CI 慢 runner 负载口径（IntelligenceItSupport 同款）。
+		return WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+				.responseTimeout(java.time.Duration.ofSeconds(30)).build();
 	}
 
 	private String sign(String accountId, String organizationId) {
