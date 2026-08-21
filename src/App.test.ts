@@ -218,6 +218,31 @@ describe('App AI 创作中心集成', () => {
     useAuth().currentUser.value = null
   })
 
+  // 整页加载（刷新/收藏深链）时 loadCurrentUser 走 null→id，与会话内登录无法凭前后值区分：
+  // 首次引导完成前的账号解析不得触发「回落 /ai-center」，否则深链永远不可达（视觉审查 ⑱）。
+  test('整页加载已登录会话时，深链不被拉回 /ai-center', async () => {
+    const user = { id: 'deep-1', email: 'deep@example.com', role: 'user', roles: [] }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/auth/me') return response({ success: true, data: { user } })
+      if (url === '/api/douyin/session') return response({ success: true, data: { status: 'anonymous' } })
+      return response({ success: true, data: [] })
+    }))
+    useAuth().currentUser.value = null
+    // 前序用例会把 store 的 loaded 置真，布局的非强制 loadCurrentUser 会被短路——
+    // 复位后才是在测「整页加载首载」的真实路径
+    useAuth().loaded.value = false
+
+    await router.push('/article')
+    await router.isReady()
+    mount(App, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(useAuth().currentUser.value?.id).toBe('deep-1')
+    expect(router.currentRoute.value.path).toBe('/article')
+    useAuth().currentUser.value = null
+  })
+
   test('文章 handoff 切换到既有工作流并预填主题与平台', async () => {
     installFetchStub()
     const wrapper = await mountApp()

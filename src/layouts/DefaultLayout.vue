@@ -376,6 +376,12 @@ const router = useRouter()
 const currentViewName = computed<AppView>(() => (route.name as AppView) || 'ai-center')
 const creationContextEpoch = ref(0)
 const showLegacyTools = ref(false)
+/**
+ * 整页加载（刷新/收藏深链）时 loadCurrentUser 会让 currentUser 走一遍 null→id，
+ * 与会话内「登录/换账号」无法只凭前后值区分——不区分就会把任何深链拉回 /ai-center。
+ * 首次引导完成后才允许账号变化触发的回落（视觉审查 ⑱）。
+ */
+const sessionBootstrapped = ref(false)
 const legacyViews: readonly AppView[] = ['home', 'video', 'image', 'article', 'moments', 'image-gen', 'comedy', 'video-production']
 const creationEntry = ref<CreationEntry | null>(null)
 const creationHandoff = ref<CreationHandoff | null>(null)
@@ -461,6 +467,7 @@ onMounted(() => {
     grasslandAnchor.value = 'gl-invitations'
   }
   void loadCurrentUser().then(() => {
+    sessionBootstrapped.value = true
     if (isAuthenticated.value) void loadCreditBalance()
   })
 })
@@ -473,7 +480,7 @@ watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
   if (accountId !== previousAccountId) {
     creationEntry.value = null
     creationHandoff.value = null
-    if (currentViewName.value !== 'commerce') {
+    if (sessionBootstrapped.value && currentViewName.value !== 'commerce') {
       router.push('/ai-center')
     }
     creationContextEpoch.value += 1
@@ -655,7 +662,7 @@ async function handleOpenSettings(): Promise<void> {
   margin: 0 auto;
   padding: calc(clamp(24px, 4vw, 40px) + env(safe-area-inset-top, 0px)) 0 80px;
 }
-.page-header { display: grid; gap: var(--space-lg); margin-bottom: var(--space-xl); }
+.page-header { position: relative; z-index: 10; display: grid; gap: var(--space-lg); margin-bottom: var(--space-xl); }
 .header-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .brand-logo { width: 36px; height: 36px; flex-shrink: 0; filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.4)); transition: filter 0.3s var(--ease-out); }
