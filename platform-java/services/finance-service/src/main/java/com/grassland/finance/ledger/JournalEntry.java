@@ -46,6 +46,8 @@ public record JournalEntry(
         FREEBIE_REFUND,
         /** 霸王餐押金补偿（托管 → 商家 org 账户）。 */
         FREEBIE_COMPENSATE,
+        /** 审判官现金佣金入推荐官钱包（ADR-D18：Dr 费用 / Cr WALLET）。 */
+        JUDGE_COMMISSION,
         /** 迁移期回填存量余额。 */
         OPENING;
 

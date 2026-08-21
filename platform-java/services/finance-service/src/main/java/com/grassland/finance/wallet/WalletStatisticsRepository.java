@@ -43,6 +43,8 @@ public class WalletStatisticsRepository {
                            AS withdrawal_cents,
                        COALESCE(SUM(CASE WHEN entry_type = 'clawback' THEN amount_cents END), 0)::bigint
                            AS clawback_cents,
+                       COALESCE(SUM(CASE WHEN entry_type = 'judge_commission' THEN amount_cents END), 0)::bigint
+                           AS judge_commission_cents,
                        COALESCE(SUM(CASE WHEN entry_type IN ('task_payout', 'commerce_commission')
                                          THEN amount_cents + fee_cents END), 0)::bigint AS gross_cents,
                        COALESCE(SUM(CASE WHEN entry_type IN ('task_payout', 'commerce_commission')
@@ -88,6 +90,7 @@ public class WalletStatisticsRepository {
                 row.get("commerce_commission_cents", Long.class),
                 row.get("withdrawal_cents", Long.class),
                 row.get("clawback_cents", Long.class),
+                row.get("judge_commission_cents", Long.class),
                 row.get("gross_cents", Long.class),
                 row.get("fee_cents", Long.class),
                 row.get("net_cents", Long.class));
@@ -108,7 +111,7 @@ public class WalletStatisticsRepository {
 
     /** 单月聚合行。金额单位分；net = SUM(amount_cents) 带符号。 */
     public record MonthlyIncome(String month, long taskPayoutCents, long commerceCommissionCents,
-                                long withdrawalCents, long clawbackCents,
+                                long withdrawalCents, long clawbackCents, long judgeCommissionCents,
                                 long grossCents, long feeCents, long netCents) {
     }
 

@@ -128,6 +128,24 @@ public class LedgerService {
                 "reverse " + engagementRef, postings);
     }
 
+    /**
+     * 审判官现金佣金（ADR-D18）：Dr JUDGE_COMMISSION_EXPENSE / Cr WALLET:{judge}。
+     * operationId = {@code judge-commission:{disputeId}:{round}:{judgeAccountId}}——
+     * journal.operation_id 唯一索引是积分 inbox 之外的第二道幂等（重放 skip）。
+     */
+    public Mono<Void> postJudgeCommission(String judgeAccountId, long amountCents,
+                                          String operationId, String disputeRef) {
+        if (amountCents <= 0 || judgeAccountId == null || judgeAccountId.isBlank()) {
+            throw new IllegalArgumentException("judge commission requires positive amount and account");
+        }
+        List<Posting> postings = List.of(
+                Posting.debit(LedgerAccount.judgeCommissionExpense(), amountCents),
+                Posting.credit(LedgerAccount.wallet(judgeAccountId), amountCents));
+        assertBalanced(postings);
+        return post(JournalEntry.Type.JUDGE_COMMISSION, operationId, null, disputeRef,
+                "judge commission " + disputeRef, postings);
+    }
+
     /** 提现（推荐官出账）：Dr WALLET / Cr EXTERNAL。一次性动作（operationId=null）。 */
     public Mono<Void> postWithdraw(String accountId, long amount) {
         List<Posting> postings = List.of(

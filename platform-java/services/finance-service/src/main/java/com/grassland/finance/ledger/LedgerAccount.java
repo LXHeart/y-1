@@ -12,6 +12,7 @@ import java.util.Objects;
  *   <li>{@code WALLET:{accountId}} — 推荐官可提现余额（投影 = {@code recommender_wallet.balance_cents}）。</li>
  *   <li>{@code FEE} — 平台抽成收入（owner/ref 为 null）。</li>
  *   <li>{@code SUBSIDY_EXPENSE} — 平台承担的等级佣金补贴费用（owner/ref 为 null）。</li>
+ *   <li>{@code JUDGE_COMMISSION_EXPENSE} — 审判官现金佣金费用（ADR-D18，owner/ref 为 null）。</li>
  *   <li>{@code EXTERNAL:{channel}} — PSP/存管对手方（{@code channel=sandbox} 为 stub；真实 PSP 时此腿接 {@code PaymentProviderAdapter}）。</li>
  * </ul>
  *
@@ -31,6 +32,8 @@ public record LedgerAccount(Type type, String owner, String ref) {
         SUBSIDY_EXPENSE,
         /** AI 积分包销售收入（AI 套餐 v1）；收入类，credit 增。 */
         AI_CREDIT_REVENUE,
+        /** 审判官现金佣金费用（ADR-D18）；借记增加。与 SUBSIDY_EXPENSE 分科目供经营报表区分。 */
+        JUDGE_COMMISSION_EXPENSE,
         EXTERNAL;
 
         public String dbValue() {
@@ -74,6 +77,11 @@ public record LedgerAccount(Type type, String owner, String ref) {
 
     public static LedgerAccount subsidy() {
         return new LedgerAccount(Type.SUBSIDY_EXPENSE, null, null);
+    }
+
+    /** 审判官现金佣金费用账户（ADR-D18，平台级无 owner）。 */
+    public static LedgerAccount judgeCommissionExpense() {
+        return new LedgerAccount(Type.JUDGE_COMMISSION_EXPENSE, null, null);
     }
 
     public static LedgerAccount external(String channel) {

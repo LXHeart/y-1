@@ -15,7 +15,9 @@ public enum WalletEntryType {
     /** 霸王餐押金预付出账（ADR-D12：报名被接受时进平台托管，负）。 */
     FREEBIE_RESERVE("freebie_reserve"),
     /** 霸王餐押金退收入账（ADR-D12：达标全额返还，正，无平台费）。 */
-    FREEBIE_REFUND("freebie_refund");
+    FREEBIE_REFUND("freebie_refund"),
+    /** 审判官现金佣金入账（ADR-D18：每票平坦分，正）。 */
+    JUDGE_COMMISSION("judge_commission");
 
     private final String dbValue;
 

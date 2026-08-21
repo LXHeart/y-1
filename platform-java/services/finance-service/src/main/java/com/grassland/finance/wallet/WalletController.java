@@ -152,7 +152,7 @@ public class WalletController {
 		YearMonth cursor = from;
 		while (!cursor.isAfter(to)) {
 			out.add(byMonth.getOrDefault(cursor.toString(),
-					new WalletStatisticsRepository.MonthlyIncome(cursor.toString(), 0, 0, 0, 0, 0, 0, 0)));
+					new WalletStatisticsRepository.MonthlyIncome(cursor.toString(), 0, 0, 0, 0, 0, 0, 0, 0)));
 			cursor = cursor.plusMonths(1);
 		}
 		return out;
@@ -165,6 +165,7 @@ public class WalletController {
 		map.put("commerceCommissionCents", m.commerceCommissionCents());
 		map.put("withdrawalCents", m.withdrawalCents());
 		map.put("clawbackCents", m.clawbackCents());
+		map.put("judgeCommissionCents", m.judgeCommissionCents());
 		map.put("grossCents", m.grossCents());
 		map.put("feeCents", m.feeCents());
 		map.put("netCents", m.netCents());

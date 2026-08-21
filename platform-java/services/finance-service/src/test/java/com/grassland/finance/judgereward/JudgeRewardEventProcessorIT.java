@@ -118,6 +118,94 @@ class JudgeRewardEventProcessorIT extends FinanceItSupport {
     }
 
     @Test
+    void commissionEventCreditsWalletPostsJournalAndReplayIsIdempotent() throws Exception {
+        // ADR-D18：JudgeVoteCommissionRewarded → 钱包余额/流水 + journal 双录（Dr 费用 / Cr WALLET）；
+        // 同 eventId 重投 inbox 吸收不重复入账。
+        String judge = UUID.randomUUID().toString();
+        String dispute = UUID.randomUUID().toString();
+        String eventId = "jc-evt-" + RUN_ID;
+        String envelope = mapper.writeValueAsString(Map.of(
+                "eventId", eventId,
+                "eventType", "JudgeVoteCommissionRewarded",
+                "aggregateType", "DisputeCase",
+                "aggregateId", dispute,
+                "payload", Map.of(
+                        "disputeId", dispute,
+                        "round", 1,
+                        "judgeAccountId", judge,
+                        "amountCents", 15)));
+
+        try (var producer = producer()) {
+            producer.send(new ProducerRecord<>(TOPIC, dispute, envelope)).get(10, TimeUnit.SECONDS);
+        }
+
+        await().atMost(AWAIT).untilAsserted(() -> {
+            Long balance = db.sql("SELECT balance_cents FROM recommender_wallet"
+                            + " WHERE account_id = CAST(:a AS uuid)")
+                    .bind("a", judge).map(r -> r.get("balance_cents", Long.class)).one().block();
+            assertThat(balance).as("现金佣金 15 分入钱包").isEqualTo(15L);
+        });
+        String entryType = db.sql("SELECT entry_type FROM wallet_ledger"
+                        + " WHERE account_id = CAST(:a AS uuid)")
+                .bind("a", judge).map(r -> r.get("entry_type", String.class)).one().block();
+        assertThat(entryType).isEqualTo("judge_commission");
+
+        String operationId = "judge-commission:" + dispute + ":1:" + judge;
+        String journalType = db.sql("SELECT journal_type FROM journal WHERE operation_id = :op")
+                .bind("op", operationId)
+                .map(r -> r.get("journal_type", String.class)).one().block();
+        assertThat(journalType).as("journal 类型=JUDGE_COMMISSION，operationId 可对账")
+                .isEqualTo("JUDGE_COMMISSION");
+        // 双录借贷平衡：Dr JUDGE_COMMISSION_EXPENSE / Cr WALLET 各 15
+        Long debits = db.sql("SELECT COALESCE(SUM(p.amount_cents), 0)::bigint AS d FROM posting p"
+                        + " JOIN journal j ON j.id = p.journal_id"
+                        + " WHERE j.operation_id = :op AND p.direction = 'DEBIT'")
+                .bind("op", operationId).map(r -> r.get("d", Long.class)).one().block();
+        Long creditsPosted = db.sql("SELECT COALESCE(SUM(p.amount_cents), 0)::bigint AS c FROM posting p"
+                        + " JOIN journal j ON j.id = p.journal_id"
+                        + " WHERE j.operation_id = :op AND p.direction = 'CREDIT'")
+                .bind("op", operationId).map(r -> r.get("c", Long.class)).one().block();
+        assertThat(debits).isEqualTo(15L);
+        assertThat(creditsPosted).isEqualTo(15L);
+
+        // 同 eventId 重投 → 不重复入账
+        try (var producer = producer()) {
+            producer.send(new ProducerRecord<>(TOPIC, dispute, envelope)).get(10, TimeUnit.SECONDS);
+        }
+        Thread.sleep(2_000);
+        Long balanceAfterReplay = db.sql("SELECT balance_cents FROM recommender_wallet"
+                        + " WHERE account_id = CAST(:a AS uuid)")
+                .bind("a", judge).map(r -> r.get("balance_cents", Long.class)).one().block();
+        assertThat(balanceAfterReplay).as("重放不重复入账").isEqualTo(15L);
+    }
+
+    @Test
+    void commissionPoisonMessageGoesToDltWithoutAnyAccounting() throws Exception {
+        // 坏佣金消息：amountCents 缺失 → 契约错误 → DLT，不开钱包不记账。
+        String judge = UUID.randomUUID().toString();
+        String dispute = UUID.randomUUID().toString();
+        String poison = mapper.writeValueAsString(Map.of(
+                "eventId", "jc-poison-" + RUN_ID,
+                "eventType", "JudgeVoteCommissionRewarded",
+                "aggregateType", "DisputeCase",
+                "aggregateId", dispute,
+                "payload", Map.of("disputeId", dispute, "round", 1, "judgeAccountId", judge)));
+
+        try (var producer = producer()) {
+            producer.send(new ProducerRecord<>(TOPIC, dispute, poison)).get(10, TimeUnit.SECONDS);
+        }
+        Thread.sleep(2_500);
+        Long walletRows = db.sql("SELECT COUNT(*)::int AS c FROM recommender_wallet"
+                        + " WHERE account_id = CAST(:a AS uuid)")
+                .bind("a", judge).map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(walletRows).as("坏佣金消息不开钱包").isZero();
+        Long journalRows = db.sql("SELECT COUNT(*)::int AS c FROM journal WHERE operation_id = :op")
+                .bind("op", "judge-commission:" + dispute + ":1:" + judge)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(journalRows).as("坏佣金消息不记账").isZero();
+    }
+
+    @Test
     void poisonMessageGoesToDltAndSubsequentValidIsStillConsumed() throws Exception {
         String judge = UUID.randomUUID().toString();
         String dispute = UUID.randomUUID().toString();

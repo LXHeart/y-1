@@ -3,6 +3,9 @@ package com.grassland.finance.judgereward;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.finance.credits.CreditsService;
+import com.grassland.finance.ledger.LedgerService;
+import com.grassland.finance.wallet.WalletEntryType;
+import com.grassland.finance.wallet.WalletRepository;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,9 @@ import reactor.core.publisher.Mono;
  * 审判官激励事件处理器（任务书 #31 / ADR-D15 D4）：消费 trust {@code JudgeVoteRewarded}，
  * 调本服务内 {@link CreditsService#awardJudgeReward} 入账。
  *
+ * <p>ADR-D18 起同处理器分支消费 {@code JudgeVoteCommissionRewarded}（现金佣金）：钱包入账 +
+ * journal 双录（{@code Dr JUDGE_COMMISSION_EXPENSE / Cr WALLET}），operationId 前缀区分。
+ *
  * <p>幂等双保险：① {@code finance_inbox}（{@code consumer_name + event_id}）吸收 at-least-once 重投；
  * ② credits 流水 {@code operation_id = judge-reward:{disputeId}:{round}:{judgeAccountId}} 唯一索引。
  * inbox 记账与入账同一 R2DBC 事务（镜像 identity 通知消费者的 7A 约束）。
@@ -24,11 +30,14 @@ import reactor.core.publisher.Mono;
 public class JudgeRewardEventProcessor {
 
     static final String EVENT_TYPE = "JudgeVoteRewarded";
+    static final String COMMISSION_EVENT_TYPE = "JudgeVoteCommissionRewarded";
 
     private static final Logger log = LoggerFactory.getLogger(JudgeRewardEventProcessor.class);
 
     private final FinanceInboxRepository inbox;
     private final CreditsService credits;
+    private final WalletRepository wallets;
+    private final LedgerService ledger;
     private final TransactionalOperator transactions;
     private final ObjectMapper mapper;
     private final String consumerName;
@@ -36,11 +45,15 @@ public class JudgeRewardEventProcessor {
     public JudgeRewardEventProcessor(
             FinanceInboxRepository inbox,
             CreditsService credits,
+            WalletRepository wallets,
+            LedgerService ledger,
             TransactionalOperator transactions,
             ObjectMapper mapper,
             @Value("${finance.judge-reward-consumer.group-id:finance-judge-reward-consumer}") String consumerName) {
         this.inbox = inbox;
         this.credits = credits;
+        this.wallets = wallets;
+        this.ledger = ledger;
         this.transactions = transactions;
         this.mapper = mapper;
         this.consumerName = consumerName;
@@ -50,6 +63,9 @@ public class JudgeRewardEventProcessor {
     public Mono<Outcome> process(ConsumerRecord<String, String> record) {
         return Mono.defer(() -> {
             EventEventEnvelope envelope = parse(record);
+            if (COMMISSION_EVENT_TYPE.equals(envelope.eventType())) {
+                return transactions.transactional(processCommission(record, envelope));
+            }
             if (!EVENT_TYPE.equals(envelope.eventType())) {
                 return Mono.just(Outcome.IGNORED);
             }
@@ -70,6 +86,47 @@ public class JudgeRewardEventProcessor {
                             : Mono.just(Outcome.DUPLICATE));
             return transactions.transactional(work);
         });
+    }
+
+    /**
+     * ADR-D18 现金佣金：inbox 幂等 + 钱包入账/流水 + journal 双录（Dr 费用 / Cr WALLET）
+     * 同一事务；operationId 前缀 {@code judge-commission:} 与积分路径区分，journal 唯一索引第二道幂等。
+     */
+    private Mono<Outcome> processCommission(ConsumerRecord<String, String> record, EventEventEnvelope envelope) {
+        CommissionPayload payload = parseCommissionPayload(envelope);
+        String operationId = "judge-commission:" + payload.disputeId() + ":" + payload.round()
+                + ":" + payload.judgeAccountId();
+        String disputeRef = payload.disputeId() + ":r" + payload.round();
+        return inbox
+                .recordIfAbsent(consumerName, record, envelope.eventId(), envelope.eventType(),
+                        envelope.aggregateType(), envelope.aggregateId(), envelope.payload())
+                .flatMap(inserted -> inserted
+                        ? wallets.credit(payload.judgeAccountId(), payload.amountCents())
+                                .then(wallets.appendEntry(payload.judgeAccountId(), WalletEntryType.JUDGE_COMMISSION,
+                                        payload.amountCents(), 0L, disputeRef,
+                                        "审判投票现金佣金（争议轮次 #" + payload.round() + "）"))
+                                .then(ledger.postJudgeCommission(payload.judgeAccountId(), payload.amountCents(),
+                                        operationId, disputeRef))
+                                .doOnSuccess(ignored -> log.info(
+                                        "judge commission credited judge={} dispute={} round={} cents={}",
+                                        payload.judgeAccountId(), payload.disputeId(), payload.round(),
+                                        payload.amountCents()))
+                                .thenReturn(Outcome.PROCESSED)
+                        : Mono.just(Outcome.DUPLICATE));
+    }
+
+    private CommissionPayload parseCommissionPayload(EventEventEnvelope envelope) {
+        JsonNode payload = envelope.payload();
+        JsonNode amountNode = payload.get("amountCents");
+        if (amountNode == null || !amountNode.isInt() || amountNode.asInt() <= 0) {
+            throw new FinanceInboxRepository.FinanceInboxContractException(
+                    "judge commission payload field amountCents must be a positive integer");
+        }
+        return new CommissionPayload(
+                requiredText(payload, "disputeId"),
+                payload.get("round").asInt(),
+                requiredText(payload, "judgeAccountId"),
+                amountNode.asInt());
     }
 
     private EventEventEnvelope parse(ConsumerRecord<String, String> record) {
@@ -128,6 +185,8 @@ public class JudgeRewardEventProcessor {
             String eventId, String eventType, String aggregateType, String aggregateId, JsonNode payload) {}
 
     private record RewardPayload(String disputeId, int round, String judgeAccountId, int credits) {}
+
+    private record CommissionPayload(String disputeId, int round, String judgeAccountId, int amountCents) {}
 
     /** 处理结局（对齐 identity NotificationProcessingResult 语义，供指标区分）。 */
     public enum Outcome {
