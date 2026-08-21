@@ -59,10 +59,15 @@ BYOK 白名单维持 `text|image|image_generation|video_generation` 不加 conte
 - 深检时机：**长文本内联**（阈值 ≥200 字符且已配置模型；文章正文等，生成后随最终帧返回，延迟被生成耗时
   主导）；**短文本（标题等）仅 L1**。
 
-### D6 门槛姿态 = advisory，不硬阻断
+### D6 门槛姿态 = 生成流 advisory；履约提交侧 blocking 已落地（2026-08-21）
 
-- findings 是「警告 + 类别建议」，用户可编辑后复查（PRD：AI 输出是建议、允许人工编辑、不自动发布）。
-- 任务提交侧（履约凭证带 high 发现是否拦截）登记为后续独立决策，本任务不动 marketplace。
+- 生成流 findings 是「警告 + 类别建议」，用户可编辑后复查（PRD：AI 输出是建议、允许人工编辑、不自动发布）。
+- **任务提交侧 blocking（原登记的独立决策，已落地）**：履约提交的全部自由文本——评论文本
+  （commentText，仅评论互动任务）与补充说明（note，任意任务，新增 ≤500 字上限）——提交时同步过
+  `POST /internal/content-safety/submission-check`（服务断言，一次调用逐字段返回结论）；存在
+  severity=high 命中 → 400（字段级文案「评论内容/备注未通过内容安全检查」）。low/medium 仍 advisory：
+  按字段（`comment_safety_review.field`，V48 每提交×字段一行）落人工复核队列。intelligence 不可用 →
+  fail-open 放行并告警（词库是附加闸门而非唯一闸门，提交低频高敏由商家人审兜底）。
 - 高风险行业 overlay（依赖 #24 门店品类进上下文）登记为后续钩子。
 
 ### D7 双入口：生成流内联自动检 + 独立手动复查端点
@@ -97,5 +102,6 @@ BYOK 白名单维持 `text|image|image_generation|video_generation` 不加 conte
 
 ## 不在范围
 
-- 词库在线 CRUD（后置）；履约提交侧拦截（独立决策）；行业 overlay；多模态输入检查；
+- 词库在线 CRUD（后置）；行业 overlay；多模态输入检查；
   创作助手优化输出与视频改编接入（后续）。
+- 履约提交侧拦截已于 2026-08-21 落地（见 D6），不再是延后项。
