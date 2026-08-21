@@ -105,6 +105,29 @@ public class CreationGenerationRepository {
                 .map((row, metadata) -> map(row)).one();
     }
 
+    /**
+     * 组织级审计读取（任务书 #44 登记）：组织 ADMIN 在审计视图按组织列出成员创作产出
+     * （organization_id 由生成链路写入；空组织行不出现）。游标分页对齐 {@link #listForOwner}。
+     */
+    public Flux<CreationGeneration> listForOrganization(
+            String organizationId, Kind kind, int limit, UUID before) {
+        String kindFilter = kind == null ? "" : " AND g.kind=:kind";
+        String cursorJoin = before == null ? "" : """
+                JOIN creation_generation cursor
+                  ON cursor.id=CAST(:before AS uuid) AND cursor.organization_id=:organizationId
+                """;
+        String cursorFilter = before == null ? "" : " AND (g.created_at, g.id) < (cursor.created_at, cursor.id)";
+        DatabaseClient.GenericExecuteSpec spec = db.sql("SELECT " + SELECT_G_COLUMNS
+                        + " FROM creation_generation g " + cursorJoin
+                        + " WHERE g.organization_id=:organizationId" + kindFilter + cursorFilter
+                        + " ORDER BY g.created_at DESC, g.id DESC LIMIT :limit")
+                .bind("organizationId", organizationId)
+                .bind("limit", limit);
+        if (kind != null) spec = spec.bind("kind", kind.db());
+        if (before != null) spec = spec.bind("before", before.toString());
+        return spec.map((row, metadata) -> map(row)).all();
+    }
+
     private CreationGeneration map(Readable row) {
         return new CreationGeneration(
                 UUID.fromString(row.get("id", String.class)),

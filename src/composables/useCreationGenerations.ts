@@ -5,6 +5,7 @@ import type {
   CreationGenerationKind,
   CreationGenerationPage,
   CreationGenerationSummary,
+  OrgCreationGenerationSummary,
 } from '../types/grassland/creation-generation'
 
 const LOAD_FALLBACK = '生成记录加载失败'
@@ -66,4 +67,24 @@ export function useCreationGenerations(kind?: CreationGenerationKind) {
   }
 
   return { items, nextBefore, loading, error, load }
+}
+
+/** 组织级审计视图（任务书 #44 登记）：组织 ADMIN 按组织列成员创作产出（带 ownerAccountId）。 */
+export async function listOrgCreationGenerations(
+  organizationId: string,
+  input: { kind?: CreationGenerationKind; limit?: number; before?: string } = {},
+): Promise<{ items: OrgCreationGenerationSummary[]; nextBefore: string | null }> {
+  const query = new URLSearchParams()
+  if (input.kind) query.set('kind', input.kind)
+  if (input.limit != null) query.set('limit', String(input.limit))
+  if (input.before) query.set('before', input.before)
+  const suffix = query.size ? `?${query}` : ''
+  const page = await request<{ items: OrgCreationGenerationSummary[]; nextBefore: string | null }>(
+    `/api/creation-generations/organizations/${encodeURIComponent(organizationId)}${suffix}`, {}, {
+      fallbackError: LOAD_FALLBACK,
+    })
+  if (page == null) {
+    throw new Error(LOAD_FALLBACK)
+  }
+  return page
 }

@@ -41,3 +41,18 @@ export interface CreationGenerationPage {
   items: CreationGenerationSummary[]
   nextBefore: string | null
 }
+
+/** 组织审计视图摘要（任务书 #44 登记）：带 ownerAccountId（审计需要「谁」）。 */
+export interface OrgCreationGenerationSummary extends CreationGenerationSummary {
+  ownerAccountId: string
+}
+
+export const CREATION_GENERATION_KIND_LABELS: Record<CreationGenerationKind, string> = {
+  video_adaptation: '视频改编',
+  asset_image: '素材图',
+  scene_image: '分镜图',
+  article: '文章正文',
+  moments_copy: '朋友圈文案',
+  comedy_script: '喜剧脚本',
+  assistant_guide: '创作引导',
+}

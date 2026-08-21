@@ -26,14 +26,17 @@ public class CreationGenerationController {
     private final IntelligenceCallerResolver callers;
     private final CreationGenerationRepository generations;
     private final MediaReferenceRepository media;
+    private final com.grassland.intelligence.security.IdentityOrgAuthorizationClient orgAuthorization;
 
     public CreationGenerationController(
             IntelligenceCallerResolver callers,
             CreationGenerationRepository generations,
-            MediaReferenceRepository media) {
+            MediaReferenceRepository media,
+            com.grassland.intelligence.security.IdentityOrgAuthorizationClient orgAuthorization) {
         this.callers = callers;
         this.generations = generations;
         this.media = media;
+        this.orgAuthorization = orgAuthorization;
     }
 
     @GetMapping
@@ -68,6 +71,49 @@ public class CreationGenerationController {
                         .switchIfEmpty(Mono.error(new IntelligenceException(404, "生成记录不存在"))))
                 .flatMap(value -> media.findAvailableIds(value.resultMediaIds()).collectList()
                         .map(available -> success(detail(value, Set.copyOf(available)))));
+    }
+
+    /**
+     * 组织级审计视图（任务书 #44 登记）：组织 ADMIN 按组织列出成员创作产出（谁在何时用哪个
+     * provider/model 生成了什么）。鉴权对齐 {@code AiOrgBudgetController}——identity 组织授权
+     * 校验 admin 角色，403/404 统一映射 404（不探测组织存在性）。
+     */
+    @GetMapping("/organizations/{organizationId}")
+    public Mono<Map<String, Object>> listForOrganization(
+            @PathVariable String organizationId,
+            @RequestParam(required = false) String kind,
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) String before,
+            ServerWebExchange exchange) {
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new IntelligenceException(400, "组织标识无效");
+        }
+        Kind parsedKind = parseKind(kind);
+        UUID cursor = parseUuid(before, "分页游标无效");
+        int safeLimit = Math.max(1, Math.min(limit, 50));
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> orgAuthorization.require(caller.accountId(), organizationId, "admin")
+                        .onErrorMap(IntelligenceException.class, error ->
+                                error.status() == 403 || error.status() == 404
+                                        ? new IntelligenceException(404, "组织不存在") : error))
+                .then(generations.listForOrganization(organizationId, parsedKind, safeLimit + 1, cursor)
+                        .collectList())
+                .map(items -> {
+                    boolean hasMore = items.size() > safeLimit;
+                    List<CreationGeneration> page = hasMore ? items.subList(0, safeLimit) : items;
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("items", page.stream().map(CreationGenerationController::orgSummary).toList());
+                    data.put("nextBefore", hasMore && !page.isEmpty()
+                            ? page.getLast().id().toString() : null);
+                    return success(data);
+                });
+    }
+
+    /** 组织视图摘要：带 ownerAccountId（审计需要「谁」），其余对齐 {@link #summary}。 */
+    private static Map<String, Object> orgSummary(CreationGeneration value) {
+        Map<String, Object> item = summary(value);
+        item.put("ownerAccountId", value.ownerAccountId());
+        return item;
     }
 
     private static Map<String, Object> summary(CreationGeneration value) {

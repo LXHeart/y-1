@@ -53,6 +53,29 @@ class CreationGenerationRepositoryIT extends IntelligenceItSupport {
     }
 
     @Test
+    void listForOrganizationScopesToOrgMembersAndSupportsKindCursorPagination() {
+        CreationGeneration oldest = insert("lineage-a", "lineage-org", Kind.ARTICLE, "oldest");
+        CreationGeneration newest = insert("lineage-b", "lineage-org", Kind.MOMENTS_COPY, "newest");
+        insert("lineage-a", "lineage-other-org", Kind.SCENE_IMAGE, "别的组织");
+        insert("lineage-a", null, Kind.SCENE_IMAGE, "独立创作无组织");
+        setCreatedAt(oldest.id(), "2026-08-19T01:00:00Z");
+        setCreatedAt(newest.id(), "2026-08-19T03:00:00Z");
+
+        List<CreationGeneration> page = repository.listForOrganization(
+                "lineage-org", null, 10, null).collectList().block();
+        List<CreationGeneration> articles = repository.listForOrganization(
+                "lineage-org", Kind.ARTICLE, 10, null).collectList().block();
+        List<CreationGeneration> tail = repository.listForOrganization(
+                "lineage-org", null, 1, newest.id()).collectList().block();
+
+        assertThat(page).extracting(CreationGeneration::id).containsExactly(newest.id(), oldest.id());
+        assertThat(page).extracting(CreationGeneration::ownerAccountId)
+                .containsExactly("lineage-b", "lineage-a");
+        assertThat(articles).extracting(CreationGeneration::id).containsExactly(oldest.id());
+        assertThat(tail).extracting(CreationGeneration::id).containsExactly(oldest.id());
+    }
+
+    @Test
     void readApiHidesListPayloadAndReportsMediaAvailabilityWithoutCrossOwnerLeaks() {
         UUID available = seedMedia(false);
         UUID expired = seedMedia(true);
@@ -81,7 +104,16 @@ class CreationGenerationRepositoryIT extends IntelligenceItSupport {
                 .jsonPath("$.data.resultMedia[1].available").isEqualTo(false);
     }
 
+    private CreationGeneration insert(String owner, String organizationId, Kind kind, String title) {
+        return insert(owner, organizationId, kind, title, List.of());
+    }
+
     private CreationGeneration insert(String owner, Kind kind, String title, List<UUID> mediaIds) {
+        return insert(owner, null, kind, title, mediaIds);
+    }
+
+    private CreationGeneration insert(String owner, String organizationId, Kind kind, String title,
+            List<UUID> mediaIds) {
         List<Map<String, Object>> images = mediaIds.stream().map(id -> Map.<String, Object>of(
                 "mediaId", id, "imageUrl", "/api/article-generation/generated-images/" + id,
                 "size", "1024x1024")).toList();
@@ -90,7 +122,7 @@ class CreationGenerationRepositoryIT extends IntelligenceItSupport {
         result.put("images", images);
         result.put("secret", "secret result body");
         return repository.insert(new CreationGeneration(
-                null, owner, null, kind, Mode.INDEPENDENT, null, null,
+                null, owner, organizationId, kind, Mode.INDEPENDENT, null, null,
                 Resolution.PLATFORM, "qwen", "wanx-v1", 1, "upstream",
                 "secret prompt", Map.of("topic", "secret input"), List.of(),
                 result, mediaIds, null)).block();
