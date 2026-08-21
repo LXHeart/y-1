@@ -19,26 +19,37 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
 /**
- * {@link ByokRoutingService} fallback 授权矩阵（HLD §12.3 硬规则）：BYOK 优先；无 BYOK 时按
- * {@code allowFallback} 决定回落平台或拒绝——绝不静默扣平台额度。
+ * {@link ByokRoutingService} 路由矩阵（HLD §12.3 / ADR-D17）：
+ * 个人 BYOK &gt; 组织 BYOK &gt; 平台模型；回退授权按组织是否配置组织密钥分两档——
+ * 未配置沿用调用方 allowFallback；配置后须组织策略 + allowFallback 双满足。
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ByokRoutingService (fallback 授权矩阵)")
+@DisplayName("ByokRoutingService (个人/组织/平台路由矩阵)")
 class ByokRoutingServiceTest {
 
     @Mock
     AiProviderKeyRepository keyRepository;
     @Mock
+    AiOrgByokPolicyRepository policyRepository;
+    @Mock
     PlatformModelControlPlaneService platformModelControlPlane;
     @InjectMocks
     ByokRoutingService service;
 
+    private static AiProviderKey key(String organizationId, String keyVersion) {
+        return new AiProviderKey(UUID.randomUUID(), organizationId, "acct", "text",
+                "openai-compatible", "http://host", "byok-model", "ciphertext", keyVersion, "sk-***", true,
+                null, null);
+    }
+
+    private static AiOrgByokPolicy policy(boolean allowFallback) {
+        return new AiOrgByokPolicy("org", allowFallback, 1, "admin-acct", null);
+    }
+
     @Test
-    @DisplayName("带组织上下文仍只解析当前账号的个人 BYOK")
-    void organizationContextUsesPersonalByok() {
-        AiProviderKey key = new AiProviderKey(UUID.randomUUID(), null, "acct", "text",
-                "openai-compatible", "http://host", "byok-model", "ciphertext", "v1", "sk-***", true, null, null);
-        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.just(key));
+    @DisplayName("个人 BYOK 优先于组织密钥——命中个人时不查组织层")
+    void personalByokWinsOverOrgKey() {
+        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.just(key(null, "v1")));
 
         ProviderResolution r = service.resolveProvider("org", "acct", "text", false).block();
 
@@ -46,31 +57,90 @@ class ByokRoutingServiceTest {
         assertThat(r.needsKeyDecryption()).isTrue();
         assertThat(r.encryptedKey()).isEqualTo("ciphertext");
         assertThat(r.modelVersionKey()).isEqualTo("byok:v1");
+        assertThat(r.byokOrganizationId()).isNull();
         assertThat(r.chargesPlatformFee()).isFalse();
         verify(keyRepository).findByPersonalAndCapability("acct", "text");
         verifyNoMoreInteractions(keyRepository);
     }
 
     @Test
-    @DisplayName("无 BYOK + allowFallback=true + 平台配置存在 → PLATFORM")
-    void noByokFallbackToPlatform() {
+    @DisplayName("无个人密钥时组织密钥兜底——byokOrganizationId 带组织 ID，modelVersionKey 用 byok-org 前缀")
+    void orgKeyUsedWhenNoPersonalKey() {
         when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.empty());
+        when(keyRepository.findByOrganizationAndCapability("org", "text")).thenReturn(Mono.just(key("org", "v2")));
+
+        ProviderResolution r = service.resolveProvider("org", "acct", "text", false).block();
+
+        assertThat(r.isByok()).isTrue();
+        assertThat(r.byokOrganizationId()).isEqualTo("org");
+        assertThat(r.modelVersionKey()).isEqualTo("byok-org:v2");
+        assertThat(r.chargesPlatformFee()).isFalse();
+    }
+
+    @Test
+    @DisplayName("组织配了组织密钥：无该能力组织密钥且策略默认（无行）→ DENIED，不静默扣平台额度")
+    void orgWithKeysButPolicyAbsentDeniesFallback() {
+        when(keyRepository.findByPersonalAndCapability("acct", "image_generation")).thenReturn(Mono.empty());
+        when(keyRepository.findByOrganizationAndCapability("org", "image_generation")).thenReturn(Mono.empty());
+        when(keyRepository.existsEnabledForOrganization("org")).thenReturn(Mono.just(true));
+        when(policyRepository.find("org")).thenReturn(Mono.empty());
+
+        ProviderResolution r = service.resolveProvider("org", "acct", "image_generation", true).block();
+
+        assertThat(r.isDenied()).isTrue();
+        assertThat(r.denialReason()).isEqualTo("fallback_not_authorized");
+        verifyNoMoreInteractions(platformModelControlPlane);
+    }
+
+    @Test
+    @DisplayName("组织配了组织密钥：策略显式允许 + 调用方授权 → 回退平台")
+    void orgPolicyAndRequestBothAllowFallbackToPlatform() {
+        when(keyRepository.findByPersonalAndCapability("acct", "image_generation")).thenReturn(Mono.empty());
+        when(keyRepository.findByOrganizationAndCapability("org", "image_generation")).thenReturn(Mono.empty());
+        when(keyRepository.existsEnabledForOrganization("org")).thenReturn(Mono.just(true));
+        when(policyRepository.find("org")).thenReturn(Mono.just(policy(true)));
+        when(platformModelControlPlane.resolve("image_generation")).thenReturn(
+                Mono.just(Optional.of(new ResolvedPlatformModel(
+                        UUID.randomUUID(), "qwen", "qwen-plus", "http://host", 1, "primary", 4))));
+
+        ProviderResolution r = service.resolveProvider("org", "acct", "image_generation", true).block();
+
+        assertThat(r.isPlatform()).isTrue();
+        assertThat(r.chargesPlatformFee()).isTrue();
+    }
+
+    @Test
+    @DisplayName("组织配了组织密钥：策略允许但调用方未授权 → 仍 DENIED（双满足缺一不可）")
+    void orgPolicyAllowsButRequestDoesNot() {
+        when(keyRepository.findByPersonalAndCapability("acct", "image_generation")).thenReturn(Mono.empty());
+        when(keyRepository.findByOrganizationAndCapability("org", "image_generation")).thenReturn(Mono.empty());
+        when(keyRepository.existsEnabledForOrganization("org")).thenReturn(Mono.just(true));
+        when(policyRepository.find("org")).thenReturn(Mono.just(policy(true)));
+
+        ProviderResolution r = service.resolveProvider("org", "acct", "image_generation", false).block();
+
+        assertThat(r.isDenied()).isTrue();
+        assertThat(r.denialReason()).isEqualTo("fallback_not_authorized");
+    }
+
+    @Test
+    @DisplayName("组织未配任何组织密钥：回退沿用调用方 allowFallback（与组织级开启前一致）")
+    void orgWithoutOrgKeysKeepsLegacyFallbackSemantics() {
+        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.empty());
+        when(keyRepository.findByOrganizationAndCapability("org", "text")).thenReturn(Mono.empty());
+        when(keyRepository.existsEnabledForOrganization("org")).thenReturn(Mono.just(false));
         when(platformModelControlPlane.resolve("text")).thenReturn(
                 Mono.just(Optional.of(new ResolvedPlatformModel(
                         UUID.randomUUID(), "qwen", "qwen-plus", "http://host", 1, "primary", 4))));
 
-        ProviderResolution r = service.resolveProvider(null, "acct", "text", true).block();
+        ProviderResolution r = service.resolveProvider("org", "acct", "text", true).block();
 
         assertThat(r.isPlatform()).isTrue();
-        assertThat(r.chargesPlatformFee()).isTrue();
-        assertThat(r.platformModelVersion()).isEqualTo(1);
-        assertThat(r.modelVersionKey()).isEqualTo("platform:1");
-        assertThat(r.model()).isEqualTo("qwen-plus");
-        assertThat(r.maxConcurrency()).isEqualTo(4);
+        verifyNoMoreInteractions(policyRepository);
     }
 
     @Test
-    @DisplayName("无 BYOK + allowFallback=false → DENIED(fallback_not_authorized)，不扣平台额度")
+    @DisplayName("个人用户（无组织）：无 BYOK + allowFallback=false → DENIED，不扣平台额度")
     void noByokFallbackUnauthorized() {
         when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.empty());
 
@@ -81,7 +151,7 @@ class ByokRoutingServiceTest {
     }
 
     @Test
-    @DisplayName("无 BYOK + allowFallback=true + 无平台配置 → DENIED(no_platform_model)")
+    @DisplayName("个人用户：无 BYOK + allowFallback=true + 无平台配置 → DENIED(no_platform_model)")
     void noByokNoPlatformModel() {
         when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.empty());
         when(platformModelControlPlane.resolve("text")).thenReturn(Mono.just(Optional.empty()));

@@ -83,6 +83,133 @@ public class AiProviderKeyRepository {
                 .one();
     }
 
+    // ---------- 组织级 BYOK（ADR-D17）----------
+
+    /** 按组织 + 能力查找有效组织密钥（成员无个人密钥时的兜底层）。 */
+    public Mono<AiProviderKey> findByOrganizationAndCapability(String organizationId, String capability) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE organization_id = :orgId"
+                + " AND capability = :capability"
+                + " AND enabled = true"
+                + " ORDER BY created_at DESC"
+                + " LIMIT 1")
+                .bind("orgId", organizationId)
+                .bind("capability", capability)
+                .map(AiProviderKeyRepository::map)
+                .one();
+    }
+
+    /** 组织是否配有任意有效组织密钥（决定回退策略是否介入）。 */
+    public Mono<Boolean> existsEnabledForOrganization(String organizationId) {
+        return db.sql("SELECT id FROM ai_provider_key"
+                + " WHERE organization_id = :orgId AND enabled = true LIMIT 1")
+                .bind("orgId", organizationId)
+                .map((r, meta) -> r.get("id", String.class))
+                .one()
+                .hasElement();
+    }
+
+    /** 按 ID + 组织查询组织密钥；其他组织的密钥表现为不存在。 */
+    public Mono<AiProviderKey> findOrgByIdAndOrganization(UUID id, String organizationId) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE id = CAST(:id AS uuid)"
+                + " AND organization_id = :orgId"
+                + " AND organization_id IS NOT NULL")
+                .bind("id", id.toString())
+                .bind("orgId", organizationId)
+                .map(AiProviderKeyRepository::map)
+                .one();
+    }
+
+    /** 按 ID 查询组织密钥（不限组织；冻结配置重解析用，成员资格在调用方校验）。 */
+    public Mono<AiProviderKey> findOrgById(UUID id) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE id = CAST(:id AS uuid)"
+                + " AND organization_id IS NOT NULL")
+                .bind("id", id.toString())
+                .map(AiProviderKeyRepository::map)
+                .one();
+    }
+
+    /** 列出组织的全部组织密钥（含已停用，管理台用）。 */
+    public Flux<AiProviderKey> findOrgByOrganization(String organizationId) {
+        return db.sql("SELECT " + SELECT_COLS
+                + " FROM ai_provider_key"
+                + " WHERE organization_id = :orgId"
+                + " AND organization_id IS NOT NULL"
+                + " ORDER BY created_at DESC")
+                .bind("orgId", organizationId)
+                .map(AiProviderKeyRepository::map)
+                .all();
+    }
+
+    /** 更新组织密钥配置（不含 apiKey）。 */
+    public Mono<Boolean> updateOrgConfig(UUID id, String organizationId, String baseUrl, String model) {
+        return db.sql("""
+                UPDATE ai_provider_key
+                SET base_url = :baseUrl,
+                    model = :model,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND organization_id = :orgId
+                  AND organization_id IS NOT NULL
+                RETURNING id::text
+                """)
+                .bind("id", id.toString())
+                .bind("orgId", organizationId)
+                .bind("baseUrl", baseUrl)
+                .bind("model", nullable(model, String.class))
+                .map((r, meta) -> r.get("id", String.class))
+                .one()
+                .hasElement();
+    }
+
+    /** 组织密钥轮换。 */
+    public Mono<Boolean> updateOrgKey(
+            UUID id, String organizationId, String newEncryptedKey, String newKeyVersion, String newMaskedHint) {
+        return db.sql("""
+                UPDATE ai_provider_key
+                SET encrypted_key = :encryptedKey,
+                    key_version = :keyVersion,
+                    masked_hint = :maskedHint,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND organization_id = :orgId
+                  AND organization_id IS NOT NULL
+                RETURNING id::text
+                """)
+                .bind("id", id.toString())
+                .bind("orgId", organizationId)
+                .bind("encryptedKey", newEncryptedKey)
+                .bind("keyVersion", newKeyVersion)
+                .bind("maskedHint", newMaskedHint)
+                .map((r, meta) -> r.get("id", String.class))
+                .one()
+                .hasElement();
+    }
+
+    /** 组织密钥软删（enabled=false）。 */
+    public Mono<Boolean> deleteOrg(UUID id, String organizationId) {
+        return db.sql("""
+                UPDATE ai_provider_key
+                SET enabled = false,
+                    updated_at = now()
+                WHERE id = CAST(:id AS uuid)
+                  AND organization_id = :orgId
+                  AND organization_id IS NOT NULL
+                  AND enabled = true
+                RETURNING id::text
+                """)
+                .bind("id", id.toString())
+                .bind("orgId", organizationId)
+                .map((r, meta) -> r.get("id", String.class))
+                .one()
+                .hasElement();
+    }
+
     /** 列出当前账号的有效及已停用个人密钥；历史组织密钥不再进入可用控制面。 */
     public Flux<AiProviderKey> findPersonalByOwner(String ownerAccountId) {
         return db.sql("SELECT " + SELECT_COLS
