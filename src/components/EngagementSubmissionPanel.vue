@@ -322,7 +322,11 @@ async function reject(submission: EngagementSubmission): Promise<void> {
       </div>
 
       <div class="sub-row">
-        <input v-model="note" placeholder="补充说明（可选）" />
+        <input
+          v-model="note"
+          maxlength="500"
+          placeholder="补充说明（可选，≤500 字；提交时将做内容安全检查）"
+        />
         <button type="button" :disabled="grassland.loading.value || !canSubmit" @click="submit">提交履约</button>
       </div>
 

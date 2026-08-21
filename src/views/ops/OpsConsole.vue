@@ -171,7 +171,7 @@ async function reviewComment(row: OpsCommentReview, decision: 'confirmed' | 'vio
     say('判定违规必须填写原因', true)
     return
   }
-  const result = await grassland.reviewOpsComment(row.submissionId, decision, note || undefined)
+  const result = await grassland.reviewOpsComment(row.submissionId, row.field, decision, note || undefined)
   if (result) {
     commentNotes.value[row.submissionId] = ''
     say(decision === 'violation' ? '已判定违规，商家侧将看到标记' : '已复核确认无问题')
@@ -496,18 +496,18 @@ function checksOf(row: OpsPendingVerification) {
         <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshComments">刷新</button>
       </div>
       <p class="ops-hint">
-        评论提交时内容安全词库存疑（low/medium，未达拦截线）的条目。复核结论独立记录：
+        履约提交时内容安全词库存疑（low/medium，未达拦截线）的评论/备注。复核结论独立记录：
         判违规只在商家交付物列表打标记（平台内容安全 ≠ 业务验收，接不接受仍由商家决定）。
       </p>
-      <p v-if="commentsLoaded && comments.length === 0" class="ops-hint">当前没有待复核的评论。</p>
+      <p v-if="commentsLoaded && comments.length === 0" class="ops-hint">当前没有待复核的条目。</p>
 
       <section v-for="row in comments" :key="row.submissionId" class="ops-item">
         <div class="ops-item-head">
           <strong>{{ row.taskTitle }}</strong>
-          <span class="ops-pos">推荐官 <code>{{ shortId(row.recommenderAccountId) }}</code> · {{ row.platform || '-' }}</span>
+          <span class="ops-pos">推荐官 <code>{{ shortId(row.recommenderAccountId) }}</code> · {{ row.platform || '-' }} · {{ row.field === 'note' ? '备注' : '评论' }}</span>
         </div>
         <dl class="ops-meta">
-          <div><dt>评论文本</dt><dd class="ops-comment-text">{{ row.commentText }}</dd></div>
+          <div><dt>{{ row.field === 'note' ? '备注原文' : '评论文本' }}</dt><dd class="ops-comment-text">{{ row.commentText }}</dd></div>
           <div><dt>词库命中</dt><dd>{{ row.findings.map((f) => `${f.category}(${f.severity})`).join('、') || '-' }}</dd></div>
           <div><dt>交付状态</dt><dd>{{ row.submissionStatus }}</dd></div>
           <div><dt>提交时间</dt><dd>{{ time(row.submittedAt) }}</dd></div>

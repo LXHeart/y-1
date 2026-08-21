@@ -121,11 +121,14 @@ export interface OpsPendingVerification {
 }
 
 /**
- * 评论人工复核队列（缺口清偿之九遗留清偿）：词库 advisory（low/medium）命中的评论提交。
- * 运营复核 confirmed=无问题 / violation=违规（经交付物列表 commentFlagged 透出给商家）。
+ * 履约自由文本人工复核队列（缺口清偿之九遗留清偿 + 履约硬门槛）：词库 advisory（low/medium）命中的
+ * 评论（comment）/备注（note）。运营复核 confirmed=无问题 / violation=违规（经交付物列表 commentFlagged
+ * 透出给商家）。
  */
 export interface OpsCommentReview {
   submissionId: string
+  /** 命中字段：comment=评论文本 / note=提交备注。 */
+  field: 'comment' | 'note'
   commentText: string
   /** 词库 advisory 明细快照。 */
   findings: Array<{ category: string; severity: string; advice?: string }>

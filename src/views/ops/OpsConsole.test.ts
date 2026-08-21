@@ -354,14 +354,14 @@ describe('OpsConsole', () => {
       { match: '/api/ops/comment-reviews', data: {
         status: 'open',
         items: [{
-          submissionId: 's-9', commentText: '加我薇信买同款', status: 'open',
+          submissionId: 's-9', field: 'comment', commentText: '加我薇信买同款', status: 'open',
           findings: [{ category: 'contact', severity: 'medium', advice: '疑似站外导流用语' }],
           taskId: 't-9', taskTitle: '小红书探店种草', platform: 'xiaohongshu',
           recommenderAccountId: 'rec-9', submissionStatus: 'submitted',
           submittedAt: '2026-08-20T03:00:00Z', createdAt: '2026-08-20T03:00:00Z',
         }],
       } },
-      { match: '/api/ops/comment-reviews/s-9/review', data: {
+      { match: '/api/ops/comment-reviews/s-9/comment/review', data: {
         submissionId: 's-9', status: 'violation', reviewerAccountId: 'ops-1', reviewNote: '站外导流',
       } },
     ])
@@ -378,13 +378,13 @@ describe('OpsConsole', () => {
     // 判违规必须带原因
     await panel.findAll('button').find((b) => b.text() === '判违规')!.trigger('click')
     expect(wrapper.text()).toContain('判定违规必须填写原因')
-    expect(calls.find((c) => c.url.includes('/api/ops/comment-reviews/s-9/review'))).toBeUndefined()
+    expect(calls.find((c) => c.url.includes('/api/ops/comment-reviews/s-9/comment/review'))).toBeUndefined()
 
     await panel.find('input[placeholder="复核备注（判违规必填）"]').setValue('站外导流')
     await panel.findAll('button').find((b) => b.text() === '判违规')!.trigger('click')
     await flushPromises()
 
-    const call = calls.find((c) => c.url.includes('/api/ops/comment-reviews/s-9/review'))
+    const call = calls.find((c) => c.url.includes('/api/ops/comment-reviews/s-9/comment/review'))
     expect(call?.method).toBe('POST')
     expect(JSON.parse(call?.body || '{}')).toEqual({ decision: 'violation', note: '站外导流' })
   })

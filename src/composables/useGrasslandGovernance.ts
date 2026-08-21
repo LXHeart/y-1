@@ -243,15 +243,20 @@ export function useGrasslandGovernance(run: RunFn) {
       { method: 'POST', body: JSON.stringify({ status, note }) },
     ))
 
-  /** 评论人工复核队列（之九遗留清偿）：词库 advisory 命中的评论提交；默认 open，可查复核史。 */
+  /** 履约自由文本复核队列（之九遗留清偿 + 履约硬门槛）：词库 advisory 命中的评论/备注；默认 open，可查复核史。 */
   const listOpsCommentReviews = (status: 'open' | 'confirmed' | 'violation' = 'open') =>
     run(() => request<{ status: string; items: OpsCommentReview[] }>(
       `/api/ops/comment-reviews?status=${status}`))
 
-  /** 复核评论：confirmed=无问题 / violation=违规（必填 note；判违规会在商家交付物列表打 commentFlagged）。 */
-  const reviewOpsComment = (submissionId: string, decision: 'confirmed' | 'violation', note?: string) =>
+  /** 复核：按字段（comment/note）判定 confirmed=无问题 / violation=违规（必填 note；判违规会在商家交付物列表打 commentFlagged）。 */
+  const reviewOpsComment = (
+    submissionId: string,
+    field: 'comment' | 'note',
+    decision: 'confirmed' | 'violation',
+    note?: string,
+  ) =>
     run(() => request<Record<string, unknown>>(
-      `/api/ops/comment-reviews/${encodeURIComponent(submissionId)}/review`,
+      `/api/ops/comment-reviews/${encodeURIComponent(submissionId)}/${field}/review`,
       { method: 'POST', body: JSON.stringify({ decision, note: note?.trim() || undefined }) },
     ))
 
