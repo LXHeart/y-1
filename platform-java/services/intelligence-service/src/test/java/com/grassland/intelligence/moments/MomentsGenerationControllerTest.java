@@ -86,7 +86,7 @@ class MomentsGenerationControllerTest {
         when(service.validateAndEncode(any())).thenReturn(List.of());
         when(credits.consume("acc-1", CreditFeature.MOMENTS_GENERATION))
                 .thenReturn(Mono.just(new CreditCharge("acc-1", CreditFeature.MOMENTS_GENERATION, "op-1")));
-        when(service.generate(any(), any(), any(), any()))
+        when(service.generate(any(), any(), any(), any(), any(), any()))
                 .thenReturn(Flux.just("{\"type\":\"result\",\"copy\":\"开业大吉\"}"));
 
         StepVerifier.create(controller.generate(request("lifestyle"), exchange()))
@@ -107,7 +107,7 @@ class MomentsGenerationControllerTest {
         when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
         when(service.validateAndEncode(any())).thenReturn(List.of());
         when(credits.consume("acc-1", CreditFeature.MOMENTS_GENERATION)).thenReturn(Mono.just(charge));
-        when(service.generate(any(), any(), any(), any()))
+        when(service.generate(any(), any(), any(), any(), any(), any()))
                 .thenReturn(Flux.error(new RuntimeException("upstream down")));
         when(credits.refund(charge, "朋友圈内容生成失败自动退回")).thenReturn(Mono.empty());
 

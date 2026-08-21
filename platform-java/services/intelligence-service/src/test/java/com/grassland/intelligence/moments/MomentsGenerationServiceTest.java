@@ -39,12 +39,22 @@ class MomentsGenerationServiceTest {
     private AiCapabilityAdapter ai;
     @Mock
     private com.grassland.intelligence.ai.run.FrozenTextExecutionService frozenText;
+    @Mock
+    private com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubLineage() {
+        // recordAdvisory 默认 mock 返回 null 会让流内 .then(...) NPE——恒空落痕（lenient：校验类用例不触达）
+        org.mockito.Mockito.lenient().when(lineage.recordAdvisory(any()))
+                .thenReturn(reactor.core.publisher.Mono.empty());
+        org.mockito.Mockito.lenient().when(lineage.independentModel()).thenReturn("qwen-plus");
+    }
 
     private MomentsGenerationService service;
 
     @BeforeEach
     void setUp() {
-        service = new MomentsGenerationService(ai, frozenText);
+        service = new MomentsGenerationService(ai, frozenText, lineage);
     }
 
     // ---------------- 素材图校验 ----------------
@@ -155,7 +165,7 @@ class MomentsGenerationServiceTest {
         when(ai.completeText(any())).thenReturn(Mono.just(
                 "{\"copy\":\"开业大吉\",\"imageOrder\":[],\"captions\":[]}"));
 
-        StepVerifier.create(service.generate(List.of(), MomentsStyle.EVENT, "开业", null))
+        StepVerifier.create(service.generate(List.of(), MomentsStyle.EVENT, "开业", null, null, null))
                 .assertNext(frame -> assertThat(frame).contains("\"type\":\"progress\""))
                 .assertNext(frame -> assertThat(frame)
                         .contains("\"type\":\"result\"")
@@ -170,7 +180,7 @@ class MomentsGenerationServiceTest {
         when(ai.completeText(any())).thenReturn(Mono.just("{\"copy\":\"ok\"}"));
 
         StepVerifier.create(service.generate(
-                        List.of(dataUrl("image/png", PNG_MAGIC)), MomentsStyle.LIFESTYLE, "主题", "感受"))
+                        List.of(dataUrl("image/png", PNG_MAGIC)), MomentsStyle.LIFESTYLE, "主题", "感受", null, null))
                 .expectNextCount(2)
                 .verifyComplete();
 
@@ -192,7 +202,7 @@ class MomentsGenerationServiceTest {
     void generateWithoutImagesSendsPlainTextUserMessage() {
         when(ai.completeText(any())).thenReturn(Mono.just("{\"copy\":\"纯文本\"}"));
 
-        StepVerifier.create(service.generate(List.of(), MomentsStyle.EVENT, "主题", null))
+        StepVerifier.create(service.generate(List.of(), MomentsStyle.EVENT, "主题", null, null, null))
                 .expectNextCount(2)
                 .verifyComplete();
 
@@ -207,7 +217,7 @@ class MomentsGenerationServiceTest {
     void generateEmitsProgressThenPropagatesUpstreamFailure() {
         when(ai.completeText(any())).thenReturn(Mono.error(new RuntimeException("upstream down")));
 
-        StepVerifier.create(service.generate(List.of(), MomentsStyle.LIFESTYLE, "主题", null))
+        StepVerifier.create(service.generate(List.of(), MomentsStyle.LIFESTYLE, "主题", null, null, null))
                 .assertNext(frame -> assertThat(frame).contains("\"type\":\"progress\""))
                 .expectError()
                 .verify();

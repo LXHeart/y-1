@@ -29,7 +29,15 @@ public record CreationGeneration(
     public enum Kind {
         VIDEO_ADAPTATION("video_adaptation"),
         ASSET_IMAGE("asset_image"),
-        SCENE_IMAGE("scene_image");
+        SCENE_IMAGE("scene_image"),
+        /** 文章正文（任务书 #44 登记扩展：文本创作流接 lineage）。 */
+        ARTICLE("article"),
+        /** 朋友圈文案。 */
+        MOMENTS_COPY("moments_copy"),
+        /** 喜剧/脱口秀脚本。 */
+        COMEDY_SCRIPT("comedy_script"),
+        /** 智能创作助手问答引导（AI 中心 SSE 流）。 */
+        ASSISTANT_GUIDE("assistant_guide");
 
         private final String db;
 

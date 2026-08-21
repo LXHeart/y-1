@@ -1,4 +1,11 @@
-export type CreationGenerationKind = 'video_adaptation' | 'asset_image' | 'scene_image'
+export type CreationGenerationKind =
+  | 'video_adaptation'
+  | 'asset_image'
+  | 'scene_image'
+  | 'article'
+  | 'moments_copy'
+  | 'comedy_script'
+  | 'assistant_guide'
 export type CreationGenerationMode = 'independent' | 'task'
 export type CreationGenerationResolution = 'platform' | 'byok'
 

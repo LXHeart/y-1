@@ -47,16 +47,19 @@ public class ArticleController {
     private final FrozenTextExecutionService frozenText;
     private final ArticleCreationContext creationContexts;
     private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
+    private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
 
     public ArticleController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits,
                              FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts,
-                             com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
+                             com.grassland.intelligence.contentsafety.ContentSafetyService safety,
+                             com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
         this.frozenText = frozenText;
         this.creationContexts = creationContexts;
         this.safety = safety;
+        this.lineage = lineage;
     }
 
     // ---------- titles：扣积分 + 聚合流式 → 解析 JSON ----------
@@ -128,16 +131,36 @@ public class ArticleController {
     public Mono<ResponseEntity<Flux<DataBuffer>>> content(@RequestBody ContentRequest body, ServerWebExchange exchange) {
         Platform platform = Platform.fromKey(body.platform());
         if (body.isTaskMode()) {
-            return taskStream(exchange, body.contextSnapshotId(), body.platform(), binding -> List.of(
-                    ArticlePrompts.contentSystem(binding.platform()), binding.promptContext(),
-                    ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())), 4096, "正文生成失败", true);
+            return contentTaskStream(exchange, body);
         }
         return callers.resolve(exchange.getRequest()).map(caller -> {
+            StringBuilder accumulated = new StringBuilder();
+            java.util.function.Function<String, String> textOf =
+                    com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor();
             Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
                     ArticlePrompts.contentSystem(platform),
                     ArticlePrompts.contentUser(body.topic(), body.title(), body.outline()))))
                     .map(chunk -> frame(Map.of("content", chunk.content())))
-                    .onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))));
+                    .doOnNext(item -> {
+                        String text = textOf.apply(item);
+                        if (text != null) {
+                            accumulated.append(text);
+                        }
+                    })
+                    .onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))))
+                    // 任务书 #44 登记扩展：正文产出落 lineage（SSE 尾部落痕，失败不破坏内容流）
+                    .concatWith(Mono.defer(() -> lineage.recordAdvisory(
+                            new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+                                    com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
+                                    com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
+                                    null, null,
+                                    com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+                                    com.grassland.intelligence.creationlineage.TextCreationLineageService.INDEPENDENT_PROVIDER,
+                                    lineage.independentModel(), null, null,
+                                    contentPrompt(body), contentInput(body), List.of(),
+                                    Map.of("contentLength", accumulated.length()), List.of(),
+                                    caller.accountId(), caller.organizationId()))
+                            .then(Mono.<String>empty())));
             // 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
             return sseEntity(safety.appendSafetyFrame(exchange, payloads,
                     com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
@@ -176,6 +199,64 @@ public class ArticleController {
                 })
                 .onErrorMap(error -> error instanceof IntelligenceException
                         ? error : new IntelligenceException(502, failureMessage));
+    }
+
+    /**
+     * 正文任务模式（任务书 #44 登记扩展）：executeTraced 携带 run/provider/model 落 lineage——
+     * 正文是文章创作的最终产出物，titles/outline 是中间步骤不落痕。
+     */
+    private Mono<ResponseEntity<Flux<DataBuffer>>> contentTaskStream(
+            ServerWebExchange exchange, ContentRequest body) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
+                .flatMap(binding -> frozenText.executeTraced(
+                        exchange, body.contextSnapshotId(), List.of(
+                                ArticlePrompts.contentSystem(binding.platform()), binding.promptContext(),
+                                ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())),
+                        4096, null, completion -> completion.content())
+                        .map(trace -> Map.entry(binding, trace)))
+                .map(bound -> {
+                    ArticleCreationContext.Binding binding = bound.getKey();
+                    FrozenTextExecutionService.Traced<String> trace = bound.getValue();
+                    Flux<String> frames = Flux.just(frame(Map.of("content", trace.value())))
+                            .concatWith(Mono.defer(() -> lineage.recordAdvisory(
+                                    new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+                                            com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
+                                            com.grassland.intelligence.creationlineage.CreationGeneration.Mode.TASK,
+                                            body.contextSnapshotId(), trace.runId(),
+                                            trace.byok()
+                                                    ? com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.BYOK
+                                                    : com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+                                            trace.provider(), trace.model(), trace.platformModelVersion(), null,
+                                            contentPrompt(body), contentInput(body), List.of(),
+                                            Map.of("contentLength", trace.value() == null ? 0 : trace.value().length()),
+                                            List.of(),
+                                            binding.snapshot().accountId(), binding.snapshot().organizationId()))
+                                    .then(Mono.<String>empty())));
+                    var snapshot = binding.snapshot();
+                    frames = safety.appendSafetyFrame(exchange, frames,
+                            com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+                            snapshot.platformId(),
+                            com.grassland.intelligence.contentsafety.ContentSafetyService.industryFromSnapshot(snapshot),
+                            com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
+                    return sseEntity(frames, exchange);
+                })
+                .onErrorMap(error -> error instanceof IntelligenceException
+                        ? error : new IntelligenceException(502, "正文生成失败"));
+    }
+
+    /** lineage 输入速写（任务书 #44：prompt=主题+标题+大纲，input=结构化摘要，正文只记长度不落全文）。 */
+    private static String contentPrompt(ContentRequest body) {
+        return "主题：" + body.topic() + "；标题：" + body.title() + "；大纲：" + body.outline();
+    }
+
+    private static Map<String, Object> contentInput(ContentRequest body) {
+        Map<String, Object> input = new java.util.LinkedHashMap<>();
+        input.put("topic", body.topic());
+        input.put("title", body.title());
+        input.put("platform", body.platform());
+        input.put("outlineLength", body.outline() == null ? 0 : body.outline().length());
+        return input;
     }
 
     private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {

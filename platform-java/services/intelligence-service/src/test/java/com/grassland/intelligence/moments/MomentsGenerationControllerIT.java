@@ -197,10 +197,11 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
     @DisplayName("任务模式 → 绑定 moments+image-text 快照，冻结执行带上下文与 MOMENTS_GENERATION")
     void taskModeBindsFrozenContext() {
         String snapshotId = seedSnapshot(ACCOUNT, "moments", "image-text");
-        when(frozenText.execute(any(), any(UUID.class), any(), anyInt(), any(CreditFeature.class),
+        when(frozenText.executeTraced(any(), any(UUID.class), any(), anyInt(), any(CreditFeature.class),
                 any(Function.class)))
-                .thenReturn(Mono.just(new MomentsGenerationService.MomentsResult(
-                        "任务朋友圈文案", List.of(), List.of())));
+                .thenReturn(Mono.just(new com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<>(
+                        new MomentsGenerationService.MomentsResult("任务朋友圈文案", List.of(), List.of()),
+                        null, "qwen", "qwen-plus", 1, false)));
 
         client().post().uri("/api/moments-generation/generate")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
@@ -218,7 +219,7 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<com.grassland.intelligence.ai.ChatMessage>> messagesCaptor =
                 ArgumentCaptor.forClass((Class<List<com.grassland.intelligence.ai.ChatMessage>>) (Class<?>) List.class);
-        verify(frozenText).execute(any(), eq(UUID.fromString(snapshotId)), messagesCaptor.capture(),
+        verify(frozenText).executeTraced(any(), eq(UUID.fromString(snapshotId)), messagesCaptor.capture(),
                 anyInt(), eq(CreditFeature.MOMENTS_GENERATION), any());
         assertThat(messagesCaptor.getValue()).hasSize(3);
         assertThat(messagesCaptor.getValue().get(0).content()).contains("朋友圈图文任务上下文");

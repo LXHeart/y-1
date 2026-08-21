@@ -42,11 +42,14 @@ public class MomentsGenerationService {
 
     private final AiCapabilityAdapter ai;
     private final FrozenTextExecutionService frozenText;
+    private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public MomentsGenerationService(AiCapabilityAdapter ai, FrozenTextExecutionService frozenText) {
+    public MomentsGenerationService(AiCapabilityAdapter ai, FrozenTextExecutionService frozenText,
+            com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
         this.ai = ai;
         this.frozenText = frozenText;
+        this.lineage = lineage;
     }
 
     /**
@@ -96,7 +99,8 @@ public class MomentsGenerationService {
     }
 
     /** 独立模式生成 → 事件流（progress/result；上游失败以 onError 信号抛出，由 controller 退款并转 error 帧）。 */
-    public Flux<String> generate(List<String> dataUrls, MomentsStyle style, String topic, String feelings) {
+    public Flux<String> generate(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
+            String accountId, String organizationId) {
         return Flux.defer(() -> Flux.concat(
                 Mono.just(progressFrame()),
                 ai.completeText(new TextCompletionCommand(
@@ -105,7 +109,13 @@ public class MomentsGenerationService {
                                         userMessage(dataUrls, topic, feelings)),
                                 "朋友圈内容生成失败", GENERATION_TIMEOUT))
                         .map(this::parseResult)
-                        .map(MomentsGenerationService::resultFrame)));
+                        .flatMapMany(result -> Flux.just(resultFrame(result))
+                                // 任务书 #44 登记扩展：朋友圈文案产出落 lineage（advisory，失败不破坏内容流）
+                                .concatWith(lineage.recordAdvisory(lineageCommand(
+                                        com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
+                                        null, null, null, style, topic, feelings, dataUrls.size(), result,
+                                        accountId, organizationId))
+                                        .then(Mono.<String>empty())))));
     }
 
     /** 任务模式生成：冻结 AI 配置 + 冻结任务上下文，积分经 AiExecutionService 闭环。 */
@@ -113,7 +123,7 @@ public class MomentsGenerationService {
                                      MomentsTaskCreationContext.Binding binding, ServerWebExchange exchange) {
         return Flux.defer(() -> Flux.concat(
                 Mono.just(progressFrame()),
-                frozenText.execute(
+                frozenText.executeTraced(
                                 exchange, binding.snapshotId(),
                                 List.of(
                                         binding.promptContext(),
@@ -121,7 +131,43 @@ public class MomentsGenerationService {
                                         userMessage(dataUrls, topic, feelings)),
                                 2048, CreditFeature.MOMENTS_GENERATION,
                                 completion -> parseResult(completion.content()))
-                        .map(MomentsGenerationService::resultFrame)));
+                        .flatMapMany(trace -> Flux.just(resultFrame(trace.value()))
+                                // 任务书 #44 登记扩展：朋友圈文案产出落 lineage（run/provider/model 来自执行环）
+                                .concatWith(lineage.recordAdvisory(lineageCommand(
+                                        com.grassland.intelligence.creationlineage.CreationGeneration.Mode.TASK,
+                                        binding.snapshotId(), trace.runId(), trace, style, topic, feelings,
+                                        dataUrls.size(), trace.value(),
+                                        binding.snapshot().accountId(), binding.snapshot().organizationId()))
+                                        .then(Mono.<String>empty())))));
+    }
+
+    /** lineage 命令（任务书 #44）：result 记 copy 全文（朋友圈文案即产出物本体）与配图建议数。 */
+    private com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command lineageCommand(
+            com.grassland.intelligence.creationlineage.CreationGeneration.Mode mode,
+            java.util.UUID snapshotId, java.util.UUID runId,
+            com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<MomentsResult> trace,
+            MomentsStyle style, String topic, String feelings, int imageCount, MomentsResult result,
+            String accountId, String organizationId) {
+        String provider = trace == null
+                ? com.grassland.intelligence.creationlineage.TextCreationLineageService.INDEPENDENT_PROVIDER
+                : trace.provider();
+        String model = trace == null ? lineage.independentModel() : trace.model();
+        return new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+                com.grassland.intelligence.creationlineage.CreationGeneration.Kind.MOMENTS_COPY,
+                mode, snapshotId, runId,
+                trace != null && trace.byok()
+                        ? com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.BYOK
+                        : com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+                provider, model, trace == null ? null : trace.platformModelVersion(), null,
+                "风格：" + style.key() + "；主题：" + topic + (feelings == null ? "" : "；感受：" + feelings),
+                Map.of("style", style.key(), "topic", topic,
+                        "feelings", feelings == null ? "" : feelings, "imageCount", imageCount),
+                List.of(),
+                result == null ? Map.of() : Map.of(
+                        "copy", result.copy() == null ? "" : result.copy(),
+                        "imageOrderCount", result.imageOrder().size(),
+                        "captionCount", result.captions().size()),
+                List.of(), accountId, organizationId);
     }
 
     /** 解析模型输出：剥 code fence → JSON → copy 必填，order/captions 容忍缺失。 */

@@ -47,14 +47,17 @@ public class CreationAssistantController {
     private final IntelligenceCallerResolver callers;
     private final AiCapabilityAdapter ai;
     private final CreditsClient credits;
+    private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
 
     public CreationAssistantController(
             IntelligenceCallerResolver callers,
             AiCapabilityAdapter ai,
-            CreditsClient credits) {
+            CreditsClient credits,
+            com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
         this.callers = callers;
         this.ai = ai;
         this.credits = credits;
+        this.lineage = lineage;
     }
 
     /** 内容评分（§4.9.6）：聚合 LLM JSON 输出 → 逐维度发 SSE 帧。 */
@@ -104,15 +107,33 @@ public class CreationAssistantController {
             return Mono.error(new IntelligenceException(400, "userInput 不能为空"));
         }
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.CREATION_ASSISTANT))
-                .flatMap(charge -> ai.startTextRun(new TextRunCommand(
+                .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.CREATION_ASSISTANT)
+                        .map(charge -> Map.entry(caller, charge)))
+                .flatMap(entry -> ai.startTextRun(new TextRunCommand(
                         CreationAssistantPrompts.guideMessages(body.userInput(), body.platform(), body.history())))
                         .map(ChatChunk::content)
                         .collectList()
                         .map(chunks -> String.join("", chunks))
-                        .map(raw -> parseGuide(stripCodeFence(raw)))
-                        .onErrorResume(error -> credits.refund(charge, "引导失败自动退回")
-                                .then(Mono.error(error))))
+                        .<Flux<String>>map(raw -> parseGuide(stripCodeFence(raw)))
+                        .onErrorResume(error -> credits.refund(entry.getValue(), "引导失败自动退回")
+                                .then(Mono.error(error)))
+                        // 任务书 #44 登记扩展：AI 中心引导流落 lineage（advisory，失败不破坏内容流）
+                        .flatMap(frames -> lineage.recordAdvisory(
+                                new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+                                        com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ASSISTANT_GUIDE,
+                                        com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
+                                        null, null,
+                                        com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+                                        com.grassland.intelligence.creationlineage.TextCreationLineageService.INDEPENDENT_PROVIDER,
+                                        lineage.independentModel(), null, null,
+                                        "平台：" + (body.platform() == null ? "" : body.platform())
+                                                + "；用户输入：" + body.userInput(),
+                                        Map.of("platform", body.platform() == null ? "" : body.platform(),
+                                                "userInputLength", body.userInput().length(),
+                                                "historyLength", body.history() == null ? 0 : body.history().length()),
+                                        java.util.List.of(), Map.of(), java.util.List.of(),
+                                        entry.getKey().accountId(), entry.getKey().organizationId()))
+                                .thenReturn(frames)))
                 .map(frames -> sseEntity(frames, exchange));
     }
 

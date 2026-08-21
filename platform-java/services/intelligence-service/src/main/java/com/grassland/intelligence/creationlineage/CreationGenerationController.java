@@ -127,9 +127,35 @@ public class CreationGenerationController {
             String text = title == null ? "视频改编" : String.valueOf(title);
             return text.length() <= 80 ? text : text.substring(0, 80);
         }
+        switch (value.kind()) {
+            case MOMENTS_COPY -> {
+                Object copy = value.result().get("copy");
+                String text = copy == null ? "朋友圈文案" : String.valueOf(copy);
+                return text.length() <= 80 ? text : text.substring(0, 80);
+            }
+            case ARTICLE -> {
+                return "文章正文 " + lengthOf(value) + " 字";
+            }
+            case COMEDY_SCRIPT -> {
+                return "喜剧脚本 " + lengthOf(value) + " 字";
+            }
+            case ASSISTANT_GUIDE -> {
+                Object topic = value.inputSummary().get("platform");
+                return "创作引导" + (topic == null || String.valueOf(topic).isBlank()
+                        ? "" : " · " + topic);
+            }
+            default -> {
+                // 图片类（asset_image / scene_image）
+            }
+        }
         Object raw = value.result().get("images");
         int count = raw instanceof List<?> list ? list.size() : value.resultMediaIds().size();
         return count + " 张图片";
+    }
+
+    private static int lengthOf(CreationGeneration value) {
+        Object length = value.result().get("contentLength");
+        return length instanceof Number number ? number.intValue() : 0;
     }
 
     private static Kind parseKind(String value) {

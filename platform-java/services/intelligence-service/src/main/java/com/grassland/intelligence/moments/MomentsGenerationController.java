@@ -72,11 +72,13 @@ public class MomentsGenerationController {
         }
         return validatedImages(body)
                 .flatMap(dataUrls -> callers.resolve(exchange.getRequest())
-                        .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.MOMENTS_GENERATION))
-                        .map(charge -> sseEntity(
-                                withSafety(exchange, service.generate(dataUrls, style, body.topic(), body.feelings())
+                        .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.MOMENTS_GENERATION)
+                                .map(charge -> Map.entry(caller, charge)))
+                        .map(entry -> sseEntity(
+                                withSafety(exchange, service.generate(dataUrls, style, body.topic(), body.feelings(),
+                                                entry.getKey().accountId(), entry.getKey().organizationId())
                                         // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
-                                        .onErrorResume(e -> credits.refund(charge, "朋友圈内容生成失败自动退回")
+                                        .onErrorResume(e -> credits.refund(entry.getValue(), "朋友圈内容生成失败自动退回")
                                                 .thenMany(Flux.just(errorFrame()))), null),
                                 exchange)));
     }
