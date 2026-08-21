@@ -283,18 +283,24 @@ watch(grasslandNavigationTarget, async (target) => {
     </p>
     <p v-if="notice" class="gl-alert gl-alert-ok">{{ notice }}</p>
 
-    <!-- 我的邀请 / 登录设备：都是账号级能力，与商家/推荐官视角无关，故在切换之外 -->
-    <article id="gl-invitations" class="gl-card gl-card-wide">
-      <MyInvitationsCard @joined="() => loadOrganizations()" />
-    </article>
+    <!-- 分区：账号级能力（与视角无关）/ 视角工作区 / 争议与平台治理 ——
+         十余张卡平铺无主次的替代方案是分区标题 + 账号区横排，而不是继续加卡 -->
+    <section class="gl-zone" aria-label="账号与合规">
+      <h3 class="gl-zone-title">账号与合规</h3>
+      <div class="gl-zone-grid">
+        <article id="gl-invitations" class="gl-card">
+          <MyInvitationsCard @joined="() => loadOrganizations()" />
+        </article>
 
-    <article class="gl-card gl-card-wide">
-      <MySessionsCard />
-    </article>
+        <article class="gl-card">
+          <MySessionsCard />
+        </article>
 
-    <article class="gl-card gl-card-wide">
-      <PersonalDataComplianceCard />
-    </article>
+        <article class="gl-card">
+          <PersonalDataComplianceCard />
+        </article>
+      </div>
+    </section>
 
     <!-- ============ 商家视角 ============ -->
     <div v-if="side === 'merchant'" class="gl-grid">
@@ -680,22 +686,25 @@ watch(grasslandNavigationTarget, async (target) => {
     </div>
 
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
-    <article id="gl-disputes" class="gl-card gl-card-wide">
-      <h3>争议审判</h3>
-      <div class="gl-row">
-        <input v-model="activeDisputeId" placeholder="争议 ID（开启争议后自动填入）" />
-      </div>
-      <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
-      <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
-        异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
-      </p>
-      <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
-    </article>
+    <section class="gl-zone" aria-label="争议与平台治理">
+      <h3 class="gl-zone-title">争议与平台治理</h3>
+      <article id="gl-disputes" class="gl-card">
+        <h3>争议审判</h3>
+        <div class="gl-row">
+          <input v-model="activeDisputeId" placeholder="争议 ID（开启争议后自动填入）" />
+        </div>
+        <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
+        <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
+          异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
+        </p>
+        <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
+      </article>
 
-    <!-- 平台审核队列：仅 admin 可见（服务端另有 role 门禁），与商家/推荐官视角无关故放在切换之外 -->
-    <article v-if="isPlatformAdmin" class="gl-card gl-card-wide">
-      <PermissionReviewPanel @reviewed="loadOrganizations" />
-    </article>
+      <!-- 平台审核队列：仅 admin 可见（服务端另有 role 门禁），与商家/推荐官视角无关故放在切换之外 -->
+      <article v-if="isPlatformAdmin" class="gl-card">
+        <PermissionReviewPanel @reviewed="loadOrganizations" />
+      </article>
+    </section>
   </section>
 </template>
 
@@ -715,6 +724,16 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-alert-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .gl-sub-block { margin-top: 10px; }
 .gl-sub-block h5 { margin: 0; font-size: 12px; opacity: 0.75; }
+.gl-zone { display: grid; gap: var(--space-sm); }
+.gl-zone-title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.gl-zone-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md); }
 .gl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md); }
 .gl-card {
   border: 1px solid var(--color-border); border-radius: 10px;

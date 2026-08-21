@@ -586,24 +586,32 @@ function handleResetAll(): void {
   justify-content: center;
   font-size: 13px;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border);
+  transition: background 0.3s, border-color 0.3s, color 0.3s;
 }
 
+/* 激活态用淡底描边而非实心紫：与表单区的权重失衡来自步骤条过度抢眼（视觉审查 ⑮） */
 .step-active .step-num {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #fff;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: var(--color-accent);
 }
 
 .step-done .step-num {
-  background: rgba(34, 197, 94, 0.2);
-  border-color: rgba(34, 197, 94, 0.4);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+  color: var(--color-success);
 }
 
 .step-label {
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.step-active .step-label {
+  color: var(--color-text);
+  font-weight: 600;
 }
 
 .upload-area {
