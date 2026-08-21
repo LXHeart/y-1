@@ -449,6 +449,29 @@ class ExternalNotificationRoutingTest {
 
     // ---- helpers ----
 
+
+    @Test
+    void personalBudgetThresholdAlertNotifiesTheUserThemselves() {
+        // 个人 AI 预算阈值告警（GL-P3-AI-001 登记项）：收件人=用户本人（payload.accountId）
+        String account = "51515151-5151-5151-5151-515151515151";
+        assertThat(resolve("AiPersonalBudgetThresholdCrossed", Map.of(
+                "accountId", account, "level", "warning", "window", "daily", "unit", "tokens",
+                "periodKey", "2026-08-21", "usage", 80, "limit", 100)))
+                .containsExactly(account);
+    }
+
+    @Test
+    void personalBudgetThresholdAlertWithInvalidAccountIsSilentlySkipped() {
+        // 非法 accountId 不投递也不抛错（不阻塞分区重试）
+        assertThat(resolve("AiPersonalBudgetThresholdCrossed", Map.of(
+                "accountId", "not-a-uuid", "level", "exceeded", "window", "monthly", "unit", "cents",
+                "periodKey", "2026-08", "usage", 105, "limit", 100)))
+                .isEmpty();
+        assertThat(resolve("AiPersonalBudgetThresholdCrossed", Map.of(
+                "level", "exceeded", "window", "monthly", "unit", "cents")))
+                .isEmpty();
+    }
+
     private List<String> resolve(String eventType, Map<String, Object> payload) {
         IdentityEventEnvelope envelope = new IdentityEventEnvelope(
                 "evt-1", eventType, "Aggregate", "agg-1", payload(payload));

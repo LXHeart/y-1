@@ -30,6 +30,30 @@ class MailTemplatesTest {
         assertThat(t.body()).isNotBlank();
     }
 
+
+    @Test
+    void personalBudgetThresholdAlertCoversWarningAndExceededVariants() {
+        // 个人 AI 预算告警（GL-P3-AI-001）：WALLET 类；exceeded/warning × monthly/daily × cents/tokens 文案
+        Map<String, Object> base = Map.of("accountId", "51515151-5151-5151-5151-515151515151",
+                "periodKey", "2026-08-21", "usage", 80, "limit", 100);
+        MailTemplate warning = MailTemplates.mailTemplate("AiPersonalBudgetThresholdCrossed",
+                payload(new java.util.HashMap<>(base) {{
+                    put("level", "warning"); put("window", "daily"); put("unit", "tokens");
+                }}));
+        assertThat(warning).isNotNull();
+        assertThat(warning.category()).isEqualTo("wallet");
+        assertThat(warning.subject()).contains("接近上限");
+        assertThat(warning.body()).contains("今日调用量");
+
+        MailTemplate exceededMonthlyCents = MailTemplates.mailTemplate("AiPersonalBudgetThresholdCrossed",
+                payload(new java.util.HashMap<>(base) {{
+                    put("level", "exceeded"); put("window", "monthly"); put("unit", "cents");
+                    put("usage", 105);
+                }}));
+        assertThat(exceededMonthlyCents.subject()).contains("已超限");
+        assertThat(exceededMonthlyCents.body()).contains("本月消费金额").contains("硬停");
+    }
+
     @Test
     void budgetThresholdAlertProducesWalletMail() {
         // 组织 AI 预算告警属资金类高价值：WALLET 类入邮件（去重由事件侧三闸保证）

@@ -50,9 +50,7 @@ describe('MediaLibraryPanel', () => {
     const editButtons = wrapper.findAll('button').filter((b) => b.text().includes('送入图片编辑'))
     expect(editButtons).toHaveLength(1)   // 仅图片素材
 
-    const emitted: Array<{ id: string; title: string; mimeType: string }> = []
-    wrapper.vm.$emit // ensure instance
-    editButtons[0].trigger('click')
+    await editButtons[0].trigger('click')
     // 直接断言组件事件
     const events = wrapper.emitted<{ id: string; title: string; mimeType: string }[]>('edit-image')
     expect(events).toBeTruthy()
