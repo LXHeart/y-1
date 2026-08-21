@@ -3,6 +3,7 @@ package com.grassland.intelligence.moments;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -160,12 +162,32 @@ class MomentsGenerationServiceTest {
 
     // ---------------- 生成事件流 ----------------
 
+    /** 独立模式经执行环（GL-P3-AI-001 尾巴清偿）：桩 executeIndependent 返回已解析结果。 */
+    private void stubIndependent(String content) {
+        when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+                .thenAnswer(inv -> Mono.just(new com.grassland.intelligence.ai.run
+                        .FrozenTextExecutionService.Traced<>(
+                        service.parseResult(content), null, "qwen", "qwen-plus", 1, false)));
+    }
+
+    private static org.springframework.mock.http.server.reactive.MockServerHttpRequest request() {
+        return org.springframework.mock.http.server.reactive.MockServerHttpRequest.post("/api/x").build();
+    }
+
+    /** generateStream 返回 Mono<Flux<String>>：测试断言展开为帧流。 */
+    private static Flux<String> independent(Mono<Flux<String>> stream) {
+        return stream.flatMapMany(java.util.function.Function.identity());
+    }
+
+    private static org.springframework.web.server.ServerWebExchange exchange() {
+        return org.springframework.mock.web.server.MockServerWebExchange.from(request());
+    }
+
     @Test
     void generateEmitsProgressThenResultFrames() {
-        when(ai.completeText(any())).thenReturn(Mono.just(
-                "{\"copy\":\"开业大吉\",\"imageOrder\":[],\"captions\":[]}"));
+        stubIndependent("{\"copy\":\"开业大吉\",\"imageOrder\":[],\"captions\":[]}");
 
-        StepVerifier.create(service.generate(List.of(), MomentsStyle.EVENT, "开业", null, null, null))
+        StepVerifier.create(independent(service.generateStream(List.of(), MomentsStyle.EVENT, "开业", null, null, null, exchange())))
                 .assertNext(frame -> assertThat(frame).contains("\"type\":\"progress\""))
                 .assertNext(frame -> assertThat(frame)
                         .contains("\"type\":\"result\"")
@@ -177,19 +199,21 @@ class MomentsGenerationServiceTest {
 
     @Test
     void generateSendsSystemAndMultimodalUserMessages() {
-        when(ai.completeText(any())).thenReturn(Mono.just("{\"copy\":\"ok\"}"));
+        stubIndependent("{\"copy\":\"ok\"}");
 
-        StepVerifier.create(service.generate(
-                        List.of(dataUrl("image/png", PNG_MAGIC)), MomentsStyle.LIFESTYLE, "主题", "感受", null, null))
+        StepVerifier.create(independent(service.generateStream(
+                        List.of(dataUrl("image/png", PNG_MAGIC)), MomentsStyle.LIFESTYLE, "主题", "感受", null, null,
+                        exchange())))
                 .expectNextCount(2)
                 .verifyComplete();
 
-        ArgumentCaptor<TextCompletionCommand> captor = ArgumentCaptor.forClass(TextCompletionCommand.class);
-        verify(ai).completeText(captor.capture());
-        TextCompletionCommand command = captor.getValue();
-        assertThat(command.messages()).hasSize(2);
-        assertThat(command.messages().get(0).content()).contains("生活化");
-        ChatMessage user = command.messages().get(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass((Class) List.class);
+        verify(frozenText).executeIndependent(any(), captor.capture(), anyInt(), any(), any());
+        List<ChatMessage> messages = captor.getValue();
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).content()).contains("生活化");
+        ChatMessage user = messages.get(1);
         assertThat(user.multimodal()).isTrue();
         assertThat(user.parts()).hasSize(2);
         assertThat(user.parts().get(0)).isInstanceOf(ContentPart.Image.class);
@@ -200,25 +224,27 @@ class MomentsGenerationServiceTest {
 
     @Test
     void generateWithoutImagesSendsPlainTextUserMessage() {
-        when(ai.completeText(any())).thenReturn(Mono.just("{\"copy\":\"纯文本\"}"));
+        stubIndependent("{\"copy\":\"纯文本\"}");
 
-        StepVerifier.create(service.generate(List.of(), MomentsStyle.EVENT, "主题", null, null, null))
+        StepVerifier.create(independent(service.generateStream(List.of(), MomentsStyle.EVENT, "主题", null, null, null, exchange())))
                 .expectNextCount(2)
                 .verifyComplete();
 
-        ArgumentCaptor<TextCompletionCommand> captor = ArgumentCaptor.forClass(TextCompletionCommand.class);
-        verify(ai).completeText(captor.capture());
-        ChatMessage user = captor.getValue().messages().get(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ChatMessage>> captor = ArgumentCaptor.forClass((Class) List.class);
+        verify(frozenText).executeIndependent(any(), captor.capture(), anyInt(), any(), any());
+        ChatMessage user = captor.getValue().get(1);
         assertThat(user.multimodal()).isFalse();
         assertThat(user.content()).contains("主题");
     }
 
     @Test
     void generateEmitsProgressThenPropagatesUpstreamFailure() {
-        when(ai.completeText(any())).thenReturn(Mono.error(new RuntimeException("upstream down")));
+        when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+                .thenReturn(Mono.error(new RuntimeException("upstream down")));
 
-        StepVerifier.create(service.generate(List.of(), MomentsStyle.LIFESTYLE, "主题", null, null, null))
-                .assertNext(frame -> assertThat(frame).contains("\"type\":\"progress\""))
+        // 先执行后发流：失败在 progress 帧之前（402/502 以 JSON 先于 SSE）
+        StepVerifier.create(independent(service.generateStream(List.of(), MomentsStyle.LIFESTYLE, "主题", null, null, null, exchange())))
                 .expectError()
                 .verify();
     }

@@ -81,13 +81,13 @@ class MomentsGenerationControllerTest {
     }
 
     @Test
-    void chargesMomentsGenerationAndWrapsSse() {
+    void independentModeWrapsExecutedStreamAsSse() {
+        // GL-P3-AI-001 尾巴清偿：独立模式扣分/退款在执行环内（service.generateStream 边界），
+        // 控制器只包 SSE。
         when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
         when(service.validateAndEncode(any())).thenReturn(List.of());
-        when(credits.consume("acc-1", CreditFeature.MOMENTS_GENERATION))
-                .thenReturn(Mono.just(new CreditCharge("acc-1", CreditFeature.MOMENTS_GENERATION, "op-1")));
-        when(service.generate(any(), any(), any(), any(), any(), any()))
-                .thenReturn(Flux.just("{\"type\":\"result\",\"copy\":\"开业大吉\"}"));
+        when(service.generateStream(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(reactor.core.publisher.Mono.just(Flux.just("{\"type\":\"result\",\"copy\":\"开业大吉\"}")));
 
         StepVerifier.create(controller.generate(request("lifestyle"), exchange()))
                 .assertNext(entity -> {
@@ -98,26 +98,27 @@ class MomentsGenerationControllerTest {
                             .contains("data: [DONE]");
                 })
                 .verifyComplete();
-        verify(credits, never()).refund(any(), any());
+        verify(credits, never()).consume(any(), any());
     }
 
     @Test
-    void refundsChargeAndEmitsErrorFrameWhenUpstreamFails() {
-        CreditCharge charge = new CreditCharge("acc-1", CreditFeature.MOMENTS_GENERATION, "op-2");
+    void upstreamFailureFailsBeforeSseAs502AndCreditsStayUntouchedAtController() {
+        // 独立模式执行在 SSE 之前完成：上游失败 → 502 JSON（不发 SSE 字节）；
+        // 退款在执行环内（AiExecutionService.handleFailure），控制器无手动退款。
         when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
         when(service.validateAndEncode(any())).thenReturn(List.of());
-        when(credits.consume("acc-1", CreditFeature.MOMENTS_GENERATION)).thenReturn(Mono.just(charge));
-        when(service.generate(any(), any(), any(), any(), any(), any()))
-                .thenReturn(Flux.error(new RuntimeException("upstream down")));
-        when(credits.refund(charge, "朋友圈内容生成失败自动退回")).thenReturn(Mono.empty());
+        when(service.generateStream(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(reactor.core.publisher.Mono.error(new RuntimeException("upstream down")));
 
         StepVerifier.create(controller.generate(request("event"), exchange()))
-                .assertNext(entity -> assertThat(decode(entity.getBody()))
-                        .contains("\"type\":\"error\"")
-                        .contains("朋友圈内容生成失败"))
-                .verifyComplete();
+                .expectErrorSatisfies(error -> {
+                    assertThat(error).isInstanceOf(IntelligenceException.class);
+                    assertThat(((IntelligenceException) error).status()).isEqualTo(502);
+                })
+                .verify();
 
-        verify(credits).refund(charge, "朋友圈内容生成失败自动退回");
+        verify(credits, never()).consume(any(), any());
+        verify(credits, never()).refund(any(), any());
     }
 
     @Test

@@ -70,17 +70,16 @@ public class MomentsGenerationController {
                     .onErrorMap(error -> error instanceof IntelligenceException
                             ? error : new IntelligenceException(502, ERROR_MESSAGE));
         }
+        // GL-P3-AI-001 尾巴清偿：独立模式经执行环（扣分/失败退款在环内）；执行完成后再发 SSE，
+        // 扣费/预算拒绝（402）以 JSON 先于流，与任务模式同契约。
         return validatedImages(body)
                 .flatMap(dataUrls -> callers.resolve(exchange.getRequest())
-                        .flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.MOMENTS_GENERATION)
-                                .map(charge -> Map.entry(caller, charge)))
-                        .map(entry -> sseEntity(
-                                withSafety(exchange, service.generate(dataUrls, style, body.topic(), body.feelings(),
-                                                entry.getKey().accountId(), entry.getKey().organizationId())
-                                        // 上游失败：先退回已扣积分再发 error 帧（GL-P0-BILL-002）
-                                        .onErrorResume(e -> credits.refund(entry.getValue(), "朋友圈内容生成失败自动退回")
-                                                .thenMany(Flux.just(errorFrame()))), null),
-                                exchange)));
+                        .flatMap(caller -> service.generateStream(dataUrls, style, body.topic(), body.feelings(),
+                                        caller.accountId(), caller.organizationId(), exchange)
+                                .map(frames -> sseEntity(
+                                        withSafety(exchange, frames, null), exchange)))
+                        .onErrorMap(error -> error instanceof IntelligenceException
+                                ? error : new IntelligenceException(502, ERROR_MESSAGE)));
     }
 
     /** 任务书 #34 D8：朋友圈文案流尾追加安全检查帧（检查文本=result 帧 copy）。 */

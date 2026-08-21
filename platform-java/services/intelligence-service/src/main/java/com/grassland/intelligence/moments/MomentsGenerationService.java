@@ -98,24 +98,29 @@ public class MomentsGenerationService {
         return List.copyOf(dataUrls);
     }
 
-    /** 独立模式生成 → 事件流（progress/result；上游失败以 onError 信号抛出，由 controller 退款并转 error 帧）。 */
-    public Flux<String> generate(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
-            String accountId, String organizationId) {
-        return Flux.defer(() -> Flux.concat(
-                Mono.just(progressFrame()),
-                ai.completeText(new TextCompletionCommand(
-                                List.of(
-                                        MomentsPrompts.system(style, dataUrls.size()),
-                                        userMessage(dataUrls, topic, feelings)),
-                                "朋友圈内容生成失败", GENERATION_TIMEOUT))
-                        .map(this::parseResult)
-                        .flatMapMany(result -> Flux.just(resultFrame(result))
-                                // 任务书 #44 登记扩展：朋友圈文案产出落 lineage（advisory，失败不破坏内容流）
-                                .concatWith(lineage.recordAdvisory(lineageCommand(
-                                        com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
-                                        null, null, null, style, topic, feelings, dataUrls.size(), result,
-                                        accountId, organizationId))
-                                        .then(Mono.<String>empty())))));
+    /**
+     * 独立模式生成（GL-P3-AI-001 尾巴清偿）：经 {@link FrozenTextExecutionService#executeIndependent}
+     * 单环执行（预算闸/ai_run 留痕/积分闭环/失败退款一套机器）。聚合型产出——执行完成后再发 SSE
+     * （progress/result 帧），扣费/预算拒绝（402）以 JSON 先于 SSE，与任务模式同契约。
+     */
+    public Mono<Flux<String>> generateStream(List<String> dataUrls, MomentsStyle style, String topic,
+            String feelings, String accountId, String organizationId, ServerWebExchange exchange) {
+        return frozenText.executeIndependent(
+                        exchange,
+                        List.of(
+                                MomentsPrompts.system(style, dataUrls.size()),
+                                userMessage(dataUrls, topic, feelings)),
+                        2048, CreditFeature.MOMENTS_GENERATION,
+                        completion -> parseResult(completion.content()))
+                .map(trace -> Flux.concat(
+                        Mono.just(progressFrame()),
+                        Mono.just(resultFrame(trace.value())),
+                        // 任务书 #44 登记扩展：朋友圈文案产出落 lineage（run/provider/model 来自执行环）
+                        lineage.recordAdvisory(lineageCommand(
+                                com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
+                                null, trace.runId(), trace, style, topic, feelings,
+                                dataUrls.size(), trace.value(), accountId, organizationId))
+                                .then(Mono.<String>empty())));
     }
 
     /** 任务模式生成：冻结 AI 配置 + 冻结任务上下文，积分经 AiExecutionService 闭环。 */

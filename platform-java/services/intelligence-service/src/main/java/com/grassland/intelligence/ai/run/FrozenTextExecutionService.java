@@ -44,6 +44,36 @@ public class FrozenTextExecutionService {
                         : Mono.error(deniedException(result.denialReason())));
     }
 
+    /**
+     * 独立模式（无任务快照）：与 {@link #executeTraced} 同执行环契约，供 legacy 聚合型文本流
+     * （GL-P3-AI-001 尾巴：credits.consume + 手动退款迁到 AiExecutionService 单环——预算闸/ai_run
+     * 留痕/积分闭环一套机器）。快照为空 → 冻结配置回落控制面当前值。
+     */
+    public <T> Mono<Traced<T>> executeIndependent(
+            ServerWebExchange exchange, List<ChatMessage> messages,
+            int maxTokens, CreditFeature feature, Function<TextCompletionResult, T> transform) {
+        int estimatedInputTokens = messages.stream()
+                .mapToInt(FrozenTextExecutionService::estimatedMessageBytes)
+                .sum();
+        return executions.prepareExecution(
+                        exchange, "text", feature, estimatedInputTokens, maxTokens, true, null)
+                .flatMap(result -> result.allowed()
+                        ? executeTracedPrepared(result.context(), messages, maxTokens, transform)
+                        : Mono.error(deniedException(result.denialReason())));
+    }
+
+    /** executeTraced 的已准备态内核（独立/任务共用：trace 元数据从 context 装配）。 */
+    private <T> Mono<Traced<T>> executeTracedPrepared(
+            AiExecutionService.ExecutionContext context, List<ChatMessage> messages,
+            int maxTokens, Function<TextCompletionResult, T> transform) {
+        return executePrepared(context, messages, maxTokens, completion -> new Traced<>(
+                transform.apply(completion), context.runId(), context.provider().provider(),
+                context.provider().model(),
+                context.provider().platformModelVersion() > 0
+                        ? context.provider().platformModelVersion() : null,
+                context.provider().isByok()));
+    }
+
     /** Same execution contract as {@link #execute}, with immutable run/provider metadata for lineage. */
     public <T> Mono<Traced<T>> executeTraced(
             ServerWebExchange exchange, UUID snapshotId, List<ChatMessage> messages,

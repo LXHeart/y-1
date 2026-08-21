@@ -102,10 +102,10 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("积分不足 → 402，不发 SSE、不调 AI")
+    @DisplayName("积分不足 → 402，不发 SSE、不调 AI（拒绝经执行环 prepare 段透传）")
     void insufficientCreditsRejected() {
-        when(credits.consume(any(), any(CreditFeature.class)))
-                .thenReturn(Mono.error(new InsufficientCreditsException()));
+        when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+                .thenReturn(Mono.error(new com.grassland.intelligence.security.IntelligenceException(402, "积分不足")));
         client().post().uri("/api/moments-generation/generate")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -115,16 +115,18 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("成功 → 200 SSE：扣 moments_generation + 多模态 prompt + progress/result/[DONE]")
+    @DisplayName("成功 → 200 SSE：经执行环（MOMENTS_GENERATION）+ 多模态 prompt + progress/result/[DONE]")
     void streamsMomentsResult() {
-        ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
-        when(credits.consume(anyString(), featureCaptor.capture()))
-                .thenAnswer(inv -> CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
-
-        ArgumentCaptor<TextCompletionCommand> cmdCaptor = ArgumentCaptor.forClass(TextCompletionCommand.class);
-        when(ai.completeText(cmdCaptor.capture())).thenReturn(Mono.just("""
-                {"copy":"开业大吉，周末来店里坐坐☕","imageOrder":[{"index":1,"reason":"封面招牌"}],"captions":[{"index":1,"text":"门店招牌"}]}
-                """));
+        // GL-P3-AI-001 尾巴清偿：独立模式经执行环（扣分/退款/预算在环内，此处桩环出口）；
+        // 消息断言从环入口（executeIndependent messages）捕获。
+        ArgumentCaptor<List<com.grassland.intelligence.ai.ChatMessage>> msgCaptor =
+                ArgumentCaptor.forClass((Class) List.class);
+        when(frozenText.executeIndependent(any(), msgCaptor.capture(), anyInt(),
+                org.mockito.ArgumentMatchers.eq(CreditFeature.MOMENTS_GENERATION), any()))
+                .thenReturn(Mono.just(traced(new MomentsGenerationService.MomentsResult(
+                        "开业大吉，周末来店里坐坐☕",
+                        List.of(new MomentsGenerationService.OrderSuggestion(1, "封面招牌")),
+                        List.of(new MomentsGenerationService.Caption(1, "门店招牌"))))));
 
         client().post().uri("/api/moments-generation/generate")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
@@ -143,24 +145,30 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
                     assertThat(body).contains("data: [DONE]");
                 });
 
-        assertThat(featureCaptor.getValue()).isEqualTo(CreditFeature.MOMENTS_GENERATION);
-        TextCompletionCommand command = cmdCaptor.getValue();
-        assertThat(command.messages()).hasSize(2);
-        assertThat(command.messages().get(0).content())
+        List<com.grassland.intelligence.ai.ChatMessage> messages = msgCaptor.getValue();
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).content())
                 .contains("到店体验")
                 .contains("不使用话题标签")
                 .contains("\"copy\"");
-        assertThat(command.messages().get(1).content()).contains("开业");
-        assertThat(command.messages().get(1).multimodal()).isFalse();
-        verify(credits, never()).refund(any(), any());
+        assertThat(messages.get(1).content()).contains("开业");
+        assertThat(messages.get(1).multimodal()).isFalse();
+    }
+
+    /** 独立模式执行环出口桩（Traced 元数据对齐平台默认）。 */
+    private static <T> com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<T> traced(T value) {
+        return new com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<>(
+                value, null, "qwen", "qwen-plus", 1, false);
     }
 
     @Test
-    @DisplayName("带素材图 → 多模态 user 消息（image part + 文本 part）")
+    @DisplayName("带素材图 → 多模态 user 消息（image part + 文本 part，经执行环入口捕获）")
     void sendsImagesAsMultimodalParts() {
-        ArgumentCaptor<TextCompletionCommand> cmdCaptor = ArgumentCaptor.forClass(TextCompletionCommand.class);
-        when(ai.completeText(cmdCaptor.capture()))
-                .thenReturn(Mono.just("{\"copy\":\"配图版文案\",\"imageOrder\":[],\"captions\":[]}"));
+        ArgumentCaptor<List<com.grassland.intelligence.ai.ChatMessage>> msgCaptor =
+                ArgumentCaptor.forClass((Class) List.class);
+        when(frozenText.executeIndependent(any(), msgCaptor.capture(), anyInt(), any(), any()))
+                .thenReturn(Mono.just(traced(new MomentsGenerationService.MomentsResult(
+                        "配图版文案", List.of(), List.of()))));
 
         String dataUrl = "data:image/png;base64," + Base64.getEncoder().encodeToString(PNG_MAGIC);
         client().post().uri("/api/moments-generation/generate")
@@ -169,28 +177,22 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of("topic", "开业", "style", "friends-share", "images", List.of(dataUrl)))
                 .exchange().expectStatus().isOk();
 
-        assertThat(cmdCaptor.getValue().messages().get(1).multimodal()).isTrue();
-        assertThat(cmdCaptor.getValue().messages().get(1).parts()).hasSize(2);
+        assertThat(msgCaptor.getValue().get(1).multimodal()).isTrue();
+        assertThat(msgCaptor.getValue().get(1).parts()).hasSize(2);
     }
 
     @Test
-    @DisplayName("上游失败 → 流内退款 + error 帧")
-    void upstreamFailureRefundsAndEmitsErrorFrame() {
-        when(ai.completeText(any())).thenReturn(Mono.error(new RuntimeException("upstream down")));
+    @DisplayName("上游失败 → 502 JSON 先于 SSE（退款在执行环内闭环）")
+    void upstreamFailureFailsBeforeSse() {
+        when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+                .thenReturn(Mono.error(new RuntimeException("upstream down")));
 
         client().post().uri("/api/moments-generation/generate")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request("lifestyle"))
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody(String.class)
-                .value(body -> {
-                    assertThat(body).contains("\"type\":\"error\"");
-                    assertThat(body).contains("朋友圈内容生成失败");
-                });
-
-        verify(credits).refund(any(), eq("朋友圈内容生成失败自动退回"));
+                .expectStatus().isEqualTo(502);
     }
 
     @Test

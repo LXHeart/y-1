@@ -9,9 +9,10 @@ import static org.mockito.Mockito.when;
 import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatChunk;
-import com.grassland.intelligence.ai.TextCompletionCommand;
+import static org.mockito.ArgumentMatchers.anyInt;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.credits.CreditsStubs;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +33,9 @@ class TextCreationLineageIT extends IntelligenceItSupport {
 
     @MockitoBean
     private AiCapabilityAdapter ai;
+
+    @MockitoBean
+    private com.grassland.intelligence.ai.run.FrozenTextExecutionService frozenText;
 
     @MockitoBean
     private CreditsClient credits;
@@ -105,8 +109,12 @@ class TextCreationLineageIT extends IntelligenceItSupport {
     @Test
     @DisplayName("朋友圈独立模式 → 落 kind=moments_copy 行（result 含 copy 全文）")
     void momentsIndependentRecordsLineage() {
-        when(ai.completeText(any(TextCompletionCommand.class)))
-                .thenReturn(Mono.just("{\"copy\":\"开业八折，欢迎来坐坐\"}"));
+        // GL-P3-AI-001 尾巴清偿后独立朋友圈走执行环：桩环出口返回已解析结果
+        when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+                .thenReturn(Mono.just(new com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<>(
+                        new com.grassland.intelligence.moments.MomentsGenerationService.MomentsResult(
+                                "开业八折，欢迎来坐坐", List.of(), List.of()),
+                        null, "qwen", "qwen-plus", 1, false)));
 
         client().post().uri("/api/moments-generation/generate")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
