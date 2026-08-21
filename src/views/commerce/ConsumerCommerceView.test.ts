@@ -225,7 +225,7 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     expect(wrapper.text()).toContain('处理暂未完成')
   })
 
-  it('超时关单订单显示已超时关闭，payment_timeout 不再当处理中展示', async () => {
+  it('超时关单订单显示已取消（超时自动关闭），payment_timeout 不再当处理中展示', async () => {
     currentUser.value = asUser()
     stubFetch((url) => {
       if (url === '/api/v2/orders') {
@@ -240,10 +240,28 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     const wrapper = mount(ConsumerCommerceView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('已超时关闭')
+    expect(wrapper.text()).toContain('已取消')
+    expect(wrapper.text()).toContain('超时自动关闭')
     expect(wrapper.text()).toContain('占用的库存已释放')
     expect(wrapper.text()).not.toContain('处理暂未完成')
+    expect(wrapper.text()).not.toContain('主动取消')
     expect(wrapper.find('.payment-hint').exists()).toBe(false)
+  })
+
+  it('主动取消订单显示已取消（主动取消）且待支付单展示取消按钮', async () => {
+    currentUser.value = asUser()
+    stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({ status: 'cancelled', lastError: 'consumer_cancelled' }),
+                baseOrder({ status: 'pending_payment', paymentDeadline: '2026-08-17T12:30:00Z' })]
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('主动取消')
+    expect(wrapper.text()).toContain('取消订单')
   })
 
   it('下单返回待支付单时 notice 携带支付截止时间', async () => {
