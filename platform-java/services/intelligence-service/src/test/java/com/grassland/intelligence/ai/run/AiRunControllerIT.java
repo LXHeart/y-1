@@ -105,6 +105,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
         db.sql("DELETE FROM ai_run").then().block();
         db.sql("DELETE FROM creation_context_snapshot").then().block();
         db.sql("DELETE FROM ai_provider_key").then().block();
+        db.sql("DELETE FROM ai_org_byok_policy").then().block();
         db.sql("DELETE FROM ai_model_budget").then().block();
         db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
@@ -347,6 +348,93 @@ class AiRunControllerIT extends IntelligenceItSupport {
         // BYOK 不扣平台积分
         CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
         CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/refund")));
+    }
+
+    @Test
+    @DisplayName("组织 BYOK run：成员无个人密钥走组织密钥；actualCents=0；TaskContext 带组织 ID")
+    void orgByokRunUsesOrgKeyForMember() {
+        doReturn(Mono.just(new TextCompletionResult("org-hello", 10, 5)))
+                .when(textClient).complete(
+                        eq("https://api.example.com"), eq("sk-org-run-secret"), eq("org-byok-model"),
+                        eq("x"), eq(32), eq(true));
+        db.sql("""
+                INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider, base_url, model,
+                    encrypted_key, key_version, masked_hint, enabled)
+                VALUES (:org, :owner, 'text', 'openai-compatible', 'https://api.example.com', 'org-byok-model',
+                    :encrypted, 'v1', 'sk-***org', true)
+                """)
+                .bind("org", ORG)
+                .bind("owner", ORG_ACCOUNT)
+                .bind("encrypted", encryption.encrypt("sk-org-run-secret"))
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":32}
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.content").isEqualTo("org-hello")
+                .jsonPath("$.actualCents").isEqualTo(0)
+                .jsonPath("$.taskContext.resolutionType").isEqualTo("BYOK")
+                .jsonPath("$.taskContext.byokOrganizationId").isEqualTo(ORG);
+
+        String recorded = db.sql("SELECT byok_organization_id FROM ai_run WHERE account_id = :account")
+                .bind("account", ORG_ACCOUNT)
+                .map((r, m) -> r.get("byok_organization_id", String.class)).one().block();
+        assertThat(recorded).isEqualTo(ORG);
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+    }
+
+    @Test
+    @DisplayName("组织配了密钥：策略未允许时 allowFallback=true 也拒绝；策略允许后才回退平台（D-11 双闸）")
+    void orgFallbackRequiresPolicyEvenWhenRequestAllows() {
+        stubQwenOk();
+        // 组织只配 image_generation 密钥：text 能力两级未命中 → 策略介入
+        db.sql("""
+                INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider, base_url, model,
+                    encrypted_key, key_version, masked_hint, enabled)
+                VALUES (:org, :owner, 'image_generation', 'openai-compatible', 'https://api.example.com', 'org-img',
+                    :encrypted, 'v1', 'sk-***org', true)
+                """)
+                .bind("org", ORG)
+                .bind("owner", ORG_ACCOUNT)
+                .bind("encrypted", encryption.encrypt("sk-org-run-secret"))
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.error").isEqualTo("无 BYOK 且未授权回退平台模型");
+
+        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+
+        db.sql("INSERT INTO ai_org_byok_policy(organization_id, allow_platform_fallback, updated_by_account_id) "
+                        + "VALUES (:org, true, :owner)")
+                .bind("org", ORG)
+                .bind("owner", ORG_ACCOUNT)
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.taskContext.resolutionType").isEqualTo("PLATFORM")
+                .jsonPath("$.taskContext.fallbackAuthorized").isEqualTo(true);
     }
 
     @Test

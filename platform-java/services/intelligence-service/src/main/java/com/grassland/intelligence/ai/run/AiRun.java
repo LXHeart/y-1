@@ -49,7 +49,8 @@ public record AiRun(
     Integer platformModelVersion, // 平台模型配置版本（平台 run 冻结；BYOK run 为 null）
     boolean fallbackAuthorized,   // 本次调用是否经授权回退平台（HLD §12.3 审计）
     UUID contextSnapshotId,        // PRD §4.12 task creation snapshot, nullable for independent runs
-    String creditsCentsPolicyVersion // priced platform run conversion snapshot; null for flat/BYOK
+    String creditsCentsPolicyVersion, // priced platform run conversion snapshot; null for flat/BYOK
+    String byokOrganizationId      // 组织密钥命中的 Run 记录组织 ID（ADR-D17 审计）；个人 BYOK/平台为 null
 ) {
     public AiRun(
             UUID id, String organizationId, String accountId, String capability, String provider, String model,
@@ -60,7 +61,7 @@ public record AiRun(
         this(id, organizationId, accountId, capability, provider, model, runType, inputTokens, outputTokens,
                 imagesGenerated, videoSeconds, budgetCents, actualCents, status, failureReason, startedAt,
                 completedAt, priceTableVersion, operationId, refundOperationId, createdAt, updatedAt,
-                platformModelVersion, fallbackAuthorized, null, null);
+                platformModelVersion, fallbackAuthorized, null, null, null);
     }
     /** 创建新 Run。 */
     public static AiRun forCreate(
@@ -97,7 +98,7 @@ public record AiRun(
     ) {
         return forCreate(organizationId, accountId, capability, provider, model, runType,
                 budgetCents, operationId, priceTableVersion, platformModelVersion,
-                fallbackAuthorized, null, null);
+                fallbackAuthorized, null, null, null);
     }
 
     /** 创建带任务创作上下文快照的 Run。 */
@@ -117,7 +118,7 @@ public record AiRun(
     ) {
         return forCreate(organizationId, accountId, capability, provider, model, runType,
                 budgetCents, operationId, priceTableVersion, platformModelVersion,
-                fallbackAuthorized, contextSnapshotId, null);
+                fallbackAuthorized, contextSnapshotId, null, null);
     }
 
     public static AiRun forCreate(
@@ -133,7 +134,8 @@ public record AiRun(
         Integer platformModelVersion,
         boolean fallbackAuthorized,
         UUID contextSnapshotId,
-        String creditsCentsPolicyVersion
+        String creditsCentsPolicyVersion,
+        String byokOrganizationId
     ) {
         return new AiRun(
             null,  // id 由数据库生成
@@ -161,7 +163,8 @@ public record AiRun(
                 platformModelVersion,
                 fallbackAuthorized,
                 contextSnapshotId,
-                creditsCentsPolicyVersion
+                creditsCentsPolicyVersion,
+                byokOrganizationId
         );
     }
 

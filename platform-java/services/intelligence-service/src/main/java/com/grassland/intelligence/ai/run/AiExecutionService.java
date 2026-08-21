@@ -224,7 +224,7 @@ public class AiExecutionService {
 		AiRun run = AiRun.forCreate(orgId, accountId, capability, provider.provider(), provider.model(), runType,
 				budget.reservedCents(), budgetOpId, priceTableVersion,
 				provider.platformModelVersion() > 0 ? provider.platformModelVersion() : null, allowFallback,
-				contextSnapshotId, moneyPolicyVersion);
+				contextSnapshotId, moneyPolicyVersion, provider.byokOrganizationId());
 		return budgetService.createRun(run).map(runId -> RunPreparation.allowed(runId, budget, run.priceTableVersion(),
 				moneyPolicyVersion, chargeRequired));
 	}

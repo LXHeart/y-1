@@ -23,7 +23,7 @@ public class AiRunRepository {
             + "budget_cents, actual_cents, status, failure_reason, "
             + "started_at, completed_at, price_table_version, operation_id::text, refund_operation_id::text, "
             + "created_at, updated_at, platform_model_version, fallback_authorized, context_snapshot_id::text, "
-            + "credits_cents_policy_version";
+            + "credits_cents_policy_version, byok_organization_id::text";
 
     private final DatabaseClient db;
 
@@ -37,11 +37,11 @@ public class AiRunRepository {
                 INSERT INTO ai_run(
                     organization_id, account_id, capability, provider, model, run_type,
                     budget_cents, operation_id, platform_model_version, fallback_authorized, context_snapshot_id,
-                    credits_cents_policy_version
+                    credits_cents_policy_version, byok_organization_id
                 ) VALUES (
                     :orgId, :accountId, :capability, :provider, :model, :runType,
                     :budgetCents, CAST(:operationId AS uuid), :platformModelVersion, :fallbackAuthorized,
-                    CAST(:contextSnapshotId AS uuid), :creditsCentsPolicyVersion
+                    CAST(:contextSnapshotId AS uuid), :creditsCentsPolicyVersion, :byokOrganizationId
                 )
                 RETURNING id::text
                 """)
@@ -58,6 +58,7 @@ public class AiRunRepository {
                 .bind("contextSnapshotId", nullable(
                         run.contextSnapshotId() == null ? null : run.contextSnapshotId().toString(), String.class))
                 .bind("creditsCentsPolicyVersion", nullable(run.creditsCentsPolicyVersion(), String.class))
+                .bind("byokOrganizationId", nullable(run.byokOrganizationId(), String.class))
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);
@@ -195,7 +196,8 @@ public class AiRunRepository {
                 row.get("platform_model_version", Integer.class),
                 row.get("fallback_authorized", Boolean.class),
                 uuidFromString(row.get("context_snapshot_id", String.class)),
-                row.get("credits_cents_policy_version", String.class)
+                row.get("credits_cents_policy_version", String.class),
+                row.get("byok_organization_id", String.class)
         );
     }
 

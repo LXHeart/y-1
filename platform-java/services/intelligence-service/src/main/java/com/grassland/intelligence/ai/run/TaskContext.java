@@ -21,6 +21,7 @@ public record TaskContext(
         boolean fallbackAuthorized,
         UUID contextSnapshotId,
         String creditsCentsPolicyVersion,
+        String byokOrganizationId,    // 组织密钥命中的 Run 记录组织 ID（ADR-D17）；个人 BYOK/平台为 null
         Instant startedAt) {
 
     public static TaskContext from(AiRun run) {
@@ -35,6 +36,7 @@ public record TaskContext(
                 run.fallbackAuthorized(),
                 run.contextSnapshotId(),
                 run.creditsCentsPolicyVersion(),
+                run.byokOrganizationId(),
                 run.startedAt());
     }
 }

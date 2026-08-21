@@ -4,6 +4,7 @@ import com.grassland.intelligence.ai.byok.AiProviderKey;
 import com.grassland.intelligence.ai.byok.AiProviderKeyRepository;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.ai.controlplane.PlatformModelConfigRepository;
+import com.grassland.intelligence.security.IdentityOrgAuthorizationClient;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.Map;
 import java.util.UUID;
@@ -14,16 +15,21 @@ import reactor.core.publisher.Mono;
 /** Resolves the exact AI configuration captured by a PRD 4.12 creation snapshot. */
 @Service
 public class FrozenAiConfigResolver {
+    private static final String FROZEN_BYOK_CHANGED = "创作开始时冻结的 BYOK 配置已变化或不可用";
+
     private final CreationContextSnapshotRepository snapshots;
     private final AiProviderKeyRepository keys;
     private final PlatformModelConfigRepository platformModels;
+    private final IdentityOrgAuthorizationClient orgAuthorization;
 
     public FrozenAiConfigResolver(CreationContextSnapshotRepository snapshots,
                                   AiProviderKeyRepository keys,
-                                  PlatformModelConfigRepository platformModels) {
+                                  PlatformModelConfigRepository platformModels,
+                                  IdentityOrgAuthorizationClient orgAuthorization) {
         this.snapshots = snapshots;
         this.keys = keys;
         this.platformModels = platformModels;
+        this.orgAuthorization = orgAuthorization;
     }
 
     public Mono<ResolvedSnapshot> resolve(UUID snapshotId, String accountId, String capability) {
@@ -53,7 +59,16 @@ public class FrozenAiConfigResolver {
     private Mono<ProviderResolution> resolveByok(
             Map<String, Object> config, String accountId, String capability) {
         UUID configId = uuid(config, "configId");
+        // 个人密钥优先；快照来自组织密钥的 Run 时回落组织分支（ADR-D17）——
+        // 重跑者必须仍是该组织成员（identity 权威校验），否则与配置漂移同口径 409 fail-closed。
+        // 组织分支整体包在 defer 里：个人命中时不应触碰组织查询（eager-assembly 陷阱）。
         return keys.findPersonalByIdAndOwner(configId, accountId)
+                .switchIfEmpty(Mono.defer(() -> keys.findOrgById(configId)
+                        .flatMap(key -> orgAuthorization
+                                .require(accountId, key.organizationId(), "member")
+                                .thenReturn(key))
+                        .onErrorMap(IntelligenceException.class, error ->
+                                new IntelligenceException(409, FROZEN_BYOK_CHANGED))))
                 .filter(AiProviderKey::enabled)
                 .filter(key -> capability.equals(key.capability()))
                 .filter(key -> equalsText(config, "provider", key.provider()))
@@ -61,9 +76,9 @@ public class FrozenAiConfigResolver {
                 .filter(key -> equalsText(config, "keyVersion", key.keyVersion()))
                 .filter(key -> matchesInstant(config.get("configUpdatedAt"), key.updatedAt()))
                 .map(key -> ProviderResolution.byok(
-                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey(), key.keyVersion()))
-                .switchIfEmpty(Mono.error(new IntelligenceException(
-                        409, "创作开始时冻结的 BYOK 配置已变化或不可用")));
+                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey(), key.keyVersion(),
+                        key.organizationId()))
+                .switchIfEmpty(Mono.error(new IntelligenceException(409, FROZEN_BYOK_CHANGED)));
     }
 
     private Mono<ProviderResolution> resolvePlatform(Map<String, Object> config, String capability) {

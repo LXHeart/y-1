@@ -25,6 +25,8 @@ class FrozenAiConfigResolverTest {
     AiProviderKeyRepository keys;
     @Mock
     PlatformModelConfigRepository platformModels;
+    @Mock
+    com.grassland.intelligence.security.IdentityOrgAuthorizationClient orgAuthorization;
     @InjectMocks
     FrozenAiConfigResolver resolver;
 
@@ -49,5 +51,60 @@ class FrozenAiConfigResolverTest {
         FrozenAiConfigResolver.ResolvedSnapshot resolved = resolver.resolve(snapshotId, "acct-1", "text").block();
 
         assertThat(resolved.provider().modelVersionKey()).isEqualTo("byok:v7");
+    }
+
+    @Test
+    void frozenOrgByokResolutionRequiresMembership() {
+        UUID snapshotId = UUID.randomUUID();
+        UUID keyId = UUID.randomUUID();
+        Instant updatedAt = Instant.parse("2026-08-19T00:00:00Z");
+        CreationContextSnapshot snapshot = new CreationContextSnapshot(
+                snapshotId, "acct-1", "org-1", "task-1", "app-1", 1,
+                "xiaohongshu", "graphic", Map.of(), Map.of(), Map.of(),
+                Map.of("resolutionType", "BYOK", "configId", keyId.toString(),
+                        "provider", "openai-compatible", "model", "org-frozen-model",
+                        "keyVersion", "v3", "configUpdatedAt", updatedAt.toString()),
+                Map.of(), updatedAt);
+        AiProviderKey orgKey = new AiProviderKey(
+                keyId, "org-1", "admin-1", "text", "openai-compatible", "https://api.example.com",
+                "org-frozen-model", "ciphertext", "v3", "sk-***", true, updatedAt, updatedAt);
+        when(snapshots.findById(snapshotId)).thenReturn(Mono.just(snapshot));
+        when(keys.findPersonalByIdAndOwner(keyId, "acct-1")).thenReturn(Mono.empty());
+        when(keys.findOrgById(keyId)).thenReturn(Mono.just(orgKey));
+        when(orgAuthorization.require("acct-1", "org-1", "member")).thenReturn(Mono.empty());
+
+        FrozenAiConfigResolver.ResolvedSnapshot resolved = resolver.resolve(snapshotId, "acct-1", "text").block();
+
+        assertThat(resolved.provider().modelVersionKey()).isEqualTo("byok-org:v3");
+        assertThat(resolved.provider().byokOrganizationId()).isEqualTo("org-1");
+    }
+
+    @Test
+    void frozenOrgByokFailsClosedWhenMemberLeft() {
+        UUID snapshotId = UUID.randomUUID();
+        UUID keyId = UUID.randomUUID();
+        Instant updatedAt = Instant.parse("2026-08-19T00:00:00Z");
+        CreationContextSnapshot snapshot = new CreationContextSnapshot(
+                snapshotId, "acct-1", "org-1", "task-1", "app-1", 1,
+                "xiaohongshu", "graphic", Map.of(), Map.of(), Map.of(),
+                Map.of("resolutionType", "BYOK", "configId", keyId.toString(),
+                        "provider", "openai-compatible", "model", "org-frozen-model",
+                        "keyVersion", "v3", "configUpdatedAt", updatedAt.toString()),
+                Map.of(), updatedAt);
+        AiProviderKey orgKey = new AiProviderKey(
+                keyId, "org-1", "admin-1", "text", "openai-compatible", "https://api.example.com",
+                "org-frozen-model", "ciphertext", "v3", "sk-***", true, updatedAt, updatedAt);
+        when(snapshots.findById(snapshotId)).thenReturn(Mono.just(snapshot));
+        when(keys.findPersonalByIdAndOwner(keyId, "acct-1")).thenReturn(Mono.empty());
+        when(keys.findOrgById(keyId)).thenReturn(Mono.just(orgKey));
+        when(orgAuthorization.require("acct-1", "org-1", "member"))
+                .thenReturn(Mono.error(new com.grassland.intelligence.security.IntelligenceException(
+                        403, "非组织成员")));
+
+        reactor.test.StepVerifier.create(resolver.resolve(snapshotId, "acct-1", "text"))
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(com.grassland.intelligence.security.IntelligenceException.class)
+                        .hasMessageContaining("已变化或不可用"))
+                .verify();
     }
 }
