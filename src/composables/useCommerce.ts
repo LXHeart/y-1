@@ -34,6 +34,9 @@ export function useCommerce() {
     body: JSON.stringify({ packageId, ...(recommenderAccountId ? { recommenderAccountId } : {}), ...(inventorySlotId ? { inventorySlotId } : {}), ...(allocations?.length ? { allocations } : {}) }),
   }))
   const listOrders = () => run(() => request<ConsumerOrder[]>('/api/v2/orders'))
+  /** 消费者主动取消未支付订单：仅待支付（pending_payment）可取消。 */
+  const cancelOrder = (id: string) => run(() => request<ConsumerOrder>(
+    `/api/v2/orders/${encodeURIComponent(id)}/cancel`, { method: 'POST' }))
   const refundOrder = (id: string, reason = 'consumer_request', amountCents?: number) => run(() => request<ConsumerOrder>(
     `/api/v2/orders/${encodeURIComponent(id)}/refund`, {
       method: 'POST', body: JSON.stringify({ reason, ...(amountCents == null ? {} : { amountCents }) }),
@@ -86,7 +89,7 @@ export function useCommerce() {
 
   return {
     loading, error,
-    getPackage, createOrder, listOrders, refundOrder, openAfterSalesDispute, getAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
+    getPackage, createOrder, listOrders, cancelOrder, refundOrder, openAfterSalesDispute, getAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
     listMerchantPackages, createPackage, revisePackage, publishPackage, offSalePackage,
     listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions,
   }
