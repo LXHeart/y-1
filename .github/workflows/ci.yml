@@ -70,6 +70,7 @@ jobs:
         run: >-
           ./gradlew test
           :services:database-bootstrap:bootJar
+          :services:release-migrator:bootJar
           :services:edge-bff:bootJar
           :services:identity-service:bootJar
           :services:marketplace-service:bootJar

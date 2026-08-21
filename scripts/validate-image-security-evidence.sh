@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${1:-${IMAGE_SECURITY_OUTPUT_DIR:-$ROOT_DIR/test-artifacts/image-security}}"
-SERVICES=(frontend database-bootstrap edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)
+SERVICES=(frontend database-bootstrap release-migrator edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 [[ -d "$REPORT_DIR" ]] || { echo "image security report directory is missing: $REPORT_DIR" >&2; exit 1; }

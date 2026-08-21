@@ -1,0 +1,7 @@
+# 独立 release migration job（one-shot，非 web 应用）：
+# 发布链在滚动应用镜像之前先跑本 job——五服务迁移按固定顺序执行（各自历史表/锁口径
+# 与服务运行时 FlywayBootstrap 完全一致），任一失败即退出非零，发布中止。
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"

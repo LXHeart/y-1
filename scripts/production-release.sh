@@ -38,6 +38,7 @@ HEALTH_SERVICES=(frontend edge-bff identity-service marketplace-service finance-
 usage() {
   cat <<'EOF'
 Usage:
+  scripts/production-release.sh [--env-file PATH] migrate
   scripts/production-release.sh [--env-file PATH] preflight
   scripts/production-release.sh [--env-file PATH] plan --release-id ID
   scripts/production-release.sh [--env-file PATH] deploy --release-id ID --backup-manifest PATH [--execute]
@@ -334,6 +335,19 @@ wait_for_compose_health() {
   return 1
 }
 
+# 独立 release migration job（进度指南「生产切流前阻塞项 #1」）：五服务迁移按固定顺序在
+# one-shot 容器执行，先于应用镜像滚动。dry-run 模式只做迁移清单校验不落库。
+run_release_migrations() {
+  load_env
+  validate_released_migrations
+  if [[ "$EXECUTE" != true ]]; then
+    log "dry-run: would run release-migrator (ordered Flyway for 5 services)"
+    return 0
+  fi
+  compose -f "$COMPOSE_FILE" -f "$PRODUCTION_COMPOSE_FILE" --profile release run --rm release-migrator
+  log "release migrations applied in order"
+}
+
 deploy() {
   load_env
   [[ -n "$RELEASE_ID" ]] || die "--release-id is required"
@@ -354,6 +368,9 @@ deploy() {
     log "run again with --execute after reviewing $override"
     return 0
   fi
+  # 先迁移后滚动：release-migrator one-shot（顺序见 services/release-migrator），失败即中止发布
+  compose -f "$COMPOSE_FILE" -f "$PRODUCTION_COMPOSE_FILE" --profile release run --rm release-migrator
+  log "release migrations applied in order"
   capture_images "$dir/previous-images.tsv"
   printf 'release_id=%s\ncreated_at=%s\nfinance_approved_by=%s\n' "$RELEASE_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${FINANCE_RELEASE_APPROVED_BY:-}" > "$dir/release.env"
   cp "$BACKUP_MANIFEST" "$dir/backup-manifest"
@@ -485,11 +502,12 @@ while [[ $# -gt 0 ]]; do
     --credential-max-age-seconds) CREDENTIAL_MAX_AGE_SECONDS="${2:?missing credential rotation evidence age}"; shift 2 ;;
     --execute) EXECUTE=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    preflight|plan|deploy|promote|canary-promote|failure-promote|observability-promote|key-rotation-promote|credential-rotation-promote|rollback|status) COMMAND="$1"; shift ;;
+    migrate|preflight|plan|deploy|promote|canary-promote|failure-promote|observability-promote|key-rotation-promote|credential-rotation-promote|rollback|status) COMMAND="$1"; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
 case "${COMMAND:-}" in
+  migrate) run_release_migrations ;;
   preflight) preflight ;;
   plan) plan ;;
   deploy) deploy ;;

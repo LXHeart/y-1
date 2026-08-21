@@ -40,6 +40,18 @@ services:
       DATABASE_BOOTSTRAP_RETRY_DELAY_MS: ${DATABASE_BOOTSTRAP_RETRY_DELAY_MS:-2000}
     restart: "no"
 
+  # 独立 release migration job（进度指南「生产切流前阻塞项 #1」编码）：五服务 Flyway 迁移
+  # 按固定顺序在一个 one-shot 容器执行。profile=release 门控——常规 up 不启动，由
+  # scripts/production-release.sh migrate 显式运行（docker compose --profile release run --rm）。
+  release-migrator:
+    build:
+      context: ./platform-java
+      dockerfile: services/release-migrator/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+    profiles: ["release"]
+    restart: "no"
+
   # Java identity-service：默认应用栈组成部分，使用共享 DATABASE_URL（自动派生 r2dbc）。
   identity-service:
     build:

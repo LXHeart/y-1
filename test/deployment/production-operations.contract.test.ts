@@ -190,7 +190,7 @@ vi.setConfig({ testTimeout: 45_000 })
 describe('Production release and recovery contracts', () => {
   it('authorizes native library access for every Java 25 container', () => {
     const services = [
-      'database-bootstrap', 'edge-bff', 'identity-service', 'marketplace-service',
+      'database-bootstrap', 'release-migrator', 'edge-bff', 'identity-service', 'marketplace-service',
       'finance-service', 'trust-service', 'intelligence-service',
     ]
     for (const service of services) {
@@ -451,7 +451,7 @@ describe('Production release and recovery contracts', () => {
   it('builds every application image, blocks high vulnerabilities, and emits SPDX SBOM evidence', () => {
     const imageSecurity = readFileSync(IMAGE_SECURITY_SCRIPT, 'utf8')
     const workflow = readFileSync(resolve(REPOSITORY_ROOT, '.github/workflows/ci.yml'), 'utf8')
-    expect(imageSecurity).toContain('SERVICES=(frontend database-bootstrap edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)')
+    expect(imageSecurity).toContain('SERVICES=(frontend database-bootstrap release-migrator edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)')
     expect(imageSecurity).toContain('--severity HIGH,CRITICAL --exit-code 1')
     expect(imageSecurity).not.toContain('--ignore-unfixed')
     expect(imageSecurity).toContain('--format spdx-json')
@@ -484,7 +484,7 @@ describe('Production release and recovery contracts', () => {
   it('validates complete image evidence and rejects missing or malformed reports', () => {
     const root = temporaryDirectory()
     const services = [
-      'frontend', 'database-bootstrap', 'edge-bff', 'identity-service',
+      'frontend', 'database-bootstrap', 'release-migrator', 'edge-bff', 'identity-service',
       'marketplace-service', 'finance-service', 'trust-service', 'intelligence-service',
     ]
     for (const service of services) {
@@ -492,7 +492,7 @@ describe('Production release and recovery contracts', () => {
       writeFileSync(join(root, `${service}.spdx.json`), '{"spdxVersion":"SPDX-2.3"}')
     }
     writeFileSync(join(root, 'signing-status.txt'), 'deferred until immutable registry digest')
-    expect(execFileSync(IMAGE_EVIDENCE_SCRIPT, [root], { encoding: 'utf8' })).toContain('8 services')
+    expect(execFileSync(IMAGE_EVIDENCE_SCRIPT, [root], { encoding: 'utf8' })).toContain('9 services')
 
     rmSync(join(root, 'finance-service.spdx.json'))
     expect(spawnSync(IMAGE_EVIDENCE_SCRIPT, [root], { encoding: 'utf8' }).status).toBe(1)
@@ -555,7 +555,7 @@ describe('Production release and recovery contracts', () => {
       COSIGN_LOG: log,
     }
     for (const service of [
-      'frontend', 'database-bootstrap', 'edge-bff', 'identity-service',
+      'frontend', 'database-bootstrap', 'release-migrator', 'edge-bff', 'identity-service',
       'marketplace-service', 'finance-service', 'trust-service', 'intelligence-service',
     ]) {
       env[`RELEASE_IMAGE_${service.toUpperCase().replace(/-/g, '_')}`] = `registry.example/${service}@sha256:${'a'.repeat(64)}`
@@ -586,7 +586,7 @@ describe('Production release and recovery contracts', () => {
       COSIGN_PUBLIC_KEY_FILE: key,
     }
     for (const service of [
-      'frontend', 'database-bootstrap', 'edge-bff', 'identity-service',
+      'frontend', 'database-bootstrap', 'release-migrator', 'edge-bff', 'identity-service',
       'marketplace-service', 'finance-service', 'trust-service', 'intelligence-service',
     ]) {
       env[`RELEASE_IMAGE_${service.toUpperCase().replace(/-/g, '_')}`] = `registry.example/${service}@sha256:${'a'.repeat(64)}`

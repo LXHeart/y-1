@@ -27,6 +27,7 @@ include(
     "platform-database",
     "platform-financial",
     "services:database-bootstrap",
+    "services:release-migrator",
     "services:edge-bff",
     "services:identity-service",
     "services:marketplace-service",

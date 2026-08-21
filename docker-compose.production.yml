@@ -54,6 +54,10 @@ services:
   database-bootstrap:
     <<: *production-resources
 
+  release-migrator:
+    <<: *production-resources
+    profiles: ["release"]
+
   kafka:
     profiles: [development]
 

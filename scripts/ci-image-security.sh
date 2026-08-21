@@ -15,7 +15,7 @@ docker buildx version >/dev/null 2>&1 || { echo "Docker Buildx is required" >&2;
   || { echo "IMAGE_SECURITY_PULL must be true or false" >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR"
 
-SERVICES=(frontend database-bootstrap edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)
+SERVICES=(frontend database-bootstrap release-migrator edge-bff identity-service marketplace-service finance-service trust-service intelligence-service)
 
 build_image() {
   local service="$1" context dockerfile
