@@ -27,6 +27,12 @@
 | [ADR-D07](D07-commerce-order-snapshot.md) | 商品/套餐、定价、库存、有效期和订单快照归属 | 已采纳 | Marketplace/Commerce |
 | [ADR-D10](D10-data-retention-redaction.md) | 数据保留、删除、导出、审计、证据脱敏和地域要求 | 已采纳（阈值 provisional） | 所有服务 |
 | [ADR-D11](D11-ai-usage-billing.md) | AI 用量单位、预留/退回、平台模型和 BYOK 计费边界 | 已采纳 | Intelligence、Finance |
+| [ADR-D12](D12-freebie-escrow.md) | 霸王餐反向资金流的押金与结算规则 | 已采纳 | Finance、Marketplace、Identity、前端 |
+| [ADR-D13](D13-interaction-tasks.md) | 点赞互动任务类型与核验口径 | 已采纳 | Marketplace、Intelligence、前端 |
+| [ADR-D14](D14-guest-trial.md) | 游客有限体验的额度与限流边界 | 已采纳 | Intelligence、edge、前端 |
+| [ADR-D15](D15-judge-incentive.md) | 审判官激励口径（AI 积分 per-vote） | 已采纳 | Trust、Finance、Identity |
+| [ADR-D16](D16-content-safety.md) | 内容安全分级检查与能力面 | 已采纳 | Intelligence、edge、前端 |
+| [ADR-D17](D17-org-byok.md) | 组织级 BYOK 启用：路由层级、管理权、回退策略与审计 | 已采纳 | Intelligence BYOK 路由/管理、组织管理 UI |
 
 ## 依赖关系
 
