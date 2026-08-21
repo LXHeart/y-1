@@ -114,6 +114,70 @@ public class FrozenTextExecutionService {
 	}
 
 	/**
+	 * 独立模式多轮管线执行器：在环内做逐轮完成调用（轮次间可相互依赖——prompt 由上一轮结果派生）。
+	 */
+	public interface IndependentStageExecutor {
+		/** 管线内单轮完成调用（复用同一执行上下文与并发租约）。 */
+		Mono<TextCompletionResult> completeRound(List<ChatMessage> messages);
+	}
+
+	/**
+	 * 独立模式多轮管线（图片评价 draft→optimize→style-refine 等）：一次计费/留痕/退款包裹 N 个 相互依赖的完成调用——与
+	 * {@link #executeBatch} 的「一次 AI run、多次调用」同构，但轮次消息可由 前一轮结果在运行时派生。usage
+	 * 按轮次累计后一次结算；任一轮失败走环内失败退款。
+	 */
+	public <T> Mono<Traced<T>> executeIndependentPipeline(ServerWebExchange exchange, CreditFeature feature,
+			int estimatedInputTokens, int estimatedOutputTokens, java.time.Duration timeout, int maxTokensPerRound,
+			Function<IndependentStageExecutor, Mono<T>> pipeline) {
+		return executions
+				.prepareExecution(exchange, "text", feature, estimatedInputTokens, estimatedOutputTokens, true, null)
+				.flatMap(result -> result.allowed()
+						? executePipelinePrepared(result.context(), timeout, maxTokensPerRound, pipeline)
+						: Mono.error(deniedException(result.denialReason())));
+	}
+
+	private <T> Mono<Traced<T>> executePipelinePrepared(AiExecutionService.ExecutionContext context,
+			java.time.Duration timeout, int maxTokensPerRound, Function<IndependentStageExecutor, Mono<T>> pipeline) {
+		String bearer = context.provider().isPlatform() ? platformDefaults.apiKey() : context.decryptedKey();
+		return Mono.usingWhen(Mono.just(context),
+				ignored -> Mono.usingWhen(concurrencyLimiter.acquire(context.provider()), lease -> {
+					java.util.concurrent.atomic.AtomicLong inputTokens = new java.util.concurrent.atomic.AtomicLong();
+					java.util.concurrent.atomic.AtomicLong outputTokens = new java.util.concurrent.atomic.AtomicLong();
+					IndependentStageExecutor stages = messages -> textClient
+							.completeMessages(context.provider().baseUrl(), bearer, context.provider().model(),
+									messages, maxTokensPerRound, context.provider().isByok(), timeout)
+							.map(completion -> executions.normalizeProviderUsage(context, completion))
+							.doOnNext(completion -> {
+								inputTokens.addAndGet(completion.inputTokens());
+								outputTokens.addAndGet(completion.outputTokens());
+							});
+					return pipeline.apply(stages)
+							.flatMap(value -> executions
+									.settleSuccess(context, intValue(inputTokens), intValue(outputTokens), 0, 0)
+									.thenReturn(new Traced<>(value, context.runId(), context.provider().provider(),
+											context.provider().model(),
+											context.provider().platformModelVersion() > 0
+													? context.provider().platformModelVersion()
+													: null,
+											context.provider().isByok())));
+				}, PlatformConcurrencyLimiter.Lease::release, (lease, error) -> lease.release(),
+						PlatformConcurrencyLimiter.Lease::release),
+				ignored -> Mono.empty(), (ignored, error) -> Mono.empty(),
+				ignored -> executions.handleCancellation(context).then())
+				.onErrorResume(error -> executions
+						.handleFailure(context, error.getMessage() == null ? "AI run failed" : error.getMessage())
+						.then(Mono.error(error)));
+	}
+
+	private static int intValue(java.util.concurrent.atomic.AtomicLong value) {
+		long current = value.get();
+		if (current < 0 || current > Integer.MAX_VALUE) {
+			throw new IntelligenceException(502, "AI provider usage 超出支持范围");
+		}
+		return (int) current;
+	}
+
+	/**
 	 * Executes several ordered completions as one frozen, billed and audited AI
 	 * run.
 	 */

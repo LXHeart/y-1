@@ -11,8 +11,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
-import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.ai.run.TextCompletionResult;
 import com.grassland.intelligence.credits.CreditFeature;
@@ -44,8 +42,6 @@ import reactor.core.publisher.Mono;
 class CreationAssistantControllerIT extends IntelligenceItSupport {
 
 	@MockitoBean
-	private AiCapabilityAdapter ai;
-	@MockitoBean
 	private CreditsClient credits;
 	@MockitoBean
 	private FrozenTextExecutionService frozenText;
@@ -56,7 +52,7 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
 
 	@BeforeEach
 	void resetMocks() {
-		reset(ai, credits, frozenText);
+		reset(credits, frozenText);
 		CreditsStubs.stubDefaults(credits);
 		db.sql("DELETE FROM creation_generation").then().block();
 	}
@@ -121,14 +117,12 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
 		verify(frozenText, never()).executeIndependent(any(), any(), anyInt(), any(), any());
 	}
 
-	// ---------------- suggest（legacy 纯流式，暂保留手写扣退）----------------
+	// ---------------- suggest（已迁执行环：先执行后发帧）----------------
 
 	@Test
-	void suggestStreamsChunksAndChargesCreationAssistant() {
-		ArgumentCaptor<CreditFeature> featureCaptor = ArgumentCaptor.forClass(CreditFeature.class);
-		when(credits.consume(any(), featureCaptor.capture()))
-				.thenAnswer(inv -> CreditsStubs.charge(inv.getArgument(0), inv.getArgument(1)));
-		when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk("亮点："), new ChatChunk("开头生动。")));
+	void suggestEmitsSingleContentFrameViaExecutionLoop() {
+		when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+				.thenReturn(Mono.just(traced("亮点：开头生动。")));
 
 		byte[] body = client().post().uri("/api/creation-assistant/suggest")
 				.header(header(), sign("user-suggest", null)).contentType(MediaType.APPLICATION_JSON)
@@ -137,42 +131,31 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
 				.returnResult().getResponseBody();
 
 		String sse = new String(body, UTF_8);
-		assertThat(sse).isEqualTo(
-				"data: {\"content\":\"亮点：\"}\n\n" + "data: {\"content\":\"开头生动。\"}\n\n" + "data: [DONE]\n\n");
-		assertThat(featureCaptor.getValue()).isEqualTo(CreditFeature.CREATION_ASSISTANT);
+		assertThat(sse).isEqualTo("data: {\"content\":\"亮点：开头生动。\"}\n\n" + "data: [DONE]\n\n");
+		verify(frozenText).executeIndependent(any(), any(), anyInt(), eq(CreditFeature.CREATION_ASSISTANT), any());
+		verify(credits, never()).consume(any(), any());
 	}
 
-	/**
-	 * 流中途失败：头已随 200 发出，只能靠错误帧告知客户端（不能 Mono.error 让流裸截断）， 同时仍要退款。镜像
-	 * ArticleController 的 outline/content 流。
-	 */
 	@Test
-	void suggestEmitsErrorFrameAndRefundsWhenStreamFailsMidway() {
-		when(credits.consume(any(), any()))
-				.thenReturn(CreditsStubs.charge("user-midfail", CreditFeature.CREATION_ASSISTANT));
-		when(ai.startTextRun(any()))
-				.thenReturn(Flux.just(new ChatChunk("亮点：")).concatWith(Flux.error(new RuntimeException("LLM 断流"))));
+	void suggestUpstreamFailureFailsBeforeSse() {
+		when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+				.thenReturn(Mono.error(new RuntimeException("LLM 断流")));
 
-		byte[] body = client().post().uri("/api/creation-assistant/suggest")
-				.header(header(), sign("user-midfail", null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("content", "这是一段需要优化建议的测试内容，至少十个字")).exchange().expectStatus().isOk().expectBody()
-				.returnResult().getResponseBody();
-
-		String sse = new String(body, UTF_8);
-		assertThat(sse).contains("data: {\"content\":\"亮点：\"}");
-		assertThat(sse).contains("data: {\"error\":\"优化建议生成失败\"}");
-		verify(credits).refund(any(), any());
+		client().post().uri("/api/creation-assistant/suggest").header(header(), sign("user-midfail", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("content", "这是一段需要优化建议的测试内容，至少十个字"))
+				.exchange().expectStatus().is5xxServerError();
+		// 退款在环内闭环，控制器不手动 refund
+		verify(credits, never()).refund(any(), any());
 	}
 
 	@Test
 	void insufficientCreditsReturnsErrorWithoutCallingAi() {
-		when(credits.consume(any(), any())).thenReturn(Mono.error(new InsufficientCreditsException()));
+		when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
+				.thenReturn(Mono.error(new InsufficientCreditsException()));
 
 		client().post().uri("/api/creation-assistant/suggest").header(header(), sign("user-broke", null))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("content", "这是一段需要优化建议的测试内容，至少十个字"))
 				.exchange().expectStatus().is4xxClientError();
-
-		verify(ai, never()).startTextRun(any());
 	}
 
 	@Test

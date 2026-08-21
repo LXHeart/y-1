@@ -66,9 +66,13 @@ class TextCreationLineageIT extends IntelligenceItSupport {
 	}
 
 	@Test
-	@DisplayName("喜剧脚本独立模式 → 落 kind=comedy_script 行")
+	@DisplayName("喜剧脚本独立模式 → 落 kind=comedy_script 行（runId 为执行环真值）")
 	void comedyIndependentStreamRecordsLineage() {
-		when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk("大家好，今天聊聊加班。")));
+		UUID runId = UUID.randomUUID();
+		// 已迁执行环：桩环出口返回完整脚本，lineage 的 runId/provider 落环内真值
+		when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any())).thenReturn(
+				Mono.just(new com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced<>("大家好，今天聊聊加班。",
+						runId, "qwen", "qwen-plus", 1, false)));
 
 		client().post().uri("/api/comedy-generation/generate-script")
 				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
@@ -81,6 +85,7 @@ class TextCreationLineageIT extends IntelligenceItSupport {
 		assertThat((String) row.get("prompt_text")).contains("加班");
 		assertThat((String) row.get("input_summary")).contains("\"durationSeconds\": 60");
 		assertThat((String) row.get("result")).contains("\"contentLength\": 11");
+		assertThat(row.get("ai_run_id").toString()).isEqualTo(runId.toString());
 	}
 
 	@Test

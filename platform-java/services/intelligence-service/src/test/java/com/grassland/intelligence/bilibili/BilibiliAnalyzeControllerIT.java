@@ -83,6 +83,16 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
 		db.sql("DELETE FROM intelligence_outbox").then().block();
 		db.sql("DELETE FROM ai_credit_compensation").then().block();
 		db.sql("DELETE FROM ai_run").then().block();
+		// 自种子平台 text/primary 配置指向 QWEN（执行环路由依赖；不依赖其他测试类留下的状态）
+		db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
+		db.sql("DELETE FROM platform_model_config").then().block();
+		String platformConfigId = db
+				.sql("INSERT INTO platform_model_config(capability, model_role, provider, model, "
+						+ "base_url, max_concurrency, health_status, enabled, version) "
+						+ "VALUES ('text','primary','qwen','qwen-plus',:baseUrl,1,'healthy',true,1) RETURNING id::text")
+				.bind("baseUrl", QWEN.baseUrl()).map((row, meta) -> row.get("id", String.class)).one().block();
+		db.sql("INSERT INTO platform_model_concurrency_slot(config_id, slot_no) VALUES (CAST(:id AS uuid), 1)")
+				.bind("id", platformConfigId).then().block();
 	}
 
 	@Test

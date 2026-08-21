@@ -2,14 +2,9 @@ package com.grassland.intelligence.creationassistant;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
-import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.Sse;
-import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
-import com.grassland.intelligence.credits.CreditCharge;
 import com.grassland.intelligence.credits.CreditFeature;
-import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.Map;
@@ -44,8 +39,8 @@ import reactor.core.publisher.Mono;
  * </ul>
  *
  * <p>
- * 所有端点扣 {@link CreditFeature#CREATION_ASSISTANT}；聚合型经执行环闭环，suggest 暂保留 手写
- * consume/refund（纯流式迁环属难档，契约变更需单独核前端）。
+ * 所有端点扣 {@link CreditFeature#CREATION_ASSISTANT}，全部经执行环闭环（GL-P3-AI-001 尾巴清偿）：
+ * 预算闸/ai_run 留痕/BYOK 路由/积分闭环/失败退款一套机器；SSE 在执行完成后发帧，402/502 在 SSE 前以 JSON 返回。
  */
 @RestController
 @RequestMapping("/api/creation-assistant")
@@ -56,17 +51,12 @@ public class CreationAssistantController {
 	private static final int ASSISTANT_MAX_TOKENS = 1024;
 
 	private final IntelligenceCallerResolver callers;
-	private final AiCapabilityAdapter ai;
-	private final CreditsClient credits;
 	private final FrozenTextExecutionService frozenText;
 	private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
 
-	public CreationAssistantController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai,
-			CreditsClient credits, FrozenTextExecutionService frozenText,
+	public CreationAssistantController(IntelligenceCallerResolver callers, FrozenTextExecutionService frozenText,
 			com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
 		this.callers = callers;
-		this.ai = ai;
-		this.credits = credits;
 		this.frozenText = frozenText;
 		this.lineage = lineage;
 	}
@@ -81,21 +71,19 @@ public class CreationAssistantController {
 				.map(trace -> sseEntity(trace.value().toFrames(), exchange));
 	}
 
-	/** 优化建议（§4.9.4）：纯流式 SSE。 */
+	/**
+	 * 优化建议（§4.9.4）：经执行环聚合后一次性发 {@code {content}} 帧（GL-P3-AI-001 尾巴清偿：
+	 * 纯流式契约收敛为「先执行后发帧」，402/502 在 SSE 前以 JSON 返回，失败退款在环内闭环； 前端 useCreationAssistant
+	 * 对单帧 content 与非 ok JSON 均兼容）。
+	 */
 	@PostMapping("/suggest")
 	public Mono<ResponseEntity<Flux<DataBuffer>>> suggest(@RequestBody ScoreRequest body, ServerWebExchange exchange) {
 		String content = requireContent(body);
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> credits.consume(caller.accountId(), CreditFeature.CREATION_ASSISTANT))
-				.map(charge -> {
-					Flux<String> payloads = ai
-							.startTextRun(new TextRunCommand(
-									CreationAssistantPrompts.suggestMessages(content, body.platform(), body.title())))
-							.map(chunk -> frame(Map.of("content", chunk.content())))
-							.onErrorResume(e -> credits.refund(charge, "优化建议失败自动退回")
-									.thenMany(Flux.just(frame(Map.of("error", "优化建议生成失败")))));
-					return sseEntity(payloads, exchange);
-				});
+				.flatMap(caller -> frozenText.executeIndependent(exchange,
+						CreationAssistantPrompts.suggestMessages(content, body.platform(), body.title()), 2048,
+						CreditFeature.CREATION_ASSISTANT, completion -> completion.content()))
+				.map(trace -> sseEntity(Flux.just(frame(Map.of("content", trace.value()))), exchange));
 	}
 
 	/**

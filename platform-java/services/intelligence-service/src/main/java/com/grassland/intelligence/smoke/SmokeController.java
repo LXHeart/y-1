@@ -1,13 +1,10 @@
 package com.grassland.intelligence.smoke;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
-import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.Sse;
-import com.grassland.intelligence.ai.TextRunCommand;
+import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.credits.CreditFeature;
-import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import java.util.List;
 import java.util.Map;
@@ -24,64 +21,58 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * 内部冒烟端点（草场 intelligence Slice 1）——非业务，验证整条链路：
- * edge-bff 断言 → intelligence callerResolver → 平台默认 Qwen 流式 → SSE 字节级透传。
+ * 内部冒烟端点（草场 intelligence Slice 1）——非业务，验证整条链路： edge-bff 断言 → intelligence
+ * callerResolver → 执行环（预算闸/ai_run/BYOK 路由/积分闭环） → 平台 Qwen 完成 → SSE 透传。
  *
- * <p><b>扣积分 + 限流</b>（GL-P0-SEC-002）。本端点真实消耗平台 Qwen 上游，此前只要求登录、
- * 既不扣分也不限流，任何登录账号可无成本驱动上游。现按 {@link CreditFeature#INTELLIGENCE_SMOKE}
- * 扣 1 积分，并由 {@link SmokePreflightFilter} 做每账号限流。扣分在 {@code startTextRun} 之前，
- * 积分不足直接 402、不触发上游调用。
- *
- * <p>后续业务 controller（脱口秀等）结构与本端点同构：{@code resolve → consume → startTextRun → Sse.stream}。
+ * <p>
+ * <b>扣积分 + 限流</b>（GL-P0-SEC-002）。本端点真实消耗平台 Qwen 上游，按
+ * {@link CreditFeature#INTELLIGENCE_SMOKE} 扣积分，并由 {@link SmokePreflightFilter}
+ * 做每账号限流。 GL-P3-AI-001 尾巴清偿后经执行环单环执行（流式收敛为完成聚合后单帧 content——冒烟本就验证
+ * 链路而非打字机体验），402/502 在 SSE 前以 JSON 返回。
  */
 @RestController
 public class SmokeController {
 
-    private static final String DEFAULT_PROMPT = "用一句话介绍草场（Grassland）这个内容撮合平台。";
+	private static final String DEFAULT_PROMPT = "用一句话介绍草场（Grassland）这个内容撮合平台。";
 
-    private final IntelligenceCallerResolver callers;
-    private final AiCapabilityAdapter ai;
-    private final CreditsClient credits;
-    private final ObjectMapper mapper = new ObjectMapper();
+	private final IntelligenceCallerResolver callers;
+	private final FrozenTextExecutionService frozenText;
+	private final ObjectMapper mapper = new ObjectMapper();
 
-    public SmokeController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai, CreditsClient credits) {
-        this.callers = callers;
-        this.ai = ai;
-        this.credits = credits;
-    }
+	public SmokeController(IntelligenceCallerResolver callers, FrozenTextExecutionService frozenText) {
+		this.callers = callers;
+		this.frozenText = frozenText;
+	}
 
-    @PostMapping("/api/intelligence/smoke/chat")
-    public Mono<ResponseEntity<Flux<DataBuffer>>> chat(@RequestBody SmokeRequest body, ServerWebExchange exchange) {
-        return callers.resolve(exchange.getRequest())
-                .flatMap(c -> credits.consume(c.accountId(), CreditFeature.INTELLIGENCE_SMOKE))
-                .map(charge -> {
-                    String prompt = (body != null && body.prompt() != null && !body.prompt().isBlank())
-                            ? body.prompt()
-                            : DEFAULT_PROMPT;
-                    Flux<String> payloads = ai.startTextRun(new TextRunCommand(List.of(
-                            ChatMessage.system("你是草场平台的助手，回答简短友好。"),
-                            ChatMessage.user(prompt))))
-                            .map(this::contentPayload)
-                            // 上游失败：退回已扣积分（GL-P0-BILL-002）
-                            .onErrorResume(error -> credits.refund(charge, "smoke 调用失败自动退回")
-                                    .then(Mono.error(error)));
-                    Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
-                    HttpHeaders h = new HttpHeaders();
-                    h.setContentType(MediaType.TEXT_EVENT_STREAM);
-                    h.set("X-Accel-Buffering", "no");
-                    h.setCacheControl("no-cache");
-                    return new ResponseEntity<>(sseBody, h, HttpStatus.OK);
-                });
-    }
+	@PostMapping("/api/intelligence/smoke/chat")
+	public Mono<ResponseEntity<Flux<DataBuffer>>> chat(@RequestBody SmokeRequest body, ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> {
+			String prompt = (body != null && body.prompt() != null && !body.prompt().isBlank())
+					? body.prompt()
+					: DEFAULT_PROMPT;
+			return frozenText.executeIndependent(exchange,
+					List.of(ChatMessage.system("你是草场平台的助手，回答简短友好。"), ChatMessage.user(prompt)), 512,
+					CreditFeature.INTELLIGENCE_SMOKE, completion -> completion.content());
+		}).map(trace -> {
+			Flux<String> payloads = Flux.just(contentPayload(trace.value()));
+			Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
+			HttpHeaders h = new HttpHeaders();
+			h.setContentType(MediaType.TEXT_EVENT_STREAM);
+			h.set("X-Accel-Buffering", "no");
+			h.setCacheControl("no-cache");
+			return new ResponseEntity<>(sseBody, h, HttpStatus.OK);
+		});
+	}
 
-    private String contentPayload(ChatChunk chunk) {
-        try {
-            return mapper.writeValueAsString(Map.of("content", chunk.content()));
-        } catch (Exception e) {
-            return "{\"content\":\"\"}";
-        }
-    }
+	private String contentPayload(String content) {
+		try {
+			return mapper.writeValueAsString(Map.of("content", content == null ? "" : content));
+		} catch (Exception e) {
+			return "{\"content\":\"\"}";
+		}
+	}
 
-    /** 冒烟请求体。prompt 可省略（走默认）。 */
-    public record SmokeRequest(String prompt) {}
+	/** 冒烟请求体。prompt 可省略（走默认）。 */
+	public record SmokeRequest(String prompt) {
+	}
 }
