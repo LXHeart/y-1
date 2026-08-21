@@ -66,6 +66,12 @@ public class NotificationRecipientResolver {
                             .flatMapMany(this::findOrgManagerAccountIds)
                             .collectList()
                             .defaultIfEmpty(java.util.List.of());
+            // intelligence：个人 AI 预算阈值告警（GL-P3-AI-001 登记项）——收件人=用户本人。
+            case "AiPersonalBudgetThresholdCrossed" ->
+                    text(payload, "accountId")
+                            .filter(NotificationRecipientResolver::isUuidText)
+                            .map(java.util.List::of)
+                            .defaultIfEmpty(java.util.List.of());
             default -> Mono.just(externalRecipients(envelope.eventType(), payload));
         };
     }

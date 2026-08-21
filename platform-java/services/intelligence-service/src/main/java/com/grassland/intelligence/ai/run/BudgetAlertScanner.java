@@ -143,7 +143,10 @@ public class BudgetAlertScanner {
             String organizationId, String ruleKey, String window, String unit, String periodKey,
             long usage, long limit, Level level) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("organizationId", organizationId);
+        // 个人预算行作用域 = "u:"+accountId（GL-P3-AI-001 登记项）：事件类型/收件人不同，通知用户本人。
+        boolean personal = organizationId.startsWith("u:");
+        String subjectId = personal ? organizationId.substring(2) : organizationId;
+        payload.put(personal ? "accountId" : "organizationId", subjectId);
         payload.put("ruleKey", ruleKey);
         payload.put("level", level.dbValue());
         payload.put("window", window);
@@ -156,7 +159,7 @@ public class BudgetAlertScanner {
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(
                 deterministicId,
-                "AiOrgBudgetThresholdCrossed",
+                personal ? "AiPersonalBudgetThresholdCrossed" : "AiOrgBudgetThresholdCrossed",
                 "AiModelBudget",
                 organizationId,
                 1,

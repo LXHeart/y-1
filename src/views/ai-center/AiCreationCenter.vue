@@ -264,7 +264,10 @@
       </footer>
     </template>
 
-    <AiRunHistoryPanel v-else-if="activeSection === 'runs'" />
+    <div v-else-if="activeSection === 'runs'" class="runs-section">
+      <PersonalAiBudgetCard />
+      <AiRunHistoryPanel />
+    </div>
     <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
         <ImageStudioView v-else-if="activeSection === 'image-studio'" />
         <VideoStudioView v-else-if="activeSection === 'video-studio'" @handoff="onVideoStudioHandoff" />
@@ -295,6 +298,7 @@
 import { computed, ref, watch } from 'vue'
 import AiProviderKeysPanel from '../../components/AiProviderKeysPanel.vue'
 import AiRunHistoryPanel from '../../components/AiRunHistoryPanel.vue'
+import PersonalAiBudgetCard from '../../components/PersonalAiBudgetCard.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.vue'
 import ImageStudioView from './components/ImageStudioView.vue'

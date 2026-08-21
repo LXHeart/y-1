@@ -217,6 +217,19 @@ public final class NotificationTemplates {
                         : "组织 AI " + dimension + "已达到预警阈值，请关注组织用量";
                 yield new Template(NotificationCategory.WALLET, title, body, LINK_PERMISSION, budgetAlertPayload(payload));
             }
+            // ---------- intelligence：个人 AI 预算阈值告警（GL-P3-AI-001 登记项）----------
+            // 收件人=用户本人（resolver 按 payload.accountId）。
+            case "AiPersonalBudgetThresholdCrossed" -> {
+                boolean exceeded = "exceeded".equals(stringField(payload, "level"));
+                boolean monthly = "monthly".equals(stringField(payload, "window"));
+                boolean cents = "cents".equals(stringField(payload, "unit"));
+                String dimension = (monthly ? "本月" : "今日") + (cents ? "消费金额" : "调用量");
+                String title = exceeded ? "个人 AI 预算已超限" : "个人 AI 预算接近上限";
+                String body = exceeded
+                        ? "你的独立创作 AI " + dimension + "已超过自己设定的上限，相关 AI 能力可能已被硬停，可调整预算或检查用量"
+                        : "你的独立创作 AI " + dimension + "已达到你设定的预警阈值，请关注用量";
+                yield new Template(NotificationCategory.WALLET, title, body, LINK_PERMISSION, budgetAlertPayload(payload));
+            }
             default -> null;
         };
     }
@@ -274,10 +287,11 @@ public final class NotificationTemplates {
         return singleKeyPayload(payload, "organizationId");
     }
 
-    /** 预算阈值告警 payload：组织 + 规则维度 + 等级 + 用量/上限（前端组织管理区渲染）。 */
+    /** 预算阈值告警 payload：主体（组织/个人） + 规则维度 + 等级 + 用量/上限（前端管理区渲染）。 */
     private static Map<String, Object> budgetAlertPayload(JsonNode payload) {
         Map<String, Object> map = new LinkedHashMap<>();
         putIfText(map, payload, "organizationId");
+        putIfText(map, payload, "accountId");
         putIfText(map, payload, "ruleKey");
         putIfText(map, payload, "level");
         putIfText(map, payload, "window");

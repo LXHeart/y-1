@@ -207,8 +207,11 @@ public class AiExecutionService {
 			String runType, String priceTableVersion, UUID contextSnapshotId, String moneyPolicyVersion,
 			boolean chargeRequired) {
 
+		// 个人预算（GL-P3-AI-001 登记项）：无组织上下文的独立创作按 "u:"+accountId 作用域查个人预算；
+		// 组织执行仍按组织预算。两者共用预留/结算/释放机器（budgetId 键控）。
+		String budgetScope = orgId != null ? orgId : AiPersonalBudgetController.personalScope(accountId);
 		return budgetService
-				.checkAndReserve(orgId, capability, provider.isPlatform() ? "platform" : provider.provider(),
+				.checkAndReserve(budgetScope, capability, provider.isPlatform() ? "platform" : provider.provider(),
 						estimatedTokens, estimatedCents)
 				.flatMap(budget -> budget.allowed()
 						? createRunRecord(budget, provider, orgId, accountId, capability, allowFallback, budgetOpId,
