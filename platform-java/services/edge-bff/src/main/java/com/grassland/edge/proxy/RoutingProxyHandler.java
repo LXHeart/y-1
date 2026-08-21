@@ -42,7 +42,8 @@ public final class RoutingProxyHandler {
             return exchange.getResponse().setComplete();
         }
         URI target = targetUri(upstream, request.getURI());
-        HttpHeaders requestHeaders = ProxyHeaderPolicy.requestHeaders(request.getHeaders());
+        HttpHeaders requestHeaders = ProxyHeaderPolicy.requestHeaders(
+                request.getHeaders(), request.getRemoteAddress());
         Flux<DataBuffer> requestBody = request.getBody();
 
         return webClient.method(request.getMethod())

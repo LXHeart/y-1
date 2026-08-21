@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { fetchApi } from './grassland-http'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
 
@@ -141,9 +142,8 @@ export function useMomentsCreation() {
     safetyReport.value = null
 
     try {
-      const response = await fetch('/api/moments-generation/generate', {
+      const response = await fetchApi('/api/moments-generation/generate', {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topic: topic.value.trim(),

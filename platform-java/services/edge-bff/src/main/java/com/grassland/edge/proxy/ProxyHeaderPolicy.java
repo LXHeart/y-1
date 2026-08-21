@@ -24,6 +24,21 @@ public final class ProxyHeaderPolicy {
         return copyEndToEndHeaders(source, true);
     }
 
+    /**
+     * 会话/设备指纹用 {@code X-Forwarded-For}（identity 取最右一段）。经 Nginx 前置时链路完整透传；
+     * 直连 edge（开发/vite 代理）时 XFF 缺失，identity 只能记到 edge 容器 IP——此处在 XFF 缺失时
+     * 补写直接对端地址（edge 是受控代理，追加点可信）。已有 XFF 时原样透传，不改变生产单可信代理链。
+     */
+    public static HttpHeaders requestHeaders(HttpHeaders source, java.net.InetSocketAddress peer) {
+        HttpHeaders headers = copyEndToEndHeaders(source, true);
+        String forwarded = headers.getFirst("X-Forwarded-For");
+        if ((forwarded == null || forwarded.isBlank()) && peer != null
+                && peer.getAddress() != null) {
+            headers.set("X-Forwarded-For", peer.getAddress().getHostAddress());
+        }
+        return headers;
+    }
+
     public static HttpHeaders responseHeaders(HttpHeaders source) {
         return copyEndToEndHeaders(source, false);
     }
