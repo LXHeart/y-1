@@ -120,6 +120,8 @@ describe('CI E2E Java runtime selection', () => {
     expect(runner).toContain('ensure_java_runtime 25')
     expect(runner).toContain("export QWEN_BASE_URL='https://qwen-e2e.invalid/v1'")
     expect(runner).toContain('export QWEN_API_KEY="$(openssl rand -hex 32)"')
+    // 假域名必须配套 DNS pinning 固定表：否则 ee9032b 的构造期强解析让 intelligence 启动即崩。
+    expect(runner).toContain("export AI_DNS_PINNING_TRUSTED_DOMAINS='qwen-e2e.invalid=127.0.0.1'")
     expect(runner).not.toContain('${QWEN_BASE_URL:-')
     expect(runner).not.toContain('${QWEN_API_KEY:-')
     expect(runner).toContain('wait_for_postgres 60')

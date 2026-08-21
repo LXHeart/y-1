@@ -691,6 +691,10 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:?QWEN_BASE_URL is required for intelligence-service}
       QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required for intelligence-service}
       QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+      # DNS pinning 固定表（ai.dns-pinning.trusted-domains）：命中即跳过创建期系统 DNS 解析。
+      # CI e2e 的 QWEN 假域名（qwen-e2e.invalid）必须预置，否则平台 client 构造期强解析
+      # 直接 fail-fast（ee9032b 起）；生产可留空走一次性系统解析。
+      AI_DNS_PINNING_TRUSTED_DOMAINS: ${AI_DNS_PINNING_TRUSTED_DOMAINS:-}
       AI_PROVIDER_ALLOW_SANDBOX: ${AI_PROVIDER_ALLOW_SANDBOX:-true}
       # Local defaults remain Sandbox. Set all fields together to exercise a real OpenAI-compatible adapter.
       AI_SPEECH_PROVIDER: ${AI_SPEECH_PROVIDER:-sandbox}

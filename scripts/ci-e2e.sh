@@ -47,6 +47,10 @@ export MINIO_ACCESS_KEY=ci-media-runtime
 export MINIO_SECRET_KEY="$(openssl rand -hex 20)"
 export QWEN_BASE_URL='https://qwen-e2e.invalid/v1'
 export QWEN_API_KEY="$(openssl rand -hex 32)"
+# ee9032b 起平台 client 构造期对 provider 域名做 DNS pinning 强解析：.invalid 假域名恒解析失败，
+# 预置固定表（ai.dns-pinning.trusted-domains）跳过系统 DNS。真实 AI 调用连 127.0.0.1 拒连，
+# 走网络错误降级——与 pinning 前「解析失败」行为等价，e2e 不打真 AI。
+export AI_DNS_PINNING_TRUSTED_DOMAINS='qwen-e2e.invalid=127.0.0.1'
 # The isolated stack uses Temporal's plaintext development server. Explicitly
 # clear production mTLS paths so the SDK does not interpret a host directory
 # or inherited environment value as a certificate file.
