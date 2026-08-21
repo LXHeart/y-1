@@ -34,8 +34,11 @@ public class HotItemsAlapiService {
 	private final ObjectMapper mapper = new ObjectMapper();
 
 	public HotItemsAlapiService(@Value("${hot-items.alapi.base-url:https://v3.alapi.cn}") String baseUrl,
-			@Value("${hot-items.alapi.timeout-ms:8000}") long timeoutMs) {
-		this.webClient = ManagedWebClientFactory.create(HotItemsAlapiService.class, baseUrl);
+			@Value("${hot-items.alapi.timeout-ms:8000}") long timeoutMs,
+			com.grassland.intelligence.ai.DnsPinningResolver dnsPinning) {
+		// 固定数据源域名钉扎（GL-P3-AI-001 尾巴覆盖扩展）
+		this.webClient = com.grassland.intelligence.ai.PinnedOutboundClients.forFixedHost(HotItemsAlapiService.class,
+				baseUrl, dnsPinning, Duration.ofMillis(Math.max(1, timeoutMs)), 2 * 1024 * 1024);
 		this.timeout = Duration.ofMillis(timeoutMs);
 	}
 

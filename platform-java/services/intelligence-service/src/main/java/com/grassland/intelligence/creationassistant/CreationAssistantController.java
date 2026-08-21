@@ -53,12 +53,15 @@ public class CreationAssistantController {
 	private final IntelligenceCallerResolver callers;
 	private final FrozenTextExecutionService frozenText;
 	private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
+	private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
 
 	public CreationAssistantController(IntelligenceCallerResolver callers, FrozenTextExecutionService frozenText,
-			com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
+			com.grassland.intelligence.creationlineage.TextCreationLineageService lineage,
+			com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
 		this.callers = callers;
 		this.frozenText = frozenText;
 		this.lineage = lineage;
+		this.safety = safety;
 	}
 
 	/** 内容评分（§4.9.6）：经执行环聚合 LLM JSON 输出 → 逐维度发 SSE 帧。 */
@@ -79,11 +82,17 @@ public class CreationAssistantController {
 	@PostMapping("/suggest")
 	public Mono<ResponseEntity<Flux<DataBuffer>>> suggest(@RequestBody ScoreRequest body, ServerWebExchange exchange) {
 		String content = requireContent(body);
+		// ADR-D16 尾巴（2026-08-21 接入）：优化建议为长文本输出，流尾追加安全检查帧（L1 必跑 +
+		// L2 已配置时深检），与喜剧脚本/文章正文同口径
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> frozenText.executeIndependent(exchange,
 						CreationAssistantPrompts.suggestMessages(content, body.platform(), body.title()), 2048,
 						CreditFeature.CREATION_ASSISTANT, completion -> completion.content()))
-				.map(trace -> sseEntity(Flux.just(frame(Map.of("content", trace.value()))), exchange));
+				.map(trace -> sseEntity(
+						safety.appendSafetyFrame(exchange, Flux.just(frame(Map.of("content", trace.value()))),
+								com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+								body.platform(), null, null),
+						exchange));
 	}
 
 	/**

@@ -120,7 +120,7 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
 	// ---------------- suggest（已迁执行环：先执行后发帧）----------------
 
 	@Test
-	void suggestEmitsSingleContentFrameViaExecutionLoop() {
+	void suggestEmitsContentFramePlusSafetyViaExecutionLoop() {
 		when(frozenText.executeIndependent(any(), any(), anyInt(), any(), any()))
 				.thenReturn(Mono.just(traced("亮点：开头生动。")));
 
@@ -131,7 +131,10 @@ class CreationAssistantControllerIT extends IntelligenceItSupport {
 				.returnResult().getResponseBody();
 
 		String sse = new String(body, UTF_8);
-		assertThat(sse).isEqualTo("data: {\"content\":\"亮点：开头生动。\"}\n\n" + "data: [DONE]\n\n");
+		assertThat(sse).isEqualTo(
+				"data: {\"content\":\"亮点：开头生动。\"}\n\n" + "data: {\"type\":\"safety\",\"safety\":{\"findings\":[],"
+						+ "\"lexiconVersion\":\"lexicon-v1\",\"deepCheck\":false,\"appliedOverlays\":[]}}\n\n"
+						+ "data: [DONE]\n\n");
 		verify(frozenText).executeIndependent(any(), any(), anyInt(), eq(CreditFeature.CREATION_ASSISTANT), any());
 		verify(credits, never()).consume(any(), any());
 	}

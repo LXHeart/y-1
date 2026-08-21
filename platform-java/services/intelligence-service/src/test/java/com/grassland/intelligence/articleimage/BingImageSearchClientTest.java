@@ -21,75 +21,73 @@ import org.junit.jupiter.api.Test;
 
 class BingImageSearchClientTest {
 
-    private static WireMockServer wireMock;
-    private static BingImageSearchClient client;
+	private static WireMockServer wireMock;
+	private static BingImageSearchClient client;
 
-    @BeforeAll
-    static void startServer() {
-        wireMock = new WireMockServer(options().dynamicPort());
-        wireMock.start();
-        IntSupplier fixedOffset = () -> 7;
-        client = new BingImageSearchClient(wireMock.baseUrl() + "/images/search", Duration.ofSeconds(2), fixedOffset);
-    }
+	@BeforeAll
+	static void startServer() {
+		wireMock = new WireMockServer(options().dynamicPort());
+		wireMock.start();
+		IntSupplier fixedOffset = () -> 7;
+		client = new BingImageSearchClient(wireMock.baseUrl() + "/images/search", Duration.ofSeconds(2), fixedOffset,
+				com.grassland.intelligence.ai.DnsPinningResolver.create());
+	}
 
-    @AfterAll
-    static void stopServer() {
-        if (wireMock != null) {
-            wireMock.stop();
-        }
-    }
+	@AfterAll
+	static void stopServer() {
+		if (wireMock != null) {
+			wireMock.stop();
+		}
+	}
 
-    @BeforeEach
-    void resetStubs() {
-        wireMock.resetMappings();
-    }
+	@BeforeEach
+	void resetStubs() {
+		wireMock.resetMappings();
+	}
 
-    @Test
-    @DisplayName("parses Bing metadata, filters HTTP and de-duplicates URLs")
-    void parsesMetadataResults() {
-        wireMock.stubFor(get(urlPathEqualTo("/images/search")).willReturn(aResponse().withStatus(200)
-                .withHeader("Content-Type", "text/html")
-                .withBody("""
-                        <div class="iusc" m='{"murl":"https://cdn.example/1.jpg","turl":"https://cdn.example/t1.jpg","purl":"https://source.example/1","desc":"第一张","w":1200,"h":800}'></div>
-                        <div class="iusc" m='{"murl":"https://cdn.example/1.jpg","turl":"https://cdn.example/t2.jpg"}'></div>
-                        <div class="iusc" m='{"murl":"http://unsafe.example/2.jpg","turl":"https://cdn.example/t2.jpg"}'></div>
-                        """)));
+	@Test
+	@DisplayName("parses Bing metadata, filters HTTP and de-duplicates URLs")
+	void parsesMetadataResults() {
+		wireMock.stubFor(get(urlPathEqualTo("/images/search"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html").withBody(
+						"""
+								<div class="iusc" m='{"murl":"https://cdn.example/1.jpg","turl":"https://cdn.example/t1.jpg","purl":"https://source.example/1","desc":"第一张","w":1200,"h":800}'></div>
+								<div class="iusc" m='{"murl":"https://cdn.example/1.jpg","turl":"https://cdn.example/t2.jpg"}'></div>
+								<div class="iusc" m='{"murl":"http://unsafe.example/2.jpg","turl":"https://cdn.example/t2.jpg"}'></div>
+								""")));
 
-        List<ImageSearchResult> results = client.search("职场沟通 插画", 3).block(Duration.ofSeconds(3));
+		List<ImageSearchResult> results = client.search("职场沟通 插画", 3).block(Duration.ofSeconds(3));
 
-        assertThat(results).containsExactly(new ImageSearchResult(
-                "https://cdn.example/1.jpg", "https://cdn.example/t1.jpg",
-                "https://source.example/1", "第一张", 1200, 800));
-        wireMock.verify(getRequestedFor(urlPathEqualTo("/images/search")));
-        assertThat(wireMock.getAllServeEvents().getFirst().getRequest().queryParameter("first").firstValue())
-                .contains("7");
-    }
+		assertThat(results).containsExactly(new ImageSearchResult("https://cdn.example/1.jpg",
+				"https://cdn.example/t1.jpg", "https://source.example/1", "第一张", 1200, 800));
+		wireMock.verify(getRequestedFor(urlPathEqualTo("/images/search")));
+		assertThat(wireMock.getAllServeEvents().getFirst().getRequest().queryParameter("first").firstValue())
+				.contains("7");
+	}
 
-    @Test
-    @DisplayName("falls back to image elements when metadata is absent")
-    void parsesFallbackImageElements() {
-        wireMock.stubFor(get(urlPathEqualTo("/images/search")).willReturn(aResponse().withStatus(200)
-                .withHeader("Content-Type", "text/html")
-                .withBody("""
-                        <div class="imgpt"><a href="https://source.example/x"><img src="https://cdn.example/x.jpg" alt="图片X" width="640" height="480"></a></div>
-                        """)));
+	@Test
+	@DisplayName("falls back to image elements when metadata is absent")
+	void parsesFallbackImageElements() {
+		wireMock.stubFor(get(urlPathEqualTo("/images/search"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/html").withBody(
+						"""
+								<div class="imgpt"><a href="https://source.example/x"><img src="https://cdn.example/x.jpg" alt="图片X" width="640" height="480"></a></div>
+								""")));
 
-        assertThat(client.search("关键词", 1).block(Duration.ofSeconds(3)))
-                .containsExactly(new ImageSearchResult(
-                        "https://cdn.example/x.jpg", "https://cdn.example/x.jpg",
-                        "https://source.example/x", "图片X", 640, 480));
-    }
+		assertThat(client.search("关键词", 1).block(Duration.ofSeconds(3))).containsExactly(new ImageSearchResult(
+				"https://cdn.example/x.jpg", "https://cdn.example/x.jpg", "https://source.example/x", "图片X", 640, 480));
+	}
 
-    @Test
-    @DisplayName("empty pages map to compatible 502")
-    void rejectsEmptySearchResult() {
-        wireMock.stubFor(get(urlPathEqualTo("/images/search")).willReturn(aResponse().withStatus(200)
-                .withHeader("Content-Type", "text/html").withBody("<html></html>")));
+	@Test
+	@DisplayName("empty pages map to compatible 502")
+	void rejectsEmptySearchResult() {
+		wireMock.stubFor(get(urlPathEqualTo("/images/search")).willReturn(
+				aResponse().withStatus(200).withHeader("Content-Type", "text/html").withBody("<html></html>")));
 
-        assertThatThrownBy(() -> client.search("关键词", 3).block(Duration.ofSeconds(3)))
-                .isInstanceOfSatisfying(IntelligenceException.class, error -> {
-                    assertThat(error.status()).isEqualTo(502);
-                    assertThat(error.getMessage()).contains("搜图失败");
-                });
-    }
+		assertThatThrownBy(() -> client.search("关键词", 3).block(Duration.ofSeconds(3)))
+				.isInstanceOfSatisfying(IntelligenceException.class, error -> {
+					assertThat(error.status()).isEqualTo(502);
+					assertThat(error.getMessage()).contains("搜图失败");
+				});
+	}
 }
