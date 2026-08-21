@@ -24,15 +24,14 @@ import reactor.core.publisher.Mono;
 /**
  * 脱口秀文稿生成（草场 intelligence Slice 2）——第一个迁入的业务模块。结构与冒烟端点同构，多两件事：
  * <ol>
- * <li>流式前扣 1 积分（{@link CreditFeature#COMEDY_GENERATION}，镜像 legacy
- * {@code requireCredit}， 不足→402 JSON，不发 SSE 字节）；</li>
+ * <li>积分经执行环闭环（{@link CreditFeature#COMEDY_GENERATION}：预算闸、扣分、失败退款都在环内）；
+ * 「先执行后发帧」——完成聚合后一次性发 content 帧（+安全帧），402/502 在 SSE 字节前以 JSON 返回；</li>
  * <li>请求校验 + 李继刚风格 prompt（{@link ComedyPrompts}，忠实移植 legacy）。</li>
  * </ol>
  *
  * <p>
  * 路径沿用 legacy {@code /api/comedy-generation/generate-script}，edge-bff 按前缀路由 →
- * 前端零改动。 上游流式中途异常降级为 {@code data: {"error":"..."}\n\n} 帧（与 legacy 一致；随后 [DONE]
- * 收尾）。
+ * 前端零改动（ComedyWritingView 对单帧与非 ok JSON 均兼容）。
  */
 @RestController
 public class ComedyController {

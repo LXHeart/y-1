@@ -9,9 +9,6 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.grassland.intelligence.credits.CreditCharge;
-import com.grassland.intelligence.credits.CreditFeature;
-import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.moments.MomentsGenerationController.MomentsRequest;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
@@ -35,8 +32,9 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 /**
- * 朋友圈生成控制器单测：401 前置、扣 MOMENTS_GENERATION、SSE 包装、上游失败退款、
- * 任务模式绑定。SSE 帧内容由 {@link MomentsGenerationServiceTest} 覆盖。
+ * 朋友圈生成控制器单测：401 前置、SSE 包装、上游失败 502、任务模式绑定。控制器不持有
+ * {@code CreditsClient}（积分扣退全在执行环/冻结执行内），SSE 帧内容由
+ * {@link MomentsGenerationServiceTest} 覆盖。
  */
 @ExtendWith(MockitoExtension.class)
 class MomentsGenerationControllerTest {
@@ -46,8 +44,6 @@ class MomentsGenerationControllerTest {
 
     @Mock
     private IntelligenceCallerResolver callers;
-    @Mock
-    private CreditsClient credits;
     @Mock
     private MomentsGenerationService service;
     @Mock
@@ -59,7 +55,7 @@ class MomentsGenerationControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new MomentsGenerationController(callers, service, credits, contexts, safety);
+        controller = new MomentsGenerationController(callers, service, contexts, safety);
         // 任务书 #34：safety 追加帧默认透传（mock 服务只回灌入帧）
         lenient().when(safety.appendSafetyFrame(any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(1));
@@ -77,7 +73,6 @@ class MomentsGenerationControllerTest {
                     assertThat(((IntelligenceException) error).status()).isEqualTo(401);
                 })
                 .verify();
-        verify(credits, never()).consume(any(), any());
     }
 
     @Test
@@ -98,11 +93,10 @@ class MomentsGenerationControllerTest {
                             .contains("data: [DONE]");
                 })
                 .verifyComplete();
-        verify(credits, never()).consume(any(), any());
     }
 
     @Test
-    void upstreamFailureFailsBeforeSseAs502AndCreditsStayUntouchedAtController() {
+    void upstreamFailureFailsBeforeSseAs502() {
         // 独立模式执行在 SSE 之前完成：上游失败 → 502 JSON（不发 SSE 字节）；
         // 退款在执行环内（AiExecutionService.handleFailure），控制器无手动退款。
         when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
@@ -116,9 +110,6 @@ class MomentsGenerationControllerTest {
                     assertThat(((IntelligenceException) error).status()).isEqualTo(502);
                 })
                 .verify();
-
-        verify(credits, never()).consume(any(), any());
-        verify(credits, never()).refund(any(), any());
     }
 
     @Test
@@ -133,7 +124,6 @@ class MomentsGenerationControllerTest {
                 })
                 .verify();
         verify(callers, never()).resolve(any());
-        verify(credits, never()).consume(any(), any());
     }
 
     @Test
@@ -182,8 +172,6 @@ class MomentsGenerationControllerTest {
                 org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq(binding),
                 any());
-        // 任务模式的积分扣退由冻结执行（FrozenTextExecutionService）内部闭环，控制器不再手动扣
-        verify(credits, never()).consume(any(), any());
     }
 
     @Test

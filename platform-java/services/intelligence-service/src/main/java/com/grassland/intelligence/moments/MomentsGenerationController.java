@@ -2,8 +2,6 @@ package com.grassland.intelligence.moments;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.Sse;
-import com.grassland.intelligence.credits.CreditFeature;
-import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
@@ -39,18 +37,16 @@ public class MomentsGenerationController {
     private final IntelligenceCallerResolver callers;
     private final MomentsGenerationService service;
     private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
-    private final CreditsClient credits;
     private final MomentsTaskCreationContext contexts;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public MomentsGenerationController(
             IntelligenceCallerResolver callers, MomentsGenerationService service,
-            CreditsClient credits, MomentsTaskCreationContext contexts,
+            MomentsTaskCreationContext contexts,
             com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
         this.callers = callers;
         this.service = service;
         this.safety = safety;
-        this.credits = credits;
         this.contexts = contexts;
     }
 
