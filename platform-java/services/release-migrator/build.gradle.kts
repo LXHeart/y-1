@@ -58,3 +58,11 @@ tasks.test {
     // 迁移测试要起 Docker Postgres（与 database-bootstrap 同款）
     jvmArgs("-Xmx2g")
 }
+
+tasks.jar {
+    enabled = false
+}
+
+tasks.bootJar {
+    archiveFileName = "release-migrator.jar"
+}
