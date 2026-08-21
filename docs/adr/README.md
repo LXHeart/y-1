@@ -33,6 +33,7 @@
 | [ADR-D15](D15-judge-incentive.md) | 审判官激励口径（AI 积分 per-vote） | 已采纳 | Trust、Finance、Identity |
 | [ADR-D16](D16-content-safety.md) | 内容安全分级检查与能力面 | 已采纳 | Intelligence、edge、前端 |
 | [ADR-D17](D17-org-byok.md) | 组织级 BYOK 启用：路由层级、管理权、回退策略与审计 | 已采纳 | Intelligence BYOK 路由/管理、组织管理 UI |
+| [ADR-D18](D18-judge-cash-commission.md) | 审判官现金佣金：内部闭环钱包入账与费用科目 | 已采纳 | Trust、Finance、前端统计 |
 
 ## 依赖关系
 
