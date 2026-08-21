@@ -28,6 +28,9 @@ public record CreateSubmissionRequest(String contentUrl, String note, List<UUID>
     /** 评论类互动评论文本上限（缺口清偿之九）。 */
     public static final int MAX_COMMENT_TEXT = 500;
 
+    /** 补充说明上限（履约硬门槛：note 同步词库审核，与 intelligence 端点同限）。 */
+    public static final int MAX_NOTE_TEXT = 500;
+
     /** 兼容 V41 之前的构造调用方（既有测试）。 */
     public CreateSubmissionRequest(String contentUrl, String note, List<UUID> mediaIds) {
         this(contentUrl, note, mediaIds, null, null);
@@ -49,6 +52,9 @@ public record CreateSubmissionRequest(String contentUrl, String note, List<UUID>
         }
         if (note != null) {
             note = note.isBlank() ? null : note.trim();
+            if (note.length() > MAX_NOTE_TEXT) {
+                throw new IllegalArgumentException("补充说明最长 " + MAX_NOTE_TEXT + " 字");
+            }
         }
         if (platformHandle != null) {
             platformHandle = platformHandle.trim();

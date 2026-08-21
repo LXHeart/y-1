@@ -52,7 +52,7 @@ public class ApplicationController {
 	private final ApplicationLifecycleService lifecycle;
 	private final EngagementSubmissionService submissionService;
 	private final EngagementVerificationService verificationService;
-	private final com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety;
+	private final com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient submissionSafety;
 	private final EngagementDecisionService decisions;
 	private final CommentSafetyReviewRepository commentReviews;
 
@@ -60,7 +60,7 @@ public class ApplicationController {
 			TaskResourceAuthorization taskAuthorization, TaskApplicationRepository apps,
 			ApplicationAcceptanceService acceptance, ApplicationLifecycleService lifecycle,
 			EngagementSubmissionService submissionService, EngagementVerificationService verificationService,
-			com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety,
+			com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient submissionSafety,
 			EngagementDecisionService decisions, CommentSafetyReviewRepository commentReviews) {
 		this.callers = callers;
 		this.tasks = tasks;
@@ -70,7 +70,7 @@ public class ApplicationController {
 		this.lifecycle = lifecycle;
 		this.submissionService = submissionService;
 		this.verificationService = verificationService;
-		this.commentSafety = commentSafety;
+		this.submissionSafety = submissionSafety;
 		this.decisions = decisions;
 		this.commentReviews = commentReviews;
 	}
@@ -135,12 +135,13 @@ public class ApplicationController {
 						.filter(task -> !"cancelled".equals(task.status())).switchIfEmpty(fail(409, "任务已取消，不能提交履约"))
 						// 任务书 #23 R3：互动任务必填平台账号标识（核验要比对截图账号）。
 						// 缺口清偿之九：评论任务评论文本契约（必填 ≤500 / 非评论任务拒绝）。
+						// 履约硬门槛（ADR-D16 D6 登记项落地）：全部自由文本（评论/备注）词库 high → 400。
 						.flatMap(task -> EngagementSubmissionService
 								.requireInteractionHandle(task, body.platformHandle())
 								.then(EngagementSubmissionService.requireCommentText(task, body.commentText()))
-								.then(commentSafety.guard(task, body.commentText()))
+								.then(submissionSafety.guardSubmission(task, body.commentText(), body.note()))
 								// 校验在事务外：逐个 mediaId 经 intelligence 取 metadata，过滤 owner==提交人（IDOR 守卫）。
-								// 遗留清偿：advisory 明细随 guard 结论返回，提交成功后落人工复核队列（不拦截）。
+								// advisory 明细随 guard 结论按字段返回，提交成功后各自落人工复核队列（不拦截）。
 								.flatMap(safety -> submissionService
 										.validateAttachments(task.organizationId(), caller.accountId(), appId,
 												body.mediaIds())
@@ -149,7 +150,7 @@ public class ApplicationController {
 														task.ownerAccountId(), body.platformHandle(),
 														body.commentText())
 												.flatMap(created -> recordCommentReview(created.id(), safety,
-														body.commentText())
+															body.commentText(), body.note())
 														// 复核行是 advisory 留痕，落库失败不回滚提交
 														.onErrorResume(failure -> {
 															log.warn(
@@ -480,16 +481,29 @@ public class ApplicationController {
 	}
 
 	/**
-	 * 评论词库 advisory 命中（low/medium，不拦截）落人工复核队列（之九遗留清偿）。 无明细（skip/干净）=
-	 * 无需复核；行只在此创建，运营在 /api/ops/comment-reviews 承接。
+	 * 履约自由文本词库 advisory 命中（low/medium，不拦截）按字段落人工复核队列（V48：每提交×字段一行）。
+	 * 无明细（skip/干净）= 无需复核；行只在此创建，运营在 /api/ops/comment-reviews 承接。
 	 */
 	private Mono<Void> recordCommentReview(String submissionId,
-			com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient.CommentCheck safety,
-			String commentText) {
-		if (safety == null || safety.details() == null || safety.details().isEmpty()) {
+			com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck safety,
+			String commentText, String note) {
+		if (safety == null) {
 			return Mono.empty();
 		}
-		return commentReviews.recordOpen(submissionId, commentText == null ? "" : commentText.trim(),
-				ApplicationBodies.toJson(safety.details()), safety.lexiconVersion());
+		Mono<Void> commentRow = recordFieldReview(submissionId, CommentSafetyReviewRepository.FIELD_COMMENT,
+				safety.comment(), commentText, safety.lexiconVersion());
+		Mono<Void> noteRow = recordFieldReview(submissionId, CommentSafetyReviewRepository.FIELD_NOTE,
+				safety.note(), note, safety.lexiconVersion());
+		return commentRow.then(noteRow);
+	}
+
+	private Mono<Void> recordFieldReview(String submissionId, String field,
+			com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck check, String text,
+			String lexiconVersion) {
+		if (check == null || check.details() == null || check.details().isEmpty()) {
+			return Mono.empty();
+		}
+		return commentReviews.recordOpen(submissionId, field, text == null ? "" : text.trim(),
+				ApplicationBodies.toJson(check.details()), lexiconVersion);
 	}
 }

@@ -57,7 +57,7 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 	private TrustDisputeClient trustDisputeClient;
 
 	@MockitoBean
-	private com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient commentSafety;
+	private com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient submissionSafety;
 
 	@MockitoBean
 	private com.grassland.marketplace.workflow.IntelligenceOfficialVerificationClient officialClient;
@@ -72,11 +72,11 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 	@org.junit.jupiter.api.BeforeEach
 	void stubCommentSafety() {
 		// 默认放行（fail-open 语义等价）；blocked 用例单独覆写
-		// guard 恒发射（新契约）：默认 skip 态 = 无 advisory 明细、不拦截
-		org.mockito.Mockito
-				.when(commentSafety.guard(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+		// guardSubmission 恒发射（新契约）：默认 skip 态 = 无 advisory 明细、不拦截
+		org.mockito.Mockito.when(submissionSafety.guardSubmission(org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
 				.thenReturn(reactor.core.publisher.Mono
-						.just(com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient.skip()));
+						.just(com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.skip()));
 	}
 
 	@org.springframework.test.context.bean.override.mockito.MockitoSpyBean
@@ -379,22 +379,25 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		String task = publishInteractionTask(merchant, org, "comment");
 		String app = applyAndAccept(recommender, task, merchant, org);
 		stubLinkPassed();
-		when(commentSafety.guard(any(), any())).thenReturn(reactor.core.publisher.Mono.just(
-				new com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient.CommentCheck(false, List.of(
-						new com.grassland.marketplace.workflow.IntelligenceCommentSafetyClient.CommentCheck.AdvisoryFinding(
-								"contact", "medium", "疑似站外导流用语")),
-						"lexicon-v1")));
+		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono.just(
+				new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck(
+						new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck(false,
+								List.of(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.AdvisoryFinding(
+										"contact", "medium", "疑似站外导流用语"))),
+						null, "lexicon-v1")));
 
 		Map<String, Object> created = submitRaw(recommender, task, app, "@seedhunter", "加我薇信买同款").expectStatus()
 				.isCreated().expectBody(Map.class).returnResult().getResponseBody();
 		String submissionId = ((Map<String, Object>) created.get("data")).get("id").toString();
 
-		// open 复核行落库（findings 快照 + 词库版本）
+		// open 复核行落库（findings 快照 + 词库版本 + 字段）
 		Map<String, Object> row = db
-				.sql("SELECT status, comment_text, findings::text AS findings,"
-						+ " lexicon_version FROM comment_safety_review" + " WHERE submission_id = CAST(:s AS uuid)")
+				.sql("SELECT status, field, comment_text, findings::text AS findings,"
+						+ " lexicon_version FROM comment_safety_review"
+						+ " WHERE submission_id = CAST(:s AS uuid) AND field = 'comment'")
 				.bind("s", submissionId)
-				.map(r -> Map.<String, Object>of("status", r.get("status", String.class), "comment_text",
+				.map(r -> Map.<String, Object>of("status", r.get("status", String.class), "field",
+						r.get("field", String.class), "comment_text",
 						r.get("comment_text", String.class), "findings", r.get("findings", String.class),
 						"lexicon_version", r.get("lexicon_version", String.class)))
 				.one().block();
@@ -416,12 +419,12 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		assertThat(queued.get().get("commentText")).isEqualTo("加我薇信买同款");
 
 		// violation 无 note → 400
-		client().post().uri("/api/ops/comment-reviews/{s}/review", submissionId)
+		client().post().uri("/api/ops/comment-reviews/{s}/comment/review", submissionId)
 				.header(H, signWithRole("ops-cs-1", "customer_service")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("decision", "violation")).exchange().expectStatus().isBadRequest();
 
 		// 判 violation → 商家列表 commentFlagged=true
-		client().post().uri("/api/ops/comment-reviews/{s}/review", submissionId)
+		client().post().uri("/api/ops/comment-reviews/{s}/comment/review", submissionId)
 				.header(H, signWithRole("ops-cs-1", "customer_service")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("decision", "violation", "note", "站外导流违规模式")).exchange().expectStatus().isOk()
 				.expectBody().jsonPath("$.data.status").isEqualTo("violation");
@@ -431,7 +434,7 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 				.expectBody().jsonPath("$.data.submissions[0].commentFlagged").isEqualTo(true);
 
 		// 重判 confirmed（可修正）→ 标记消除（字段不再出现）
-		client().post().uri("/api/ops/comment-reviews/{s}/review", submissionId)
+		client().post().uri("/api/ops/comment-reviews/{s}/comment/review", submissionId)
 				.header(H, signWithRole("ops-cs-1", "customer_service")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("decision", "confirmed", "note", "复核后确认无导流意图")).exchange().expectStatus().isOk()
 				.expectBody().jsonPath("$.data.status").isEqualTo("confirmed");
@@ -470,13 +473,93 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		String task = publishInteractionTask(merchant, orgId, "comment");
 		String app = applyAndAccept(recommender, task, merchant, orgId);
 		stubLinkPassed();
-		org.mockito.Mockito
-				.when(commentSafety.guard(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+		org.mockito.Mockito.when(submissionSafety.guardSubmission(org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
 				.thenReturn(reactor.core.publisher.Mono.error(
 						new com.grassland.marketplace.security.MarketplaceException(400, "评论内容未通过内容安全检查，请修改后提交")));
 
 		submitRaw(recommender, task, app, "@seedhunter", "违规内容").expectStatus().isBadRequest().expectBody()
 				.jsonPath("$.error").isEqualTo("评论内容未通过内容安全检查，请修改后提交");
+	}
+
+	/** 履约硬门槛（ADR-D16 D6 登记项落地）：备注 high 命中 → 400（非评论任务同样拦截）。 */
+	@Test
+	void blockedSubmissionNoteRejectedBySafetyGuard() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		String task = publishInteractionTask(merchant, org, "like");
+		String app = applyAndAccept(recommender, task, merchant, org);
+		stubLinkPassed();
+		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono.error(
+				new com.grassland.marketplace.security.MarketplaceException(400, "备注未通过内容安全检查，请修改后提交")));
+
+		submitRaw(recommender, task, app, "@seedhunter").expectStatus().isBadRequest().expectBody()
+				.jsonPath("$.error").isEqualTo("备注未通过内容安全检查，请修改后提交");
+
+		// 拦截发生在事务前 → 无 submission 残留
+		Integer submissions = db
+				.sql("SELECT COUNT(*)::int AS c FROM engagement_submission"
+						+ " WHERE application_id = CAST(:app AS uuid)")
+				.bind("app", app).map(r -> r.get("c", Integer.class)).one().block();
+		assertThat(submissions).isZero();
+	}
+
+	/** 备注 advisory（low/medium）不拦截，按 field='note' 落复核行（V48：评论与备注各留一行）。 */
+	@Test
+	@SuppressWarnings("unchecked")
+	void advisoryNoteFlowsIntoFieldScopedReviewRow() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		String task = publishInteractionTask(merchant, org, "like");
+		String app = applyAndAccept(recommender, task, merchant, org);
+		stubLinkPassed();
+		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono.just(
+				new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck(null,
+						new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck(false,
+								List.of(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.AdvisoryFinding(
+										"absolute_claims", "medium", "广告法极限词，建议改为具体描述"))),
+						"lexicon-v1")));
+
+		Map<String, Object> created = submitRaw(recommender, task, app, "@seedhunter").expectStatus()
+				.isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		String submissionId = ((Map<String, Object>) created.get("data")).get("id").toString();
+
+		Map<String, Object> row = db
+				.sql("SELECT field, comment_text FROM comment_safety_review"
+						+ " WHERE submission_id = CAST(:s AS uuid)")
+				.bind("s", submissionId)
+				.map(r -> Map.<String, Object>of("field", r.get("field", String.class), "comment_text",
+						r.get("comment_text", String.class)))
+				.one().block();
+		assertThat(row.get("field")).isEqualTo("note");
+		assertThat(row.get("comment_text")).isEqualTo("已完成互动");
+
+		// 运营按字段路径复核
+		client().post().uri("/api/ops/comment-reviews/{s}/note/review", submissionId)
+				.header(H, signWithRole("ops-cs-2", "customer_service")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("decision", "confirmed", "note", "备注措辞可接受")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.field").isEqualTo("note");
+	}
+
+	/** 备注上限 500（与 intelligence 端点同限；超长在词库检查前 400）。 */
+	@Test
+	void overlongSubmissionNoteRejectedByContract() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		String task = publishInteractionTask(merchant, org, "like");
+		String app = applyAndAccept(recommender, task, merchant, org);
+		stubLinkPassed();
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("contentUrl", "https://www.xiaohongshu.com/post/1");
+		body.put("platformHandle", "@seedhunter");
+		body.put("note", "长".repeat(501));
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions")
+				.header(H, sign(recommender, "recommender")).contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+				.exchange().expectStatus().isBadRequest();
 	}
 
 	private String publishInteractionTask(String merchant, String org) {

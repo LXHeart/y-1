@@ -58,10 +58,11 @@ public class OpsCommentReviewController {
 						.ok(Map.of("success", true, "data", Map.of("status", target, "items", items))));
 	}
 
-	/** 复核：decision ∈ confirmed/violation；violation 必填 note（≤500）。可重判修正。 */
-	@PostMapping(value = "/api/ops/comment-reviews/{submissionId}/review", consumes = MediaType.APPLICATION_JSON_VALUE)
+	/** 复核：field ∈ comment/note（V48：每提交×字段一行）；decision ∈ confirmed/violation；violation 必填 note（≤500）。可重判修正。 */
+	@PostMapping(value = "/api/ops/comment-reviews/{submissionId}/{field}/review", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> review(@PathVariable String submissionId,
-			@RequestBody ReviewRequest body, ServerHttpRequest request) {
+			@PathVariable String field, @RequestBody ReviewRequest body, ServerHttpRequest request) {
+		String targetField = normalizeField(field);
 		String decision = body == null ? null : body.decision();
 		String status = normalizeStatus(decision);
 		String note = body.note() == null ? "" : body.note().trim();
@@ -72,9 +73,10 @@ public class OpsCommentReviewController {
 			throw new MarketplaceException(400, "判定违规必须填写原因");
 		}
 		return callers.requireOpsOperator(request)
-				.flatMap(caller -> reviews.find(submissionId)
-						.switchIfEmpty(Mono.error(new MarketplaceException(404, "该评论无复核记录")))
-						.then(reviews.decide(submissionId, status, caller.accountId(), note.isEmpty() ? null : note)))
+				.flatMap(caller -> reviews.find(submissionId, targetField)
+						.switchIfEmpty(Mono.error(new MarketplaceException(404, "该字段无复核记录")))
+						.then(reviews.decide(submissionId, targetField, status, caller.accountId(),
+								note.isEmpty() ? null : note)))
 				.map(row -> ResponseEntity.ok(Map.of("success", true, "data", toRowBody(row))));
 	}
 
@@ -85,9 +87,18 @@ public class OpsCommentReviewController {
 		throw new MarketplaceException(400, "status 仅支持 open/confirmed/violation");
 	}
 
+	private static String normalizeField(String raw) {
+		if (CommentSafetyReviewRepository.FIELD_COMMENT.equals(raw)
+				|| CommentSafetyReviewRepository.FIELD_NOTE.equals(raw)) {
+			return raw;
+		}
+		throw new MarketplaceException(400, "field 仅支持 comment/note");
+	}
+
 	private static Map<String, Object> toBody(CommentSafetyReviewRepository.QueueRow row) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("submissionId", row.submissionId().toString());
+		body.put("field", row.field());
 		body.put("commentText", row.commentText());
 		body.put("findings", findingsBody(row.findingsJson()));
 		body.put("status", row.status());
@@ -107,6 +118,7 @@ public class OpsCommentReviewController {
 	private static Map<String, Object> toRowBody(CommentSafetyReviewRepository.ReviewRow row) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("submissionId", row.submissionId().toString());
+		body.put("field", row.field());
 		body.put("status", row.status());
 		body.put("reviewerAccountId", row.reviewerAccountId());
 		body.put("reviewNote", row.reviewNote());
