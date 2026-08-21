@@ -280,18 +280,30 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	}
 
 	/**
-	 * ADR-D15：对该轮实际投票的审判官逐人 append {@code JudgeVoteRewarded}（与轮终局状态变更同事务）。 平坦
-	 * credits-per-vote（D3）；0/负 = 关闭发奖（不发事件）。确定性 event_id
-	 * {@code JudgeVoteRewarded:disputeId:round:judgeId}——activity 重试时 outbox ON
-	 * CONFLICT 去重， 重开轮（round 递增）天然各自计发。
+	 * ADR-D15 / ADR-D18：对该轮实际投票的审判官逐人 append 激励事件（与轮终局状态变更同事务）。
+	 * 积分 {@code JudgeVoteRewarded}（平坦 credits-per-vote，默认 20）与现金
+	 * {@code JudgeVoteCommissionRewarded}（平坦 cents-per-vote，默认 0=关闭）各发各的——
+	 * 事件类型分离使既有载荷契约零变更，也避开跨版本 activity 重试的 payload canonical-hash 边缘冲突。
+	 * 0/负 = 关闭对应激励（不发事件）。确定性 event_id 前缀区分
+	 * （{@code JudgeVoteRewarded:}/{@code JudgeVoteCommission:} + disputeId:round:judgeId）——
+	 * activity 重试时 outbox ON CONFLICT 去重，重开轮（round 递增）天然各自计发。
 	 */
 	private Mono<Void> appendVoteRewards(DisputeCase dispute, int round) {
 		int credits = props.judgeRewardCreditsPerVote();
-		if (credits <= 0) {
+		int cashCents = props.judgeCommissionCentsPerVote();
+		if (credits <= 0 && cashCents <= 0) {
 			return Mono.empty();
 		}
 		return judges.findVoterAccountIds(dispute.id(), round)
-				.flatMap(judgeAccountId -> outbox.append(rewardEnvelope(dispute, round, judgeAccountId, credits)))
+				.flatMap(judgeAccountId -> {
+					Mono<Void> creditPart = credits > 0
+							? outbox.append(rewardEnvelope(dispute, round, judgeAccountId, credits)).then()
+							: Mono.empty();
+					Mono<Void> cashPart = cashCents > 0
+							? outbox.append(commissionEnvelope(dispute, round, judgeAccountId, cashCents)).then()
+							: Mono.empty();
+					return creditPart.then(cashPart);
+				})
 				.then();
 	}
 
@@ -307,6 +319,21 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		payload.put("credits", credits);
 		return new EventEnvelope(eventId, "JudgeVoteRewarded", "DisputeCase", dispute.id(), dispute.version(),
 				Instant.now(), null, payload);
+	}
+
+	/** ADR-D18：现金佣金事件（分，finance 消费端入钱包 + journal/posting 双录账本）。 */
+	private EventEnvelope commissionEnvelope(DisputeCase dispute, int round, String judgeAccountId, int cashCents) {
+		String eventId = UUID
+				.nameUUIDFromBytes(("JudgeVoteCommission:" + dispute.id() + ":" + round + ":" + judgeAccountId)
+						.getBytes(StandardCharsets.UTF_8))
+				.toString();
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("disputeId", dispute.id());
+		payload.put("round", round);
+		payload.put("judgeAccountId", judgeAccountId);
+		payload.put("amountCents", cashCents);
+		return new EventEnvelope(eventId, "JudgeVoteCommissionRewarded", "DisputeCase", dispute.id(),
+				dispute.version(), Instant.now(), null, payload);
 	}
 
 	/**

@@ -111,6 +111,9 @@ trust:
     dispute-cooldown-seconds: ${TRUST_ADJUDICATION_DISPUTE_COOLDOWN_SECONDS:0}
     # 任务书 #31 / ADR-D15：审判官每票激励积分（平坦 per-vote；0=关闭）。默认 20。
     judge-reward-credits-per-vote: ${TRUST_JUDGE_REWARD_CREDITS_PER_VOTE:20}
+    # ADR-D18：审判官每票现金佣金（分，平坦；0=关闭，默认关）。内部闭环入钱包，
+    # 真实外币化/提现通道受 D-01 门禁与财务批准，生产启用须显式注入。
+    judge-commission-cents-per-vote: ${TRUST_JUDGE_COMMISSION_CENTS_PER_VOTE:0}
     # GL-P2-TRUST-001：争议终局后冷却期，防止恶意重复开争议（默认 7 天=168h）
     dispute-cooldown-hours: ${TRUST_ADJUDICATION_DISPUTE_COOLDOWN_HOURS:168}
     # 秒级覆盖（>0 时优先于上面的小时值）：窗口原本最小 1 小时，dev/e2e 无法验证

@@ -39,7 +39,9 @@ public record AdjudicationProperties(
         /** 争议冷却期秒级覆盖（>0 时优先于 {@code disputeCooldownHours}）。dev/e2e 用（T5 恢复 DisputeCooldownIT）。 */
         long disputeCooldownSeconds,
         /** 任务书 #31 / ADR-D15：每张计入裁决的投票发放的 AI 积分（平坦，默认 20；0=关闭发奖）。 */
-        int judgeRewardCreditsPerVote) {
+        int judgeRewardCreditsPerVote,
+        /** ADR-D18：每票现金佣金（分，平坦；默认 0=关闭）。内部闭环入推荐官钱包，真实外币化受 D-01 门禁。 */
+        int judgeCommissionCentsPerVote) {
 
     public AdjudicationProperties {
         if (panelSize <= 0) {
@@ -93,6 +95,10 @@ public record AdjudicationProperties(
         // ADR-D15：奖励积分为 0/负 = 关闭发奖（不发事件）；默认 20。
         if (judgeRewardCreditsPerVote < 0) {
             judgeRewardCreditsPerVote = 0;
+        }
+        // ADR-D18：现金佣金 0/负 = 关闭（哨兵语义与积分一致）。
+        if (judgeCommissionCentsPerVote < 0) {
+            judgeCommissionCentsPerVote = 0;
         }
     }
 
