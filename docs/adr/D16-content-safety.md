@@ -26,7 +26,7 @@
 - `contracts/content-safety-lexicon.json`：`version`（如 `lexicon-v1`）、六类目录、词表、正则模式、例外表。
 - Java 构建消费（processResources 进 classpath）+ **版本随创作上下文快照冻结**——规则更新不能改变
   历史生成记录的检查结论（§4.7）。
-- admin 在线 CRUD 词库后置（登记）；文件式版本化是 v1 真相源，运营改词 = 提 PR 发版本。
+- ~~admin 在线 CRUD 词库后置~~（已于任务书 #45 落地：V34 词库版本表 + draft/activate/retire + 单 active 索引 + 60 秒缓存；文件式 seed 保留为启动兜底）。
 
 ### D3 初版类目与严重度
 
@@ -56,7 +56,7 @@ BYOK 白名单维持 `text|image|image_generation|video_generation` 不加 conte
   机制**；本库既有的免费执行形态即 `feature=null`（`AiExecutionService` 只对 `provider.isPlatform()
   && feature != null` 发起 consume）。故「平台资助 0 积分」落地为 feature=null 免费分支——
   用户零扣减、run 留痕两项验收语义完全一致，且不为单一 feature 改 finance 扣减语义。
-- 深检时机：**长文本内联**（阈值 ≥200 字符且已配置模型；文章正文等，生成后随最终帧返回，延迟被生成耗时
+- 深检时机：**长文本内联**（阈值 ≥200 字符且已配置模型——最小长度已配置化于 `ContentSafetyProperties`，不再是写死常量；文章正文等，生成后随最终帧返回，延迟被生成耗时
   主导）；**短文本（标题等）仅 L1**。
 
 ### D6 门槛姿态 = 生成流 advisory；履约提交侧 blocking 已落地（2026-08-21）
@@ -102,6 +102,6 @@ BYOK 白名单维持 `text|image|image_generation|video_generation` 不加 conte
 
 ## 不在范围
 
-- 词库在线 CRUD（后置）；行业 overlay；多模态输入检查；
+- ~~词库在线 CRUD（后置）~~（已落地，任务书 #45）；~~行业 overlay~~（已落地）；多模态输入检查（仍开放，见 D6）；
   创作助手优化输出与视频改编接入（后续）。
 - 履约提交侧拦截已于 2026-08-21 落地（见 D6），不再是延后项。
