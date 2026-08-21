@@ -44,6 +44,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'request-login': []
   'selection-change': [assetIds: string[]]
+  /** 素材库直连编辑器（任务书 #43 D9 补欠）：图片素材送入图片编辑台。 */
+  'edit-image': [asset: { id: string; title: string; mimeType: string }]
 }>()
 
 const grassland = useGrassland()
@@ -497,6 +499,12 @@ function formatSize(bytes: number | null | undefined): string {
           </label>
           <span v-else class="lib-title">{{ asset.title }}</span>
           <span class="lib-cat">{{ categoryLabel(asset.category) }}</span>
+          <button
+            v-if="asset.mimeType?.startsWith('image/') && authenticated"
+            type="button"
+            class="lib-edit-link"
+            @click="emit('edit-image', { id: asset.id, title: asset.title, mimeType: asset.mimeType })"
+          >送入图片编辑</button>
         </div>
         <p v-if="asset.mimeType || asset.sizeBytes" class="lib-meta">
           {{ asset.mimeType }} · {{ formatSize(asset.sizeBytes) }}

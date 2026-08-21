@@ -269,7 +269,7 @@
       <AiRunHistoryPanel />
     </div>
     <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
-        <ImageStudioView v-else-if="activeSection === 'image-studio'" />
+        <ImageStudioView v-else-if="activeSection === 'image-studio'" ref="imageStudioRef" />
         <VideoStudioView v-else-if="activeSection === 'video-studio'" @handoff="onVideoStudioHandoff" />
     <CreationAssistantPanel
       v-else-if="activeSection === 'assistant'"
@@ -288,6 +288,7 @@
       :selected-asset-ids="materialIds"
       :recommendation-context="recommendationContext"
       @selection-change="setSelectedMaterials"
+      @edit-image="onEditImageFromLibrary"
       @request-login="emit('request-login')"
     />
     <AiProviderKeysPanel v-else />
@@ -295,7 +296,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import AiProviderKeysPanel from '../../components/AiProviderKeysPanel.vue'
 import AiRunHistoryPanel from '../../components/AiRunHistoryPanel.vue'
 import PersonalAiBudgetCard from '../../components/PersonalAiBudgetCard.vue'
@@ -342,6 +343,23 @@ const emit = defineEmits<{
 }>()
 
 const grassland = useGrassland()
+const imageStudioRef = ref<InstanceType<typeof ImageStudioView> | null>(null)
+
+/**
+ * 素材库直连编辑器（任务书 #43 D9 补欠）：素材库图片 → presigned 下载 URL → 图片编辑台
+ * 载入底图（与本地文件选择同管线）。URL 短时有效（300s），取到即用不缓存。
+ */
+async function onEditImageFromLibrary(asset: { id: string; title: string; mimeType: string }): Promise<void> {
+  const granted = await grassland.getContentAssetDownloadUrl(asset.id)
+  if (!granted?.downloadUrl) return
+  activeSection.value = 'image-studio'
+  await nextTick()
+  try {
+    await imageStudioRef.value?.loadImageFromUrl(granted.downloadUrl, asset.title)
+  } catch {
+    grassland.error.value = '素材载入编辑器失败，请重试'
+  }
+}
 const assistant = useCreationAssistant()
 const activeSection = ref<AiCenterSection>('create')
 /** 已选热点标题（与 topic 分开存：topic 会被结构化选题覆盖，refine 仍需原标题）。 */

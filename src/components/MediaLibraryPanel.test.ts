@@ -27,6 +27,38 @@ function mockFetch(routes: Record<string, unknown>): ReturnType<typeof vi.fn> {
 }
 
 describe('MediaLibraryPanel', () => {
+  test('图片素材提供「送入图片编辑」，视频素材不提供；点击 emit edit-image', async () => {
+    const fetchMock = mockFetch({
+      '/api/content-assets?libraryType=public': { items: [
+        { id: 'img-1', mediaId: 'm1', libraryType: 'public', category: 'scene',
+          title: '门店招牌图', tags: [], status: 'active', version: 1, mimeType: 'image/png', sizeBytes: 1024,
+          source: '平台素材', createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' },
+        { id: 'vid-1', mediaId: 'm2', libraryType: 'public', category: 'scene',
+          title: '探店视频', tags: [], status: 'active', version: 1, mimeType: 'video/mp4', sizeBytes: 2048,
+          source: '平台素材', createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' },
+      ] },
+      '/api/me/identities': [],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MediaLibraryPanel, { props: { authenticated: true } })
+    await flushPromises()
+    const publicTab = wrapper.findAll('button[role="tab"]').find((b) => b.text().includes('公共'))!
+    await publicTab.trigger('click')
+    await flushPromises()
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text().includes('送入图片编辑'))
+    expect(editButtons).toHaveLength(1)   // 仅图片素材
+
+    const emitted: Array<{ id: string; title: string; mimeType: string }> = []
+    wrapper.vm.$emit // ensure instance
+    editButtons[0].trigger('click')
+    // 直接断言组件事件
+    const events = wrapper.emitted<{ id: string; title: string; mimeType: string }[]>('edit-image')
+    expect(events).toBeTruthy()
+    expect(events![0][0]).toEqual({ id: 'img-1', title: '门店招牌图', mimeType: 'image/png' })
+  })
+
   test('公共 tab 渲染公共素材列表（未登录也可）', async () => {
     const fetchMock = mockFetch({
       '/api/content-assets?libraryType=public': { items: [

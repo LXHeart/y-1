@@ -259,6 +259,25 @@ async function onFileSelected(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  await loadFile(file)
+}
+
+/**
+ * 素材库直连编辑器（任务书 #43 D9 补欠）：从素材库 presigned URL 拉取图片入编辑管线。
+ * CORS GET 经 MinIO 9002 反代（与抠图结果图层同款 crossOrigin 路径）；下载为 File 后
+ * 与本地选择完全同管线（下采样/裁剪/滤镜/导出一致）。
+ */
+async function loadImageFromUrl(url: string, fileName = 'library-asset'): Promise<void> {
+  const response = await fetch(url, { mode: 'cors' })
+  if (!response.ok) throw new Error(`素材拉取失败（${response.status}）`)
+  const blob = await response.blob()
+  const name = fileName.includes('.') ? fileName : `${fileName}.${(blob.type.split('/')[1] || 'png')}`
+  await loadFile(new File([blob], name, { type: blob.type || 'image/png' }))
+}
+
+defineExpose({ loadImageFromUrl })
+
+async function loadFile(file: File) {
   sourceFile.value = file
   downsampleNote.value = ''
   mattingLayer.value = null
