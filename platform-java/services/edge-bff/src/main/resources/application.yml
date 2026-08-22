@@ -148,6 +148,10 @@ edge:
     - path: /api/admin/recommender-requests
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_RECOMMENDER_IDENTITY:true}
+    # 平台 admin 商家主体更名审核（V40）。精确前缀，同上。
+    - path: /api/admin/org-rename-requests
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_ORGRENAME_IDENTITY:true}
     # 平台 AI 控制面（GL-P3-AI-001）→ intelligence-service。
     # /api/ai 前缀：BYOK 密钥、控制面 Run 与组织 AI 预算统一由 intelligence 承载。
     - path: /api/ai

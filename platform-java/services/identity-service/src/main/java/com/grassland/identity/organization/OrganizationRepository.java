@@ -43,6 +43,13 @@ public class OrganizationRepository {
                 .map(OrganizationRepository::map).one();
     }
 
+    /** 主体更名生效（V40 审核流专用；调用方事务内执行）。 */
+    public Mono<Long> updateName(String id, String name) {
+        return db.sql("UPDATE organization SET name = :name, updated_at = now() WHERE id = CAST(:id AS uuid)")
+                .bind("name", name).bind("id", id)
+                .fetch().rowsUpdated();
+    }
+
     /** 在调用方事务内锁定组织，供跨表业务流程统一串行化。 */
     public Mono<Organization> findByIdForUpdate(String id) {
         return db.sql("SELECT " + SELECT_COLS + " FROM organization WHERE id = CAST(:id AS uuid) FOR UPDATE")

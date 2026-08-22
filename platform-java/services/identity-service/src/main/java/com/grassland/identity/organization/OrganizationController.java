@@ -6,7 +6,12 @@ import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.membership.Membership;
 import com.grassland.identity.membership.MembershipRepository;
 import com.grassland.identity.membership.MembershipRole;
+import com.grassland.identity.membership.OrgAuthorization;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -48,15 +53,24 @@ public class OrganizationController {
 
 	private final CurrentAccountResolver accounts;
 	private final OrganizationRepository organizations;
+	private final OrganizationRenameRepository renames;
 	private final MembershipRepository memberships;
+	private final OrgAuthorization authz;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 
+	/** 更名冷却期（产品规则：一定周期内只能改一次；先取 30 天常量，运营配置化留待后续）。 */
+	static final Duration RENAME_COOLDOWN = Duration.ofDays(30);
+
 	public OrganizationController(CurrentAccountResolver accounts, OrganizationRepository organizations,
-			MembershipRepository memberships, OutboxRepository outbox, TransactionalOperator transactions) {
+			OrganizationRenameRepository renames,
+			MembershipRepository memberships, OrgAuthorization authz,
+			OutboxRepository outbox, TransactionalOperator transactions) {
 		this.accounts = accounts;
 		this.organizations = organizations;
+		this.renames = renames;
 		this.memberships = memberships;
+		this.authz = authz;
 		this.outbox = outbox;
 		this.transactions = transactions;
 	}
@@ -70,8 +84,13 @@ public class OrganizationController {
 				.flatMap(
 						owner -> transactions
 								.transactional(
-										organizations
-												.create(owner.id(), body.name(), normalizeIndustry(body.industry()))
+										// 产品规则（2026-08-23）：一个账号只能创建一个商家主体；
+										// 被邀请加入他人主体不受限（成员关系），受限的是「再开一个」。
+										organizations.findByOwner(owner.id()).next()
+												.flatMap(existing -> Mono.<Organization>error(
+														new IdentityException(409, "一个账号只能创建一个商家主体")))
+												.switchIfEmpty(organizations
+														.create(owner.id(), body.name(), normalizeIndustry(body.industry())))
 												.flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))
 												.flatMap(org -> outbox
 														.append(new EventEnvelope(UUID.randomUUID().toString(),
@@ -82,6 +101,82 @@ public class OrganizationController {
 														.thenReturn(org)))
 								.map(org -> ResponseEntity.status(201)
 										.body(Map.of("success", true, "data", toBody(org)))));
+	}
+
+	/**
+	 * 提交主体更名申请（V40）：OWNER/ADMIN 发起；平台审核通过才生效；30 天冷却
+	 * （自创建或上次更名生效起算）；同一主体同时只有一份待审。
+	 */
+	@PostMapping("/{id}/rename-requests")
+	public Mono<ResponseEntity<Map<String, Object>>> requestRename(@PathVariable String id,
+			@RequestBody RenameRequestRequest body, ServerHttpRequest request) {
+		if (body.name() == null || body.name().isBlank() || body.name().trim().length() > 80) {
+			return Mono.just(ResponseEntity.badRequest().body(Map.of("success", false, "error", "新主体名称必填（80 字以内）")));
+		}
+		String requestedName = body.name().trim();
+		return authz.requireRole(request, id, MembershipRole.ADMIN)
+				.flatMap(caller -> renames.findPendingByOrg(id)
+						.hasElement()
+						.flatMap(pending -> pending
+								? Mono.error(new IdentityException(409, "已有待审核的更名申请，请等待平台审核"))
+								: organizations.findById(id)
+										.switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
+										.flatMap(org -> {
+											if (org.name().equals(requestedName)) {
+												return Mono.error(new IdentityException(400, "新名称与当前名称相同"));
+											}
+											return renames.findLatestApproved(id).map(approved -> approved.reviewedAt())
+													.defaultIfEmpty(org.createdAt())
+													.flatMap(lastChangeAt -> {
+														Instant nextAllowed = lastChangeAt.plus(RENAME_COOLDOWN);
+														if (Instant.now().isBefore(nextAllowed)) {
+															return Mono.error(new IdentityException(409,
+																	"商家主体更名冷却中（30 天一次），最早可于 "
+																			+ formatDateTime(nextAllowed) + " 再次申请"));
+														}
+														return renames.insert(id, caller.id(), org.name(), requestedName)
+																.flatMap(req -> outbox.append(new EventEnvelope(
+																		UUID.randomUUID().toString(),
+																		"OrganizationRenameRequested", "Organization", id, 1,
+																		Instant.now(), null,
+																		Map.of("organizationId", id,
+																				"currentName", org.name(),
+																				"requestedName", requestedName,
+																				"requestedBy", caller.id())))
+																		.thenReturn(req));
+													});
+										})))
+				.map(req -> ResponseEntity.status(201).body(Map.of("success", true, "data", toRenameBody(req))));
+	}
+
+	/** 主体视角：申请历史（含待审），供工作台展示冷却/审核中状态。 */
+	@GetMapping("/{id}/rename-requests")
+	public Mono<ResponseEntity<Map<String, Object>>> listRenames(@PathVariable String id, ServerHttpRequest request) {
+		return authz.requireRole(request, id, MembershipRole.MEMBER)
+				.flatMap(caller -> renames.findRecentByOrg(id, 5).collectList()
+						.map(list -> ResponseEntity.ok(Map.of("success", true,
+								"data", list.stream().map(this::toRenameBody).toList()))));
+	}
+
+	private static String formatDateTime(Instant instant) {
+		return ZonedDateTime.ofInstant(instant, ZoneId.of("Asia/Shanghai"))
+				.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+	}
+
+	private Map<String, Object> toRenameBody(OrganizationRenameRepository.RenameRequest req) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", req.id());
+		body.put("organizationId", req.organizationId());
+		body.put("currentName", req.currentName());
+		body.put("requestedName", req.requestedName());
+		body.put("status", req.status());
+		body.put("requestedAt", req.requestedAt() == null ? null : req.requestedAt().toString());
+		body.put("reviewedAt", req.reviewedAt() == null ? null : req.reviewedAt().toString());
+		body.put("reviewNote", req.reviewNote());
+		return body;
+	}
+
+	public record RenameRequestRequest(String name) {
 	}
 
 	@GetMapping("/{id}")

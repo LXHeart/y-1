@@ -24,7 +24,13 @@ class MembershipControllerIT extends IdentityItSupport {
     void trustServiceReadsAllAuthoritativeOrganizationMemberships() {
         var account = seedAccount("internal-memberships@example.com");
         String firstOrg = createOrg(account.cookie(), "内部成员关系一");
-        String secondOrg = createOrg(account.cookie(), "内部成员关系二");
+        // 一账号一主体（V40）：第二个 org 由另一账号创建、本账号经成员关系加入——
+        // 内部端点聚合的是「成员关系」而非「名下主体」，语义不变
+        var other = seedAccount("internal-memberships-owner@example.com");
+        String secondOrg = createOrg(other.cookie(), "内部成员关系二");
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role) "
+                        + "VALUES (gen_random_uuid(), CAST(:org AS uuid), CAST(:acct AS uuid), 'member')")
+                .bind("org", secondOrg).bind("acct", account.accountId()).then().block();
 
         client().get().uri("/internal/identity/accounts/" + account.accountId() + "/organization-memberships")
                 .header("X-Grassland-Identity", serviceAssertion("trust"))
