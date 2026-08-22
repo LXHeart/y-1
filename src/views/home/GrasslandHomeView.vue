@@ -101,6 +101,63 @@
       </div>
     </section>
 
+    <!-- 创作灵感：全网热点（选题材入口，创作在 AI 中心完成） -->
+    <section class="gl-zone hot-zone" aria-label="创作灵感与热点">
+      <div class="gl-zone-head">
+        <h3 class="gl-zone-title">创作灵感</h3>
+        <p class="gl-zone-note">选好题材后进入 AI 中心完成创作；热点是手段，不是终点</p>
+        <div class="hot-refresh-group">
+          <span v-if="hotFetchedNote" class="hot-fetched-note gl-num">{{ hotFetchedNote }}</span>
+          <button type="button" :disabled="hotLoading" @click="hotRange === 'live' ? loadHotItems() : loadHistory(hotRange)">
+            {{ hotLoading ? '刷新中…' : '刷新' }}
+          </button>
+        </div>
+      </div>
+
+      <div class="hot-range-switch" role="tablist" aria-label="热点时间范围">
+        <button v-for="option in HOT_RANGE_OPTIONS" :key="option.value" type="button"
+          class="hot-range-tab" :class="{ 'hot-range-tab-active': hotRange === option.value }"
+          role="tab" :aria-selected="hotRange === option.value"
+          :disabled="hotLoading" @click="switchHotRange(option.value)">
+          {{ option.label }}
+        </button>
+      </div>
+      <p v-if="hotRange !== 'live'" class="hot-range-note">
+        {{ hotRange === 'today' ? '今日' : '最近 7 天' }}聚合自历史快照{{ snapshotCount > 0 ? `（${snapshotCount} 份）` : '，暂无归档' }}
+      </p>
+
+      <div v-if="hotLoading && !activeHotItems.length" class="hot-skeleton-list" aria-hidden="true">
+        <div v-for="index in 5" :key="index" class="hot-skeleton"></div>
+      </div>
+      <p v-else-if="hotError" class="hot-empty">{{ hotError }}</p>
+      <p v-else-if="!hasHotContent" class="hot-empty">暂无热点数据。</p>
+      <template v-else>
+        <div v-if="showHotTabs" class="hot-tabs" role="tablist">
+          <button v-for="group in hotGroups" :key="group.platform" type="button"
+            class="hot-tab" :class="{ 'hot-tab-active': activePlatform === group.platform }"
+            role="tab" :aria-selected="activePlatform === group.platform"
+            @click="activePlatform = group.platform">
+            {{ group.label }} <span class="gl-num">{{ group.items.length }}</span>
+          </button>
+        </div>
+        <ol class="hot-list">
+          <li v-for="item in activeHotItems" :key="`${item.rank}-${item.title}`" class="hot-item">
+            <span class="hot-rank gl-num">{{ item.rank }}</span>
+            <div class="hot-main">
+              <a v-if="item.url" class="hot-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ item.title }}</a>
+              <p v-else class="hot-title">{{ item.title }}</p>
+              <div class="hot-meta-row">
+                <span v-if="item.hotValue" class="hot-value gl-num">热度 {{ item.hotValue }}</span>
+                <span v-if="item.sourceLabel" class="hot-source">{{ item.sourceLabel }}</span>
+                <span v-if="hotRange !== 'live' && item.validUntil" class="hot-source">失效 {{ new Date(item.validUntil).toLocaleDateString() }}</span>
+              </div>
+            </div>
+            <button type="button" class="hot-create-btn" @click="createFromHotTopic(item.title)">去创作</button>
+          </li>
+        </ol>
+      </template>
+    </section>
+
     <!-- 共享能力：三类角色都可用 -->
     <section class="gl-zone" aria-label="共享能力">
       <div class="gl-zone-head">
@@ -124,13 +181,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
 import { useActiveIdentity } from '../../composables/useActiveIdentity'
+import { useHomepageHotItems } from '../../composables/useHomepageHotItems'
+import { normalizePlatformId } from '../../config/ai-platform-capabilities'
+import type { CreationEntry } from '../../types/ai-creation'
 import type { AppView } from '../../types/navigation'
 
-const emit = defineEmits<{ 'request-login': [] }>()
+const emit = defineEmits<{ 'request-login': []; 'open-creation': [entry: CreationEntry] }>()
 
 const router = useRouter()
 const { isAuthenticated } = useAuth()
@@ -154,6 +214,67 @@ const activeIdentityLabel = computed(() => {
   if (hasRecommenderIdentity.value && !hasMerchantIdentity.value) return '推荐官'
   return '商家'
 })
+
+// ---------- 创作灵感：全网热点（PRD §4.3 热点是创作手段，不作一级入口的独立模块） ----------
+const { items: hotItems, groups: hotGroups, provider: hotProvider,
+  fetchedAt: hotFetchedAt, loading: hotLoading, error: hotError,
+  snapshotCount, loadHotItems, loadHistory } = useHomepageHotItems()
+
+type HotRange = 'live' | 'today' | 'week'
+const HOT_RANGE_OPTIONS: ReadonlyArray<{ value: HotRange; label: string }> = [
+  { value: 'live', label: '实时' },
+  { value: 'today', label: '今天' },
+  { value: 'week', label: '本周' },
+]
+const hotRange = ref<HotRange>('live')
+const activePlatform = ref('')
+
+async function switchHotRange(range: HotRange): Promise<void> {
+  if (hotRange.value === range || hotLoading.value) return
+  hotRange.value = range
+  if (range === 'live') { await loadHotItems(); return }
+  await loadHistory(range)
+}
+
+const hotFetchedNote = computed(() => {
+  if (!hotFetchedAt.value) return ''
+  const t = new Date(hotFetchedAt.value)
+  if (Number.isNaN(t.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `抓取于 ${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`
+})
+
+/** 60s 实时榜与历史模式都按平台分组展示 tab；alapi 实时直接平铺。 */
+const showHotTabs = computed(() =>
+  hotGroups.value.length > 0 && (hotProvider.value === '60s' || hotRange.value !== 'live'))
+const activeHotItems = computed(() => {
+  if (showHotTabs.value) {
+    return hotGroups.value.find((g) => g.platform === activePlatform.value)?.items ?? []
+  }
+  return hotItems.value
+})
+const hasHotContent = computed(() => showHotTabs.value
+  ? hotGroups.value.some((g) => g.items.length > 0)
+  : hotItems.value.length > 0)
+
+watch(hotGroups, (newGroups) => {
+  if (newGroups.length > 0 && !newGroups.some((g) => g.platform === activePlatform.value)) {
+    activePlatform.value = newGroups[0].platform
+  }
+}, { immediate: true })
+
+/** 热点选题 → AI 中心（源=hot-topic，带入选题预填）。 */
+function createFromHotTopic(title: string): void {
+  emit('open-creation', {
+    revision: Date.now(),
+    platformId: normalizePlatformId(activePlatform.value),
+    contentFormId: null,
+    source: { type: 'hot-topic', title },
+    prefill: { topic: title },
+  })
+}
+
+onMounted(() => { void loadHotItems() })
 
 function go(view: AppView): void {
   void router.push({ name: view })
@@ -293,6 +414,34 @@ function go(view: AppView): void {
   font-size: var(--text-xs);
   cursor: pointer;
 }
+
+.hot-zone .gl-zone-head { flex-wrap: wrap; }
+.hot-refresh-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.hot-fetched-note { font-size: var(--text-xs); color: var(--color-text-muted); }
+.hot-range-switch { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--color-border); border-radius: var(--radius-md); width: fit-content; margin-bottom: 12px; }
+.hot-range-tab { min-height: 30px; padding: 0 12px; border: none; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-range-tab-active { background: var(--gradient-accent); color: #fff; }
+.hot-range-note { margin: 0 0 10px; font-size: var(--text-xs); color: var(--color-text-muted); }
+.hot-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.hot-tab { min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 999px; background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-tab-active { border-color: var(--color-border-accent); background: var(--color-surface-highlight); color: var(--color-accent-2); }
+.hot-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.hot-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.hot-rank { flex-shrink: 0; width: 24px; text-align: center; font-size: 0.9rem; font-weight: 700; color: var(--color-accent-2); }
+.hot-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.hot-title-link, .hot-title { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--color-text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hot-title-link:hover { text-decoration: underline; }
+.hot-meta-row { display: flex; gap: 10px; font-size: var(--text-xs); color: var(--color-text-muted); }
+.hot-create-btn { flex-shrink: 0; min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-sm); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-create-btn:hover { border-color: var(--color-accent-2); }
+.hot-skeleton-list { display: grid; gap: 6px; }
+.hot-skeleton { height: 40px; border-radius: var(--radius-sm); background: var(--surface-muted); animation: hot-skeleton-pulse 1.4s ease-in-out infinite; }
+.hot-skeleton:nth-child(2) { animation-delay: 0.15s; }
+.hot-skeleton:nth-child(3) { animation-delay: 0.3s; }
+.hot-skeleton:nth-child(4) { animation-delay: 0.45s; }
+.hot-skeleton:nth-child(5) { animation-delay: 0.6s; }
+@keyframes hot-skeleton-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.hot-empty { margin: 0; padding: var(--space-sm) 0; font-size: var(--text-sm); color: var(--color-text-muted); }
 
 @media (max-width: 900px) {
   .hero {
