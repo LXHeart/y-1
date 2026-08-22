@@ -84,11 +84,11 @@ public class OrganizationController {
 				.flatMap(
 						owner -> transactions
 								.transactional(
-										// 产品规则（2026-08-23）：一个账号只能创建一个商家主体；
-										// 被邀请加入他人主体不受限（成员关系），受限的是「再开一个」。
-										organizations.findByOwner(owner.id()).next()
+										// 产品规则（2026-08-23）：一个账号只能有一个商家主体关联——
+										// 自建或被邀请加入任一存在即不可再建（用户实测：admin 成员仍能创建）。
+										organizations.findForAccount(owner.id()).next()
 												.flatMap(existing -> Mono.<Organization>error(
-														new IdentityException(409, "一个账号只能创建一个商家主体")))
+														new IdentityException(409, "一个账号只能有一个商家主体（自建或已加入），不可再创建")))
 												.switchIfEmpty(organizations
 														.create(owner.id(), body.name(), normalizeIndustry(body.industry())))
 												.flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))

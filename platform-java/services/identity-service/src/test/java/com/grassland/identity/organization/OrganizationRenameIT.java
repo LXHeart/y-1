@@ -31,12 +31,31 @@ class OrganizationRenameIT extends IdentityItSupport {
         WebTestClient client = client();
         Seeded owner = seedAccount("one-org-" + UUID.randomUUID() + "@example.com");
 
+        // 自建后不能再建
         client.post().uri("/api/organizations").contentType(JSON).header("Cookie", "y1.sid=" + owner.cookie())
                 .bodyValue("{\"name\":\"第一个主体\"}")
                 .exchange().expectStatus().isCreated();
 
         client.post().uri("/api/organizations").contentType(JSON).header("Cookie", "y1.sid=" + owner.cookie())
                 .bodyValue("{\"name\":\"第二个主体\"}")
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.success").isEqualTo(false);
+    }
+
+    @Test
+    void memberOfAnyOrganizationCannotCreateAnother() {
+        WebTestClient client = client();
+        Seeded owner = seedAccount("member-org-owner-" + UUID.randomUUID() + "@example.com");
+        String orgId = createOrg(owner.cookie(), "已有主体");
+        String memberEmail = "member-no-create-" + UUID.randomUUID() + "@example.com";
+        Seeded member = seedAccount(memberEmail);
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role) "
+                        + "VALUES (gen_random_uuid(), CAST(:org AS uuid), "
+                        + "(SELECT id FROM app_users WHERE email = :email), 'admin')")
+                .bind("org", orgId).bind("email", memberEmail).then().block();
+
+        client.post().uri("/api/organizations").contentType(JSON).header("Cookie", "y1.sid=" + member.cookie())
+                .bodyValue("{\"name\":\"成员想另建\"}")
                 .exchange().expectStatus().isEqualTo(409)
                 .expectBody().jsonPath("$.success").isEqualTo(false);
     }

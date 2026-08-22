@@ -481,7 +481,7 @@ watch(grasslandNavigationTarget, async (target) => {
 
     <!-- ============ 商家工作台 ============ -->
     <div v-if="side === 'merchant'" id="gl-panel-merchant" aria-label="商家工作台" tabindex="0" class="gl-workbench" data-side="merchant">
-      <!-- 无商家主体时的入驻引导：创建入口不再藏在页签里（可发现性） -->
+      <!-- 无任何主体关联时的入驻引导（自建或被邀请加入都算有关联） -->
       <section v-if="orgs.length === 0" class="gl-zone" aria-label="创建商家主体">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">创建你的商家主体</h3>
@@ -730,8 +730,8 @@ watch(grasslandNavigationTarget, async (target) => {
                 <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
               </select>
             </div>
-            <!-- 产品规则（2026-08-23）：一个账号只能创建一个商家主体；已有主体的账号不再显示创建入口 -->
-            <div v-if="!orgs.some((o) => o.ownerAccountId === currentUser?.id)" class="gl-row">
+            <!-- 产品规则（2026-08-23）：一个账号只能有一个商家主体关联（自建或加入），有即不显示创建入口 -->
+            <div v-if="orgs.length === 0" class="gl-row">
               <input v-model="newOrgName" aria-label="新商家主体名称" name="organization-name" autocomplete="off" placeholder="新商家主体名称" @keyup.enter="createOrg" />
               <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
             </div>
