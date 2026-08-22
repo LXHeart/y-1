@@ -129,6 +129,57 @@ describe('MySessionsCard 列表', () => {
   })
 })
 
+describe('MySessionsCard 分页', () => {
+  function manySessions(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      sessionToken: `sid-${i}`,
+      activeIdentityType: null,
+      deviceId: null,
+      deviceLabel: null,
+      ipAddress: null,
+      lastSeenAt: new Date(Date.now() - i * 60000).toISOString(),
+      current: i === 0,
+    }))
+  }
+
+  test('超过 5 条分页：默认首页 5 条，翻页可见其余，页码如实', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data: manySessions(12) }),
+    })))
+    const wrapper = mount(MySessionsCard)
+    currentUser.value = asUser('acct-sess', 'sess@test.local')
+    await flushPromises()
+
+    // 首页 5 条
+    expect(wrapper.findAll('.sess-list li')).toHaveLength(5)
+    expect(wrapper.get('.sess-page').text()).toBe('第 1 / 3 页 · 共 12 条')
+
+    await wrapper.get('.sess-pager button:last-child').trigger('click')
+    expect(wrapper.findAll('.sess-list li')).toHaveLength(5)
+    await wrapper.get('.sess-pager button:last-child').trigger('click')
+    expect(wrapper.findAll('.sess-list li')).toHaveLength(2)
+    expect(wrapper.get('.sess-page').text()).toBe('第 3 / 3 页 · 共 12 条')
+    // 末页「下一页」禁用
+    expect(wrapper.get('.sess-pager button:last-child').attributes('disabled')).toBe('')
+  })
+
+  test('5 条及以下不渲染分页条', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data: manySessions(4) }),
+    })))
+    const wrapper = mount(MySessionsCard)
+    currentUser.value = asUser('acct-sess2', 'sess2@test.local')
+    await flushPromises()
+
+    expect(wrapper.findAll('.sess-list li')).toHaveLength(4)
+    expect(wrapper.find('.sess-pager').exists()).toBe(false)
+  })
+})
+
 describe('MySessionsCard 撤销', () => {
   test('撤销其它设备：DELETE 该 token，且不动本机登录态', async () => {
     const { calls } = stubFetch([THIS_DEVICE, OTHER_DEVICE])

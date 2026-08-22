@@ -29,6 +29,17 @@ const confirmingOthers = ref(false)
 /** 其它设备（非本机）的会话数——「一键登出其它」只在确有其它设备时出现。 */
 const otherSessions = computed(() => sessions.value.filter((s) => !s.current))
 
+/** 分页：测试与多设备日常登录下清单可能很长（每次登录一台），每页 5 条。 */
+const PAGE_SIZE = 5
+const page = ref(1)
+const pageCount = computed(() => Math.max(1, Math.ceil(sessions.value.length / PAGE_SIZE)))
+const pagedSessions = computed(() =>
+  sessions.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+
+function clampPage(): void {
+  if (page.value > pageCount.value) page.value = pageCount.value
+}
+
 const IDENTITY_LABEL: Record<IdentityType, string> = {
   merchant: '商家',
   recommender: '推荐官',
@@ -63,11 +74,13 @@ async function refresh(): Promise<void> {
   const list = await grassland.listMySessions()
   // Array.isArray 防御：测试/降级路径的桩可能回非数组信封，进 filter 会炸渲染。
   if (Array.isArray(list)) sessions.value = list
+  clampPage()
 }
 
 // 与 MyInvitationsCard 同理：卡片在未登录时也已挂载，只在 mounted 拉一次会停在空列表。
 watch(() => currentUser.value?.id, (accountId) => {
   sessions.value = []
+  page.value = 1
   notice.value = ''
   confirmingSelf.value = ''
   confirmingOthers.value = false
@@ -131,7 +144,7 @@ async function revoke(session: LoginSession): Promise<void> {
 
     <p v-if="sessions.length === 0" class="sess-hint">暂无记录。</p>
     <ul v-else class="sess-list">
-      <li v-for="s in sessions" :key="s.sessionToken">
+      <li v-for="s in pagedSessions" :key="s.sessionToken">
         <div class="sess-main">
           <span class="sess-name">
             {{ s.deviceLabel || (s.deviceId ? `设备 ${s.deviceId.slice(0, 8)}` : '未知设备') }}
@@ -151,6 +164,12 @@ async function revoke(session: LoginSession): Promise<void> {
         >{{ s.current && confirmingSelf === s.sessionToken ? '确认登出本机' : '撤销' }}</button>
       </li>
     </ul>
+
+    <div v-if="pageCount > 1" class="sess-pager">
+      <button type="button" class="sess-quiet" :disabled="page <= 1" @click="page -= 1">上一页</button>
+      <span class="sess-page gl-num">第 {{ page }} / {{ pageCount }} 页 · 共 {{ sessions.length }} 条</span>
+      <button type="button" class="sess-quiet" :disabled="page >= pageCount" @click="page += 1">下一页</button>
+    </div>
 
     <p class="sess-hint">
       撤销会让那台设备<strong>立即登出</strong>；「有效期至」是该设备登录态的自然过期日。
@@ -180,4 +199,6 @@ button:hover:not(:disabled) { border-color: var(--color-border-hover); backgroun
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .sess-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
 .sess-danger { font-size: 12px; padding: 4px 10px; color: var(--color-danger); border-color: var(--color-danger); }
+.sess-pager { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.sess-page { font-size: 12px; opacity: 0.7; }
 </style>

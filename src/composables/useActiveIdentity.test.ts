@@ -76,6 +76,34 @@ describe('loadAccountIdentity 初始视角规则', () => {
     expect(calls).toContain('activate:recommender')
   })
 
+  test('推荐官身份 + 门店管理范围：激活推荐官，管理范围不压身份档案', async () => {
+    // judge1 实况：历史种子给了门店经理授权，旧排序会把工作台压进商家面板
+    const { api, calls } = fakeGrassland({
+      identities: [identity('recommender')],
+      scopes: [managerScope()],
+    })
+    const state = useActiveIdentity()
+
+    await state.loadAccountIdentity(api)
+
+    expect(state.activeSide.value).toBe('recommender')
+    expect(state.merchantViewViaManagerScope.value).toBe(false)
+    expect(calls).toContain('activate:recommender')
+  })
+
+  test('初始激活每个账号只做一次：二次装载不重激活（防覆盖登录所选身份）', async () => {
+    const { api, calls } = fakeGrassland({ identities: [identity('merchant'), identity('recommender')] })
+    const state = useActiveIdentity()
+
+    await state.loadAccountIdentity(api)
+    await state.activateIdentitySide('recommender', api)
+    // 账号 watch 的并发装载晚到：不得再用默认商家覆盖已显式激活的推荐官
+    await state.loadAccountIdentity(api)
+
+    expect(state.activeSide.value).toBe('recommender')
+    expect(calls.filter((call) => call === 'activate:merchant')).toHaveLength(1)
+  })
+
   test('无身份但有门店管理范围：商家视角本地生效，不激活', async () => {
     const { api, calls } = fakeGrassland({ identities: [], scopes: [managerScope()] })
     const state = useActiveIdentity()

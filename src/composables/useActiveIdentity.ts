@@ -20,6 +20,8 @@ const identities = ref<IdentityProfile[]>([])
 const identitiesLoaded = ref(false)
 /** 无商家身份但持门店管理范围：商家视角本地生效（服务端不激活，门店范围自证权限）。 */
 const merchantViewViaManagerScope = ref(false)
+/** 初始视角激活每个账号只做一次（防并发装载用默认覆盖显式选择）。 */
+let initialActivationApplied = false
 
 const hasMerchantIdentity = computed(() =>
   identities.value.some((identity) => identity.identityType === 'merchant'))
@@ -38,7 +40,8 @@ export function useActiveIdentity() {
   /**
    * 装载账号身份并激活初始视角（原工作台 initForAccount 的身份段，原样上提）：
    * - 商家身份优先（双身份账号的既有默认）；
-   * - 无商家身份但有门店管理范围 → 商家视角本地生效，**不激活**；
+   * - 有推荐官身份（即使同时持门店管理范围）→ 激活推荐官，管理范围不压身份档案；
+   * - 无任何身份档案、仅有门店管理范围 → 商家视角本地生效，**不激活**；
    * - 仅推荐官 → 激活推荐官（沿用默认 merchant 会收到可预期 409）；
    * - 无任何身份 → 保持 merchant 视角进入入驻引导，不暗中开户。
    */
@@ -53,19 +56,23 @@ export function useActiveIdentity() {
     const storeScopes = Array.isArray(scopeResult) ? scopeResult : []
     identities.value = identityResult
     identitiesLoaded.value = true
+    const hasManagerScope = storeScopes.some((scope) => scope.role === 'manager')
+    // 管理范围兜底只在**没有任何身份档案**时生效：有推荐官身份（即使同时持门店
+    // 管理范围）应激活推荐官——管理范围是授权视图，不该压过真实身份档案。
     merchantViewViaManagerScope.value =
-      !hasMerchantIdentity.value && storeScopes.some((scope) => scope.role === 'manager')
+      !hasMerchantIdentity.value && !hasRecommenderIdentity.value && hasManagerScope
 
     const initialIdentity: IdentitySide | null = hasMerchantIdentity.value
       ? 'merchant'
-      : merchantViewViaManagerScope.value
-        ? null
-        : hasRecommenderIdentity.value
-          ? 'recommender'
-          : null
+      : hasRecommenderIdentity.value
+        ? 'recommender'
+        : null
     if (merchantViewViaManagerScope.value) activeSide.value = 'merchant'
-    if (initialIdentity) {
+    // 初始激活每个账号只做一次：登录后账号 watch 与 ensureLoginIdentity 并发各装载
+    // 一次，若每次都按默认重激活，后完成的一方会用「商家优先」覆盖登录表单选定的身份。
+    if (initialIdentity && !initialActivationApplied) {
       activeSide.value = initialIdentity
+      initialActivationApplied = true
       await grassland.activateIdentity(initialIdentity)
       grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
     }
@@ -98,6 +105,7 @@ export function useActiveIdentity() {
     identities.value = []
     identitiesLoaded.value = false
     merchantViewViaManagerScope.value = false
+    initialActivationApplied = false
   }
 
   return {

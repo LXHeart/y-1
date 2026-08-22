@@ -278,23 +278,63 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(openTile.find('button.identity-open-btn').exists()).toBe(false)
   })
 
-  test('商家工作台子页签：默认任务与报名，四个页签可切换', async () => {
+  test('商家工作台子页签：默认任务与报名，五个页签（含账号与合规）', async () => {
     stubFetch()
     const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
-    const tabs = wrapper.findAll('.gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '组织与门店', '资金与经营', 'AI 与治理'])
+    const tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
+    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '组织与门店', '资金与经营', 'AI 与治理', '账号与合规'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
-    await tabs[2].trigger('click')
-    const after = wrapper.findAll('.gl-subtab')
-    expect(after[2].attributes('aria-selected')).toBe('true')
-    expect(after[0].attributes('aria-selected')).toBe('false')
+    // 账号与合规页签：共享区显示、任务区隐藏（v-show 常驻 DOM）
+    expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(true)
+    await tabs[4].trigger('click')
+    const after = wrapper.findAll('#gl-panel-merchant .gl-subtab')
+    expect(after[4].attributes('aria-selected')).toBe('true')
   })
 
-  test('?mtab= 深链恢复子页签；锚点滚动先切所属页签', async () => {
+  test('推荐官工作台四个子页签；?wtab= 深链与锚点联动', async () => {
+    const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+    stubFetch(identities)
+    const anchorRef = ref('')
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
+      ],
+    })
+    router.push('/grassland?side=recommender&wtab=hall')
+    await router.isReady()
+    const wrapper = mount(GrasslandWorkbench, {
+      global: {
+        plugins: [router],
+        stubs: {
+          MyRecommenderProfileCard: true, MyWalletCard: true,
+          EngagementSubmissionPanel: true, EngagementRatingPanel: true, AdjudicationPanel: true,
+        },
+        provide: { grasslandAnchor: anchorRef },
+      },
+    })
+    currentUser.value = asUser('acct-rec', 'recommender@test.local')
+    await flushPromises()
+
+    const tabs = wrapper.findAll('#gl-panel-recommender .gl-subtab')
+    expect(tabs.map((t) => t.text())).toEqual(['我的草场', '任务大厅', '我的履约', '账号与合规'])
+    // 深链恢复：任务大厅页签激活
+    expect(tabs[1].attributes('aria-selected')).toBe('true')
+    // 任务大厅锚点 id 就位（此前 scrollBlockIntoView('gl-task-hall') 一直空滚——顺手修复）
+    expect(wrapper.find('#gl-task-hall').exists()).toBe(true)
+
+    // 锚点驱动：gl-engagements（推荐官侧）属于「我的履约」
+    anchorRef.value = 'gl-engagements'
+    await flushPromises()
+    expect(wrapper.findAll('#gl-panel-recommender .gl-subtab')[2].attributes('aria-selected')).toBe('true')
+  })
+
+  test('?wtab= 深链恢复商家子页签；锚点滚动先切所属页签', async () => {
     stubFetch()
     const anchorRef = ref('')
     const router = createRouter({
@@ -304,7 +344,7 @@ describe('GrasslandWorkbench 登录态', () => {
         { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
       ],
     })
-    router.push('/grassland?mtab=finance')
+    router.push('/grassland?wtab=finance')
     await router.isReady()
     const wrapper = mount(GrasslandWorkbench, {
       global: {
@@ -316,13 +356,13 @@ describe('GrasslandWorkbench 登录态', () => {
     await flushPromises()
 
     // 深链恢复：finance 页签激活
-    let tabs = wrapper.findAll('.gl-subtab')
+    let tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
     expect(tabs[2].attributes('aria-selected')).toBe('true')
 
     // 锚点驱动：gl-engagements 属于「任务与报名」，滚动前自动切回
     anchorRef.value = 'gl-engagements'
     await flushPromises()
-    tabs = wrapper.findAll('.gl-subtab')
+    tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
     expect(tabs[0].attributes('aria-selected')).toBe('true')
   })
 

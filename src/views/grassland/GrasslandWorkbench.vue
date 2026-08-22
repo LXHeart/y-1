@@ -174,20 +174,45 @@ async function openOtherIdentity(target: 'merchant' | 'recommender'): Promise<vo
   }
 }
 
-// 商家工作台子页签：田垄②/③ 内容按工作频率分垄，v-show 常驻 DOM（锚点滚动与既有断言不破坏）
-type MerchantTabId = 'tasks' | 'org' | 'finance' | 'ai'
-const MERCHANT_TABS: ReadonlyArray<{ id: MerchantTabId; label: string }> = [
+// 工作台子页签：两侧各自分垄（账号与合规为共享页签，标记只写一份、渲染在两侧页签位之后），
+// v-show 常驻 DOM（锚点滚动与既有断言不破坏）
+type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'account' | 'home' | 'hall' | 'engagements'
+interface SubTab { id: SubTabId; label: string }
+const MERCHANT_TABS: readonly SubTab[] = [
   { id: 'tasks', label: '任务与报名' },
   { id: 'org', label: '组织与门店' },
   { id: 'finance', label: '资金与经营' },
   { id: 'ai', label: 'AI 与治理' },
+  { id: 'account', label: '账号与合规' },
 ]
-const merchantTab = ref<MerchantTabId>('tasks')
-/** 通知锚点 → 所属子页签：滚动前先切页签（隐藏元素无法 scrollIntoView）。 */
-const MERCHANT_ANCHOR_TAB: Readonly<Record<string, MerchantTabId>> = {
-  'gl-engagements': 'tasks',
-  'gl-organizations': 'org',
-  'gl-wallet': 'finance',
+const RECOMMENDER_TABS: readonly SubTab[] = [
+  { id: 'home', label: '我的草场' },
+  { id: 'hall', label: '任务大厅' },
+  { id: 'engagements', label: '我的履约' },
+  { id: 'account', label: '账号与合规' },
+]
+const subTab = ref<SubTabId>('tasks')
+const activeTabs = computed<readonly SubTab[]>(() =>
+  side.value === 'merchant' ? MERCHANT_TABS : RECOMMENDER_TABS)
+// 切换身份后当前页签可能不存在于另一侧的列表：回落到该侧首页签。
+// immediate：工作台常在登录完成**之后**才挂载（side 已定型，无翻转事件可听）。
+watch(activeTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.id === subTab.value)) subTab.value = tabs[0].id
+}, { immediate: true })
+/** 通知锚点 → 所属子页签（按身份侧）：滚动前先切页签（隐藏元素无法 scrollIntoView）。 */
+const ANCHOR_TAB: Readonly<Record<'merchant' | 'recommender', Readonly<Record<string, SubTabId>>>> = {
+  merchant: {
+    'gl-engagements': 'tasks',
+    'gl-organizations': 'org',
+    'gl-wallet': 'finance',
+    'gl-invitations': 'account',
+  },
+  recommender: {
+    'gl-wallet': 'home',
+    'gl-task-hall': 'hall',
+    'gl-engagements': 'engagements',
+    'gl-invitations': 'account',
+  },
 }
 
 /** 生长刻度：任务生命周期五段（草稿 → 审核 → 招募 → 履约 → 结算）。 */
@@ -274,6 +299,9 @@ watch(side, async (next, previous) => {
 watch(() => currentUser.value?.id, async (accountId) => {
   resetAccountState()
   if (accountId) {
+    // 留存进入时的原始 query：初始化期间 urlQuerySnapshot watcher 会按默认态重写 URL，
+    // 直接读 route.query 会丢深链（?wtab= 曾被这样吃掉）。
+    const entryQuery: Record<string, LocationQueryValue | LocationQueryValue[]> = { ...route.query }
     initializingAccount = true
     try {
       await initForAccount()
@@ -281,7 +309,7 @@ watch(() => currentUser.value?.id, async (accountId) => {
       initializingAccount = false
     }
     // 初始化期间可能又换了账号——旧账号的 URL 恢复直接放弃，避免上一个链接串数据。
-    if (currentUser.value?.id === accountId) await restoreWorkbenchStateFromUrl()
+    if (currentUser.value?.id === accountId) await restoreWorkbenchStateFromUrl(entryQuery)
   }
 }, { immediate: true })
 
@@ -289,7 +317,7 @@ watch(() => currentUser.value?.id, async (accountId) => {
 // 视角 / 选中任务 / 报名筛选 / 大厅筛选随 query 持久化——刷新、分享链接可恢复现场。
 // 恢复必须在 initForAccount 之后：它按已开通身份重排 side，先恢复会被覆盖。
 
-const OWNED_QUERY_KEYS = ['side', 'mtab', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist'] as const
+const OWNED_QUERY_KEYS = ['side', 'wtab', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist'] as const
 const LEVEL_FILTER_VALUES = ['Lv2', 'Lv3', 'Lv4']
 const RATE_FILTER_VALUES = [60, 70, 80, 90]
 const DISTANCE_VALUES = [1, 3, 5, 10, 30]
@@ -303,7 +331,7 @@ function firstQueryParam(raw: LocationQueryValue | LocationQueryValue[]): string
 const urlQuerySnapshot = computed<Record<string, string>>(() => {
   const query: Record<string, string> = {}
   if (side.value === 'recommender') query.side = 'recommender'
-  if (side.value === 'merchant' && merchantTab.value !== 'tasks') query.mtab = merchantTab.value
+  if (subTab.value !== activeTabs.value[0].id) query.wtab = subTab.value
   if (selectedTaskId.value) query.task = selectedTaskId.value
   if (levelFilter.value) query.level = levelFilter.value
   if (rateFilterPct.value > 0) query.rate = String(rateFilterPct.value)
@@ -324,9 +352,10 @@ watch(urlQuerySnapshot, (owned) => {
   void router.replace({ name: 'grassland', query: { ...merged, ...owned } })
 })
 
-/** URL → 状态：账号初始化完成后执行一次。无效值一律忽略，绝不因链接参数破坏白名单约束。 */
-async function restoreWorkbenchStateFromUrl(): Promise<void> {
-  const query = route.query
+/** URL → 状态：账号初始化完成后执行一次（读进入时的原始 query，见调用点注释）。无效值一律忽略。 */
+async function restoreWorkbenchStateFromUrl(
+  query: Record<string, LocationQueryValue | LocationQueryValue[]>,
+): Promise<void> {
   const level = firstQueryParam(query.level)
   if (level && LEVEL_FILTER_VALUES.includes(level)) levelFilter.value = level
   const rate = Number(firstQueryParam(query.rate))
@@ -346,9 +375,9 @@ async function restoreWorkbenchStateFromUrl(): Promise<void> {
   if ((sideParam === 'merchant' || sideParam === 'recommender') && sideParam !== side.value) {
     await switchSide(sideParam)
   }
-  const mtabParam = firstQueryParam(query.mtab)
-  if (side.value === 'merchant' && MERCHANT_TABS.some((tab) => tab.id === mtabParam)) {
-    merchantTab.value = mtabParam as MerchantTabId
+  const wtabParam = firstQueryParam(query.wtab)
+  if (wtabParam && activeTabs.value.some((tab) => tab.id === wtabParam)) {
+    subTab.value = wtabParam as SubTabId
   }
   // side 未变化时（如换账号前后同为 recommender）composable 的 side watch 不触发，
   // feed 首页不会自动拉——这里补一次，保证恢复的筛选条件有数据可筛。
@@ -383,9 +412,8 @@ const grasslandNavigationTarget = inject<Ref<NotificationLinkTarget | null>>(
 // 挂载时若锚点非空就补滚一次；空值由 `if (!anchor) return` 兜住，正常进草场视图不会误滚。
 watch(grasslandAnchor, async (anchor) => {
   if (!anchor) return
-  if (side.value === 'merchant' && MERCHANT_ANCHOR_TAB[anchor]) {
-    merchantTab.value = MERCHANT_ANCHOR_TAB[anchor]
-  }
+  const tabForAnchor = ANCHOR_TAB[side.value][anchor]
+  if (tabForAnchor) subTab.value = tabForAnchor
   await nextTick()
   scrollBlockIntoView(anchor)
   grasslandAnchor.value = ''
@@ -411,7 +439,7 @@ watch(grasslandNavigationTarget, async (target) => {
       }
       tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
       await selectTask(task.id)
-      merchantTab.value = 'tasks'
+      subTab.value = 'tasks'
       await nextTick()
       scrollBlockIntoView('gl-engagements')
       setNotice('已打开审核任务，可修改后重新提交')
@@ -461,43 +489,6 @@ watch(grasslandNavigationTarget, async (target) => {
     </p>
     <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
-    <!-- 田垄①：账号级能力（与身份无关） -->
-    <section class="gl-zone" aria-label="账号与合规">
-      <div class="gl-zone-head">
-        <h3 class="gl-zone-title">账号与合规</h3>
-      </div>
-      <div class="gl-zone-body">
-        <!-- 身份开通引导（PRD §一：首次切换到尚未开通的身份时引导开通；切换本身在账号菜单） -->
-        <article v-if="side === 'merchant' && !hasRecommenderIdentity" class="gl-tile identity-open-tile">
-          <h3>开通推荐官身份</h3>
-          <p class="identity-open-copy">同一账号可同时开通商家与推荐官身份；开通后可在账号菜单随时切换。</p>
-          <button type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('recommender')">
-            {{ identityOpening ? '开通中…' : '开通推荐官身份' }}
-          </button>
-        </article>
-        <article v-else-if="side === 'recommender' && !hasMerchantIdentity" class="gl-tile identity-open-tile">
-          <h3>开通商家身份</h3>
-          <p v-if="canOpenMerchantIdentity" class="identity-open-copy">用你当前的组织开通商家身份；开通后可在账号菜单随时切换。</p>
-          <button v-if="canOpenMerchantIdentity" type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('merchant')">
-            {{ identityOpening ? '开通中…' : '开通商家身份' }}
-          </button>
-          <p v-else class="identity-open-copy">开通商家身份需要一个商家组织：先接受组织邀请，或由商家将你加为门店成员后再来开通。</p>
-        </article>
-
-        <article id="gl-invitations" class="gl-tile">
-          <MyInvitationsCard @joined="() => loadOrganizations()" />
-        </article>
-
-        <article class="gl-tile">
-          <MySessionsCard />
-        </article>
-
-        <article class="gl-tile">
-          <PersonalDataComplianceCard />
-        </article>
-      </div>
-    </section>
-
     <!-- ============ 商家工作台 ============ -->
     <div v-if="side === 'merchant'" id="gl-panel-merchant" aria-label="商家工作台" tabindex="0" class="gl-workbench" data-side="merchant">
       <nav class="gl-subtabs" role="tablist" aria-label="商家工作台模块">
@@ -507,15 +498,15 @@ watch(grasslandNavigationTarget, async (target) => {
           type="button"
           role="tab"
           class="gl-subtab"
-          :class="{ 'gl-subtab-active': merchantTab === tab.id }"
-          :aria-selected="merchantTab === tab.id"
-          :tabindex="merchantTab === tab.id ? 0 : -1"
-          @click="merchantTab = tab.id"
+          :class="{ 'gl-subtab-active': subTab === tab.id }"
+          :aria-selected="subTab === tab.id"
+          :tabindex="subTab === tab.id ? 0 : -1"
+          @click="subTab = tab.id"
         >{{ tab.label }}</button>
       </nav>
 
       <!-- 子页签① 任务与报名：田垄②主操作区——每天干活的地方 -->
-      <section v-show="merchantTab === 'tasks'" class="gl-zone" aria-label="发布与撮合">
+      <section v-show="subTab === 'tasks'" class="gl-zone" aria-label="发布与撮合">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">发布与撮合</h3>
           <p class="gl-zone-note">任务沿 草稿 → 审核 → 招募 → 履约 → 结算 的生长线推进</p>
@@ -717,7 +708,7 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
 
       <!-- 子页签② 组织与门店：主体、成员、品牌与 KYB -->
-      <section v-show="merchantTab === 'org'" class="gl-zone" aria-label="组织与门店">
+      <section v-show="subTab === 'org'" class="gl-zone" aria-label="组织与门店">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">组织与门店</h3>
           <p class="gl-zone-note">商家主体、成员、品牌与认证资料</p>
@@ -785,7 +776,7 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
 
       <!-- 子页签③ 资金与经营：资金账户、月度账单、核销订单与营收分析 -->
-      <section v-show="merchantTab === 'finance'" class="gl-zone" aria-label="资金与经营">
+      <section v-show="subTab === 'finance'" class="gl-zone" aria-label="资金与经营">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">资金与经营</h3>
           <p class="gl-zone-note">余额与充值、月度账单、核销订单与营收分析</p>
@@ -823,7 +814,7 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
 
       <!-- 子页签④ AI 与治理：组织 AI 预算、模型密钥与创作审计（owner/admin） -->
-      <section v-show="merchantTab === 'ai'" class="gl-zone" aria-label="AI 与治理">
+      <section v-show="subTab === 'ai'" class="gl-zone" aria-label="AI 与治理">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">AI 与治理</h3>
           <p class="gl-zone-note">组织 AI 用量上限、模型密钥与创作审计（owner / admin 可管理）</p>
@@ -850,8 +841,22 @@ watch(grasslandNavigationTarget, async (target) => {
 
     <!-- ============ 推荐官工作台 ============ -->
     <div v-else id="gl-panel-recommender" aria-label="推荐官工作台" tabindex="0" class="gl-workbench" data-side="recommender">
-      <!-- 田垄②′：我的草场——主页、分享、收款 -->
-      <section class="gl-zone" aria-label="我的草场">
+      <nav class="gl-subtabs" role="tablist" aria-label="推荐官工作台模块">
+        <button
+          v-for="tab in RECOMMENDER_TABS"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="gl-subtab"
+          :class="{ 'gl-subtab-active': subTab === tab.id }"
+          :aria-selected="subTab === tab.id"
+          :tabindex="subTab === tab.id ? 0 : -1"
+          @click="subTab = tab.id"
+        >{{ tab.label }}</button>
+      </nav>
+
+      <!-- 子页签 我的草场：主页、分享、收款 -->
+      <section v-show="subTab === 'home'" class="gl-zone" aria-label="我的草场">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">我的草场</h3>
         </div>
@@ -882,7 +887,7 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
 
       <!-- 田垄③′：任务大厅——找活儿的地方 -->
-      <section class="gl-zone" aria-label="任务大厅">
+      <section id="gl-task-hall" v-show="subTab === 'hall'" class="gl-zone" aria-label="任务大厅">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">任务大厅</h3>
           <p class="gl-zone-note">只显示已发布且未截止的任务</p>
@@ -923,7 +928,7 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
 
       <!-- 田垄④′：我的履约与争议 -->
-      <section class="gl-zone" aria-label="我的履约与争议">
+      <section v-show="subTab === 'engagements'" class="gl-zone" aria-label="我的履约与争议">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">我的履约与争议</h3>
         </div>
@@ -975,6 +980,44 @@ watch(grasslandNavigationTarget, async (target) => {
     </div>
 
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
+    <!-- 子页签 账号与合规（两侧共享页签）：标记一份，渲染在当前身份面板之后 -->
+    <section v-show="subTab === 'account'" class="gl-zone" aria-label="账号与合规">
+      <div class="gl-zone-head">
+        <h3 class="gl-zone-title">账号与合规</h3>
+      </div>
+      <div class="gl-zone-body">
+        <!-- 身份开通引导（PRD §一：首次切换到尚未开通的身份时引导开通；切换本身在账号菜单） -->
+        <article v-if="side === 'merchant' && !hasRecommenderIdentity" class="gl-tile identity-open-tile">
+          <h3>开通推荐官身份</h3>
+          <p class="identity-open-copy">同一账号可同时开通商家与推荐官身份；开通后可在账号菜单随时切换。</p>
+          <button type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('recommender')">
+            {{ identityOpening ? '开通中…' : '开通推荐官身份' }}
+          </button>
+        </article>
+        <article v-else-if="side === 'recommender' && !hasMerchantIdentity" class="gl-tile identity-open-tile">
+          <h3>开通商家身份</h3>
+          <p v-if="canOpenMerchantIdentity" class="identity-open-copy">用你当前的组织开通商家身份；开通后可在账号菜单随时切换。</p>
+          <button v-if="canOpenMerchantIdentity" type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('merchant')">
+            {{ identityOpening ? '开通中…' : '开通商家身份' }}
+          </button>
+          <p v-else class="identity-open-copy">开通商家身份需要一个商家组织：先接受组织邀请，或由商家将你加为门店成员后再来开通。</p>
+        </article>
+
+        <article id="gl-invitations" class="gl-tile">
+          <MyInvitationsCard @joined="() => loadOrganizations()" />
+        </article>
+
+        <article class="gl-tile">
+          <MySessionsCard />
+        </article>
+
+        <article class="gl-tile">
+          <PersonalDataComplianceCard />
+        </article>
+      </div>
+    </section>
+
+
     <section class="gl-zone" aria-label="争议与平台治理">
       <div class="gl-zone-head">
         <h3 class="gl-zone-title">争议与平台治理</h3>
