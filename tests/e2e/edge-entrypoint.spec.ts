@@ -27,7 +27,7 @@ test.describe('unified Edge public entrypoint', () => {
     await page.goto('/')
     await page.getByRole('button', { name: '登录', exact: true }).click()
 
-    const dialog = page.getByRole('dialog', { name: /登录后管理/ })
+    const dialog = page.getByRole('dialog', { name: /登录草场/ })
     await dialog.locator('#login-email').fill(email)
     await dialog.locator('#login-password').fill(password as string)
 

@@ -6,7 +6,7 @@ const password = process.env.E2E_PASSWORD
 async function login(page: import('@playwright/test').Page): Promise<void> {
   await page.goto('/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: /登录后管理/ })
+  const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password as string)
   const response = page.waitForResponse((item) =>
@@ -68,11 +68,11 @@ test('protected AI control-plane tabs require login without calling protected AP
   await page.goto('/')
 
   await page.getByRole('tab', { name: '运行记录' }).click()
-  await expect(page.getByRole('dialog', { name: /登录后管理/ })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: /登录草场/ })).toBeVisible()
   await page.getByRole('button', { name: '关闭登录弹窗' }).click()
   await page.getByRole('tab', { name: '模型密钥' }).click()
 
-  await expect(page.getByRole('dialog', { name: /登录后管理/ })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: /登录草场/ })).toBeVisible()
   await expect(page.getByRole('tab', { name: '开始创作' })).toHaveAttribute('aria-selected', 'true')
   expect(protectedRequests).toEqual([])
 })

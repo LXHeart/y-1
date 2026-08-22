@@ -37,11 +37,11 @@ export interface LoginFormValues {
   password: string
 }
 
+/** 注册只建统一账号（不选身份）；业务身份登录后在工作台按引导开通（PRD §一一套账号体系）。 */
 export interface RegisterFormValues {
   email: string
   displayName: string
   password: string
   confirmPassword: string
   verificationCode: string
-  initialIdentity: 'merchant' | 'recommender'
 }

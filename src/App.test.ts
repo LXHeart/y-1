@@ -76,7 +76,7 @@ vi.mock('./components/LoginModal.vue', () => ({ __esModule: true,
     template: `<div v-if="visible" role="dialog">
       <button data-testid="complete-registration" @click="$emit('register', {
         email: 'new@example.com', displayName: '新用户', password: 'password123',
-        confirmPassword: 'password123', verificationCode: '123456', initialIdentity: 'recommender'
+        confirmPassword: 'password123', verificationCode: '123456'
       })">完成注册</button>
     </div>`,
   },
@@ -194,7 +194,8 @@ describe('App AI 创作中心集成', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/api/auth/register') {
-        expect(JSON.parse(String(init?.body))).toMatchObject({ initialIdentity: 'recommender' })
+        // 注册不区分身份：payload 不携带 initialIdentity，登录后在工作台开通
+        expect(JSON.parse(String(init?.body))).not.toHaveProperty('initialIdentity')
         return response({
           success: true,
           data: { user: { id: 'new-user', email: 'new@example.com', displayName: '新用户', role: 'user' } },
@@ -220,7 +221,7 @@ describe('App AI 创作中心集成', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="grassland-workbench"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('请先完善推荐官主页资料')
+    expect(wrapper.text()).toContain('请先开通你的第一个身份')
     useAuth().currentUser.value = null
   })
 

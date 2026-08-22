@@ -564,9 +564,8 @@ async function handleRegister(values: RegisterFormValues): Promise<void> {
   closeLoginModal()
   await nextTick()
   router.push({ name: 'grassland' })
-  authBannerMessage.value = values.initialIdentity === 'merchant'
-    ? '注册成功，请先创建商家主体并完善入驻资料。'
-    : '注册成功，请先完善推荐官主页资料。'
+  // 注册不再选身份（登录后才区分）：落地工作台的开通引导，选商家或推荐官开始
+  authBannerMessage.value = '注册成功，请先开通你的第一个身份（商家或推荐官）。'
 }
 
 async function handleSendCode(email: string, captchaCode: string): Promise<void> {

@@ -106,7 +106,7 @@ async function loginBrowser(page: Page, email: string, password: string): Promis
   // 管理员会话建立在治理台 origin 上（与用户端分离部署，cookie 相互独立）
   await page.goto(opsBaseURL + '/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: /登录后管理/ })
+  const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password)
   const loginResponse = page.waitForResponse((response) =>

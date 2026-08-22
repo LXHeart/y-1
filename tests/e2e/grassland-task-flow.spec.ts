@@ -46,7 +46,7 @@ async function activateIdentity(context: APIRequestContext, type: 'merchant' | '
 async function uiLogin(page: Page, email: string): Promise<void> {
   await page.goto('/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: /登录后管理/ })
+  const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password)
   await dialog.locator('button[type="submit"]').click()

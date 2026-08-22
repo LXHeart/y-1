@@ -5,10 +5,11 @@ import LoginModal from './LoginModal.vue'
 import type { RegisterFormValues } from '../types/auth'
 
 /**
- * 登录/注册弹窗。锁住注册流程新增的“初始身份选择”：
- * - 仅注册模式渲染，默认推荐官，可切换商家；
- * - 选择结果作为 initialIdentity 进入注册请求，由服务端创建对应身份档案。
- * 同时锁定既有注册流程（验证码/邮箱验证码字段）不被破坏。
+ * 登录/注册弹窗。注册不再区分身份（登录后才在工作台开通）：
+ * - 注册模式没有身份选择，payload 不携带 initialIdentity；
+ * - 保留既有注册流程锁定（验证码/邮箱验证码字段不被破坏）；
+ * - 密码可见切换（眼睛按钮，替代旧的「显示密码」勾选）；
+ * - hideRegister（治理台）：无模式切换、恒登录模式。
  */
 
 function stubFetch(): void {
@@ -21,9 +22,9 @@ function stubFetch(): void {
   })))
 }
 
-function mountModal() {
+function mountModal(props: Record<string, unknown> = {}) {
   return mount(LoginModal, {
-    props: { visible: true, submitting: false, error: '' },
+    props: { visible: true, submitting: false, error: '', ...props },
     global: { stubs: { Teleport: true } },
   })
 }
@@ -53,46 +54,17 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('初始身份选择渲染', () => {
-  test('登录模式下不渲染身份选择', () => {
+describe('注册不区分身份', () => {
+  test('注册模式没有身份选择卡片，文案引导登录后开通', async () => {
     const wrapper = mountModal()
+    await switchToRegister(wrapper)
+
     expect(wrapper.findAll('.login-identity-card')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('初始身份')
+    expect(wrapper.get('.login-subtitle').text()).toContain('登录后再选择开通')
   })
 
-  test('注册模式下渲染两张身份卡片，默认选中推荐官', async () => {
-    const wrapper = mountModal()
-    await switchToRegister(wrapper)
-
-    const cards = wrapper.findAll('.login-identity-card')
-    expect(cards).toHaveLength(2)
-    expect(wrapper.text()).toContain('推荐官')
-    expect(wrapper.text()).toContain('商家')
-    expect(cards[0].attributes('aria-checked')).toBe('true')
-    expect(cards[1].attributes('aria-checked')).toBe('false')
-    expect(cards[0].classes()).toContain('login-identity-card-active')
-  })
-
-  test('点击商家卡片切换选中状态', async () => {
-    const wrapper = mountModal()
-    await switchToRegister(wrapper)
-
-    const cards = wrapper.findAll('.login-identity-card')
-    await cards[1].trigger('click')
-    // 点击后重渲染，重新查询卡片引用
-    const after = wrapper.findAll('.login-identity-card')
-    expect(after[1].attributes('aria-checked')).toBe('true')
-    expect(after[0].attributes('aria-checked')).toBe('false')
-    expect(after[1].classes()).toContain('login-identity-card-active')
-
-    // 可再切回推荐官
-    await after[0].trigger('click')
-    const afterSwitchBack = wrapper.findAll('.login-identity-card')
-    expect(afterSwitchBack[0].attributes('aria-checked')).toBe('true')
-  })
-})
-
-describe('注册提交与初始身份契约', () => {
-  test('默认推荐官提交：payload 携带 initialIdentity=recommender', async () => {
+  test('提交 payload 不携带 initialIdentity', async () => {
     const wrapper = mountModal()
     await switchToRegister(wrapper)
     await fillRegisterForm(wrapper)
@@ -108,22 +80,7 @@ describe('注册提交与初始身份契约', () => {
       password: 'password123',
       confirmPassword: 'password123',
       verificationCode: '123456',
-      initialIdentity: 'recommender',
     })
-  })
-
-  test('切换商家后提交：payload 携带 initialIdentity=merchant', async () => {
-    const wrapper = mountModal()
-    await switchToRegister(wrapper)
-    await fillRegisterForm(wrapper)
-    await wrapper.findAll('.login-identity-card')[1].trigger('click')
-
-    await wrapper.find('form').trigger('submit')
-
-    const emitted = wrapper.emitted('register')
-    expect(emitted).toBeTruthy()
-    const values = emitted![0][0] as RegisterFormValues
-    expect(values.initialIdentity).toBe('merchant')
   })
 
   test('表单未填完时提交不触发注册', async () => {
@@ -134,5 +91,49 @@ describe('注册提交与初始身份契约', () => {
     await wrapper.find('form').trigger('submit')
 
     expect(wrapper.emitted('register')).toBeUndefined()
+  })
+})
+
+describe('登录与密码可见切换', () => {
+  test('登录模式只有邮箱与密码，标题为登录草场', () => {
+    const wrapper = mountModal()
+
+    expect(wrapper.get('.login-title').text()).toBe('登录草场')
+    expect(wrapper.find('#login-display-name').exists()).toBe(false)
+    expect(wrapper.find('#login-captcha').exists()).toBe(false)
+    expect(wrapper.find('#login-verification-code').exists()).toBe(false)
+  })
+
+  test('眼睛按钮切换密码明文', async () => {
+    const wrapper = mountModal()
+
+    expect(wrapper.get('#login-password').attributes('type')).toBe('password')
+    await wrapper.get('.login-eye-btn').trigger('click')
+    expect(wrapper.get('#login-password').attributes('type')).toBe('text')
+    await wrapper.get('.login-eye-btn').trigger('click')
+    expect(wrapper.get('#login-password').attributes('type')).toBe('password')
+  })
+
+  test('登录提交发出 submit 事件', async () => {
+    const wrapper = mountModal()
+    await wrapper.find('#login-email').setValue('grass@test.local')
+    await wrapper.find('#login-password').setValue('password123')
+
+    await wrapper.find('form').trigger('submit')
+
+    const emitted = wrapper.emitted('submit')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toEqual({ email: 'grass@test.local', password: 'password123' })
+  })
+})
+
+describe('hideRegister（治理台形态）', () => {
+  test('隐藏模式切换与注册入口，副标题为治理台文案', () => {
+    const wrapper = mountModal({ hideRegister: true })
+
+    expect(wrapper.find('.login-mode-switch').exists()).toBe(false)
+    expect(wrapper.find('#login-display-name').exists()).toBe(false)
+    expect(wrapper.get('.login-subtitle').text()).toContain('治理')
+    expect(wrapper.get('.login-title').text()).toBe('登录草场')
   })
 })
