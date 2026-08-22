@@ -98,14 +98,14 @@ describe('AI 内容创作中心', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text()))
-      .toEqual(['开始创作', '创作助手', '语音转写', '图片编辑', '视频工坊', '运行记录', '素材库', '模型密钥'])
+      .toEqual(['开始创作', '创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', '模型密钥'])
 
     // 除「开始创作」外每个分栏都要求登录（助手要按账号存草稿，同 runs/keys 口径）
-    for (const label of ['创作助手', '语音转写', '图片编辑', '视频工坊', '运行记录', '素材库', '模型密钥']) {
+    for (const label of ['创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', '模型密钥']) {
       await sectionTab(wrapper, label).trigger('click')
     }
 
-    expect(wrapper.emitted('request-login')).toHaveLength(7)
+    expect(wrapper.emitted('request-login')).toHaveLength(8)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)

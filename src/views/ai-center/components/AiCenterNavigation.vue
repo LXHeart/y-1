@@ -7,15 +7,16 @@
 </template>
 
 <script setup lang="ts">
-export type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'video-studio' | 'keys' | 'library'
+export type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'image-gen' | 'video-studio' | 'keys' | 'library'
 
 defineProps<{ modelValue: AiCenterSection }>()
 const emit = defineEmits<{ 'update:modelValue': [section: AiCenterSection] }>()
 const sections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
   { id: 'create', label: '开始创作' }, { id: 'assistant', label: '创作助手' },
   { id: 'speech', label: '语音转写' }, { id: 'image-studio', label: '图片编辑' },
-  { id: 'video-studio', label: '视频工坊' }, { id: 'runs', label: '运行记录' },
-  { id: 'library', label: '素材库' }, { id: 'keys', label: '模型密钥' },
+  { id: 'image-gen', label: '图片生成' }, { id: 'video-studio', label: '视频工坊' },
+  { id: 'runs', label: '运行记录' }, { id: 'library', label: '素材库' },
+  { id: 'keys', label: '模型密钥' },
 ]
 </script>
 

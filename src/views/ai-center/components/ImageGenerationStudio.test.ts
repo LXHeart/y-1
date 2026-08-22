@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import ImageGenerationView from '../../views/image-gen/ImageGenerationView.vue'
+import ImageGenerationStudio from './ImageGenerationStudio.vue'
 
 /**
- * ImageGenerationView 特征测试（重构安全网）。
+ * ImageGenerationStudio（原独立 /image-gen 视图，现并入 AI 中心「图片生成」区块）
+ * 特征测试（重构安全网）。
  *
  * 锁定：渲染骨架、尺寸选择器初始状态、主按钮可用性条件、
  * 生成请求的 URL 与 FormData 载荷、成功结果的渲染。
@@ -36,14 +37,13 @@ afterEach(() => {
 
 enableAutoUnmount(afterEach)
 
-describe('ImageGenerationView 渲染骨架与初始状态', () => {
-  test('锁定标题、提示词输入与上传入口', () => {
-    const wrapper = mount(ImageGenerationView)
+describe('ImageGenerationStudio 渲染骨架与初始状态', () => {
+  test('锁定区块定位文案、提示词输入与上传入口', () => {
+    const wrapper = mount(ImageGenerationStudio)
 
-    expect(wrapper.find('.section-title').text()).toBe('图片生成')
-    // 文案对齐素材生成定位：为图文/视频制作生成封面、配图与素材
-    expect(wrapper.find('.section-desc').text()).toContain('为图文/视频制作生成封面、配图与素材')
-    expect(wrapper.find('.section-desc').text()).toContain('AI 帮你生成图片')
+    // 定位文案对齐素材生成：为图文/视频制作生成封面、配图与素材
+    expect(wrapper.find('.studio-intro').text()).toContain('为图文/视频制作生成封面、配图与素材')
+    expect(wrapper.find('.studio-intro').text()).toContain('AI 帮你生成图片')
     // 参考素材使用权授权提示（静态、不阻断）
     const authNote = wrapper.find('.auth-note')
     expect(authNote.exists()).toBe(true)
@@ -61,7 +61,7 @@ describe('ImageGenerationView 渲染骨架与初始状态', () => {
   })
 
   test('尺寸选择器锁定：三个比例，默认 1:1', () => {
-    const wrapper = mount(ImageGenerationView)
+    const wrapper = mount(ImageGenerationStudio)
 
     const buttons = wrapper.findAll('.size-btn')
     expect(buttons.map((b) => b.text())).toEqual(['1:1', '2:3', '3:2'])
@@ -71,7 +71,7 @@ describe('ImageGenerationView 渲染骨架与初始状态', () => {
   })
 
   test('主按钮初始禁用，输入提示词后启用', async () => {
-    const wrapper = mount(ImageGenerationView)
+    const wrapper = mount(ImageGenerationStudio)
     const genBtn = wrapper.get('button.gen-btn')
 
     expect(genBtn.text()).toBe('生成图片')
@@ -82,9 +82,9 @@ describe('ImageGenerationView 渲染骨架与初始状态', () => {
   })
 })
 
-describe('ImageGenerationView 生成交互', () => {
+describe('ImageGenerationStudio 生成交互', () => {
   test('点击生成图片：POST FormData 到正确 URL，成功后渲染结果', async () => {
-    const wrapper = mount(ImageGenerationView)
+    const wrapper = mount(ImageGenerationStudio)
 
     await wrapper.find('textarea.prompt-input').setValue('一只橘色的猫坐在窗台上')
     await wrapper.findAll('.size-btn')[2].trigger('click') // 选 3:2
@@ -121,7 +121,7 @@ describe('ImageGenerationView 生成交互', () => {
         json: async () => ({ success: false, error: '图片生成额度不足' }),
       }
     }))
-    const wrapper = mount(ImageGenerationView)
+    const wrapper = mount(ImageGenerationStudio)
 
     await wrapper.find('textarea.prompt-input').setValue('测试提示词')
     await wrapper.get('button.gen-btn').trigger('click')
@@ -132,7 +132,7 @@ describe('ImageGenerationView 生成交互', () => {
   })
 
   test('挂载时不发起任何网络请求', async () => {
-    mount(ImageGenerationView)
+    mount(ImageGenerationStudio)
     await flushPromises()
 
     expect(calls).toEqual([])

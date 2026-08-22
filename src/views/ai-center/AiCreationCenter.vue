@@ -276,6 +276,7 @@
     </div>
     <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
         <ImageStudioView v-else-if="activeSection === 'image-studio'" ref="imageStudioRef" />
+        <ImageGenerationStudio v-else-if="activeSection === 'image-gen'" />
         <VideoStudioView v-else-if="activeSection === 'video-studio'" @handoff="onVideoStudioHandoff" />
     <CreationAssistantPanel
       v-else-if="activeSection === 'assistant'"
@@ -309,6 +310,7 @@ import PersonalAiBudgetCard from '../../components/PersonalAiBudgetCard.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.vue'
 import ImageStudioView from './components/ImageStudioView.vue'
+import ImageGenerationStudio from './components/ImageGenerationStudio.vue'
 import VideoStudioView from './components/VideoStudioView.vue'
 import AiCenterNavigation, { type AiCenterSection } from './components/AiCenterNavigation.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
@@ -470,6 +472,9 @@ const sectionTitle = computed(() => {
   if (activeSection.value === 'assistant') return '智能创作助手'
   if (activeSection.value === 'library') return '内容素材库'
   if (activeSection.value === 'keys') return '模型密钥'
+  if (activeSection.value === 'image-studio') return '图片编辑'
+  if (activeSection.value === 'image-gen') return '图片生成'
+  if (activeSection.value === 'video-studio') return '视频工坊'
   return '选择发布平台'
 })
 const workflow = computed(() => platformId.value && contentFormId.value && sourceType.value

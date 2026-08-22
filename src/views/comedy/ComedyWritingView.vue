@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onActivated, ref, type Ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getStyleTemplate, STYLE_TEMPLATES, type StyleTemplateId } from '../../config/style-templates'
 import type { CreationHandoff } from '../../types/ai-creation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
@@ -120,24 +120,6 @@ const durationOptions = [
   { value: 90, label: '90 秒' },
   { value: 120, label: '2 分钟' },
 ]
-
-const comedyInitialTopic = inject<Ref<string>>('comedyInitialTopic')
-
-function consumeInitialTopic(): void {
-  if (comedyInitialTopic?.value) {
-    topic.value = comedyInitialTopic.value
-    comedyInitialTopic.value = ''
-  }
-}
-
-watch(comedyInitialTopic!, (val) => {
-  if (val) {
-    topic.value = val
-    comedyInitialTopic!.value = ''
-  }
-})
-
-onActivated(consumeInitialTopic)
 
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'comedy' || handoff.workflowId !== 'comedy-script') return

@@ -1,9 +1,8 @@
 <template>
-  <section class="image-gen-view gl-field">
-    <header class="section-header">
-      <h2 class="section-title">图片生成</h2>
-      <p class="section-desc">为图文/视频制作生成封面、配图与素材：输入描述提示词，上传参考素材保持风格一致，AI 帮你生成图片</p>
-    </header>
+  <section class="image-generation-studio gl-field" aria-label="图片生成">
+    <p class="studio-intro">
+      为图文/视频制作生成封面、配图与素材：输入描述提示词，上传参考素材保持风格一致，AI 帮你生成图片。
+    </p>
 
     <div class="gen-card gl-zone">
       <div v-if="materials.length > 0" class="materials-area">
@@ -125,9 +124,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { compressImageToFile } from '../../composables/compress-image'
-import { generateImage } from '../../composables/useImageGeneration'
-import OversizedImageDialog from './components/OversizedImageDialog.vue'
+import { compressImageToFile } from '../../../composables/compress-image'
+import { generateImage } from '../../../composables/useImageGeneration'
+import OversizedImageDialog from './OversizedImageDialog.vue'
 
 interface GenerateResult {
   imageUrl: string
@@ -331,30 +330,18 @@ async function handleGenerate(): Promise<void> {
 </script>
 
 <style scoped>
-.image-gen-view {
+.image-generation-studio {
   display: grid;
   gap: var(--space-lg);
   max-width: 820px;
   margin: 0 auto;
 }
 
-.section-header {
-  display: grid;
-  gap: var(--space-xs);
-}
-
-.section-title {
-  font-size: var(--text-xl);
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--color-text);
+.studio-intro {
   margin: 0;
-}
-
-.section-desc {
   font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.7;
 }
 
 .gen-card {

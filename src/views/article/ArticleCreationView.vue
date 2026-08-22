@@ -306,7 +306,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, type Ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useArticleCreation } from '../../composables/useArticleCreation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { useArticleFormatRule } from './composables/useArticleFormatRule'
@@ -330,7 +330,6 @@ const {
   reset, cancel, setTopic, bindCreationContext, finish,
 } = useArticleCreation()
 
-const articleInitialTopic = inject<Ref<string>>('articleInitialTopic')
 const hydratedCreationRevision = ref<number | null>(null)
 
 // 抖音（图集短文案）复用现有小红书平台契约，仅前端提示词/文案层差异，API 契约不变。
@@ -370,12 +369,6 @@ watch(() => props.creationHandoff, (handoff) => {
     isDouyinMode.value = false
   } else if (handoff.platformId === 'douyin') {
     selectDouyin()
-  }
-}, { immediate: true })
-
-watch(articleInitialTopic!, (val) => {
-  if (val) {
-    setTopic(val)
   }
 }, { immediate: true })
 
