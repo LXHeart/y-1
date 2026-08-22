@@ -340,7 +340,7 @@ function checksOf(row: OpsPendingVerification) {
 </script>
 
 <template>
-  <section class="ops">
+  <section class="ops gl-field">
     <header class="ops-head">
       <div>
         <h2 class="ops-title">运营处置台</h2>
@@ -701,18 +701,18 @@ function checksOf(row: OpsPendingVerification) {
 <style scoped>
 .ops { display: flex; flex-direction: column; gap: var(--space-md); }
 .ops-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.ops-title { margin: 0; font-size: 17px; }
-.ops-desc { margin: 4px 0 0; font-size: 12px; opacity: 0.62; }
+.ops-title { margin: 0; font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em; }
+.ops-desc { margin: 4px 0 0; font-size: var(--text-xs); color: var(--color-text-muted); }
 .ops-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--color-border); }
 .ops-tab { padding: 7px 14px; border: none; background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; opacity: 0.65; border-bottom: 2px solid transparent; }
-.ops-tab-on { opacity: 1; border-bottom-color: var(--color-accent, currentColor); }
+.ops-tab-on { opacity: 1; color: var(--color-accent-2); font-weight: 600; border-bottom-color: var(--color-accent); }
 .ops-panel { display: flex; flex-direction: column; gap: var(--space-sm); }
 /* 筛选行控件统一高度：主按钮与次要按钮/下拉不得出现 12px 级高度差（视觉审查 ⑤） */
 .ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; font-size: 12px; }
 .ops-filters select, .ops-filters button { min-height: 32px; }
 .ops-filters label { display: flex; align-items: center; gap: 6px; opacity: 0.8; }
 .ops-check { cursor: pointer; }
-.ops-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.ops-alert { margin: 0; padding: 6px var(--space-sm); border-radius: var(--radius-sm); font-size: var(--text-sm); }
 .ops-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .ops-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .ops-hint { margin: 0; font-size: 12px; opacity: 0.62; }
@@ -728,7 +728,7 @@ function checksOf(row: OpsPendingVerification) {
 .ops-st-approved, .ops-st-succeeded, .ops-st-replayed { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 .ops-st-rejected, .ops-st-failed { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
 .ops-time { font-size: 11px; opacity: 0.6; white-space: nowrap; }
-.ops-item { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: 8px; }
+.ops-item { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--surface-furrow); }
 .ops-item-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
 .ops-pos { font-size: 11px; opacity: 0.65; }
 .ops-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0; }
@@ -741,7 +741,7 @@ function checksOf(row: OpsPendingVerification) {
 .ops-err-summary details { margin-top: 4px; }
 .ops-err-summary summary { cursor: pointer; opacity: 0.8; }
 .ops-err-summary pre { margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; opacity: 0.85; }
-.ops-payload { margin: 0; padding: 8px; border-radius: 6px; background: var(--color-surface-strong); font-size: 11px; max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.ops-payload { margin: 0; padding: var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-muted); font-family: var(--font-mono); font-size: var(--text-xs); max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 .ops-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ops-actions input { flex: 1; min-width: 160px; }
 .ops-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -749,12 +749,12 @@ function checksOf(row: OpsPendingVerification) {
 .ops-check-type { flex: 0 0 120px; opacity: 0.7; }
 .ops-check-status { flex: 0 0 90px; }
 .ops-check-detail { flex: 1; opacity: 0.7; word-break: break-all; }
-.ops-drawer-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.42); display: flex; justify-content: flex-end; z-index: 40; }
+.ops-drawer-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--color-bg) 55%, transparent); backdrop-filter: blur(4px); display: flex; justify-content: flex-end; z-index: 40; }
 .ops-drawer { width: min(560px, 94vw); height: 100%; overflow-y: auto; padding: 16px; background: var(--color-surface); border-left: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 12px; }
 .ops-drawer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .ops-drawer-head h3 { margin: 0; font-size: 15px; }
-.ops-resolution { margin: 0; padding: 7px 10px; border-radius: 6px; background: var(--color-surface-strong); font-size: 12px; }
-.ops-flow { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.ops-resolution { margin: 0; padding: 6px var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-muted); font-size: var(--text-xs); }
+.ops-flow { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .ops-sub { margin: 4px 0 0; font-size: 13px; }
 .ops-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ops-log li { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
@@ -766,8 +766,8 @@ function checksOf(row: OpsPendingVerification) {
 .ops-tl-actor { opacity: 0.68; }
 .ops-tl-body { display: flex; gap: 10px; font-size: 11px; opacity: 0.7; flex-wrap: wrap; }
 .ops-tl-transition { font-family: monospace; }
-input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+input, select { padding: 6px var(--space-sm); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm); }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .ops-danger { color: var(--color-danger); }

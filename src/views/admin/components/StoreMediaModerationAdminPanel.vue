@@ -120,17 +120,17 @@ onMounted(() => void loadQueue())
 .panel-toolbar p { margin-top: 4px; color: var(--color-text-muted); font-size: 0.82rem; }
 .queue-controls { display: flex; align-items: end; gap: 8px; }
 .queue-controls label { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 0.78rem; }
-.queue-controls select { min-height: 34px; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); }
-.refresh-btn, .approve-btn, .reject-btn { min-height: 32px; padding: 0 12px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; }
+.queue-controls select { min-height: 34px; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.refresh-btn, .approve-btn, .reject-btn { min-height: 32px; padding: 0 12px; border-radius: var(--radius-sm); font-size: 0.78rem; cursor: pointer; }
 .refresh-btn { border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); }
 .refresh-btn:disabled, .approve-btn:disabled, .reject-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.approve-btn { border: 1px solid rgba(22, 163, 74, 0.35); background: rgba(22, 163, 74, 0.08); color: #15803d; }
-.reject-btn { border: 1px solid rgba(220, 38, 38, 0.3); background: rgba(220, 38, 38, 0.07); color: #b91c1c; }
+.approve-btn { border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent); background: color-mix(in srgb, var(--color-success) 8%, transparent); color: var(--color-success); }
+.reject-btn { border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 7%, transparent); color: var(--color-danger); }
 .review-actions { display: flex; gap: 6px; }
-.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--surface-muted); white-space: nowrap; }
+.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--surface-muted); white-space: nowrap; }
 .type-tag.status-review { border-color: #b45309; color: #b45309; }
-.type-tag.status-blocked { border-color: #b91c1c; color: #b91c1c; }
-.type-tag.status-pass { border-color: #15803d; color: #15803d; }
+.type-tag.status-blocked { border-color: var(--color-danger); color: var(--color-danger); }
+.type-tag.status-pass { border-color: var(--color-success); color: var(--color-success); }
 .loading-state { padding: var(--space-xl); text-align: center; color: var(--color-text-muted); font-size: 0.9rem; }
 .error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: rgba(239, 107, 107, 0.1); border: 1px solid rgba(239, 107, 107, 0.2); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
 .td-time { white-space: nowrap; color: var(--color-text-muted); }
@@ -150,6 +150,6 @@ onMounted(() => void loadQueue())
 .review-trail dt { color: var(--color-text-muted); }
 .review-trail dd { margin: 0; overflow-wrap: anywhere; }
 .media-body label { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 0.78rem; }
-.media-body input { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); box-sizing: border-box; }
+.media-body input { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); box-sizing: border-box; }
 @media (max-width: 640px) { .moderation-item { grid-template-columns: 96px minmax(0, 1fr); } }
 </style>

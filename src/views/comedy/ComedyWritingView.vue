@@ -1,5 +1,5 @@
 <template>
-  <section class="comedy-view">
+  <section class="comedy-view gl-field">
     <header class="section-header">
       <h2 class="section-title">脱口秀创作</h2>
       <p class="section-desc">输入一个题材，选择表达风格与时长，AI 帮你生成脱口秀文稿</p>
@@ -51,7 +51,7 @@
           </div>
         </div>
         <button
-          class="gen-btn"
+          class="gen-btn gl-btn-primary"
           :class="{ 'gen-btn-loading': generating }"
           type="button"
           :disabled="!canGenerate"
@@ -359,11 +359,11 @@ async function handleGenerate(): Promise<void> {
 .comedy-card {
   display: grid;
   gap: var(--space-sm);
-  padding: var(--space-lg);
-  background: var(--gradient-surface);
+  background: var(--surface-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  padding: var(--space-md);
 }
 
 .topic-input {
@@ -423,12 +423,12 @@ async function handleGenerate(): Promise<void> {
 .dur-btn {
   padding: 3px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: 999px;
   background: transparent;
   color: var(--color-text-muted);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .dur-btn:hover:not(:disabled) {
@@ -437,9 +437,10 @@ async function handleGenerate(): Promise<void> {
 }
 
 .dur-btn-active {
-  background: var(--color-surface-highlight);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: var(--color-border-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
+  font-weight: 600;
 }
 
 .dur-btn:disabled {
@@ -456,8 +457,6 @@ async function handleGenerate(): Promise<void> {
   padding: 0 24px;
   border: none;
   border-radius: var(--radius-sm);
-  background: var(--gradient-accent);
-  color: #fff;
   font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
@@ -484,7 +483,7 @@ async function handleGenerate(): Promise<void> {
   height: 14px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: #fff;
-  border-radius: 50%;
+  border-radius: 999px;
   animation: spin 0.6s linear infinite;
 }
 
@@ -495,8 +494,8 @@ async function handleGenerate(): Promise<void> {
 .error-msg {
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  background: rgba(239, 107, 107, 0.1);
-  border: 1px solid rgba(239, 107, 107, 0.2);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
   font-size: 0.86rem;
   margin: 0;
@@ -528,12 +527,12 @@ async function handleGenerate(): Promise<void> {
 .copy-btn {
   padding: 4px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
-  font-size: 0.8rem;
+  color: var(--color-accent-2);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .copy-btn:hover {

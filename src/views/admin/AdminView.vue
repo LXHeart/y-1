@@ -1,5 +1,5 @@
 <template>
-  <section class="admin-view">
+  <section class="admin-view gl-field">
     <header class="section-header">
       <h2 class="section-title">平台管理</h2>
       <p class="section-desc">处理用户、审核、等级权益、信任准入与平台配置</p>
@@ -748,9 +748,9 @@ function formatBytes(value: number | null): string {
   justify-content: center;
   margin-left: 4px;
   padding: 0 5px;
-  border-radius: 10px;
+  border-radius: 999px;
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-on-accent);
   font-size: 0.72rem;
 }
 
@@ -775,8 +775,8 @@ function formatBytes(value: number | null): string {
 /* 财务对账的组织筛选行（类名与运营处置台同名，但 scoped 不跨组件，须本地定义） */
 .ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .ops-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
-.ops-filters input { min-height: 32px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; }
-.search-toolbar input { min-width: min(320px, 64vw); min-height: 34px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); }
+.ops-filters input { min-height: 32px; padding: 6px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.search-toolbar input { min-width: min(320px, 64vw); min-height: 34px; padding: 6px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 
 .panel-toolbar h3 {
   font-size: 1rem;
@@ -792,9 +792,9 @@ function formatBytes(value: number | null): string {
 .approve-btn,
 .reject-btn {
   min-height: 32px;
-  padding: 0 12px;
-  border-radius: 6px;
-  font-size: 0.78rem;
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -819,7 +819,7 @@ function formatBytes(value: number | null): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.76rem;
 }
 
@@ -827,7 +827,7 @@ function formatBytes(value: number | null): string {
   display: inline-block;
   padding: 3px 7px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: 999px;
   background: var(--surface-muted);
   white-space: nowrap;
 }
@@ -860,14 +860,15 @@ function formatBytes(value: number | null): string {
 }
 
 .section-title {
-  font-size: 1.3rem;
-  font-weight: 700;
+  font-size: var(--text-xl);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   color: var(--color-text);
   margin: 0;
 }
 
 .section-desc {
-  font-size: 0.88rem;
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   margin: 0;
 }
@@ -890,8 +891,8 @@ function formatBytes(value: number | null): string {
 }
 
 .table-card {
-  padding: var(--space-lg);
-  background: var(--gradient-surface);
+  padding: var(--space-md);
+  background: var(--surface-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -946,7 +947,7 @@ function formatBytes(value: number | null): string {
 .role-tag {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -965,7 +966,7 @@ function formatBytes(value: number | null): string {
 .adjust-btn {
   padding: 4px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-accent);
   font-size: 0.78rem;
@@ -985,15 +986,15 @@ function formatBytes(value: number | null): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-overlay);
   backdrop-filter: blur(4px);
 }
 
 .modal-card {
   width: min(440px, 92vw);
-  background: var(--color-surface, #fff);
+  background: var(--color-surface);
   border-radius: var(--radius-lg, 12px);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-elevated);
 }
 
 .review-modal {
@@ -1024,14 +1025,14 @@ function formatBytes(value: number | null): string {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
 }
 
 .modal-close:hover {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+  background: var(--surface-hover);
 }
 
 .modal-body {
@@ -1063,7 +1064,7 @@ function formatBytes(value: number | null): string {
   height: 40px;
   padding: 0 12px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-muted);
   color: var(--color-text);
   font-size: 0.88rem;
@@ -1172,7 +1173,7 @@ function formatBytes(value: number | null): string {
   min-width: 56px;
   height: 32px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-accent);
   cursor: pointer;
@@ -1187,7 +1188,7 @@ function formatBytes(value: number | null): string {
 .btn-cancel {
   padding: 8px 16px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 0.86rem;
@@ -1197,9 +1198,9 @@ function formatBytes(value: number | null): string {
 .btn-confirm {
   padding: 8px 20px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--gradient-accent);
-  color: #fff;
+  color: var(--color-on-accent);
   font-size: 0.86rem;
   font-weight: 600;
   cursor: pointer;
