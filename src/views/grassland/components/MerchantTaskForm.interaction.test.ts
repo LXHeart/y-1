@@ -26,12 +26,30 @@ function mountForm(form: typeof baseForm) {
 }
 
 describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #23 R6）', () => {
-  test('内容形式是下拉（受控值集），不再是自由文本', () => {
+  test('内容形式是下拉（受控值集）：无「未指定」，平台未定时给全三类', () => {
     const wrapper = mountForm({ ...baseForm })
     const select = wrapper.findAll('select').find((s) => s.text().includes('图文种草'))!
     const options = select.findAll('option').map((o) => o.element.value)
-    // PRD §2.2 内容形式三类：图文种草/视频种草/点赞互动（article 不在任务分类里）
-    expect(options).toEqual(['', 'image', 'video', 'interaction'])
+    // PRD §2.2 三类 + 用户决策：去掉「未指定」；平台未指定时不裁剪
+    expect(options).toEqual(['image', 'video', 'interaction'])
+  })
+
+  test('内容形式随平台能力裁剪并自动纠正（PRD §4.2 平台×形式）', () => {
+    const optionsOf = (form: Partial<typeof baseForm>) =>
+      mountForm({ ...baseForm, ...form })
+        .get('select[name="task-content-form"]')
+        .findAll('option').map((o) => o.element.value)
+
+    // 公众号仅图文；当前值不被支持时挂载即纠正回 image
+    expect(optionsOf({ platform: 'wechat-official' })).toEqual(['image', 'interaction'])
+    const correction = mountForm({ ...baseForm, platform: 'wechat-official', contentForm: 'video' })
+    expect(correction.emitted('update:field')?.some((a) => a[0] === 'contentForm' && a[1] === 'image'))
+      .toBe(true)
+
+    // B 站仅视频
+    expect(optionsOf({ platform: 'bilibili' })).toEqual(['video', 'interaction'])
+    // 小红书图文视频双能力
+    expect(optionsOf({ platform: 'xiaohongshu' })).toEqual(['image', 'video', 'interaction'])
   })
 
   test('非互动任务不渲染互动字段；选「点赞互动」后展示目标链接与动作类型', async () => {

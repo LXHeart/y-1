@@ -15,12 +15,9 @@
           <option v-for="p in TASK_PLATFORMS" :key="p.id" :value="p.id">{{ p.label }}</option>
         </select>
       </label>
-      <label>内容形式
+      <label>内容形式（随所选平台）
         <select name="task-content-form" :value="form.contentForm" @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)">
-          <option value="">未指定</option>
-          <option value="image">图文种草</option>
-          <option value="video">视频种草</option>
-          <option value="interaction">点赞互动</option>
+          <option v-for="opt in contentFormOptions" :key="opt" :value="opt">{{ CONTENT_FORM_LABELS[opt] }}</option>
         </select>
       </label>
     </div>
@@ -112,7 +109,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
-import { AI_PLATFORM_DEFINITIONS } from '../../../config/ai-platform-capabilities'
+import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 import type { Store } from '../../../types/grassland'
 import { formatYuan, yuanToCents } from '../../../lib/money'
 import { emptyCommissionLadderForm } from './commission-ladder'
@@ -168,6 +165,41 @@ const TASK_PLATFORMS = AI_PLATFORM_DEFINITIONS.map((platform) => ({
   // PRD §2.2 的平台名（B 站在 AI 中心表里叫 Bilibili，任务表单按 PRD 口径显示）
   label: platform.id === 'bilibili' ? 'B站' : platform.label,
 }))
+
+/** PRD §2.2 任务内容形式三类（article 不在任务分类）。 */
+const CONTENT_FORM_LABELS: Readonly<Record<string, string>> = {
+  image: '图文种草',
+  video: '视频种草',
+  interaction: '点赞互动',
+}
+
+/**
+ * 内容形式随平台能力裁剪（PRD §4.2 平台×形式表，与 AI 中心同源）：
+ * 图文能力=graphic/image-text，视频能力=video/video-text；点赞互动无需创作内容，
+ * 所有平台可用。平台未指定或为存量自由文本（无法归一）时不裁剪。
+ */
+const contentFormOptions = computed<string[]>(() => {
+  const platformId = normalizePlatformId(props.form.platform || '')
+  const forms = platformId ? getPlatform(platformId)?.forms : null
+  if (!forms) return ['image', 'video', 'interaction']
+  const hasGraphic = forms.some((form) => form.id === 'graphic' || form.id === 'image-text')
+  const hasVideo = forms.some((form) => form.id === 'video' || form.id === 'video-text')
+  return [hasGraphic ? 'image' : null, hasVideo ? 'video' : null, 'interaction']
+    .filter((form): form is string => form !== null)
+})
+
+// 换平台后当前形式可能不再被支持（如视频种草 → 公众号）：自动落回首个可用形式。
+// 初值纠正放 onMounted：setup 期 emit 尚未初始化，immediate watcher 会踩 TDZ。
+onMounted(() => {
+  if (!contentFormOptions.value.includes(props.form.contentForm)) {
+    updateField('contentForm', contentFormOptions.value[0])
+  }
+})
+watch([() => props.form.platform, () => props.form.contentForm], () => {
+  if (!contentFormOptions.value.includes(props.form.contentForm)) {
+    updateField('contentForm', contentFormOptions.value[0])
+  }
+})
 
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
 const bountyActive = computed(() => props.form.bountyYuan > 0)
