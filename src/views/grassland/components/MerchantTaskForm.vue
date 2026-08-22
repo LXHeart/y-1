@@ -61,10 +61,22 @@
       <label>最早发布时间 <input :value="form.publishStartAt" name="task-publish-start" autocomplete="off" type="datetime-local" @input="updateField('publishStartAt', ($event.target as HTMLInputElement).value)" /></label>
       <label>最晚发布时间 <input :value="form.publishEndAt" name="task-publish-end" autocomplete="off" type="datetime-local" @input="updateField('publishEndAt', ($event.target as HTMLInputElement).value)" /></label>
     </div>
+    <div class="gl-row" role="radiogroup" aria-label="付费方式（三选一）">
+      <span class="payment-mode-label">付费方式</span>
+      <label class="payment-mode-option">
+        <input type="radio" name="task-payment-mode" value="commission" :checked="form.paymentMode === 'commission'" @change="switchPaymentMode('commission')" />
+        任务量佣金（达标即给 / 阶梯）
+      </label>
+      <label class="payment-mode-option">
+        <input type="radio" name="task-payment-mode" value="freebie" :checked="form.paymentMode === 'freebie'" @change="switchPaymentMode('freebie')" />
+        霸王餐 / 实物兑换
+      </label>
+      <span class="gl-hint">三种模式三选一，不可组合</span>
+    </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>赏金 ¥<input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>霸王餐押金 ¥<input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" :disabled="ladderEnabled || !canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label v-if="form.paymentMode === 'commission'">赏金 ¥<input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label v-if="form.paymentMode === 'freebie'">霸王餐押金 ¥<input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>报名截止 <input :value="form.applicationDeadline" name="task-deadline" autocomplete="off" type="datetime-local" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
       <label>最低等级
         <select name="task-min-level" :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
@@ -81,11 +93,10 @@
     <p v-if="bountyActive || freebieActive" class="gl-hint">
       {{ fundingHint }}
     </p>
-    <div class="gl-row commission-ladder-toggle-row">
+    <div v-if="form.paymentMode === 'commission'" class="gl-row commission-ladder-toggle-row">
       <label>阶梯佣金
-        <input type="checkbox" aria-label="启用阶梯佣金" name="commission-ladder-enabled" :checked="ladderForm.enabled" :disabled="freebieActive" @change="patchCommissionLadder({ enabled: ($event.target as HTMLInputElement).checked })" />
+        <input type="checkbox" aria-label="启用阶梯佣金" name="commission-ladder-enabled" :checked="ladderForm.enabled" @change="patchCommissionLadder({ enabled: ($event.target as HTMLInputElement).checked })" />
       </label>
-      <span v-if="freebieActive" class="gl-hint">霸王餐押金启用中，不能同时开启阶梯佣金</span>
     </div>
     <div v-if="ladderForm.enabled" class="commission-ladder-editor">
       <label>指标标识
@@ -110,7 +121,7 @@
       <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
       <button v-if="editingDraft || revisingTask" type="button" :disabled="loading" @click="confirmResetForm">取消编辑</button>
     </div>
-    <p class="gl-hint">赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。霸王餐押金可与赏金<b>组合</b>（任务书 #46）：押金由推荐官报名被接受时从钱包预付进平台托管，达标（核实+确认）全额返还推荐官，未达标补偿商家；赏金腿照常由商家出资、结算付推荐官。阶梯佣金仍不可与押金同设。</p>
+    <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
   </article>
 </template>
 
@@ -133,6 +144,8 @@ interface TaskFormData {
   maxSlots: number
   bountyYuan: number
   freebieDepositYuan: number
+  /** 付费方式三选一：commission=任务量佣金，freebie=霸王餐/实物兑换。 */
+  paymentMode: 'commission' | 'freebie'
   applicationDeadline: string
   minRecommenderLevel: number
   autoAcceptMinLevel: number | null
@@ -217,15 +230,23 @@ const freebieActive = computed(() => props.form.freebieDepositYuan > 0)
 const ladderForm = computed<CommissionLadderFormData>(
   () => props.form.commissionLadder ?? emptyCommissionLadderForm(),
 )
-const ladderEnabled = computed(() => ladderForm.value.enabled)
 const fundingHint = computed(() => {
-  if (bountyActive.value && freebieActive.value) {
-    return `组合模式：赏金 ${formatYuan(yuanToCents(props.form.bountyYuan))} 由商家出资托管，押金 ${formatYuan(yuanToCents(props.form.freebieDepositYuan))} 由推荐官预付、达标全额返还（两腿独立结算）`
-  }
   return freebieActive.value
-    ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ${formatYuan(yuanToCents(props.form.freebieDepositYuan))}，达标全额返还`
-    : '赏金模式：商家出资托管，结算时打给推荐官；可与霸王餐押金组合（押金退推荐官、赏金付推荐官）'
+    ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ${formatYuan(yuanToCents(props.form.freebieDepositYuan))}，达标（核实+商家确认）全额返还，未达标补偿商家`
+    : '赏金模式：商家出资托管，推荐官达标后结算（可切换为阶梯佣金按档计酬）'
 })
+
+/** 付费方式三选一：切换即清另一模式的资金字段（押金↔赏金/阶梯互斥，组合无法成立）。 */
+function switchPaymentMode(mode: 'commission' | 'freebie'): void {
+  if (props.form.paymentMode === mode) return
+  updateField('paymentMode', mode)
+  if (mode === 'freebie') {
+    updateField('bountyYuan', 0)
+    if (ladderForm.value.enabled) patchCommissionLadder({ enabled: false })
+  } else {
+    updateField('freebieDepositYuan', 0)
+  }
+}
 
 const emit = defineEmits<{
   'update:field': [field: string, value: string | number | null]
@@ -306,6 +327,8 @@ function removeCommissionTier(index: number): void {
 </script>
 
 <style scoped>
+.payment-mode-label { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
+.payment-mode-option { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer; }
 h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
 
 .task-requirement-grid {

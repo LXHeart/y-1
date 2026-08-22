@@ -10,7 +10,7 @@ import type { CommissionLadderFormData } from './commission-ladder'
 const baseForm = {
   title: '阶梯任务', description: '', platform: '', contentForm: '', maxSlots: 1,
   interactionTargetUrl: '', interactionActionType: 'like',
-  bountyYuan: 100, freebieDepositYuan: 0, applicationDeadline: '', minRecommenderLevel: 1,
+  bountyYuan: 100, freebieDepositYuan: 0, paymentMode: 'commission' as 'commission' | 'freebie', applicationDeadline: '', minRecommenderLevel: 1,
   autoAcceptMinLevel: null as number | null, productServiceInfo: '', mustInclude: '',
   forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '',
   evidenceRequirements: '',
@@ -126,19 +126,15 @@ describe('MerchantTaskForm 阶梯佣金编辑器（任务书 #25）', () => {
     expect(capped.find('[aria-label="添加档位"]').exists()).toBe(false)
   })
 
-  test('霸王餐押金 >0 禁用阶梯开关；阶梯启用禁用霸王餐押金输入', () => {
-    const freebieWrapper = mountForm({ bountyYuan: 0, freebieDepositYuan: 66 })
-    expect(freebieWrapper.get('[aria-label="启用阶梯佣金"]').attributes('disabled')).toBeDefined()
-
-    const ladderWrapper = mountForm({ bountyYuan: 0, commissionLadder: enabledLadderForm() })
-    const depositLabel = ladderWrapper.findAll('label').find((l) => l.text().includes('霸王餐押金'))!
-    expect(depositLabel.find('input').attributes('disabled')).toBeDefined()
+  test('霸王餐模式下不渲染阶梯开关与赏金输入（三选一，字段级互斥）', () => {
+    const wrapper = mountForm({ paymentMode: 'freebie', freebieDepositYuan: 66 })
+    expect(wrapper.find('[aria-label="启用阶梯佣金"]').exists()).toBe(false)
+    expect(wrapper.findAll('label').some((l) => l.text().includes('赏金'))).toBe(false)
   })
 
-  test('两者都未启用时互不禁用（回归 #22 XOR 保持）', () => {
-    const wrapper = mountForm({ bountyYuan: 0 })
+  test('佣金模式下阶梯开关与赏金输入共存可用（同属任务量佣金模式）', () => {
+    const wrapper = mountForm({})
     expect(wrapper.get('[aria-label="启用阶梯佣金"]').attributes('disabled')).toBeUndefined()
-    const depositLabel = wrapper.findAll('label').find((l) => l.text().includes('霸王餐押金'))!
-    expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
+    expect(wrapper.findAll('label').some((l) => l.text().includes('赏金'))).toBe(true)
   })
 })

@@ -32,6 +32,8 @@ export function useWorkbenchTaskDrafts(
   /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
   const taskForm = ref({
     title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
+    /** 付费方式三选一（PRD §2.2）：commission=任务量佣金（达标即给/阶梯），freebie=霸王餐/实物兑换。 */
+    paymentMode: 'commission' as 'commission' | 'freebie',
     applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null as number | null,
     productServiceInfo: '', mustInclude: '', forbiddenContent: '',
     publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
@@ -45,8 +47,11 @@ export function useWorkbenchTaskDrafts(
 
   async function publishTask(): Promise<void> {
     if (!activeOrgId.value || !taskForm.value.title.trim()) return
-    const bountyCents = yuanToCents(taskForm.value.bountyYuan)
-    const freebieDepositCents = yuanToCents(taskForm.value.freebieDepositYuan)
+    // 付费方式三选一：未选中模式的资金字段一律归零（表单互斥切换 + payload 双保险）
+    const bountyCents = taskForm.value.paymentMode === 'freebie'
+      ? 0 : yuanToCents(taskForm.value.bountyYuan)
+    const freebieDepositCents = taskForm.value.paymentMode === 'commission'
+      ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
     // 任务书 #25：validate-then-build——本地校验失败 setNotice 后不发请求。
     if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return
     const created = await grassland.createTask({
@@ -90,7 +95,9 @@ export function useWorkbenchTaskDrafts(
 
   function taskRequirements() {
     // 任务书 #25：禁用阶梯时省略 commissionLadder 键；启用时按阈值升序发送。
-    const commissionLadder = buildCommissionLadderPayload(taskForm.value.commissionLadder)
+    // 付费方式三选一：霸王餐模式下阶梯一律不带（即使表单残留 enabled）。
+    const commissionLadder = taskForm.value.paymentMode === 'commission'
+      ? buildCommissionLadderPayload(taskForm.value.commissionLadder) : null
     return {
       productServiceInfo: taskForm.value.productServiceInfo.trim() || undefined,
       mustInclude: lines(taskForm.value.mustInclude),
@@ -139,7 +146,7 @@ export function useWorkbenchTaskDrafts(
   }
 
   function resetTaskForm(): void {
-    taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
+    taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0, paymentMode: 'commission',
       applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
       forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
       commissionLadder: emptyCommissionLadderForm() }
@@ -150,8 +157,10 @@ export function useWorkbenchTaskDrafts(
   /** 存草稿 / 保存修订：revisingTask → POST /revise，editingDraft → PUT 草稿，否则 POST 新建草稿。 */
   async function saveDraft(): Promise<void> {
     if (!activeOrgId.value || !taskForm.value.title.trim()) return
-    const bountyCents = yuanToCents(taskForm.value.bountyYuan)
-    const freebieDepositCents = yuanToCents(taskForm.value.freebieDepositYuan)
+    const bountyCents = taskForm.value.paymentMode === 'freebie'
+      ? 0 : yuanToCents(taskForm.value.bountyYuan)
+    const freebieDepositCents = taskForm.value.paymentMode === 'commission'
+      ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
     // 任务书 #25：三条提交链路（revise / update / createDraft）共用同一阶梯校验入口。
     if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return
     const revising = revisingTask.value
@@ -249,6 +258,7 @@ export function useWorkbenchTaskDrafts(
       maxSlots: task.maxSlots ?? 1,
       bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
       freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
+      paymentMode: (task.freebieDepositCents && task.freebieDepositCents > 0 ? 'freebie' : 'commission') as 'commission' | 'freebie',
       applicationDeadline: isoToLocalInput(task.applicationDeadline),
       minRecommenderLevel: task.minRecommenderLevel ?? 1,
       autoAcceptMinLevel: task.autoAcceptMinLevel ?? null,

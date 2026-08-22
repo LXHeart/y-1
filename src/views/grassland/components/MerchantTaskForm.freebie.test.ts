@@ -12,7 +12,8 @@ import type { Task } from '../../../types/grassland'
 const baseForm = {
   title: '霸王餐任务', description: '', platform: '', contentForm: '', maxSlots: 1,
   interactionTargetUrl: '', interactionActionType: 'like',
-  bountyYuan: 0, freebieDepositYuan: 0, applicationDeadline: '', minRecommenderLevel: 1,
+  bountyYuan: 0, freebieDepositYuan: 0, paymentMode: 'commission' as 'commission' | 'freebie',
+  applicationDeadline: '', minRecommenderLevel: 1,
   autoAcceptMinLevel: null as number | null, productServiceInfo: '', mustInclude: '',
   forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '',
   evidenceRequirements: '',
@@ -32,51 +33,46 @@ function bountyInput(wrapper: ReturnType<typeof mountForm>) {
     && i.attributes('type') === 'number' && i.element.closest('label')?.textContent?.includes('赏金'))!
 }
 
-describe('MerchantTaskForm 资金组合交互（任务书 #46：赏金与押金可同设）', () => {
-  test('押金 >0 时赏金输入仍可编辑（组合放开），显示押金模式提示', () => {
-    const wrapper = mountForm({ ...baseForm, freebieDepositYuan: 100 })
-    const labels = wrapper.findAll('label')
-    const bountyLabel = labels.find((l) => l.text().includes('赏金'))!
-    const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
-
-    expect(bountyLabel.find('input').attributes('disabled')).toBeUndefined()
-    expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.text()).toContain('霸王餐押金模式')
-    expect(wrapper.text()).toContain('达标全额返还')
-  })
-
-  test('赏金 >0 时押金输入仍可编辑，显示赏金模式提示（含可组合说明）', () => {
-    const wrapper = mountForm({ ...baseForm, bountyYuan: 50 })
-    const labels = wrapper.findAll('label')
-    const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
-
-    expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.text()).toContain('赏金模式')
-    expect(wrapper.text()).toContain('可与霸王餐押金组合')
-  })
-
-  test('两者都 >0 时显示组合模式提示（两腿独立结算）', () => {
-    const wrapper = mountForm({ ...baseForm, bountyYuan: 50, freebieDepositYuan: 100 })
-    const labels = wrapper.findAll('label')
-    const bountyLabel = labels.find((l) => l.text().includes('赏金'))!
-    const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
-
-    expect(bountyLabel.find('input').attributes('disabled')).toBeUndefined()
-    expect(depositLabel.find('input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.text()).toContain('组合模式')
-    expect(wrapper.text()).toContain('两腿独立结算')
-  })
-
-  test('两者都为 0 时无资金模式提示', () => {
+describe('MerchantTaskForm 付费方式三选一（PRD §2.2，推翻 #46 组合）', () => {
+  test('佣金模式：显示赏金与阶梯开关，不显示押金输入', () => {
     const wrapper = mountForm({ ...baseForm })
+    expect(wrapper.text()).toContain('赏金')
+    expect(wrapper.text()).toContain('阶梯佣金')
+    expect(wrapper.findAll('label').some((l) => l.text().includes('霸王餐押金'))).toBe(false)
+    // 无资金时无模式提示
     expect(wrapper.text()).not.toContain('霸王餐押金模式')
     void bountyInput
   })
 
+  test('霸王餐模式：显示押金输入并隐藏赏金/阶梯，提示达标返还', () => {
+    const wrapper = mountForm({ ...baseForm, paymentMode: 'freebie', freebieDepositYuan: 100 })
+    expect(wrapper.findAll('label').some((l) => l.text().includes('霸王餐押金'))).toBe(true)
+    expect(wrapper.findAll('label').some((l) => l.text().includes('赏金'))).toBe(false)
+    expect(wrapper.find('[aria-label="启用阶梯佣金"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('霸王餐押金模式')
+    expect(wrapper.text()).toContain('达标（核实+商家确认）全额返还')
+  })
+
+  test('切到霸王餐即清零赏金并关阶梯；切回佣金即清零押金', async () => {
+    const wrapper = mountForm({ ...baseForm, bountyYuan: 50 })
+    const radios = wrapper.findAll('input[name="task-payment-mode"]')
+
+    await radios[1].trigger('change')
+    const events = wrapper.emitted('update:field') ?? []
+    expect(events.some((args) => args[0] === 'paymentMode' && args[1] === 'freebie')).toBe(true)
+    expect(events.some((args) => args[0] === 'bountyYuan' && args[1] === 0)).toBe(true)
+
+    // 切回佣金：押金被清零（测试 props 静态、emit 不回流，切回腿用霸王餐表单另挂验证）
+    const back = mountForm({ ...baseForm, paymentMode: 'freebie', freebieDepositYuan: 80 })
+    await back.findAll('input[name="task-payment-mode"]')[0].trigger('change')
+    const events2 = back.emitted('update:field') ?? []
+    expect(events2.some((args) => args[0] === 'paymentMode' && args[1] === 'commission')).toBe(true)
+    expect(events2.some((args) => args[0] === 'freebieDepositYuan' && args[1] === 0)).toBe(true)
+  })
+
   test('押金输入变更发出 update:field 事件（元值，父组件负责换算 cents）', async () => {
-    const wrapper = mountForm({ ...baseForm })
-    const labels = wrapper.findAll('label')
-    const depositLabel = labels.find((l) => l.text().includes('霸王餐押金'))!
+    const wrapper = mountForm({ ...baseForm, paymentMode: 'freebie' })
+    const depositLabel = wrapper.findAll('label').find((l) => l.text().includes('霸王餐押金'))!
     await depositLabel.find('input').setValue('66')
     const events = wrapper.emitted('update:field') ?? []
     expect(events.some((args) => args[0] === 'freebieDepositYuan' && args[1] === 66)).toBe(true)
