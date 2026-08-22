@@ -44,7 +44,7 @@
       <div v-if="profile.averageSpendCents != null || profile.priceRange" class="gl-profile-row">
         <dt>消费参考</dt>
         <dd>
-          <template v-if="profile.averageSpendCents != null">人均 ¥{{ (profile.averageSpendCents / 100).toFixed(2) }}</template>
+          <template v-if="profile.averageSpendCents != null">人均 {{ formatYuan(profile.averageSpendCents) }}</template>
           <template v-if="profile.averageSpendCents != null && profile.priceRange"> · </template>
           <template v-if="profile.priceRange">{{ profile.priceRange }}</template>
         </dd>
@@ -86,6 +86,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { StorePublicProfile } from '../../../types/grassland'
+import { formatYuan } from '../../../lib/money'
 
 const props = defineProps<{
   /** 当前选中任务的门店 id；为空则不渲染。 */
