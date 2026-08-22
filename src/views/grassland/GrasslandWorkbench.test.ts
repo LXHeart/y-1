@@ -933,7 +933,7 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('正在修订已发布任务')
-    expect(wrapper.find('input[placeholder="平台（可选）"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('select[name="task-platform"]').attributes('disabled')).toBeUndefined()
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('修订标题')
     await wrapper.get('[aria-label="产品服务信息"]').setValue(' 双人招牌套餐 ')

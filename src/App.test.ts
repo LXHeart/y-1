@@ -156,10 +156,12 @@ describe('App AI 创作中心集成', () => {
     const navigation = wrapper.get('nav[aria-label="功能选择"]').text()
     expect(navigation).toContain('主页')
     expect(navigation).toContain('AI 内容创作中心')
-    expect(navigation).toContain('到店消费')
+    // 到店消费不是独立模块（PRD §2.2 付费方式三）：导航不出现，仅 /commerce 深链可达
+    expect(navigation).not.toContain('到店消费')
     // 未登录不露出需要身份/工作台的入口
     expect(navigation).not.toContain('工作台')
     expect(navigation).not.toContain('举报投诉')
+    expect(navigation).not.toContain('到店消费')
     // 旧「更多工具」下拉整体移除（工具视图收编为 AI 中心工作流目的地）
     expect(wrapper.find('.legacy-tools-menu').exists()).toBe(false)
     expect(wrapper.find('button[aria-controls="legacy-tools-panel"]').exists()).toBe(false)

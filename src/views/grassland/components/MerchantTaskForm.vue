@@ -9,14 +9,18 @@
         </select>
       </label>
       <input :value="form.title" aria-label="任务标题" name="task-title" autocomplete="off" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
-      <input :value="form.platform" aria-label="平台（可选）" name="task-platform" autocomplete="off" placeholder="平台（可选）" @input="updateField('platform', ($event.target as HTMLInputElement).value)" />
+      <label>发布平台
+        <select name="task-platform" :value="form.platform ?? ''" aria-label="发布平台（PRD §2.2 九平台）" @change="updateField('platform', ($event.target as HTMLSelectElement).value)">
+          <option value="">未指定</option>
+          <option v-for="p in TASK_PLATFORMS" :key="p.id" :value="p.id">{{ p.label }}</option>
+        </select>
+      </label>
       <label>内容形式
         <select name="task-content-form" :value="form.contentForm" @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)">
           <option value="">未指定</option>
           <option value="image">图文种草</option>
           <option value="video">视频种草</option>
-          <option value="article">文章</option>
-          <option value="interaction">互动</option>
+          <option value="interaction">点赞互动</option>
         </select>
       </label>
     </div>
@@ -108,6 +112,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { AI_PLATFORM_DEFINITIONS } from '../../../config/ai-platform-capabilities'
 import type { Store } from '../../../types/grassland'
 import { formatYuan, yuanToCents } from '../../../lib/money'
 import { emptyCommissionLadderForm } from './commission-ladder'
@@ -153,6 +158,17 @@ const props = defineProps<{
 /** 任务书 #46：赏金与押金可组合（两腿独立）；仍互斥的是阶梯 × 押金（#25）。 */
 /** 任务书 #23 R6：contentForm=interaction 时展示目标链接 + 动作类型两个必填字段。 */
 /** 任务书 #25：阶梯佣金（赏金模式）与霸王餐押金互斥——freebie>0 禁用阶梯开关，阶梯启用禁用押金输入。 */
+/**
+ * 发布平台下拉（PRD §2.2：小红书/抖音/快手/视频号/公众号/知乎/B站/大众点评/朋友圈）。
+ * 与 AI 创作中心的平台表同源（config/ai-platform-capabilities），存 canonical id——
+ * 任务上下文带入 AI 中心时 normalizePlatformId 可直接归一。
+ */
+const TASK_PLATFORMS = AI_PLATFORM_DEFINITIONS.map((platform) => ({
+  id: platform.id,
+  // PRD §2.2 的平台名（B 站在 AI 中心表里叫 Bilibili，任务表单按 PRD 口径显示）
+  label: platform.id === 'bilibili' ? 'B站' : platform.label,
+}))
+
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
 const bountyActive = computed(() => props.form.bountyYuan > 0)
 const freebieActive = computed(() => props.form.freebieDepositYuan > 0)

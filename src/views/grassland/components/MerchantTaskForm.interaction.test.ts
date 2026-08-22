@@ -30,7 +30,8 @@ describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #
     const wrapper = mountForm({ ...baseForm })
     const select = wrapper.findAll('select').find((s) => s.text().includes('图文种草'))!
     const options = select.findAll('option').map((o) => o.element.value)
-    expect(options).toEqual(['', 'image', 'video', 'article', 'interaction'])
+    // PRD §2.2 内容形式三类：图文种草/视频种草/点赞互动（article 不在任务分类里）
+    expect(options).toEqual(['', 'image', 'video', 'interaction'])
   })
 
   test('非互动任务不渲染互动字段；选「点赞互动」后展示目标链接与动作类型', async () => {

@@ -132,19 +132,6 @@
           AI 内容创作中心
         </button>
         <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'commerce' }"
-          :aria-current="currentViewName === 'commerce' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('commerce')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2 5.5h12l-1 8H3l-1-8zM4.5 5.5V4a3.5 3.5 0 017 0v1.5" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-            <path d="M6 9h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          到店消费
-        </button>
-        <button
           v-if="isAuthenticated"
           class="nav-tab"
           :class="{ 'nav-tab-active': currentViewName === 'complaints' }"

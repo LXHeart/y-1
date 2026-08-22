@@ -11,7 +11,6 @@
         </p>
         <div v-if="!isAuthenticated" class="hero-actions">
           <button type="button" class="gl-btn-primary hero-cta" @click="emit('request-login')">登录 / 注册</button>
-          <button type="button" class="hero-cta-secondary" @click="go('commerce')">到店消费</button>
         </div>
         <p v-else class="hero-identity">
           当前身份：<strong>{{ activeIdentityLabel }}</strong>（换身份请退出后重新登录）
@@ -106,18 +105,13 @@
     <section class="gl-zone" aria-label="共享能力">
       <div class="gl-zone-head">
         <h3 class="gl-zone-title">共享能力</h3>
-        <p class="gl-zone-note">商家与推荐官都可使用；消费者场景对所有用户开放</p>
+        <p class="gl-zone-note">商家与推荐官都可使用</p>
       </div>
       <div class="gl-zone-body">
         <button type="button" class="gl-tile gl-tile-button gl-tile-button-primary" @click="go('ai-center')">
           <span class="eyebrow">AI 内容创作中心</span>
           <h3>按发布平台创作图文与视频</h3>
           <p class="tile-copy">选平台、定形式，从独立创作、任务、门店或热点出发；热点、参考视频与图片生成都是创作手段。</p>
-        </button>
-        <button type="button" class="gl-tile gl-tile-button" @click="go('commerce')">
-          <span class="eyebrow">消费者场景</span>
-          <h3>到店消费</h3>
-          <p class="tile-copy">扫码下单、核销码与消费订单——任何注册用户都可使用，不需要单独开通身份。</p>
         </button>
         <button v-if="isAuthenticated" type="button" class="gl-tile gl-tile-button" @click="go('complaints')">
           <span class="eyebrow">平台治理</span>
@@ -225,22 +219,6 @@ function go(view: AppView): void {
   font-size: 0.95rem;
 }
 
-.hero-cta-secondary {
-  min-height: 44px;
-  padding: 0 22px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--color-text-secondary);
-  font-size: 0.92rem;
-  cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-
-.hero-cta-secondary:hover {
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-}
 
 .hero-identity {
   margin: 0;

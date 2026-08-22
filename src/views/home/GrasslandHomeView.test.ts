@@ -47,9 +47,9 @@ describe('草场主页 · 未登录', () => {
     expect(wrapper.find('[data-testid="home-merchant-entry"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="home-recommender-entry"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="home-onboarding-entry"]').exists()).toBe(false)
-    // 共享能力对游客可见（AI 中心游客有限体验、消费者场景），治理入口不可见
+    // 共享能力对游客可见（AI 中心游客有限体验），治理入口与到店消费（付费方式而非模块）不可见
     expect(wrapper.text()).toContain('AI 内容创作中心')
-    expect(wrapper.text()).toContain('到店消费')
+    expect(wrapper.text()).not.toContain('到店消费')
     expect(wrapper.text()).not.toContain('举报投诉')
   })
 
