@@ -4,6 +4,7 @@ import { useActiveIdentity, type IdentitySide } from '../../../composables/useAc
 import { yuanToCents } from '../../../lib/money'
 import type {
   FinanceAccount,
+  OrganizationRenameRequest,
   MembershipRole,
   Organization,
   OrganizationAccessScope,
@@ -55,6 +56,29 @@ export function useWorkbenchSession(
   const creditAmountYuan = ref(1000)
   /** 推荐官钱包余额（分，任务书 #22：霸王餐押金任务的报名软提示）；null = 未加载。 */
   const walletBalanceCents = ref<number | null>(null)
+  /** 主体更名申请（V40：审核生效+30 天冷却）；[0] 为待审（至多一条）。 */
+  const renameRequests = ref<OrganizationRenameRequest[]>([])
+  const pendingRename = computed(() => renameRequests.value.find((r) => r.status === 'pending') ?? null)
+  const renaming = ref(false)
+
+  async function loadRenameRequests(): Promise<void> {
+    if (!activeOrgId.value) {
+      renameRequests.value = []
+      return
+    }
+    const list = await grassland.listOrgRenameRequests(activeOrgId.value)
+    if (Array.isArray(list)) renameRequests.value = list as OrganizationRenameRequest[]
+  }
+
+  async function requestRename(name: string): Promise<void> {
+    if (!activeOrgId.value || !name.trim() || renaming.value) return
+    renaming.value = true
+    const ok = await grassland.requestOrgRename(activeOrgId.value, name.trim())
+    renaming.value = false
+    if (ok === null) return  // 冷却/重复等错误走 grassland.error
+    setNotice('更名申请已提交，等待平台审核')
+    await loadRenameRequests()
+  }
 
   const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.value) || null)
   const managerStoreScopes = computed(() => storeScopes.value.filter((scope) => scope.role === 'manager'))
@@ -108,6 +132,7 @@ export function useWorkbenchSession(
     if (activeOrgId.value) {
       await loadActiveOrganizationStores()
       await refreshAccount()
+      void loadRenameRequests()
       await refreshTasks()
     }
   }
@@ -263,6 +288,7 @@ export function useWorkbenchSession(
     activeOrg, managerStoreScopes, activeOrgHasOrganizationAccess, activeOrganizationRole,
     canManageAiBudget, canPublishBounty, balanceYuan,
     loadOrganizations, loadActiveOrganizationStores, initForAccount,
+    renameRequests, pendingRename, renaming, loadRenameRequests, requestRename,
     createOrg, refreshAccount, changeOrganization, provision, credit, switchSide, reset,
   }
 }

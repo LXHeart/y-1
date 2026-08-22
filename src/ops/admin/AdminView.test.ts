@@ -56,7 +56,7 @@ describe('AdminView KYB 审核', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
-      ['用户与积分', 'KYB 审核', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
+      ['用户与积分', 'KYB 审核', '主体更名', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
         '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '统一审计', '公共素材', '门店媒体'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
@@ -216,7 +216,7 @@ describe('AdminView 等级权益治理', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await wrapper.findAll('[role="tab"]')[5].trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('策略版本 7')
     expect(wrapper.findAll('.reputation-level-row')).toHaveLength(5)
@@ -252,7 +252,7 @@ describe('AdminView 等级权益治理', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await wrapper.findAll('[role="tab"]')[5].trigger('click')
     await flushPromises()
     const input = wrapper.find('[data-testid="level-2-min-completed"]')
     await input.setValue(9)
@@ -295,7 +295,7 @@ describe('AdminView 等级权益治理', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await wrapper.findAll('[role="tab"]')[5].trigger('click')
     await flushPromises()
     await wrapper.find('[data-testid="reputation-account-id"]').setValue(accountId)
     await wrapper.find('[data-testid="load-admin-reputation"]').trigger('click')
@@ -342,7 +342,7 @@ describe('AdminView 等级权益治理', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
-    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await wrapper.findAll('[role="tab"]')[5].trigger('click')
     await flushPromises()
 
     const accountInput = wrapper.find('[data-testid="reputation-account-id"]')
@@ -385,7 +385,7 @@ describe('AdminView 审判官运营准入', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await wrapper.findAll('[role="tab"]')[6].trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain(accountId)
     await wrapper.find('[data-testid="judge-admission-toggle"]').trigger('click')
@@ -428,7 +428,7 @@ describe('AdminView 审判官运营准入', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await wrapper.findAll('[role="tab"]')[6].trigger('click')
     await flushPromises()
     const recordButton = wrapper.findAll('button').find((button) => button.text() === '记录')
     await recordButton?.trigger('click')

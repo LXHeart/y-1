@@ -13,6 +13,8 @@
         :class="{ active: activeSection === 'kyb' }" @click="activeSection = 'kyb'">
         KYB 审核 <span v-if="kybRequests.length" class="count-badge">{{ kybRequests.length }}</span>
       </button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'org-renames'"
+        :class="{ active: activeSection === 'org-renames' }" @click="activeSection = 'org-renames'">主体更名</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'recommenders'"
         :class="{ active: activeSection === 'recommenders' }"
         @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
@@ -58,6 +60,9 @@
       </button>
     </div>
 
+    <div v-if="activeSection === 'org-renames'" class="admin-panel" role="tabpanel">
+      <OrganizationRenameAdminPanel />
+    </div>
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
       <form class="panel-toolbar search-toolbar" @submit.prevent="loadUsers">
         <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
@@ -339,6 +344,7 @@ import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
+import OrganizationRenameAdminPanel from './components/OrganizationRenameAdminPanel.vue'
 import StoreMediaModerationAdminPanel from './components/StoreMediaModerationAdminPanel.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import { useAuth } from '../../composables/useAuth'
@@ -371,7 +377,7 @@ const reviewerOnly = computed(() => Boolean(currentUser.value)
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
 const activeSection = ref<
-  'users' | 'kyb' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

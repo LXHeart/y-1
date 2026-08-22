@@ -133,6 +133,28 @@ export function useGrasslandIdentity(run: RunFn) {
 
   // ---------- identity：组织成员 / 门店 / 门店成员（Slice 2F/2G/2J）----------
 
+  /** 主体更名申请（V40 审核+30 天冷却；OWNER/ADMIN）。 */
+  const requestOrgRename = (organizationId: string, name: string) =>
+    run(() => request<unknown>(`/api/organizations/${organizationId}/rename-requests`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }))
+
+  /** 主体更名申请历史（含待审；org MEMBER+）。 */
+  const listOrgRenameRequests = (organizationId: string) =>
+    run(() => request<unknown[]>(`/api/organizations/${organizationId}/rename-requests`))
+
+  /** 平台审核队列：待审更名申请。 */
+  const listAdminOrgRenames = () =>
+    run(() => request<unknown[]>('/api/admin/org-rename-requests'))
+
+  /** 审核更名申请：approve 生效 / reject 驳回留痕。 */
+  const reviewAdminOrgRename = (id: string, decision: 'approve' | 'reject', note?: string) =>
+    run(() => request<unknown>(`/api/admin/org-rename-requests/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
+    }))
+
   /** 列组织成员（需 org MEMBER+）。 */
   const listMemberships = (orgId: string) =>
     run(() => request<Membership[]>(`/api/organizations/${orgId}/memberships`))
@@ -348,5 +370,6 @@ export function useGrasslandIdentity(run: RunFn) {
     listStores, createStore, getStorePublicProfile, getPublicBrandProfile, getStorePublicMedia, listStoreMemberships, addStoreMembership,
     removeStoreMembership,
     getBrandProfile, updateBrandProfile, uploadBrandLogo,
+    requestOrgRename, listOrgRenameRequests, listAdminOrgRenames, reviewAdminOrgRename,
   }
 }

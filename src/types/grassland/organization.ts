@@ -212,6 +212,18 @@ export interface IdentityProfile {
   status: string
 }
 
+/** 商家主体更名申请（V40：审核生效 + 30 天冷却）。 */
+export interface OrganizationRenameRequest {
+  id: string
+  organizationId: string
+  currentName: string
+  requestedName: string
+  status: 'pending' | 'approved' | 'rejected'
+  requestedAt: string | null
+  reviewedAt: string | null
+  reviewNote: string | null
+}
+
 // ---------- identity：组织成员 / 门店 / 门店成员（Slice 2F/2G/2J）----------
 
 /**

@@ -71,6 +71,13 @@ const router = useRouter()
 const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
 
 const notice = ref('')
+const renameFormOpen = ref(false)
+
+async function submitRename(): Promise<void> {
+  await requestRename(newOrgName.value)
+  newOrgName.value = ''
+  renameFormOpen.value = false
+}
 
 function setNotice(message: string): void {
   notice.value = message
@@ -90,12 +97,13 @@ function scrollBlockIntoView(elementId: string): void {
 // refreshTasks 的依赖是**晚绑定 thunk**：engagements 在下方才创建，但该回调只在异步函数的
 // await 之后被调用（setup 同步路径不触达），届时 const 必已完成初始化。
 const {
-  side, orgs, stores, organizationAccessIds, managerStoreScopes,
+  side, orgs, stores, managerStoreScopes,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
   canManageAiBudget, canPublishBounty,
   loadOrganizations, initForAccount, createOrg, refreshAccount, changeOrganization,
   provision, credit, switchSide, reset: resetSession,
+  pendingRename, renaming, requestRename,
 } = useWorkbenchSession(grassland, {
   setNotice,
   refreshTasks: () => engagements.refreshTasks(),
@@ -722,7 +730,8 @@ watch(grasslandNavigationTarget, async (target) => {
                 <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
               </select>
             </div>
-            <div v-if="organizationAccessIds.size > 0 || managerStoreScopes.length === 0" class="gl-row">
+            <!-- 产品规则（2026-08-23）：一个账号只能创建一个商家主体；已有主体的账号不再显示创建入口 -->
+            <div v-if="!orgs.some((o) => o.ownerAccountId === currentUser?.id)" class="gl-row">
               <input v-model="newOrgName" aria-label="新商家主体名称" name="organization-name" autocomplete="off" placeholder="新商家主体名称" @keyup.enter="createOrg" />
               <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
             </div>
@@ -731,6 +740,23 @@ watch(grasslandNavigationTarget, async (target) => {
               <span v-if="!activeOrgHasOrganizationAccess">（仅门店经理权限）</span>
               <span v-if="!canPublishBounty">（非 finance_transaction 等级不可发布赏金任务）</span>
             </p>
+
+            <!-- 主体更名（V40）：审核生效 + 30 天冷却；owner/admin 可发起 -->
+            <div v-if="activeOrg && activeOrgHasOrganizationAccess" class="org-rename">
+              <template v-if="pendingRename">
+                <p class="gl-hint">
+                  更名审核中：「{{ activeOrg.name }}」→「{{ pendingRename.requestedName }}」，等待平台审核通过后生效。
+                </p>
+              </template>
+              <template v-else>
+                <button v-if="!renameFormOpen" type="button" class="quiet" @click="renameFormOpen = true">申请更名</button>
+                <div v-else class="gl-row">
+                  <input v-model="newOrgName" aria-label="新主体名称" name="org-rename-name" autocomplete="off" placeholder="新主体名称（经平台审核后生效，30 天内只能改一次）" />
+                  <button type="button" :disabled="renaming || grassland.loading.value" @click="submitRename">提交更名申请</button>
+                  <button type="button" class="quiet" @click="renameFormOpen = false">取消</button>
+                </div>
+              </template>
+            </div>
           </article>
 
           <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
