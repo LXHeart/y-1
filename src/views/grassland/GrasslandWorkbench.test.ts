@@ -278,6 +278,54 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(openTile.find('button.identity-open-btn').exists()).toBe(false)
   })
 
+  test('商家工作台子页签：默认任务与报名，四个页签可切换', async () => {
+    stubFetch()
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    const tabs = wrapper.findAll('.gl-subtab')
+    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '组织与门店', '资金与经营', 'AI 与治理'])
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+
+    await tabs[2].trigger('click')
+    const after = wrapper.findAll('.gl-subtab')
+    expect(after[2].attributes('aria-selected')).toBe('true')
+    expect(after[0].attributes('aria-selected')).toBe('false')
+  })
+
+  test('?mtab= 深链恢复子页签；锚点滚动先切所属页签', async () => {
+    stubFetch()
+    const anchorRef = ref('')
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
+      ],
+    })
+    router.push('/grassland?mtab=finance')
+    await router.isReady()
+    const wrapper = mount(GrasslandWorkbench, {
+      global: {
+        plugins: [router],
+        provide: { grasslandAnchor: anchorRef },
+      },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    // 深链恢复：finance 页签激活
+    let tabs = wrapper.findAll('.gl-subtab')
+    expect(tabs[2].attributes('aria-selected')).toBe('true')
+
+    // 锚点驱动：gl-engagements 属于「任务与报名」，滚动前自动切回
+    anchorRef.value = 'gl-engagements'
+    await flushPromises()
+    tabs = wrapper.findAll('.gl-subtab')
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+  })
+
   test('纯门店 MANAGER 不激活 merchant，只显示获授权门店业务', async () => {
     const calls: Array<[string, RequestInit | undefined]> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

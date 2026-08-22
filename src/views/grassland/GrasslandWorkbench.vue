@@ -174,6 +174,22 @@ async function openOtherIdentity(target: 'merchant' | 'recommender'): Promise<vo
   }
 }
 
+// 商家工作台子页签：田垄②/③ 内容按工作频率分垄，v-show 常驻 DOM（锚点滚动与既有断言不破坏）
+type MerchantTabId = 'tasks' | 'org' | 'finance' | 'ai'
+const MERCHANT_TABS: ReadonlyArray<{ id: MerchantTabId; label: string }> = [
+  { id: 'tasks', label: '任务与报名' },
+  { id: 'org', label: '组织与门店' },
+  { id: 'finance', label: '资金与经营' },
+  { id: 'ai', label: 'AI 与治理' },
+]
+const merchantTab = ref<MerchantTabId>('tasks')
+/** 通知锚点 → 所属子页签：滚动前先切页签（隐藏元素无法 scrollIntoView）。 */
+const MERCHANT_ANCHOR_TAB: Readonly<Record<string, MerchantTabId>> = {
+  'gl-engagements': 'tasks',
+  'gl-organizations': 'org',
+  'gl-wallet': 'finance',
+}
+
 /** 生长刻度：任务生命周期五段（草稿 → 审核 → 招募 → 履约 → 结算）。 */
 const TASK_STAGES = ['草稿', '审核', '招募', '履约', '结算'] as const
 
@@ -273,7 +289,7 @@ watch(() => currentUser.value?.id, async (accountId) => {
 // 视角 / 选中任务 / 报名筛选 / 大厅筛选随 query 持久化——刷新、分享链接可恢复现场。
 // 恢复必须在 initForAccount 之后：它按已开通身份重排 side，先恢复会被覆盖。
 
-const OWNED_QUERY_KEYS = ['side', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist'] as const
+const OWNED_QUERY_KEYS = ['side', 'mtab', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist'] as const
 const LEVEL_FILTER_VALUES = ['Lv2', 'Lv3', 'Lv4']
 const RATE_FILTER_VALUES = [60, 70, 80, 90]
 const DISTANCE_VALUES = [1, 3, 5, 10, 30]
@@ -287,6 +303,7 @@ function firstQueryParam(raw: LocationQueryValue | LocationQueryValue[]): string
 const urlQuerySnapshot = computed<Record<string, string>>(() => {
   const query: Record<string, string> = {}
   if (side.value === 'recommender') query.side = 'recommender'
+  if (side.value === 'merchant' && merchantTab.value !== 'tasks') query.mtab = merchantTab.value
   if (selectedTaskId.value) query.task = selectedTaskId.value
   if (levelFilter.value) query.level = levelFilter.value
   if (rateFilterPct.value > 0) query.rate = String(rateFilterPct.value)
@@ -329,6 +346,10 @@ async function restoreWorkbenchStateFromUrl(): Promise<void> {
   if ((sideParam === 'merchant' || sideParam === 'recommender') && sideParam !== side.value) {
     await switchSide(sideParam)
   }
+  const mtabParam = firstQueryParam(query.mtab)
+  if (side.value === 'merchant' && MERCHANT_TABS.some((tab) => tab.id === mtabParam)) {
+    merchantTab.value = mtabParam as MerchantTabId
+  }
   // side 未变化时（如换账号前后同为 recommender）composable 的 side watch 不触发，
   // feed 首页不会自动拉——这里补一次，保证恢复的筛选条件有数据可筛。
   if (side.value === 'recommender' && feedItems.value.length === 0) {
@@ -362,6 +383,9 @@ const grasslandNavigationTarget = inject<Ref<NotificationLinkTarget | null>>(
 // 挂载时若锚点非空就补滚一次；空值由 `if (!anchor) return` 兜住，正常进草场视图不会误滚。
 watch(grasslandAnchor, async (anchor) => {
   if (!anchor) return
+  if (side.value === 'merchant' && MERCHANT_ANCHOR_TAB[anchor]) {
+    merchantTab.value = MERCHANT_ANCHOR_TAB[anchor]
+  }
   await nextTick()
   scrollBlockIntoView(anchor)
   grasslandAnchor.value = ''
@@ -387,6 +411,7 @@ watch(grasslandNavigationTarget, async (target) => {
       }
       tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
       await selectTask(task.id)
+      merchantTab.value = 'tasks'
       await nextTick()
       scrollBlockIntoView('gl-engagements')
       setNotice('已打开审核任务，可修改后重新提交')
@@ -475,8 +500,22 @@ watch(grasslandNavigationTarget, async (target) => {
 
     <!-- ============ 商家工作台 ============ -->
     <div v-if="side === 'merchant'" id="gl-panel-merchant" aria-label="商家工作台" tabindex="0" class="gl-workbench" data-side="merchant">
-      <!-- 田垄②：主操作区——每天干活的地方放最上面 -->
-      <section class="gl-zone" aria-label="发布与撮合">
+      <nav class="gl-subtabs" role="tablist" aria-label="商家工作台模块">
+        <button
+          v-for="tab in MERCHANT_TABS"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="gl-subtab"
+          :class="{ 'gl-subtab-active': merchantTab === tab.id }"
+          :aria-selected="merchantTab === tab.id"
+          :tabindex="merchantTab === tab.id ? 0 : -1"
+          @click="merchantTab = tab.id"
+        >{{ tab.label }}</button>
+      </nav>
+
+      <!-- 子页签① 任务与报名：田垄②主操作区——每天干活的地方 -->
+      <section v-show="merchantTab === 'tasks'" class="gl-zone" aria-label="发布与撮合">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">发布与撮合</h3>
           <p class="gl-zone-note">任务沿 草稿 → 审核 → 招募 → 履约 → 结算 的生长线推进</p>
@@ -677,10 +716,11 @@ watch(grasslandNavigationTarget, async (target) => {
         </div>
       </section>
 
-      <!-- 田垄③：低频资料与治理——组织、资金、KYB、AI 治理归拢一垄 -->
-      <section class="gl-zone" aria-label="组织与门店">
+      <!-- 子页签② 组织与门店：主体、成员、品牌与 KYB -->
+      <section v-show="merchantTab === 'org'" class="gl-zone" aria-label="组织与门店">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">组织与门店</h3>
+          <p class="gl-zone-note">商家主体、成员、品牌与认证资料</p>
         </div>
         <div class="gl-zone-body">
           <article id="gl-organizations" class="gl-tile">
@@ -702,20 +742,6 @@ watch(grasslandNavigationTarget, async (target) => {
             </p>
           </article>
 
-          <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
-          <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
-            id="gl-wallet" class="gl-tile">
-            <h3>资金账户</h3>
-            <p class="gl-balance">余额 <strong class="gl-num">{{ account ? formatYuan(account.balanceCents) : '¥—' }}</strong></p>
-            <div class="gl-row">
-              <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
-            </div>
-            <div class="gl-row">
-              <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
-              <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
-            </div>
-          </article>
-
           <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
           <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
             <MerchantPermissionCard
@@ -729,22 +755,6 @@ watch(grasslandNavigationTarget, async (target) => {
           <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
           <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
             <OrgTeamCard :org-id="activeOrg.id" />
-          </article>
-
-          <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
-          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <AiOrgBudgetPanel :organization-id="activeOrg.id" />
-          </article>
-
-          <!-- 组织级 BYOK（ADR-D17）：组织密钥管理 + 回退策略开关，同款 owner/admin 门禁 -->
-          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <AiOrgProviderKeysPanel :organization-id="activeOrg.id" />
-          </article>
-
-          <!-- 组织级创作审计视图（任务书 #44 登记）：谁在何时用哪个模型生成了什么；同款 owner/admin 门禁 -->
-          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <h3>组织创作审计</h3>
-            <OrgCreationAuditPanel :organization-id="activeOrg.id" />
           </article>
 
           <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
@@ -771,6 +781,30 @@ watch(grasslandNavigationTarget, async (target) => {
           </article>
 
           <!-- 任务书 #29+#30 #30：商家月度账单（按月汇总资金流水） -->
+        </div>
+      </section>
+
+      <!-- 子页签③ 资金与经营：资金账户、月度账单、核销订单与营收分析 -->
+      <section v-show="merchantTab === 'finance'" class="gl-zone" aria-label="资金与经营">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">资金与经营</h3>
+          <p class="gl-zone-note">余额与充值、月度账单、核销订单与营收分析</p>
+        </div>
+        <div class="gl-zone-body">
+          <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
+          <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
+            id="gl-wallet" class="gl-tile">
+            <h3>资金账户</h3>
+            <p class="gl-balance">余额 <strong class="gl-num">{{ account ? formatYuan(account.balanceCents) : '¥—' }}</strong></p>
+            <div class="gl-row">
+              <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
+            </div>
+            <div class="gl-row">
+              <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
+              <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
+            </div>
+          </article>
+
           <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
             <MerchantMonthlyBillCard :organization-id="activeOrgId" />
           </article>
@@ -784,6 +818,31 @@ watch(grasslandNavigationTarget, async (target) => {
 
           <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
             <BusinessAnalyticsPanel :organization-id="activeOrgId" :store-id="selectedStoreId" />
+          </article>
+        </div>
+      </section>
+
+      <!-- 子页签④ AI 与治理：组织 AI 预算、模型密钥与创作审计（owner/admin） -->
+      <section v-show="merchantTab === 'ai'" class="gl-zone" aria-label="AI 与治理">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">AI 与治理</h3>
+          <p class="gl-zone-note">组织 AI 用量上限、模型密钥与创作审计（owner / admin 可管理）</p>
+        </div>
+        <div class="gl-zone-body">
+          <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
+          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
+            <AiOrgBudgetPanel :organization-id="activeOrg.id" />
+          </article>
+
+          <!-- 组织级 BYOK（ADR-D17）：组织密钥管理 + 回退策略开关，同款 owner/admin 门禁 -->
+          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
+            <AiOrgProviderKeysPanel :organization-id="activeOrg.id" />
+          </article>
+
+          <!-- 组织级创作审计视图（任务书 #44 登记）：谁在何时用哪个模型生成了什么；同款 owner/admin 门禁 -->
+          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
+            <h3>组织创作审计</h3>
+            <OrgCreationAuditPanel :organization-id="activeOrg.id" />
           </article>
         </div>
       </section>
@@ -986,6 +1045,12 @@ watch(grasslandNavigationTarget, async (target) => {
 }
 
 /* 垄眉：micro-caps，颜色随视角（商家紫 / 推荐官苗绿），切侧时交叉淡入 */
+.gl-subtabs { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-card); overflow-x: auto; scrollbar-width: none; width: fit-content; max-width: 100%; }
+.gl-subtabs::-webkit-scrollbar { display: none; }
+.gl-subtab { min-height: 36px; padding: 0 16px; border: none; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.gl-subtab:hover { color: var(--color-text-secondary); }
+.gl-subtab-active { background: var(--gradient-accent); color: #fff; }
+.gl-workbench[data-side="recommender"] .gl-subtab-active { background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 70%, var(--color-info))); }
 .gl-workbench .gl-zone-title { transition: color var(--duration-normal) var(--ease-out); }
 .gl-workbench[data-side="merchant"] .gl-zone-title { color: var(--color-accent-2); }
 .gl-workbench[data-side="recommender"] .gl-zone-title { color: var(--color-grass); }
