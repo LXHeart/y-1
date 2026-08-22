@@ -263,7 +263,9 @@ const {
 const grassland = useGrassland()
 const {
   activeSide, hasMerchantIdentity, hasRecommenderIdentity, identitiesLoaded,
-  loadAccountIdentity, activateIdentitySide, reset: resetActiveIdentity,
+  loadAccountIdentity, activateIdentitySide,
+  claimActivation, releaseActivationClaim, initialActivationFinalize,
+  reset: resetActiveIdentity,
 } = useActiveIdentity()
 
 /** 工作台导航标签随活动身份变化（PRD：导航、工作台与默认数据范围随活动身份切换）。 */
@@ -438,7 +440,10 @@ async function ensureLoginIdentity(choice: LoginIdentity): Promise<void> {
     grassland.clearError()
     await loadAccountIdentity(grassland)
   }
-  await activateIdentitySide(choice, grassland)
+  // 本函数是登录路径激活的唯一写入者（claimActivation 已拦下布局的默认激活）：
+  // 显式激活后固化「本账号已激活」，后续任何装载不再写会话。
+  const result = await activateIdentitySide(choice, grassland)
+  if (result !== 'not-opened') initialActivationFinalize()
 }
 
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
@@ -481,8 +486,12 @@ function closeLoginModal(): void {
 }
 
 async function handleLogin(values: LoginFormValues): Promise<void> {
+  if (values.identity) claimActivation() // 须先于 login()：currentUser 一变布局 watch 即装载
   const ok = await login(values)
-  if (!ok) return
+  if (!ok) {
+    if (values.identity) releaseActivationClaim()
+    return
+  }
   if (values.identity) await ensureLoginIdentity(values.identity)
   closeLoginModal()
   authBannerMessage.value = values.identity
@@ -491,8 +500,12 @@ async function handleLogin(values: LoginFormValues): Promise<void> {
 }
 
 async function handleRegister(values: RegisterFormValues): Promise<void> {
+  if (values.identity) claimActivation()
   const ok = await register(values)
-  if (!ok) return
+  if (!ok) {
+    if (values.identity) releaseActivationClaim()
+    return
+  }
   if (values.identity) await ensureLoginIdentity(values.identity)
   closeLoginModal()
   await nextTick()

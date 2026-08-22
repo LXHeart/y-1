@@ -73,6 +73,7 @@ function dataFor(url: string): unknown {
   if (url.includes('/stores')) return []
   if (url === '/api/me/store-scopes') return []
   if (url === '/api/me/sessions') return []
+  if (url === '/api/me/active-identity') return { activeIdentityType: null }
   if (url === '/api/me/invitations') return []
   if (url.startsWith('/api/tasks/feed')) return { items: [], nextCursor: null, hasMore: false }
   if (url.startsWith('/api/tasks')) return []
@@ -124,7 +125,7 @@ describe('GrasslandWorkbench 登录态', () => {
   })
 
   test('同一页面内登录后自动激活身份并拉组织（原缺陷：需刷新整页）', async () => {
-    const { urls } = stubFetch()
+    const { urls, calls } = stubFetch()
     const wrapper = mountWorkbench()
     await flushPromises()
 
@@ -133,7 +134,7 @@ describe('GrasslandWorkbench 登录态', () => {
 
     // 顺序关键：先查已开通身份，再激活它；避免 recommender-only 账号被默认 merchant 激活成 409。
     expect(urls[0]).toBe('/api/me/identities')
-    expect(urls).toContain('/api/me/active-identity')
+    expect(calls.some(([url, init]) => url === '/api/me/active-identity' && init?.method === 'POST')).toBe(true)
     expect(urls).toContain('/api/organizations')
     expect(wrapper.text()).toContain('示例商家')
   })
@@ -204,10 +205,11 @@ describe('GrasslandWorkbench 登录态', () => {
     await flushPromises()
 
     expect(wrapper.get('.gl-title').text()).toBe('推荐官工作台')
-    const activation = calls.find(([url]) => url === '/api/me/active-identity')
+    // GET /me/active-identity（读会话活动身份）不算激活；激活是 POST
+    const activation = calls.find(([url, init]) => url === '/api/me/active-identity' && init?.method === 'POST')
     expect(activation).toBeDefined()
     expect(JSON.parse(activation?.[1]?.body as string)).toEqual({ type: 'recommender' })
-    expect(calls.filter(([url]) => url === '/api/me/active-identity')).toHaveLength(1)
+    expect(calls.filter(([url, init]) => url === '/api/me/active-identity' && init?.method === 'POST')).toHaveLength(1)
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
   })
 
@@ -361,16 +363,19 @@ describe('GrasslandWorkbench 登录态', () => {
   })
 
   test('换账号重新激活身份并重拉（不沿用上一个账号的组织）', async () => {
-    const { urls } = stubFetch()
+    const { urls, calls } = stubFetch()
     mountWorkbench()
 
     currentUser.value = asUser('acct-1', 'a@test.local')
     await flushPromises()
     const firstRound = urls.length
+    // SPA 内换账号的归属：布局先 reset 全局身份再重装载（工作台不再自清身份）——
+    // 单测只挂工作台，这里代行布局职责
+    useActiveIdentity().reset()
     currentUser.value = asUser('acct-2', 'b@test.local')
     await flushPromises()
 
-    expect(urls.slice(firstRound)).toContain('/api/me/active-identity')
+    expect(calls.slice(firstRound).some(([url, init]) => url === '/api/me/active-identity' && init?.method === 'POST')).toBe(true)
     expect(urls.slice(firstRound)).toContain('/api/organizations')
   })
 })

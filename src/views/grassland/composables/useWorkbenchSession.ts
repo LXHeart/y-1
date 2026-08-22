@@ -40,7 +40,7 @@ export function useWorkbenchSession(
   const {
     activeSide: side,
     hasMerchantIdentity, hasRecommenderIdentity,
-    loadAccountIdentity, reset: resetActiveIdentity,
+    loadAccountIdentity,
   } = useActiveIdentity()
   const orgs = ref<Organization[]>([])
   const stores = ref<Store[]>([])
@@ -164,9 +164,8 @@ export function useWorkbenchSession(
     }
   }
 
-  /** 账号切换清空（原 resetAccountState 的会话字段；side/wallet 刻意不清，与原实现一致）。 */
+/** 账号切换清空组织/门店/资金等会话字段；全局身份状态由布局的账号 watch 归零（工作台挂载即清曾把登录所选身份翻回默认）。 */
   function reset(): void {
-    resetActiveIdentity()
     orgs.value = []
     stores.value = []
     storeScopes.value = []

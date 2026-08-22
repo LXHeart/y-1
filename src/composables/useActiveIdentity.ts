@@ -22,6 +22,13 @@ const identitiesLoaded = ref(false)
 const merchantViewViaManagerScope = ref(false)
 /** 初始视角激活每个账号只做一次（防并发装载用默认覆盖显式选择）。 */
 let initialActivationApplied = false
+/**
+ * 激活独占声明（登录/注册路径）：登录时 ensureLoginIdentity 与布局的账号 watch
+ * 并发装载——若布局那份按默认 POST 商家、ensure POST 所选身份，两个激活赛跑，
+ * 商家后落地会把会话盖回默认（实测复现：选推荐官登录→刷新变回商家）。
+ * 声明后其他装载一律不激活，由 ensure 作为唯一写入者。
+ */
+let activationClaimed = false
 
 const hasMerchantIdentity = computed(() =>
   identities.value.some((identity) => identity.identityType === 'merchant'))
@@ -70,13 +77,39 @@ export function useActiveIdentity() {
     if (merchantViewViaManagerScope.value) activeSide.value = 'merchant'
     // 初始激活每个账号只做一次：登录后账号 watch 与 ensureLoginIdentity 并发各装载
     // 一次，若每次都按默认重激活，后完成的一方会用「商家优先」覆盖登录表单选定的身份。
-    if (initialIdentity && !initialActivationApplied) {
-      activeSide.value = initialIdentity
+    if (initialIdentity && !initialActivationApplied && !activationClaimed) {
       initialActivationApplied = true
-      await grassland.activateIdentity(initialIdentity)
+      // 会话已激活过身份（登录时选定/上次激活，session 存活期内刷新页面仍在）→ 以
+      // 服务器为准，不重激活——否则双身份账号选推荐官后，工作台装载/刷新会翻回商家。
+      const serverActive = await grassland.getActiveIdentity()
+      const serverSide = serverActive?.activeIdentityType === 'merchant'
+        || serverActive?.activeIdentityType === 'recommender'
+        ? serverActive.activeIdentityType : null
+      if (serverSide && (serverSide === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value)) {
+        activeSide.value = serverSide
+      } else {
+        activeSide.value = initialIdentity
+        await grassland.activateIdentity(initialIdentity)
+      }
       grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
     }
     return { identities: identityResult, storeScopes }
+  }
+
+  /** 声明激活独占（须在 login()/register() 改变 currentUser **之前**调用——布局 watch 一触即装载）。 */
+  function claimActivation(): void {
+    activationClaimed = true
+  }
+
+  /** 登录/注册失败时释放声明（否则下次装载会被跳过激活）。 */
+  function releaseActivationClaim(): void {
+    activationClaimed = false
+  }
+
+  /** 登录路径激活完成后固化：本账号后续装载一律跳过激活块（后到的默认激活不可能再覆盖会话）。 */
+  function initialActivationFinalize(): void {
+    initialActivationApplied = true
+    activationClaimed = false
   }
 
   /**
@@ -106,11 +139,15 @@ export function useActiveIdentity() {
     identitiesLoaded.value = false
     merchantViewViaManagerScope.value = false
     initialActivationApplied = false
+    // 刻意不清 activationClaimed：登录瞬间账号 watch 的 reset 恰好落在
+    // claim 与 ensure 完成之间——清了就拦不住布局装载的默认激活与所选身份赛跑。
+    // claim 只由 finalize（成功）/ release（登录失败）收敛。
   }
 
   return {
     activeSide, identities, identitiesLoaded, merchantViewViaManagerScope,
     hasMerchantIdentity, hasRecommenderIdentity,
-    loadAccountIdentity, activateIdentitySide, reset,
+    loadAccountIdentity, activateIdentitySide, claimActivation, releaseActivationClaim,
+    initialActivationFinalize, reset,
   }
 }

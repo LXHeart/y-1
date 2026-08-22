@@ -50,6 +50,10 @@ export function useGrasslandIdentity(run: RunFn) {
       body: JSON.stringify(organizationId ? { type, organizationId } : { type }),
     }))
 
+  /** 当前 session 的活动身份（per-session；无记录 = 消费者/null）。 */
+  const getActiveIdentity = () =>
+    run(() => request<{ activeIdentityType: string | null }>('/api/me/active-identity'))
+
   /** 切换当前 session 的活动身份（多设备互不影响）。请求字段同为 `type`。 */
   const activateIdentity = (type: IdentityType) =>
     run(() => request<unknown>('/api/me/active-identity', {
@@ -330,7 +334,7 @@ export function useGrasslandIdentity(run: RunFn) {
 
   return {
     listIdentities, listOrganizations, listMyStoreScopes, listMyOrganizationScopes, createOrganization,
-    openIdentity, activateIdentity, reauthenticate,
+    openIdentity, activateIdentity, getActiveIdentity, reauthenticate,
     getQuota, getUsage,
     createPermissionRequest, listPermissionRequests, appealPermissionRequest,
     listPendingPermissionRequests, claimPermissionRequest, listPermissionRequestAudit,

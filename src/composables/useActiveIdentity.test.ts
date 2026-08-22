@@ -29,6 +29,8 @@ function fakeGrassland(options: {
   identities?: IdentityProfile[] | null
   scopes?: StoreAccessScope[]
   activateFail?: boolean
+  /** 服务器会话已激活的活动身份（模拟登录时已选定/刷新页面场景）。 */
+  serverActive?: 'merchant' | 'recommender' | null
 }) {
   const calls: string[] = []
   // 与 useGrassland().run 同语义：失败吞异常返回 null（调用方按 null 判定），error 走 clearError 通道。
@@ -41,6 +43,10 @@ function fakeGrassland(options: {
     activateIdentity: vi.fn(async (type: string) => {
       calls.push(`activate:${type}`)
       return options.activateFail ? null : { ok: true, type }
+    }),
+    getActiveIdentity: vi.fn(async () => {
+      calls.push('get-active')
+      return { activeIdentityType: options.serverActive ?? null }
     }),
     clearError: vi.fn(),
   }
@@ -102,6 +108,32 @@ describe('loadAccountIdentity 初始视角规则', () => {
 
     expect(state.activeSide.value).toBe('recommender')
     expect(calls.filter((call) => call === 'activate:merchant')).toHaveLength(1)
+  })
+
+  test('会话已激活推荐官：装载尊重服务器值，双身份也不翻回商家（登录后进工作台/刷新的回归）', async () => {
+    const { api, calls } = fakeGrassland({
+      identities: [identity('merchant'), identity('recommender')],
+      serverActive: 'recommender',
+    })
+    const state = useActiveIdentity()
+
+    await state.loadAccountIdentity(api)
+
+    expect(state.activeSide.value).toBe('recommender')
+    expect(calls.filter((call) => call.startsWith('activate:'))).toEqual([]) // 不重激活
+  })
+
+  test('会话无记录时维持既有默认（双身份商家优先激活）', async () => {
+    const { api, calls } = fakeGrassland({
+      identities: [identity('merchant'), identity('recommender')],
+      serverActive: null,
+    })
+    const state = useActiveIdentity()
+
+    await state.loadAccountIdentity(api)
+
+    expect(state.activeSide.value).toBe('merchant')
+    expect(calls).toContain('activate:merchant')
   })
 
   test('无身份但有门店管理范围：商家视角本地生效，不激活', async () => {

@@ -68,6 +68,7 @@ describe('草场主页 · 角色感知入口', () => {
       listIdentities: async () => [identity('merchant')],
       listMyStoreScopes: async () => [],
       activateIdentity: async () => ({}),
+      getActiveIdentity: async () => ({ activeIdentityType: null }),
       clearError: () => {},
     } as never)
     await flushPromises()
@@ -87,6 +88,7 @@ describe('草场主页 · 角色感知入口', () => {
       listIdentities: async () => [identity('recommender')],
       listMyStoreScopes: async () => [],
       activateIdentity: async () => ({}),
+      getActiveIdentity: async () => ({ activeIdentityType: null }),
       clearError: () => {},
     } as never)
     await flushPromises()
@@ -120,6 +122,7 @@ describe('草场主页 · 角色感知入口', () => {
       listIdentities: async () => [],
       listMyStoreScopes: async () => [],
       activateIdentity: async () => ({}),
+      getActiveIdentity: async () => ({ activeIdentityType: null }),
       clearError: () => {},
     } as never)
     await flushPromises()
