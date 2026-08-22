@@ -30,7 +30,7 @@ import reactor.core.publisher.Mono;
  * <li>POST /api/organizations — 创建组织（当前 account 为 owner），种 OWNER 成员行，写 outbox
  * {@code OrganizationCreated} 事件。</li>
  * <li>GET /api/organizations/{id} — 取单个组织。</li>
- * <li>GET /api/organizations — 列出当前 account 名下组织。</li>
+ * <li>GET /api/organizations — 列出当前 account 名下组织（owner 或成员，含被邀请加入的主体）。</li>
  * </ul>
  *
  * <p>
@@ -94,7 +94,7 @@ public class OrganizationController {
 
 	@GetMapping
 	public Mono<ResponseEntity<Map<String, Object>>> listMine(ServerHttpRequest request) {
-		return accounts.resolve(request).flatMap(acc -> organizations.findByOwner(acc.id()).collectList().map(
+		return accounts.resolve(request).flatMap(acc -> organizations.findForAccount(acc.id()).collectList().map(
 				list -> ResponseEntity.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
 	}
 

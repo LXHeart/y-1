@@ -57,6 +57,23 @@ public class OrganizationRepository {
     }
 
     /**
+     * 名下主体 = **owner 或任一主体的成员**（PRD §2.1：成员属于商家主体，按角色访问主体能力）。
+     * 此前只列 owner 名下——被邀请加入的主体成员拉不到列表，前端会把他们降级成
+     * 「仅门店经理权限」视图（admin 也看不到品牌/成员/权限卡）。owner 条件保留：
+     * 老数据的 OWNER 成员行是 best-effort 种的，可能缺席。
+     */
+    public Flux<Organization> findForAccount(String accountId) {
+        return db.sql("SELECT o.id::text, o.owner_account_id::text, o.name, o.status,"
+                        + " o.permission_tier, o.industry, o.created_at, o.updated_at FROM organization o"
+                        + " WHERE o.owner_account_id = CAST(:acct AS uuid)"
+                        + " OR EXISTS (SELECT 1 FROM organization_membership m"
+                        + " WHERE m.organization_id = o.id AND m.account_id = CAST(:acct AS uuid))"
+                        + " ORDER BY o.created_at")
+                .bind("acct", accountId)
+                .map(OrganizationRepository::map).all();
+    }
+
+    /**
      * 原子升级商家准入权限（Slice 2F）。只允许从低等级写到高等级；并发或陈旧审核绝不降级。
      * 返回 0 表示组织不存在，或当前等级已经达到/超过目标等级。
      */

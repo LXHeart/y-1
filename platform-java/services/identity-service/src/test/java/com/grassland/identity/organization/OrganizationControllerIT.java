@@ -109,6 +109,41 @@ class OrganizationControllerIT {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void listIncludesOrgsWhereAccountIsMemberNotJustOwner() {
+        // 名下主体 = owner ∪ 成员：被邀请加入的成员（含 admin）必须能拉到主体列表，
+        // 否则前端会把主体成员降级成「仅门店经理权限」视图（judge1 实况）。
+        // 先建 owner 账号（seed 用户+session），再直插组织行（不经 API，
+        // 避免多写 OrganizationCreated outbox 事件污染共享库上的计数断言）
+        seedOwnerWithCookie("org-owner@example.com");
+        String orgId = UUID.randomUUID().toString();
+        db.sql("INSERT INTO organization(id, owner_account_id, name, status) VALUES (CAST(:id AS uuid), "
+                        + "(SELECT id FROM app_users WHERE email = 'org-owner@example.com'), '成员可见主体', 'active')")
+                .bind("id", orgId).then().block();
+
+        String memberCookie = seedOwnerWithCookie("org-member@example.com");
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role) "
+                        + "VALUES (gen_random_uuid(), CAST(:org AS uuid), "
+                        + "(SELECT id FROM app_users WHERE email = 'org-member@example.com'), 'admin')")
+                .bind("org", orgId).then().block();
+
+        Map mine = client().get().uri("/api/organizations")
+                .header("Cookie", "y1.sid=" + memberCookie).exchange()
+                .expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        java.util.List<Map> data = (java.util.List<Map>) mine.get("data");
+        assertThat(data).anySatisfy(org -> assertThat(org.get("id")).isEqualTo(orgId));
+
+        // 外人（无 owner/成员关系）看不到
+        String outsiderCookie = seedOwnerWithCookie("org-outsider@example.com");
+        client().get().uri("/api/organizations")
+                .header("Cookie", "y1.sid=" + outsiderCookie).exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.length()").isEqualTo(0);
+    }
+
+    @Test
     void rejectsRequestsWithoutSessionCookie() {
         client().post().uri("/api/organizations")
                 .contentType(MediaType.APPLICATION_JSON)
