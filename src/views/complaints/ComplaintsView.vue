@@ -1,5 +1,5 @@
 <template>
-  <section class="complaints-view">
+  <section class="complaints-view gl-field">
     <header class="section-header">
       <h2 class="section-title">举报与投诉</h2>
       <p class="section-desc">
@@ -131,12 +131,12 @@ function time(value: string | null): string {
 .section-header { display: grid; gap: var(--space-xs); }
 .section-title {
   margin: 0;
-  font-size: 1.3rem;
-  font-weight: 700;
+  font-size: var(--text-xl);
+  font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--color-text);
 }
-.section-desc { margin: 0; font-size: 0.88rem; color: var(--color-text-muted); }
+.section-desc { margin: 0; font-size: var(--text-sm); color: var(--color-text-muted); }
 
 .complaints-grid {
   display: grid;
@@ -148,10 +148,11 @@ function time(value: string | null): string {
 .panel {
   display: grid;
   gap: var(--space-md);
-  padding: var(--space-lg);
+  padding: var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--surface-card);
+  box-shadow: var(--shadow-card);
 }
 .panel h3 { margin: 0; font-size: 1rem; color: var(--color-text); }
 
@@ -189,11 +190,10 @@ function time(value: string | null): string {
 .complaint-form button[type="submit"] {
   justify-self: start;
   min-height: 38px;
-  padding: 0 20px;
+  padding: 0 var(--space-md);
   border: none;
-  border-radius: var(--radius-md);
-  background: var(--gradient-accent);
-  color: #fff;
+  border-radius: var(--radius-sm);
+  color: var(--color-on-accent);
   font-weight: 600;
   cursor: pointer;
 }

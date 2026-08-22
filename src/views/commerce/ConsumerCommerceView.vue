@@ -1,5 +1,5 @@
 <template>
-  <section class="commerce-view">
+  <section class="commerce-view gl-field">
     <header class="commerce-hero">
       <div>
         <p class="eyebrow">推荐官到店消费</p>
@@ -146,6 +146,7 @@ import QRCode from 'qrcode'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../../composables/useAuth'
 import { useCommerce } from '../../composables/useCommerce'
+import { formatYuan } from '../../lib/money'
 import type { AfterSalesDispute, CommercePackage, ConsumerOrder, InventorySlot } from '../../types/commerce'
 
 const emit = defineEmits<{ 'request-login': [] }>()
@@ -309,7 +310,7 @@ async function submitReview(orderId: string): Promise<void> {
   notice.value = '评价已提交。'
 }
 
-function yuan(cents: number): string { return (cents / 100).toFixed(2) }
+function yuan(cents: number): string { return formatYuan(cents) }
 function short(value: string): string { return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value }
 function formatTime(value: string): string { return new Date(value).toLocaleString() }
 function slotRange(slot: InventorySlot): string {
@@ -344,13 +345,13 @@ function statusClass(status: ConsumerOrder['status']): string {
 <style scoped>
 .commerce-view { display: grid; gap: 16px; }
 .commerce-hero, .panel-head, .lookup-row, .offer-card, .order-card > header, .actions, .review-box { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.commerce-hero { padding: 20px; border-radius: 18px; color: white; background: var(--gradient-accent); }
+.commerce-hero { padding: var(--space-lg); border-radius: var(--radius-lg); color: var(--color-on-accent); background: var(--gradient-accent); box-shadow: var(--shadow-glow); }
 .commerce-hero h2, .panel h3, .order-card p { margin: 0; }
 .commerce-hero p { margin: 4px 0 0; opacity: .82; }
 .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
-.panel { padding: 18px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); }
+.panel { padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-card); }
 .lookup-row input { flex: 1; }
-input, select, button, textarea { min-height: 38px; border: 1px solid var(--color-border); border-radius: 8px; padding: 7px 10px; background: var(--color-surface); color: var(--color-text); }
+input, select, textarea { min-height: 34px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 6px var(--space-sm); background: var(--color-surface); color: var(--color-text); }
 button { cursor: pointer; font-weight: 650; }
 button:disabled { opacity: .55; cursor: not-allowed; }
 button.linklike { min-height: auto; padding: 2px 6px; border: none; background: none; color: var(--color-accent); text-decoration: underline; font-weight: 600; }
@@ -358,26 +359,26 @@ button.linklike { min-height: auto; padding: 2px 6px; border: none; background: 
 .offer-main { flex: 1; }
 .offer-main h3 { margin: 8px 0 4px; font-size: 24px; }
 .offer-main dl { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 8px; margin: 16px 0 0; }
-.offer-main dl div { padding: 10px; border-radius: 10px; background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+.offer-main dl div { padding: var(--space-sm); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
 dt, small, .meta { font-size: 12px; opacity: .68; } dd { margin: 4px 0 0; font-weight: 700; }
 .slot-picker { margin-top: 14px; display: grid; gap: 6px; }
 .slot-picker .slot-title { margin: 0 0 2px; font-size: 12px; opacity: .7; }
-.slot-picker label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; font-size: 13px; }
+.slot-picker label { display: flex; align-items: center; gap: var(--space-xs); padding: 6px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: var(--text-sm); }
 .slot-picker label.soldout { opacity: .45; }
-.buy-box { width: 220px; padding: 16px; display: grid; align-content: center; gap: 10px; border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.buy-box { width: 220px; padding: var(--space-md); display: grid; align-content: center; gap: var(--space-sm); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .order-card header span { margin-left: var(--space-xs); }
-.notice { margin: 0; padding: 10px 14px; border-radius: 10px; }.notice.error, .inline-error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }.notice.ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
-.payment-hint { margin: 0; font-size: 13px; color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, transparent); padding: 8px 12px; border-radius: 8px; }
+.notice { margin: 0; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); }.notice.error, .inline-error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }.notice.ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
+.payment-hint { margin: 0; font-size: var(--text-sm); color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, transparent); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
 .order-list { display: grid; gap: 12px; margin-top: 14px; }
-.order-card { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: 12px; }
-.redeem-box { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 10px; background: color-mix(in srgb, var(--color-success) 7%, transparent); color: var(--color-text); }
+.order-card { display: grid; gap: var(--space-sm); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--surface-furrow); }
+.redeem-box { display: flex; gap: var(--space-md); align-items: center; padding: var(--space-sm); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-success) 7%, transparent); color: var(--color-text); }
 .redeem-box img { width: 96px; height: 96px; }.redeem-box div { display: grid; gap: 5px; }.redeem-box code { font-size: 16px; font-weight: 800; }
-.dispute-box { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
+.dispute-box { display: grid; gap: 4px; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); font-size: var(--text-sm); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
 .dispute-box.resolved { background: color-mix(in srgb, var(--color-success) 10%, transparent); }
 .dispute-box.rejected { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
 .dispute-box p { margin: 0; }
 .attribution-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; opacity: .78; }
-.subform { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed var(--color-border); border-radius: 10px; }
+.subform { display: grid; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
 .subform > p { margin: 0; font-size: 12px; opacity: .7; }
 .subform-row { display: flex; gap: 8px; }
 .subform-row input { flex: 1; } .subform-row input.pct { flex: 0 0 96px; }

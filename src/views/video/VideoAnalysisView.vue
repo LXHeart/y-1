@@ -1,5 +1,5 @@
 <template>
-  <div class="video-analysis-page">
+  <div class="video-analysis-page gl-field">
     <header class="view-header">
       <div class="view-header-copy">
         <p class="view-kicker">视频制作 · 可选输入手段</p>
@@ -13,7 +13,7 @@
 
     <div class="video-analysis">
     <section class="input-column">
-      <article class="editor-card glass-card">
+      <article class="editor-card gl-zone">
         <header class="card-head">
           <div class="platform-switch" role="tablist" aria-label="视频平台选择">
             <button
@@ -52,7 +52,7 @@
 
         <div class="action-row">
           <button
-            class="btn-primary"
+            class="btn-primary gl-btn-primary"
             :disabled="isCurrentPlatformParseLoading || !videoInput.trim()"
             @click="handleExtractVideo"
           >
@@ -125,7 +125,7 @@
         @retry-analysis="handleRetryBilibiliAnalysis"
       />
 
-      <section v-if="currentProxyVideoUrl" class="recreation-card glass-card">
+      <section v-if="currentProxyVideoUrl" class="recreation-card gl-zone">
         <div class="recreation-head">
           <div>
             <p class="recreation-kicker">视频复刻 · 仅参考结构</p>
@@ -133,7 +133,7 @@
             <p>把参考视频拆成独立分镜场景，逐场景生成 AI 参考图；结果只作创作参考，不复刻原文。</p>
           </div>
           <button
-            class="btn-primary"
+            class="btn-primary gl-btn-primary"
             type="button"
             :disabled="recreationLoading"
             @click="handleAnalyzeRecreation"
@@ -150,18 +150,18 @@
         />
       </section>
 
-      <section v-if="referenceTarget && currentAnalysis" class="reference-handoff glass-card">
+      <section v-if="referenceTarget && currentAnalysis" class="reference-handoff gl-zone">
         <div>
           <p class="reference-handoff-kicker">发布目标</p>
           <h2>{{ referenceTarget.label }}</h2>
           <p>分析摘要会作为可编辑的创作要求带入下一步。</p>
         </div>
-        <button class="btn-primary" type="button" @click="startFromReference">
+        <button class="btn-primary gl-btn-primary" type="button" @click="startFromReference">
           带入创作
         </button>
       </section>
 
-      <section v-if="showEmptyState" class="empty-card glass-card">
+      <section v-if="showEmptyState" class="empty-card gl-zone">
         <div class="empty-icon" aria-hidden="true">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
             <rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" stroke-width="1.4"/>
@@ -664,16 +664,16 @@ watch(() => props.creationHandoff, (handoff) => {
   width: fit-content;
   gap: 4px;
   padding: 4px;
-  border-radius: var(--radius-md);
+  border-radius: 999px;
   background: var(--surface-page);
   border: 1px solid var(--color-border);
 }
 
 .platform-tab {
-  min-height: 36px;
+  min-height: 30px;
   padding: 0 16px;
-  border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -691,10 +691,10 @@ watch(() => props.creationHandoff, (handoff) => {
 }
 
 .platform-tab-active {
-  background: var(--surface-card);
-  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent-2);
   font-weight: 600;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-accent);
 }
 
 .card-title {
@@ -751,43 +751,9 @@ watch(() => props.creationHandoff, (handoff) => {
 
 .btn-primary,
 .btn-secondary {
-  min-height: 40px;
-  padding: 0 18px;
-  border-radius: var(--radius-md);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0.88rem;
-  font-weight: 600;
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    opacity var(--duration-fast) var(--ease-out);
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  border: none;
-}
-
-.btn-primary:hover {
-  transform: translateY(-1px);
-  background: var(--color-accent-2);
-}
-
-.btn-secondary {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-secondary:hover {
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-  background: var(--color-surface-hover);
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
 }
 
 .toggle-link {

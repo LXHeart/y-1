@@ -60,7 +60,7 @@
             <span>{{ card.label }}</span>
           </label>
           <div class="action-row action-row-start">
-            <button class="btn-primary" :disabled="!hasSelectedCards" @click="$emit('applyToPrompt')">带入自定义要求</button>
+            <button class="btn-primary gl-btn-primary" :disabled="!hasSelectedCards" @click="$emit('applyToPrompt')">带入自定义要求</button>
           </div>
           <p v-if="applied" class="field-note reference-applied-hint">已带入自定义要求，可在上方「自定义要求」中查看和编辑。</p>
         </div>

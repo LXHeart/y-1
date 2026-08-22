@@ -1,5 +1,5 @@
 <template>
-  <div class="video-production">
+  <div class="video-production gl-field">
     <nav class="steps-bar" aria-label="制作步骤">
       <div
         v-for="(s, i) in steps"
@@ -16,7 +16,7 @@
     </nav>
 
     <!-- Step 1: Upload -->
-    <section v-if="stage === 'upload'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'upload'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <p class="eyebrow">第一步</p>
         <h2 class="card-title">上传素材 & 填写店铺信息</h2>
@@ -150,7 +150,7 @@
 
       <div class="action-row">
         <button
-          class="btn-primary"
+          class="btn-primary gl-btn-primary"
           :disabled="!canProceedToScript || scriptLoading"
           @click="generateScript"
         >
@@ -160,7 +160,7 @@
     </section>
 
     <!-- Step 2: Script Editing -->
-    <section v-if="stage === 'script'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'script'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
           <button class="btn-back" type="button" @click="goBackToUpload">
@@ -219,7 +219,7 @@
           {{ scriptLoading ? '生成中…' : '重新生成' }}
         </button>
         <button
-          class="btn-primary"
+          class="btn-primary gl-btn-primary"
           :disabled="scriptLoading || !script.trim() || !videoGenerationAvailable"
           @click="startVideoGeneration"
         >
@@ -231,7 +231,7 @@
     </section>
 
     <!-- Step 3: Video Generation -->
-    <section v-if="stage === 'generate'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'generate'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
           <button class="btn-back" type="button" @click="goBackToScript">
@@ -255,7 +255,7 @@
       <div v-else-if="videoUrl" class="result-area">
         <video :src="videoUrl" controls class="result-video"></video>
         <div class="action-row">
-          <a :href="videoUrl" download class="btn-primary" target="_blank">下载视频</a>
+          <a :href="videoUrl" download class="btn-primary gl-btn-primary" target="_blank">下载视频</a>
           <button class="btn-secondary" @click="handleResetAll">新建视频</button>
         </div>
       </div>
@@ -263,7 +263,7 @@
       <div v-else-if="error" class="result-area">
         <p class="error-hint">{{ error }}</p>
         <div class="action-row">
-          <button class="btn-primary" @click="startVideoGeneration">重试</button>
+          <button class="btn-primary gl-btn-primary" @click="startVideoGeneration">重试</button>
           <button class="btn-secondary" @click="goBackToScript">返回脚本</button>
         </div>
       </div>
@@ -580,7 +580,7 @@ function handleResetAll(): void {
 .step-num {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -628,8 +628,8 @@ function handleResetAll(): void {
   align-items: center;
   gap: 8px;
   padding: 32px;
-  border: 2px dashed rgba(255, 255, 255, 0.15);
-  border-radius: 12px;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
   color: var(--color-text-muted);
@@ -639,7 +639,7 @@ function handleResetAll(): void {
 .drop-zone:hover,
 .drop-zone-active {
   border-color: var(--color-accent);
-  background: rgba(99, 102, 241, 0.05);
+  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
 .preview-grid {
@@ -653,7 +653,7 @@ function handleResetAll(): void {
   position: relative;
   width: 72px;
   height: 72px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   cursor: grab;
 }
@@ -670,8 +670,8 @@ function handleResetAll(): void {
   right: 2px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
+  border-radius: 999px;
+  background: var(--color-overlay);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -688,8 +688,8 @@ function handleResetAll(): void {
   left: 2px;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
+  border-radius: 999px;
+  background: var(--color-overlay);
   color: #fff;
   font-size: 10px;
   display: flex;
@@ -703,8 +703,8 @@ function handleResetAll(): void {
   gap: 8px;
   margin-bottom: 16px;
   padding: 12px;
-  border-radius: 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border);
 }
 
 .input-method-toggle {
@@ -736,23 +736,23 @@ function handleResetAll(): void {
   gap: 10px;
   margin-top: 10px;
   padding: 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  background: var(--surface-furrow);
 }
 
 .reference-platform-switch {
   display: inline-flex;
   gap: 4px;
   padding: 4px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
   width: fit-content;
 }
 
 .reference-platform-tab {
   padding: 4px 14px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 13px;
@@ -767,9 +767,9 @@ function handleResetAll(): void {
 .reference-input,
 .topic-input {
   padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--surface-hover);
   color: inherit;
   font-size: 14px;
   font-family: inherit;
@@ -791,8 +791,8 @@ function handleResetAll(): void {
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
 }
 
 .reference-card-option {
@@ -805,7 +805,7 @@ function handleResetAll(): void {
 
 .reference-applied-hint,
 .reference-applied-note {
-  color: rgba(34, 197, 94, 0.9);
+  color: color-mix(in srgb, var(--color-success) 90%, transparent);
 }
 
 .topic-row {
@@ -840,9 +840,9 @@ function handleResetAll(): void {
 .form-field textarea {
   min-height: 38px;
   padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--surface-hover);
   color: inherit;
   font-size: 14px;
   font-family: inherit;
@@ -870,7 +870,7 @@ function handleResetAll(): void {
   width: 56px;
   height: 56px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -883,9 +883,9 @@ function handleResetAll(): void {
 .stream-textarea {
   width: 100%;
   padding: 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--surface-hover);
   color: inherit;
   font-size: 14px;
   font-family: inherit;
@@ -916,7 +916,7 @@ function handleResetAll(): void {
 .stream-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--color-accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
@@ -933,7 +933,7 @@ function handleResetAll(): void {
 .progress-bar-track {
   height: 6px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-border-hover);
   overflow: hidden;
   margin-bottom: 8px;
 }
@@ -952,7 +952,7 @@ function handleResetAll(): void {
 .result-video {
   width: 100%;
   max-width: 480px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   margin-bottom: var(--space-md);
 }
 
@@ -968,40 +968,16 @@ function handleResetAll(): void {
   justify-content: flex-end;
 }
 
-.btn-primary {
-  padding: 8px 20px;
-  border-radius: 8px;
-  border: none;
-  background: var(--color-accent);
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-primary:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.85;
-}
-
+.btn-primary,
 .btn-secondary {
-  padding: 8px 20px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: transparent;
-  color: inherit;
-  font-size: 14px;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-secondary:hover {
-  opacity: 0.85;
-  background: rgba(255, 255, 255, 0.05);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  text-decoration: none;
 }
 
 .btn-back {
@@ -1053,7 +1029,7 @@ function handleResetAll(): void {
 .lightbox-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
+  background: var(--color-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1064,7 +1040,7 @@ function handleResetAll(): void {
 .lightbox-img {
   max-width: 90vw;
   max-height: 90vh;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: default;
 }
 
@@ -1074,8 +1050,8 @@ function handleResetAll(): void {
   right: 16px;
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: var(--color-border-hover);
   color: #fff;
   border: none;
   font-size: 20px;
