@@ -54,7 +54,7 @@ const industryLabel = computed(() => {
 </script>
 
 <template>
-  <article v-if="organizationId && hasContent" id="gl-brand-public-profile" class="gl-card gl-card-wide">
+  <article v-if="organizationId && hasContent" id="gl-brand-public-profile" class="gl-tile gl-tile-wide">
     <h3>品牌资料</h3>
     <div class="brand-row">
       <img
@@ -85,6 +85,8 @@ const industryLabel = computed(() => {
 </template>
 
 <style scoped>
+h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+
 .brand-row {
   display: flex;
   gap: 16px;

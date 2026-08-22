@@ -93,7 +93,7 @@ const {
   side, orgs, stores, organizationAccessIds, managerStoreScopes,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
-  canManageAiBudget, canPublishBounty, balanceYuan,
+  canManageAiBudget, canPublishBounty,
   loadOrganizations, initForAccount, createOrg, refreshAccount, changeOrganization,
   provision, credit, switchSide, reset: resetSession,
 } = useWorkbenchSession(grassland, {
@@ -164,6 +164,20 @@ async function onSideTabKeydown(event: KeyboardEvent): Promise<void> {
   await switchSide(next)
   await nextTick()
   document.getElementById(`gl-tab-${next}`)?.focus()
+}
+
+/** 生长刻度：任务生命周期五段（草稿 → 审核 → 招募 → 履约 → 结算）。 */
+const TASK_STAGES = ['草稿', '审核', '招募', '履约', '结算'] as const
+
+/** 任务状态 → 刻度当前段：closed 停在履约（招募关闭、确认结算进行中）；cancelled 由模板加 dead 态。 */
+function taskStageIndex(task: Task): number {
+  switch (task.status) {
+    case 'draft': return 0
+    case 'pending_review': return 1
+    case 'published': return 2
+    case 'closed': return 3
+    default: return 2
+  }
 }
 
 async function openAcceptedTaskCreation(application: TaskApplication): Promise<void> {
@@ -376,13 +390,14 @@ watch(grasslandNavigationTarget, async (target) => {
 </script>
 
 <template>
-  <section class="grassland">
+  <section class="gl-field grassland">
     <header class="gl-header">
-      <div>
-        <h2>草场工作台</h2>
+      <div class="gl-head-copy">
+        <h2 class="gl-title">草场工作台</h2>
         <p class="gl-sub">商家与推荐官的撮合闭环（经 edge-bff 调用 Java 微服务）</p>
       </div>
       <div class="gl-side-switch" role="tablist" aria-label="角色切换">
+        <span class="gl-switch-thumb" :class="{ 'gl-switch-thumb-rec': side === 'recommender' }" aria-hidden="true"></span>
         <button
           type="button" role="tab" id="gl-tab-merchant" aria-controls="gl-panel-merchant"
           :aria-selected="side === 'merchant'" :tabindex="side === 'merchant' ? 0 : -1"
@@ -398,501 +413,622 @@ watch(grasslandNavigationTarget, async (target) => {
       </div>
     </header>
 
+    <!-- 地平线（signature）：紫=商家播种，苗绿=推荐官耕耘；激活侧标签点亮 -->
+    <div class="gl-horizon" aria-hidden="true">
+      <span class="gl-horizon-tag gl-horizon-merchant" :class="{ on: side === 'merchant' }">商家 · 播种</span>
+      <span class="gl-horizon-line"></span>
+      <span class="gl-horizon-tag gl-horizon-recommender" :class="{ on: side === 'recommender' }">推荐官 · 耕耘</span>
+    </div>
+
     <p v-if="grassland.error.value" class="gl-alert gl-alert-error" role="alert">
       {{ grassland.error.value }}
     </p>
     <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
-    <!-- 分区：账号级能力（与视角无关）/ 视角工作区 / 争议与平台治理 ——
-         十余张卡平铺无主次的替代方案是分区标题 + 账号区横排，而不是继续加卡 -->
+    <!-- 田垄①：账号级能力（与视角无关） -->
     <section class="gl-zone" aria-label="账号与合规">
-      <h3 class="gl-zone-title">账号与合规</h3>
-      <div class="gl-zone-grid">
-        <article id="gl-invitations" class="gl-card">
+      <div class="gl-zone-head">
+        <h3 class="gl-zone-title">账号与合规</h3>
+      </div>
+      <div class="gl-zone-body">
+        <article id="gl-invitations" class="gl-tile">
           <MyInvitationsCard @joined="() => loadOrganizations()" />
         </article>
 
-        <article class="gl-card">
+        <article class="gl-tile">
           <MySessionsCard />
         </article>
 
-        <article class="gl-card">
+        <article class="gl-tile">
           <PersonalDataComplianceCard />
         </article>
       </div>
     </section>
 
     <!-- ============ 商家视角 ============ -->
-    <div v-if="side === 'merchant'" id="gl-panel-merchant" role="tabpanel" aria-labelledby="gl-tab-merchant" tabindex="0" class="gl-grid">
-      <article id="gl-organizations" class="gl-card">
-        <h3>1. 我的组织</h3>
-        <div class="gl-row">
-          <select v-model="activeOrgId" aria-label="所属组织" name="organization" @change="changeOrganization">
-            <option value="" disabled>选择组织</option>
-            <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
-          </select>
+    <div v-if="side === 'merchant'" id="gl-panel-merchant" role="tabpanel" aria-labelledby="gl-tab-merchant" tabindex="0" class="gl-workbench" data-side="merchant">
+      <!-- 田垄②：主操作区——每天干活的地方放最上面 -->
+      <section class="gl-zone" aria-label="发布与撮合">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">发布与撮合</h3>
+          <p class="gl-zone-note">任务沿 草稿 → 审核 → 招募 → 履约 → 结算 的生长线推进</p>
         </div>
-        <div v-if="organizationAccessIds.size > 0 || managerStoreScopes.length === 0" class="gl-row">
-          <input v-model="newOrgName" aria-label="新组织名称" name="organization-name" autocomplete="off" placeholder="新组织名称" @keyup.enter="createOrg" />
-          <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
-        </div>
-        <p v-if="activeOrg" class="gl-hint">
-          当前等级 <code>{{ activeOrg.permissionTier }}</code>
-          <span v-if="!activeOrgHasOrganizationAccess">（仅门店经理权限）</span>
-          <span v-if="!canPublishBounty">（非 finance_transaction 等级不可发布赏金任务）</span>
-        </p>
-      </article>
-
-      <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
-      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
-        <MerchantPermissionCard
-          :org-id="activeOrg.id"
-          :tier="activeOrg.permissionTier"
-          :industry="activeOrg.industry"
-          @changed="loadOrganizations"
-        />
-      </article>
-
-      <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
-      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
-        <OrgTeamCard :org-id="activeOrg.id" />
-      </article>
-
-      <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
-      <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
-        <AiOrgBudgetPanel :organization-id="activeOrg.id" />
-      </article>
-
-      <!-- 组织级 BYOK（ADR-D17）：组织密钥管理 + 回退策略开关，同款 owner/admin 门禁 -->
-      <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
-        <AiOrgProviderKeysPanel :organization-id="activeOrg.id" />
-      </article>
-
-      <!-- 组织级创作审计视图（任务书 #44 登记）：谁在何时用哪个模型生成了什么；同款 owner/admin 门禁 -->
-      <article v-if="activeOrg && canManageAiBudget" class="gl-card gl-card-wide">
-        <h3>组织创作审计</h3>
-        <OrgCreationAuditPanel :organization-id="activeOrg.id" />
-      </article>
-
-      <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
-      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
-        <OrganizationBrandCard :org-id="activeOrg.id" :role="activeOrganizationRole" />
-      </article>
-
-      <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
-      <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-card gl-card-wide">
-        <MerchantKybCard :org-id="activeOrg.id" @changed="() => loadOrganizations()" />
-      </article>
-
-      <!-- 独立门店 KYB：纯门店 MANAGER（无组织成员身份）也能维护自己门店的资料并走审核状态机。 -->
-      <article
-        v-else-if="activeOrg && managerStoreScopes.some((scope) => scope.organizationId === activeOrgId)"
-        class="gl-card gl-card-wide"
-      >
-        <MerchantKybCard
-          :org-id="activeOrgId"
-          store-only
-          :stores="stores.map((store) => ({ id: store.id, name: store.name }))"
-          @changed="() => loadOrganizations()"
-        />
-      </article>
-
-      <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
-      <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
-        id="gl-wallet" class="gl-card">
-        <h3>2. 资金账户</h3>
-        <p class="gl-balance">余额 <strong>¥{{ balanceYuan }}</strong></p>
-        <div class="gl-row">
-          <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
-        </div>
-        <div class="gl-row">
-          <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
-          <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
-        </div>
-      </article>
-
-      <!-- 任务书 #29+#30 #30：商家月度账单（按月汇总资金流水） -->
-      <MerchantMonthlyBillCard v-if="activeOrgId" :organization-id="activeOrgId" />
-
-      <MerchantCommerceCard
-        v-if="activeOrgId"
-        :organization-id="activeOrgId"
-        :store-id="selectedStoreId || undefined"
-      />
-
-      <article v-if="activeOrgId" class="gl-card gl-card-wide">
-        <BusinessAnalyticsPanel :organization-id="activeOrgId" :store-id="selectedStoreId" />
-      </article>
-
-      <MerchantTaskForm
-        :form="taskForm"
-        :editing-draft="editingDraft"
-        :revising-task="revisingTask"
-        :stores="stores"
-        :selected-store-id="selectedStoreId"
-        :active-org-id="activeOrgId"
-        :has-organization-access="activeOrgHasOrganizationAccess"
-        :can-publish-bounty="canPublishBounty"
-        :loading="grassland.loading.value"
-        @update:field="handleTaskFormUpdate"
-        @update:commission-ladder="updateCommissionLadder"
-        @change-store="handleTaskFormStoreChange"
-        @publish="publishTask"
-        @save-draft="saveDraft"
-        @reset-form="resetTaskForm"
-      />
-
-      <article id="gl-engagements" class="gl-card gl-card-wide">
-        <h3>4. 任务与报名</h3>
-        <p v-if="tasks.length === 0" class="gl-empty">暂无任务</p>
-        <ul class="gl-list">
-          <li v-for="t in tasks" :key="t.id">
-            <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }" @click="selectTask(t.id)">
-              {{ t.title }}
-            </button>
-            <span class="badge badge-neutral">{{ taskStatusLabel(t.status) }}</span>
-            <span v-if="t.bountyCents" class="badge badge-success">{{ formatYuan(t.bountyCents) }}</span>
-            <!-- 任务书 #25：阶梯任务在状态/赏金标签旁展示 compact 档位摘要（赏金 = 最高档预留） -->
-            <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" compact />
-            <span v-if="t.minRecommenderLevel > 1" class="badge badge-neutral">Lv{{ t.minRecommenderLevel }}+</span>
-            <span v-if="t.autoAcceptMinLevel" class="badge badge-info">Lv{{ t.autoAcceptMinLevel }}+ 自动通过中</span>
-            <span v-if="t.storeId" class="badge badge-neutral">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>
-            <!-- 草稿：编辑 / 提交审核 / 取消 -->
-            <template v-if="t.status === 'draft'">
-              <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
-              <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">提交审核</button>
-              <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
-            </template>
-            <!-- 待审核：平台内容审核中，仅可取消（编辑需先驳回或取消重建） -->
-            <template v-else-if="t.status === 'pending_review'">
-              <span class="gl-hint">平台审核中</span>
-              <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
-            </template>
-            <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
-            <template v-else-if="t.status === 'published'">
-              <button type="button" :disabled="grassland.loading.value" @click="editPublished(t)">编辑</button>
-              <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
-              <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消任务</button>
-            </template>
-          </li>
-        </ul>
-
-        <div v-if="selectedTaskId" class="gl-apps">
-          <RecommenderRecommendations
-            v-if="selectedTask?.status === 'published'"
-            :items="recommendations?.items || []"
-            :eligible-count="recommendations?.eligibleCount || 0"
-            :scoring-version="recommendations?.scoringVersion || 'deterministic-v1'"
-            :loading="recommendationsLoading"
-            :inviting-account-id="invitingAccountId"
-            @refresh="loadRecommendations()"
-            @invite="inviteRecommended"
+        <div class="gl-zone-body">
+          <MerchantTaskForm
+            :form="taskForm"
+            :editing-draft="editingDraft"
+            :revising-task="revisingTask"
+            :stores="stores"
+            :selected-store-id="selectedStoreId"
+            :active-org-id="activeOrgId"
+            :has-organization-access="activeOrgHasOrganizationAccess"
+            :can-publish-bounty="canPublishBounty"
+            :loading="grassland.loading.value"
+            @update:field="handleTaskFormUpdate"
+            @update:commission-ladder="updateCommissionLadder"
+            @change-store="handleTaskFormStoreChange"
+            @publish="publishTask"
+            @save-draft="saveDraft"
+            @reset-form="resetTaskForm"
           />
-          <h4>报名列表</h4>
-          <p v-if="applications.length === 0" class="gl-empty">该任务暂无报名</p>
-          <template v-else>
-            <!-- 筛选：等级 ≥ / 完成率 ≥（前端对全量报名筛选，后端无搜人入口） -->
-            <div class="gl-filter">
-              <label>等级 ≥
-                <select v-model="levelFilter">
-                  <option value="">不限</option>
-                  <option v-for="lv in ['Lv2','Lv3','Lv4']" :key="lv" :value="lv">{{ lv }}</option>
-                </select>
-              </label>
-              <label>完成率 ≥
-                <select v-model.number="rateFilterPct">
-                  <option :value="0">不限</option>
-                  <option v-for="p in [60,70,80,90]" :key="p" :value="p">{{ p }}%</option>
-                </select>
-              </label>
-            </div>
 
-            <p v-if="filteredApplications.length === 0" class="gl-empty">无符合筛选条件的报名</p>
-            <template v-else>
-              <!-- 任务书 #27：批量操作栏 -->
-              <div class="gl-batch-bar">
-                <label class="gl-batch-select-all">
-                  <input type="checkbox" :checked="allPendingSelected" @change="toggleSelectAll" />
-                  全选待处理（{{ pendingFilteredApplications.length }}）
-                </label>
-                <button type="button" :disabled="batchButtonsDisabled" @click="batchAccept">批量接受</button>
-                <button type="button" :disabled="batchButtonsDisabled" @click="confirmBatchReject">批量拒绝</button>
-                <span v-if="selectedAppIds.size > 0" class="gl-hint">已选 {{ selectedAppIds.size }} 条</span>
-              </div>
-
-              <table class="gl-table">
-                <thead><tr><th class="gl-th-check"><input type="checkbox" aria-label="全选待处理报名" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
-                <tbody>
-                  <tr v-for="(a, index) in filteredApplications" :key="a.id">
-                    <td>
-                      <input v-if="a.status === 'pending'" type="checkbox" :aria-label="`选择第 ${index + 1} 行报名`" :checked="selectedAppIds.has(a.id)" @change="toggleSelectApp(a.id)" />
-                    </td>
-                  <td><code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></td>
-                  <td>
-                    <RecommenderReputationBadge
-                      compact
-                      :reputation="applicantReputation[a.recommenderAccountId] || null"
-                      :profile="applicantProfile[a.recommenderAccountId] || null"
+          <article id="gl-engagements" class="gl-tile gl-tile-wide">
+            <h3>任务与报名</h3>
+            <p v-if="tasks.length === 0" class="gl-empty">暂无任务</p>
+            <ul class="gl-list">
+              <li v-for="t in tasks" :key="t.id">
+                <div class="gl-task-main">
+                  <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }" @click="selectTask(t.id)">
+                    {{ t.title }}
+                  </button>
+                  <span class="badge badge-neutral">{{ taskStatusLabel(t.status) }}</span>
+                  <span v-if="t.bountyCents" class="badge badge-success gl-num">{{ formatYuan(t.bountyCents) }}</span>
+                  <!-- 任务书 #25：阶梯任务在状态/赏金标签旁展示 compact 档位摘要（赏金 = 最高档预留） -->
+                  <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" compact />
+                  <span v-if="t.minRecommenderLevel > 1" class="badge badge-neutral">Lv{{ t.minRecommenderLevel }}+</span>
+                  <span v-if="t.autoAcceptMinLevel" class="badge badge-info">Lv{{ t.autoAcceptMinLevel }}+ 自动通过中</span>
+                  <span v-if="t.storeId" class="badge badge-neutral">{{ stores.find((s) => s.id === t.storeId)?.name || '门店任务' }}</span>
+                  <!-- 生长刻度：五段状态轨，当前段高亮；cancelled 整轨转 danger -->
+                  <div
+                    class="gl-growth" :class="{ dead: t.status === 'cancelled' }" role="img"
+                    :aria-label="`生长进度：第 ${taskStageIndex(t) + 1}/5 段（${TASK_STAGES[taskStageIndex(t)]}）${t.status === 'cancelled' ? '，任务已取消' : ''}`"
+                  >
+                    <span
+                      v-for="(stageLabel, i) in TASK_STAGES" :key="stageLabel" class="gl-growth-seg"
+                      :class="[`s${i}`, { done: i < taskStageIndex(t), now: i === taskStageIndex(t) }]"
                     />
-                  </td>
-                  <td>{{ statusLabel(a.status) }}</td>
-                  <td class="gl-actions">
-                    <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
-                    <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
-                    <template v-if="a.status === 'accepted'">
-                      <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
-                        {{ taskContextLoadingAppId === a.id ? '加载上下文...' : '围绕任务创作' }}
-                      </button>
-                      <!-- 任务书 #25：阶梯任务确认履约须申报实际指标，实时预览预计结算 -->
-                      <template v-if="selectedCommissionLadder()">
-                        <input
-                          v-model="confirmedMetricInputs[a.id]"
-                          type="number"
-                          min="0"
-                          step="1"
-                          class="gl-metric-input"
-                          :aria-label="`第 ${index + 1} 行实际指标（${selectedCommissionLadder()?.metricKey ?? ''}）`"
-                          placeholder="实际指标"
-                        />
-                        <span class="gl-hint">预计结算 {{ formatYuan(previewCommissionCents(a.id)) }}</span>
-                        <span v-if="confirmedMetricResult(a.id).error" class="gl-hint gl-metric-error">
-                          {{ confirmedMetricResult(a.id).error }}
-                        </span>
-                      </template>
-                      <button
-                        type="button"
-                        :disabled="grassland.loading.value
-                          || (selectedCommissionLadder() != null && confirmedMetricResult(a.id).error != null)"
-                        @click="confirm(a)"
-                      >确认履约</button>
-                      <input
-                        v-model="contestReasons[a.id]"
-                        class="gl-contest-reason"
-                        :aria-label="`第 ${index + 1} 行拒绝理由`"
-                        placeholder="拒绝理由（系统核实通过后转客服）"
-                      />
-                      <button
-                        type="button"
-                        :disabled="grassland.loading.value || !contestReasons[a.id]?.trim()"
-                        @click="contest(a)"
-                      >拒绝并转客服</button>
-                    </template>
-                  </td>
-                  <td class="gl-outcome">{{ outcomes[a.id] || '—' }}</td>
-                </tr>
-              </tbody>
-            </table>
-            </template>
+                  </div>
+                </div>
+                <div class="gl-task-actions">
+                  <!-- 草稿：编辑 / 提交审核 / 取消 -->
+                  <template v-if="t.status === 'draft'">
+                    <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
+                    <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">提交审核</button>
+                    <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
+                  </template>
+                  <!-- 待审核：平台内容审核中，仅可取消（编辑需先驳回或取消重建） -->
+                  <template v-else-if="t.status === 'pending_review'">
+                    <span class="gl-hint">平台审核中</span>
+                    <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
+                  </template>
+                  <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
+                  <template v-else-if="t.status === 'published'">
+                    <button type="button" :disabled="grassland.loading.value" @click="editPublished(t)">编辑</button>
+                    <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
+                    <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消任务</button>
+                  </template>
+                </div>
+              </li>
+            </ul>
 
-            <!-- 交付物 + 评分：确认履约前必须有一份待核验的（后端 409 守卫）；评分须先确认履约。 -->
-            <template v-for="a in applications" :key="`sub-${a.id}`">
-              <div v-if="a.status === 'accepted'" class="gl-sub-block">
-                <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
-                <EngagementSubmissionPanel
-                  :task-id="selectedTaskId" :application-id="a.id" role="merchant"
-                  :task-content-form="selectedTask?.contentForm ?? null"
-                  :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
-                />
-                <EngagementRatingPanel
-                  :task-id="selectedTaskId" :application-id="a.id" role="merchant"
-                  :can-rate="confirmedAppIds.has(a.id)"
-                />
-              </div>
-            </template>
-          </template>
+            <div v-if="selectedTaskId" class="gl-apps">
+              <RecommenderRecommendations
+                v-if="selectedTask?.status === 'published'"
+                :items="recommendations?.items || []"
+                :eligible-count="recommendations?.eligibleCount || 0"
+                :scoring-version="recommendations?.scoringVersion || 'deterministic-v1'"
+                :loading="recommendationsLoading"
+                :inviting-account-id="invitingAccountId"
+                @refresh="loadRecommendations()"
+                @invite="inviteRecommended"
+              />
+              <h4>报名列表</h4>
+              <p v-if="applications.length === 0" class="gl-empty">该任务暂无报名</p>
+              <template v-else>
+                <!-- 筛选：等级 ≥ / 完成率 ≥（前端对全量报名筛选，后端无搜人入口） -->
+                <div class="gl-filter">
+                  <label>等级 ≥
+                    <select v-model="levelFilter">
+                      <option value="">不限</option>
+                      <option v-for="lv in ['Lv2','Lv3','Lv4']" :key="lv" :value="lv">{{ lv }}</option>
+                    </select>
+                  </label>
+                  <label>完成率 ≥
+                    <select v-model.number="rateFilterPct">
+                      <option :value="0">不限</option>
+                      <option v-for="p in [60,70,80,90]" :key="p" :value="p">{{ p }}%</option>
+                    </select>
+                  </label>
+                </div>
+
+                <p v-if="filteredApplications.length === 0" class="gl-empty">无符合筛选条件的报名</p>
+                <template v-else>
+                  <!-- 任务书 #27：批量操作栏 -->
+                  <div class="gl-batch-bar">
+                    <label class="gl-batch-select-all">
+                      <input type="checkbox" aria-label="全选待处理报名" :checked="allPendingSelected" @change="toggleSelectAll" />
+                      全选待处理（{{ pendingFilteredApplications.length }}）
+                    </label>
+                    <button type="button" :disabled="batchButtonsDisabled" @click="batchAccept">批量接受</button>
+                    <button type="button" :disabled="batchButtonsDisabled" @click="confirmBatchReject">批量拒绝</button>
+                    <span v-if="selectedAppIds.size > 0" class="gl-hint">已选 {{ selectedAppIds.size }} 条</span>
+                  </div>
+
+                  <table class="gl-table">
+                    <thead><tr><th class="gl-th-check"><input type="checkbox" aria-label="全选待处理报名" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
+                    <tbody>
+                      <tr v-for="(a, index) in filteredApplications" :key="a.id">
+                        <td>
+                          <input v-if="a.status === 'pending'" type="checkbox" :aria-label="`选择第 ${index + 1} 行报名`" :checked="selectedAppIds.has(a.id)" @change="toggleSelectApp(a.id)" />
+                        </td>
+                        <td><code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></td>
+                        <td>
+                          <RecommenderReputationBadge
+                            compact
+                            :reputation="applicantReputation[a.recommenderAccountId] || null"
+                            :profile="applicantProfile[a.recommenderAccountId] || null"
+                          />
+                        </td>
+                        <td>{{ statusLabel(a.status) }}</td>
+                        <td class="gl-actions">
+                          <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
+                          <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
+                          <template v-if="a.status === 'accepted'">
+                            <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
+                              {{ taskContextLoadingAppId === a.id ? '加载上下文…' : '围绕任务创作' }}
+                            </button>
+                            <!-- 任务书 #25：阶梯任务确认履约须申报实际指标，实时预览预计结算 -->
+                            <template v-if="selectedCommissionLadder()">
+                              <input
+                                v-model="confirmedMetricInputs[a.id]"
+                                type="number"
+                                min="0"
+                                step="1"
+                                class="gl-metric-input"
+                                :aria-label="`第 ${index + 1} 行实际指标（${selectedCommissionLadder()?.metricKey ?? ''}）`"
+                                placeholder="实际指标"
+                              />
+                              <span class="gl-hint">预计结算 <span class="gl-num">{{ formatYuan(previewCommissionCents(a.id)) }}</span></span>
+                              <span v-if="confirmedMetricResult(a.id).error" class="gl-hint gl-metric-error">
+                                {{ confirmedMetricResult(a.id).error }}
+                              </span>
+                            </template>
+                            <button
+                              type="button"
+                              :disabled="grassland.loading.value
+                                || (selectedCommissionLadder() != null && confirmedMetricResult(a.id).error != null)"
+                              @click="confirm(a)"
+                            >确认履约</button>
+                            <input
+                              v-model="contestReasons[a.id]"
+                              class="gl-contest-reason"
+                              :aria-label="`第 ${index + 1} 行拒绝理由`"
+                              placeholder="拒绝理由（系统核实通过后转客服）"
+                            />
+                            <button
+                              type="button"
+                              :disabled="grassland.loading.value || !contestReasons[a.id]?.trim()"
+                              @click="contest(a)"
+                            >拒绝并转客服</button>
+                          </template>
+                        </td>
+                        <td class="gl-outcome gl-num">{{ outcomes[a.id] || '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </template>
+
+                <!-- 交付物 + 评分：确认履约前必须有一份待核验的（后端 409 守卫）；评分须先确认履约。 -->
+                <template v-for="a in applications" :key="`sub-${a.id}`">
+                  <div v-if="a.status === 'accepted'" class="gl-sub-block">
+                    <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
+                    <EngagementSubmissionPanel
+                      :task-id="selectedTaskId" :application-id="a.id" role="merchant"
+                      :task-content-form="selectedTask?.contentForm ?? null"
+                      :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
+                    />
+                    <EngagementRatingPanel
+                      :task-id="selectedTaskId" :application-id="a.id" role="merchant"
+                      :can-rate="confirmedAppIds.has(a.id)"
+                    />
+                  </div>
+                </template>
+              </template>
+            </div>
+          </article>
         </div>
-      </article>
+      </section>
+
+      <!-- 田垄③：低频资料与治理——组织、资金、KYB、AI 治理归拢一垄 -->
+      <section class="gl-zone" aria-label="组织与门店">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">组织与门店</h3>
+        </div>
+        <div class="gl-zone-body">
+          <article id="gl-organizations" class="gl-tile">
+            <h3>我的组织</h3>
+            <div class="gl-row">
+              <select v-model="activeOrgId" aria-label="所属组织" name="organization" @change="changeOrganization">
+                <option value="" disabled>选择组织</option>
+                <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
+              </select>
+            </div>
+            <div v-if="organizationAccessIds.size > 0 || managerStoreScopes.length === 0" class="gl-row">
+              <input v-model="newOrgName" aria-label="新组织名称" name="organization-name" autocomplete="off" placeholder="新组织名称" @keyup.enter="createOrg" />
+              <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
+            </div>
+            <p v-if="activeOrg" class="gl-hint">
+              当前等级 <code>{{ activeOrg.permissionTier }}</code>
+              <span v-if="!activeOrgHasOrganizationAccess">（仅门店经理权限）</span>
+              <span v-if="!canPublishBounty">（非 finance_transaction 等级不可发布赏金任务）</span>
+            </p>
+          </article>
+
+          <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
+          <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
+            id="gl-wallet" class="gl-tile">
+            <h3>资金账户</h3>
+            <p class="gl-balance">余额 <strong class="gl-num">{{ account ? formatYuan(account.balanceCents) : '¥—' }}</strong></p>
+            <div class="gl-row">
+              <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
+            </div>
+            <div class="gl-row">
+              <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
+              <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
+            </div>
+          </article>
+
+          <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
+          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
+            <MerchantPermissionCard
+              :org-id="activeOrg.id"
+              :tier="activeOrg.permissionTier"
+              :industry="activeOrg.industry"
+              @changed="loadOrganizations"
+            />
+          </article>
+
+          <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
+          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
+            <OrgTeamCard :org-id="activeOrg.id" />
+          </article>
+
+          <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
+          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
+            <AiOrgBudgetPanel :organization-id="activeOrg.id" />
+          </article>
+
+          <!-- 组织级 BYOK（ADR-D17）：组织密钥管理 + 回退策略开关，同款 owner/admin 门禁 -->
+          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
+            <AiOrgProviderKeysPanel :organization-id="activeOrg.id" />
+          </article>
+
+          <!-- 组织级创作审计视图（任务书 #44 登记）：谁在何时用哪个模型生成了什么；同款 owner/admin 门禁 -->
+          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
+            <h3>组织创作审计</h3>
+            <OrgCreationAuditPanel :organization-id="activeOrg.id" />
+          </article>
+
+          <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
+          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
+            <OrganizationBrandCard :org-id="activeOrg.id" :role="activeOrganizationRole" />
+          </article>
+
+          <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
+          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
+            <MerchantKybCard :org-id="activeOrg.id" @changed="() => loadOrganizations()" />
+          </article>
+
+          <!-- 独立门店 KYB：纯门店 MANAGER（无组织成员身份）也能维护自己门店的资料并走审核状态机。 -->
+          <article
+            v-else-if="activeOrg && managerStoreScopes.some((scope) => scope.organizationId === activeOrgId)"
+            class="gl-tile gl-tile-wide"
+          >
+            <MerchantKybCard
+              :org-id="activeOrgId"
+              store-only
+              :stores="stores.map((store) => ({ id: store.id, name: store.name }))"
+              @changed="() => loadOrganizations()"
+            />
+          </article>
+
+          <!-- 任务书 #29+#30 #30：商家月度账单（按月汇总资金流水） -->
+          <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
+            <MerchantMonthlyBillCard :organization-id="activeOrgId" />
+          </article>
+
+          <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
+            <MerchantCommerceCard
+              :organization-id="activeOrgId"
+              :store-id="selectedStoreId || undefined"
+            />
+          </article>
+
+          <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
+            <BusinessAnalyticsPanel :organization-id="activeOrgId" :store-id="selectedStoreId" />
+          </article>
+        </div>
+      </section>
     </div>
 
     <!-- ============ 推荐官视角 ============ -->
-    <div v-else id="gl-panel-recommender" role="tabpanel" aria-labelledby="gl-tab-recommender" tabindex="0" class="gl-grid">
-      <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
-      <article class="gl-card gl-card-wide">
-        <MyRecommenderProfileCard />
-      </article>
+    <div v-else id="gl-panel-recommender" role="tabpanel" aria-labelledby="gl-tab-recommender" tabindex="0" class="gl-workbench" data-side="recommender">
+      <!-- 田垄②′：我的草场——主页、分享、收款 -->
+      <section class="gl-zone" aria-label="我的草场">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">我的草场</h3>
+        </div>
+        <div class="gl-zone-body">
+          <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
+          <article class="gl-tile gl-tile-wide">
+            <MyRecommenderProfileCard />
+          </article>
 
-      <!-- 推广链接/二维码生成（消费者归因闭环的推荐官侧入口） -->
-      <article class="gl-card gl-card-wide">
-        <RecommenderShareCard />
-      </article>
+          <!-- 推广链接/二维码生成（消费者归因闭环的推荐官侧入口） -->
+          <article class="gl-tile gl-tile-wide">
+            <RecommenderShareCard />
+          </article>
 
-      <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
-      <article id="gl-wallet" class="gl-card gl-card-wide">
-        <MyWalletCard />
-      </article>
+          <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
+          <article id="gl-wallet" class="gl-tile gl-tile-wide">
+            <MyWalletCard />
+          </article>
 
-      <!-- 任务书 #29+#30 #29：收入统计（按月/按任务）+ 历史任务 -->
-      <article class="gl-card gl-card-wide">
-        <RecommenderIncomeStatsCard />
-      </article>
-      <article class="gl-card gl-card-wide">
-        <RecommenderHistoryCard />
-      </article>
+          <!-- 任务书 #29+#30 #29：收入统计（按月/按任务）+ 历史任务 -->
+          <article class="gl-tile gl-tile-wide">
+            <RecommenderIncomeStatsCard />
+          </article>
+          <article class="gl-tile gl-tile-wide">
+            <RecommenderHistoryCard />
+          </article>
+        </div>
+      </section>
 
-      <RecommenderTaskHall
-        :feed-items="feedItems"
-        :feed-has-more="feedHasMore"
-        :feed-loading="feedLoading"
-        :feed-filters="feedFilters"
-        :apply-note="applyNote"
-        :selected-task-id="selectedTaskId"
-        :loading="grassland.loading.value"
-        :locating="locating"
-        :wallet-balance-cents="walletBalanceCents"
-        @update:feed-filter="handleFeedFilterUpdate"
-        @load-feed="loadFeed"
-        @update:apply-note="applyNote = $event"
-        @select-task="selectTask"
-        @apply="apply"
-        @use-location="useCurrentLocation"
-      />
+      <!-- 田垄③′：任务大厅——找活儿的地方 -->
+      <section class="gl-zone" aria-label="任务大厅">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">任务大厅</h3>
+          <p class="gl-zone-note">只显示已发布且未截止的任务</p>
+        </div>
+        <div class="gl-zone-body">
+          <RecommenderTaskHall
+            :feed-items="feedItems"
+            :feed-has-more="feedHasMore"
+            :feed-loading="feedLoading"
+            :feed-filters="feedFilters"
+            :apply-note="applyNote"
+            :selected-task-id="selectedTaskId"
+            :loading="grassland.loading.value"
+            :locating="locating"
+            :wallet-balance-cents="walletBalanceCents"
+            @update:feed-filter="handleFeedFilterUpdate"
+            @load-feed="loadFeed"
+            @update:apply-note="applyNote = $event"
+            @select-task="selectTask"
+            @apply="apply"
+            @use-location="useCurrentLocation"
+          />
 
-      <!-- 任务书 #24：选中任务的门店公开详情页（只读白名单） -->
-      <StorePublicProfilePanel
-        :store-id="selectedTask?.storeId ?? null"
-        :profile="storePublicProfile"
-        :loading="storePublicProfileLoading"
-        :error="storePublicProfileError"
-      />
+          <!-- 任务书 #24：选中任务的门店公开详情页（只读白名单） -->
+          <StorePublicProfilePanel
+            :store-id="selectedTask?.storeId ?? null"
+            :profile="storePublicProfile"
+            :loading="storePublicProfileLoading"
+            :error="storePublicProfileError"
+          />
 
-      <!-- 缺口清偿之六：选中任务的品牌公开资料（#32 D9 公开消费） -->
-      <BrandPublicProfilePanel :organization-id="selectedTask?.organizationId ?? null" />
+          <!-- 缺口清偿之六：选中任务的品牌公开资料（#32 D9 公开消费） -->
+          <BrandPublicProfilePanel :organization-id="selectedTask?.organizationId ?? null" />
 
-      <!-- 任务书 #42：门店公开媒体画廊（按需拉取，URL 过期 onerror 重拉一次） -->
-      <StoreMediaGallery :store-id="selectedTask?.storeId ?? null" />
+          <!-- 任务书 #42：门店公开媒体画廊（按需拉取，URL 过期 onerror 重拉一次） -->
+          <StoreMediaGallery :store-id="selectedTask?.storeId ?? null" />
+        </div>
+      </section>
 
-      <article id="gl-engagements" class="gl-card gl-card-wide">
-        <h3>我的履约与争议</h3>
-        <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。</p>
-        <p v-if="applications.length === 0" class="gl-empty">选择任务后可见相关报名</p>
-        <table v-else class="gl-table">
-          <thead><tr><th>报名</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="a in applications" :key="a.id">
-              <td><code>{{ a.id.slice(0, 8) }}…</code></td>
-              <td>{{ statusLabel(a.status) }}</td>
-              <td>
-                <template v-if="a.status === 'accepted'">
-                  <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
-                    {{ taskContextLoadingAppId === a.id ? '加载上下文...' : '开始创作' }}
-                  </button>
-                  <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
-                </template>
-                <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="confirmWithdraw(a)">
-                  撤销
-                </button>
-                <span v-else>—</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- 田垄④′：我的履约与争议 -->
+      <section class="gl-zone" aria-label="我的履约与争议">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">我的履约与争议</h3>
+        </div>
+        <div class="gl-zone-body">
+          <article id="gl-engagements" class="gl-tile gl-tile-wide">
+            <h3>履约与争议</h3>
+            <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。</p>
+            <p v-if="applications.length === 0" class="gl-empty">选择任务后可见相关报名</p>
+            <table v-else class="gl-table">
+              <thead><tr><th>报名</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr v-for="a in applications" :key="a.id">
+                  <td><code>{{ a.id.slice(0, 8) }}…</code></td>
+                  <td>{{ statusLabel(a.status) }}</td>
+                  <td>
+                    <template v-if="a.status === 'accepted'">
+                      <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
+                        {{ taskContextLoadingAppId === a.id ? '加载上下文…' : '开始创作' }}
+                      </button>
+                      <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
+                    </template>
+                    <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="confirmWithdraw(a)">
+                      撤销
+                    </button>
+                    <span v-else>—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-        <!-- 提交履约凭证：商家确认前必须先有这一步 -->
-        <template v-for="a in applications" :key="`mysub-${a.id}`">
-          <div v-if="a.status === 'accepted'" class="gl-sub-block">
-            <h5>提交履约 · <code>{{ a.id.slice(0, 8) }}…</code></h5>
-            <EngagementSubmissionPanel
-              :task-id="selectedTaskId" :application-id="a.id" role="recommender"
-              :task-content-form="selectedTask?.contentForm ?? null"
-              :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
-            />
-            <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
-            <EngagementRatingPanel
-              :task-id="selectedTaskId" :application-id="a.id" role="recommender"
-            />
-          </div>
-        </template>
-      </article>
+            <!-- 提交履约凭证：商家确认前必须先有这一步 -->
+            <template v-for="a in applications" :key="`mysub-${a.id}`">
+              <div v-if="a.status === 'accepted'" class="gl-sub-block">
+                <h5>提交履约 · <code>{{ a.id.slice(0, 8) }}…</code></h5>
+                <EngagementSubmissionPanel
+                  :task-id="selectedTaskId" :application-id="a.id" role="recommender"
+                  :task-content-form="selectedTask?.contentForm ?? null"
+                  :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
+                />
+                <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
+                <EngagementRatingPanel
+                  :task-id="selectedTaskId" :application-id="a.id" role="recommender"
+                />
+              </div>
+            </template>
+          </article>
+        </div>
+      </section>
     </div>
 
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
     <section class="gl-zone" aria-label="争议与平台治理">
-      <h3 class="gl-zone-title">争议与平台治理</h3>
-      <article id="gl-disputes" class="gl-card">
-        <h3>争议审判</h3>
-        <div class="gl-row">
-          <input v-model="activeDisputeId" aria-label="争议 ID" name="dispute-id" autocomplete="off" placeholder="争议 ID（开启争议后自动填入）" />
-        </div>
-        <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
-        <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
-          异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
-        </p>
-        <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
-      </article>
+      <div class="gl-zone-head">
+        <h3 class="gl-zone-title">争议与平台治理</h3>
+      </div>
+      <div class="gl-zone-body">
+        <article id="gl-disputes" class="gl-tile">
+          <h3>争议审判</h3>
+          <div class="gl-row">
+            <input v-model="activeDisputeId" aria-label="争议 ID" name="dispute-id" autocomplete="off" placeholder="争议 ID（开启争议后自动填入）" />
+          </div>
+          <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
+          <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
+            异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
+          </p>
+          <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
+        </article>
 
-      <!-- 平台审核队列：仅 admin 可见（服务端另有 role 门禁），与商家/推荐官视角无关故放在切换之外 -->
-      <article v-if="isPlatformAdmin" class="gl-card">
-        <PermissionReviewPanel @reviewed="loadOrganizations" />
-      </article>
+        <!-- 平台审核队列：仅 admin 可见（服务端另有 role 门禁），与商家/推荐官视角无关故放在切换之外 -->
+        <article v-if="isPlatformAdmin" class="gl-tile">
+          <PermissionReviewPanel @reviewed="loadOrganizations" />
+        </article>
+      </div>
     </section>
   </section>
 </template>
 
 <style scoped>
-.grassland { display: flex; flex-direction: column; gap: var(--space-md); }
-.gl-header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-md); flex-wrap: wrap; }
-.gl-header h2 { margin: 0; font-size: 20px; }
-.gl-sub { margin: 4px 0 0; font-size: 13px; opacity: 0.7; }
-.gl-side-switch { display: flex; gap: 4px; }
+.grassland { display: flex; flex-direction: column; gap: var(--space-lg); }
+
+/* ---------- 地平线头区（signature：紫=播种 / 苗绿=耕耘） ---------- */
+.gl-header { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-md); flex-wrap: wrap; }
+.gl-head-copy { min-width: 0; }
+.gl-title { margin: 0; font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
+.gl-sub { margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-text-muted); }
+
+.gl-side-switch {
+  position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px;
+  border: 1px solid var(--color-border); border-radius: 999px;
+  background: var(--surface-card);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
 .gl-side-switch button {
-  padding: 6px 14px; border: 1px solid var(--color-border);
-  background: transparent; border-radius: 6px; cursor: pointer; font-size: 13px;
+  position: relative; z-index: 1; min-height: 32px; padding: 0 var(--space-md);
+  border: none; background: transparent; border-radius: 999px;
+  color: var(--color-text-muted); cursor: pointer; font-size: var(--text-sm); font-weight: 500;
+  transition: color var(--duration-normal) var(--ease-out);
 }
-.gl-side-switch button.active { background: var(--color-accent); color: #fff; border-color: transparent; }
-.gl-alert { margin: 0; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
-.gl-alert-error { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
-.gl-alert-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.gl-sub-block { margin-top: 10px; }
-.gl-sub-block h5 { margin: 0; font-size: 12px; opacity: 0.75; }
-.gl-zone { display: grid; gap: var(--space-sm); }
-.gl-zone-title {
-  margin: 0;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
+.gl-side-switch button:hover:not(:disabled) { background: transparent; color: var(--color-text-secondary); }
+.gl-side-switch button.active { color: var(--color-on-accent); font-weight: 600; }
+/* 激活滑块：商家=紫渐变；推荐官=苗绿渐变；spring 缓动滑到对侧 */
+.gl-switch-thumb {
+  position: absolute; z-index: 0; top: 4px; bottom: 4px; left: 4px;
+  width: calc(50% - 4px); border-radius: 999px; background: var(--gradient-accent);
+  transition: transform var(--duration-normal) var(--ease-spring), background var(--duration-normal) var(--ease-out);
 }
-.gl-zone-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md); }
-.gl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-md); }
-.gl-card {
-  border: 1px solid var(--color-border); border-radius: 10px;
-  padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm);
+.gl-switch-thumb-rec {
+  background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 68%, var(--color-info)));
+  transform: translateX(calc(100% + 4px));
 }
-.gl-card-wide { grid-column: 1 / -1; }
-.gl-card h3 { margin: 0; font-size: 15px; }
-.gl-card h4 { margin: 12px 0 6px; font-size: 14px; }
-.gl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.gl-row input, .gl-row select { flex: 1; min-width: 120px; padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-.gl-row input[type="number"] { flex: 0 0 90px; }
-.gl-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
-button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-.gl-hint { margin: 0; font-size: 12px; opacity: 0.65; }
-.gl-empty { margin: 0; font-size: 13px; opacity: 0.55; }
-.gl-balance { margin: 0; font-size: 14px; }
-.gl-balance strong { font-size: 18px; }
-.gl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-/* min-width:0 是 flex 子项默认 min-width:auto 的逃生口：不放开则超长标题（UGC）无法收缩截断 */
-.gl-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.gl-link {
-  border: none; background: none; padding: 2px 0; cursor: pointer; text-align: left; font-size: 13px;
-  text-decoration: underline; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+
+/* 地平线：全宽紫→绿渐变细线，两端身份标签，激活侧点亮 */
+.gl-horizon { display: flex; align-items: center; gap: var(--space-sm); }
+.gl-horizon-line { flex: 1; height: 2px; border-radius: 999px; background: var(--gradient-field); opacity: 0.85; }
+.gl-horizon-tag {
+  font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em;
+  color: var(--color-text-muted); white-space: nowrap;
+  transition: color var(--duration-normal) var(--ease-out);
 }
-.gl-link.active { font-weight: 600; }
-.gl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.gl-table th, .gl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
-.gl-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.gl-contest-reason { min-width: 210px; padding: 6px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 12px; }
-/* 任务书 #25：阶梯任务申报指标输入（同拒绝理由行的紧凑样式）与校验错误提示 */
-.gl-metric-input { width: 110px; padding: 6px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 12px; }
+.gl-horizon-merchant.on { color: var(--color-accent-2); }
+.gl-horizon-recommender.on { color: var(--color-grass); }
+@media (max-width: 640px) { .gl-horizon-tag { display: none; } }
+
+/* ---------- 提示条 ---------- */
+.gl-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--text-sm); border: 1px solid transparent; }
+.gl-alert-error {
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+}
+.gl-alert-ok {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 24%, transparent);
+}
+
+/* 垄眉：micro-caps，颜色随视角（商家紫 / 推荐官苗绿），切侧时交叉淡入 */
+.gl-workbench .gl-zone-title { transition: color var(--duration-normal) var(--ease-out); }
+.gl-workbench[data-side="merchant"] .gl-zone-title { color: var(--color-accent-2); }
+.gl-workbench[data-side="recommender"] .gl-zone-title { color: var(--color-grass); }
+/* 资金账户：余额走台账等宽大字 */
+.gl-balance { margin: 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.gl-balance strong {
+  display: block; margin-top: 2px; font-size: var(--text-xl); font-weight: 700;
+  color: var(--color-text); letter-spacing: -0.01em;
+}
+
+/* ---------- 任务列表 + 生长刻度 ---------- */
+.gl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-sm); }
+.gl-list li {
+  display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap;
+  min-width: 0; padding: var(--space-sm); border-radius: var(--radius-md);
+  background: var(--surface-furrow);
+}
+.gl-task-main { display: flex; align-items: center; gap: var(--space-xs); flex: 1 1 240px; min-width: 0; flex-wrap: wrap; }
+.gl-task-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* 生长刻度：五段轨（草稿/审核/招募/履约/结算），已完成=段色半透、当前=段色实心；
+   段色映射状态 token：中性/警示/信息/强调/成功——结构即状态机，不新增色相 */
+.gl-growth { display: inline-flex; align-items: center; gap: 3px; }
+.gl-growth-seg { width: 18px; height: 3px; border-radius: 999px; background: color-mix(in srgb, var(--color-text-muted) 30%, transparent); }
+.gl-growth-seg.s0.done { background: color-mix(in srgb, var(--color-text-secondary) 55%, transparent); }
+.gl-growth-seg.s0.now { background: var(--color-text-secondary); }
+.gl-growth-seg.s1.done { background: color-mix(in srgb, var(--color-warning) 55%, transparent); }
+.gl-growth-seg.s1.now { background: var(--color-warning); }
+.gl-growth-seg.s2.done { background: color-mix(in srgb, var(--color-info) 55%, transparent); }
+.gl-growth-seg.s2.now { background: var(--color-info); }
+.gl-growth-seg.s3.done { background: color-mix(in srgb, var(--color-accent) 55%, transparent); }
+.gl-growth-seg.s3.now { background: var(--color-accent-2); }
+.gl-growth-seg.s4.done { background: color-mix(in srgb, var(--color-success) 55%, transparent); }
+.gl-growth-seg.s4.now { background: var(--color-success); }
+.gl-growth.dead .gl-growth-seg { background: color-mix(in srgb, var(--color-danger) 40%, transparent); }
+
+.gl-outcome { font-size: var(--text-xs); color: var(--color-text-secondary); white-space: nowrap; }
+.gl-contest-reason, .gl-metric-input {
+  min-height: 30px; padding: 4px var(--space-xs);
+  border: 1px solid var(--color-border); background: var(--color-surface);
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-xs);
+}
+.gl-contest-reason { min-width: 210px; flex: 1; }
+.gl-metric-input { width: 110px; }
 .gl-metric-error { color: var(--color-danger); white-space: nowrap; }
-.gl-outcome { font-size: 12px; opacity: 0.8; }
-.gl-filter { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
-.gl-filter label { display: flex; align-items: center; gap: 6px; opacity: 0.85; }
-.gl-filter select { padding: 4px 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-.gl-batch-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; font-size: 13px; }
-.gl-batch-select-all { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+
+/* ---------- 筛选 / 批量 ---------- */
+.gl-filter { display: flex; gap: var(--space-md); align-items: center; flex-wrap: wrap; font-size: var(--text-sm); }
+.gl-filter label { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); }
+.gl-filter select {
+  min-height: 30px; padding: 4px var(--space-xs);
+  border: 1px solid var(--color-border); background: var(--color-surface);
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm);
+}
+.gl-batch-bar { display: flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; padding: var(--space-xs) 0; font-size: var(--text-sm); }
+.gl-batch-select-all { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); cursor: pointer; }
 .gl-th-check { width: 32px; }
+
+.gl-sub-block { margin-top: var(--space-sm); }
+.gl-sub-block h5 { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--color-text-muted); letter-spacing: 0.04em; }
 </style>

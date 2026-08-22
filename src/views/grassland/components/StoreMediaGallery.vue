@@ -69,7 +69,7 @@ const isVideo = (item: StoreMediaItem): boolean =>
   <article
     v-if="storeId && hasAny && groups"
     id="gl-store-media-gallery"
-    class="gl-card gl-card-wide"
+    class="gl-tile gl-tile-wide"
   >
     <h3>门店媒体</h3>
     <template v-for="kind in STORE_MEDIA_KINDS" :key="kind">
@@ -106,6 +106,8 @@ const isVideo = (item: StoreMediaItem): boolean =>
 </template>
 
 <style scoped>
+h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+
 .gl-media-group {
   margin-top: 12px;
 }

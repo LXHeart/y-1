@@ -31,7 +31,7 @@ function evidenceText(match: RecommenderMatch, key: string): string {
       <button type="button" :disabled="loading" @click="$emit('refresh')">刷新</button>
     </header>
 
-    <p v-if="loading && items.length === 0" class="gl-empty">正在计算推荐顺序...</p>
+    <p v-if="loading && items.length === 0" class="gl-empty">正在计算推荐顺序…</p>
     <p v-else-if="items.length === 0" class="gl-empty">暂无符合任务等级要求的历史推荐官</p>
     <div v-else class="match-scroll">
       <table class="gl-table match-table">
@@ -40,7 +40,7 @@ function evidenceText(match: RecommenderMatch, key: string): string {
         </thead>
         <tbody>
           <tr v-for="match in items" :key="match.accountId">
-            <td><code>{{ match.accountId.slice(0, 8) }}...</code><small>{{ match.level }}</small></td>
+            <td><code>{{ match.accountId.slice(0, 8) }}…</code><small>{{ match.level }}</small></td>
             <td><strong class="match-total">{{ match.totalScore }}</strong><span>/100</span></td>
             <td>
               <!-- title 仅供鼠标悬停；aria-label 给读屏完整维度名，视觉文本保持缩写不扩行 -->
@@ -69,7 +69,7 @@ function evidenceText(match: RecommenderMatch, key: string): string {
                 v-else type="button"
                 :disabled="loading || Boolean(invitingAccountId)"
                 @click="$emit('invite', match)"
-              >{{ invitingAccountId === match.accountId ? '邀请中...' : '邀请' }}</button>
+                >{{ invitingAccountId === match.accountId ? '邀请中…' : '邀请' }}</button>
             </td>
           </tr>
         </tbody>
@@ -88,12 +88,12 @@ function evidenceText(match: RecommenderMatch, key: string): string {
 .match-table td { vertical-align: top; }
 .match-table td:first-child { white-space: nowrap; }
 .match-table small { display: block; margin-top: 4px; color: var(--color-text-secondary); }
-.match-total { font-size: 22px; color: var(--color-primary); }
+.match-total { font-size: 22px; color: var(--color-accent-2); }
 .match-table td:nth-child(2) span { color: var(--color-text-secondary); font-size: 12px; }
 .match-dimensions { display: grid; grid-template-columns: repeat(3, minmax(82px, 1fr)); gap: 4px; }
 .match-dimensions span { padding: 3px 5px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 11px; white-space: nowrap; }
 details { margin-top: 6px; font-size: 11px; }
-summary { cursor: pointer; color: var(--color-primary); }
+summary { cursor: pointer; color: var(--color-accent-2); }
 dl { margin: 5px 0 0; }
 dt { font-weight: 600; }
 dd { margin: 0 0 4px; color: var(--color-text-secondary); }

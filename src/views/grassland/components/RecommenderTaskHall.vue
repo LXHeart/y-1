@@ -1,5 +1,5 @@
 <template>
-  <article id="gl-task-hall" class="gl-card gl-card-wide">
+  <article id="gl-task-hall" class="gl-tile gl-tile-wide">
     <h3>任务大厅</h3>
     <div class="gl-row">
       <input :value="feedFilters.q || ''" type="search" aria-label="搜索任务" name="task-q" autocomplete="off" maxlength="100" placeholder="搜索任务标题或描述"
@@ -15,7 +15,7 @@
         </select>
       </label>
       <button type="button" :disabled="locating" @click="$emit('use-location')">
-        {{ locating ? '定位中...' : feedFilters.latitude == null ? '使用当前位置' : '更新位置' }}
+        {{ locating ? '定位中…' : feedFilters.latitude == null ? '使用当前位置' : '更新位置' }}
       </button>
       <button type="button" :disabled="feedLoading || loading" @click="$emit('load-feed', true)">查询</button>
     </div>
@@ -40,15 +40,15 @@
             <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" />
             <span v-if="t.freebieDepositCents" class="badge badge-warning"
                   :title="`报名被接受时从钱包预付 ${formatYuan(t.freebieDepositCents)}，达标全额返还`">
-              霸王餐 · 需预付 {{ formatYuan(t.freebieDepositCents) }} · 达标全额返还
+              霸王餐 · 需预付 <span class="gl-num">{{ formatYuan(t.freebieDepositCents) }}</span> · 达标全额返还
             </span>
             <template v-else>{{ t.bountyCents ? formatYuan(t.bountyCents) : '无' }}</template>
             <p v-if="t.freebieDepositCents && walletBalanceCents != null && t.freebieDepositCents > walletBalanceCents"
                class="gl-hint gl-freebie-warn">
-              押金超过钱包余额 {{ formatYuan(walletBalanceCents) }}，被接受时会因余额不足退回
+              押金超过钱包余额 <span class="gl-num">{{ formatYuan(walletBalanceCents) }}</span>，被接受时会因余额不足退回
             </p>
           </td>
-          <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)} km` }}</td>
+          <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)}\u00A0km` }}</td>
           <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
           <td>
             <button type="button" :disabled="loading" @click="$emit('apply', t.id)">报名</button>
@@ -92,13 +92,15 @@ defineEmits<{
 </script>
 
 <style scoped>
+h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+
 select {
   min-height: 34px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-text);
-  padding: 0 8px;
+  padding: 4px var(--space-sm);
   font: inherit;
   letter-spacing: 0;
 }

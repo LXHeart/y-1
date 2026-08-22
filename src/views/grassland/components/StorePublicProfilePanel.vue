@@ -1,7 +1,7 @@
 <template>
-  <article v-if="storeId" id="gl-store-public-profile" class="gl-card gl-card-wide">
+  <article v-if="storeId" id="gl-store-public-profile" class="gl-tile gl-tile-wide">
     <h3>门店公开资料</h3>
-    <p v-if="loading" class="gl-hint">加载中...</p>
+    <p v-if="loading" class="gl-hint">加载中…</p>
     <p v-else-if="error" class="gl-hint">{{ error }}</p>
     <p v-else-if="!profile" class="gl-empty">该门店暂无公开资料</p>
     <dl v-else class="gl-store-profile-grid">
@@ -132,6 +132,8 @@ const businessHoursText = computed<string[]>(() => {
 </script>
 
 <style scoped>
+h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+
 .gl-store-profile-grid {
   display: grid;
   gap: 8px;

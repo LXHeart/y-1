@@ -1,6 +1,6 @@
 <template>
-  <article class="gl-card gl-card-wide">
-    <h3>3. 发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在上方「提交审核」）</span><span v-else class="gl-hint"> · 提交后经平台内容审核，通过后在大厅上架</span></h3>
+  <article class="gl-tile gl-tile-wide">
+    <h3>发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在上方「提交审核」）</span><span v-else class="gl-hint"> · 提交后经平台内容审核，通过后在大厅上架</span></h3>
     <div class="gl-row">
       <label>资源范围
         <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
@@ -98,7 +98,7 @@
       <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
     </div>
     <div class="gl-row">
-      <button v-if="!revisingTask" type="button" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
+      <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
       <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
       <button v-if="editingDraft || revisingTask" type="button" :disabled="loading" @click="confirmResetForm">取消编辑</button>
     </div>
@@ -249,6 +249,8 @@ function removeCommissionTier(index: number): void {
 </script>
 
 <style scoped>
+h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+
 .task-requirement-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

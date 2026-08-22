@@ -3,7 +3,7 @@
     <p class="gl-ladder-head">
       <span class="gl-tag gl-tag-ladder">阶梯佣金</span>
       <span class="gl-ladder-metric"><code>{{ ladder.metricKey }}</code></span>
-      <span class="gl-ladder-range">{{ payoutRange }}</span>
+      <span class="gl-ladder-range gl-num">{{ payoutRange }}</span>
     </p>
     <details class="gl-ladder-details">
       <summary>档位明细</summary>
