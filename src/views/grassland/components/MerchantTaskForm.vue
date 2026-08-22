@@ -15,8 +15,15 @@
           <option v-for="p in TASK_PLATFORMS" :key="p.id" :value="p.id">{{ p.label }}</option>
         </select>
       </label>
-      <label>内容形式（随所选平台）
-        <select name="task-content-form" :value="form.contentForm" @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)">
+      <label>内容形式
+        <select
+          name="task-content-form"
+          :value="form.contentForm"
+          :disabled="!form.platform"
+          :aria-disabled="!form.platform"
+          @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)"
+        >
+          <option v-if="!form.platform" value="" disabled>请先选择发布平台</option>
           <option v-for="opt in contentFormOptions" :key="opt" :value="opt">{{ CONTENT_FORM_LABELS[opt] }}</option>
         </select>
       </label>
@@ -181,6 +188,7 @@ const CONTENT_FORM_LABELS: Readonly<Record<string, string>> = {
 const contentFormOptions = computed<string[]>(() => {
   const platformId = normalizePlatformId(props.form.platform || '')
   const forms = platformId ? getPlatform(platformId)?.forms : null
+  if (!platformId) return [] // 未选平台：内容形式为空且不可选（先定平台，再定形式）
   if (!forms) return ['image', 'video', 'interaction']
   const hasGraphic = forms.some((form) => form.id === 'graphic' || form.id === 'image-text')
   const hasVideo = forms.some((form) => form.id === 'video' || form.id === 'video-text')
@@ -188,18 +196,19 @@ const contentFormOptions = computed<string[]>(() => {
     .filter((form): form is string => form !== null)
 })
 
-// 换平台后当前形式可能不再被支持（如视频种草 → 公众号）：自动落回首个可用形式。
-// 初值纠正放 onMounted：setup 期 emit 尚未初始化，immediate watcher 会踩 TDZ。
-onMounted(() => {
-  if (!contentFormOptions.value.includes(props.form.contentForm)) {
-    updateField('contentForm', contentFormOptions.value[0])
+// 平台是内容形式的前置：未选平台 → 形式清空；选了平台 → 形式不被支持时自动落回
+// 首个可用形式（如视频种草 → 公众号）。初值纠正放 onMounted：setup 期 emit 尚未
+// 初始化，immediate watcher 会踩 TDZ。
+function reconcileContentForm(): void {
+  const options = contentFormOptions.value
+  if (options.length === 0) {
+    if (props.form.contentForm !== '') updateField('contentForm', '')
+    return
   }
-})
-watch([() => props.form.platform, () => props.form.contentForm], () => {
-  if (!contentFormOptions.value.includes(props.form.contentForm)) {
-    updateField('contentForm', contentFormOptions.value[0])
-  }
-})
+  if (!options.includes(props.form.contentForm)) updateField('contentForm', options[0])
+}
+onMounted(reconcileContentForm)
+watch([() => props.form.platform, () => props.form.contentForm], reconcileContentForm)
 
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
 const bountyActive = computed(() => props.form.bountyYuan > 0)

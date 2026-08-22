@@ -8,7 +8,7 @@ import type { Task } from '../../../types/grassland'
 /** 任务书 #23 Stage B3：内容形式下拉受控化 + 互动任务条件字段 + 大厅徽标。 */
 
 const baseForm = {
-  title: '互动任务', description: '', platform: '', contentForm: '', maxSlots: 1,
+  title: '互动任务', description: '', platform: 'xiaohongshu', contentForm: 'image', maxSlots: 1,
   interactionTargetUrl: '', interactionActionType: 'like',
   bountyYuan: 0, freebieDepositYuan: 0, applicationDeadline: '', minRecommenderLevel: 1,
   autoAcceptMinLevel: null as number | null, productServiceInfo: '', mustInclude: '',
@@ -26,12 +26,11 @@ function mountForm(form: typeof baseForm) {
 }
 
 describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #23 R6）', () => {
-  test('内容形式是下拉（受控值集）：无「未指定」，平台未定时给全三类', () => {
-    const wrapper = mountForm({ ...baseForm })
-    const select = wrapper.findAll('select').find((s) => s.text().includes('图文种草'))!
-    const options = select.findAll('option').map((o) => o.element.value)
-    // PRD §2.2 三类 + 用户决策：去掉「未指定」；平台未指定时不裁剪
-    expect(options).toEqual(['image', 'video', 'interaction'])
+  test('未选发布平台：内容形式为空且不可选（先定平台再定形式）', () => {
+    const wrapper = mountForm({ ...baseForm, platform: '', contentForm: '' })
+    const select = wrapper.get('select[name="task-content-form"]')
+    expect(select.attributes('disabled')).toBe('')
+    expect(select.text()).toContain('请先选择发布平台')
   })
 
   test('内容形式随平台能力裁剪并自动纠正（PRD §4.2 平台×形式）', () => {
@@ -56,7 +55,7 @@ describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #
     const wrapper = mountForm({ ...baseForm })
     expect(wrapper.find('input[placeholder*="互动目标链接"]').exists()).toBe(false)
 
-    const select = wrapper.findAll('select').find((s) => s.text().includes('图文种草'))!
+    const select = wrapper.get('select[name="task-content-form"]')
     await select.setValue('interaction')
     expect(wrapper.emitted('update:field')?.some((a) => a[0] === 'contentForm' && a[1] === 'interaction'))
       .toBe(true)
