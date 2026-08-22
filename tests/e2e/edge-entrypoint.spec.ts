@@ -30,13 +30,15 @@ test.describe('unified Edge public entrypoint', () => {
     const dialog = page.getByRole('dialog', { name: /登录草场/ })
     await dialog.locator('#login-email').fill(email)
     await dialog.locator('#login-password').fill(password as string)
+    // 登录时选择进入身份（无默认值）；本流程走推荐官
+    await dialog.getByRole('radio', { name: '推荐官' }).click()
 
     const loginResponse = page.waitForResponse((response) =>
       response.request().method() === 'POST' && response.url().endsWith('/api/auth/login'))
     await dialog.locator('button[type="submit"]').click()
     expect((await loginResponse).status()).toBe(200)
 
-    await expect(page.getByText('已登录', { exact: true })).toBeVisible()
+    await page.locator('.account-trigger').waitFor({ timeout: 10_000 })
     await expect(page.getByText(displayName, { exact: true })).toBeVisible()
 
     const me = await page.request.get('/api/auth/me')

@@ -127,6 +127,67 @@ describe('登录与密码可见切换', () => {
   })
 })
 
+describe('登录时选择进入身份（withIdentityChoice）', () => {
+  function mountUserModal(props: Record<string, unknown> = {}) {
+    return mountModal({ withIdentityChoice: true, ...props })
+  }
+
+  test('渲染两个身份选项，默认不选中，未选时提交禁用', async () => {
+    const wrapper = mountUserModal()
+    await wrapper.find('#login-email').setValue('grass@test.local')
+    await wrapper.find('#login-password').setValue('password123')
+
+    const options = wrapper.findAll('.login-identity-option')
+    expect(options).toHaveLength(2)
+    expect(options.every((o) => o.attributes('aria-checked') === 'false')).toBe(true)
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBe('')
+  })
+
+  test('选推荐官后可提交，登录 payload 携带 identity', async () => {
+    const wrapper = mountUserModal()
+    await wrapper.find('#login-email').setValue('grass@test.local')
+    await wrapper.find('#login-password').setValue('password123')
+    await wrapper.findAll('.login-identity-option')[0].trigger('click')
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    await wrapper.find('form').trigger('submit')
+
+    const emitted = wrapper.emitted('submit')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toMatchObject({ email: 'grass@test.local', identity: 'recommender' })
+  })
+
+  test('切换选商家后 payload 携带 identity=merchant', async () => {
+    const wrapper = mountUserModal()
+    await wrapper.find('#login-email').setValue('grass@test.local')
+    await wrapper.find('#login-password').setValue('password123')
+    await wrapper.findAll('.login-identity-option')[1].trigger('click')
+
+    await wrapper.find('form').trigger('submit')
+
+    const emitted = wrapper.emitted('submit')
+    expect(emitted![0][0]).toMatchObject({ identity: 'merchant' })
+  })
+
+  test('注册模式同样要求先选身份', async () => {
+    const wrapper = mountUserModal()
+    await switchToRegister(wrapper)
+    await fillRegisterForm(wrapper)
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBe('')
+    await wrapper.findAll('.login-identity-option')[0].trigger('click')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.emitted('register')![0][0]).toMatchObject({ identity: 'recommender' })
+  })
+
+  test('未开 withIdentityChoice（治理台）不渲染选择器且不需要选择', () => {
+    const wrapper = mountModal()
+    expect(wrapper.find('.login-identity-choice').exists()).toBe(false)
+  })
+})
+
 describe('hideRegister（治理台形态）', () => {
   test('隐藏模式切换与注册入口，副标题为治理台文案', () => {
     const wrapper = mountModal({ hideRegister: true })

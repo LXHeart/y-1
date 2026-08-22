@@ -237,6 +237,7 @@
       :submitting="loggingIn || registering"
       :error="loginError || registerError || sendCodeError"
       :message="loginModalMessage"
+      with-identity-choice
       @close="closeLoginModal"
       @submit="handleLogin"
       @register="handleRegister"
@@ -261,7 +262,7 @@ import { useCredits } from '../composables/useCredits'
 import { useGrassland } from '../composables/useGrassland'
 import { useHomepageSettings } from '../composables/useHomepageSettings'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
-import type { LoginFormValues, RegisterFormValues } from '../types/auth'
+import type { LoginFormValues, LoginIdentity, RegisterFormValues } from '../types/auth'
 import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
 import type { AppView } from '../types/navigation'
@@ -493,6 +494,23 @@ function handleOpenGrassland(): void {
 provide('grasslandAnchor', grasslandAnchor)
 provide('grasslandNavigationTarget', grasslandNavigationTarget)
 
+/**
+ * 登录时选定的进入身份（PRD：登录时区分身份，登录后不再引导选择）：
+ * 未开通则先开通（商家可无组织开通，组织与资料在工作台内完善），再激活为当前活动身份。
+ * 开通/激活失败不阻断登录——保留装载默认视角，用户可在账号菜单或工作台内重试。
+ */
+async function ensureLoginIdentity(choice: LoginIdentity): Promise<void> {
+  const boot = await loadAccountIdentity(grassland)
+  if (boot === null) return
+  const opened = choice === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value
+  if (!opened) {
+    await grassland.openIdentity(choice)
+    grassland.clearError()
+    await loadAccountIdentity(grassland)
+  }
+  await activateIdentitySide(choice, grassland)
+}
+
 /** 账号菜单切换活动身份：仅已开通身份；失败展示后端错误，成功即关菜单（导航标签随之更新）。 */
 async function switchIdentityFromMenu(side: IdentitySide): Promise<void> {
   if (identitySwitching.value || activeSide.value === side) {
@@ -554,18 +572,25 @@ function closeLoginModal(): void {
 async function handleLogin(values: LoginFormValues): Promise<void> {
   const ok = await login(values)
   if (!ok) return
+  if (values.identity) await ensureLoginIdentity(values.identity)
   closeLoginModal()
-  authBannerMessage.value = '已登录，现在可以打开设置管理你的专属配置。'
+  authBannerMessage.value = values.identity
+    ? `已进入${values.identity === 'merchant' ? '商家' : '推荐官'}身份，可从账号菜单随时切换。`
+    : '已登录，现在可以打开设置管理你的专属配置。'
 }
 
 async function handleRegister(values: RegisterFormValues): Promise<void> {
   const ok = await register(values)
   if (!ok) return
+  if (values.identity) await ensureLoginIdentity(values.identity)
   closeLoginModal()
   await nextTick()
   router.push({ name: 'grassland' })
-  // 注册不再选身份（登录后才区分）：落地工作台的开通引导，选商家或推荐官开始
-  authBannerMessage.value = '注册成功，请先开通你的第一个身份（商家或推荐官）。'
+  authBannerMessage.value = values.identity === 'merchant'
+    ? '注册成功，已进入商家身份——请创建商家组织，开始发布推广任务。'
+    : values.identity === 'recommender'
+      ? '注册成功，已进入推荐官身份——请完善推荐官资料，到任务大厅开始接单。'
+      : '注册成功。'
 }
 
 async function handleSendCode(email: string, captchaCode: string): Promise<void> {

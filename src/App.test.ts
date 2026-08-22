@@ -76,7 +76,7 @@ vi.mock('./components/LoginModal.vue', () => ({ __esModule: true,
     template: `<div v-if="visible" role="dialog">
       <button data-testid="complete-registration" @click="$emit('register', {
         email: 'new@example.com', displayName: '新用户', password: 'password123',
-        confirmPassword: 'password123', verificationCode: '123456'
+        confirmPassword: 'password123', verificationCode: '123456', identity: 'recommender'
       })">完成注册</button>
     </div>`,
   },
@@ -221,7 +221,7 @@ describe('App AI 创作中心集成', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="grassland-workbench"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('请先开通你的第一个身份')
+    expect(wrapper.text()).toContain('已进入推荐官身份')
     useAuth().currentUser.value = null
   })
 

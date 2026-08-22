@@ -43,18 +43,20 @@ async function activateIdentity(context: APIRequestContext, type: 'merchant' | '
   await data(await context.post('/api/me/active-identity', { data: { type } }))
 }
 
-async function uiLogin(page: Page, email: string): Promise<void> {
+async function uiLogin(page: Page, email: string, identity: '商家' | '推荐官'): Promise<void> {
   await page.goto('/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password)
+  // 登录时选择进入身份（无默认值，必须显式点击）
+  await dialog.getByRole('radio', { name: identity }).click()
   await dialog.locator('button[type="submit"]').click()
-  await expect(page.getByText('已登录', { exact: true })).toBeVisible()
+  await page.locator('.account-trigger').waitFor({ timeout: 10_000 })
 }
 
 async function openGrassland(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '草场', exact: true }).first().click()
+  await page.locator('[data-testid="nav-workbench"]').click()
   await expect(page.locator('#gl-task-hall, .gl-card').first()).toBeVisible()
 }
 
@@ -91,7 +93,7 @@ test.describe('草场任务主流程', () => {
     // ---- 推荐官：大厅报名（UI）----
     const recommenderContext = await browser.newContext({ baseURL })
     const recommenderPage = await recommenderContext.newPage()
-    await uiLogin(recommenderPage, recommenderEmail)
+    await uiLogin(recommenderPage, recommenderEmail, '推荐官')
     // UI 登录后的会话 cookie 与 page.request 共享，直接激活 recommender 活动身份。
     await recommenderPage.request.post('/api/me/active-identity', { data: { type: 'recommender' } })
     await openGrassland(recommenderPage)
@@ -116,14 +118,14 @@ test.describe('草场任务主流程', () => {
     // ---- 商家：报名列表接受（UI；非资金型 accept 直接 200，无 Saga 轮询窗口）----
     const merchantContext = await browser.newContext({ baseURL })
     const merchantPage = await merchantContext.newPage()
-    await uiLogin(merchantPage, merchantEmail)
+    await uiLogin(merchantPage, merchantEmail, '商家')
     await merchantPage.request.post('/api/me/active-identity', { data: { type: 'merchant' } })
     await openGrassland(merchantPage)
 
     // 组织/任务链在含大量种子任务的栈上加载较慢；重挂载一次并放宽断言超时，
     // 避开「initForAccount 中途某环失败导致列表未刷」的偶发竞态。
     await merchantPage.reload()
-    await merchantPage.getByRole('button', { name: '草场', exact: true }).first().click()
+    await merchantPage.locator('[data-testid="nav-workbench"]').click()
     const merchantTaskRow = merchantPage.getByRole('button', { name: taskTitle, exact: true }).first()
     await expect(merchantTaskRow).toBeVisible({ timeout: 20_000 })
     await merchantTaskRow.click()

@@ -9,11 +9,13 @@ async function login(page: import('@playwright/test').Page): Promise<void> {
   const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password as string)
+  // 登录时选择进入身份（无默认值）；本流程用通用账号走推荐官
+  await dialog.getByRole('radio', { name: '推荐官' }).click()
   const response = page.waitForResponse((item) =>
     item.request().method() === 'POST' && item.url().endsWith('/api/auth/login'))
   await dialog.locator('button[type="submit"]').click()
   expect((await response).status()).toBe(200)
-  await expect(page.getByText('已登录', { exact: true })).toBeVisible()
+  await page.locator('.account-trigger').waitFor({ timeout: 10_000 })
 }
 
 test('platform-first creation entry hands an independent topic to article workflow', async ({ page }) => {

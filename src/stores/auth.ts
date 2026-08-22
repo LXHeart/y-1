@@ -101,9 +101,11 @@ export const useAuthStore = defineStore('auth', () => {
     registerError.value = ''
     logoutError.value = ''
     try {
+      // identity 是登录后的进入身份（前端编排用），不属于认证 API 契约，发送前剥离
+      const { email, password } = values
       const data = await request<{ user: AuthUser }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify(values),
+        body: JSON.stringify({ email, password }),
       }, { fallbackError: '登录失败' })
       currentUser.value = data.user
       loaded.value = true
@@ -123,9 +125,10 @@ export const useAuthStore = defineStore('auth', () => {
     loginError.value = ''
     logoutError.value = ''
     try {
+      const { email, displayName, password, confirmPassword, verificationCode } = values
       const data = await request<{ user: AuthUser }>('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify(values),
+        body: JSON.stringify({ email, displayName, password, confirmPassword, verificationCode }),
       }, { fallbackError: '注册失败' })
       currentUser.value = data.user
       loaded.value = true

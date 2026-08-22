@@ -55,6 +55,37 @@
 
         <p v-if="message" class="login-message">{{ message }}</p>
 
+        <!-- 登录时区分身份（用户端）：选择进入 商家/推荐官，成功后自动开通并激活 -->
+        <div v-if="withIdentityChoice" class="login-identity-choice" role="radiogroup" aria-labelledby="login-identity-label">
+          <p id="login-identity-label" class="login-label login-identity-label">以哪种身份进入草场</p>
+          <div class="login-identity-options">
+            <button
+              type="button"
+              role="radio"
+              class="login-identity-option"
+              :class="{ 'login-identity-option-active': identity === 'recommender' }"
+              :aria-checked="identity === 'recommender'"
+              @click="identity = 'recommender'"
+            >
+              <span class="login-identity-dot" aria-hidden="true"></span>
+              <span class="login-identity-name">推荐官</span>
+              <span class="login-identity-desc">接单创作，赚取佣金</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              class="login-identity-option"
+              :class="{ 'login-identity-option-active': identity === 'merchant' }"
+              :aria-checked="identity === 'merchant'"
+              @click="identity = 'merchant'"
+            >
+              <span class="login-identity-dot login-identity-dot-merchant" aria-hidden="true"></span>
+              <span class="login-identity-name">商家</span>
+              <span class="login-identity-desc">发布任务，管理门店与资金</span>
+            </button>
+          </div>
+        </div>
+
         <form class="login-form" autocomplete="off" @submit.prevent="handleSubmit">
           <label class="login-label" for="login-email">邮箱</label>
           <input
@@ -195,7 +226,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { AuthMode, LoginFormValues, RegisterFormValues } from '../types/auth'
+import type { AuthMode, LoginFormValues, LoginIdentity, RegisterFormValues } from '../types/auth'
 import { requestText } from '../composables/grassland-http'
 
 const props = defineProps<{
@@ -205,6 +236,8 @@ const props = defineProps<{
   message?: string
   /** 隐藏注册入口（治理台等内部端使用：运营账号由平台开通，不自助注册）。 */
   hideRegister?: boolean
+  /** 登录时选择进入身份（用户端）；治理台等内部端不选身份。 */
+  withIdentityChoice?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -216,6 +249,8 @@ const emit = defineEmits<{
 
 const mode = ref<AuthMode>('login')
 
+/** 进入身份：无默认值，必须显式选择（避免把商家账号默认翻成推荐官）。 */
+const identity = ref<LoginIdentity | null>(null)
 const email = ref('')
 const displayName = ref('')
 const password = ref('')
@@ -237,6 +272,7 @@ const subtitle = computed(() => {
 const submitLabelIdle = computed(() => mode.value === 'login' ? '登录' : '注册并登录')
 const submitLabelBusy = computed(() => mode.value === 'login' ? '登录中…' : '注册中…')
 const canSubmit = computed(() => {
+  if (props.withIdentityChoice && identity.value === null) return false
   if (mode.value === 'login') {
     return email.value.length > 0 && password.value.length > 0
   }
@@ -280,6 +316,7 @@ function handleSendCode(): void {
 
 function resetForm(): void {
   mode.value = 'login'
+  identity.value = null
   email.value = ''
   displayName.value = ''
   password.value = ''
@@ -321,6 +358,7 @@ function handleSubmit(): void {
       password: password.value,
       confirmPassword: confirmPassword.value,
       verificationCode: verificationCode.value,
+      identity: identity.value ?? undefined,
     })
     return
   }
@@ -328,6 +366,7 @@ function handleSubmit(): void {
   emit('submit', {
     email: email.value,
     password: password.value,
+    identity: identity.value ?? undefined,
   })
 }
 </script>
@@ -498,6 +537,76 @@ function handleSubmit(): void {
   color: var(--color-text-secondary);
   font-size: 0.84rem;
   line-height: 1.5;
+}
+
+.login-identity-choice {
+  margin-bottom: 16px;
+}
+
+.login-identity-label {
+  margin: 0 0 7px;
+}
+
+.login-identity-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.login-identity-option {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+  padding: 12px 12px 12px 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.login-identity-option:hover {
+  border-color: var(--color-border-hover);
+}
+
+.login-identity-option-active {
+  border-color: var(--color-border-accent);
+  background: var(--color-surface-highlight);
+}
+
+.login-identity-dot {
+  position: absolute;
+  left: 14px;
+  top: 16px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-text-muted);
+}
+
+.login-identity-option-active .login-identity-dot {
+  border-color: var(--color-grass, #10b981);
+  background: var(--color-grass, #10b981);
+  box-shadow: inset 0 0 0 3px var(--surface-card);
+}
+
+.login-identity-option-active .login-identity-dot-merchant {
+  border-color: var(--color-accent-2);
+  background: var(--color-accent-2);
+}
+
+.login-identity-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.login-identity-desc {
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
 }
 
 .login-form {
