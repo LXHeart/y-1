@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import GrasslandWorkbench from '../../views/grassland/GrasslandWorkbench.vue'
 import MerchantTaskForm from '../../views/grassland/components/MerchantTaskForm.vue'
 import { useAuth } from '../../composables/useAuth'
@@ -21,6 +22,25 @@ const { currentUser } = useAuth()
 
 function asUser(id: string, email: string): AuthUser {
   return { id, email, displayName: email, role: 'user' }
+}
+
+/**
+ * 工作台挂载助手：工作台用 useRoute/useRouter 做 URL 状态同步，挂载必须带 router 插件。
+ * 每次挂载新建 memory router（初始路由 '/'、无 query）——URL 恢复路径整体空转，
+ * 与旧裸挂载行为等价；需要验证 query 恢复时在测试内自行 push 到 /grassland 再挂载。
+ */
+function mountWorkbench(options?: Parameters<typeof mount>[1]) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: { template: '<div />' } },
+      { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
+    ],
+  })
+  return mount(GrasslandWorkbench, {
+    ...options,
+    global: { ...options?.global, plugins: [...(options?.global?.plugins ?? []), router] },
+  })
 }
 
 const ORG = {
@@ -91,7 +111,7 @@ describe('GrasslandWorkbench 登录态', () => {
   test('未登录时不发任何请求', async () => {
     const { urls } = stubFetch()
 
-    mount(GrasslandWorkbench)
+    mountWorkbench()
     await flushPromises()
 
     expect(urls).toEqual([])
@@ -99,7 +119,7 @@ describe('GrasslandWorkbench 登录态', () => {
 
   test('同一页面内登录后自动激活身份并拉组织（原缺陷：需刷新整页）', async () => {
     const { urls } = stubFetch()
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     await flushPromises()
 
     currentUser.value = asUser('acct-1', 'merchant@test.local')
@@ -114,7 +134,7 @@ describe('GrasslandWorkbench 登录态', () => {
 
   test('AI 预算入口仅对组织 owner/admin 可见', async () => {
     const owner = stubFetch()
-    const ownerWrapper = mount(GrasslandWorkbench)
+    const ownerWrapper = mountWorkbench()
     currentUser.value = asUser('acct-owner', 'owner@test.local')
     await flushPromises()
     expect(ownerWrapper.text()).toContain('AI 预算')
@@ -132,7 +152,7 @@ describe('GrasslandWorkbench 登录态', () => {
       return { ok: true, headers: { get: () => 'application/json' },
         json: async () => ({ success: true, data }) }
     }))
-    const memberWrapper = mount(GrasslandWorkbench)
+    const memberWrapper = mountWorkbench()
     currentUser.value = asUser('acct-member', 'member@test.local')
     await flushPromises()
     expect(memberWrapper.text()).not.toContain('AI 预算')
@@ -148,7 +168,7 @@ describe('GrasslandWorkbench 登录态', () => {
    */
   test('商家任务列表按 draft/pending_review/published/closed/cancelled 五态拉取', async () => {
     const { urls } = stubFetch()
-    mount(GrasslandWorkbench)
+    mountWorkbench()
 
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
@@ -162,7 +182,7 @@ describe('GrasslandWorkbench 登录态', () => {
   test('recommender-only 账号直接激活推荐官，不尝试 merchant', async () => {
     const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
     const { calls } = stubFetch(identities)
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: {
         stubs: {
           MyRecommenderProfileCard: true,
@@ -187,7 +207,7 @@ describe('GrasslandWorkbench 登录态', () => {
 
   test('未开通身份时保留商家 onboarding，且不激活或自动开通', async () => {
     const { calls } = stubFetch([])
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
 
     currentUser.value = asUser('acct-consumer', 'consumer@test.local')
     await flushPromises()
@@ -214,7 +234,7 @@ describe('GrasslandWorkbench 登录态', () => {
         json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-manager', 'manager@test.local')
     await flushPromises()
 
@@ -234,7 +254,7 @@ describe('GrasslandWorkbench 登录态', () => {
 
   test('登出清空组织/余额/任务，不留上一个账号的数据', async () => {
     stubFetch()
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
 
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
@@ -249,7 +269,7 @@ describe('GrasslandWorkbench 登录态', () => {
 
   test('换账号重新激活身份并重拉（不沿用上一个账号的组织）', async () => {
     const { urls } = stubFetch()
-    mount(GrasslandWorkbench)
+    mountWorkbench()
 
     currentUser.value = asUser('acct-1', 'a@test.local')
     await flushPromises()
@@ -306,7 +326,7 @@ describe('GrasslandWorkbench 商家 contest', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
     })
     currentUser.value = asUser('acct-1', 'merchant@test.local')
@@ -324,7 +344,7 @@ describe('GrasslandWorkbench 商家 contest', () => {
       prefill: { topic: '待核验任务', instructions: '突出门店招牌' },
     })
 
-    const reason = wrapper.get('[aria-label="拒绝理由 app-accepted"]')
+    const reason = wrapper.get('[aria-label="第 1 行拒绝理由"]')
     await reason.setValue('  画面与要求不符  ')
     const button = wrapper.findAll('button').find((item) => item.text() === '拒绝并转客服')!
     await button.trigger('click')
@@ -376,7 +396,7 @@ describe('GrasslandWorkbench 接受报名预留失败（compensated）', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
     })
     currentUser.value = asUser('acct-1', 'merchant@test.local')
@@ -436,7 +456,7 @@ describe('GrasslandWorkbench 确认履约结算暂扣（held）', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
     })
     currentUser.value = asUser('acct-1', 'merchant@test.local')
@@ -513,7 +533,7 @@ describe('GrasslandWorkbench deferred 争议', () => {
 
   test('pending 时显示明确提示且不把 requestId 挂给 AdjudicationPanel', async () => {
     recommenderFetch([{ status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' }])
-    const wrapper = mount(GrasslandWorkbench, { global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
+    const wrapper = mountWorkbench({ global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
 
     await reachDeferred(wrapper)
 
@@ -527,7 +547,7 @@ describe('GrasslandWorkbench deferred 争议', () => {
       { status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' },
       { status: 'promoted', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: 'dispute-2', workflowId: 'adjudicate-dispute-2' },
     ])
-    const wrapper = mount(GrasslandWorkbench, { global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
+    const wrapper = mountWorkbench({ global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
     await reachDeferred(wrapper)
 
     await vi.advanceTimersByTimeAsync(3000)
@@ -543,7 +563,7 @@ describe('GrasslandWorkbench deferred 争议', () => {
 
   test('组件卸载后清理 pending 轮询 timer', async () => {
     const calls = recommenderFetch([{ status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' }])
-    const wrapper = mount(GrasslandWorkbench, { global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
+    const wrapper = mountWorkbench({ global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
     await reachDeferred(wrapper)
 
     wrapper.unmount()
@@ -624,13 +644,13 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
 
   test('阶梯任务渲染指标输入与预计结算，确认发送申报值并在成功后清空', async () => {
     const calls = confirmationsFetch(ladderTask)
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
     })
     await selectFirstTask(wrapper)
 
     // 未填：有输入、预览 ¥0.00、明确提示、确认禁用
-    const metric = wrapper.get('[aria-label="实际指标 douyin.play_count a-1"]')
+    const metric = wrapper.get('[aria-label="第 1 行实际指标（douyin.play_count）"]')
     expect(wrapper.text()).toContain('预计结算 ¥0.00')
     expect(wrapper.text()).toContain('请输入实际指标')
     expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
@@ -652,12 +672,12 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
 
   test('清空或非法输入时禁用确认且不发请求', async () => {
     const calls = confirmationsFetch(ladderTask)
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
     })
     await selectFirstTask(wrapper)
 
-    const metric = wrapper.get('[aria-label="实际指标 douyin.play_count a-1"]')
+    const metric = wrapper.get('[aria-label="第 1 行实际指标（douyin.play_count）"]')
     await metric.setValue('-5')
     expect(wrapper.text()).toContain('实际指标必须是非负安全整数')
     expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
@@ -676,7 +696,7 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
       requirements: { ...ladderTask.requirements, commissionLadder: undefined },
     }
     const calls = confirmationsFetch(fixedTask)
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
     })
     await selectFirstTask(wrapper)
@@ -704,7 +724,7 @@ describe('GrasslandWorkbench 通知锚点', () => {
 
   test('商家视角下五个锚点都在 DOM 里', async () => {
     stubFetch()
-    const wrapper = mount(GrasslandWorkbench, { attachTo: document.body })
+    const wrapper = mountWorkbench({ attachTo: document.body })
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
@@ -725,7 +745,7 @@ describe('GrasslandWorkbench 通知锚点', () => {
       scrolled.push(this.id)
     } as unknown as typeof Element.prototype.scrollIntoView
 
-    const wrapper = mount(GrasslandWorkbench, {
+    const wrapper = mountWorkbench({
       attachTo: document.body,
       global: { provide: { grasslandAnchor: anchor } },
     })
@@ -757,7 +777,7 @@ describe('GrasslandWorkbench 通知锚点', () => {
       scrolled.push(this.id)
     } as unknown as typeof Element.prototype.scrollIntoView
 
-    mount(GrasslandWorkbench, {
+    mountWorkbench({
       attachTo: document.body,
       global: { provide: { grasslandAnchor: anchor } },
     })
@@ -810,7 +830,7 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
@@ -882,7 +902,7 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
 
   test('发布任务 payload 含按阈值升序的 commissionLadder', async () => {
     const { calls } = stubFetch()
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     await loginMerchant(wrapper)
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('阶梯佣金任务')
@@ -919,7 +939,7 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
 
   test('最高档佣金超过赏金时不发 POST 并提示「最高档佣金不能超过任务赏金」', async () => {
     const { calls } = stubFetch()
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     await loginMerchant(wrapper)
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('超额阶梯任务')
@@ -975,7 +995,7 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     await loginMerchant(wrapper)
 
     const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')!
@@ -1044,7 +1064,7 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
 
-    const wrapper = mount(GrasslandWorkbench)
+    const wrapper = mountWorkbench()
     await loginMerchant(wrapper)
 
     const list = wrapper.get('#gl-engagements ul.gl-list')

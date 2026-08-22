@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch, type Ref } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router'
 import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
@@ -40,7 +41,8 @@ import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
-import type { TaskApplication } from '../../types/grassland'
+import type { Task, TaskApplication } from '../../types/grassland'
+import { formatYuan } from '../../lib/money'
 
 /**
  * 草场工作台——Java 微服务域的第一个前端驱动（P0-1）。
@@ -62,6 +64,9 @@ const emit = defineEmits<{
   'open-creation': [entry: CreationEntry]
 }>()
 
+const route = useRoute()
+const router = useRouter()
+
 /** 平台 admin 才看得到审核队列。真正的门禁在服务端（identity 查 app_users.role）。 */
 const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
 
@@ -69,6 +74,16 @@ const notice = ref('')
 
 function setNotice(message: string): void {
   notice.value = message
+}
+
+/** 通知锚点滚动尊重系统「减弱动态效果」设置（prefers-reduced-motion 时退化为瞬时定位）。 */
+function scrollBlockIntoView(elementId: string): void {
+  const prefersReducedMotion = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  document.getElementById(elementId)?.scrollIntoView({
+    behavior: prefersReducedMotion ? 'auto' : 'smooth',
+    block: 'start',
+  })
 }
 
 // session 先建（taskHall/engagements/drafts 依赖其 side/orgId/storeId refs）。它对履约域
@@ -119,6 +134,37 @@ const {
   publishTask, saveDraft, editDraft, editPublished, resetTaskForm,
   updateCommissionLadder, handleTaskFormUpdate, handleTaskFormStoreChange, reset: resetTaskDrafts,
 } = useWorkbenchTaskDrafts(grassland, setNotice, { activeOrgId, selectedStoreId, refreshTasks })
+
+/** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。 */
+function confirmCancelTask(task: Task): void {
+  const message = task.status === 'draft'
+    ? `取消草稿「${task.title}」？草稿将被删除，不可恢复。`
+    : task.status === 'pending_review'
+      ? `取消审核中的任务「${task.title}」？已提交的审核将作废，不可恢复。`
+      : `取消任务「${task.title}」？已提交的报名将一并作废，且不可恢复。`
+  if (!window.confirm(message)) return
+  void cancelTaskAction(task)
+}
+
+function confirmBatchReject(): void {
+  if (!window.confirm(`批量拒绝已选的 ${selectedAppIds.value.size} 条报名？该操作不可恢复。`)) return
+  void batchReject()
+}
+
+function confirmWithdraw(app: TaskApplication): void {
+  if (!window.confirm('撤销该报名？撤销后商家将无法再接受它。')) return
+  void withdrawApp(app)
+}
+
+/** tablist 方向键导航（ARIA tabs 模式）：左右键切换视角并把焦点移到新激活的 tab。 */
+async function onSideTabKeydown(event: KeyboardEvent): Promise<void> {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  const next: 'merchant' | 'recommender' = side.value === 'merchant' ? 'recommender' : 'merchant'
+  await switchSide(next)
+  await nextTick()
+  document.getElementById(`gl-tab-${next}`)?.focus()
+}
 
 async function openAcceptedTaskCreation(application: TaskApplication): Promise<void> {
   const task = selectedTask.value
@@ -174,12 +220,83 @@ function resetAccountState(): void {
  * （或空白），必须手动刷新整页才正确——浏览器实测发现。活动身份也按 session 存，
  * 换账号后必须重新激活，否则商家操作 403。
  */
-watch(() => currentUser.value?.id, (accountId) => {
+watch(() => currentUser.value?.id, async (accountId) => {
   resetAccountState()
   if (accountId) {
-    initForAccount()
+    await initForAccount()
+    // 初始化期间可能又换了账号——旧账号的 URL 恢复直接放弃，避免上一个链接串数据。
+    if (currentUser.value?.id === accountId) await restoreWorkbenchStateFromUrl()
   }
 }, { immediate: true })
+
+// ---------- URL 状态同步（Web Interface Guidelines：URL 反映视图状态） ----------
+// 视角 / 选中任务 / 报名筛选 / 大厅筛选随 query 持久化——刷新、分享链接可恢复现场。
+// 恢复必须在 initForAccount 之后：它按已开通身份重排 side，先恢复会被覆盖。
+
+const OWNED_QUERY_KEYS = ['side', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist'] as const
+const LEVEL_FILTER_VALUES = ['Lv2', 'Lv3', 'Lv4']
+const RATE_FILTER_VALUES = [60, 70, 80, 90]
+const DISTANCE_VALUES = [1, 3, 5, 10, 30]
+
+/** query 值可能是数组（重复 key），只取首个；空串视为未提供。 */
+function firstQueryParam(raw: LocationQueryValue | LocationQueryValue[]): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+const urlQuerySnapshot = computed<Record<string, string>>(() => {
+  const query: Record<string, string> = {}
+  if (side.value === 'recommender') query.side = 'recommender'
+  if (selectedTaskId.value) query.task = selectedTaskId.value
+  if (levelFilter.value) query.level = levelFilter.value
+  if (rateFilterPct.value > 0) query.rate = String(rateFilterPct.value)
+  if (feedFilters.value.q.trim()) query.q = feedFilters.value.q.trim()
+  if (feedFilters.value.platform.trim()) query.platform = feedFilters.value.platform.trim()
+  if (feedFilters.value.contentForm.trim()) query.contentForm = feedFilters.value.contentForm.trim()
+  if (feedFilters.value.minBountyYuan > 0) query.minBounty = String(feedFilters.value.minBountyYuan)
+  if (feedFilters.value.maxDistanceKm > 0) query.dist = String(feedFilters.value.maxDistanceKm)
+  return query
+})
+
+// 状态 → URL。工作台被 KeepAlive 保活，离开本路由后状态仍可能变化——只在本路由上写 query，
+// 且保留非本组件拥有的参数（?anchor= 之类不被抹掉）。
+watch(urlQuerySnapshot, (owned) => {
+  if (router.currentRoute.value.name !== 'grassland') return
+  const merged: LocationQueryRaw = { ...router.currentRoute.value.query }
+  for (const key of OWNED_QUERY_KEYS) delete merged[key]
+  void router.replace({ name: 'grassland', query: { ...merged, ...owned } })
+})
+
+/** URL → 状态：账号初始化完成后执行一次。无效值一律忽略，绝不因链接参数破坏白名单约束。 */
+async function restoreWorkbenchStateFromUrl(): Promise<void> {
+  const query = route.query
+  const level = firstQueryParam(query.level)
+  if (level && LEVEL_FILTER_VALUES.includes(level)) levelFilter.value = level
+  const rate = Number(firstQueryParam(query.rate))
+  if (RATE_FILTER_VALUES.includes(rate)) rateFilterPct.value = rate
+  const q = firstQueryParam(query.q)
+  if (q) feedFilters.value.q = q
+  const platform = firstQueryParam(query.platform)
+  if (platform) feedFilters.value.platform = platform
+  const contentForm = firstQueryParam(query.contentForm)
+  if (contentForm) feedFilters.value.contentForm = contentForm
+  const minBounty = Number(firstQueryParam(query.minBounty))
+  if (Number.isFinite(minBounty) && minBounty > 0) feedFilters.value.minBountyYuan = minBounty
+  const distance = Number(firstQueryParam(query.dist))
+  if (DISTANCE_VALUES.includes(distance)) feedFilters.value.maxDistanceKm = distance
+
+  const sideParam = firstQueryParam(query.side)
+  if ((sideParam === 'merchant' || sideParam === 'recommender') && sideParam !== side.value) {
+    await switchSide(sideParam)
+  }
+  // side 未变化时（如换账号前后同为 recommender）composable 的 side watch 不触发，
+  // feed 首页不会自动拉——这里补一次，保证恢复的筛选条件有数据可筛。
+  if (side.value === 'recommender' && feedItems.value.length === 0) {
+    await loadFeed(true)
+  }
+  const taskParam = firstQueryParam(query.task)
+  if (taskParam) await selectTask(taskParam)
+}
 
 // 注：openIdentity 对商家需带 org。挂载时 org 尚未加载，故此处只做激活；
 // 未开通的情况留给 switchSide（那时 activeOrgId 已就绪）。
@@ -206,8 +323,7 @@ const grasslandNavigationTarget = inject<Ref<NotificationLinkTarget | null>>(
 watch(grasslandAnchor, async (anchor) => {
   if (!anchor) return
   await nextTick()
-  const element = document.getElementById(anchor)
-  element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  scrollBlockIntoView(anchor)
   grasslandAnchor.value = ''
 }, { immediate: true })
 
@@ -216,7 +332,7 @@ watch(grasslandNavigationTarget, async (target) => {
   if (target?.disputeId) {
     activeDisputeId.value = target.disputeId
     await nextTick()
-    document.getElementById('gl-disputes')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollBlockIntoView('gl-disputes')
     grasslandNavigationTarget.value = null
     return
   }
@@ -232,7 +348,7 @@ watch(grasslandNavigationTarget, async (target) => {
       tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
       await selectTask(task.id)
       await nextTick()
-      document.getElementById('gl-engagements')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      scrollBlockIntoView('gl-engagements')
       setNotice('已打开审核任务，可修改后重新提交')
     } finally {
       grasslandNavigationTarget.value = null
@@ -251,7 +367,7 @@ watch(grasslandNavigationTarget, async (target) => {
     feedItems.value = [task, ...feedItems.value.filter((item) => item.id !== task.id)]
     await selectTask(task.id)
     await nextTick()
-    document.getElementById('gl-task-hall')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      scrollBlockIntoView('gl-task-hall')
     setNotice('已打开邀请任务，可直接报名')
   } finally {
     grasslandNavigationTarget.value = null
@@ -268,12 +384,16 @@ watch(grasslandNavigationTarget, async (target) => {
       </div>
       <div class="gl-side-switch" role="tablist" aria-label="角色切换">
         <button
-          type="button" role="tab" :aria-selected="side === 'merchant'"
+          type="button" role="tab" id="gl-tab-merchant" aria-controls="gl-panel-merchant"
+          :aria-selected="side === 'merchant'" :tabindex="side === 'merchant' ? 0 : -1"
           :class="{ active: side === 'merchant' }" @click="switchSide('merchant')"
+          @keydown="onSideTabKeydown"
         >商家视角</button>
         <button
-          type="button" role="tab" :aria-selected="side === 'recommender'"
+          type="button" role="tab" id="gl-tab-recommender" aria-controls="gl-panel-recommender"
+          :aria-selected="side === 'recommender'" :tabindex="side === 'recommender' ? 0 : -1"
           :class="{ active: side === 'recommender' }" @click="switchSide('recommender')"
+          @keydown="onSideTabKeydown"
         >推荐官视角</button>
       </div>
     </header>
@@ -281,7 +401,7 @@ watch(grasslandNavigationTarget, async (target) => {
     <p v-if="grassland.error.value" class="gl-alert gl-alert-error" role="alert">
       {{ grassland.error.value }}
     </p>
-    <p v-if="notice" class="gl-alert gl-alert-ok">{{ notice }}</p>
+    <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
     <!-- 分区：账号级能力（与视角无关）/ 视角工作区 / 争议与平台治理 ——
          十余张卡平铺无主次的替代方案是分区标题 + 账号区横排，而不是继续加卡 -->
@@ -303,17 +423,17 @@ watch(grasslandNavigationTarget, async (target) => {
     </section>
 
     <!-- ============ 商家视角 ============ -->
-    <div v-if="side === 'merchant'" class="gl-grid">
+    <div v-if="side === 'merchant'" id="gl-panel-merchant" role="tabpanel" aria-labelledby="gl-tab-merchant" tabindex="0" class="gl-grid">
       <article id="gl-organizations" class="gl-card">
         <h3>1. 我的组织</h3>
         <div class="gl-row">
-          <select v-model="activeOrgId" @change="changeOrganization">
+          <select v-model="activeOrgId" aria-label="所属组织" name="organization" @change="changeOrganization">
             <option value="" disabled>选择组织</option>
             <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
           </select>
         </div>
         <div v-if="organizationAccessIds.size > 0 || managerStoreScopes.length === 0" class="gl-row">
-          <input v-model="newOrgName" placeholder="新组织名称" @keyup.enter="createOrg" />
+          <input v-model="newOrgName" aria-label="新组织名称" name="organization-name" autocomplete="off" placeholder="新组织名称" @keyup.enter="createOrg" />
           <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
         </div>
         <p v-if="activeOrg" class="gl-hint">
@@ -386,7 +506,7 @@ watch(grasslandNavigationTarget, async (target) => {
           <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
         </div>
         <div class="gl-row">
-          <input v-model.number="creditAmountYuan" type="number" min="1" />
+          <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
           <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
         </div>
       </article>
@@ -431,7 +551,7 @@ watch(grasslandNavigationTarget, async (target) => {
               {{ t.title }}
             </button>
             <span class="badge badge-neutral">{{ taskStatusLabel(t.status) }}</span>
-            <span v-if="t.bountyCents" class="badge badge-success">¥{{ (t.bountyCents / 100).toFixed(2) }}</span>
+            <span v-if="t.bountyCents" class="badge badge-success">{{ formatYuan(t.bountyCents) }}</span>
             <!-- 任务书 #25：阶梯任务在状态/赏金标签旁展示 compact 档位摘要（赏金 = 最高档预留） -->
             <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" compact />
             <span v-if="t.minRecommenderLevel > 1" class="badge badge-neutral">Lv{{ t.minRecommenderLevel }}+</span>
@@ -441,18 +561,18 @@ watch(grasslandNavigationTarget, async (target) => {
             <template v-if="t.status === 'draft'">
               <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
               <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">提交审核</button>
-              <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消</button>
+              <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
             </template>
             <!-- 待审核：平台内容审核中，仅可取消（编辑需先驳回或取消重建） -->
             <template v-else-if="t.status === 'pending_review'">
               <span class="gl-hint">平台审核中</span>
-              <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消</button>
+              <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
             </template>
             <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
             <template v-else-if="t.status === 'published'">
               <button type="button" :disabled="grassland.loading.value" @click="editPublished(t)">编辑</button>
               <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
-              <button type="button" :disabled="grassland.loading.value" @click="cancelTaskAction(t)">取消任务</button>
+              <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消任务</button>
             </template>
           </li>
         </ul>
@@ -496,16 +616,16 @@ watch(grasslandNavigationTarget, async (target) => {
                   全选待处理（{{ pendingFilteredApplications.length }}）
                 </label>
                 <button type="button" :disabled="batchButtonsDisabled" @click="batchAccept">批量接受</button>
-                <button type="button" :disabled="batchButtonsDisabled" @click="batchReject">批量拒绝</button>
+                <button type="button" :disabled="batchButtonsDisabled" @click="confirmBatchReject">批量拒绝</button>
                 <span v-if="selectedAppIds.size > 0" class="gl-hint">已选 {{ selectedAppIds.size }} 条</span>
               </div>
 
               <table class="gl-table">
-                <thead><tr><th class="gl-th-check"><input type="checkbox" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
+                <thead><tr><th class="gl-th-check"><input type="checkbox" aria-label="全选待处理报名" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
                 <tbody>
-                  <tr v-for="a in filteredApplications" :key="a.id">
+                  <tr v-for="(a, index) in filteredApplications" :key="a.id">
                     <td>
-                      <input v-if="a.status === 'pending'" type="checkbox" :checked="selectedAppIds.has(a.id)" @change="toggleSelectApp(a.id)" />
+                      <input v-if="a.status === 'pending'" type="checkbox" :aria-label="`选择第 ${index + 1} 行报名`" :checked="selectedAppIds.has(a.id)" @change="toggleSelectApp(a.id)" />
                     </td>
                   <td><code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></td>
                   <td>
@@ -531,10 +651,10 @@ watch(grasslandNavigationTarget, async (target) => {
                           min="0"
                           step="1"
                           class="gl-metric-input"
-                          :aria-label="`实际指标 ${selectedCommissionLadder()?.metricKey ?? ''} ${a.id}`"
+                          :aria-label="`第 ${index + 1} 行实际指标（${selectedCommissionLadder()?.metricKey ?? ''}）`"
                           placeholder="实际指标"
                         />
-                        <span class="gl-hint">预计结算 ¥{{ (previewCommissionCents(a.id) / 100).toFixed(2) }}</span>
+                        <span class="gl-hint">预计结算 {{ formatYuan(previewCommissionCents(a.id)) }}</span>
                         <span v-if="confirmedMetricResult(a.id).error" class="gl-hint gl-metric-error">
                           {{ confirmedMetricResult(a.id).error }}
                         </span>
@@ -548,7 +668,7 @@ watch(grasslandNavigationTarget, async (target) => {
                       <input
                         v-model="contestReasons[a.id]"
                         class="gl-contest-reason"
-                        :aria-label="`拒绝理由 ${a.id}`"
+                        :aria-label="`第 ${index + 1} 行拒绝理由`"
                         placeholder="拒绝理由（系统核实通过后转客服）"
                       />
                       <button
@@ -585,7 +705,7 @@ watch(grasslandNavigationTarget, async (target) => {
     </div>
 
     <!-- ============ 推荐官视角 ============ -->
-    <div v-else class="gl-grid">
+    <div v-else id="gl-panel-recommender" role="tabpanel" aria-labelledby="gl-tab-recommender" tabindex="0" class="gl-grid">
       <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
       <article class="gl-card gl-card-wide">
         <MyRecommenderProfileCard />
@@ -658,7 +778,7 @@ watch(grasslandNavigationTarget, async (target) => {
                   </button>
                   <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
                 </template>
-                <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="withdrawApp(a)">
+                <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="confirmWithdraw(a)">
                   撤销
                 </button>
                 <span v-else>—</span>
@@ -691,7 +811,7 @@ watch(grasslandNavigationTarget, async (target) => {
       <article id="gl-disputes" class="gl-card">
         <h3>争议审判</h3>
         <div class="gl-row">
-          <input v-model="activeDisputeId" placeholder="争议 ID（开启争议后自动填入）" />
+          <input v-model="activeDisputeId" aria-label="争议 ID" name="dispute-id" autocomplete="off" placeholder="争议 ID（开启争议后自动填入）" />
         </div>
         <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
         <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
@@ -754,8 +874,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .gl-balance { margin: 0; font-size: 14px; }
 .gl-balance strong { font-size: 18px; }
 .gl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.gl-list li { display: flex; align-items: center; gap: 8px; }
-.gl-link { border: none; background: none; padding: 2px 0; cursor: pointer; text-align: left; font-size: 13px; text-decoration: underline; }
+/* min-width:0 是 flex 子项默认 min-width:auto 的逃生口：不放开则超长标题（UGC）无法收缩截断 */
+.gl-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gl-link {
+  border: none; background: none; padding: 2px 0; cursor: pointer; text-align: left; font-size: 13px;
+  text-decoration: underline; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .gl-link.active { font-weight: 600; }
 .gl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .gl-table th, .gl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
