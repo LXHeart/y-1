@@ -136,12 +136,21 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(nginx).toContain("script-src 'self' 'sha256-")
     expect(nginx).not.toContain("script-src 'self' 'unsafe-inline'")
 
-    // index.html 的内联防 FOUC 脚本必须与 nginx hash 严格同步（改一处不改另一处会在 enforce 下被打断）。
+    // index.html 与 ops.html（治理台入口）的内联防 FOUC 脚本必须与 nginx hash 严格同步
+    // （改一处不改另一处会在 enforce 下被打断）；两个入口共用同一段脚本即同一个 hash。
     const indexHtml = readRepositoryFile('index.html')
     const inline = indexHtml.match(/<script>(.*?)<\/script>/s)
     expect(inline).not.toBeNull()
     const hash = createHash('sha256').update(inline![1], 'utf8').digest('base64')
     expect(nginx).toContain(`'sha256-${hash}'`)
+
+    const opsHtml = readRepositoryFile('ops.html')
+    const opsInline = opsHtml.match(/<script>(.*?)<\/script>/s)
+    expect(opsInline).not.toBeNull()
+    const opsHash = createHash('sha256').update(opsInline![1], 'utf8').digest('base64')
+    expect(nginx).toContain(`'sha256-${opsHash}'`)
+    // ops.html 入口脚本指向治理台应用
+    expect(opsHtml).toContain('src="/src/ops/main.ts"')
 
     // 报告端点：只收 POST、反代到 edge、清掉转发链身份头。
     const reportLocation = nginxLocation(nginx, '= /csp-report')

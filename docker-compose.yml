@@ -5,6 +5,9 @@ services:
       dockerfile: Dockerfile.frontend
     ports:
       - "${FRONTEND_PORT:-8080}:80"
+      # 治理台独立 origin（运营处置 + 管理后台，入口 ops.html）：与用户端分离部署，
+      # 生产可对本端口做 IP 白名单/VPN 隔离；会话/授权仍由后端 backend_role 门禁。
+      - "${OPS_FRONTEND_PORT:-8083}:81"
       - "${MINIO_PROXY_PORT:-9002}:9002"  # 草场 Slice 11 Stage 3: MinIO CORS 反代端口
     environment:
       # 公网 API 统一经 edge-bff；未登记路由由 Edge fail-closed 404。

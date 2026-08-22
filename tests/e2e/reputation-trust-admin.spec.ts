@@ -3,6 +3,8 @@ import type { APIResponse, Page } from '@playwright/test'
 
 const adminEmail = process.env.E2E_ADMIN_EMAIL || 'e2e-admin-ci@test.local'
 const adminPassword = process.env.E2E_ADMIN_PASSWORD
+// 治理台独立入口（ops.html 双页应用的第二 origin；CI 由 ci-e2e.sh 注入 OPS_BASE_URL）
+const opsBaseURL = process.env.OPS_BASE_URL || 'http://127.0.0.1:18081'
 
 interface Envelope<T> {
   success: boolean
@@ -30,7 +32,8 @@ async function data<T>(response: APIResponse, expectedStatus = 200): Promise<T> 
 }
 
 async function loginBrowser(page: Page, email: string, password: string): Promise<void> {
-  await page.goto('/')
+  // 管理员会话建立在治理台 origin 上（与用户端分离部署，cookie 相互独立）
+  await page.goto(opsBaseURL + '/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /登录后管理/ })
   await dialog.locator('#login-email').fill(email)
@@ -39,7 +42,7 @@ async function loginBrowser(page: Page, email: string, password: string): Promis
     candidate.request().method() === 'POST' && candidate.url().endsWith('/api/auth/login'))
   await dialog.locator('button[type="submit"]').click()
   expect((await response).status()).toBe(200)
-  await expect(page.getByText('已登录', { exact: true })).toBeVisible()
+  await expect(page.locator('.ops-user')).toBeVisible()
 }
 
 test.describe('等级权益与审判官运营后台', () => {
@@ -48,7 +51,6 @@ test.describe('等级权益与审判官运营后台', () => {
     test.skip(!adminPassword, 'E2E_ADMIN_PASSWORD is required for the seeded platform admin')
     await loginBrowser(page, adminEmail, adminPassword as string)
 
-    await page.getByRole('button', { name: '管理', exact: true }).click()
     const policyResponse = page.waitForResponse((response) =>
       response.request().method() === 'GET'
       && response.url().endsWith('/api/admin/reputation-config'))

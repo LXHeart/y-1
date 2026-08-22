@@ -3,6 +3,8 @@ import type { APIRequestContext, APIResponse, Page } from '@playwright/test'
 import { Pool } from 'pg'
 
 const baseURL = process.env.BASE_URL || 'http://127.0.0.1:18080'
+// 治理台独立入口（ops.html 双页应用的第二 origin；CI 由 ci-e2e.sh 注入 OPS_BASE_URL）
+const opsBaseURL = process.env.OPS_BASE_URL || 'http://127.0.0.1:18081'
 const merchantEmail = process.env.E2E_EMAIL || 'e2e-ci@test.local'
 const merchantPassword = process.env.E2E_PASSWORD
 const adminEmail = process.env.E2E_ADMIN_EMAIL || 'e2e-admin-ci@test.local'
@@ -101,7 +103,8 @@ async function attach(
 }
 
 async function loginBrowser(page: Page, email: string, password: string): Promise<void> {
-  await page.goto('/')
+  // 管理员会话建立在治理台 origin 上（与用户端分离部署，cookie 相互独立）
+  await page.goto(opsBaseURL + '/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /登录后管理/ })
   await dialog.locator('#login-email').fill(email)
@@ -110,11 +113,11 @@ async function loginBrowser(page: Page, email: string, password: string): Promis
     response.request().method() === 'POST' && response.url().endsWith('/api/auth/login'))
   await dialog.locator('button[type="submit"]').click()
   expect((await loginResponse).status()).toBe(200)
-  await expect(page.getByText('已登录', { exact: true })).toBeVisible()
+  await expect(page.locator('.ops-user')).toBeVisible()
 }
 
 async function openKybAdmin(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '管理', exact: true }).click()
+  // 登录后治理台直接落管理后台（无需再点主导航「管理」——治理台就是它的唯一宿主）
   await page.getByRole('tab', { name: /KYB 审核/ }).click()
   await expect(page.getByRole('heading', { name: '待审核申请' })).toBeVisible()
 }
