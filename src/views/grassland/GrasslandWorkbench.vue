@@ -101,7 +101,7 @@ const {
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
   canManageAiBudget, canPublishBounty,
-  loadOrganizations, initForAccount, createOrg, refreshAccount, changeOrganization,
+  loadOrganizations, loadActiveOrganizationStores, initForAccount, createOrg, refreshAccount, changeOrganization,
   provision, credit, switchSide, reset: resetSession,
   pendingRename, renaming, requestRename,
 } = useWorkbenchSession(grassland, {
@@ -771,7 +771,7 @@ watch(grasslandNavigationTarget, async (target) => {
 
           <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
           <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
-            <OrgTeamCard :org-id="activeOrg.id" />
+            <OrgTeamCard :org-id="activeOrg.id" @stores-changed="loadActiveOrganizationStores" />
           </article>
 
           <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
@@ -781,7 +781,7 @@ watch(grasslandNavigationTarget, async (target) => {
 
           <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
           <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
-            <MerchantKybCard :org-id="activeOrg.id" @changed="() => loadOrganizations()" />
+            <MerchantKybCard :org-id="activeOrg.id" :stores="stores.map((store) => ({ id: store.id, name: store.name }))" @changed="() => loadOrganizations()" />
           </article>
 
           <!-- 独立门店 KYB：纯门店 MANAGER（无组织成员身份）也能维护自己门店的资料并走审核状态机。 -->

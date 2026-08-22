@@ -490,6 +490,16 @@ function resetOrganizationState(): void {
   storeForm.value = emptyStoreForm()
 }
 
+// 门店列表 prop 变化时同步下拉（新建门店后不刷新页面即可见）
+watch(() => props.stores, (next) => {
+  if (Array.isArray(next)) {
+    storeOptions.value = [...next]
+    if (storeOptions.value.length > 0 && !selectedStoreId.value) {
+      selectedStoreId.value = storeOptions.value[0].id
+    }
+  }
+}, { deep: true })
+
 watch(() => props.orgId, (orgId) => {
   const version = ++organizationLoadVersion
   resetOrganizationState()

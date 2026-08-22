@@ -27,6 +27,7 @@ import type {
  * - 守卫：移除最后一个 owner / 唯一 manager 均 409
  */
 
+const emit = defineEmits<{ 'stores-changed': [] }>()
 const props = defineProps<{ orgId: string }>()
 
 const grassland = useGrassland()
@@ -156,6 +157,7 @@ async function addStore(): Promise<void> {
   if (!created) return
   newStoreName.value = ''
   notice.value = `门店「${created.name}」已创建`
+  emit('stores-changed')
   const list = await grassland.listStores(props.orgId)
   if (list) stores.value = list
 }
