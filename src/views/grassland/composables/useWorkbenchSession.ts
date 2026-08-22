@@ -39,7 +39,7 @@ export function useWorkbenchSession(
    */
   const {
     activeSide: side,
-    hasMerchantIdentity,
+    hasMerchantIdentity, hasRecommenderIdentity,
     loadAccountIdentity, reset: resetActiveIdentity,
   } = useActiveIdentity()
   const orgs = ref<Organization[]>([])
@@ -259,7 +259,7 @@ export function useWorkbenchSession(
 
   return {
     side, orgs, stores, storeScopes, organizationAccessIds, organizationRoles,
-    hasMerchantIdentity, activeOrgId, selectedStoreId, account,
+    hasMerchantIdentity, hasRecommenderIdentity, activeOrgId, selectedStoreId, account,
     newOrgName, creditAmountYuan, walletBalanceCents,
     activeOrg, managerStoreScopes, activeOrgHasOrganizationAccess, activeOrganizationRole,
     canManageAiBudget, canPublishBounty, balanceYuan,

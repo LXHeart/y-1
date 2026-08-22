@@ -203,7 +203,7 @@ describe('GrasslandWorkbench 登录态', () => {
     currentUser.value = asUser('acct-rec', 'recommender@test.local')
     await flushPromises()
 
-    expect(wrapper.find('[aria-selected="true"]').text()).toBe('推荐官视角')
+    expect(wrapper.get('.gl-title').text()).toBe('推荐官工作台')
     const activation = calls.find(([url]) => url === '/api/me/active-identity')
     expect(activation).toBeDefined()
     expect(JSON.parse(activation?.[1]?.body as string)).toEqual({ type: 'recommender' })
@@ -218,10 +218,64 @@ describe('GrasslandWorkbench 登录态', () => {
     currentUser.value = asUser('acct-consumer', 'consumer@test.local')
     await flushPromises()
 
-    expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')
+    expect(wrapper.get('.gl-title').text()).toBe('商家工作台')
     expect(calls.filter(([url]) => url === '/api/me/active-identity')).toHaveLength(0)
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
-    expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')
+  })
+
+  // 视角切换器移除后，另一身份的开通入口在「账号与合规」区（PRD §一：引导开通，切换在账号菜单）
+  test('商家-only 账号显示开通推荐官引导，点击后激活并切入推荐官工作台', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mountWorkbench()
+
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    expect(wrapper.get('.gl-title').text()).toBe('商家工作台')
+    const openTile = wrapper.get('.identity-open-tile')
+    expect(openTile.text()).toContain('开通推荐官身份')
+    expect(openTile.text()).not.toContain('开通商家身份')
+
+    await openTile.get('button.identity-open-btn').trigger('click')
+    await flushPromises()
+
+    const activations = calls.filter(([url]) => url === '/api/me/active-identity')
+    expect(activations.length).toBeGreaterThanOrEqual(1)
+    expect(JSON.parse(activations[activations.length - 1]?.[1]?.body as string)).toEqual({ type: 'recommender' })
+    expect(wrapper.get('.gl-title').text()).toBe('推荐官工作台')
+  })
+
+  test('recommender-only 无组织时不开通按钮，只给指引文案', async () => {
+    // 无组织形态：organizations 返回空（默认 stub 会给出 ORG，那是有组织形态）
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      let data: unknown = dataFor(url)
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+      } else if (url === '/api/organizations' || url === '/api/me/store-scopes') {
+        data = []
+      }
+      return {
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data }),
+      }
+    }))
+    const wrapper = mountWorkbench({
+      global: {
+        stubs: {
+          MyRecommenderProfileCard: true, MyWalletCard: true,
+          EngagementSubmissionPanel: true, EngagementRatingPanel: true, AdjudicationPanel: true,
+        },
+      },
+    })
+
+    currentUser.value = asUser('acct-rec2', 'recommender2@test.local')
+    await flushPromises()
+
+    expect(wrapper.get('.gl-title').text()).toBe('推荐官工作台')
+    const openTile = wrapper.get('.identity-open-tile')
+    expect(openTile.text()).toContain('商家组织')
+    expect(openTile.find('button.identity-open-btn').exists()).toBe(false)
   })
 
   test('纯门店 MANAGER 不激活 merchant，只显示获授权门店业务', async () => {
@@ -763,7 +817,7 @@ describe('GrasslandWorkbench 通知锚点', () => {
 
     expect(scrolled).toEqual(['gl-disputes'])
     expect(anchor.value).toBe('')  // 置空后同一锚点可再次触发
-    expect(wrapper.find('[aria-selected="true"]').text()).toBe('商家视角')  // 未替用户切视角
+    expect(wrapper.get('.gl-title').text()).toBe('商家工作台')  // 未替用户切身份
   })
 
   /**

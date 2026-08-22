@@ -91,6 +91,7 @@ function scrollBlockIntoView(elementId: string): void {
 // await 之后被调用（setup 同步路径不触达），届时 const 必已完成初始化。
 const {
   side, orgs, stores, organizationAccessIds, managerStoreScopes,
+  hasMerchantIdentity, hasRecommenderIdentity,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
   canManageAiBudget, canPublishBounty,
@@ -135,8 +136,7 @@ const {
   updateCommissionLadder, handleTaskFormUpdate, handleTaskFormStoreChange, reset: resetTaskDrafts,
 } = useWorkbenchTaskDrafts(grassland, setNotice, { activeOrgId, selectedStoreId, refreshTasks })
 
-/** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。 */
-function confirmCancelTask(task: Task): void {
+/** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。 */function confirmCancelTask(task: Task): void {
   const message = task.status === 'draft'
     ? `取消草稿「${task.title}」？草稿将被删除，不可恢复。`
     : task.status === 'pending_review'
@@ -156,14 +156,22 @@ function confirmWithdraw(app: TaskApplication): void {
   void withdrawApp(app)
 }
 
-/** tablist 方向键导航（ARIA tabs 模式）：左右键切换视角并把焦点移到新激活的 tab。 */
-async function onSideTabKeydown(event: KeyboardEvent): Promise<void> {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-  event.preventDefault()
-  const next: 'merchant' | 'recommender' = side.value === 'merchant' ? 'recommender' : 'merchant'
-  await switchSide(next)
-  await nextTick()
-  document.getElementById(`gl-tab-${next}`)?.focus()
+/**
+ * 开通另一身份（账号与合规区的引导入口）。复用 switchSide 的开通回退：
+ * 推荐官无需材料直接开通；商家须已属于某个组织（或有门店管理范围），
+ * 否则前端只给指引文案不开按钮——与后端 openIdentity(merchant 需 org) 的约束一致。
+ */
+const identityOpening = ref(false)
+const canOpenMerchantIdentity = computed(() => Boolean(activeOrgId.value) || managerStoreScopes.value.length > 0)
+
+async function openOtherIdentity(target: 'merchant' | 'recommender'): Promise<void> {
+  if (identityOpening.value) return
+  identityOpening.value = true
+  try {
+    await switchSide(target)
+  } finally {
+    identityOpening.value = false
+  }
 }
 
 /** 生长刻度：任务生命周期五段（草稿 → 审核 → 招募 → 履约 → 结算）。 */
@@ -411,27 +419,12 @@ watch(grasslandNavigationTarget, async (target) => {
   <section class="gl-field grassland">
     <header class="gl-header">
       <div class="gl-head-copy">
-        <h2 class="gl-title">草场工作台</h2>
-        <p class="gl-sub">商家与推荐官的撮合闭环（经 edge-bff 调用 Java 微服务）</p>
-      </div>
-      <div class="gl-side-switch" role="tablist" aria-label="角色切换">
-        <span class="gl-switch-thumb" :class="{ 'gl-switch-thumb-rec': side === 'recommender' }" aria-hidden="true"></span>
-        <button
-          type="button" role="tab" id="gl-tab-merchant" aria-controls="gl-panel-merchant"
-          :aria-selected="side === 'merchant'" :tabindex="side === 'merchant' ? 0 : -1"
-          :class="{ active: side === 'merchant' }" @click="switchSide('merchant')"
-          @keydown="onSideTabKeydown"
-        >商家视角</button>
-        <button
-          type="button" role="tab" id="gl-tab-recommender" aria-controls="gl-panel-recommender"
-          :aria-selected="side === 'recommender'" :tabindex="side === 'recommender' ? 0 : -1"
-          :class="{ active: side === 'recommender' }" @click="switchSide('recommender')"
-          @keydown="onSideTabKeydown"
-        >推荐官视角</button>
+        <h2 class="gl-title">{{ side === 'merchant' ? '商家工作台' : '推荐官工作台' }}</h2>
+        <p class="gl-sub">工作台随活动身份切换——在右上角账号菜单或主页入口切换身份（经 edge-bff 调用 Java 微服务）</p>
       </div>
     </header>
 
-    <!-- 地平线（signature）：紫=商家播种，苗绿=推荐官耕耘；激活侧标签点亮 -->
+    <!-- 地平线（signature）：紫=商家播种，苗绿=推荐官耕耘；当前身份侧点亮 -->
     <div class="gl-horizon" aria-hidden="true">
       <span class="gl-horizon-tag gl-horizon-merchant" :class="{ on: side === 'merchant' }">商家 · 播种</span>
       <span class="gl-horizon-line"></span>
@@ -443,12 +436,29 @@ watch(grasslandNavigationTarget, async (target) => {
     </p>
     <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
-    <!-- 田垄①：账号级能力（与视角无关） -->
+    <!-- 田垄①：账号级能力（与身份无关） -->
     <section class="gl-zone" aria-label="账号与合规">
       <div class="gl-zone-head">
         <h3 class="gl-zone-title">账号与合规</h3>
       </div>
       <div class="gl-zone-body">
+        <!-- 身份开通引导（PRD §一：首次切换到尚未开通的身份时引导开通；切换本身在账号菜单） -->
+        <article v-if="side === 'merchant' && !hasRecommenderIdentity" class="gl-tile identity-open-tile">
+          <h3>开通推荐官身份</h3>
+          <p class="identity-open-copy">同一账号可同时开通商家与推荐官身份；开通后可在账号菜单随时切换。</p>
+          <button type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('recommender')">
+            {{ identityOpening ? '开通中…' : '开通推荐官身份' }}
+          </button>
+        </article>
+        <article v-else-if="side === 'recommender' && !hasMerchantIdentity" class="gl-tile identity-open-tile">
+          <h3>开通商家身份</h3>
+          <p v-if="canOpenMerchantIdentity" class="identity-open-copy">用你当前的组织开通商家身份；开通后可在账号菜单随时切换。</p>
+          <button v-if="canOpenMerchantIdentity" type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('merchant')">
+            {{ identityOpening ? '开通中…' : '开通商家身份' }}
+          </button>
+          <p v-else class="identity-open-copy">开通商家身份需要一个商家组织：先接受组织邀请，或由商家将你加为门店成员后再来开通。</p>
+        </article>
+
         <article id="gl-invitations" class="gl-tile">
           <MyInvitationsCard @joined="() => loadOrganizations()" />
         </article>
@@ -463,8 +473,8 @@ watch(grasslandNavigationTarget, async (target) => {
       </div>
     </section>
 
-    <!-- ============ 商家视角 ============ -->
-    <div v-if="side === 'merchant'" id="gl-panel-merchant" role="tabpanel" aria-labelledby="gl-tab-merchant" tabindex="0" class="gl-workbench" data-side="merchant">
+    <!-- ============ 商家工作台 ============ -->
+    <div v-if="side === 'merchant'" id="gl-panel-merchant" aria-label="商家工作台" tabindex="0" class="gl-workbench" data-side="merchant">
       <!-- 田垄②：主操作区——每天干活的地方放最上面 -->
       <section class="gl-zone" aria-label="发布与撮合">
         <div class="gl-zone-head">
@@ -779,8 +789,8 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
     </div>
 
-    <!-- ============ 推荐官视角 ============ -->
-    <div v-else id="gl-panel-recommender" role="tabpanel" aria-labelledby="gl-tab-recommender" tabindex="0" class="gl-workbench" data-side="recommender">
+    <!-- ============ 推荐官工作台 ============ -->
+    <div v-else id="gl-panel-recommender" aria-label="推荐官工作台" tabindex="0" class="gl-workbench" data-side="recommender">
       <!-- 田垄②′：我的草场——主页、分享、收款 -->
       <section class="gl-zone" aria-label="我的草场">
         <div class="gl-zone-head">
@@ -941,29 +951,15 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-title { margin: 0; font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
 .gl-sub { margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-text-muted); }
 
-.gl-side-switch {
-  position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px;
-  border: 1px solid var(--color-border); border-radius: 999px;
-  background: var(--surface-card);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-}
-.gl-side-switch button {
-  position: relative; z-index: 1; min-height: 32px; padding: 0 var(--space-md);
-  border: none; background: transparent; border-radius: 999px;
-  color: var(--color-text-muted); cursor: pointer; font-size: var(--text-sm); font-weight: 500;
-  transition: color var(--duration-normal) var(--ease-out);
-}
-.gl-side-switch button:hover:not(:disabled) { background: transparent; color: var(--color-text-secondary); }
-.gl-side-switch button.active { color: var(--color-on-accent); font-weight: 600; }
-/* 激活滑块：商家=紫渐变；推荐官=苗绿渐变；spring 缓动滑到对侧 */
-.gl-switch-thumb {
-  position: absolute; z-index: 0; top: 4px; bottom: 4px; left: 4px;
-  width: calc(50% - 4px); border-radius: 999px; background: var(--gradient-accent);
-  transition: transform var(--duration-normal) var(--ease-spring), background var(--duration-normal) var(--ease-out);
-}
-.gl-switch-thumb-rec {
-  background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 68%, var(--color-info)));
-  transform: translateX(calc(100% + 4px));
+/* ---------- 身份开通引导（账号与合规区内） ---------- */
+.identity-open-tile { display: grid; gap: 6px; align-content: start; border-color: var(--color-border-accent); }
+.identity-open-tile h3 { margin: 0; font-size: var(--text-base); font-weight: 700; }
+.identity-open-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text-muted); line-height: 1.6; }
+.identity-open-btn {
+  justify-self: start; margin-top: 4px; min-height: 36px; padding: 0 16px;
+  border: 1px solid var(--color-border-accent); border-radius: var(--radius-sm);
+  background: var(--color-surface-highlight); color: var(--color-accent-2);
+  font-size: var(--text-sm); font-weight: 600; cursor: pointer;
 }
 
 /* 地平线：全宽紫→绿渐变细线，两端身份标签，激活侧点亮 */
