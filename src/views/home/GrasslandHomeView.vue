@@ -64,7 +64,7 @@
     <section v-else class="gl-zone" aria-label="我的草场">
       <div class="gl-zone-head">
         <h3 class="gl-zone-title">我的草场</h3>
-        <p class="gl-zone-note">入口随当前活动身份组织</p>
+        <p class="gl-zone-note">入口随当前活动身份组织；平台治理人员请使用治理台</p>
       </div>
       <div class="gl-zone-body">
         <button
@@ -99,28 +99,6 @@
           <span class="eyebrow">开通身份</span>
           <h3>完善资料，开通你的第一个身份</h3>
           <p class="tile-copy">进入工作台选择商家或推荐官身份，完成资料后即可开始使用草场。</p>
-        </button>
-        <button
-          v-if="canSeeOps"
-          type="button"
-          class="gl-tile gl-tile-button workbench-tile"
-          data-testid="home-ops-entry"
-          @click="go('ops')"
-        >
-          <span class="eyebrow">平台治理</span>
-          <h3>运营处置</h3>
-          <p class="tile-copy">投诉受理、争议处置与平台运营事务。</p>
-        </button>
-        <button
-          v-if="canSeeAdmin"
-          type="button"
-          class="gl-tile gl-tile-button workbench-tile"
-          data-testid="home-admin-entry"
-          @click="go('admin')"
-        >
-          <span class="eyebrow">平台治理</span>
-          <h3>管理后台</h3>
-          <p class="tile-copy">账号与权限、商家审核、任务与内容审核、AI 模型能力管理。</p>
         </button>
       </div>
     </section>
@@ -163,7 +141,7 @@ import type { AppView } from '../../types/navigation'
 const emit = defineEmits<{ 'request-login': [] }>()
 
 const router = useRouter()
-const { isAuthenticated, hasBackendRole } = useAuth()
+const { isAuthenticated } = useAuth()
 const grassland = useGrassland()
 const {
   activeSide, hasMerchantIdentity, hasRecommenderIdentity,
@@ -175,11 +153,6 @@ const hasAnyIdentity = computed(() =>
 const showMerchantEntry = computed(() => hasMerchantIdentity.value)
 const showRecommenderEntry = computed(() => hasRecommenderIdentity.value)
 const canSwitchIdentity = computed(() => hasMerchantIdentity.value && hasRecommenderIdentity.value)
-const canSeeOps = computed(() =>
-  hasBackendRole('platform_admin') || hasBackendRole('customer_service'))
-const canSeeAdmin = computed(() =>
-  hasBackendRole('platform_admin') || hasBackendRole('content_reviewer'))
-
 const activeIdentityLabel = computed(() => {
   if (hasMerchantIdentity.value && hasRecommenderIdentity.value) {
     return activeSide.value === 'merchant' ? '商家' : '推荐官'

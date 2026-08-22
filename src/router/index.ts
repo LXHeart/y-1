@@ -2,12 +2,15 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 
 /**
+ * 用户端路由（index.html 入口）。
+ *
  * 路由结构对齐 PRD §11.2 分层：草场是平台，AI 内容创作中心是内置共享能力。
  *
- * - `/` 草场主页：角色感知的落地页（未登录平台介绍 / 商家 / 推荐官 / 平台治理）。
+ * - `/` 草场主页：角色感知的落地页（未登录平台介绍 / 商家 / 推荐官）。
  * - 工具视图（video/image/article/moments/comedy/video-production）保留路由但不在
  *   主导航露出——它们是 AI 中心工作流的落地目的地（见 types/navigation.ts 注释）。
  * - `/home`、`/image-gen` 是旧入口的兜底重定向，外发过的链接不作废。
+ * - 运营处置与管理后台在独立治理台入口（ops.html / src/ops，独立 origin 部署）。
  */
 const routes: RouteRecordRaw[] = [
   {
@@ -70,16 +73,6 @@ const routes: RouteRecordRaw[] = [
         path: 'complaints',
         name: 'complaints',
         component: () => import('../views/complaints/ComplaintsView.vue'),
-      },
-      {
-        path: 'ops',
-        name: 'ops',
-        component: () => import('../views/ops/OpsConsole.vue'),
-      },
-      {
-        path: 'admin',
-        name: 'admin',
-        component: () => import('../views/admin/AdminView.vue'),
       },
     ],
   },

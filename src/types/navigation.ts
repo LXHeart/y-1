@@ -17,5 +17,3 @@ export type AppView =
   | 'commerce'
   | 'grassland'
   | 'complaints'
-  | 'ops'
-  | 'admin'

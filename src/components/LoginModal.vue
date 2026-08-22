@@ -13,7 +13,7 @@
           </button>
         </header>
 
-        <div class="login-mode-switch" role="tablist" aria-label="认证模式切换">
+        <div v-if="!hideRegister" class="login-mode-switch" role="tablist" aria-label="认证模式切换">
           <button
             class="login-mode-btn"
             :class="{ 'login-mode-btn-active': mode === 'login' }"
@@ -195,6 +195,8 @@ const props = defineProps<{
   submitting: boolean
   error: string
   message?: string
+  /** 隐藏注册入口（治理台等内部端使用：运营账号由平台开通，不自助注册）。 */
+  hideRegister?: boolean
 }>()
 
 const emit = defineEmits<{

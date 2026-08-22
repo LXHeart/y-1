@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
@@ -5,6 +6,12 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     rollupOptions: {
+      // 双页入口：index.html = 用户端（商家/推荐官/消费者），ops.html = 治理台
+      // （运营处置 + 管理后台，独立 origin 部署，见 nginx.conf 81 端口 server）。
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        ops: resolve(__dirname, 'ops.html'),
+      },
       output: {
         // 框架运行时单独成块：业务代码发版时浏览器仍命中缓存的 vendor chunk。
         // 内容哈希文件名由 nginx 的 immutable 一年缓存策略承接（见 nginx.conf）。

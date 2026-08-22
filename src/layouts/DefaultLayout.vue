@@ -188,34 +188,6 @@
           </svg>
           举报投诉
         </button>
-        <button
-          v-if="isAuthenticated && (hasBackendRole('platform_admin') || hasBackendRole('customer_service'))"
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'ops' }"
-          :aria-current="currentViewName === 'ops' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('ops')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-            <circle cx="12.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2"/>
-          </svg>
-          运营处置
-        </button>
-        <button
-          v-if="isAuthenticated && (hasBackendRole('platform_admin') || hasBackendRole('content_reviewer'))"
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'admin' }"
-          :aria-current="currentViewName === 'admin' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('admin')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M5.5 8.5h5M8 6v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-          </svg>
-          管理
-        </button>
       </nav>
     </header>
 
@@ -321,7 +293,7 @@ const loginModalMessage = ref('')
 const authBannerMessage = ref('')
 
 const {
-  currentUser, isAuthenticated, hasBackendRole,
+  currentUser, isAuthenticated,
   loggingIn, registering, loggingOut,
   loginError, registerError, logoutError, loadError: authLoadError,
   clearLoginError, clearRegisterError, clearLogoutError,

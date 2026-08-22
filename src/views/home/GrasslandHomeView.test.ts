@@ -98,7 +98,7 @@ describe('草场主页 · 角色感知入口', () => {
     expect(wrapper.get('.hero-identity').text()).toContain('推荐官')
   })
 
-  test('平台管理员：显示运营处置与管理后台入口', async () => {
+  test('平台管理员主页不再露出治理入口（治理台独立 origin）', async () => {
     useAuth().currentUser.value = {
       id: 'a-1', email: 'a@example.com', role: 'admin', roles: ['platform_admin'],
     }
@@ -106,8 +106,9 @@ describe('草场主页 · 角色感知入口', () => {
 
     const wrapper = mountView()
 
-    expect(wrapper.find('[data-testid="home-ops-entry"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="home-admin-entry"]').exists()).toBe(true)
+    // 治理入口已拆到独立治理台（ops.html）；用户端主页对管理员也不显示
+    expect(wrapper.find('[data-testid="home-ops-entry"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="home-admin-entry"]').exists()).toBe(false)
     // 无业务身份 → 引导开通
     expect(wrapper.find('[data-testid="home-onboarding-entry"]').exists()).toBe(true)
   })

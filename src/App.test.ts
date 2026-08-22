@@ -22,8 +22,6 @@ vi.mock('./views/article/ArticleCreationView.vue', () => ({ __esModule: true,
   },
 }))
 vi.mock('./views/comedy/ComedyWritingView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
-vi.mock('./views/admin/AdminView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
-vi.mock('./views/ops/OpsConsole.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./views/grassland/GrasslandWorkbench.vue', () => ({ __esModule: true,
   default: { template: '<div data-testid="grassland-workbench" />' },
 }))
@@ -117,7 +115,10 @@ async function mountApp() {
 }
 
 describe('App AI 创作中心集成', () => {
-  test('平台管理入口仅对 platform_admin 可见', async () => {
+  // 治理端（运营处置/管理后台）已拆到独立入口 ops.html（src/ops），用户端 SPA 不再包含
+  // 治理路由——即使 platform_admin 登录，用户端导航也不出现治理入口。角色分流的
+  // 正向断言在 src/ops/OpsApp.test.ts。
+  test('用户端不含治理入口，platform_admin 登录后导航也不出现运营处置/管理', async () => {
     const admin = {
       id: 'admin-1', email: 'admin@example.com', displayName: '管理员',
       role: 'admin', roles: ['platform_admin'],
@@ -136,19 +137,13 @@ describe('App AI 创作中心集成', () => {
     const wrapper = await mountApp()
 
     const navigation = wrapper.get('nav[aria-label="功能选择"]')
-    expect(navigation.text()).toContain('管理')
-
-    auth.currentUser.value = {
-      id: 'cs-1', email: 'cs@example.com', role: 'customer_service', roles: ['customer_service'],
-    }
-    await flushPromises()
-    expect(navigation.text()).toContain('运营处置')
+    expect(navigation.text()).not.toContain('运营处置')
+    expect(navigation.text()).not.toContain('管理后台')
     expect(navigation.text()).not.toContain('管理')
 
     auth.currentUser.value = { id: 'user-1', email: 'user@example.com', role: 'user', roles: [] }
     await flushPromises()
     expect(navigation.text()).not.toContain('运营处置')
-    expect(navigation.text()).not.toContain('管理')
     auth.currentUser.value = null
   })
 
