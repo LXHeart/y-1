@@ -2,15 +2,15 @@
   <section class="ai-control-panel" aria-labelledby="ai-org-provider-keys-title">
     <header class="panel-heading">
       <div>
-        <h3 id="ai-org-provider-keys-title">组织模型密钥</h3>
-        <p>成员无个人密钥时使用组织密钥（个人优先）；密钥加密保存，成员可用不可见</p>
+        <h3 id="ai-org-provider-keys-title">商家主体模型密钥</h3>
+        <p>成员无个人密钥时使用主体密钥（个人优先）；密钥加密保存，成员可用不可见</p>
       </div>
-      <button type="button" class="primary-command" data-action="add-org-key" @click="openCreate">添加组织密钥</button>
+      <button type="button" class="primary-command" data-action="add-org-key" @click="openCreate">添加主体密钥</button>
     </header>
 
     <p v-if="error" class="error-state" role="alert">{{ error }}</p>
-    <p v-if="loading" class="empty-state">正在加载组织密钥...</p>
-    <p v-else-if="!error && orgKeys.length === 0" class="empty-state">暂无组织模型密钥</p>
+    <p v-if="loading" class="empty-state">正在加载主体密钥...</p>
+    <p v-else-if="!error && orgKeys.length === 0" class="empty-state">暂无主体模型密钥</p>
     <div v-else class="key-list">
       <article v-for="key in orgKeys" :key="key.id" class="key-row" :data-key-id="key.id">
         <div class="key-main">
@@ -29,7 +29,7 @@
     <div class="policy-band" data-testid="org-byok-policy">
       <div>
         <strong>允许成员回退平台模型</strong>
-        <p>组织配置了组织密钥后，成员无密钥的能力默认不可回退平台（不静默扣平台额度）；开启后仍需调用方显式授权</p>
+        <p>主体配置了主体密钥后，成员无密钥的能力默认不可回退平台（不静默扣平台额度）；开启后仍需调用方显式授权</p>
       </div>
       <label class="policy-toggle">
         <input
@@ -49,8 +49,8 @@
     <div v-if="mode" class="form-band">
       <form @submit.prevent="submit">
         <header class="form-heading">
-          <h4>{{ mode === 'create' ? '添加组织密钥' : mode === 'edit' ? '编辑连接配置' : '轮换组织密钥' }}</h4>
-          <button type="button" aria-label="关闭组织密钥表单" @click="closeForm">×</button>
+          <h4>{{ mode === 'create' ? '添加主体密钥' : mode === 'edit' ? '编辑连接配置' : '轮换主体密钥' }}</h4>
+          <button type="button" aria-label="关闭主体密钥表单" @click="closeForm">×</button>
         </header>
         <template v-if="mode !== 'rotate'">
           <label>能力
@@ -119,7 +119,7 @@ async function loadKeys(): Promise<void> {
     keys.value = [...await api.listOrgKeys(props.organizationId)]
   } catch (caught: unknown) {
     keys.value = []
-    const message = caught instanceof Error ? caught.message : '组织密钥加载失败'
+    const message = caught instanceof Error ? caught.message : '主体密钥加载失败'
     error.value = caught instanceof AiControlPlaneError && caught.status === 404
       ? '组织不存在或当前环境未启用密钥托管'
       : message

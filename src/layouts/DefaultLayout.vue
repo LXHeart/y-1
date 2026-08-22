@@ -498,7 +498,7 @@ async function handleRegister(values: RegisterFormValues): Promise<void> {
   await nextTick()
   router.push({ name: 'grassland' })
   authBannerMessage.value = values.identity === 'merchant'
-    ? '注册成功，已进入商家身份——请创建商家组织，开始发布推广任务。'
+    ? '注册成功，已进入商家身份——请创建商家主体，开始发布推广任务。'
     : values.identity === 'recommender'
       ? '注册成功，已进入推荐官身份——请完善推荐官资料，到任务大厅开始接单。'
       : '注册成功。'

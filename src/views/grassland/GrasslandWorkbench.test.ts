@@ -230,7 +230,7 @@ describe('GrasslandWorkbench 登录态', () => {
     await flushPromises()
 
     const tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '组织与门店', '资金与经营', 'AI 与治理', '账号与合规'])
+    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营', 'AI 与治理', '账号与合规'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
     // 账号与合规页签：共享区显示、任务区隐藏（v-show 常驻 DOM）

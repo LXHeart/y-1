@@ -161,7 +161,7 @@ type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'account' | 'home' | 'hall'
 interface SubTab { id: SubTabId; label: string }
 const MERCHANT_TABS: readonly SubTab[] = [
   { id: 'tasks', label: '任务与报名' },
-  { id: 'org', label: '组织与门店' },
+  { id: 'org', label: '商家主体与门店' },
   { id: 'finance', label: '资金与经营' },
   { id: 'ai', label: 'AI 与治理' },
   { id: 'account', label: '账号与合规' },
@@ -473,6 +473,24 @@ watch(grasslandNavigationTarget, async (target) => {
 
     <!-- ============ 商家工作台 ============ -->
     <div v-if="side === 'merchant'" id="gl-panel-merchant" aria-label="商家工作台" tabindex="0" class="gl-workbench" data-side="merchant">
+      <!-- 无商家主体时的入驻引导：创建入口不再藏在页签里（可发现性） -->
+      <section v-if="orgs.length === 0" class="gl-zone" aria-label="创建商家主体">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">创建你的商家主体</h3>
+          <p class="gl-zone-note">商家主体是门店、成员、任务、素材与资金的归属（PRD §2.1）</p>
+        </div>
+        <div class="gl-zone-body">
+          <article class="gl-tile gl-tile-wide">
+            <h3>第一步：填写主体名称</h3>
+            <div class="gl-row">
+              <input v-model="newOrgName" aria-label="商家主体名称" name="onboarding-org-name" autocomplete="off" placeholder="如：云朵餐饮 / 张三甜品店" @keyup.enter="createOrg" />
+              <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建商家主体</button>
+            </div>
+            <p class="gl-hint">创建后即可添加门店、邀请成员并发布推广任务；认证资料与品牌信息可在「商家主体与门店」页签继续完善。</p>
+          </article>
+        </div>
+      </section>
+
       <nav class="gl-subtabs" role="tablist" aria-label="商家工作台模块">
         <button
           v-for="tab in MERCHANT_TABS"
@@ -690,22 +708,22 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
 
       <!-- 子页签② 组织与门店：主体、成员、品牌与 KYB -->
-      <section v-show="subTab === 'org'" class="gl-zone" aria-label="组织与门店">
+      <section v-show="subTab === 'org'" class="gl-zone" aria-label="商家主体与门店">
         <div class="gl-zone-head">
-          <h3 class="gl-zone-title">组织与门店</h3>
+          <h3 class="gl-zone-title">商家主体与门店</h3>
           <p class="gl-zone-note">商家主体、成员、品牌与认证资料</p>
         </div>
         <div class="gl-zone-body">
           <article id="gl-organizations" class="gl-tile">
-            <h3>我的组织</h3>
+            <h3>我的商家主体</h3>
             <div class="gl-row">
-              <select v-model="activeOrgId" aria-label="所属组织" name="organization" @change="changeOrganization">
-                <option value="" disabled>选择组织</option>
+              <select v-model="activeOrgId" aria-label="所属商家主体" name="organization" @change="changeOrganization">
+                <option value="" disabled>选择商家主体</option>
                 <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
               </select>
             </div>
             <div v-if="organizationAccessIds.size > 0 || managerStoreScopes.length === 0" class="gl-row">
-              <input v-model="newOrgName" aria-label="新组织名称" name="organization-name" autocomplete="off" placeholder="新组织名称" @keyup.enter="createOrg" />
+              <input v-model="newOrgName" aria-label="新商家主体名称" name="organization-name" autocomplete="off" placeholder="新商家主体名称" @keyup.enter="createOrg" />
               <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
             </div>
             <p v-if="activeOrg" class="gl-hint">
@@ -799,7 +817,7 @@ watch(grasslandNavigationTarget, async (target) => {
       <section v-show="subTab === 'ai'" class="gl-zone" aria-label="AI 与治理">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">AI 与治理</h3>
-          <p class="gl-zone-note">组织 AI 用量上限、模型密钥与创作审计（owner / admin 可管理）</p>
+          <p class="gl-zone-note">商家主体 AI 用量上限、模型密钥与创作审计（owner / admin 可管理）</p>
         </div>
         <div class="gl-zone-body">
           <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
@@ -814,7 +832,7 @@ watch(grasslandNavigationTarget, async (target) => {
 
           <!-- 组织级创作审计视图（任务书 #44 登记）：谁在何时用哪个模型生成了什么；同款 owner/admin 门禁 -->
           <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <h3>组织创作审计</h3>
+            <h3>主体创作审计</h3>
             <OrgCreationAuditPanel :organization-id="activeOrg.id" />
           </article>
         </div>

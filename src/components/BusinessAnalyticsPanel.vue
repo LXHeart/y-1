@@ -1,7 +1,7 @@
 <template>
   <section class="analytics-console">
     <header class="panel-head">
-      <div><h3>经营分析</h3><p>{{ admin ? '查看组织经营结果与推荐官归因贡献' : '跟踪任务转化、履约和实际经营结果' }}</p></div>
+      <div><h3>经营分析</h3><p>{{ admin ? '查看主体经营结果与推荐官归因贡献' : '跟踪任务转化、履约和实际经营结果' }}</p></div>
       <div class="panel-actions">
         <button type="button" :disabled="loading || !effectiveOrganizationId" @click="load">刷新</button>
         <button type="button" :disabled="loading || !effectiveOrganizationId" @click="exportCsv">导出 CSV</button>
@@ -11,13 +11,13 @@
 
     <div class="filters">
       <label v-if="admin">组织 ID<input v-model.trim="organizationFilter" placeholder="输入组织 ID" @keyup.enter="load" /></label>
-      <label v-if="admin">门店 ID<input v-model.trim="storeFilter" placeholder="留空为组织级" @keyup.enter="load" /></label>
+      <label v-if="admin">门店 ID<input v-model.trim="storeFilter" placeholder="留空为主体级" @keyup.enter="load" /></label>
       <label>开始时间<input v-model="from" type="datetime-local" /></label>
       <label>结束时间<input v-model="to" type="datetime-local" /></label>
       <button type="button" :disabled="loading || !effectiveOrganizationId" @click="load">查询</button>
     </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <p v-if="!effectiveOrganizationId" class="empty">{{ admin ? '输入组织 ID 后查询' : '选择组织后查看经营数据' }}</p>
+    <p v-if="!effectiveOrganizationId" class="empty">{{ admin ? '输入主体 ID 后查询' : '选择主体后查看经营数据' }}</p>
     <p v-else-if="loading && !merchantReport && !adminReport" class="empty">正在汇总经营数据...</p>
 
     <template v-if="merchantReport">

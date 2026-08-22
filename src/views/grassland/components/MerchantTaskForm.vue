@@ -4,7 +4,7 @@
     <div class="gl-row">
       <label>资源范围
         <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
-          <option v-if="hasOrganizationAccess" value="">组织级任务</option>
+          <option v-if="hasOrganizationAccess" value="">主体级任务</option>
           <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
         </select>
       </label>

@@ -77,6 +77,6 @@ describe('OrgCreationAuditPanel（组织级创作审计视图）', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('生成记录加载失败')
-    expect(wrapper.text()).toContain('该组织暂无创作产出记录')
+    expect(wrapper.text()).toContain('该主体暂无创作产出记录')
   })
 })

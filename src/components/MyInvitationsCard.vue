@@ -96,13 +96,13 @@ async function decline(invitation: MyInvitation): Promise<void> {
     <p v-if="notice" class="inv-alert inv-ok">{{ notice }}</p>
 
     <p v-if="invitations.length === 0" class="inv-hint">
-      暂无待接受的邀请。组织或门店用你的注册邮箱发出邀请后，这里会出现。
+      暂无待接受的邀请。商家主体或门店用你的注册邮箱发出邀请后，这里会出现。
     </p>
     <ul v-else class="inv-list">
       <li v-for="i in invitations" :key="i.id">
         <div class="inv-main">
           <strong>{{ scopeLabel(i) }}</strong>
-          <span class="inv-tag">{{ i.storeId ? '门店' : '组织' }}</span>
+          <span class="inv-tag">{{ i.storeId ? '门店' : '主体' }}</span>
           <span class="inv-tag">{{ roleLabel(i.role) }}</span>
         </div>
         <div class="inv-actions">

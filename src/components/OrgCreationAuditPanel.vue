@@ -8,7 +8,7 @@
       <button type="button" :disabled="loading" @click="reload">刷新</button>
     </div>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-    <p v-if="!loading && items.length === 0" class="gl-hint">该组织暂无创作产出记录。</p>
+    <p v-if="!loading && items.length === 0" class="gl-hint">该主体暂无创作产出记录。</p>
     <table v-if="items.length > 0" class="audit-table">
       <thead>
         <tr>

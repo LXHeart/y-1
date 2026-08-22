@@ -288,7 +288,7 @@ onBeforeUnmount(() => {
           </dd>
         </div>
       </dl>
-      <p class="brand-readonly-hint">当前角色只读，品牌资料仅组织 owner / admin 可编辑</p>
+      <p class="brand-readonly-hint">当前角色只读，品牌资料仅主体 owner / admin 可编辑</p>
     </div>
   </div>
 </template>

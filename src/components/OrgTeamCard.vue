@@ -213,7 +213,7 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
 
     <!-- 组织成员 -->
     <section class="team-sec">
-      <h4>组织成员</h4>
+      <h4>主体成员</h4>
       <p v-if="members.length === 0" class="team-hint">暂无成员记录。</p>
       <table v-else class="team-table">
         <thead><tr><th>账号</th><th>角色</th><th>操作</th></tr></thead>
@@ -243,7 +243,7 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
         </button>
       </div>
       <p class="team-hint">
-        需组织所有者权限；所有者角色只能在建组织时产生，不能在此授予。
+        需主体所有者权限；所有者角色只能在创建主体时产生，不能在此授予。
         <strong>系统不会告诉你该邮箱是否已注册</strong>——无论如何都记下邀请，由对方登录后自行接受（防账号枚举）。
       </p>
 
@@ -318,7 +318,7 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
           新建门店
         </button>
       </div>
-      <p class="team-hint">建门店需组织管理员及以上。点门店名可管理其成员。</p>
+      <p class="team-hint">建门店需主体管理员及以上。点门店名可管理其成员。</p>
     </section>
 
     <!-- 门店成员 -->
@@ -355,8 +355,8 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
         >发出邀请</button>
       </div>
       <p class="team-hint">
-        邀请店员需本店店长及以上；邀请店长需组织管理员及以上。对方登录后在「我的邀请」接受，
-        直接成为本店成员（不占组织成员席位）。系统不会透露该邮箱是否已注册。
+        邀请店员需本店店长及以上；邀请店长需主体管理员及以上。对方登录后在「我的邀请」接受，
+        直接成为本店成员（不占主体成员席位）。系统不会透露该邮箱是否已注册。
       </p>
 
       <details class="team-adv">

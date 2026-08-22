@@ -238,7 +238,7 @@ function cancelAppeal(): void {
       </dl>
       <p class="mp-hint">
         额度上限由等级决定；超限时发布会被拒（403/409）。
-        <span v-if="quota && !usage">已用量仅对当前商家身份绑定的组织可见。</span>
+        <span v-if="quota && !usage">已用量仅对当前商家身份绑定的商家主体可见。</span>
       </p>
     </section>
 
@@ -256,7 +256,7 @@ function cancelAppeal(): void {
         </label>
         <label>行业
           <select v-model="formIndustry">
-            <option value="">（沿用组织行业）</option>
+            <option value="">（沿用主体行业）</option>
             <option v-for="i in INDUSTRIES" :key="i.value" :value="i.value">{{ i.label }}</option>
           </select>
         </label>

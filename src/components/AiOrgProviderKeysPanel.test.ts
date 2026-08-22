@@ -37,7 +37,7 @@ describe('AiOrgProviderKeysPanel', () => {
     const wrapper = mount(AiOrgProviderKeysPanel, { props: { organizationId: ORG } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('组织模型密钥')
+    expect(wrapper.text()).toContain('商家主体模型密钥')
     expect(wrapper.text()).toContain('sk-***org')
     expect(wrapper.text()).not.toContain('ciphertext')
     const toggle = wrapper.get('input[data-action="toggle-org-fallback"]')
