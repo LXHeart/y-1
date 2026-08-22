@@ -2,12 +2,12 @@
   <article id="gl-task-hall" class="gl-card gl-card-wide">
     <h3>任务大厅</h3>
     <div class="gl-row">
-      <input :value="feedFilters.q || ''" type="search" maxlength="100" placeholder="搜索任务标题或描述"
+      <input :value="feedFilters.q || ''" type="search" aria-label="搜索任务" name="task-q" autocomplete="off" maxlength="100" placeholder="搜索任务标题或描述"
              @input="$emit('update:feedFilter', 'q', ($event.target as HTMLInputElement).value)"
              @keyup.enter="$emit('load-feed', true)" />
-      <input :value="feedFilters.platform" placeholder="平台筛选（可选）" @input="$emit('update:feedFilter', 'platform', ($event.target as HTMLInputElement).value)" />
-      <input :value="feedFilters.contentForm" placeholder="内容形式筛选（可选）" @input="$emit('update:feedFilter', 'contentForm', ($event.target as HTMLInputElement).value)" />
-      <label>最低赏金 ¥<input :value="feedFilters.minBountyYuan" type="number" min="0" @input="$emit('update:feedFilter', 'minBountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <input :value="feedFilters.platform" aria-label="平台筛选（可选）" name="task-platform-filter" autocomplete="off" placeholder="平台筛选（可选）" @input="$emit('update:feedFilter', 'platform', ($event.target as HTMLInputElement).value)" />
+      <input :value="feedFilters.contentForm" aria-label="内容形式筛选（可选）" name="task-content-form-filter" autocomplete="off" placeholder="内容形式筛选（可选）" @input="$emit('update:feedFilter', 'contentForm', ($event.target as HTMLInputElement).value)" />
+      <label>最低赏金 ¥<input :value="feedFilters.minBountyYuan" name="task-min-bounty" autocomplete="off" type="number" min="0" @input="$emit('update:feedFilter', 'minBountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>距离
         <select :value="feedFilters.maxDistanceKm" @change="$emit('update:feedFilter', 'maxDistanceKm', Number(($event.target as HTMLSelectElement).value))">
           <option :value="0">不限</option><option :value="1">1 公里内</option><option :value="3">3 公里内</option>
@@ -20,7 +20,7 @@
       <button type="button" :disabled="feedLoading || loading" @click="$emit('load-feed', true)">查询</button>
     </div>
     <div class="gl-row">
-      <input :value="applyNote" placeholder="报名留言（可选）" @input="$emit('update:applyNote', ($event.target as HTMLInputElement).value)" />
+      <input :value="applyNote" aria-label="报名留言（可选）" name="apply-note" autocomplete="off" placeholder="报名留言（可选）" @input="$emit('update:applyNote', ($event.target as HTMLInputElement).value)" />
     </div>
     <p class="gl-hint">大厅只显示已发布且未截止的任务；报名截止后不再接受新报名。</p>
     <p v-if="feedItems.length === 0" class="gl-empty">暂无可报名任务</p>
@@ -39,13 +39,13 @@
             <!-- 任务书 #25：阶梯任务先看档位规则，再显示最高赏金（= 最高档可预留金额） -->
             <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" />
             <span v-if="t.freebieDepositCents" class="badge badge-warning"
-                  :title="`报名被接受时从钱包预付 ¥${(t.freebieDepositCents / 100).toFixed(2)}，达标全额返还`">
-              霸王餐 · 需预付 ¥{{ (t.freebieDepositCents / 100).toFixed(2) }} · 达标全额返还
+                  :title="`报名被接受时从钱包预付 ${formatYuan(t.freebieDepositCents)}，达标全额返还`">
+              霸王餐 · 需预付 {{ formatYuan(t.freebieDepositCents) }} · 达标全额返还
             </span>
-            <template v-else>{{ t.bountyCents ? `¥${(t.bountyCents / 100).toFixed(2)}` : '无' }}</template>
+            <template v-else>{{ t.bountyCents ? formatYuan(t.bountyCents) : '无' }}</template>
             <p v-if="t.freebieDepositCents && walletBalanceCents != null && t.freebieDepositCents > walletBalanceCents"
                class="gl-hint gl-freebie-warn">
-              押金超过钱包余额 ¥{{ (walletBalanceCents / 100).toFixed(2) }}，被接受时会因余额不足退回
+              押金超过钱包余额 {{ formatYuan(walletBalanceCents) }}，被接受时会因余额不足退回
             </p>
           </td>
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)} km` }}</td>
@@ -63,6 +63,7 @@
 <script setup lang="ts">
 import CommissionLadderSummary from './CommissionLadderSummary.vue'
 import type { Task } from '../../../types/grassland'
+import { formatYuan } from '../../../lib/money'
 
 withDefaults(defineProps<{
   feedItems: Task[]

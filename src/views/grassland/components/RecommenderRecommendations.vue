@@ -43,13 +43,14 @@ function evidenceText(match: RecommenderMatch, key: string): string {
             <td><code>{{ match.accountId.slice(0, 8) }}...</code><small>{{ match.level }}</small></td>
             <td><strong class="match-total">{{ match.totalScore }}</strong><span>/100</span></td>
             <td>
+              <!-- title 仅供鼠标悬停；aria-label 给读屏完整维度名，视觉文本保持缩写不扩行 -->
               <div class="match-dimensions" aria-label="六维得分">
-                <span title="平台契合度">平台 {{ evidenceText(match, 'platformFit') }}</span>
-                <span title="推荐官等级">等级 {{ evidenceText(match, 'level') }}</span>
-                <span title="历史完成率">完成 {{ evidenceText(match, 'completionRate') }}</span>
-                <span title="平均评分">评分 {{ evidenceText(match, 'averageRating') }}</span>
-                <span title="首次交付响应速度">响应 {{ evidenceText(match, 'responseSpeed') }}</span>
-                <span title="近期平台活跃">活跃 {{ evidenceText(match, 'recentActivity') }}</span>
+                <span title="平台契合度" :aria-label="`平台契合度 ${evidenceText(match, 'platformFit')}`">平台 {{ evidenceText(match, 'platformFit') }}</span>
+                <span title="推荐官等级" :aria-label="`推荐官等级 ${evidenceText(match, 'level')}`">等级 {{ evidenceText(match, 'level') }}</span>
+                <span title="历史完成率" :aria-label="`历史完成率 ${evidenceText(match, 'completionRate')}`">完成 {{ evidenceText(match, 'completionRate') }}</span>
+                <span title="平均评分" :aria-label="`平均评分 ${evidenceText(match, 'averageRating')}`">评分 {{ evidenceText(match, 'averageRating') }}</span>
+                <span title="首次交付响应速度" :aria-label="`首次交付响应速度 ${evidenceText(match, 'responseSpeed')}`">响应 {{ evidenceText(match, 'responseSpeed') }}</span>
+                <span title="近期平台活跃" :aria-label="`近期平台活跃 ${evidenceText(match, 'recentActivity')}`">活跃 {{ evidenceText(match, 'recentActivity') }}</span>
               </div>
               <details>
                 <summary>查看计算证据</summary>
