@@ -16,15 +16,30 @@ class RegistrationIdentityIT extends IdentityItSupport {
     }
 
     @Test
-    void registrationRejectsMissingOrUnknownInitialIdentityBeforeCreatingAccount() {
-        String missingEmail = uniqueEmail("missing");
-        seedCode(missingEmail, "123456");
-        register(missingEmail, "123456", null)
-                .expectStatus().isBadRequest()
-                .expectBody()
-                .jsonPath("$.success").isEqualTo(false);
-        assertThat(accountCount(missingEmail)).isZero();
+    void registrationWithoutIdentityCreatesBareAccount() {
+        // 注册不区分身份：缺 initialIdentity = 只建统一账号，身份档案为空（登录后在工作台开通）
+        String email = uniqueEmail("bare");
+        String code = "654321";
+        seedCode(email, code);
 
+        register(email, code, null)
+                .expectStatus().isCreated()
+                .expectHeader().exists("Set-Cookie")
+                .expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.user.email").isEqualTo(email);
+
+        String accountId = db.sql("SELECT id::text FROM app_users WHERE email = :email")
+                .bind("email", email)
+                .map(row -> row.get(0, String.class)).one().block();
+        Long profileCount = db.sql("SELECT count(*) FROM identity_profile WHERE account_id = CAST(:id AS uuid)")
+                .bind("id", accountId)
+                .map(row -> row.get(0, Long.class)).one().block();
+        assertThat(profileCount).isZero();
+    }
+
+    @Test
+    void registrationRejectsUnknownInitialIdentityBeforeCreatingAccount() {
         String unknownEmail = uniqueEmail("unknown");
         seedCode(unknownEmail, "123456");
         register(unknownEmail, "123456", "consumer")
