@@ -91,7 +91,6 @@ function scrollBlockIntoView(elementId: string): void {
 // await 之后被调用（setup 同步路径不触达），届时 const 必已完成初始化。
 const {
   side, orgs, stores, organizationAccessIds, managerStoreScopes,
-  hasMerchantIdentity, hasRecommenderIdentity,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
   canManageAiBudget, canPublishBounty,
@@ -154,24 +153,6 @@ function confirmBatchReject(): void {
 function confirmWithdraw(app: TaskApplication): void {
   if (!window.confirm('撤销该报名？撤销后商家将无法再接受它。')) return
   void withdrawApp(app)
-}
-
-/**
- * 开通另一身份（账号与合规区的引导入口）。复用 switchSide 的开通回退：
- * 推荐官无需材料直接开通；商家须已属于某个组织（或有门店管理范围），
- * 否则前端只给指引文案不开按钮——与后端 openIdentity(merchant 需 org) 的约束一致。
- */
-const identityOpening = ref(false)
-const canOpenMerchantIdentity = computed(() => Boolean(activeOrgId.value) || managerStoreScopes.value.length > 0)
-
-async function openOtherIdentity(target: 'merchant' | 'recommender'): Promise<void> {
-  if (identityOpening.value) return
-  identityOpening.value = true
-  try {
-    await switchSide(target)
-  } finally {
-    identityOpening.value = false
-  }
 }
 
 // 工作台子页签：两侧各自分垄（账号与合规为共享页签，标记只写一份、渲染在两侧页签位之后），
@@ -474,7 +455,7 @@ watch(grasslandNavigationTarget, async (target) => {
     <header class="gl-header">
       <div class="gl-head-copy">
         <h2 class="gl-title">{{ side === 'merchant' ? '商家工作台' : '推荐官工作台' }}</h2>
-        <p class="gl-sub">工作台随活动身份切换——在右上角账号菜单或主页入口切换身份（经 edge-bff 调用 Java 微服务）</p>
+        <p class="gl-sub">{{ side === 'merchant' ? '发布任务、筛选推荐官报名、确认履约与资金结算' : '浏览任务大厅、报名接单、提交凭证与查看收益' }}</p>
       </div>
     </header>
 
@@ -1001,23 +982,6 @@ watch(grasslandNavigationTarget, async (target) => {
         <h3 class="gl-zone-title">账号与合规</h3>
       </div>
       <div class="gl-zone-body">
-        <!-- 身份开通引导（PRD §一：首次切换到尚未开通的身份时引导开通；切换本身在账号菜单） -->
-        <article v-if="side === 'merchant' && !hasRecommenderIdentity" class="gl-tile identity-open-tile">
-          <h3>开通推荐官身份</h3>
-          <p class="identity-open-copy">同一账号可同时开通商家与推荐官身份；开通后可在账号菜单随时切换。</p>
-          <button type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('recommender')">
-            {{ identityOpening ? '开通中…' : '开通推荐官身份' }}
-          </button>
-        </article>
-        <article v-else-if="side === 'recommender' && !hasMerchantIdentity" class="gl-tile identity-open-tile">
-          <h3>开通商家身份</h3>
-          <p v-if="canOpenMerchantIdentity" class="identity-open-copy">用你当前的组织开通商家身份；开通后可在账号菜单随时切换。</p>
-          <button v-if="canOpenMerchantIdentity" type="button" class="identity-open-btn" :disabled="identityOpening" @click="openOtherIdentity('merchant')">
-            {{ identityOpening ? '开通中…' : '开通商家身份' }}
-          </button>
-          <p v-else class="identity-open-copy">开通商家身份需要一个商家组织：先接受组织邀请，或由商家将你加为门店成员后再来开通。</p>
-        </article>
-
         <article id="gl-invitations" class="gl-tile">
           <MyInvitationsCard @joined="() => loadOrganizations()" />
         </article>

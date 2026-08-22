@@ -14,8 +14,7 @@
           <button type="button" class="hero-cta-secondary" @click="go('commerce')">到店消费</button>
         </div>
         <p v-else class="hero-identity">
-          当前活动身份：<strong>{{ activeIdentityLabel }}</strong>
-          <template v-if="canSwitchIdentity">（可在右上角账号菜单切换）</template>
+          当前身份：<strong>{{ activeIdentityLabel }}</strong>（换身份请退出后重新登录）
         </p>
       </div>
       <div class="hero-meta" aria-label="平台运转三步">
@@ -72,7 +71,7 @@
           type="button"
           class="gl-tile gl-tile-button gl-tile-button-primary workbench-tile"
           data-testid="home-merchant-entry"
-          @click="openWorkbench('merchant')"
+          @click="go('grassland')"
         >
           <span class="eyebrow">商家 · 播种</span>
           <h3>商家工作台</h3>
@@ -83,7 +82,7 @@
           type="button"
           class="gl-tile gl-tile-button gl-tile-button-primary workbench-tile"
           data-testid="home-recommender-entry"
-          @click="openWorkbench('recommender')"
+          @click="go('grassland')"
         >
           <span class="eyebrow">推荐官 · 耕耘</span>
           <h3>推荐官工作台</h3>
@@ -94,7 +93,7 @@
           type="button"
           class="gl-tile gl-tile-button workbench-tile"
           data-testid="home-onboarding-entry"
-          @click="openWorkbench('merchant')"
+          @click="go('grassland')"
         >
           <span class="eyebrow">开通身份</span>
           <h3>完善资料，开通你的第一个身份</h3>
@@ -134,25 +133,26 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
-import { useActiveIdentity, type IdentitySide } from '../../composables/useActiveIdentity'
-import { useGrassland } from '../../composables/useGrassland'
+import { useActiveIdentity } from '../../composables/useActiveIdentity'
 import type { AppView } from '../../types/navigation'
 
 const emit = defineEmits<{ 'request-login': [] }>()
 
 const router = useRouter()
 const { isAuthenticated } = useAuth()
-const grassland = useGrassland()
 const {
-  activeSide, hasMerchantIdentity, hasRecommenderIdentity,
-  identitiesLoaded, activateIdentitySide,
+  activeSide, hasMerchantIdentity, hasRecommenderIdentity, identitiesLoaded,
 } = useActiveIdentity()
 
 const hasAnyIdentity = computed(() =>
   identitiesLoaded.value && (hasMerchantIdentity.value || hasRecommenderIdentity.value))
-const showMerchantEntry = computed(() => hasMerchantIdentity.value)
-const showRecommenderEntry = computed(() => hasRecommenderIdentity.value)
-const canSwitchIdentity = computed(() => hasMerchantIdentity.value && hasRecommenderIdentity.value)
+
+/** 身份登录时选定、会话内不切换：入口卡只随当前活动身份（双身份账号换身份=退出重登）。 */
+const showMerchantEntry = computed(() =>
+  hasMerchantIdentity.value && activeSide.value === 'merchant')
+const showRecommenderEntry = computed(() =>
+  hasRecommenderIdentity.value && activeSide.value === 'recommender')
+
 const activeIdentityLabel = computed(() => {
   if (hasMerchantIdentity.value && hasRecommenderIdentity.value) {
     return activeSide.value === 'merchant' ? '商家' : '推荐官'
@@ -163,16 +163,6 @@ const activeIdentityLabel = computed(() => {
 
 function go(view: AppView): void {
   void router.push({ name: view })
-}
-
-/**
- * 工作台入口随身份直达：已开通且未激活的身份先切活动身份（后端校验），
- * 再进工作台——工作台 watch 全局 side 自动刷新任务列表。激活失败（如门店
- * 管理范围的商家视角）不阻断导航，工作台内部还能切换。
- */
-async function openWorkbench(side: IdentitySide): Promise<void> {
-  if (activeSide.value !== side) await activateIdentitySide(side, grassland)
-  await router.push({ name: 'grassland' })
 }
 </script>
 

@@ -64,54 +64,24 @@
             <span>设置</span>
           </button>
 
-          <!-- 账号菜单（PRD §一：已开通身份在账号菜单中切换，导航随活动身份变化） -->
-          <div v-if="isAuthenticated && currentUser" class="account-menu" ref="accountMenuRef">
-            <button
-              type="button"
-              class="account-trigger"
-              :aria-expanded="accountMenuOpen"
-              aria-haspopup="menu"
-              @click="accountMenuOpen = !accountMenuOpen"
-            >
-              <span class="account-side-badge" :class="{ 'account-side-badge-rec': activeSide === 'recommender' }">
-                {{ activeSideBadge }}
-              </span>
-              <strong class="account-name">{{ currentUser.displayName || currentUser.email }}</strong>
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"
-                :style="{ transform: accountMenuOpen ? 'rotate(180deg)' : 'none' }">
-                <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <div v-if="accountMenuOpen" class="account-dropdown" role="menu" aria-label="账号菜单">
-              <p class="account-menu-label">切换活动身份</p>
-              <button
-                v-for="option in identityOptions"
-                :key="option.side"
-                type="button"
-                role="menuitemradio"
-                class="account-menu-item"
-                :aria-checked="activeSide === option.side"
-                :disabled="!option.opened || identitySwitching"
-                @click="switchIdentityFromMenu(option.side)"
-              >
-                <span class="account-menu-item-dot" :class="{ on: activeSide === option.side }" aria-hidden="true"></span>
-                {{ option.label }}
-                <span v-if="!option.opened" class="account-menu-item-note">未开通</span>
-                <span v-else-if="activeSide === option.side" class="account-menu-item-note">当前</span>
-              </button>
-              <p v-if="identitySwitchNotice" class="account-menu-notice" role="status">{{ identitySwitchNotice }}</p>
-              <div class="account-menu-divider" aria-hidden="true"></div>
-              <button
-                type="button"
-                role="menuitem"
-                class="account-menu-item"
-                :disabled="loggingOut"
-                @click="handleLogout"
-              >
-                {{ loggingOut ? '退出中…' : '退出登录' }}
-              </button>
-            </div>
+          <!-- 账号区：身份在登录时选定（会话内不切换；换身份=退出后重新登录选择） -->
+          <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite">
+            <span class="auth-pill-label">已登录</span>
+            <span class="account-side-badge" :class="{ 'account-side-badge-rec': activeSide === 'recommender' }">
+              {{ activeSideBadge }}
+            </span>
+            <strong class="auth-pill-name">{{ currentUser.displayName || currentUser.email }}</strong>
           </div>
+
+          <button
+            v-if="isAuthenticated"
+            class="auth-trigger auth-trigger-secondary"
+            type="button"
+            :disabled="loggingOut"
+            @click="handleLogout"
+          >
+            {{ loggingOut ? '退出中…' : '退出登录' }}
+          </button>
           <button v-else class="auth-trigger auth-trigger-primary" type="button" @click="openLoginModal()">
             登录
           </button>
@@ -247,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NotificationBell from '../components/NotificationBell.vue'
 
@@ -255,7 +225,7 @@ const AnalysisSettingsModal = defineAsyncComponent(() => import('../components/A
 const CreditsPackagesModal = defineAsyncComponent(() => import('../components/CreditsPackagesModal.vue'))
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
 
-import { useActiveIdentity, type IdentitySide } from '../composables/useActiveIdentity'
+import { useActiveIdentity } from '../composables/useActiveIdentity'
 import { useAnalysisSettings } from '../composables/useAnalysisSettings'
 import { useAuth } from '../composables/useAuth'
 import { useCredits } from '../composables/useCredits'
@@ -308,16 +278,6 @@ const {
   activeSide, hasMerchantIdentity, hasRecommenderIdentity, identitiesLoaded,
   loadAccountIdentity, activateIdentitySide, reset: resetActiveIdentity,
 } = useActiveIdentity()
-
-const accountMenuOpen = ref(false)
-const accountMenuRef = ref<HTMLElement | null>(null)
-const identitySwitching = ref(false)
-const identitySwitchNotice = ref('')
-
-const identityOptions = computed<ReadonlyArray<{ side: IdentitySide; label: string; opened: boolean }>>(() => [
-  { side: 'merchant', label: '商家身份', opened: hasMerchantIdentity.value },
-  { side: 'recommender', label: '推荐官身份', opened: hasRecommenderIdentity.value },
-])
 
 /** 工作台导航标签随活动身份变化（PRD：导航、工作台与默认数据范围随活动身份切换）。 */
 const workbenchTabLabel = computed(() => {
@@ -397,19 +357,7 @@ onMounted(() => {
     sessionBootstrapped.value = true
     if (isAuthenticated.value) void loadCreditBalance()
   })
-  document.addEventListener('pointerdown', onDocumentPointerDown)
 })
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown)
-})
-
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!accountMenuOpen.value) return
-  if (accountMenuRef.value?.contains(event.target as Node)) return
-  accountMenuOpen.value = false
-  identitySwitchNotice.value = ''
-}
 
 watch(isAuthenticated, (authed) => {
   if (authed) void loadCreditBalance()
@@ -419,7 +367,7 @@ watch(isAuthenticated, (authed) => {
  * 账号变化（整页加载、登录、换账号、登出）：重置并按新账号装载活动身份。
  * immediate：整页加载时布局挂载可能晚于 loadCurrentUser 完成（currentUser 已就位、
  * 不再有 null→id 翻转），不 immediate 会漏装载、导航拿不到身份。
- * 主导航标签、账号菜单与草场主页的角色入口都读这组全局状态。
+ * 主导航标签、账号区身份徽标与草场主页的角色入口都读这组全局状态。
  */
 watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
   if (accountId !== previousAccountId) {
@@ -430,16 +378,11 @@ watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
     }
     creationContextEpoch.value += 1
     resetActiveIdentity()
-    accountMenuOpen.value = false
-    identitySwitchNotice.value = ''
     if (accountId) void loadAccountIdentity(grassland)
   }
 }, { immediate: true })
 
-watch(currentViewName, () => {
-  accountMenuOpen.value = false
-  identitySwitchNotice.value = ''
-})
+
 
 const themeToggleTitle = computed(() => {
   if (themeMode.value === 'light') return '浅色模式 — 点击切换'
@@ -511,25 +454,6 @@ async function ensureLoginIdentity(choice: LoginIdentity): Promise<void> {
   await activateIdentitySide(choice, grassland)
 }
 
-/** 账号菜单切换活动身份：仅已开通身份；失败展示后端错误，成功即关菜单（导航标签随之更新）。 */
-async function switchIdentityFromMenu(side: IdentitySide): Promise<void> {
-  if (identitySwitching.value || activeSide.value === side) {
-    accountMenuOpen.value = false
-    return
-  }
-  identitySwitching.value = true
-  identitySwitchNotice.value = ''
-  const result = await activateIdentitySide(side, grassland)
-  identitySwitching.value = false
-  if (result === 'ok') {
-    accountMenuOpen.value = false
-    return
-  }
-  identitySwitchNotice.value = result === 'not-opened'
-    ? '该身份尚未开通：进入工作台完成开通后再切换。'
-    : (grassland.error.value || '切换失败，请稍后重试。')
-}
-
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
   router.push({ name: target.view })
   grasslandAnchor.value = target.anchor
@@ -575,7 +499,7 @@ async function handleLogin(values: LoginFormValues): Promise<void> {
   if (values.identity) await ensureLoginIdentity(values.identity)
   closeLoginModal()
   authBannerMessage.value = values.identity
-    ? `已进入${values.identity === 'merchant' ? '商家' : '推荐官'}身份，可从账号菜单随时切换。`
+    ? `已进入${values.identity === 'merchant' ? '商家' : '推荐官'}身份；换身份请退出后重新登录。`
     : '已登录，现在可以打开设置管理你的专属配置。'
 }
 
@@ -608,7 +532,6 @@ async function handleLogout(): Promise<void> {
   showSettingsModal.value = false
   creationEntry.value = null
   creationHandoff.value = null
-  accountMenuOpen.value = false
   router.push({ name: 'home' })
   authBannerMessage.value = '你已退出登录。'
 }
@@ -654,6 +577,9 @@ async function handleOpenSettings(): Promise<void> {
 .brand-title { margin: 0; font-size: var(--text-display); font-weight: 800; letter-spacing: -0.04em; color: var(--color-text); line-height: 1.1; }
 .brand-subtitle { margin: 0; color: var(--color-text-muted); font-size: 0.84rem; line-height: 1.4; letter-spacing: 0.01em; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.auth-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--color-border); background: var(--surface-card); }
+.auth-pill-label { color: var(--color-text-muted); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.auth-pill-name { color: var(--color-text); font-size: 0.84rem; font-weight: 500; }
 .credits-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: none; background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(99, 102, 241, 0.1)); color: var(--color-accent-2); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
 .credits-badge:hover { background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(99, 102, 241, 0.18)); box-shadow: 0 0 24px rgba(139, 92, 246, 0.2); transform: translateY(-1px); }
 .settings-trigger, .auth-trigger, .theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-height: 38px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--color-border); background: var(--surface-card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--color-text-secondary); cursor: pointer; font-size: 0.84rem; font-weight: 500; letter-spacing: 0.01em; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
@@ -663,23 +589,6 @@ async function handleOpenSettings(): Promise<void> {
 .auth-trigger-primary:hover { box-shadow: var(--shadow-glow-strong); transform: translateY(-2px) scale(1.02); color: #ffffff; }
 .auth-banner { margin: 0; padding: 12px 16px; border: 1px solid var(--color-border-accent); border-radius: 14px; background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), rgba(99, 102, 241, 0.04)); color: var(--color-text-secondary); font-size: 0.86rem; animation: fade-in var(--duration-normal) var(--ease-out); }
 
-/* 账号菜单（身份切换 + 退出登录） */
-.account-menu { position: relative; }
-.account-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; max-width: 260px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--color-border); background: var(--surface-card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--color-text); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out); }
-.account-trigger:hover { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
-.account-side-badge { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(139, 92, 246, 0.16); color: var(--color-accent-2); font-size: 0.72rem; font-weight: 700; }
-.account-side-badge-rec { background: rgba(16, 185, 129, 0.16); color: #059669; }
-.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 600; }
-.account-dropdown { position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; display: grid; gap: 2px; min-width: 240px; padding: 8px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--shadow-elevated); }
-.account-menu-label { margin: 2px 8px 6px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); }
-.account-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 10px; border: none; border-radius: 10px; background: transparent; color: var(--color-text); font-size: 0.86rem; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
-.account-menu-item:hover:not(:disabled) { background: var(--color-surface-hover); }
-.account-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
-.account-menu-item-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--color-text-muted); flex-shrink: 0; }
-.account-menu-item-dot.on { border-color: var(--color-accent-2); background: var(--color-accent-2); }
-.account-menu-item-note { margin-left: auto; font-size: 0.72rem; color: var(--color-text-muted); }
-.account-menu-notice { margin: 4px 8px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--color-danger) 8%, transparent); color: var(--color-danger); font-size: 0.78rem; line-height: 1.5; }
-.account-menu-divider { height: 1px; margin: 6px 4px; background: var(--color-border); }
 
 .nav-tabs { position: relative; display: flex; gap: 4px; padding: 5px; border-radius: 16px; background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--color-border); width: fit-content; }
 .nav-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 16px; border: none; border-radius: 12px; background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: 0.86rem; font-weight: 500; white-space: nowrap; position: relative; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
