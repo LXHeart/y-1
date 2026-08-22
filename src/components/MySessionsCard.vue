@@ -143,14 +143,14 @@ async function revoke(session: LoginSession): Promise<void> {
     <p v-if="notice" class="sess-alert sess-ok">{{ notice }}</p>
 
     <p v-if="sessions.length === 0" class="sess-hint">暂无记录。</p>
-    <ul v-else class="sess-list">
+    <ul v-else class="sess-list" :class="{ 'sess-list-paged': pageCount > 1 }">
       <li v-for="s in pagedSessions" :key="s.sessionToken">
         <div class="sess-main">
           <span class="sess-name">
             {{ s.deviceLabel || (s.deviceId ? `设备 ${s.deviceId.slice(0, 8)}` : '未知设备') }}
             <span v-if="s.current" class="sess-badge">本机</span>
           </span>
-          <span class="sess-meta">
+          <span class="sess-meta" :title="`${identityLabel(s.activeIdentityType)} · ${s.ipAddress || '未知 IP'} · 最近活动 ${lastSeenLabel(s.lastSeenAt)}${expiryLabel(s.expiresAt) ? ' · ' + expiryLabel(s.expiresAt) : ''}`">
             {{ identityLabel(s.activeIdentityType) }} · {{ s.ipAddress || '未知 IP' }} ·
             最近活动 {{ lastSeenLabel(s.lastSeenAt) }}<template v-if="expiryLabel(s.expiresAt)">
               · {{ expiryLabel(s.expiresAt) }}</template>
@@ -188,6 +188,15 @@ async function revoke(session: LoginSession): Promise<void> {
 .sess-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .sess-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .sess-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+/* 分页态锁定满页高度：行高统一（名称/元信息各一行、超长省略号，全文在 title）
+ * 与列表 min-height（5 行 + 间隙）共同保证任意页同高——此前 meta 换行行数不等，
+ * 翻到末页卡片高度塌陷、页间跳版。 */
+.sess-list li { flex-wrap: nowrap; }
+.sess-main { min-width: 0; flex: 1; }
+.sess-name, .sess-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; display: block; }
+.sess-list li > button { flex-shrink: 0; }
+.sess-list-paged { min-height: calc(5 * 58px + 4 * 6px); }
+.sess-list-paged li { height: 58px; align-items: center; }
 .sess-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; }
 .sess-main { display: flex; flex-direction: column; gap: 2px; }
 .sess-name { font-size: 13px; display: flex; align-items: center; gap: 6px; }

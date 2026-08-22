@@ -152,8 +152,9 @@ describe('MySessionsCard 分页', () => {
     currentUser.value = asUser('acct-sess', 'sess@test.local')
     await flushPromises()
 
-    // 首页 5 条
+    // 首页 5 条；分页态锁定满页高度（末页条数少也不塌陷）
     expect(wrapper.findAll('.sess-list li')).toHaveLength(5)
+    expect(wrapper.find('.sess-list-paged').exists()).toBe(true)
     expect(wrapper.get('.sess-page').text()).toBe('第 1 / 3 页 · 共 12 条')
 
     await wrapper.get('.sess-pager button:last-child').trigger('click')
@@ -177,6 +178,7 @@ describe('MySessionsCard 分页', () => {
 
     expect(wrapper.findAll('.sess-list li')).toHaveLength(4)
     expect(wrapper.find('.sess-pager').exists()).toBe(false)
+    expect(wrapper.find('.sess-list-paged').exists()).toBe(false)
   })
 })
 

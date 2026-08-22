@@ -55,7 +55,7 @@
           <code>{{ item.id }}</code>
         </div>
         <div class="row-actions">
-          <button type="button" @click="edit(item)">编辑出新版本</button>
+          <button type="button" @click="edit(item)" title="历史版本不可变；已下单消费者按下单时的版本结算">编辑（存为新版本）</button>
           <button v-if="item.status !== 'published'" type="button" @click="publish(item.id)">上架</button>
           <button v-else type="button" @click="offSale(item.id)">下架</button>
           <button type="button" @click="selectPromotion(item)">推广链接/二维码</button>
