@@ -1,11 +1,11 @@
 <template>
-  <section class="image-gen-view">
+  <section class="image-gen-view gl-field">
     <header class="section-header">
       <h2 class="section-title">图片生成</h2>
       <p class="section-desc">为图文/视频制作生成封面、配图与素材：输入描述提示词，上传参考素材保持风格一致，AI 帮你生成图片</p>
     </header>
 
-    <div class="gen-card">
+    <div class="gen-card gl-zone">
       <div v-if="materials.length > 0" class="materials-area">
         <div class="materials-label">参考素材（{{ materials.length }}/4）</div>
         <div class="materials-grid">
@@ -43,7 +43,7 @@
           </button>
         </div>
         <div class="prompt-footer">
-          <span class="char-count">{{ prompt.length }} / 4000</span>
+          <span class="char-count gl-num">{{ prompt.length }} / 4000</span>
           <div class="prompt-actions">
             <button type="button" class="upload-btn" :disabled="generating || materials.length >= 4" @click="triggerUpload">
               + 上传素材
@@ -74,7 +74,7 @@
       </div>
 
       <button
-        class="gen-btn"
+        class="gen-btn gl-btn-primary"
         :class="{ 'gen-btn-loading': generating }"
         type="button"
         :disabled="!canGenerate"
@@ -94,7 +94,7 @@
       <div
         v-for="(item, index) in results"
         :key="index"
-        class="result-card"
+        class="result-card gl-tile"
       >
         <div class="result-img-wrap" @click="openLightbox(item.imageUrl)">
           <img :src="item.imageUrl" :alt="item.revisedPrompt || prompt" class="result-img" loading="lazy" />
@@ -344,14 +344,15 @@ async function handleGenerate(): Promise<void> {
 }
 
 .section-title {
-  font-size: 1.3rem;
-  font-weight: 700;
+  font-size: var(--text-xl);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   color: var(--color-text);
   margin: 0;
 }
 
 .section-desc {
-  font-size: 0.88rem;
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   margin: 0;
 }
@@ -359,11 +360,6 @@ async function handleGenerate(): Promise<void> {
 .gen-card {
   display: grid;
   gap: var(--space-md);
-  padding: var(--space-lg);
-  background: var(--gradient-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
 }
 
 .materials-area {
@@ -416,8 +412,8 @@ async function handleGenerate(): Promise<void> {
   left: 0;
   right: 0;
   padding: 1px 4px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: var(--color-overlay);
+  color: var(--color-on-accent);
   font-size: 0.65rem;
   text-align: center;
   line-height: 1.4;
@@ -431,8 +427,8 @@ async function handleGenerate(): Promise<void> {
   height: 18px;
   border: none;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: var(--color-overlay);
+  color: var(--color-on-accent);
   font-size: 0.7rem;
   line-height: 1;
   cursor: pointer;
@@ -444,7 +440,7 @@ async function handleGenerate(): Promise<void> {
 }
 
 .material-remove:hover:not(:disabled) {
-  background: rgba(239, 107, 107, 0.8);
+  background: color-mix(in srgb, var(--color-danger) 80%, transparent);
 }
 
 .material-remove:disabled {
@@ -538,12 +534,12 @@ async function handleGenerate(): Promise<void> {
 .upload-btn {
   padding: 4px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
-  font-size: 0.8rem;
+  color: var(--color-accent-2);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .upload-btn:hover:not(:disabled) {
@@ -564,12 +560,12 @@ async function handleGenerate(): Promise<void> {
 .size-btn {
   padding: 4px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .size-btn:hover:not(:disabled) {
@@ -578,9 +574,10 @@ async function handleGenerate(): Promise<void> {
 }
 
 .size-btn-active {
-  background: var(--color-surface-highlight);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: var(--color-border-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
+  font-weight: 600;
 }
 
 .size-btn:disabled {
@@ -595,19 +592,7 @@ async function handleGenerate(): Promise<void> {
   gap: 8px;
   height: 44px;
   padding: 0 28px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--gradient-accent);
-  color: #fff;
   font-size: 0.92rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-}
-
-.gen-btn:hover:not(:disabled) {
-  opacity: 0.92;
-  transform: translateY(-1px);
 }
 
 .gen-btn:disabled {
@@ -636,8 +621,8 @@ async function handleGenerate(): Promise<void> {
 .error-msg {
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  background: rgba(239, 107, 107, 0.1);
-  border: 1px solid rgba(239, 107, 107, 0.2);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
   font-size: 0.86rem;
   margin: 0;
@@ -651,10 +636,6 @@ async function handleGenerate(): Promise<void> {
 .result-card {
   display: grid;
   gap: var(--space-sm);
-  padding: var(--space-md);
-  background: var(--gradient-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
 }
 
 .result-img-wrap {
@@ -691,13 +672,13 @@ async function handleGenerate(): Promise<void> {
 .result-action-btn {
   padding: 4px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
   cursor: pointer;
   text-decoration: none;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .result-action-btn:hover {

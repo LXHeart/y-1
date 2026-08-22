@@ -1,5 +1,5 @@
 <template>
-  <section class="session-versions-card glass-card" aria-label="本次会话版本对比">
+  <section class="session-versions-card gl-zone" aria-label="本次会话版本对比">
     <header class="session-versions-head">
       <div>
         <p class="session-versions-title">多版本对比</p>

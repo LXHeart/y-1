@@ -1,7 +1,7 @@
 <template>
-  <div class="image-analysis">
+  <div class="image-analysis gl-field">
     <section class="image-shell">
-      <article class="control-card glass-card">
+      <article class="control-card gl-zone">
         <header class="section-head">
           <div>
             <p class="section-kicker">图片评价</p>
@@ -122,7 +122,7 @@
 
         <div class="action-row">
           <button
-            class="btn-primary"
+            class="btn-primary gl-btn-primary"
             :disabled="loading || images.length === 0"
             @click="startGeneration"
           >
@@ -149,7 +149,7 @@
           @remove-version="removeVersion"
         />
 
-        <section v-if="generationStage === 'drafting'" class="progress-card glass-card fade-in">
+        <section v-if="generationStage === 'drafting'" class="progress-card gl-zone fade-in">
           <header class="result-head">
             <div>
               <p class="section-kicker">生成进度</p>
@@ -182,7 +182,7 @@
           </ol>
         </section>
 
-        <section v-else-if="showStepLoading" class="progress-card glass-card fade-in">
+        <section v-else-if="showStepLoading" class="progress-card gl-zone fade-in">
           <header class="result-head">
             <div>
               <p class="section-kicker">生成进度</p>
@@ -195,12 +195,12 @@
           </p>
         </section>
 
-        <section v-else-if="error && !result" class="status-card status-card-error glass-card fade-in">
+        <section v-else-if="error && !result" class="status-card status-card-error gl-zone fade-in">
           <p class="status-title">生成失败</p>
           <p class="status-copy">{{ error }}</p>
         </section>
 
-        <section v-else-if="result && isStepReview" class="result-card glass-card fade-in">
+        <section v-else-if="result && isStepReview" class="result-card gl-zone fade-in">
           <header class="result-head">
             <div>
               <p class="section-kicker">{{ stepLabel }}</p>
@@ -243,7 +243,7 @@
               </div>
             </div>
             <div class="edit-actions">
-              <button class="btn-primary" :disabled="savingStyle" @click="handleApplyEditsLocally">直接保存</button>
+              <button class="btn-primary gl-btn-primary" :disabled="savingStyle" @click="handleApplyEditsLocally">直接保存</button>
               <button class="btn-save-style" :disabled="savingStyle" @click="handleSaveStyleMemory">
                 <svg v-if="savingStyle" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg>
                 {{ savingStyle ? '保存中…' : '记忆风格并保存' }}
@@ -269,10 +269,10 @@
 
           <div v-if="!isEditing" class="step-actions">
             <div v-if="generationStage === 'draft-review'" class="step-nav">
-              <button class="btn-primary" @click="proceedToOptimize">下一步：润色优化</button>
+              <button class="btn-primary gl-btn-primary" @click="proceedToOptimize">下一步：润色优化</button>
             </div>
             <div v-else-if="generationStage === 'optimize-review'" class="step-nav">
-              <button class="btn-primary" @click="proceedToStyleRefine">下一步：风格偏好优化</button>
+              <button class="btn-primary gl-btn-primary" @click="proceedToStyleRefine">下一步：风格偏好优化</button>
             </div>
           </div>
 
@@ -308,7 +308,7 @@
           </div>
         </section>
 
-        <section v-else-if="result" class="result-card glass-card fade-in">
+        <section v-else-if="result" class="result-card gl-zone fade-in">
           <header class="result-head">
             <div>
               <p class="section-kicker">输出结果</p>
@@ -372,7 +372,7 @@
               </div>
             </div>
             <div class="edit-actions">
-              <button class="btn-primary" :disabled="savingStyle" @click="handleApplyEditsLocally">直接保存</button>
+              <button class="btn-primary gl-btn-primary" :disabled="savingStyle" @click="handleApplyEditsLocally">直接保存</button>
               <button class="btn-save-style" :disabled="savingStyle" @click="handleSaveStyleMemory">
                 <svg v-if="savingStyle" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg>
                 {{ savingStyle ? '保存中…' : '记忆风格并保存' }}
@@ -435,7 +435,7 @@
           </div>
         </section>
 
-        <section v-else class="empty-card glass-card">
+        <section v-else class="empty-card gl-zone">
           <p class="section-kicker">等待生成</p>
           <h2 class="empty-title">上传图片后，这里会显示评价结果</h2>
           <p class="empty-copy">生成完成后可直接复制标题、正文和标签，用于淘宝或大众点评发布。</p>
@@ -966,7 +966,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   height: 42px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
@@ -1024,7 +1024,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   position: relative;
   width: 72px;
   height: 72px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--color-border);
   background: var(--surface-card);
@@ -1045,8 +1045,8 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   display: grid;
   place-items: center;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(11, 14, 20, 0.72);
+  border: 1px solid var(--color-border);
+  background: var(--surface-card);
   color: white;
   font-size: 12px;
   line-height: 1;
@@ -1152,42 +1152,9 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .btn-primary,
 .btn-secondary,
 .btn-copy {
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: var(--radius-md);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
-  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  border: none;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-2);
-  transform: translateY(-1px);
-}
-
-.btn-secondary,
-.btn-copy {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-secondary:hover:not(:disabled),
-.btn-copy:hover {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
 }
 
 .result-actions {
@@ -1246,8 +1213,8 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .export-error {
   padding: 12px 16px;
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(239, 107, 107, 0.28);
-  background: rgba(239, 107, 107, 0.08);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
 }
 
 .export-error p {
@@ -1262,8 +1229,8 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   gap: 10px;
   padding: 12px 16px;
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(72, 187, 120, 0.28);
-  background: rgba(72, 187, 120, 0.08);
+  border: 1px solid color-mix(in srgb, var(--color-success) 28%, transparent);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
   flex-wrap: wrap;
 }
 
@@ -1364,8 +1331,8 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 }
 
 .status-card-error {
-  border-color: rgba(239, 107, 107, 0.28);
-  background: rgba(239, 107, 107, 0.08);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
 }
 
 .progress-count {
@@ -1408,7 +1375,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   margin-top: 6px;
   border-radius: 999px;
   background: var(--color-accent);
-  box-shadow: 0 0 0 6px rgba(114, 132, 248, 0.12);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
 .progress-copy {
@@ -1546,8 +1513,8 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   display: flex;
   padding: 12px 16px;
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(72, 187, 120, 0.28);
-  background: rgba(72, 187, 120, 0.08);
+  border: 1px solid color-mix(in srgb, var(--color-success) 28%, transparent);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
 }
 
 .save-style-success p {

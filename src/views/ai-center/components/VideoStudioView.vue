@@ -579,46 +579,46 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .video-studio { display: flex; flex-direction: column; gap: 1rem; }
-.vs-tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border, #ddd); padding-bottom: 0.5rem; }
-.vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: 4px 4px 0 0; background: transparent; cursor: pointer; font-size: 0.9rem; }
+.vs-tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem; }
+.vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: 999px; background: transparent; cursor: pointer; font-size: 0.9rem; }
 .vs-tab.active { background: var(--primary, #3b82f6); color: #fff; border-color: var(--primary, #3b82f6); }
 .vs-section { display: flex; flex-direction: column; gap: 1rem; }
 .vs-filter-row { display: flex; gap: 0.5rem; }
 .vs-filter-row select { padding: 0.3rem; }
 .vs-template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
-.vs-template-card { border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 0.8rem; }
+.vs-template-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.8rem; }
 .vs-template-card h4 { margin: 0 0 0.3rem; }
 .tpl-meta { font-size: 0.8rem; color: var(--text-secondary, #666); }
 .tpl-structure { font-size: 0.8rem; padding-left: 1.2rem; margin: 0.5rem 0; }
 .vs-sub-source, .vs-sub-upload { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .vs-sub-history { display: flex; flex-direction: column; gap: 0.3rem; max-height: 300px; overflow-y: auto; }
-.vs-history-item { display: flex; gap: 1rem; padding: 0.4rem; border: 1px solid var(--border, #eee); border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+.vs-history-item { display: flex; gap: 1rem; padding: 0.4rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.85rem; }
 .vs-history-item:hover { background: var(--hover, #f5f5f5); }
 .vs-hint { font-size: 0.85rem; color: var(--warning, #b45309); font-style: italic; }
-.vs-cue-table { border: 1px solid var(--border, #ddd); border-radius: 6px; overflow: hidden; }
+.vs-cue-table { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .vs-cue-header { display: grid; grid-template-columns: 2em 4em 4em 1fr 5em; gap: 0.3rem; padding: 0.4rem; background: var(--bg-secondary, #f9f9f9); font-weight: 600; font-size: 0.8rem; }
-.vs-cue-row { display: grid; grid-template-columns: 2em 4em 4em 1fr 5em; gap: 0.3rem; padding: 0.3rem 0.4rem; align-items: center; font-size: 0.85rem; border-top: 1px solid var(--border, #eee); }
+.vs-cue-row { display: grid; grid-template-columns: 2em 4em 4em 1fr 5em; gap: 0.3rem; padding: 0.3rem 0.4rem; align-items: center; font-size: 0.85rem; border-top: 1px solid var(--color-border); }
 .vs-cue-row.active { background: var(--primary-light, #eff6ff); }
-.vs-cue-row input { width: 100%; padding: 0.15rem 0.3rem; border: 1px solid var(--border, #ccc); border-radius: 3px; font-size: 0.8rem; }
+.vs-cue-row input { width: 100%; padding: 0.15rem 0.3rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 0.8rem; }
 .vs-cue-actions { display: flex; gap: 0.2rem; }
-.vs-cue-actions button { padding: 0.1rem 0.3rem; font-size: 0.75rem; border: 1px solid var(--border, #ccc); border-radius: 3px; background: transparent; cursor: pointer; }
+.vs-cue-actions button { padding: 0.1rem 0.3rem; font-size: 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .vs-export-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .vs-bgm-form { display: flex; flex-direction: column; gap: 0.6rem; max-width: 400px; }
 .vs-bgm-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
 .vs-bgm-form input, .vs-bgm-form select { padding: 0.3rem; }
 .vs-bgm-result { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.8rem; }
-.bgm-card { border: 1px solid var(--border, #ddd); border-radius: 6px; padding: 0.6rem; }
+.bgm-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.6rem; }
 .bgm-card h4 { margin: 0 0 0.3rem; font-size: 0.9rem; }
 .bgm-card ul { padding-left: 1rem; margin: 0; font-size: 0.85rem; }
 .vs-cover-btns { display: flex; gap: 0.5rem; }
-.vs-cover-btns button { padding: 0.4rem 0.8rem; border: 1px solid var(--border, #ccc); border-radius: 4px; background: transparent; cursor: pointer; }
+.vs-cover-btns button { padding: 0.4rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .vs-cover-btns button.active { background: var(--primary, #3b82f6); color: #fff; }
 .vs-frame-strip { display: flex; gap: 0.5rem; margin-top: 0.5rem; overflow-x: auto; }
-.vs-frame-thumb { width: 80px; height: 45px; border: 2px solid transparent; border-radius: 4px; overflow: hidden; cursor: pointer; }
+.vs-frame-thumb { width: 80px; height: 45px; border: 2px solid transparent; border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; }
 .vs-frame-thumb.active { border-color: var(--primary, #3b82f6); }
 .vs-frame-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .vs-cover-edit { display: flex; gap: 1.5rem; }
-.vs-cover-canvas-wrap { flex: 1; background: #1a1a1a; border-radius: 6px; display: flex; align-items: center; justify-content: center; min-height: 300px; }
+.vs-cover-canvas-wrap { flex: 1; background: var(--surface-muted); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; min-height: 300px; }
 .vs-cover-canvas { max-width: 100%; max-height: 60vh; }
 .vs-cover-controls { width: 240px; display: flex; flex-direction: column; gap: 0.5rem; }
 .vs-cover-controls label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
@@ -626,6 +626,6 @@ onBeforeUnmount(() => {
 .vs-status { color: var(--text-secondary, #666); font-size: 0.85rem; }
 .vs-ok { color: var(--success, #16a34a); font-size: 0.85rem; }
 .vs-error { color: var(--error, #dc2626); font-size: 0.85rem; }
-.studio-upload-btn { cursor: pointer; padding: 0.4rem 0.8rem; border: 1px solid var(--border, #ccc); border-radius: 4px; }
+.studio-upload-btn { cursor: pointer; padding: 0.4rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .studio-upload-btn input { display: none; }
 </style>

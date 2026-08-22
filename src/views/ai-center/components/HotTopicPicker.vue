@@ -232,14 +232,14 @@ function validityNote(item: HomepageHotItem): string {
 </script>
 
 <style scoped>
-.hot-picker { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+.hot-picker { display: grid; gap: var(--space-sm); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--surface-furrow); }
 .hot-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .hot-refresh { padding: 6px 12px; font-size: 0.8rem; }
 .hot-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 .hot-picker-note { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
 .hot-filters { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)) auto; gap: 8px; align-items: end; }
 .hot-filters label { display: grid; gap: 4px; color: var(--color-text-muted); font-size: 0.74rem; }
-.hot-filters select { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); }
+.hot-filters select { width: 100%; min-width: 0; padding: 6px var(--space-xs); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .hot-expired-toggle { display: flex !important; min-height: 34px; align-items: center; grid-template-columns: auto 1fr; white-space: nowrap; }
 .hot-expired-toggle input { margin: 0; }
 .hot-tabs { display: flex; gap: 4px; flex-wrap: wrap; }

@@ -1,11 +1,11 @@
 <template>
-  <section class="creation-center" aria-labelledby="creation-center-title">
+  <section class="creation-center gl-field" aria-labelledby="creation-center-title">
     <header class="center-head">
       <div>
         <p class="section-kicker">AI 内容创作中心</p>
         <h2 id="creation-center-title">{{ sectionTitle }}</h2>
       </div>
-      <p class="capability-version">规则 {{ AI_PLATFORM_CAPABILITY_VERSION }}</p>
+      <p class="capability-version gl-num">规则 {{ AI_PLATFORM_CAPABILITY_VERSION }}</p>
     </header>
 
     <AiCenterNavigation :model-value="activeSection" @update:model-value="selectSection" />
@@ -13,6 +13,11 @@
     <template v-if="activeSection === 'create'">
       <!-- 任务书 #36 / ADR-D14：未登录游客的免费体验入口（登录用户不显示，功能面不变） -->
       <GuestTrialPanel v-if="!props.authenticated" @request-login="emit('request-login')" />
+      <section class="gl-zone create-zone">
+      <div class="gl-zone-head">
+        <h3 class="gl-zone-title">创作配置</h3>
+        <p class="gl-zone-note">平台 · 形式 · 来源 · 上下文，配好即可开始</p>
+      </div>
       <div class="platform-grid" role="list" aria-label="发布平台">
         <button
           v-for="platform in AI_PLATFORM_DEFINITIONS"
@@ -219,7 +224,7 @@
         <dl>
           <div><dt>发布平台</dt><dd>{{ entry.taskContext.platform || '未指定' }}</dd></div>
           <div><dt>内容形式</dt><dd>{{ entry.taskContext.contentForm || '未指定' }}</dd></div>
-          <div><dt>任务赏金</dt><dd>¥{{ (entry.taskContext.bountyCents / 100).toFixed(2) }}</dd></div>
+          <div><dt>任务赏金</dt><dd class="gl-num">{{ formatYuan(entry.taskContext.bountyCents) }}</dd></div>
           <div><dt>接受时间</dt><dd>{{ formatTaskDate(entry.taskContext.acceptedAt) }}</dd></div>
           <div v-if="entry.taskContext.storeId"><dt>门店范围</dt>
             <dd>{{ taskStoreBranding?.storeName || entry.taskContext.storeId }}</dd></div>
@@ -257,11 +262,12 @@
         <p data-testid="selection-summary">{{ selectionSummary }}</p>
         <div>
           <span v-if="workflow.status === 'planned'" class="planned-state">该创作路径尚未接入</span>
-          <button type="button" class="primary-command" :disabled="!canStart || freezingContext" @click="startWorkflow">
+          <button type="button" class="primary-command gl-btn-primary" :disabled="!canStart || freezingContext" @click="startWorkflow">
             {{ freezingContext ? '正在准备...' : '开始创作' }}
           </button>
         </div>
       </footer>
+      </section>
     </template>
 
     <div v-else-if="activeSection === 'runs'" class="runs-section">
@@ -316,6 +322,7 @@ import {
   resolveWorkflow,
 } from '../../config/ai-platform-capabilities'
 import { useGrassland } from '../../composables/useGrassland'
+import { formatYuan } from '../../lib/money'
 import { useHomepageHotItems } from '../../composables/useHomepageHotItems'
 import type { Organization, Store, StoreProfile, StorePublicProfile } from '../../types/grassland'
 import type { HomepageHotFilters } from '../../types/homepage-hot'
@@ -904,35 +911,36 @@ function nextWorkflowRevision(): number {
 </script>
 
 <style scoped>
-.creation-center { display: grid; gap: 22px; max-width: 1040px; margin: 0 auto; }
+.creation-center { display: grid; gap: var(--space-lg); max-width: 1040px; margin: 0 auto; }
 .center-head, .choice-title-row, .start-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .center-head h2, .choice-title-row h3 { margin: 0; color: var(--color-text); letter-spacing: 0; }
-.center-head h2 { font-size: 1.5rem; }
+.center-head h2 { font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; }
 .choice-title-row h3 { font-size: 1rem; }
-.section-kicker, .capability-version, .choice-title-row span, .start-bar p { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
-.section-kicker { margin-bottom: 4px; font-weight: 700; color: var(--color-accent); }
-.platform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
-.platform-option { min-height: 78px; padding: 14px; display: grid; gap: 5px; text-align: left; background: var(--color-surface); color: var(--color-text); border: 0; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); cursor: pointer; }
-.platform-option:nth-child(3n) { border-right: 0; }
-.platform-option:nth-last-child(-n + 3) { border-bottom: 0; }
-.platform-option span, .source-option span { color: var(--color-text-muted); font-size: 0.78rem; }
+.section-kicker, .capability-version, .choice-title-row span, .start-bar p { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.section-kicker { margin-bottom: 4px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent-2); }
+.platform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-sm); }
+.platform-option { min-height: 78px; padding: var(--space-sm); display: grid; gap: 5px; align-content: center; text-align: left; background: var(--gradient-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-md); cursor: pointer; transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.platform-option:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--color-border-hover); box-shadow: var(--shadow-elevated); }
+.platform-option span, .source-option span { color: var(--color-text-muted); font-size: var(--text-xs); }
 .platform-option.selected, .source-option.selected { background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface)); box-shadow: inset 3px 0 0 var(--color-accent); }
 .platform-option:disabled { cursor: default; opacity: 0.72; }
-.choice-band, .context-band { display: grid; gap: 14px; padding-top: 18px; border-top: 1px solid var(--color-border); }
-.segmented { display: inline-flex; width: fit-content; padding: 3px; gap: 3px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: 7px; }
-.segmented button { min-width: 108px; padding: 8px 14px; border: 0; border-radius: 5px; color: var(--color-text-secondary); background: transparent; cursor: pointer; }
-.segmented button.active { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-sm); }
+.choice-band, .context-band { display: grid; gap: var(--space-sm); padding-top: var(--space-md); border-top: 1px solid var(--color-border); }
+.create-zone > .choice-band:first-of-type, .create-zone > .context-band:first-of-type { border-top: 0; padding-top: 0; }
+.segmented { display: inline-flex; width: fit-content; padding: 4px; gap: 4px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: 999px; }
+.segmented button { min-width: 108px; min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; color: var(--color-text-secondary); background: transparent; cursor: pointer; }
+.segmented button.active { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-weight: 600; }
 .source-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.source-option { min-height: 72px; display: grid; gap: 5px; align-content: center; padding: 10px; text-align: left; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface); color: var(--color-text); cursor: pointer; }
+.source-option { min-height: 72px; display: grid; gap: 5px; align-content: center; padding: var(--space-sm); text-align: left; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--gradient-surface); color: var(--color-text); cursor: pointer; transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.source-option:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--color-border-hover); box-shadow: var(--shadow-elevated); }
 .store-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .store-fields label, .topic-field { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 0.82rem; }
-select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); padding: 9px 10px; font: inherit; letter-spacing: 0; }
+select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); padding: 8px var(--space-sm); font: inherit; letter-spacing: 0; }
 textarea { resize: vertical; min-height: 76px; }
 .inline-state, .context-summary { padding: 12px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--color-border); }
 .inline-state p, .context-summary p { margin: 0; color: var(--color-text-secondary); }
 .context-summary { display: grid; justify-content: start; }
 .context-summary span { color: var(--color-text-muted); font-size: 0.78rem; }
-.task-context-summary { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface-muted); }
+.task-context-summary { display: grid; gap: var(--space-sm); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--surface-furrow); border: none; }
 .task-context-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .task-context-head span { color: var(--color-text-muted); font-size: 0.78rem; }
 .task-context-summary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
@@ -944,11 +952,9 @@ textarea { resize: vertical; min-height: 76px; }
 .task-requirements { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid var(--color-border); }
 .task-requirements > div { display: grid; grid-template-columns: minmax(100px, 0.35fr) 1fr; gap: 10px; }
 .task-requirements span { color: var(--color-text-muted); font-size: 0.78rem; overflow-wrap: anywhere; }
-.start-bar { position: sticky; bottom: 12px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: color-mix(in srgb, var(--color-surface) 94%, transparent); backdrop-filter: blur(12px); }
+.start-bar { position: sticky; bottom: var(--space-xs); padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-surface) 94%, transparent); backdrop-filter: blur(12px); box-shadow: var(--shadow-card); }
 .start-bar > div { display: flex; align-items: center; gap: 12px; }
-.primary-command, .secondary-command { padding: 9px 15px; border-radius: 6px; cursor: pointer; }
-.primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: #fff; font-weight: 700; }
-.secondary-command { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }
+.primary-command, .secondary-command { min-height: 38px; padding: 0 var(--space-md); border-radius: var(--radius-sm); cursor: pointer; }
 .primary-command:disabled { opacity: 0.45; cursor: not-allowed; }
 .planned-state { color: var(--color-warning); font-size: 0.82rem; }
 .error-state { margin: 0; color: var(--color-danger); font-size: 0.84rem; }
