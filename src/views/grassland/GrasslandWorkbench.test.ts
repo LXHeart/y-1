@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import GrasslandWorkbench from '../../views/grassland/GrasslandWorkbench.vue'
 import MerchantTaskForm from '../../views/grassland/components/MerchantTaskForm.vue'
 import { useAuth } from '../../composables/useAuth'
+import { useActiveIdentity } from '../../composables/useActiveIdentity'
 import type { AuthUser } from '../../types/auth'
 import type { Task } from '../../types/grassland'
 
@@ -100,6 +101,11 @@ enableAutoUnmount(afterEach)
 
 beforeEach(() => {
   currentUser.value = null
+  // 活动身份是全局单例（跨视图共享）：每个用例复位回「新会话默认商家」，
+  // 等价于原实现「每次 mount 一个新 side ref 默认 merchant」的测试语义。
+  const identity = useActiveIdentity()
+  identity.reset()
+  identity.activeSide.value = 'merchant'
 })
 
 afterEach(() => {

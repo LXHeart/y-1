@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
+import { useActiveIdentity, type IdentitySide } from '../../../composables/useActiveIdentity'
 import { yuanToCents } from '../../../lib/money'
 import type {
   FinanceAccount,
@@ -10,12 +11,13 @@ import type {
   StoreAccessScope,
 } from '../../../types/grassland'
 
-export type Side = 'merchant' | 'recommender'
+export type Side = IdentitySide
 
 /**
- * 工作台会话域：账号初始化、组织/门店装载、身份激活与视角切换、商家资金账户。
+ * 工作台会话域：账号初始化、组织/门店装载、身份视角切换、商家资金账户。
  *
- * 从 GrasslandWorkbench.vue 原样迁出（行为不变）。两个刻意设计随迁：
+ * 从 GrasslandWorkbench.vue 迁出；活动身份（side）改为全局单例（useActiveIdentity），
+ * 账号菜单切换与主导航标签共享同一状态。两个刻意设计随迁：
  * - 按**账号**初始化（组件层 watch currentUser 触发 {@link initForAccount}），而非 onMounted——
  *   工作台未登录时就已挂载且切标签页不重挂载，换账号必须重拉并重新激活活动身份。
  * - 换组织/切回商家视角后要重拉任务列表，但任务列表属于履约域（useWorkbenchEngagements），
@@ -31,13 +33,20 @@ export function useWorkbenchSession(
 ) {
   const { setNotice, refreshTasks } = deps
 
-  const side = ref<Side>('merchant')
+  /**
+   * 活动身份是全局状态（PRD §11.3）：账号菜单切换、主导航标签与工作台视角共用，
+   * 由 {@link useActiveIdentity} 单例持有。本 composable 只在其上叠加工作台侧效应。
+   */
+  const {
+    activeSide: side,
+    hasMerchantIdentity,
+    loadAccountIdentity, reset: resetActiveIdentity,
+  } = useActiveIdentity()
   const orgs = ref<Organization[]>([])
   const stores = ref<Store[]>([])
   const storeScopes = ref<StoreAccessScope[]>([])
   const organizationAccessIds = ref<Set<string>>(new Set())
   const organizationRoles = ref<Map<string, MembershipRole>>(new Map())
-  const hasMerchantIdentity = ref(false)
   const activeOrgId = ref('')
   /** Empty means legacy organization-level task scope; otherwise the selected store. */
   const selectedStoreId = ref('')
@@ -129,46 +138,26 @@ export function useWorkbenchSession(
   }
 
   /**
-   * 初始化先读取已开通身份，再激活与之对应的当前 session 身份。
-   *
-   * 推荐官-only 账号若沿用默认 merchant，会产生一个可预期却会出现在浏览器 console 的 409；
-   * 无身份账号保留 merchant onboarding 界面，但不因打开工作台暗中开通/激活 merchant。
+   * 初始化 = 全局活动身份装载（身份 + 门店范围 + 初始激活，见 useActiveIdentity）
+   * + 工作台自己的组织/资金/钱包装载。身份段与布局层共享同一实现与结果。
    */
   async function initForAccount(): Promise<void> {
-    // 只激活已开通的身份：推荐官-only 账号不应因默认 merchant 视图收到可预期的 409。
-    // merchant 优先保留双身份账号的既有工作台入口；无身份则留在 merchant onboarding，但不暗中开户/激活。
-    const [identities, organizations, scopes, organizationScopes] = await Promise.all([
-      grassland.listIdentities(),
+    const boot = await loadAccountIdentity(grassland)
+    if (boot === null) return
+
+    storeScopes.value = boot.storeScopes
+    const [organizations, organizationScopes] = await Promise.all([
       grassland.listOrganizations(),
-      grassland.listMyStoreScopes(),
       grassland.listMyOrganizationScopes(),
     ])
-    if (identities === null) return
-
-    hasMerchantIdentity.value = identities.some((identity) => identity.identityType === 'merchant')
-    storeScopes.value = Array.isArray(scopes) ? scopes : []
-    const hasManagerScope = storeScopes.value.some((scope) => scope.role === 'manager')
-    const initialIdentity = hasMerchantIdentity.value
-      ? 'merchant'
-      : hasManagerScope
-        ? null
-        : identities.some((identity) => identity.identityType === 'recommender')
-          ? 'recommender'
-          : null
-    if (hasManagerScope && !hasMerchantIdentity.value) side.value = 'merchant'
-    if (initialIdentity) {
-      side.value = initialIdentity
-      await grassland.activateIdentity(initialIdentity)
-      grassland.clearError()  // 已知身份的激活失败由后续具体操作给出更明确的错误
-    }
     await loadOrganizations(
       Array.isArray(organizations) ? organizations : [],
-      Array.isArray(scopes) ? scopes : [],
+      boot.storeScopes,
       Array.isArray(organizationScopes) ? organizationScopes : [],
     )
     // 任务书 #22：推荐官侧加载钱包余额，供任务大厅对霸王餐押金任务做报名软提示（不阻断）。
     walletBalanceCents.value = null
-    if (identities.some((identity) => identity.identityType === 'recommender')) {
+    if (boot.identities.some((identity) => identity.identityType === 'recommender')) {
       void grassland.getMyWallet().then((wallet) => {
         walletBalanceCents.value = wallet ? wallet.balanceCents : 0
       })
@@ -177,12 +166,12 @@ export function useWorkbenchSession(
 
   /** 账号切换清空（原 resetAccountState 的会话字段；side/wallet 刻意不清，与原实现一致）。 */
   function reset(): void {
+    resetActiveIdentity()
     orgs.value = []
     stores.value = []
     storeScopes.value = []
     organizationAccessIds.value = new Set()
     organizationRoles.value = new Map()
-    hasMerchantIdentity.value = false
     activeOrgId.value = ''
     selectedStoreId.value = ''
     account.value = null
@@ -236,6 +225,9 @@ export function useWorkbenchSession(
    * 关键：**激活失败必须回滚 UI**。此前无论成败都切视角，账号若未开通对应身份，
    * 会出现「UI 显示推荐官、后端仍是商家、所有操作 403」且用户看不出原因（浏览器实测发现）。
    * 未开通时后端返回 409，这里自动尝试开通一次（推荐官无需 org，可直接开通）。
+   *
+   * 切到商家后的任务重拉不在这里做——工作台组件 watch 全局 side 统一处理，
+   * 这样账号菜单发起的切换（不经本函数）同样能刷新任务列表。
    */
   async function switchSide(next: Side): Promise<void> {
     const previous = side.value
@@ -243,7 +235,6 @@ export function useWorkbenchSession(
 
     if (next === 'merchant' && !hasMerchantIdentity.value && managerStoreScopes.value.length > 0) {
       grassland.clearError()
-      await refreshTasks()
       return
     }
 
@@ -264,9 +255,6 @@ export function useWorkbenchSession(
     }
 
     grassland.clearError()
-    if (next === 'merchant') {
-      await refreshTasks()
-    }
   }
 
   return {

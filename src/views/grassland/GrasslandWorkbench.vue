@@ -216,7 +216,9 @@ async function openAcceptedTaskCreation(application: TaskApplication): Promise<v
 
 // ---------- 账号级编排：重置 + 初始化 ----------
 
-/** 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。 */
+/**
+ * 清空全部账号相关状态——否则上一个账号的组织/余额/任务会留在界面上。
+ */
 function resetAccountState(): void {
   notice.value = ''
   resetSession()
@@ -227,9 +229,20 @@ function resetAccountState(): void {
 }
 
 /**
+ * 活动身份翻到商家视角时重拉任务列表。side 是全局状态（账号菜单也能切），
+ * 不能只在工作台内的 switchSide 里刷新；初始化期间的初始翻角除外——
+ * 那时 loadOrganizations 自己会走 refreshTasks，重复拉且时序上组织还没就绪。
+ */
+let initializingAccount = false
+watch(side, async (next, previous) => {
+  if (next === previous || initializingAccount) return
+  if (next === 'merchant') await refreshTasks()
+})
+
+/**
  * 按**账号**初始化，而不是 onMounted 跑一次。
  *
- * 工作台在未登录时也已挂载，且 App.vue 用 `<component :is>` 复用组件、切标签页不重挂载：
+ * 工作台在未登录时也已挂载，且 App.vue 用 `<component :is>` 复用组件、切标签页不重挂载:
  * 只在 mounted 初始化的话，同一页面内登录/换账号后，组织列表、余额、任务全是上一个账号的
  * （或空白），必须手动刷新整页才正确——浏览器实测发现。活动身份也按 session 存，
  * 换账号后必须重新激活，否则商家操作 403。
@@ -237,7 +250,12 @@ function resetAccountState(): void {
 watch(() => currentUser.value?.id, async (accountId) => {
   resetAccountState()
   if (accountId) {
-    await initForAccount()
+    initializingAccount = true
+    try {
+      await initForAccount()
+    } finally {
+      initializingAccount = false
+    }
     // 初始化期间可能又换了账号——旧账号的 URL 恢复直接放弃，避免上一个链接串数据。
     if (currentUser.value?.id === accountId) await restoreWorkbenchStateFromUrl()
   }
