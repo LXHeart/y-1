@@ -3,6 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import App from './App.vue'
 import AiCreationCenter from './views/ai-center/AiCreationCenter.vue'
+import ArticleCreationView from './views/article/ArticleCreationView.vue'
 import router from './router'
 import { useAuth } from './composables/useAuth'
 import type { CreationHandoff } from './types/ai-creation'
@@ -26,7 +27,9 @@ vi.mock('./views/ops/OpsConsole.vue', () => ({ __esModule: true, default: { temp
 vi.mock('./views/grassland/GrasslandWorkbench.vue', () => ({ __esModule: true,
   default: { template: '<div data-testid="grassland-workbench" />' },
 }))
-vi.mock('./views/home/HomeView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
+vi.mock('./views/home/GrasslandHomeView.vue', () => ({ __esModule: true,
+  default: { template: '<div data-testid="grassland-home" />' },
+}))
 vi.mock('./views/image/ImageAnalysisView.vue', () => ({ __esModule: true,
   default: {
     props: ['creationHandoff'],
@@ -38,7 +41,6 @@ vi.mock('./views/image/ImageAnalysisView.vue', () => ({ __esModule: true,
     `,
   },
 }))
-vi.mock('./views/image-gen/ImageGenerationView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./views/video/VideoAnalysisView.vue', () => ({ __esModule: true,
   default: {
     props: ['creationHandoff'],
@@ -150,17 +152,47 @@ describe('App AI 创作中心集成', () => {
     auth.currentUser.value = null
   })
 
-  test('默认展示平台优先入口，旧独立工具只在二级菜单中出现', async () => {
+  test('品牌是草场平台；主导航不再露出独立工具入口', async () => {
     installFetchStub()
     const wrapper = await mountApp()
 
-    // 9 个平台入口的断言在 AiCreationCenter.test.ts 对真实组件覆盖（属性已更名 data-platform-id）
-    expect(wrapper.get('.brand-title').text()).toBe('AI 内容创作中心')
-    expect(wrapper.get('nav[aria-label="功能选择"]').attributes('role')).toBeUndefined()
+    // PRD §一：平台名是草场，AI 内容创作中心是内置共享能力而非门面
+    expect(wrapper.get('.brand-title').text()).toBe('草场')
+    const navigation = wrapper.get('nav[aria-label="功能选择"]').text()
+    expect(navigation).toContain('主页')
+    expect(navigation).toContain('AI 内容创作中心')
+    expect(navigation).toContain('到店消费')
+    // 未登录不露出需要身份/工作台的入口
+    expect(navigation).not.toContain('工作台')
+    expect(navigation).not.toContain('举报投诉')
+    // 旧「更多工具」下拉整体移除（工具视图收编为 AI 中心工作流目的地）
     expect(wrapper.find('.legacy-tools-menu').exists()).toBe(false)
+    expect(wrapper.find('button[aria-controls="legacy-tools-panel"]').exists()).toBe(false)
+  })
 
-    await wrapper.get('button[aria-expanded="false"]').trigger('click')
-    expect(wrapper.get('.legacy-tools-menu').text()).toContain('爆款文章')
+  test('登录后主导航随活动身份展示工作台与举报投诉', async () => {
+    const user = { id: 'u-1', email: 'u@example.com', role: 'user', roles: [] }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/auth/me') return response({ success: true, data: { user } })
+      if (url === '/api/me/identities') {
+        return response({ success: true, data: [
+          { id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' },
+          { id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' },
+        ] })
+      }
+      if (url === '/api/douyin/session') return response({ success: true, data: { status: 'anonymous' } })
+      return response({ success: true, data: [] })
+    }))
+    const auth = useAuth()
+    await auth.loadCurrentUser(true)
+    const wrapper = await mountApp()
+    await flushPromises()
+
+    // 双身份账号默认商家（merchant 优先），标签随活动身份
+    expect(wrapper.get('[data-testid="nav-workbench"]').text()).toContain('商家工作台')
+    expect(wrapper.get('nav[aria-label="功能选择"]').text()).toContain('举报投诉')
+    useAuth().currentUser.value = null
   })
 
   test('注册成功后携带初始身份并进入首次资料完善工作台', async () => {
@@ -198,23 +230,28 @@ describe('App AI 创作中心集成', () => {
   })
 
   // KeepAlive 缓存按 creationContextEpoch 键控（DefaultLayout），账号变化时整体重建——
-  // 与旧版差异：不再断言组件内部选中态（App.test 里 AiCreationCenter 是 mock），
-  // 断言实例重建 + 非商城视图换账号回落 /ai-center，二者合起来即「清除上一账号页面状态」。
-  test('登录账号变化时重建 KeepAlive 缓存，清除上一账号的创作页面状态', async () => {
+  // 换账号回落草场主页（平台门面），且回到工具视图时实例是新建的（上一账号缓存已清）。
+  test('登录账号变化时清除上一账号的创作页面状态', async () => {
     installFetchStub()
     const wrapper = await mountApp()
-    const previousCenter = wrapper.getComponent(AiCreationCenter).vm
 
     // 先离开创作中心（实例进 KeepAlive 缓存）
     await router.push('/article')
     await flushPromises()
     expect(wrapper.findComponent(AiCreationCenter).exists()).toBe(false)
+    const previousArticle = wrapper.getComponent(ArticleCreationView).vm
 
     useAuth().currentUser.value = { id: 'account-b', email: 'b@example.com', role: 'user', roles: [] }
     await flushPromises()
 
-    expect(router.currentRoute.value.path).toBe('/ai-center')
-    expect(wrapper.getComponent(AiCreationCenter).vm).not.toBe(previousCenter)
+    // 非商城视图换账号回落草场主页
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('[data-testid="grassland-home"]').exists()).toBe(true)
+
+    // 回到工具视图：KeepAlive 缓存已按账号重建，不再是上一账号的实例
+    await router.push('/article')
+    await flushPromises()
+    expect(wrapper.getComponent(ArticleCreationView).vm).not.toBe(previousArticle)
     useAuth().currentUser.value = null
   })
 

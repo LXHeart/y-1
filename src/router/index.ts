@@ -2,26 +2,28 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 
 /**
- * 默认布局下的子路由 —— 所有功能页面共享顶部导航与全局弹窗。
+ * 路由结构对齐 PRD §11.2 分层：草场是平台，AI 内容创作中心是内置共享能力。
  *
- * 首屏 AiCreationCenter 保留同步 import（见 DefaultLayout）避免首屏延迟；
- * 其余视图均通过 `() => import(...)` 做代码分割。
+ * - `/` 草场主页：角色感知的落地页（未登录平台介绍 / 商家 / 推荐官 / 平台治理）。
+ * - 工具视图（video/image/article/moments/comedy/video-production）保留路由但不在
+ *   主导航露出——它们是 AI 中心工作流的落地目的地（见 types/navigation.ts 注释）。
+ * - `/home`、`/image-gen` 是旧入口的兜底重定向，外发过的链接不作废。
  */
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: () => import('../layouts/DefaultLayout.vue'),
     children: [
-      { path: '', redirect: '/ai-center' },
+      {
+        path: '',
+        name: 'home',
+        component: () => import('../views/home/GrasslandHomeView.vue'),
+      },
+      { path: 'home', redirect: '/' },
       {
         path: 'ai-center',
         name: 'ai-center',
         component: () => import('../views/ai-center/AiCreationCenter.vue'),
-      },
-      {
-        path: 'home',
-        name: 'home',
-        component: () => import('../views/home/HomeView.vue'),
       },
       {
         path: 'video',
@@ -43,11 +45,7 @@ const routes: RouteRecordRaw[] = [
         name: 'moments',
         component: () => import('../views/moments/MomentsCreationView.vue'),
       },
-      {
-        path: 'image-gen',
-        name: 'image-gen',
-        component: () => import('../views/image-gen/ImageGenerationView.vue'),
-      },
+      { path: 'image-gen', redirect: { name: 'ai-center' } },
       {
         path: 'comedy',
         name: 'comedy',

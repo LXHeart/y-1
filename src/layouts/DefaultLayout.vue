@@ -24,8 +24,8 @@
             </svg>
           </div>
           <div class="brand-copy">
-            <h1 class="brand-title">AI 内容创作中心</h1>
-            <p class="brand-subtitle">按发布平台组织任务、门店与热点创作</p>
+            <h1 class="brand-title">草场</h1>
+            <p class="brand-subtitle">商家 × 推荐官 的种草推广任务撮合平台</p>
           </div>
         </div>
 
@@ -44,11 +44,6 @@
               <path d="M8 3c2.5 0 4.5 2.2 4.5 5s-2 5-4.5 5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
             </svg>
           </button>
-
-          <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite">
-            <span class="auth-pill-label">已登录</span>
-            <strong class="auth-pill-name">{{ currentUser.displayName || currentUser.email }}</strong>
-          </div>
 
           <NotificationBell v-if="isAuthenticated" @navigate="handleNotificationNavigate" />
 
@@ -69,15 +64,54 @@
             <span>设置</span>
           </button>
 
-          <button
-            v-if="isAuthenticated"
-            class="auth-trigger auth-trigger-secondary"
-            type="button"
-            :disabled="loggingOut"
-            @click="handleLogout"
-          >
-            {{ loggingOut ? '退出中…' : '退出登录' }}
-          </button>
+          <!-- 账号菜单（PRD §一：已开通身份在账号菜单中切换，导航随活动身份变化） -->
+          <div v-if="isAuthenticated && currentUser" class="account-menu" ref="accountMenuRef">
+            <button
+              type="button"
+              class="account-trigger"
+              :aria-expanded="accountMenuOpen"
+              aria-haspopup="menu"
+              @click="accountMenuOpen = !accountMenuOpen"
+            >
+              <span class="account-side-badge" :class="{ 'account-side-badge-rec': activeSide === 'recommender' }">
+                {{ activeSideBadge }}
+              </span>
+              <strong class="account-name">{{ currentUser.displayName || currentUser.email }}</strong>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"
+                :style="{ transform: accountMenuOpen ? 'rotate(180deg)' : 'none' }">
+                <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div v-if="accountMenuOpen" class="account-dropdown" role="menu" aria-label="账号菜单">
+              <p class="account-menu-label">切换活动身份</p>
+              <button
+                v-for="option in identityOptions"
+                :key="option.side"
+                type="button"
+                role="menuitemradio"
+                class="account-menu-item"
+                :aria-checked="activeSide === option.side"
+                :disabled="!option.opened || identitySwitching"
+                @click="switchIdentityFromMenu(option.side)"
+              >
+                <span class="account-menu-item-dot" :class="{ on: activeSide === option.side }" aria-hidden="true"></span>
+                {{ option.label }}
+                <span v-if="!option.opened" class="account-menu-item-note">未开通</span>
+                <span v-else-if="activeSide === option.side" class="account-menu-item-note">当前</span>
+              </button>
+              <p v-if="identitySwitchNotice" class="account-menu-notice" role="status">{{ identitySwitchNotice }}</p>
+              <div class="account-menu-divider" aria-hidden="true"></div>
+              <button
+                type="button"
+                role="menuitem"
+                class="account-menu-item"
+                :disabled="loggingOut"
+                @click="handleLogout"
+              >
+                {{ loggingOut ? '退出中…' : '退出登录' }}
+              </button>
+            </div>
+          </div>
           <button v-else class="auth-trigger auth-trigger-primary" type="button" @click="openLoginModal()">
             登录
           </button>
@@ -87,6 +121,33 @@
       <p v-if="authBannerMessage" class="auth-banner">{{ authBannerMessage }}</p>
 
       <nav class="nav-tabs" aria-label="功能选择">
+        <button
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentViewName === 'home' }"
+          :aria-current="currentViewName === 'home' ? 'page' : undefined"
+          type="button"
+          @click="navigateTo('home')"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 7.2L8 2l6 5.2v6.1a1.2 1.2 0 01-1.2 1.2H9.7V10H6.3v4.5H3.2A1.2 1.2 0 012 13.3V7.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+          </svg>
+          主页
+        </button>
+        <button
+          v-if="isAuthenticated"
+          class="nav-tab"
+          :class="{ 'nav-tab-active': currentViewName === 'grassland' }"
+          :aria-current="currentViewName === 'grassland' ? 'page' : undefined"
+          type="button"
+          data-testid="nav-workbench"
+          @click="navigateTo('grassland')"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 13V6.5l6-4 6 4V13" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M6 13V9h4v4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+          {{ workbenchTabLabel }}
+        </button>
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentViewName === 'ai-center' }"
@@ -100,141 +161,6 @@
           </svg>
           AI 内容创作中心
         </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': legacyViews.includes(currentViewName) }"
-          type="button"
-          :aria-expanded="showLegacyTools"
-          aria-controls="legacy-tools-panel"
-          @click="showLegacyTools = !showLegacyTools"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M3 3h4v4H3V3zm6 0h4v4H9V3zM3 9h4v4H3V9zm6 0h4v4H9V9z" stroke="currentColor" stroke-width="1.2"/>
-          </svg>
-          更多工具
-        </button>
-        <div v-if="showLegacyTools" id="legacy-tools-panel" class="legacy-tools-menu" role="group" aria-label="独立工具">
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'home' }"
-          :aria-current="currentViewName === 'home' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('home')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2 7.2L8 2l6 5.2v6.1a1.2 1.2 0 01-1.2 1.2H9.7V10H6.3v4.5H3.2A1.2 1.2 0 012 13.3V7.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-          </svg>
-          首页
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'video' }"
-          :aria-current="currentViewName === 'video' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('video')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="1.5" y="3" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M6.5 6.5l3.5 1.5-3.5 1.5V6.5z" fill="currentColor"/>
-          </svg>
-          视频参考提取
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'image' }"
-          :aria-current="currentViewName === 'image' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('image')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/>
-            <circle cx="5.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M2 11l3-3 2 2 2.5-2.5L14 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          图片评价文案
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'article' }"
-          :aria-current="currentViewName === 'article' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('article')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2.5 2h7.5l3 3v8.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 011 13.5v-10A1.5 1.5 0 012.5 2z" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M5 7.5h6M5 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          爆款文章
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'moments' }"
-          :aria-current="currentViewName === 'moments' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('moments')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="5.5" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
-            <circle cx="11" cy="6.5" r="2.2" stroke="currentColor" stroke-width="1.2"/>
-            <circle cx="6" cy="11.5" r="2.2" stroke="currentColor" stroke-width="1.2"/>
-          </svg>
-          朋友圈创作
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'image-gen' }"
-          :aria-current="currentViewName === 'image-gen' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('image-gen')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M5.5 2h5a1 1 0 011 1v1.5H13a1 1 0 011 1V13a1 1 0 01-1 1H3a1 1 0 01-1-1V5.5a1 1 0 011-1h1.5V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-            <circle cx="8" cy="8.5" r="2" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M5.5 2v2.5M10.5 2v2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          图片生成
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'comedy' }"
-          :aria-current="currentViewName === 'comedy' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('comedy')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 1.5a4.5 4.5 0 00-1 8.9V12a1 1 0 001 0V10.4a4.5 4.5 0 00-0-8.9z" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M5 13.5h6M6.5 15h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          脱口秀创作
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'video-production' }"
-          :aria-current="currentViewName === 'video-production' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('video-production')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2 4.5a2 2 0 012-2h8a2 2 0 012 2v5a2 2 0 01-2 2H4a2 2 0 01-2-2v-5z" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M6 14h4M8 11.5V14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-            <circle cx="8" cy="7" r="1.5" stroke="currentColor" stroke-width="1"/>
-          </svg>
-          视频制作
-        </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'complaints' }"
-          :aria-current="currentViewName === 'complaints' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('complaints')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 2a4.5 4.5 0 00-4.5 4.5c0 1.4.6 2.6 1.6 3.4V12l1.7-1h2.4l1.7 1V9.9a4.5 4.5 0 00-.9-7.9A4.5 4.5 0 008 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-            <path d="M6.2 6.5h3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          举报投诉
-        </button>
-        </div>
         <button
           class="nav-tab"
           :class="{ 'nav-tab-active': currentViewName === 'commerce' }"
@@ -251,16 +177,16 @@
         <button
           v-if="isAuthenticated"
           class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'grassland' }"
-          :aria-current="currentViewName === 'grassland' ? 'page' : undefined"
+          :class="{ 'nav-tab-active': currentViewName === 'complaints' }"
+          :aria-current="currentViewName === 'complaints' ? 'page' : undefined"
           type="button"
-          @click="navigateTo('grassland')"
+          @click="navigateTo('complaints')"
         >
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2 13V6.5l6-4 6 4V13" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-            <path d="M6 13V9h4v4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <path d="M8 2a4.5 4.5 0 00-4.5 4.5c0 1.4.6 2.6 1.6 3.4V12l1.7-1h2.4l1.7 1V9.9a4.5 4.5 0 00-.9-7.9A4.5 4.5 0 008 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <path d="M6.2 6.5h3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
           </svg>
-          草场
+          举报投诉
         </button>
         <button
           v-if="isAuthenticated && (hasBackendRole('platform_admin') || hasBackendRole('customer_service'))"
@@ -300,11 +226,9 @@
             :is="Component"
             v-bind="currentViewProps"
             @open-view="handleOpenView"
-            @create-article="handleCreateArticleFromTopic"
-            @create-comedy="handleCreateComedyFromTopic"
             @open-creation="handleOpenCreation"
             @start-workflow="handleStartWorkflow"
-            @request-login="openLoginModal('任务和门店资料按账号隔离，请先登录。')"
+            @request-login="openLoginModal('请先登录后继续。')"
             @open-grassland="handleOpenGrassland"
             @open-dispute="handleOpenDispute"
           />
@@ -350,7 +274,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, provide, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import NotificationBell from '../components/NotificationBell.vue'
 
@@ -358,38 +282,36 @@ const AnalysisSettingsModal = defineAsyncComponent(() => import('../components/A
 const CreditsPackagesModal = defineAsyncComponent(() => import('../components/CreditsPackagesModal.vue'))
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
 
+import { useActiveIdentity, type IdentitySide } from '../composables/useActiveIdentity'
 import { useAnalysisSettings } from '../composables/useAnalysisSettings'
 import { useAuth } from '../composables/useAuth'
+import { useCredits } from '../composables/useCredits'
+import { useGrassland } from '../composables/useGrassland'
 import { useHomepageSettings } from '../composables/useHomepageSettings'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
-import { useCredits } from '../composables/useCredits'
 import type { LoginFormValues, RegisterFormValues } from '../types/auth'
 import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
+import type { AppView } from '../types/navigation'
 import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from '../types/settings'
 
-type AppView = 'ai-center' | 'home' | 'video' | 'image' | 'article' | 'moments' | 'image-gen' | 'comedy' | 'video-production' | 'complaints' | 'commerce' | 'grassland' | 'ops' | 'admin'
 type HomeFeatureView = Exclude<AppView, 'home'>
 const route = useRoute()
 const router = useRouter()
 
-const currentViewName = computed<AppView>(() => (route.name as AppView) || 'ai-center')
+const currentViewName = computed<AppView>(() => (route.name as AppView) || 'home')
 const creationContextEpoch = ref(0)
-const showLegacyTools = ref(false)
 /**
  * 整页加载（刷新/收藏深链）时 loadCurrentUser 会让 currentUser 走一遍 null→id，
- * 与会话内「登录/换账号」无法只凭前后值区分——不区分就会把任何深链拉回 /ai-center。
+ * 与会话内「登录/换账号」无法只凭前后值区分——不区分就会把任何深链拉回主页。
  * 首次引导完成后才允许账号变化触发的回落（视觉审查 ⑱）。
  */
 const sessionBootstrapped = ref(false)
-const legacyViews: readonly AppView[] = ['home', 'video', 'image', 'article', 'moments', 'image-gen', 'comedy', 'video-production']
 const creationEntry = ref<CreationEntry | null>(null)
 const creationHandoff = ref<CreationHandoff | null>(null)
 let creationRevision = Date.now()
 const grasslandAnchor = ref('')
 const grasslandNavigationTarget = ref<NotificationLinkTarget | null>(null)
-const articleInitialTopic = ref('')
-const comedyInitialTopic = ref('')
 const showSettingsModal = ref(false)
 const showCreditsModal = ref(false)
 const showLoginModal = ref(false)
@@ -406,6 +328,38 @@ const {
   sendVerificationCode, clearSendCodeError, sendCodeError,
   loadCurrentUser, login, register, logout,
 } = useAuth()
+
+/** 草场域请求封装：账号菜单身份切换走它（激活经后端校验）。 */
+const grassland = useGrassland()
+const {
+  activeSide, hasMerchantIdentity, hasRecommenderIdentity, identitiesLoaded,
+  loadAccountIdentity, activateIdentitySide, reset: resetActiveIdentity,
+} = useActiveIdentity()
+
+const accountMenuOpen = ref(false)
+const accountMenuRef = ref<HTMLElement | null>(null)
+const identitySwitching = ref(false)
+const identitySwitchNotice = ref('')
+
+const identityOptions = computed<ReadonlyArray<{ side: IdentitySide; label: string; opened: boolean }>>(() => [
+  { side: 'merchant', label: '商家身份', opened: hasMerchantIdentity.value },
+  { side: 'recommender', label: '推荐官身份', opened: hasRecommenderIdentity.value },
+])
+
+/** 工作台导航标签随活动身份变化（PRD：导航、工作台与默认数据范围随活动身份切换）。 */
+const workbenchTabLabel = computed(() => {
+  if (hasMerchantIdentity.value && hasRecommenderIdentity.value) {
+    return activeSide.value === 'merchant' ? '商家工作台' : '推荐官工作台'
+  }
+  if (hasRecommenderIdentity.value) return '推荐官工作台'
+  return '工作台'
+})
+
+const activeSideBadge = computed(() => {
+  if (!identitiesLoaded.value) return '·'
+  if (hasRecommenderIdentity.value && !hasMerchantIdentity.value) return '荐'
+  return activeSide.value === 'recommender' ? '荐' : '商'
+})
 
 const { currentBalance, loadBalance: loadCreditBalance } = useCredits()
 
@@ -453,10 +407,10 @@ watch(authLoadError, (message) => {
 onMounted(() => {
   const query = new URLSearchParams(window.location.search)
   if (query.get('view') === 'commerce' || query.has('package')) {
-    // 兜底 path 判断必须包含 /ai-center：router 把 / 默认重定向到 /ai-center 的守卫
-    // 先于本 onMounted 执行（e2e 实测深链曾因此静默落在创作中心）。
+    // 兜底 path 判断必须覆盖 `/` 与 `/ai-center`：router 的默认路由守卫先于本 onMounted
+    // 执行（e2e 实测深链曾因此静默落在草场主页/AI 中心）。
     // query 原样带上——ConsumerCommerceView 从 URL 读 package/recommender（归因参数），丢了即断链。
-    if (route.path === '/' || route.path === '' || route.path === '/ai-center') {
+    if (['/', '', '/ai-center', '/home'].includes(route.path)) {
       router.replace({ name: 'commerce', query: { ...route.query } })
     }
   }
@@ -470,24 +424,49 @@ onMounted(() => {
     sessionBootstrapped.value = true
     if (isAuthenticated.value) void loadCreditBalance()
   })
+  document.addEventListener('pointerdown', onDocumentPointerDown)
 })
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+})
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!accountMenuOpen.value) return
+  if (accountMenuRef.value?.contains(event.target as Node)) return
+  accountMenuOpen.value = false
+  identitySwitchNotice.value = ''
+}
 
 watch(isAuthenticated, (authed) => {
   if (authed) void loadCreditBalance()
 })
 
+/**
+ * 账号变化（整页加载、登录、换账号、登出）：重置并按新账号装载活动身份。
+ * immediate：整页加载时布局挂载可能晚于 loadCurrentUser 完成（currentUser 已就位、
+ * 不再有 null→id 翻转），不 immediate 会漏装载、导航拿不到身份。
+ * 主导航标签、账号菜单与草场主页的角色入口都读这组全局状态。
+ */
 watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
   if (accountId !== previousAccountId) {
     creationEntry.value = null
     creationHandoff.value = null
     if (sessionBootstrapped.value && currentViewName.value !== 'commerce') {
-      router.push('/ai-center')
+      router.push('/')
     }
     creationContextEpoch.value += 1
+    resetActiveIdentity()
+    accountMenuOpen.value = false
+    identitySwitchNotice.value = ''
+    if (accountId) void loadAccountIdentity(grassland)
   }
-})
+}, { immediate: true })
 
-watch(currentViewName, () => { showLegacyTools.value = false })
+watch(currentViewName, () => {
+  accountMenuOpen.value = false
+  identitySwitchNotice.value = ''
+})
 
 const themeToggleTitle = computed(() => {
   if (themeMode.value === 'light') return '浅色模式 — 点击切换'
@@ -539,20 +518,27 @@ function handleOpenGrassland(): void {
   router.push({ name: 'grassland' })
 }
 
-function handleCreateArticleFromTopic(topic: string): void {
-  articleInitialTopic.value = topic
-  router.push({ name: 'article' })
-}
-
-function handleCreateComedyFromTopic(topic: string): void {
-  comedyInitialTopic.value = topic
-  router.push({ name: 'comedy' })
-}
-
-provide('articleInitialTopic', articleInitialTopic)
-provide('comedyInitialTopic', comedyInitialTopic)
 provide('grasslandAnchor', grasslandAnchor)
 provide('grasslandNavigationTarget', grasslandNavigationTarget)
+
+/** 账号菜单切换活动身份：仅已开通身份；失败展示后端错误，成功即关菜单（导航标签随之更新）。 */
+async function switchIdentityFromMenu(side: IdentitySide): Promise<void> {
+  if (identitySwitching.value || activeSide.value === side) {
+    accountMenuOpen.value = false
+    return
+  }
+  identitySwitching.value = true
+  identitySwitchNotice.value = ''
+  const result = await activateIdentitySide(side, grassland)
+  identitySwitching.value = false
+  if (result === 'ok') {
+    accountMenuOpen.value = false
+    return
+  }
+  identitySwitchNotice.value = result === 'not-opened'
+    ? '该身份尚未开通：进入工作台完成开通后再切换。'
+    : (grassland.error.value || '切换失败，请稍后重试。')
+}
 
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
   router.push({ name: target.view })
@@ -626,7 +612,8 @@ async function handleLogout(): Promise<void> {
   showSettingsModal.value = false
   creationEntry.value = null
   creationHandoff.value = null
-  router.push({ name: 'ai-center' })
+  accountMenuOpen.value = false
+  router.push({ name: 'home' })
   authBannerMessage.value = '你已退出登录。'
 }
 
@@ -671,9 +658,6 @@ async function handleOpenSettings(): Promise<void> {
 .brand-title { margin: 0; font-size: var(--text-display); font-weight: 800; letter-spacing: -0.04em; color: var(--color-text); line-height: 1.1; }
 .brand-subtitle { margin: 0; color: var(--color-text-muted); font-size: 0.84rem; line-height: 1.4; letter-spacing: 0.01em; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.auth-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--color-border); background: var(--surface-page); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-.auth-pill-label { color: var(--color-text-muted); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-.auth-pill-name { color: var(--color-text); font-size: 0.84rem; font-weight: 500; }
 .credits-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: none; background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(99, 102, 241, 0.1)); color: var(--color-accent-2); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
 .credits-badge:hover { background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(99, 102, 241, 0.18)); box-shadow: 0 0 24px rgba(139, 92, 246, 0.2); transform: translateY(-1px); }
 .settings-trigger, .auth-trigger, .theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-height: 38px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--color-border); background: var(--surface-card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--color-text-secondary); cursor: pointer; font-size: 0.84rem; font-weight: 500; letter-spacing: 0.01em; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
@@ -682,8 +666,26 @@ async function handleOpenSettings(): Promise<void> {
 .auth-trigger-primary { background: var(--gradient-accent); border: none; color: #ffffff; font-weight: 600; box-shadow: var(--shadow-glow); }
 .auth-trigger-primary:hover { box-shadow: var(--shadow-glow-strong); transform: translateY(-2px) scale(1.02); color: #ffffff; }
 .auth-banner { margin: 0; padding: 12px 16px; border: 1px solid var(--color-border-accent); border-radius: 14px; background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), rgba(99, 102, 241, 0.04)); color: var(--color-text-secondary); font-size: 0.86rem; animation: fade-in var(--duration-normal) var(--ease-out); }
+
+/* 账号菜单（身份切换 + 退出登录） */
+.account-menu { position: relative; }
+.account-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; max-width: 260px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--color-border); background: var(--surface-card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--color-text); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out); }
+.account-trigger:hover { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
+.account-side-badge { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(139, 92, 246, 0.16); color: var(--color-accent-2); font-size: 0.72rem; font-weight: 700; }
+.account-side-badge-rec { background: rgba(16, 185, 129, 0.16); color: #059669; }
+.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 600; }
+.account-dropdown { position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; display: grid; gap: 2px; min-width: 240px; padding: 8px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--shadow-elevated); }
+.account-menu-label { margin: 2px 8px 6px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); }
+.account-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 10px; border: none; border-radius: 10px; background: transparent; color: var(--color-text); font-size: 0.86rem; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
+.account-menu-item:hover:not(:disabled) { background: var(--color-surface-hover); }
+.account-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.account-menu-item-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--color-text-muted); flex-shrink: 0; }
+.account-menu-item-dot.on { border-color: var(--color-accent-2); background: var(--color-accent-2); }
+.account-menu-item-note { margin-left: auto; font-size: 0.72rem; color: var(--color-text-muted); }
+.account-menu-notice { margin: 4px 8px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--color-danger) 8%, transparent); color: var(--color-danger); font-size: 0.78rem; line-height: 1.5; }
+.account-menu-divider { height: 1px; margin: 6px 4px; background: var(--color-border); }
+
 .nav-tabs { position: relative; display: flex; gap: 4px; padding: 5px; border-radius: 16px; background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--color-border); width: fit-content; }
-.legacy-tools-menu { position: absolute; z-index: 20; top: calc(100% + 8px); left: 0; display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 4px; width: min(620px, calc(100vw - 40px)); padding: 6px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); box-shadow: var(--shadow-elevated); }
 .nav-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 16px; border: none; border-radius: 12px; background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: 0.86rem; font-weight: 500; white-space: nowrap; position: relative; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .nav-tab:hover { color: var(--color-text-secondary); background: rgba(139, 92, 246, 0.06); }
 .nav-tab-active { background: var(--gradient-accent); color: #ffffff; font-weight: 600; box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3); }
@@ -693,7 +695,6 @@ async function handleOpenSettings(): Promise<void> {
   .header-row { flex-direction: column; gap: var(--space-md); align-items: flex-start; }
   .header-actions { width: 100%; justify-content: flex-start; }
   .nav-tabs { width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .legacy-tools-menu { position: fixed; top: auto; right: 10px; bottom: 10px; left: 10px; width: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .nav-tabs::-webkit-scrollbar { display: none; }
 }
 @media (max-width: 560px) {
@@ -701,7 +702,6 @@ async function handleOpenSettings(): Promise<void> {
   .brand-logo { width: 28px; height: 28px; }
   .brand-title { font-size: 1.2rem; }
   .brand-subtitle { font-size: 0.8rem; }
-  .auth-pill { width: 100%; justify-content: space-between; }
   .nav-tab { padding: 0 12px; min-height: 36px; font-size: 0.82rem; }
 }
 </style>
