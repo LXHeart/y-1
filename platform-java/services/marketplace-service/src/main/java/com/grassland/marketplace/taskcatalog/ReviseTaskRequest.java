@@ -39,7 +39,7 @@ public record ReviseTaskRequest(
         if (freebieDepositCents != null && freebieDepositCents < 0) {
             throw new IllegalArgumentException("freebieDepositCents must be >= 0");
         }
-        TaskCatalogFundingRules.validate(requirements, freebieDepositCents);
+        TaskCatalogFundingRules.validate(requirements, freebieDepositCents, bountyCents);
         if (!TaskRequirements.isValidContentForm(contentForm)) {
             throw new IllegalArgumentException("内容形式必须是 image / video / article / interaction");
         }

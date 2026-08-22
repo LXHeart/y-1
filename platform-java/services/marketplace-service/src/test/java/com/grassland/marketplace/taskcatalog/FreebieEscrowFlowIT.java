@@ -76,19 +76,43 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 
     // ---------- 发布契约（XOR + funding 闸门） ----------
 
-    // ---------- 任务书 #46 组合模式：bounty + deposit 可同设 ----------
+    // ---------- 付费方式三选一（PRD §2.2 2026-08-22 决策，推翻 #46 组合放开） ----------
 
     @Test
-    void combinedBountyAndDepositPublishes() {
+    void combinedBountyAndDepositRejected() {
         String org = UUID.randomUUID().toString();
         client().post().uri("/api/tasks")
                 .header(H, sign(UUID.randomUUID().toString(), "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("organizationId", org, "title", "组合资金任务",
                         "bountyCents", 500L, "freebieDepositCents", 100L))
-                .exchange().expectStatus().isCreated().expectBody()
-                .jsonPath("$.data.bountyCents").isEqualTo(500L)
-                .jsonPath("$.data.freebieDepositCents").isEqualTo(100L);
+                .exchange().expectStatus().isBadRequest().expectBody()
+                .jsonPath("$.error").isEqualTo("付费方式只能三选一：霸王餐押金与赏金不能同时设置");
+    }
+
+    @Test
+    void partialUpdateCannotSneakInDepositOnBountyTask() {
+        // 部分更新 null=保留现值：现有赏金任务只 PUT 押金 → 合并视图仍是组合，须拒绝
+        String org = UUID.randomUUID().toString();
+        String merchant = UUID.randomUUID().toString();
+        Map<String, Object> resp = client().post().uri("/api/tasks")
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("organizationId", org, "title", "赏金任务", "bountyCents", 500L))
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) resp.get("data");
+        String taskId = (String) data.get("id");
+        int version = (Integer) data.get("version");
+        db.sql("UPDATE task SET status = 'draft' WHERE id = CAST(:id AS uuid)").bind("id", taskId).then().block();
+
+        client().put().uri("/api/tasks/" + taskId)
+                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("title", "夹带押金", "freebieDepositCents", 100L,
+                        "expectedVersion", version))
+                .exchange().expectStatus().isBadRequest().expectBody()
+                .jsonPath("$.error").isEqualTo("付费方式只能三选一：霸王餐押金与赏金不能同时设置");
     }
 
     @Test
@@ -419,18 +443,22 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 
     // ---------- helpers ----------
 
+    /**
+     * 存量组合任务模拟：三选一契约下 API 已建不出组合，改押金任务 + SQL 补赏金——
+     * 两腿结算机器（#46 saga）仍须正确处理存量数据，直到其自然终态。
+     */
     private String publishCombinedTask(String merchant, String org, long bountyCents, long depositCents) {
         Map<String, Object> resp = client().post().uri("/api/tasks")
                 .header(H, sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("organizationId", org, "title", "组合资金任务",
-                        "bountyCents", bountyCents, "freebieDepositCents", depositCents))
+                .bodyValue(Map.of("organizationId", org, "title", "存量组合任务",
+                        "freebieDepositCents", depositCents))
                 .exchange().expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
-        db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()) "
+        db.sql("UPDATE task SET bounty_cents = :bounty, status = 'published', published_at = COALESCE(published_at, now()) "
                         + "WHERE id = CAST(:id AS uuid)")
-                .bind("id", taskId).then().block();
+                .bind("id", taskId).bind("bounty", bountyCents).then().block();
         return taskId;
     }
 

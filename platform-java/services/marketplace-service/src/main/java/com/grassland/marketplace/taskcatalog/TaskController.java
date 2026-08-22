@@ -141,8 +141,10 @@ public class TaskController {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTask(id, caller, "draft")
                         .flatMap(current -> transactions.transactional(
-                                enforceInteractionBinding(body.contentForm(),
-                                                body.requirements() == null ? current.requirements() : body.requirements())
+                                enforceFundingSingleMode(current, body.requirements(), body.bountyCents(),
+                                                body.freebieDepositCents())
+                                        .then(enforceInteractionBinding(body.contentForm(),
+                                                body.requirements() == null ? current.requirements() : body.requirements()))
                                         .then(enforceLadderBudget(body.requirements() == null
                                                 ? current.requirements() : body.requirements(), body.bountyCents()))
                                         .then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
@@ -285,6 +287,8 @@ public class TaskController {
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "published")
                         .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
                                         body.freebieDepositCents())
+                                .then(enforceFundingSingleMode(access.task(), body.requirements(), body.bountyCents(),
+                                                body.freebieDepositCents()))
                                 .then(enforceInteractionBinding(body.contentForm(),
                                                 body.requirements() == null ? access.task().requirements() : body.requirements()))
                                 .then(enforceLadderBudget(body.requirements() == null
@@ -344,6 +348,24 @@ public class TaskController {
      * contentForm=null 表示「清空内容形式」，须与现行 requirements 合并后再判
      * {@code contentForm=interaction ⇔ requirements.interaction 非空}。
      */
+    /**
+     * 付费方式三选一（PRD §2.2 2026-08-22 决策）的合并视图校验：update/revise 的资金字段
+     * null=保留现值，请求体构造器里的 {@link TaskCatalogFundingRules} 看不到现值，
+     * 部分更新可夹带出组合（如现有赏金任务只 PUT 押金）。这里按「现值 ∪ 请求值」终判。
+     */
+    private Mono<Void> enforceFundingSingleMode(Task current, TaskRequirements requirements, Long bountyCents,
+                                                Long freebieDepositCents) {
+        try {
+            TaskCatalogFundingRules.validate(
+                    requirements == null ? current.requirements() : requirements,
+                    freebieDepositCents == null ? current.freebieDepositCents() : freebieDepositCents,
+                    bountyCents == null ? current.bountyCents() : bountyCents);
+        } catch (IllegalArgumentException error) {
+            return Mono.error(new MarketplaceException(400, error.getMessage()));
+        }
+        return Mono.empty();
+    }
+
     private Mono<Void> enforceInteractionBinding(String contentForm, TaskRequirements mergedRequirements) {
         try {
             TaskRequirements.validateInteractionBinding(contentForm, mergedRequirements);
