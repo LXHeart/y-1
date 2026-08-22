@@ -322,7 +322,7 @@ describe('GrasslandWorkbench 登录态', () => {
     await flushPromises()
 
     const tabs = wrapper.findAll('#gl-panel-recommender .gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['我的草场', '任务大厅', '我的履约', '账号与合规'])
+    expect(tabs.map((t) => t.text())).toEqual(['主页与分享', '任务大厅', '我的履约', '收益与结算', '账号与合规'])
     // 深链恢复：任务大厅页签激活
     expect(tabs[1].attributes('aria-selected')).toBe('true')
     // 任务大厅锚点 id 就位（此前 scrollBlockIntoView('gl-task-hall') 一直空滚——顺手修复）

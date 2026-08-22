@@ -176,7 +176,7 @@ async function openOtherIdentity(target: 'merchant' | 'recommender'): Promise<vo
 
 // 工作台子页签：两侧各自分垄（账号与合规为共享页签，标记只写一份、渲染在两侧页签位之后），
 // v-show 常驻 DOM（锚点滚动与既有断言不破坏）
-type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'account' | 'home' | 'hall' | 'engagements'
+type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'account' | 'home' | 'hall' | 'engagements' | 'earnings'
 interface SubTab { id: SubTabId; label: string }
 const MERCHANT_TABS: readonly SubTab[] = [
   { id: 'tasks', label: '任务与报名' },
@@ -186,9 +186,10 @@ const MERCHANT_TABS: readonly SubTab[] = [
   { id: 'account', label: '账号与合规' },
 ]
 const RECOMMENDER_TABS: readonly SubTab[] = [
-  { id: 'home', label: '我的草场' },
+  { id: 'home', label: '主页与分享' },
   { id: 'hall', label: '任务大厅' },
   { id: 'engagements', label: '我的履约' },
+  { id: 'earnings', label: '收益与结算' },
   { id: 'account', label: '账号与合规' },
 ]
 const subTab = ref<SubTabId>('tasks')
@@ -208,7 +209,7 @@ const ANCHOR_TAB: Readonly<Record<'merchant' | 'recommender', Readonly<Record<st
     'gl-invitations': 'account',
   },
   recommender: {
-    'gl-wallet': 'home',
+    'gl-wallet': 'earnings',
     'gl-task-hall': 'hall',
     'gl-engagements': 'engagements',
     'gl-invitations': 'account',
@@ -855,10 +856,11 @@ watch(grasslandNavigationTarget, async (target) => {
         >{{ tab.label }}</button>
       </nav>
 
-      <!-- 子页签 我的草场：主页、分享、收款 -->
-      <section v-show="subTab === 'home'" class="gl-zone" aria-label="我的草场">
+      <!-- 子页签 主页与分享：推荐官资料 + 推广二维码 -->
+      <section v-show="subTab === 'home'" class="gl-zone" aria-label="主页与分享">
         <div class="gl-zone-head">
-          <h3 class="gl-zone-title">我的草场</h3>
+          <h3 class="gl-zone-title">主页与分享</h3>
+          <p class="gl-zone-note">推荐官资料、内容风格与推广二维码</p>
         </div>
         <div class="gl-zone-body">
           <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
@@ -872,17 +874,8 @@ watch(grasslandNavigationTarget, async (target) => {
           </article>
 
           <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
-          <article id="gl-wallet" class="gl-tile gl-tile-wide">
-            <MyWalletCard />
-          </article>
 
           <!-- 任务书 #29+#30 #29：收入统计（按月/按任务）+ 历史任务 -->
-          <article class="gl-tile gl-tile-wide">
-            <RecommenderIncomeStatsCard />
-          </article>
-          <article class="gl-tile gl-tile-wide">
-            <RecommenderHistoryCard />
-          </article>
         </div>
       </section>
 
@@ -931,6 +924,7 @@ watch(grasslandNavigationTarget, async (target) => {
       <section v-show="subTab === 'engagements'" class="gl-zone" aria-label="我的履约与争议">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">我的履约与争议</h3>
+          <p class="gl-zone-note">进行中的履约、争议与历史任务记录</p>
         </div>
         <div class="gl-zone-body">
           <article id="gl-engagements" class="gl-tile gl-tile-wide">
@@ -974,6 +968,27 @@ watch(grasslandNavigationTarget, async (target) => {
                 />
               </div>
             </template>
+          </article>
+
+          <!-- 历史任务记录：回答「我做过什么」（PRD §3.4 个人主页），与履约同垄 -->
+                    <article class="gl-tile gl-tile-wide">
+            <RecommenderHistoryCard />
+          </article>
+        </div>
+      </section>
+
+      <!-- 子页签 收益与结算：钱包余额与收入统计（通知锚点 gl-wallet 在此） -->
+      <section v-show="subTab === 'earnings'" class="gl-zone" aria-label="收益与结算">
+        <div class="gl-zone-head">
+          <h3 class="gl-zone-title">收益与结算</h3>
+          <p class="gl-zone-note">钱包余额与收入统计；佣金按任务结算进钱包</p>
+        </div>
+        <div class="gl-zone-body">
+                    <article id="gl-wallet" class="gl-tile gl-tile-wide">
+            <MyWalletCard />
+          </article>
+                    <article class="gl-tile gl-tile-wide">
+            <RecommenderIncomeStatsCard />
           </article>
         </div>
       </section>
