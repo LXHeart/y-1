@@ -1,6 +1,6 @@
 <template>
-  <div class="home-view fade-in">
-    <section class="hero glass-card">
+  <div class="home-view fade-in gl-field">
+    <section class="gl-zone hero">
       <div class="hero-copy">
         <p class="eyebrow">创作灵感</p>
         <h2 class="hero-title">从热点与灵感出发，进入 AI 内容创作中心。</h2>
@@ -18,28 +18,34 @@
       </div>
     </section>
 
-    <section class="feature-grid" aria-label="创作入口">
-      <button
-        v-for="feature in features"
-        :key="feature.view"
-        class="feature-card glass-card"
-        :class="{ 'feature-card-primary': feature.primary }"
-        type="button"
-        @click="emit('open-view', feature.view)"
-      >
-        <div class="feature-head">
-          <p class="eyebrow">{{ feature.eyebrow }}</p>
-          <span class="feature-badge" :class="{ 'feature-badge-primary': feature.primary }">{{ feature.primary ? '主入口' : '进入' }}</span>
-        </div>
-        <h3 class="feature-title">{{ feature.title }}</h3>
-        <p class="feature-copy">{{ feature.copy }}</p>
-        <ul class="feature-points">
-          <li v-for="point in feature.points" :key="point">{{ point }}</li>
-        </ul>
-      </button>
+    <section class="gl-zone" aria-label="创作入口">
+      <div class="gl-zone-head">
+        <h3 class="gl-zone-title">创作入口</h3>
+        <p class="gl-zone-note">六条创作链路，主路径是 AI 中心</p>
+      </div>
+      <div class="gl-zone-body feature-grid">
+        <button
+          v-for="feature in features"
+          :key="feature.view"
+          class="gl-tile gl-tile-button feature-card"
+          :class="{ 'feature-card-primary': feature.primary }"
+          type="button"
+          @click="emit('open-view', feature.view)"
+        >
+          <div class="feature-head">
+            <p class="eyebrow">{{ feature.eyebrow }}</p>
+            <span class="feature-badge" :class="{ 'feature-badge-primary': feature.primary }">{{ feature.primary ? '主入口' : '进入' }}</span>
+          </div>
+          <h3 class="feature-title">{{ feature.title }}</h3>
+          <p class="feature-copy">{{ feature.copy }}</p>
+          <ul class="feature-points">
+            <li v-for="point in feature.points" :key="point">{{ point }}</li>
+          </ul>
+        </button>
+      </div>
     </section>
 
-    <section class="hot-panel glass-card">
+    <section class="gl-zone hot-panel">
       <header class="card-head">
         <div class="card-head-row">
           <div>
@@ -47,20 +53,20 @@
             <h2 class="card-title">热门话题</h2>
           </div>
           <div class="hot-refresh-group">
-            <span v-if="hotFetchedNote" class="hot-fetched-note">{{ hotFetchedNote }}</span>
-            <button class="btn-secondary btn-sm" type="button" :disabled="loading" @click="loadHotItems()">
+            <span v-if="hotFetchedNote" class="hot-fetched-note gl-num">{{ hotFetchedNote }}</span>
+            <button class="btn-sm" type="button" :disabled="loading" @click="loadHotItems()">
               {{ loading ? '刷新中…' : '刷新' }}
             </button>
           </div>
         </div>
-        <p class="field-note">热点数据由服务端拉取并归一化展示，可作为创作灵感与选题参考，一键带入 AI 中心创作。</p>
+        <p class="gl-zone-note">热点数据由服务端拉取并归一化展示，可作为创作灵感与选题参考，一键带入 AI 中心创作。</p>
       </header>
 
       <div v-if="loading && !activeItems.length" class="hot-skeleton-list" aria-hidden="true">
         <div v-for="index in 5" :key="index" class="hot-skeleton"></div>
       </div>
 
-      <section v-else-if="error" class="empty-card hot-empty">
+      <section v-else-if="error" class="gl-tile hot-empty">
         <h3 class="empty-title">热点暂时不可用</h3>
         <p class="empty-copy">{{ error }}</p>
       </section>
@@ -96,22 +102,22 @@
             @click="activePlatform = group.platform"
           >
             {{ group.label }}
-            <span class="hot-tab-count">{{ group.items.length }}</span>
+            <span class="hot-tab-count gl-num">{{ group.items.length }}</span>
           </button>
         </div>
 
         <ol class="hot-list">
           <li v-for="item in activeItems" :key="`${item.rank}-${item.title}`" class="hot-item">
-            <div class="hot-rank">{{ item.rank }}</div>
+            <div class="hot-rank gl-num">{{ item.rank }}</div>
             <div class="hot-main">
               <a v-if="item.url" class="hot-title-link" :href="item.url" target="_blank" rel="noreferrer">
                 {{ item.title }}
               </a>
               <p v-else class="hot-title">{{ item.title }}</p>
               <div class="hot-meta-row">
-                <span v-if="item.hotValue" class="hot-value">热度 {{ item.hotValue }}</span>
+                <span v-if="item.hotValue" class="hot-value gl-num">热度 {{ item.hotValue }}</span>
                 <span v-if="item.sourceLabel" class="hot-source">{{ item.sourceLabel }}</span>
-                <span v-if="hotRange !== 'live' && item.occurrences" class="hot-source">出现 {{ item.occurrences }} 次</span>
+                <span v-if="hotRange !== 'live' && item.occurrences" class="hot-source gl-num">出现 {{ item.occurrences }} 次</span>
               </div>
             </div>
             <img v-if="item.cover" class="hot-cover" :src="item.cover" :alt="item.title">
@@ -122,7 +128,7 @@
         </ol>
       </template>
 
-      <section v-else class="empty-card hot-empty">
+      <section v-else class="gl-tile hot-empty">
         <h3 class="empty-title">{{ hotRange === 'live' ? '暂无热点数据' : '暂无历史归档' }}</h3>
         <p class="empty-copy">{{ hotRange === 'live'
           ? '当前没有可展示的热点内容，稍后可点击刷新重试。'
@@ -281,6 +287,7 @@ onMounted(() => {
   gap: var(--space-lg);
 }
 
+/* Hero：田垄条带内的两栏主张区 */
 .hero {
   display: grid;
   gap: var(--space-lg);
@@ -288,16 +295,14 @@ onMounted(() => {
   align-items: stretch;
 }
 
-.hero-copy,
-.hot-panel,
-.card-head {
+.hero-copy {
   display: grid;
   gap: var(--space-sm);
 }
 
 .eyebrow {
   margin: 0;
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-text-muted);
@@ -315,6 +320,7 @@ onMounted(() => {
 .hero-title {
   font-size: clamp(1.7rem, 2.4vw, 2.8rem);
   max-width: 12ch;
+  font-weight: 800;
 }
 
 .hero-note,
@@ -329,14 +335,6 @@ onMounted(() => {
   font-size: 0.95rem;
 }
 
-.field-note {
-  margin: 0;
-  max-width: 55ch;
-  color: var(--color-text-muted);
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-
 .hot-refresh-group {
   display: flex;
   align-items: center;
@@ -345,7 +343,7 @@ onMounted(() => {
 
 .hot-fetched-note {
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .hero-meta {
@@ -359,9 +357,9 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   min-height: 56px;
-  padding: 0 16px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-page);
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--surface-furrow);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
 }
@@ -377,31 +375,15 @@ onMounted(() => {
   background: var(--color-accent-2);
 }
 
+/* 入口磁贴排布（视觉走全局 .gl-tile / .gl-tile-button） */
 .feature-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .feature-card {
-  display: grid;
-  gap: var(--space-md);
-  text-align: left;
-  cursor: pointer;
-  border: 1px solid var(--color-border);
-  background: var(--gradient-surface);
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
-}
-
-.feature-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--color-border-hover);
-  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
-  box-shadow: var(--shadow-elevated);
+  gap: var(--space-sm);
 }
 
 .feature-card-primary {
@@ -412,7 +394,7 @@ onMounted(() => {
 .feature-badge-primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: white;
+  color: var(--color-on-accent);
 }
 
 .feature-head,
@@ -433,11 +415,12 @@ onMounted(() => {
   background: var(--color-surface-highlight);
   border: 1px solid var(--color-border-accent);
   color: var(--color-text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .feature-title {
-  font-size: 1.18rem;
+  font-size: var(--text-lg);
+  font-weight: 700;
 }
 
 .feature-copy {
@@ -454,41 +437,23 @@ onMounted(() => {
   font-size: 0.84rem;
 }
 
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-}
-
-.btn-secondary:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
 .btn-sm {
-  min-height: 34px;
-  padding: 0 12px;
-  font-size: 0.82rem;
+  min-height: 30px;
+  padding: 0 var(--space-sm);
+  font-size: var(--text-xs);
 }
 
+.card-head {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.card-title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+/* 时间范围/平台页签：胶囊形态（按钮基座走全局系统） */
 .hot-range-switch {
   display: flex;
   gap: 6px;
@@ -496,13 +461,9 @@ onMounted(() => {
 }
 
 .hot-range-tab {
-  padding: 4px 14px;
-  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0 14px;
 }
 
 .hot-range-tab-active {
@@ -512,15 +473,10 @@ onMounted(() => {
   font-weight: 600;
 }
 
-.hot-range-tab:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .hot-range-note {
   margin: 0 0 8px;
   color: var(--color-text-muted);
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
 }
 
 .hot-tabs {
@@ -536,37 +492,19 @@ onMounted(() => {
 }
 
 .hot-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 0 14px;
   border-radius: 999px;
-  background: var(--surface-page);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
   font-size: 0.84rem;
-  cursor: pointer;
   white-space: nowrap;
-  transition:
-    background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out);
-}
-
-.hot-tab:hover {
-  background: var(--color-surface-hover);
-  color: var(--color-text);
 }
 
 .hot-tab-active {
-  background: var(--surface-card);
   border-color: var(--color-border-accent);
+  background: var(--surface-furrow);
   color: var(--color-text);
 }
 
 .hot-tab-count {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   opacity: 0.62;
 }
 
@@ -577,7 +515,7 @@ onMounted(() => {
 
 .hot-skeleton {
   height: 76px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.03) 100%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
@@ -585,21 +523,21 @@ onMounted(() => {
 
 .hot-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* 热点行：磁贴配方（无边框、furrow 底、radius-md） */
 .hot-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: var(--space-md);
   align-items: center;
-  padding: 14px 16px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-page);
-  border: 1px solid var(--color-border);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--surface-furrow);
 }
 
 .hot-rank {
@@ -607,7 +545,7 @@ onMounted(() => {
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-highlight);
   color: var(--color-text);
   font-weight: 700;
@@ -630,7 +568,7 @@ onMounted(() => {
 }
 
 .hot-title-link:hover {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .hot-meta-row {
@@ -638,14 +576,14 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 10px;
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 .hot-cover {
   width: 84px;
   height: 56px;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
 }
 
@@ -656,55 +594,18 @@ onMounted(() => {
 }
 
 .hot-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-md);
-  background: var(--color-accent);
-  color: white;
-  border: none;
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: pointer;
   white-space: nowrap;
-  transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-}
-
-.hot-action-btn:hover {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
-}
-
-.hot-action-btn-comedy {
-  background: transparent;
-  border: 1px solid var(--color-border-accent);
-  color: var(--color-accent);
-}
-
-.hot-action-btn-comedy:hover {
-  background: var(--color-surface-highlight);
-}
-
-.empty-card {
-  display: grid;
-  gap: 8px;
-  place-items: start;
-  padding: 20px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-page);
-  border: 1px solid var(--color-border);
 }
 
 .empty-title {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--text-base);
+  font-weight: 700;
 }
 
 .hot-empty {
   min-height: 132px;
-  align-content: center;
+  justify-content: center;
 }
 
 @media (max-width: 960px) {

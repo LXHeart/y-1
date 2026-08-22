@@ -68,15 +68,14 @@ async function copyResult(): Promise<void> {
 </script>
 
 <template>
-  <section class="moments-view" aria-labelledby="moments-title">
+  <section class="moments-view gl-field" aria-labelledby="moments-title">
     <header class="moments-head">
       <h2 id="moments-title">朋友圈创作</h2>
       <p class="moments-sub">精简文案 + 九宫格顺序建议 + 每图配文，一次生成</p>
     </header>
 
-    <p v-if="ruleSummary" data-test="moments-rule" class="rule-hint">{{ ruleSummary }}</p>
-
-    <div class="moments-form">
+    <div class="gl-zone moments-form">
+      <p v-if="ruleSummary" data-test="moments-rule" class="rule-hint">{{ ruleSummary }}</p>
       <div class="form-field">
         <label for="moments-topic">主题 *</label>
         <input
@@ -149,7 +148,7 @@ async function copyResult(): Promise<void> {
         <button
           type="button"
           data-test="moments-generate"
-          class="primary"
+          class="primary gl-btn-primary"
           :disabled="!canGenerate"
           @click="generate"
         >
@@ -163,7 +162,7 @@ async function copyResult(): Promise<void> {
     <p v-if="generating && progressMessage" class="progress">{{ progressMessage }}</p>
     <p v-if="error" data-test="moments-error" class="error" role="alert">{{ error }}</p>
 
-    <div v-if="result" class="moments-result">
+    <div v-if="result" class="gl-zone moments-result">
       <div class="form-field">
         <label for="moments-copy">朋友圈文案（可编辑）</label>
         <textarea id="moments-copy" v-model="result.copy" data-test="moments-copy" rows="4" />
@@ -203,48 +202,49 @@ async function copyResult(): Promise<void> {
 
 <style scoped>
 .moments-view { display: grid; gap: var(--space-lg); max-width: 760px; margin: 0 auto; }
-.moments-head h2 { margin: 0; font-size: 1.4rem; color: var(--color-text); }
-.moments-sub { margin: 4px 0 0; color: var(--color-text-muted); font-size: 0.92rem; }
+.moments-head h2 { margin: 0; font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; color: var(--color-text); }
+.moments-sub { margin: 4px 0 0; color: var(--color-text-muted); font-size: var(--text-sm); }
 .rule-hint {
-  margin: 0; padding: var(--space-sm) var(--space-md); border-radius: 8px;
-  background: var(--surface-page); color: var(--color-text-muted);
-  font-size: 0.86rem; line-height: 1.5;
+  margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm);
+  background: var(--surface-furrow); color: var(--color-text-muted);
+  font-size: var(--text-sm); line-height: 1.5;
 }
 .moments-form { display: grid; gap: var(--space-md); }
 .form-field { display: grid; gap: 6px; }
-.form-field label, .form-field legend { font-size: 0.9rem; color: var(--color-text); font-weight: 600; }
+.form-field label, .form-field legend { font-size: var(--text-sm); color: var(--color-text); font-weight: 600; }
 .form-field input[type='text'], .form-field textarea {
-  padding: 9px 11px; border: 1px solid var(--color-border); border-radius: 8px;
+  padding: 8px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   font: inherit; background: var(--color-surface); color: var(--color-text);
 }
 .style-options { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .style-option {
-  display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--space-sm); min-height: 32px;
   border: 1px solid var(--color-border); border-radius: 999px; cursor: pointer;
-  font-size: 0.9rem; color: var(--color-text); background: var(--color-surface);
+  font-size: var(--text-sm); color: var(--color-text); background: transparent;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
-.style-option.active { border-color: var(--color-accent); color: var(--color-accent); }
+.style-option.active {
+  border-color: var(--color-border-accent); color: var(--color-accent-2);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
 .image-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-sm); }
 .image-item {
-  display: grid; gap: 6px; padding: var(--space-xs); border: 1px solid var(--color-border);
-  border-radius: 10px; background: var(--color-surface);
+  display: grid; gap: 6px; padding: var(--space-xs); border-radius: var(--radius-md);
+  background: var(--surface-furrow);
 }
-.image-item img { width: 100%; height: 96px; object-fit: cover; border-radius: 6px; }
-.image-meta { display: grid; gap: 2px; font-size: 0.8rem; color: var(--color-text-muted); }
+.image-item img { width: 100%; height: 96px; object-fit: cover; border-radius: var(--radius-sm); }
+.image-meta { display: grid; gap: 2px; font-size: var(--text-xs); color: var(--color-text-muted); }
 .image-caption { color: var(--color-text); }
-.image-remove { justify-self: start; padding: 3px 8px; font-size: 0.78rem; border: none; background: none; color: var(--color-danger); cursor: pointer; }
-.actions { display: flex; gap: var(--space-sm); }
-.primary, .secondary {
-  padding: 9px 16px; border-radius: 8px; font: inherit; cursor: pointer;
-  border: 1px solid transparent;
+.image-remove {
+  justify-self: start; min-height: auto; padding: 3px 8px; font-size: var(--text-xs);
+  border: none; background: none; color: var(--color-danger);
 }
-.primary { background: var(--gradient-accent); color: #fff; }
-.primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.secondary { background: none; border-color: var(--color-border); color: var(--color-text); }
-.progress { margin: 0; color: var(--color-text-muted); font-size: 0.88rem; }
-.error { margin: 0; color: var(--color-danger); font-size: 0.9rem; }
-.moments-result { display: grid; gap: var(--space-md); padding-top: 6px; border-top: 1px solid var(--color-border); }
-.moments-result h3 { margin: 0 0 6px; font-size: 1rem; color: var(--color-text); }
-.order-block ol, .captions-block ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--color-text); font-size: 0.92rem; }
+.actions { display: flex; gap: var(--space-sm); }
+.primary, .secondary { min-height: 38px; padding: 0 var(--space-md); border-radius: var(--radius-sm); }
+.progress { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }
+.moments-result { display: grid; gap: var(--space-md); }
+.moments-result h3 { margin: 0 0 6px; font-size: var(--text-base); font-weight: 700; color: var(--color-text); }
+.order-block ol, .captions-block ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--color-text); font-size: var(--text-sm); }
 .order-reason { color: var(--color-text-muted); }
 </style>

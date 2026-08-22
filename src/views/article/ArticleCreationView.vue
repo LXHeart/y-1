@@ -1,5 +1,5 @@
 <template>
-  <div class="article-creation">
+  <div class="article-creation gl-field">
     <nav class="steps-bar" aria-label="创作步骤">
       <div
         v-for="(s, i) in steps"
@@ -34,7 +34,7 @@
     />
 
     <template v-else>
-    <section v-if="stage === 'topic'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'topic'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <p class="eyebrow">第一步</p>
         <h2 class="card-title">先确定主题和发布平台</h2>
@@ -89,7 +89,7 @@
 
       <div class="action-row">
         <button
-          class="btn-primary"
+          class="btn-primary gl-btn-primary"
           :disabled="titlesLoading || !topic.trim()"
           @click="fetchTitles"
         >
@@ -98,7 +98,7 @@
       </div>
     </section>
 
-    <section v-if="stage === 'titles'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'titles'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
           <button class="btn-back" type="button" @click="stage = 'topic'">
@@ -146,7 +146,7 @@
 
       <div class="action-row">
         <button
-          class="btn-primary"
+          class="btn-primary gl-btn-primary"
           :disabled="outlineLoading || !selectedTitle.trim()"
           @click="streamOutline"
         >
@@ -161,7 +161,7 @@
       />
     </section>
 
-    <section v-if="stage === 'outline'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'outline'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
           <button class="btn-back" type="button" @click="goToTitles">
@@ -192,7 +192,7 @@
 
       <div class="action-row">
         <button
-          class="btn-primary"
+          class="btn-primary gl-btn-primary"
           :disabled="contentLoading || outlineLoading || !outline.trim()"
           @click="streamContent"
         >
@@ -208,7 +208,7 @@
       </div>
     </section>
 
-    <section v-if="stage === 'content'" class="stage-card glass-card fade-in">
+    <section v-if="stage === 'content'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
           <button class="btn-back" type="button" @click="goToOutline">
@@ -296,7 +296,7 @@
       @updated="safetyReport = $event"
     />
 
-    <section v-if="error" class="error-card glass-card fade-in">
+    <section v-if="error" class="error-card gl-zone fade-in">
       <p class="error-title">生成失败</p>
       <p class="error-text">{{ error }}</p>
     </section>
@@ -458,7 +458,7 @@ const contentWithImages = computed(() => {
   flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
-  border-radius: var(--radius-md);
+  border-radius: 999px;
   background: var(--surface-page);
   border: 1px solid var(--color-border);
 }
@@ -469,15 +469,15 @@ const contentWithImages = computed(() => {
   gap: 8px;
   min-height: 38px;
   padding: 0 14px;
-  border-radius: calc(var(--radius-md) - 4px);
+  border-radius: 999px;
   color: var(--color-text-muted);
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 
 .step-active {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
+  background: var(--gradient-accent);
+  border: 1px solid transparent;
+  color: var(--color-on-accent);
 }
 
 .step-done {
@@ -497,9 +497,9 @@ const contentWithImages = computed(() => {
 }
 
 .step-active .step-num {
-  background: var(--color-accent);
+  background: var(--color-on-accent);
   border-color: transparent;
-  color: white;
+  color: var(--color-accent);
 }
 
 .step-done .step-num {
@@ -572,20 +572,6 @@ const contentWithImages = computed(() => {
   transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
 }
 
-.btn-back {
-  min-height: 36px;
-  padding: 0 12px;
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-back:hover {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-}
-
 .topic-input,
 .custom-title-input,
 .stream-textarea {
@@ -600,7 +586,7 @@ const contentWithImages = computed(() => {
 .topic-input,
 .stream-textarea {
   resize: vertical;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   padding: 14px 16px;
   line-height: 1.7;
 }
@@ -612,7 +598,7 @@ const contentWithImages = computed(() => {
 .custom-title-input {
   min-height: 42px;
   padding: 10px 14px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
 }
 
 .stream-textarea {
@@ -650,16 +636,16 @@ const contentWithImages = computed(() => {
   flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
-  border-radius: var(--radius-md);
+  border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--surface-page);
 }
 
 .platform-btn {
-  min-height: 36px;
+  min-height: 30px;
   padding: 0 14px;
-  border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
@@ -670,9 +656,9 @@ const contentWithImages = computed(() => {
 }
 
 .platform-btn-active {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border: 1px solid var(--color-border-accent);
+  color: var(--color-accent-2);
 }
 
 .platform-btn:not(.platform-btn-active):hover {
@@ -696,10 +682,10 @@ const contentWithImages = computed(() => {
   width: 100%;
   display: grid;
   gap: 6px;
-  padding: 16px;
-  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--surface-page);
+  background: var(--gradient-surface);
   cursor: pointer;
   text-align: left;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
@@ -718,7 +704,7 @@ const contentWithImages = computed(() => {
 }
 
 .title-selected {
-  background: var(--surface-card);
+  background: var(--color-surface-highlight);
   border-color: var(--color-border-accent);
   box-shadow: var(--focus-ring);
 }
@@ -748,8 +734,8 @@ const contentWithImages = computed(() => {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(114, 132, 248, 0.12);
-  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent-2);
   font-size: 0.76rem;
   font-weight: 600;
 }
@@ -775,56 +761,27 @@ const contentWithImages = computed(() => {
 
 .btn-primary,
 .btn-secondary {
-  min-height: 40px;
-  padding: 0 16px;
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  border: none;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-2);
-  transform: translateY(-1px);
-}
-
-.btn-secondary {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-}
-
-.btn-primary:disabled,
-.btn-secondary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
 }
 
 .btn-sm {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 30px;
+  padding: 0 var(--space-sm);
 }
 
 .error-card {
-  border-color: rgba(239, 107, 107, 0.28);
-  background: rgba(239, 107, 107, 0.08);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
 }
 
 .platform-mode-hint {
   margin: 0;
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  border: 1px solid rgba(114, 132, 248, 0.28);
-  background: rgba(114, 132, 248, 0.08);
+  border: 1px solid color-mix(in srgb, var(--color-info) 28%, transparent);
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
   color: var(--color-text-secondary);
   font-size: 0.84rem;
   line-height: 1.6;
@@ -864,14 +821,14 @@ const contentWithImages = computed(() => {
 .format-rule-warnings li,
 .format-rule-warn {
   margin: 0;
-  color: var(--color-danger, #d97706);
+  color: var(--color-danger);
   font-size: 0.82rem;
   line-height: 1.5;
 }
 
 .format-rule-bar-warn {
-  border-color: rgba(239, 107, 107, 0.28);
-  background: rgba(239, 107, 107, 0.06);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
 }
 
 @media (max-width: 720px) {

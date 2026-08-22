@@ -1,5 +1,5 @@
 <template>
-  <section class="stage-card glass-card fade-in">
+  <section class="stage-card gl-zone fade-in">
     <header class="card-head">
       <h2 class="card-title">文章已完成</h2>
       <p class="field-note">{{ selectedTitle }}</p>
@@ -17,7 +17,7 @@
     </div>
 
     <div class="action-row">
-      <button class="btn-primary" @click="$emit('copy')">复制正文</button>
+      <button class="btn-primary gl-btn-primary" @click="$emit('copy')">复制正文</button>
       <button class="btn-secondary" @click="$emit('reset')">新建文章</button>
     </div>
   </section>
@@ -77,40 +77,9 @@ import { computed } from 'vue'
 
 .btn-primary,
 .btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
-  min-height: 40px;
-  padding: 0 16px;
-  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  border: none;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-2);
-  transform: translateY(-1px);
-}
-
-.btn-secondary {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
 }
 
 .format-rule-bar {

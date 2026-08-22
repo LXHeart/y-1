@@ -1,5 +1,5 @@
 <template>
-  <section class="stage-card glass-card fade-in">
+  <section class="stage-card gl-zone fade-in">
     <header class="card-head">
       <div class="card-head-row">
         <button class="btn-back" type="button" @click="$emit('goBack')">
@@ -15,7 +15,7 @@
     </header>
 
     <div v-if="!imageRecommendations && !loadingRecommendations" class="action-row">
-      <button class="btn-primary" @click="$emit('loadRecommendations')">
+      <button class="btn-primary gl-btn-primary" @click="$emit('loadRecommendations')">
         获取配图推荐
       </button>
       <button class="btn-secondary" @click="$emit('finish')">跳过，直接完成</button>
@@ -105,7 +105,7 @@
     </div>
 
     <div v-if="imageRecommendations" class="action-row">
-      <button class="btn-primary" @click="$emit('finish')">完成</button>
+      <button class="btn-primary gl-btn-primary" @click="$emit('finish')">完成</button>
       <button class="btn-secondary" @click="$emit('loadRecommendations')">重新推荐</button>
     </div>
   </section>
@@ -174,63 +174,14 @@ defineEmits<{
 .btn-back,
 .btn-primary,
 .btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
-  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
-}
-
-.btn-back {
-  min-height: 36px;
-  padding: 0 12px;
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-back:hover {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-}
-
-.btn-primary,
-.btn-secondary {
-  min-height: 40px;
-  padding: 0 16px;
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  border: none;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-2);
-  transform: translateY(-1px);
-}
-
-.btn-secondary {
-  background: var(--surface-card);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
 }
 
 .btn-sm {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 30px;
+  padding: 0 var(--space-sm);
 }
 
 .action-row {
