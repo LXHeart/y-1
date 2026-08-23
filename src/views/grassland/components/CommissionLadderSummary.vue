@@ -50,7 +50,7 @@ const payoutRange = computed(() => {
 .gl-ladder-summary { display: inline-flex; flex-direction: column; gap: 2px; text-align: left; vertical-align: middle; }
 .gl-ladder-head { display: flex; align-items: center; gap: 6px; margin: 0; flex-wrap: wrap; }
 .gl-tag-ladder {
-  display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
+  display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: var(--radius-lg); white-space: nowrap;
   background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-accent);
 }
 .gl-ladder-metric { font-size: 12px; opacity: 0.8; }

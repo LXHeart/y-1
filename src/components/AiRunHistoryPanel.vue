@@ -83,11 +83,11 @@ function formatDateTime(value: string): string {
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .panel-heading h3 { margin: 0; color: var(--color-text); font-size: 1.05rem; letter-spacing: 0; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 0.82rem; }
-.icon-command { width: 36px; height: 36px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); cursor: pointer; font-size: 1.1rem; }
+.icon-command { width: 36px; height: 36px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); cursor: pointer; font-size: 1.1rem; }
 .icon-command:disabled { cursor: wait; opacity: 0.5; }
 .empty-state, .error-state { margin: 0; padding: 24px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }
-.data-table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 8px; }
+.data-table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .data-table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 0.82rem; }
 .data-table th, .data-table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--color-border); vertical-align: top; }
 .data-table tr:last-child td { border-bottom: 0; }
@@ -96,7 +96,7 @@ function formatDateTime(value: string): string {
 .data-table strong, .data-table small { display: block; }
 .data-table strong { color: var(--color-text); }
 .data-table small { margin-top: 2px; color: var(--color-text-muted); }
-.status-tag { display: inline-block; padding: 3px 7px; border-radius: 5px; background: var(--surface-muted); }
+.status-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }
 .status-completed { color: var(--color-success); }
 .status-failed { color: var(--color-danger); }
 .status-running { color: var(--color-accent); }

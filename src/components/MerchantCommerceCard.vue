@@ -386,22 +386,22 @@ onBeforeUnmount(stopScanner)
 </script>
 
 <style scoped>
-.commerce-card { grid-column: 1 / -1; display: grid; gap: 14px; padding: 16px; border: 1px solid var(--color-border); border-radius: 10px; }
+.commerce-card { grid-column: 1 / -1; display: grid; gap: 14px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 .card-head, .package-row, .promotion-box, .copy-row, .actions, .row-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card-head h3, .card-head p, .package-row p, .promotion-box h4, .redemption-grid h4 { margin: 0; }.card-head p, .package-row p, .empty { font-size: 12px; opacity: .7; }
 .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }.wide { grid-column: 1 / -1; }.date-field { display: grid; gap: 3px; font-size: 11px; opacity: .8; }
-.slots-editor { display: grid; gap: 8px; padding: 10px; border: 1px dashed var(--color-border); border-radius: 9px; }
+.slots-editor { display: grid; gap: 8px; padding: 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
 .slots-head { display: flex; align-items: center; justify-content: space-between; }
 .slots-editor .hint { margin: 0; font-size: 11px; opacity: .68; }
 .slot-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .slot-row label { display: grid; gap: 2px; font-size: 11px; opacity: .75; }
 .slot-row .danger { color: var(--color-danger); }
 .slot-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
-.slot-summary span { padding: 2px 8px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.slot-summary span { padding: 2px 8px; border-radius: var(--radius-pill); font-size: 11px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .slot-summary span.tight { color: var(--color-danger); }
 .compact-orders { max-height: 320px; overflow: auto; display: grid; gap: 8px; }
-.compact-order { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; }
+.compact-order { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .compact-order p { margin: 0; font-size: 12px; }
 .compact-order.disputed { border-color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 7%, transparent); }
 .dispute-handle { margin-top: 6px; }
@@ -410,10 +410,10 @@ onBeforeUnmount(stopScanner)
 .resolve-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .resolve-row input.amount { flex: 1; min-width: 160px; }
 .resolve-row button, button.warn { border-color: var(--color-warning); color: var(--color-warning); }
-input, button { min-height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface); color: var(--color-text); } button { cursor: pointer; }
-.package-list { display: grid; gap: 8px; }.package-row { padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; }.package-row span { margin-left: 8px; font-size: 11px; opacity: .7; }.package-row code { font-size: 10px; opacity: .6; }
-.row-actions { justify-content: flex-end; flex-wrap: wrap; }.promotion-box { align-items: stretch; padding: 14px; border-radius: 10px; background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: 8px; }.promotion-box img { width: 150px; height: 150px; }
-.copy-row input { flex: 1; }.redemption-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.redemption-grid > div { padding: 12px; border: 1px solid var(--color-border); border-radius: 9px; }.scanner-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }.scanner-actions small { opacity: .68; }.scanner-box { position: relative; margin-top: 8px; overflow: hidden; border-radius: 10px; background: #111; }.scanner-box video { display: block; width: 100%; max-height: 260px; object-fit: cover; }.scanner-box p { position: absolute; inset: auto 8px 8px; margin: 0; padding: 5px 8px; border-radius: 6px; color: white; background: rgba(0, 0, 0, .65); }.scanner-notice { margin: 7px 0 0; color: var(--color-danger); font-size: 12px; }
-.alert { margin: 0; padding: 8px 10px; border-radius: 8px; }.alert.error { color: var(--color-danger); }.alert.ok { color: var(--color-success); }
+input, button { min-height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); } button { cursor: pointer; }
+.package-list { display: grid; gap: 8px; }.package-row { padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }.package-row span { margin-left: 8px; font-size: 11px; opacity: .7; }.package-row code { font-size: 10px; opacity: .6; }
+.row-actions { justify-content: flex-end; flex-wrap: wrap; }.promotion-box { align-items: stretch; padding: 14px; border-radius: var(--radius-lg); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: 8px; }.promotion-box img { width: 150px; height: 150px; }
+.copy-row input { flex: 1; }.redemption-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.redemption-grid > div { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }.scanner-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }.scanner-actions small { opacity: .68; }.scanner-box { position: relative; margin-top: 8px; overflow: hidden; border-radius: var(--radius-lg); background: #111; }.scanner-box video { display: block; width: 100%; max-height: 260px; object-fit: cover; }.scanner-box p { position: absolute; inset: auto 8px 8px; margin: 0; padding: 5px 8px; border-radius: var(--radius-sm); color: white; background: rgba(0, 0, 0, .65); }.scanner-notice { margin: 7px 0 0; color: var(--color-danger); font-size: 12px; }
+.alert { margin: 0; padding: 8px 10px; border-radius: var(--radius-md); }.alert.error { color: var(--color-danger); }.alert.ok { color: var(--color-success); }
 @media (max-width: 760px) { .form-grid, .redemption-grid { grid-template-columns: 1fr; }.promotion-box, .package-row, .card-head { align-items: stretch; flex-direction: column; }.promotion-box img { align-self: center; } }
 </style>

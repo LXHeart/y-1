@@ -931,8 +931,8 @@ function nextWorkflowRevision(): number {
 .platform-option:disabled { cursor: default; opacity: 0.72; }
 .choice-band, .context-band { display: grid; gap: var(--space-sm); padding-top: var(--space-md); border-top: 1px solid var(--color-border); }
 .create-zone > .choice-band:first-of-type, .create-zone > .context-band:first-of-type { border-top: 0; padding-top: 0; }
-.segmented { display: inline-flex; width: fit-content; padding: 4px; gap: 4px; background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: 999px; }
-.segmented button { min-width: 108px; min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; color: var(--color-text-secondary); background: transparent; cursor: pointer; }
+.segmented { display: inline-flex; width: fit-content; padding: 4px; gap: 4px; background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
+.segmented button { min-width: 108px; min-height: 30px; padding: 0 14px; border: 0; border-radius: var(--radius-pill); color: var(--color-text-secondary); background: transparent; cursor: pointer; }
 .segmented button.active { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-weight: 600; }
 .source-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .source-option { min-height: 72px; display: grid; gap: 5px; align-content: center; padding: var(--space-sm); text-align: left; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--gradient-surface); color: var(--color-text); cursor: pointer; transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }

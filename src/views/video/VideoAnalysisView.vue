@@ -664,7 +664,7 @@ watch(() => props.creationHandoff, (handoff) => {
   width: fit-content;
   gap: 4px;
   padding: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-page);
   border: 1px solid var(--color-border);
 }
@@ -673,7 +673,7 @@ watch(() => props.creationHandoff, (handoff) => {
   min-height: 30px;
   padding: 0 16px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;

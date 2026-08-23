@@ -1089,7 +1089,7 @@ watch(grasslandNavigationTarget, async (target) => {
 
 /* 地平线：全宽紫→绿渐变细线，两端身份标签，激活侧点亮 */
 .gl-horizon { display: flex; align-items: center; gap: var(--space-sm); }
-.gl-horizon-line { flex: 1; height: 2px; border-radius: 999px; background: var(--gradient-field); opacity: 0.85; }
+.gl-horizon-line { flex: 1; height: 2px; border-radius: var(--radius-pill); background: var(--gradient-field); opacity: 0.85; }
 .gl-horizon-tag {
   font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em;
   color: var(--color-text-muted); white-space: nowrap;
@@ -1113,7 +1113,7 @@ watch(grasslandNavigationTarget, async (target) => {
 /* 垄眉：micro-caps，颜色随视角（商家紫 / 推荐官苗绿），切侧时交叉淡入 */
 .gl-subtabs { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-card); overflow-x: auto; scrollbar-width: none; width: fit-content; max-width: 100%; }
 .gl-subtabs::-webkit-scrollbar { display: none; }
-.gl-subtab { min-height: 36px; padding: 0 16px; border: none; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.gl-subtab { min-height: 36px; padding: 0 16px; border: none; border-radius: var(--radius-xs); background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .gl-subtab:hover { color: var(--color-text-secondary); }
 .gl-subtab-active { background: var(--gradient-accent); color: var(--color-on-accent); }
 .gl-workbench[data-side="recommender"] .gl-subtab-active { background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 70%, var(--color-info))); }
@@ -1139,7 +1139,7 @@ watch(grasslandNavigationTarget, async (target) => {
 /* 生长刻度：五段轨（草稿/审核/招募/履约/结算），已完成=段色半透、当前=段色实心；
    段色映射状态 token：中性/警示/信息/强调/成功——结构即状态机，不新增色相 */
 .gl-growth { display: inline-flex; align-items: center; gap: 3px; }
-.gl-growth-seg { width: 18px; height: 3px; border-radius: 999px; background: color-mix(in srgb, var(--color-text-muted) 30%, transparent); }
+.gl-growth-seg { width: 18px; height: 3px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-text-muted) 30%, transparent); }
 .gl-growth-seg.s0.done { background: color-mix(in srgb, var(--color-text-secondary) 55%, transparent); }
 .gl-growth-seg.s0.now { background: var(--color-text-secondary); }
 .gl-growth-seg.s1.done { background: color-mix(in srgb, var(--color-warning) 55%, transparent); }

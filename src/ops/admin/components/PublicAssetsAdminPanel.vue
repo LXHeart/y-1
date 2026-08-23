@@ -102,7 +102,7 @@ onMounted(() => void loadPublicAssetReviews())
 .approve-btn { border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent); background: color-mix(in srgb, var(--color-success) 8%, transparent); color: var(--color-success); }
 .reject-btn { border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 7%, transparent); color: var(--color-danger); }
 .review-actions { display: flex; gap: 6px; }
-.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--surface-muted); white-space: nowrap; }
+.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--surface-muted); white-space: nowrap; }
 .loading-state { padding: var(--space-xl); text-align: center; color: var(--color-text-muted); font-size: 0.9rem; }
 .error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
 .td-time { white-space: nowrap; color: var(--color-text-muted); }

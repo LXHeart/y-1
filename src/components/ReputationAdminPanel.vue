@@ -436,42 +436,42 @@ onMounted(() => void loadPolicy())
 .panel-toolbar.compact { margin-bottom: 12px; }
 .toolbar-actions, .admission-actions { display: flex; gap: 8px; }
 .primary-btn, .secondary-btn, .danger-btn {
-  min-height: 36px; padding: 0 14px; border-radius: 6px; border: 1px solid transparent;
+  min-height: 36px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid transparent;
   font: inherit; font-weight: 600; cursor: pointer;
 }
 .primary-btn { background: var(--color-accent); color: var(--color-on-accent); }
 .secondary-btn { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
 .danger-btn { background: var(--color-danger); color: var(--color-on-accent); }
 button:disabled { opacity: .55; cursor: not-allowed; }
-.error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: 6px; font-size: 13px; }
+.error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .error-msg { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); }
 .success-msg { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
 .loading-state { padding: 24px; text-align: center; color: var(--color-text-muted); }
 .level-list { display: grid; gap: 10px; }
-.reputation-level-row { padding: 14px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); }
+.reputation-level-row { padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
 .level-heading { display: grid; grid-template-columns: 48px minmax(150px, 240px) auto auto; align-items: center; gap: 8px; }
 .level-heading strong { font-size: 16px; }
 .level-heading input, .level-fields input, textarea, .account-search input {
-  width: 100%; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: 5px;
+  width: 100%; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   background: var(--color-surface); color: var(--color-text); font: inherit;
 }
 .level-heading input, .level-fields input, .account-search input { height: 34px; padding: 0 9px; }
 textarea { padding: 8px 9px; resize: vertical; }
-.status-tag { justify-self: start; padding: 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.status-tag { justify-self: start; padding: 3px 7px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 700; }
 .status-invite { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
 .status-judge { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 .level-fields { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 12px; }
 .level-fields label, .benefits-field, .account-search label, .admission-note { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 12px; }
 .input-suffix { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; }
-.input-suffix input { border-radius: 5px 0 0 5px; }
-.input-suffix span { height: 32px; display: grid; place-items: center; border: 1px solid var(--color-border); border-left: 0; border-radius: 0 5px 5px 0; }
+.input-suffix input { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.input-suffix span { height: 32px; display: grid; place-items: center; border: 1px solid var(--color-border); border-left: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .check-field { display: flex !important; align-items: center; gap: 7px !important; padding-top: 22px; }
 .check-field input { width: 16px; height: 16px; }
 .benefits-field { margin-top: 10px; }
 .account-section { border-top: 1px solid var(--color-border); padding-top: 18px; }
 .account-search { display: grid; grid-template-columns: minmax(260px, 520px) auto; align-items: end; gap: 8px; }
 .reputation-detail { margin-top: 14px; display: grid; gap: 12px; }
-.detail-summary { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 1px; background: var(--color-border); border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+.detail-summary { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 1px; background: var(--color-border); border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
 .detail-summary div { display: grid; gap: 4px; padding: 12px; background: var(--color-surface); }
 .detail-summary span { color: var(--color-text-muted); font-size: 12px; }
 .account-id-value { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 12px; }

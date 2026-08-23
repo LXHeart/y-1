@@ -173,7 +173,7 @@ defineEmits<{
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 20px;

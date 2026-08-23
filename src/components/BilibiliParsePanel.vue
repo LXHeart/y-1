@@ -355,7 +355,7 @@ const analysisRunIdText = computed(() => {
 
 .meta-list div {
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
 }

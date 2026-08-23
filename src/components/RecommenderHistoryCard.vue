@@ -90,13 +90,13 @@ watch(() => currentUser.value?.id, (accountId) => {
 .rhc { display: flex; flex-direction: column; gap: 10px; }
 .rhc-head { display: flex; justify-content: space-between; align-items: center; }
 .rhc-head h3 { margin: 0; font-size: 15px; }
-.rhc-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px;
+.rhc-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px;
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .rhc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rhc-table th, .rhc-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
 .rhc-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .rhc-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

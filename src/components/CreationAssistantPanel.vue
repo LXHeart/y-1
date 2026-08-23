@@ -421,17 +421,17 @@ onBeforeUnmount(() => {
 .as-tabs { display: flex; gap: 8px; }
 .as-tab {
   padding: 6px 14px; border: 1px solid var(--color-border);
-  border-radius: 999px; background: transparent; cursor: pointer; font-size: 14px;
+  border-radius: var(--radius-pill); background: transparent; cursor: pointer; font-size: 14px;
 }
 .as-tab.active { background: var(--color-accent); color: var(--color-on-accent); border-color: transparent; }
 .as-body { display: flex; flex-direction: column; gap: 12px; }
 .as-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .as-input {
   flex: 1 1 220px; padding: 8px 10px;
-  border: 1px solid var(--color-border); border-radius: 6px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
 }
 .as-btn {
-  padding: 8px 16px; border: none; border-radius: 6px;
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
   background: var(--color-accent); color: var(--color-on-accent); cursor: pointer;
 }
 .as-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -446,7 +446,7 @@ onBeforeUnmount(() => {
 .as-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .as-item {
   display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-  border: 1px solid var(--color-border); border-radius: 6px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
 }
 .as-item.active { border-color: var(--color-accent); }
 .as-item-open {
@@ -460,7 +460,7 @@ onBeforeUnmount(() => {
 .as-editor-head { display: flex; justify-content: space-between; align-items: center; }
 .as-editor-actions { display: flex; align-items: center; gap: 10px; }
 .as-history-btn {
-  padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 5px;
+  padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   background: transparent; color: inherit; cursor: pointer; font-size: 12px;
 }
 .as-history-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -469,14 +469,14 @@ onBeforeUnmount(() => {
 .as-save.saved { color: var(--color-success); }
 .as-save.conflict, .as-save.error { color: var(--color-warning); }
 .as-textarea {
-  width: 100%; padding: 10px; border-radius: 6px; resize: vertical;
+  width: 100%; padding: 10px; border-radius: var(--radius-sm); resize: vertical;
   border: 1px solid var(--color-border); font: inherit;
 }
 .as-chat {
   display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto;
-  padding: 10px; border: 1px solid var(--color-border); border-radius: 6px;
+  padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
 }
-.as-msg { max-width: 88%; padding: 8px 12px; border-radius: 10px; }
+.as-msg { max-width: 88%; padding: 8px 12px; border-radius: var(--radius-lg); }
 .as-msg.user { align-self: flex-end; background: var(--color-accent); color: var(--color-on-accent); }
 .as-msg.assistant { align-self: flex-start; background: color-mix(in srgb, var(--color-text-muted) 12%, transparent); }
 .as-msg-text { margin: 0; white-space: pre-wrap; }
@@ -485,7 +485,7 @@ onBeforeUnmount(() => {
 .as-brief-row dt { min-width: 36px; opacity: 0.7; }
 .as-brief-row dd { margin: 0; }
 .as-inferred {
-  margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: 11px;
+  margin-left: 6px; padding: 1px 6px; border-radius: var(--radius-pill); font-size: 11px;
   background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning);
 }
 .as-typing, .as-empty, .as-alert { font-size: 13px; opacity: 0.75; margin: 0; }
@@ -493,29 +493,29 @@ onBeforeUnmount(() => {
 .as-ok { color: var(--color-success); font-size: 13px; margin: 0; }
 .as-warn { color: var(--color-warning); font-size: 13px; margin: 0; }
 .as-conflict {
-  margin: 0; padding: 8px 10px; border-radius: 6px; font-size: 13px;
+  margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); font-size: 13px;
   background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning);
 }
 .as-score { display: flex; flex-direction: column; gap: 8px; }
 .as-overall { margin: 0; font-size: 15px; font-weight: 600; }
 .as-dim {
-  padding: 8px 10px; border-radius: 6px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
 }
 .as-dim-head { display: flex; justify-content: space-between; }
 .as-dim-name { font-weight: 500; }
 .as-dim-advice { margin: 4px 0 0; font-size: 13px; opacity: 0.85; }
 .as-suggestion {
-  margin: 0; padding: 10px; border-radius: 6px; white-space: pre-wrap;
+  margin: 0; padding: 10px; border-radius: var(--radius-sm); white-space: pre-wrap;
   background: color-mix(in srgb, var(--color-text-muted) 10%, transparent); font: inherit;
 }
 .as-coverage { display: flex; flex-direction: column; gap: 6px; }
 .as-gaps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .as-gap {
   display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline;
-  padding: 8px 10px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
 }
 .as-gap-req { font-weight: 500; }
-.as-gap-status { font-size: 12px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning); }
+.as-gap-status { font-size: 12px; padding: 1px 6px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning); }
 .as-gap-hint { font-size: 13px; opacity: 0.8; }
 </style>

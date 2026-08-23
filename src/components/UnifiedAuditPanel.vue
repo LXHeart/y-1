@@ -208,17 +208,17 @@ function actionLabel(action: string): string {
 button, select, input { font: inherit; letter-spacing: 0; }
 .filters { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; }
 .filters label { display: grid; gap: 5px; color: var(--color-text-muted); font-size: .75rem; }
-select, input { box-sizing: border-box; width: 100%; min-height: 36px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); padding: 7px 9px; }
-button { min-height: 36px; padding: 0 16px; border: 1px solid var(--color-accent); border-radius: 6px; background: var(--color-accent); color: var(--color-on-accent); cursor: pointer; }button:disabled { opacity: .5; cursor: not-allowed; }
+select, input { box-sizing: border-box; width: 100%; min-height: 36px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); padding: 7px 9px; }
+button { min-height: 36px; padding: 0 16px; border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-on-accent); cursor: pointer; }button:disabled { opacity: .5; cursor: not-allowed; }
 .error { margin: 0; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); color: var(--color-danger); }
-.table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 8px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .audit-table { width: 100%; min-width: 900px; border-collapse: collapse; table-layout: fixed; font-size: .78rem; }
 .audit-table th { padding: 9px 11px; text-align: left; color: var(--color-text-muted); background: var(--surface-muted); font-weight: 600; }
 .audit-table td { padding: 11px; border-top: 1px solid var(--color-border); vertical-align: top; overflow-wrap: anywhere; }
 .audit-table th:nth-child(1) { width: 18%; }.audit-table th:nth-child(2) { width: 15%; }.audit-table th:nth-child(3) { width: 18%; }.audit-table th:nth-child(4) { width: 18%; }
 .audit-table td > span, .audit-table td > code, .audit-table td > strong, .audit-table td > time { display: block; }
 .audit-table code { margin-top: 3px; color: var(--color-text-muted); font-size: .7rem; }.audit-table p { margin: 5px 0 0; color: var(--color-text-secondary); }
-.source { width: fit-content; margin-top: 5px; padding: 2px 5px; border-radius: 4px; background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface)); color: var(--color-accent); font-size: .68rem; }
+.source { width: fit-content; margin-top: 5px; padding: 2px 5px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface)); color: var(--color-accent); font-size: .68rem; }
 .transition { font-family: ui-monospace, monospace; color: var(--color-text); }.empty { padding: 36px !important; text-align: center; color: var(--color-text-muted); }
 @media (max-width: 900px) { .filters { grid-template-columns: 1fr 1fr; }.filters button { width: 100%; } }
 @media (max-width: 560px) { .panel-head { align-items: flex-start; }.filters { grid-template-columns: 1fr; } }

@@ -164,14 +164,14 @@ onMounted(async () => {
 .vh-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--color-border); }
 .vh-select { display: grid; grid-template-columns: auto auto auto minmax(90px, 1fr) auto; align-items: center; gap: 8px; min-height: 42px; cursor: pointer; font-size: 13px; }
 .vh-version { font-weight: 600; }
-.vh-current, .vh-changed { padding: 2px 6px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
+.vh-current, .vh-changed { padding: 2px 6px; border-radius: var(--radius-pill); font-size: 11px; background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
 .vh-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vh-item time { font-size: 12px; opacity: 0.65; }
 .vh-list-restore { border: 0; background: transparent; color: var(--color-accent); padding: 4px; cursor: pointer; font-size: 12px; }
 .vh-list-restore:disabled { opacity: 0.5; cursor: not-allowed; }
-.vh-more, .vh-restore { align-self: flex-start; border: 1px solid var(--color-accent); border-radius: 5px; background: transparent; color: var(--color-accent); padding: 5px 9px; cursor: pointer; }
+.vh-more, .vh-restore { align-self: flex-start; border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: transparent; color: var(--color-accent); padding: 5px 9px; cursor: pointer; }
 .vh-more:disabled { opacity: 0.5; cursor: not-allowed; }
-.vh-compare-scroll { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 6px; }
+.vh-compare-scroll { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .vh-compare { display: grid; grid-template-columns: 130px repeat(2, minmax(220px, 1fr)); min-width: 620px; }
 .vh-corner, .vh-column-head, .vh-field-label, .vh-value { padding: 9px; border-bottom: 1px solid var(--color-border); border-right: 1px solid var(--color-border); }
 .vh-column-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }

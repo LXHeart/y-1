@@ -183,7 +183,7 @@ onMounted(() => void loadJudges(false))
 .panel-toolbar h3, .audit-heading h4 { margin: 0; font-size: 17px; }
 .panel-toolbar p, .audit-heading p { margin: 5px 0 0; color: var(--color-text-muted); font-size: 13px; }
 .primary-btn, .secondary-btn, .danger-btn, .icon-btn {
-  min-height: 34px; padding: 0 11px; border-radius: 6px; border: 1px solid transparent;
+  min-height: 34px; padding: 0 11px; border-radius: var(--radius-sm); border: 1px solid transparent;
   font: inherit; font-weight: 600; cursor: pointer;
 }
 .primary-btn { background: var(--color-accent); color: var(--color-on-accent); }
@@ -191,21 +191,21 @@ onMounted(() => void loadJudges(false))
 .danger-btn { background: var(--color-danger); color: var(--color-on-accent); }
 .icon-btn { width: 34px; padding: 0; background: transparent; color: var(--color-text-muted); font-size: 20px; }
 button:disabled { opacity: .55; cursor: not-allowed; }
-.error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: 6px; font-size: 13px; }
+.error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .error-msg { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); }
 .success-msg { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
 .loading-state { padding: 24px; text-align: center; color: var(--color-text-muted); }
 .judge-search { display: grid; grid-template-columns: minmax(260px, 520px) auto auto; align-items: end; gap: 8px; }
 .judge-search label { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 12px; }
-.judge-search input { height: 34px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text); }
+.judge-search input { height: 34px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .pagination-actions { display: flex; justify-content: center; }
-.table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 6px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 table { width: 100%; border-collapse: collapse; min-width: 900px; }
 th, td { padding: 10px 11px; border-bottom: 1px solid var(--color-border); text-align: left; font-size: 13px; }
 th { color: var(--color-text-muted); background: var(--color-surface-hover); font-weight: 600; }
 tbody tr:last-child td { border-bottom: 0; }
 .account-cell { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
-td input { width: 100%; min-width: 170px; height: 34px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text); }
+td input { width: 100%; min-width: 170px; height: 34px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .row-actions { display: flex; gap: 6px; white-space: nowrap; }
 .state-good { color: var(--color-success); font-weight: 700; }
 .state-warn { color: var(--color-warning); font-weight: 700; }
@@ -213,7 +213,7 @@ td input { width: 100%; min-width: 170px; height: 34px; box-sizing: border-box; 
 .empty-cell { padding: 24px; text-align: center; color: var(--color-text-muted); }
 .audit-section { border-top: 1px solid var(--color-border); padding-top: 16px; }
 .audit-heading { display: flex; align-items: flex-start; justify-content: space-between; }
-.audit-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 1px; background: var(--color-border); border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+.audit-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 1px; background: var(--color-border); border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
 .audit-list li { display: grid; grid-template-columns: 56px minmax(160px, 1fr) minmax(260px, 1.4fr); align-items: center; gap: 10px; padding: 11px; background: var(--color-surface); font-size: 13px; }
 .audit-list small { color: var(--color-text-muted); }
 @media (max-width: 720px) {

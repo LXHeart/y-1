@@ -91,7 +91,7 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .rate { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--color-border); }
-.rate-alert { margin: 0; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+.rate-alert { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12px; }
 .rate-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .rate-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .rate-existing { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
@@ -102,8 +102,8 @@ async function submit(): Promise<void> {
 .rate-score { font-weight: 600; }
 .rate-comment { opacity: 0.8; font-size: 12px; }
 .rate-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rate-form input { flex: 1 1 200px; padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+.rate-form input { flex: 1 1 200px; padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .rate-hint { margin: 0; font-size: 12px; opacity: 0.6; }

@@ -320,10 +320,10 @@ function cancelAppeal(): void {
 </template>
 
 <style scoped>
-.mp { border: 1px solid var(--color-border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.mp { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .mp-head { display: flex; justify-content: space-between; align-items: center; }
 .mp-head h3 { margin: 0; font-size: 15px; }
-.mp-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.mp-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .mp-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .mp-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .mp-quota { display: flex; flex-direction: column; gap: 8px; }
@@ -340,12 +340,12 @@ function cancelAppeal(): void {
 .mp-req { color: var(--color-danger); }
 .mp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .mp-table th, .mp-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
-.mp-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); margin-left: 4px; }
+.mp-tag { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); margin-left: 4px; }
 .mp-overdue { color: var(--color-danger); }
 .mp-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .mp-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }

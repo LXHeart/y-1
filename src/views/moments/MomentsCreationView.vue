@@ -219,7 +219,7 @@ async function copyResult(): Promise<void> {
 .style-options { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .style-option {
   display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--space-sm); min-height: 32px;
-  border: 1px solid var(--color-border); border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer;
   font-size: var(--text-sm); color: var(--color-text); background: transparent;
   transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }

@@ -174,17 +174,17 @@ function formatCents(value: number | null): string {
 .budget-head h3, .usage h4 { margin: 0; font-size: 15px; letter-spacing: 0; }
 .budget-head p, .actions span, .empty { margin: 3px 0 0; color: var(--color-text-muted); font-size: 12px; }
 .budget-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: 7px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 legend { padding: 0 5px; font-size: 13px; font-weight: 600; }
 label { min-width: 0; display: grid; gap: 5px; color: var(--color-text-secondary); font-size: 12px; }
-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; }
+input { width: 100%; min-width: 0; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
 .usage { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 dl { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-dl div { min-width: 0; padding: 8px; background: var(--surface-muted); border-radius: 6px; }
+dl div { min-width: 0; padding: 8px; background: var(--surface-muted); border-radius: var(--radius-sm); }
 dt { color: var(--color-text-muted); font-size: 11px; } dd { margin: 3px 0 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
-button { min-height: 32px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); cursor: pointer; }
+button { min-height: 32px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); cursor: pointer; }
 button:disabled { opacity: .5; cursor: wait; }.primary { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); }.quiet { color: var(--color-text-secondary); }
-.alert { margin: 0; padding: 8px 10px; border-radius: 6px; font-size: 12px; }.error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }.success { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }.warning { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
+.alert { margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); font-size: 12px; }.error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }.success { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }.warning { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
 .conflict-actions { display: flex; justify-content: flex-end; }
 @media (max-width: 760px) { .budget-groups, dl { grid-template-columns: 1fr; } fieldset { grid-template-columns: 1fr; } .actions { align-items: flex-start; flex-direction: column; } }
 </style>

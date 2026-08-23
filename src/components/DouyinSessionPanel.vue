@@ -201,7 +201,7 @@ function formatDate(value: string): string {
 .session-status {
   align-self: flex-start;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: rgba(255,255,255,0.06);
   color: var(--color-text-secondary);
@@ -278,14 +278,14 @@ function formatDate(value: string): string {
 .qr-image {
   width: min(240px, 100%);
   aspect-ratio: 1;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: white;
   padding: 10px;
 }
 
 .session-error {
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   color: var(--color-danger);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
@@ -301,7 +301,7 @@ function formatDate(value: string): string {
 .btn-secondary {
   min-height: 42px;
   padding: 0 16px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   transition: transform 150ms ease, opacity 150ms ease, background 150ms ease;
 }

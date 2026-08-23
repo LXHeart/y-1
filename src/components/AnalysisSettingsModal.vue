@@ -839,7 +839,7 @@ function handleClose(): void {
 .settings-close-btn {
   width: 36px;
   height: 36px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
@@ -867,7 +867,7 @@ function handleClose(): void {
   min-height: 36px;
   padding: 0 14px;
   border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -938,7 +938,7 @@ function handleClose(): void {
   min-height: 36px;
   padding: 0 14px;
   border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;

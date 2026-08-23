@@ -172,23 +172,23 @@ function healthLabel(value: PlatformModelHealth): string {
 .panel-heading h3, .form-heading h4 { margin: 0; color: var(--color-text); letter-spacing: 0; }
 .panel-heading h3 { font-size: 1.05rem; }.form-heading h4 { font-size: .95rem; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: .82rem; }
-.primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: 6px; cursor: pointer; }
+.primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
 .primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
 .secondary-command, .row-actions button, .form-heading button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command { color: var(--color-danger); }.primary-command:disabled { opacity: .5; cursor: wait; }
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { grid-column: 1 / -1; padding: 0; text-align: left; }
-.model-table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 8px; }
+.model-table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .model-table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: .82rem; }
 .model-table th, .model-table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--color-border); }
 .model-table tr:last-child td { border-bottom: 0; }.model-table th { color: var(--color-text-muted); background: var(--surface-muted); }
 .model-table td { color: var(--color-text-secondary); }.model-table strong, .model-table small { display: block; }.model-table strong { color: var(--color-text); }.model-table small { color: var(--color-text-muted); margin-top: 2px; }
 .row-actions { white-space: nowrap; }.row-actions button { min-height: 30px; padding: 0 9px; margin-right: 5px; }
-.health-tag { display: inline-block; padding: 3px 7px; border-radius: 5px; background: var(--surface-muted); }.health-healthy { color: var(--color-success); }.health-degraded { color: var(--color-warning); }.health-unhealthy { color: var(--color-danger); }
+.health-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }.health-healthy { color: var(--color-success); }.health-degraded { color: var(--color-warning); }.health-unhealthy { color: var(--color-danger); }
 .form-band { padding-top: 16px; border-top: 1px solid var(--color-border); }
 form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.form-heading, .form-actions, .wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; }
-input, select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; }
+input, select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
 .form-actions { justify-content: flex-end; }
 @media (max-width: 700px) { .panel-heading { align-items: flex-start; flex-direction: column; } form { grid-template-columns: 1fr; } form > * { grid-column: 1; } }
 </style>

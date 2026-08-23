@@ -127,7 +127,7 @@ onMounted(() => void loadQueue())
 .approve-btn { border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent); background: color-mix(in srgb, var(--color-success) 8%, transparent); color: var(--color-success); }
 .reject-btn { border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 7%, transparent); color: var(--color-danger); }
 .review-actions { display: flex; gap: 6px; }
-.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--surface-muted); white-space: nowrap; }
+.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--surface-muted); white-space: nowrap; }
 .type-tag.status-review { border-color: var(--color-warning); color: var(--color-warning); }
 .type-tag.status-blocked { border-color: var(--color-danger); color: var(--color-danger); }
 .type-tag.status-pass { border-color: var(--color-success); color: var(--color-success); }
@@ -136,7 +136,7 @@ onMounted(() => void loadQueue())
 .td-time { white-space: nowrap; color: var(--color-text-muted); }
 .td-empty { text-align: center; padding: var(--space-xl); color: var(--color-text-muted); }
 .moderation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-.moderation-item { display: grid; grid-template-columns: 128px minmax(0, 1fr); min-height: 164px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); overflow: hidden; }
+.moderation-item { display: grid; grid-template-columns: 128px minmax(0, 1fr); min-height: 164px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; }
 .media-preview { display: grid; place-items: center; min-height: 164px; background: var(--surface-muted); color: var(--color-text-muted); font-size: 0.76rem; }
 .media-preview img, .media-preview video { width: 100%; height: 100%; object-fit: cover; }
 .media-body { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 12px; }

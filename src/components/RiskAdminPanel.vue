@@ -153,12 +153,12 @@ function actionLabel(value: string): string { return ({ signal_attached: '信号
 .panel-head h3 { font-size: 1rem; }
 .panel-head p { margin-top: 4px; color: var(--color-text-muted); font-size: .82rem; }
 button, select, input, textarea { font: inherit; letter-spacing: 0; }
-button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); cursor: pointer; }
+button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); cursor: pointer; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .filters { display: grid; grid-template-columns: 150px 130px 1fr 1fr auto; gap: 10px; align-items: end; }
 .filters label { display: grid; gap: 5px; color: var(--color-text-muted); font-size: .75rem; }
-select, input, textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); padding: 8px 10px; }
-.workspace { display: grid; grid-template-columns: minmax(260px, .72fr) minmax(0, 1.6fr); min-height: 560px; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+select, input, textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); padding: 8px 10px; }
+.workspace { display: grid; grid-template-columns: minmax(260px, .72fr) minmax(0, 1.6fr); min-height: 560px; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .case-list { border-right: 1px solid var(--color-border); background: var(--color-surface); }
 .list-head { padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
 .list-head span { color: var(--color-text-muted); font-size: .78rem; }
@@ -166,11 +166,11 @@ select, input, textarea { box-sizing: border-box; width: 100%; border: 1px solid
 .case-row.selected { background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface)); box-shadow: inset 3px 0 var(--color-accent); }
 .case-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .case-row > span:not(.severity), .case-row time { grid-column: 2; color: var(--color-text-muted); font-size: .75rem; }
-.severity { width: fit-content; align-self: start; padding: 2px 6px; border-radius: 4px; color: var(--color-text-secondary); font-size: .7rem; font-weight: 700; background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); }
+.severity { width: fit-content; align-self: start; padding: 2px 6px; border-radius: var(--radius-xs); color: var(--color-text-secondary); font-size: .7rem; font-weight: 700; background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); }
 .severity[data-severity="medium"] { background: color-mix(in srgb, var(--color-warning) 16%, transparent); color: var(--color-warning); }.severity[data-severity="high"] { background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger); }.severity[data-severity="critical"] { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); border: 1px solid color-mix(in srgb, var(--color-danger) 45%, transparent); }
 .case-detail { min-width: 0; padding: 18px; background: var(--color-surface); overflow: auto; }
 .detail-head > div { display: flex; align-items: center; gap: 9px; min-width: 0; }.detail-head h4 { overflow-wrap: anywhere; font-size: .95rem; }
-.status { padding: 3px 8px; border: 1px solid var(--color-border); border-radius: 4px; white-space: nowrap; font-size: .75rem; }
+.status { padding: 3px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-xs); white-space: nowrap; font-size: .75rem; }
 .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
 .summary dt { color: var(--color-text-muted); font-size: .72rem; }.summary dd { margin: 4px 0 0; overflow-wrap: anywhere; }
 .reason { padding: 12px 0; border-block: 1px solid var(--color-border); }.reason p { margin-top: 6px; color: var(--color-text-secondary); }

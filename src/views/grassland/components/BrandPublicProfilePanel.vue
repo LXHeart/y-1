@@ -96,7 +96,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
 .brand-logo {
   width: 72px;
   height: 72px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   object-fit: cover;
   flex: 0 0 auto;

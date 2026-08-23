@@ -94,7 +94,7 @@ defineEmits<{ close: [] }>()
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 20px;
@@ -149,7 +149,7 @@ defineEmits<{ close: [] }>()
   display: inline-flex;
   align-items: center;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);

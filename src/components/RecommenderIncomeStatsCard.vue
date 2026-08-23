@@ -125,7 +125,7 @@ watch([from, to], () => {
 .ris-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .ris-head h3 { margin: 0; font-size: 15px; }
 .ris h4 { margin: 6px 0 0; font-size: 13px; }
-.ris-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px;
+.ris-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px;
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .ris-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ris-table th, .ris-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }

@@ -106,14 +106,14 @@ async function confirmPurchase(packageId: string): Promise<void> {
 .credits-modal {
   position: relative; width: min(560px, 100%); max-height: 84vh; overflow-y: auto;
   background: var(--surface-card); border: 1px solid var(--color-border);
-  border-radius: 16px; padding: 22px; display: grid; gap: 16px;
+  border-radius: var(--radius-xl); padding: 22px; display: grid; gap: 16px;
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.22);
 }
 .credits-modal-head h3 { margin: 0; font-size: 1.2rem; color: var(--color-text); }
 .balance-line { margin: 6px 0 0; color: var(--color-text-muted); font-size: 0.88rem; }
 .close-btn {
   position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border: none;
-  border-radius: 8px; background: none; font-size: 1.2rem; color: var(--color-text-muted); cursor: pointer;
+  border-radius: var(--radius-md); background: none; font-size: 1.2rem; color: var(--color-text-muted); cursor: pointer;
 }
 section h4 { margin: 0 0 8px; font-size: 0.96rem; color: var(--color-text); }
 .muted { margin: 0; color: var(--color-text-muted); font-size: 0.88rem; }
@@ -122,7 +122,7 @@ section h4 { margin: 0 0 8px; font-size: 0.96rem; color: var(--color-text); }
 .package-list, .order-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .package-card {
   display: flex; justify-content: space-between; gap: 12px; padding: 14px;
-  border: 1px solid var(--color-border); border-radius: 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg);
 }
 .package-info { display: grid; gap: 4px; }
 .package-name { font-weight: 600; color: var(--color-text); }
@@ -131,13 +131,13 @@ section h4 { margin: 0 0 8px; font-size: 0.96rem; color: var(--color-text); }
 .package-actions { display: grid; gap: 4px; justify-items: end; text-align: right; }
 .package-price { font-weight: 700; color: var(--color-text); }
 .primary, .secondary {
-  padding: 7px 14px; border-radius: 8px; font: inherit; cursor: pointer; border: 1px solid transparent;
+  padding: 7px 14px; border-radius: var(--radius-md); font: inherit; cursor: pointer; border: 1px solid transparent;
 }
 .primary { background: var(--color-success); color: var(--color-on-accent); }
 .primary:disabled { opacity: 0.55; cursor: not-allowed; }
 .secondary { background: none; border-color: var(--color-border); color: var(--color-text); }
 .order-item {
-  display: flex; justify-content: space-between; padding: 8px 12px; border-radius: 8px;
+  display: flex; justify-content: space-between; padding: 8px 12px; border-radius: var(--radius-md);
   background: var(--surface-muted); font-size: 0.88rem; color: var(--color-text);
 }
 .order-status { color: var(--color-text-muted); }

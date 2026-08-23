@@ -1044,7 +1044,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   height: 22px;
   display: grid;
   place-items: center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: white;
@@ -1073,7 +1073,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   min-height: 36px;
   padding: 0 14px;
   border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
@@ -1311,7 +1311,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   display: inline-flex;
   align-items: center;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
@@ -1342,7 +1342,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   min-width: 48px;
   min-height: 32px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
@@ -1373,7 +1373,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   width: 9px;
   height: 9px;
   margin-top: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-accent);
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
@@ -1442,7 +1442,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   align-items: center;
   gap: 4px;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
@@ -1455,7 +1455,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   width: 18px;
   height: 18px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 14px;

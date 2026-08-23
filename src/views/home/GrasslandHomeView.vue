@@ -420,11 +420,11 @@ function go(view: AppView): void {
 .hot-refresh-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .hot-fetched-note { font-size: var(--text-xs); color: var(--color-text-muted); }
 .hot-range-switch { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--color-border); border-radius: var(--radius-md); width: fit-content; margin-bottom: 12px; }
-.hot-range-tab { min-height: 30px; padding: 0 12px; border: none; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-range-tab { min-height: 30px; padding: 0 12px; border: none; border-radius: var(--radius-xs); background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
 .hot-range-tab-active { background: var(--gradient-accent); color: var(--color-on-accent); }
 .hot-range-note { margin: 0 0 10px; font-size: var(--text-xs); color: var(--color-text-muted); }
 .hot-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
-.hot-tab { min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 999px; background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-tab { min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
 .hot-tab-active { border-color: var(--color-border-accent); background: var(--color-surface-highlight); color: var(--color-accent-2); }
 .hot-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .hot-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
@@ -433,7 +433,7 @@ function go(view: AppView): void {
 .hot-title-link, .hot-title { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--color-text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hot-title-link:hover { text-decoration: underline; }
 .hot-meta-row { display: flex; gap: 10px; font-size: var(--text-xs); color: var(--color-text-muted); }
-.hot-create-btn { flex-shrink: 0; min-height: 30px; padding: 0 14px; border: 1px solid var(--color-border-accent); border-radius: 999px; background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-create-btn { flex-shrink: 0; min-height: 30px; padding: 0 14px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-pill); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
 .hot-create-btn:hover { border-color: var(--color-accent-2); }
 .hot-skeleton-list { display: grid; gap: 6px; }
 .hot-skeleton { height: 40px; border-radius: var(--radius-sm); background: var(--surface-muted); animation: hot-skeleton-pulse 1.4s ease-in-out infinite; }

@@ -199,7 +199,7 @@ async function setStatus(pkg: AdminPackage, status: string): Promise<void> {
 <style scoped>
 .credits-packages-panel { display: grid; gap: 18px; }
 .panel-toolbar { display: flex; align-items: center; gap: 12px; }
-.refresh-btn { padding: 6px 14px; border-radius: 8px; border: 1px solid var(--color-border); background: none; cursor: pointer; }
+.refresh-btn { padding: 6px 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: none; cursor: pointer; }
 .notice { color: var(--color-success); font-size: 0.88rem; }
 .error { color: var(--color-danger); font-size: 0.88rem; }
 h4 { margin: 0 0 8px; font-size: 0.94rem; color: var(--color-text); }
@@ -208,13 +208,13 @@ h4 { margin: 0 0 8px; font-size: 0.94rem; color: var(--color-text); }
 .data-table th { color: var(--color-text-muted); font-weight: 600; }
 .muted { color: var(--color-text-muted); }
 .mono { font-family: ui-monospace, monospace; }
-.status-tag { padding: 2px 8px; border-radius: 999px; font-size: 0.76rem; background: var(--surface-muted); color: var(--color-text-muted); }
+.status-tag { padding: 2px 8px; border-radius: var(--radius-pill); font-size: 0.76rem; background: var(--surface-muted); color: var(--color-text-muted); }
 .status-tag.active, .status-tag.paid { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
 .status-tag.retired { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); }
 .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
-.actions-cell input { width: 76px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 6px; }
-.actions-cell button, .create-form button { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--color-border); background: none; cursor: pointer; font-size: 0.8rem; }
+.actions-cell input { width: 76px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.actions-cell button, .create-form button { padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: none; cursor: pointer; font-size: 0.8rem; }
 .create-form { display: flex; gap: 8px; flex-wrap: wrap; }
-.create-form input { padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.create-form input { padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .create-form button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

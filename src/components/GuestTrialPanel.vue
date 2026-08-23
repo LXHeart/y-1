@@ -189,26 +189,26 @@ function onPickImage(event: Event): void {
 </template>
 
 <style scoped>
-.trial { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); }
+.trial { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
 .trial-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .trial-kicker { margin: 0; font-size: 12px; color: var(--color-accent); letter-spacing: 0.08em; }
 .trial-head h3 { margin: 2px 0 0; font-size: 16px; }
 .trial-quota { margin: 0; font-size: 13px; opacity: 0.75; }
 .trial-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-.trial-tabs button { padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 999px; background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; }
+.trial-tabs button { padding: 6px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; }
 .trial-tabs button.active { border-color: var(--color-accent); color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .trial-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .trial-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
-.trial-form input, .trial-form textarea { flex: 1 1 260px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-strong, var(--color-surface)); color: var(--color-text); font: inherit; font-size: 13px; }
-.trial-form button { padding: 8px 16px; border: 1px solid var(--color-accent); border-radius: 6px; background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: 13px; }
+.trial-form input, .trial-form textarea { flex: 1 1 260px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-strong, var(--color-surface)); color: var(--color-text); font: inherit; font-size: 13px; }
+.trial-form button { padding: 8px 16px; border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: 13px; }
 .trial-form button:disabled { opacity: 0.5; cursor: not-allowed; }
 .trial-file { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; flex: 1 1 260px; }
 .trial-file input { display: none; }
-.trial-file span { padding: 8px 12px; border: 1px dashed var(--color-border); border-radius: 6px; }
-.trial-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
-.trial-login { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.trial-file span { padding: 8px 12px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); }
+.trial-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
+.trial-login { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
 .trial-login p { margin: 0; font-size: 13px; }
-.trial-login button { padding: 7px 16px; border: none; border-radius: 6px; background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: 13px; }
+.trial-login button { padding: 7px 16px; border: none; border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: 13px; }
 .trial-result { border-top: 1px dashed var(--color-border); padding-top: 8px; }
 .trial-result ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .trial-result li { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }

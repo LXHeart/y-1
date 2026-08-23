@@ -531,7 +531,7 @@ onMounted(() => loadHistory(true))
   flex: 0 0 auto;
   padding: 2px 7px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   font-size: 0.75rem;
 }
@@ -559,7 +559,7 @@ onMounted(() => loadHistory(true))
   overflow: auto;
   margin: 10px 0 0;
   padding: 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-page);
   color: var(--color-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -619,7 +619,7 @@ onMounted(() => loadHistory(true))
   width: 72px;
   height: 72px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
 }
 
@@ -662,7 +662,7 @@ onMounted(() => loadHistory(true))
 
 .card-api-badge {
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.7rem;
   color: var(--color-text-muted);
   border: 1px solid var(--color-border);

@@ -189,7 +189,7 @@ function formatSize(bytes: number): string {
 
 .sandbox-badge {
   border: 1px solid currentColor;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 6px;
   font-size: 12px;
 }

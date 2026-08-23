@@ -105,11 +105,11 @@ function shiftTo(delta: number): void {
 .mp-field { display: flex; align-items: center; gap: 4px; }
 .mp-input {
   padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface);
-  color: var(--color-text); border-radius: 6px; font-size: 13px;
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px;
 }
 .mp-btn {
   padding: 5px 9px; border: 1px solid var(--color-border); background: transparent;
-  color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px;
+  color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px;
 }
 .mp-btn:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .mp-btn:disabled { opacity: 0.4; cursor: not-allowed; }

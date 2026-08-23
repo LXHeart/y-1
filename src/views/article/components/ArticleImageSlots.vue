@@ -212,7 +212,7 @@ defineEmits<{
   margin-left: auto;
   padding: 2px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 0.76rem;
@@ -238,7 +238,7 @@ defineEmits<{
   display: inline-flex;
   align-items: center;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent);
   font-size: 0.76rem;
@@ -293,7 +293,7 @@ defineEmits<{
   min-height: 32px;
   padding: 0 14px;
   border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;

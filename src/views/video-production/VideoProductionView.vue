@@ -580,7 +580,7 @@ function handleResetAll(): void {
 .step-num {
   width: 28px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -670,7 +670,7 @@ function handleResetAll(): void {
   right: 2px;
   width: 18px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-overlay);
   color: var(--color-on-accent);
   border: none;
@@ -688,7 +688,7 @@ function handleResetAll(): void {
   left: 2px;
   width: 16px;
   height: 16px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-overlay);
   color: var(--color-on-accent);
   font-size: 10px;
@@ -916,7 +916,7 @@ function handleResetAll(): void {
 .stream-dot {
   width: 6px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
@@ -932,7 +932,7 @@ function handleResetAll(): void {
 
 .progress-bar-track {
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--color-border-hover);
   overflow: hidden;
   margin-bottom: 8px;
@@ -940,7 +940,7 @@ function handleResetAll(): void {
 
 .progress-bar-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--color-accent);
   transition: width 0.3s ease;
 }
@@ -1050,7 +1050,7 @@ function handleResetAll(): void {
   right: 16px;
   width: 36px;
   height: 36px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-border-hover);
   color: var(--color-on-accent);
   border: none;

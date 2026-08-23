@@ -484,7 +484,7 @@ function handleSubmit(): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-muted);
@@ -513,7 +513,7 @@ function handleSubmit(): void {
   min-height: 36px;
   padding: 0 14px;
   border: none;
-  border-radius: calc(var(--radius-md) - 4px);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 0.86rem;

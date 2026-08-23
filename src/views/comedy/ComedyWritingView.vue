@@ -405,7 +405,7 @@ async function handleGenerate(): Promise<void> {
 .dur-btn {
   padding: 3px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   font-size: 0.78rem;
@@ -465,7 +465,7 @@ async function handleGenerate(): Promise<void> {
   height: 14px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: var(--color-on-accent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   animation: spin 0.6s linear infinite;
 }
 

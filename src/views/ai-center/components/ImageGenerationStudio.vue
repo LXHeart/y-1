@@ -487,7 +487,7 @@ async function handleGenerate(): Promise<void> {
   width: 100%;
   padding: 6px 10px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text);
   font-size: 0.82rem;

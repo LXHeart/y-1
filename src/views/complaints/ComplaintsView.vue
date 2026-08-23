@@ -225,7 +225,7 @@ function time(value: string | null): string {
 }
 .complaint-item-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 .complaint-item-head strong { font-size: 0.94rem; }
-.status { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+.status { padding: 2px 8px; border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 600; }
 .status[data-status="open"] { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
 .status[data-status="processing"] { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, transparent); }
 .status[data-status="resolved"] { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }

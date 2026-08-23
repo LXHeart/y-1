@@ -300,11 +300,11 @@ async function submitFinalDecision(): Promise<void> {
 </template>
 
 <style scoped>
-.adj { border: 1px solid var(--color-border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.adj { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .adj-head { display: flex; justify-content: space-between; align-items: center; }
 .adj-head h4 { margin: 0; font-size: 15px; }
 .adj-refresh { font-size: 12px; padding: 3px 10px; }
-.adj-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.adj-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .adj-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .adj-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .adj-body { display: flex; flex-direction: column; gap: 14px; }
@@ -314,7 +314,7 @@ async function submitFinalDecision(): Promise<void> {
 .adj-meta dd { margin: 0; font-size: 13px; font-weight: 500; }
 .adj-window {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 7px 11px; border-radius: 6px; background: var(--color-surface-strong); font-size: 13px;
+  padding: 7px 11px; border-radius: var(--radius-sm); background: var(--color-surface-strong); font-size: 13px;
 }
 .adj-window-label { font-weight: 500; }
 .adj-window-time { font-variant-numeric: tabular-nums; }
@@ -322,8 +322,8 @@ async function submitFinalDecision(): Promise<void> {
 .adj-tally { display: flex; flex-direction: column; gap: 6px; }
 .adj-tally-row { display: flex; align-items: center; gap: 8px; }
 .adj-tally-label { flex: 0 0 62px; font-size: 12px; opacity: 0.75; }
-.adj-bar { flex: 1; height: 9px; background: var(--color-surface-strong); border-radius: 5px; overflow: hidden; }
-.adj-bar-fill { display: block; height: 100%; border-radius: 5px; transition: width 0.3s ease; }
+.adj-bar { flex: 1; height: 9px; background: var(--color-surface-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.adj-bar-fill { display: block; height: 100%; border-radius: var(--radius-sm); transition: width 0.3s ease; }
 .adj-bar-m { background: var(--color-accent); }
 .adj-bar-r { background: var(--color-success); }
 .adj-bar-a { background: var(--color-text-muted); }
@@ -332,14 +332,14 @@ async function submitFinalDecision(): Promise<void> {
 .adj-act { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--color-border); }
 .adj-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .adj-vote { display: flex; flex-direction: column; gap: 8px; }
-.adj-vote input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
+.adj-vote input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
 .adj-vote-btns { display: flex; gap: 8px; flex-wrap: wrap; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .adj-quiet { opacity: 0.7; font-size: 12px; }
-select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
+select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
 .adj-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .adj-cs summary { font-size: 13px; cursor: pointer; }
-.adj-warn { margin: 8px 0 0; font-size: 12px; color: var(--color-accent-warm); background: color-mix(in srgb, var(--color-accent-warm) 12%, transparent); padding: 7px 10px; border-radius: 6px; }
+.adj-warn { margin: 8px 0 0; font-size: 12px; color: var(--color-accent-warm); background: color-mix(in srgb, var(--color-accent-warm) 12%, transparent); padding: 7px 10px; border-radius: var(--radius-sm); }
 </style>

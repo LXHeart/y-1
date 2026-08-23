@@ -121,7 +121,7 @@ async function withdraw(): Promise<void> {
 .wal-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .wal-head h3 { margin: 0; font-size: 15px; }
 .wal h4 { margin: 6px 0 0; font-size: 13px; }
-.wal-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.wal-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .wal-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .wal-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .wal-balance { margin: 0; font-size: 14px; }
@@ -133,8 +133,8 @@ async function withdraw(): Promise<void> {
 .wal-out { color: var(--color-danger); }
 .wal-fee { font-size: 11px; opacity: 0.62; margin-left: 6px; }
 .wal-hint { margin: 0; font-size: 12px; opacity: 0.62; }
-input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; width: 110px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; width: 110px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .wal-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }

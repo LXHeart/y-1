@@ -78,12 +78,12 @@ function handleNavigate(target: NotificationLinkTarget): void {
 .nt-bell-wrap { position: relative; display: inline-flex; }
 .nt-bell {
   display: inline-flex; align-items: center; gap: 6px; position: relative;
-  padding: 6px 10px; font-size: 13px; border-radius: 8px; cursor: pointer;
+  padding: 6px 10px; font-size: 13px; border-radius: var(--radius-md); cursor: pointer;
   border: 1px solid var(--color-border); background: transparent; color: inherit;
 }
 .nt-bell:hover { background: var(--surface-hover); }
 .nt-bell-badge {
-  min-width: 17px; padding: 0 5px; border-radius: 9px; font-size: 11px; line-height: 17px;
+  min-width: 17px; padding: 0 5px; border-radius: var(--radius-md); font-size: 11px; line-height: 17px;
   text-align: center; color: var(--color-on-accent); background: var(--color-danger); font-variant-numeric: tabular-nums;
 }
 .nt-backdrop { position: fixed; inset: 0; z-index: 40; }

@@ -580,7 +580,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .video-studio { display: flex; flex-direction: column; gap: 1rem; }
 .vs-tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem; }
-.vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: 999px; background: transparent; cursor: pointer; font-size: 0.9rem; }
+.vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; cursor: pointer; font-size: 0.9rem; }
 .vs-tab.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
 .vs-section { display: flex; flex-direction: column; gap: 1rem; }
 .vs-filter-row { display: flex; gap: 0.5rem; }

@@ -90,9 +90,9 @@ watch(() => [props.organizationId, month.value], () => { void load() }, { immedi
 .mmb { display: flex; flex-direction: column; gap: 10px; }
 .mmb-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .mmb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.mmb-actions button { min-height: 32px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 6px; background: transparent; color: var(--color-text); cursor: pointer; }
+.mmb-actions button { min-height: 32px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text); cursor: pointer; }
 .mmb-head h3 { margin: 0; font-size: 15px; }
-.mmb-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px;
+.mmb-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px;
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .mmb-summary { display: flex; gap: 20px; flex-wrap: wrap; }
 .mmb-stat { display: flex; flex-direction: column; gap: 2px; }

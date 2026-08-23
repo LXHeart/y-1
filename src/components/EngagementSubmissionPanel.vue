@@ -347,17 +347,17 @@ async function reject(submission: EngagementSubmission): Promise<void> {
 
 <style scoped>
 .sub { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--color-border); }
-.sub-alert { margin: 0; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+.sub-alert { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12px; }
 .sub-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .sub-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .sub-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .sub-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.sub-list > li { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.sub-list > li { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .sub-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .sub-main a { color: var(--color-accent); word-break: break-all; }
 .sub-meta { margin: 0; font-size: 12px; opacity: 0.7; }
 .sub-reject { color: var(--color-danger); opacity: 0.9; }
-.sub-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); }
+.sub-tag { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); }
 .sub-submitted { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
 .sub-accepted { background: color-mix(in srgb, var(--color-success) 22%, transparent); }
 .sub-rejected { background: color-mix(in srgb, var(--color-danger) 22%, transparent); }
@@ -371,16 +371,16 @@ async function reject(submission: EngagementSubmission): Promise<void> {
 .sub-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sub-form { display: flex; flex-direction: column; gap: 6px; }
 .sub-atts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.sub-atts li { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--color-surface-strong); }
+.sub-atts li { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 8px; border-radius: var(--radius-sm); background: var(--color-surface-strong); }
 .sub-att-name { flex: 1 1 auto; word-break: break-all; }
 .sub-att-size { opacity: 0.6; white-space: nowrap; }
 .sub-atts button { padding: 2px 10px; font-size: 12px; }
 .sub-file { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .sub-file input[type="file"] { display: none; }
-.sub-file span { padding: 6px 14px; border: 1px dashed var(--color-border); border-radius: 6px; }
+.sub-file span { padding: 6px 14px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); }
 .sub-file input:disabled + span { opacity: 0.5; cursor: not-allowed; }
-input { flex: 1 1 220px; padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+input { flex: 1 1 220px; padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -132,7 +132,7 @@ async function open(item: Notification): Promise<void> {
 .nt-panel {
   display: flex; flex-direction: column; gap: 10px;
   width: min(400px, calc(100vw - 32px)); max-height: min(70vh, 560px);
-  padding: 14px; border-radius: 12px;
+  padding: 14px; border-radius: var(--radius-lg);
   background: var(--surface-card);
   border: 1px solid var(--color-border);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
@@ -140,17 +140,17 @@ async function open(item: Notification): Promise<void> {
 .nt-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .nt-head h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
 .nt-badge {
-  min-width: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; line-height: 18px;
+  min-width: 18px; padding: 0 5px; border-radius: var(--radius-md); font-size: 11px; line-height: 18px;
   text-align: center; color: var(--color-on-accent); background: var(--color-danger);
 }
 .nt-head-actions { display: flex; align-items: center; gap: 8px; }
 .nt-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--color-text-muted); }
 .nt-quiet {
-  padding: 3px 8px; font-size: 12px; border-radius: 6px; cursor: pointer;
+  padding: 3px 8px; font-size: 12px; border-radius: var(--radius-sm); cursor: pointer;
   border: 1px solid var(--color-border); background: transparent; color: inherit;
 }
 .nt-quiet:disabled { opacity: 0.5; cursor: not-allowed; }
-.nt-alert { margin: 0; padding: 6px 8px; border-radius: 6px; font-size: 12px; background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger); }
+.nt-alert { margin: 0; padding: 6px 8px; border-radius: var(--radius-sm); font-size: 12px; background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger); }
 .nt-empty { margin: 12px 0; text-align: center; font-size: 13px; color: var(--color-text-muted); }
 .nt-scroll { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 .nt-group { display: flex; flex-direction: column; gap: 6px; }
@@ -158,7 +158,7 @@ async function open(item: Notification): Promise<void> {
 .nt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .nt-item {
   width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 8px;
-  text-align: left; cursor: pointer; border: none; border-radius: 8px;
+  text-align: left; cursor: pointer; border: none; border-radius: var(--radius-md);
   background: transparent; color: inherit; font: inherit;
 }
 .nt-item:hover { background: var(--surface-hover); }
@@ -171,7 +171,7 @@ async function open(item: Notification): Promise<void> {
 .nt-meta { font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 li.unread .nt-title { font-weight: 700; }
 .nt-more {
-  align-self: center; padding: 5px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;
+  align-self: center; padding: 5px 12px; font-size: 12px; border-radius: var(--radius-sm); cursor: pointer;
   border: 1px solid var(--color-border); background: transparent; color: inherit;
 }
 .nt-more:disabled { opacity: 0.6; cursor: not-allowed; }

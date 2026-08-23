@@ -77,13 +77,13 @@ onMounted(() => { void refresh() })
 .panel-head { display: flex; justify-content: space-between; align-items: center; }
 .panel-head h3 { margin: 0; font-size: 15px; }
 .rename-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.rename-item { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; }
+.rename-item { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .rename-main { display: grid; gap: 2px; }
 .rename-names { font-size: 14px; }
 .rename-meta { font-size: 12px; opacity: 0.6; }
 .rename-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.rename-actions input { flex: 1; min-width: 180px; min-height: 34px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--surface-muted); color: var(--color-text); font-size: 13px; }
-.rename-actions button { min-height: 34px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; cursor: pointer; font-size: 13px; }
+.rename-actions input { flex: 1; min-width: 180px; min-height: 34px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--color-text); font-size: 13px; }
+.rename-actions button { min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; cursor: pointer; font-size: 13px; }
 .approve { color: var(--color-success); border-color: currentColor; }
 .reject { color: var(--color-danger); border-color: currentColor; }
 </style>

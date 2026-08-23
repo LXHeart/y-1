@@ -118,17 +118,17 @@ async function decline(invitation: MyInvitation): Promise<void> {
 .inv { display: flex; flex-direction: column; gap: 10px; }
 .inv-head { display: flex; justify-content: space-between; align-items: center; }
 .inv-head h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-.inv-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--color-accent); color: var(--color-on-accent); }
-.inv-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.inv-badge { font-size: 11px; padding: 1px 7px; border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-on-accent); }
+.inv-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .inv-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .inv-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .inv-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .inv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.inv-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.inv-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .inv-main { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.inv-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); }
+.inv-tag { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); }
 .inv-actions { display: flex; gap: 8px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .inv-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }

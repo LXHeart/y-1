@@ -451,7 +451,7 @@ const contentWithImages = computed(() => {
   flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-page);
   border: 1px solid var(--color-border);
 }
@@ -462,7 +462,7 @@ const contentWithImages = computed(() => {
   gap: 8px;
   min-height: 38px;
   padding: 0 14px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--color-text-muted);
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
@@ -482,7 +482,7 @@ const contentWithImages = computed(() => {
   height: 20px;
   display: grid;
   place-items: center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   font-size: 0.74rem;
@@ -629,7 +629,7 @@ const contentWithImages = computed(() => {
   flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
 }
@@ -638,7 +638,7 @@ const contentWithImages = computed(() => {
   min-height: 30px;
   padding: 0 14px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
@@ -726,7 +726,7 @@ const contentWithImages = computed(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent-2);
   font-size: 0.76rem;

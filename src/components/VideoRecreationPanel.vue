@@ -536,7 +536,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   width: 100%;
   aspect-ratio: 1;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
 }
 

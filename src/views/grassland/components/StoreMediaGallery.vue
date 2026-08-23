@@ -128,7 +128,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
 .gl-media-frame {
   aspect-ratio: 4 / 3;
   background: var(--surface-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -143,7 +143,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #111827;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .gl-media-broken {
@@ -153,7 +153,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
   justify-content: center;
   background: var(--surface-muted);
   border: 1px dashed var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   font-size: 12px;
 }

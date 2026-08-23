@@ -91,7 +91,7 @@ function evidenceText(match: RecommenderMatch, key: string): string {
 .match-total { font-size: 22px; color: var(--color-accent-2); }
 .match-table td:nth-child(2) span { color: var(--color-text-secondary); font-size: 12px; }
 .match-dimensions { display: grid; grid-template-columns: repeat(3, minmax(82px, 1fr)); gap: 4px; }
-.match-dimensions span { padding: 3px 5px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 11px; white-space: nowrap; }
+.match-dimensions span { padding: 3px 5px; border: 1px solid var(--color-border); border-radius: var(--radius-xs); font-size: 11px; white-space: nowrap; }
 details { margin-top: 6px; font-size: 11px; }
 summary { cursor: pointer; color: var(--color-accent-2); }
 dl { margin: 5px 0 0; }

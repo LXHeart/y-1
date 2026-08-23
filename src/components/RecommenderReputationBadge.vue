@@ -82,7 +82,7 @@ const tags = computed(() => [
 <style scoped>
 .rep { display: flex; flex-direction: column; gap: 6px; }
 .rep-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rep-level { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--color-surface-strong); white-space: nowrap; }
+.rep-level { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-lg); background: var(--color-surface-strong); white-space: nowrap; }
 .rep-Lv2 { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
 .rep-Lv3 { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 .rep-Lv4 { background: color-mix(in srgb, var(--color-success) 26%, transparent); color: var(--color-success); }
@@ -94,7 +94,7 @@ const tags = computed(() => [
 .rep-stats dd { margin: 0; }
 .rep-bio { margin: 0; font-size: 12px; opacity: 0.8; }
 .rep-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 0; }
-.rep-tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--color-surface-strong); }
+.rep-tag { font-size: 11px; padding: 1px 7px; border-radius: var(--radius-lg); background: var(--color-surface-strong); }
 .rep-social { list-style: none; margin: 0; padding: 0; font-size: 12px; opacity: 0.8; display: flex; flex-direction: column; gap: 2px; }
 .rep-empty { margin: 0; font-size: 12px; opacity: 0.55; }
 </style>

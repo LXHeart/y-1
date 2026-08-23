@@ -127,14 +127,14 @@ defineExpose({ reset, staged })
 
 <style scoped>
 .uploader { display: flex; flex-direction: column; gap: 8px; }
-.uploader-err { margin: 0; padding: 6px 10px; border-radius: 6px; font-size: 12px; background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
+.uploader-err { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12px; background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .uploader-staged { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.uploader-staged li { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--color-surface-strong); }
+.uploader-staged li { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 8px; border-radius: var(--radius-sm); background: var(--color-surface-strong); }
 .uploader-name { flex: 1 1 auto; word-break: break-all; }
 .uploader-size { opacity: 0.6; white-space: nowrap; }
-.uploader-staged button { padding: 2px 10px; font-size: 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; }
+.uploader-staged button { padding: 2px 10px; font-size: 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; }
 .uploader-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .uploader-pick input[type="file"] { display: none; }
-.uploader-pick span { padding: 6px 14px; border: 1px dashed var(--color-border); border-radius: 6px; }
+.uploader-pick span { padding: 6px 14px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); }
 .uploader-pick input:disabled + span { opacity: 0.5; cursor: not-allowed; }
 </style>

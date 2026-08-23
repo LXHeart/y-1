@@ -230,17 +230,17 @@ function capabilityLabel(value: AiProviderCapability): string {
 .panel-heading h3, .form-heading h4 { margin: 0; color: var(--color-text); letter-spacing: 0; }
 .panel-heading h3 { font-size: 1.05rem; }.form-heading h4 { font-size: 0.95rem; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 0.82rem; }
-.primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: 6px; cursor: pointer; }
+.primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
 .primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
 .secondary-command, .row-actions button, .form-heading button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command { color: var(--color-danger); }
 .primary-command:disabled { opacity: .5; cursor: wait; }
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { padding: 4px 0 0; text-align: left; }
-.key-list { display: grid; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.key-list { display: grid; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .key-row { padding: 13px 14px; border-bottom: 1px solid var(--color-border); }.key-row:last-child { border-bottom: 0; }
 .key-main { display: grid; gap: 3px; min-width: 0; }.key-main strong { color: var(--color-text); }.key-main span, .key-main small { color: var(--color-text-muted); overflow-wrap: anywhere; }
-.policy-band { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: 8px; }
+.policy-band { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .policy-band strong { color: var(--color-text); font-size: 0.9rem; }
 .policy-band p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 0.8rem; }
 .policy-toggle { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--color-text-secondary); white-space: nowrap; }
@@ -249,7 +249,7 @@ function capabilityLabel(value: AiProviderCapability): string {
 form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
 .form-heading, .form-actions, .wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 0.82rem; }
-input, select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; }
+input, select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
 .form-actions { justify-content: flex-end; }
 @media (max-width: 700px) { .panel-heading, .key-row { align-items: flex-start; flex-direction: column; }.row-actions { width: 100%; }.row-actions button { flex: 1; } .policy-band { grid-template-columns: 1fr; } form { grid-template-columns: 1fr; } form > * { grid-column: 1; } }
 </style>

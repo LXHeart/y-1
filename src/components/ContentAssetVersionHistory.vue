@@ -131,14 +131,14 @@ onMounted(async () => {
 .cavh-message, .cavh-hint { margin: 0; font-size: 11px; opacity: 0.7; }
 .cavh-error { color: var(--color-danger); opacity: 1; }
 .cavh-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.cavh-item label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.cavh-item label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 4px; border-radius: var(--radius-xs); cursor: pointer; }
 .cavh-item label.cavh-item-checked { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .cavh-item input { width: 14px; height: 14px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
 .cavh-item input:disabled { cursor: not-allowed; }
 .cavh-version { font-weight: 600; font-variant-numeric: tabular-nums; }
 .cavh-snapshot { opacity: 0.75; word-break: break-all; }
 .cavh-compare { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
-.cavh-grid { display: grid; grid-template-columns: 84px 1fr 1fr; gap: 6px; padding: 3px 4px; border-radius: 4px; }
+.cavh-grid { display: grid; grid-template-columns: 84px 1fr 1fr; gap: 6px; padding: 3px 4px; border-radius: var(--radius-xs); }
 .cavh-compare-head { font-weight: 600; opacity: 0.85; }
 .cavh-field { opacity: 0.7; }
 .cavh-changed { background: color-mix(in srgb, var(--color-warning) 12%, transparent); }

@@ -754,7 +754,7 @@ function formatBytes(value: number | null): string {
   justify-content: center;
   margin-left: 4px;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-danger);
   color: var(--color-on-accent);
   font-size: 0.72rem;
@@ -833,7 +833,7 @@ function formatBytes(value: number | null): string {
   display: inline-block;
   padding: 3px 7px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-muted);
   white-space: nowrap;
 }
@@ -953,7 +953,7 @@ function formatBytes(value: number | null): string {
 .role-tag {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -999,7 +999,7 @@ function formatBytes(value: number | null): string {
 .modal-card {
   width: min(440px, 92vw);
   background: var(--color-surface);
-  border-radius: var(--radius-lg, 12px);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-elevated);
 }
 

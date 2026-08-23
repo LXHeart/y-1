@@ -199,15 +199,15 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
 </template>
 
 <style scoped>
-.pr { border: 1px solid var(--color-border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.pr { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .pr-head { display: flex; justify-content: space-between; align-items: center; }
 .pr-head h3 { margin: 0; font-size: 15px; }
-.pr-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.pr-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .pr-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .pr-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.pr-item { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.pr-item { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .pr-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
-.pr-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-surface-strong); }
+.pr-tag { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); }
 .pr-sla { font-size: 11px; opacity: 0.7; margin-left: auto; }
 .pr-overdue { color: var(--color-danger); opacity: 1; }
 .pr-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 0; }
@@ -218,15 +218,15 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
 .pr-materials li { display: flex; gap: 8px; font-size: 12px; }
 .pr-mat-label { flex: 0 0 88px; opacity: 0.65; }
 .pr-mat-value { flex: 1; word-break: break-all; }
-.pr-appeal { margin: 0; font-size: 12px; padding: 6px 10px; border-radius: 6px; background: var(--color-surface-strong); }
+.pr-appeal { margin: 0; font-size: 12px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--color-surface-strong); }
 .pr-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pr-actions input { flex: 1; min-width: 160px; }
 .pr-audit { margin: 0; padding-left: 20px; font-size: 12px; }
 .pr-audit li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
 .pr-audit time { opacity: 0.62; }
 .pr-hint { margin: 0; font-size: 12px; opacity: 0.62; }
-input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .pr-reject { color: var(--color-danger); }

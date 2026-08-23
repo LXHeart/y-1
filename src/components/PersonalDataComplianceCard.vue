@@ -147,7 +147,7 @@ onBeforeUnmount(() => {
 .compliance-head h3 { margin: 0; font-size: 15px; }
 .action-row { padding: 10px 0; border-top: 1px solid var(--color-border); }
 .action-row p { margin: 2px 0 0; font-size: 12px; opacity: 0.62; }
-.result-row { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 12px; }
+.result-row { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 12px; }
 .result-row a { color: var(--color-accent); font-weight: 600; }
 .danger-zone { border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-border)); }
 .blockers { margin: 0; padding-left: 20px; color: var(--color-danger); font-size: 12px; }
@@ -155,10 +155,10 @@ onBeforeUnmount(() => {
 .audit-list { list-style: none; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 5px; }
 .audit-list li { font-size: 12px; }
 .audit-list time { opacity: 0.58; }
-.alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .error { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-button { padding: 6px 12px; border: 1px solid var(--color-border); border-radius: 6px; background: transparent; color: var(--color-text); cursor: pointer; }
+button { padding: 6px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text); cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .quiet { font-size: 12px; opacity: 0.75; }
 .danger { color: var(--color-danger); border-color: var(--color-danger); }

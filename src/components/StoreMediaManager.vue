@@ -409,14 +409,14 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
   padding: 8px;
   background: var(--surface-muted);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .sm-thumb {
   aspect-ratio: 4 / 3;
   margin-bottom: 6px;
   background: var(--color-surface-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -446,7 +446,7 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
   font-size: 12px;
   border: 1px solid var(--color-border);
   background: white;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
 }
 
@@ -490,7 +490,7 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 .sm-upload input[type="file"] {
   padding: 6px;
   border: 1px dashed var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 </style>

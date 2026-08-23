@@ -260,7 +260,7 @@ async function save(): Promise<void> {
 .prof { display: flex; flex-direction: column; gap: 10px; }
 .prof-head { display: flex; justify-content: space-between; align-items: center; }
 .prof-head h3 { margin: 0; font-size: 15px; }
-.prof-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
+.prof-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .prof-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .prof-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .prof-field { display: flex; flex-direction: column; gap: 4px; }
@@ -274,16 +274,16 @@ async function save(): Promise<void> {
 .prof-avatar-pick { position: relative; display: inline-flex; }
 .prof-avatar-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .prof-avatar-pick span {
-  padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 6px;
+  padding: 6px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   font-size: 13px; color: var(--color-text); cursor: pointer;
 }
-input, textarea { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 6px; font-size: 13px; font-family: inherit; }
+input, textarea { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; font-family: inherit; }
 textarea { resize: vertical; }
 .prof-socials { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .prof-social-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .prof-social-row input { flex: 1 1 120px; min-width: 0; }
 .prof-social-row input[type="number"] { flex: 0 0 110px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }
+button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .prof-add { align-self: flex-start; }

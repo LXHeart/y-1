@@ -720,9 +720,9 @@ function checksOf(row: OpsPendingVerification) {
 .ops-table th { text-align: left; padding: 6px 8px; opacity: 0.6; font-weight: 500; border-bottom: 1px solid var(--color-border); }
 .ops-table td { padding: 7px 8px; border-bottom: 1px solid var(--color-border); }
 .ops-row-high td:first-child { border-left: 2px solid var(--color-danger); }
-.ops-sev { margin-left: 6px; font-size: 10px; padding: 1px 5px; border-radius: 999px; font-weight: 600; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
+.ops-sev { margin-left: 6px; font-size: 10px; padding: 1px 5px; border-radius: var(--radius-pill); font-weight: 600; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
 /* 状态徽标语义色：待动作琥珀 / 流转中蓝 / 成功绿 / 失败红 / 终态灰（缺省底色） */
-.ops-status { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); color: var(--color-text-secondary); }
+.ops-status { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); color: var(--color-text-secondary); }
 .ops-st-open, .ops-st-pending { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
 .ops-st-in_review { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, transparent); }
 .ops-st-approved, .ops-st-succeeded, .ops-st-replayed { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
