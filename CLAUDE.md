@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## UI 设计规范（改前端 UI 前必读）
+
+所有前端 UI 工作遵循根 `AGENTS.md` 的 UI 规则；设计 token 与组件规范见根 `DESIGN.md`（用户端 / 共享组件）与 `src/ops/DESIGN.md`（治理台），两端品牌主色同为 `#533afd`。
+
 ## Repository overview
 
 全功能营销工具库 — 本地优先的短视频提取、内容创作与营销工具平台。
