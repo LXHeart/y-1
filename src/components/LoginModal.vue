@@ -10,12 +10,12 @@
             <svg class="login-brand-mark" width="34" height="34" viewBox="0 0 36 36" fill="none" aria-hidden="true">
               <defs>
                 <linearGradient id="login-mark-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop stop-color="#8b5cf6"/>
-                  <stop offset="0.5" stop-color="#6366f1"/>
-                  <stop offset="1" stop-color="#4f46e5"/>
+                  <stop stop-color="#665efd"/>
+                  <stop offset="0.5" stop-color="#533afd"/>
+                  <stop offset="1" stop-color="#4434d4"/>
                 </linearGradient>
               </defs>
-              <rect width="36" height="36" rx="10" fill="url(#login-mark-grad)"/>
+              <rect width="36" height="36" rx="8" fill="url(#login-mark-grad)"/>
               <path d="M11 10.5C11 9.67 11.67 9 12.5 9C12.9 9 13.27 9.16 13.53 9.43L23.53 18.43C24.15 19 24.15 19.97 23.53 20.54C23.27 20.78 22.93 20.91 22.57 20.91H12.5C11.67 20.91 11 20.24 11 19.41V10.5Z" fill="rgba(255,255,255,0.95)"/>
               <rect x="11" y="23" width="14" height="1.8" rx="0.9" fill="rgba(255,255,255,0.5)"/>
               <rect x="11" y="26.2" width="9" height="1.8" rx="0.9" fill="rgba(255,255,255,0.35)"/>
@@ -433,7 +433,7 @@ function handleSubmit(): void {
   height: 4px;
   margin: 0 -28px 22px;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  background: var(--gradient-field, linear-gradient(90deg, #8b5cf6, #10b981));
+  background: var(--gradient-field, linear-gradient(90deg, #533afd, #10b981));
 }
 
 .login-header {

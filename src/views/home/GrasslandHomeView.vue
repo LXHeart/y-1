@@ -312,10 +312,11 @@ function go(view: AppView): void {
 
 .hero-title {
   margin: 0;
+  font-family: var(--font-display);
   font-size: clamp(1.7rem, 2.6vw, 2.6rem);
   line-height: 1.15;
   letter-spacing: -0.03em;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--color-text);
 }
 
@@ -432,7 +433,7 @@ function go(view: AppView): void {
 .hot-title-link, .hot-title { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--color-text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hot-title-link:hover { text-decoration: underline; }
 .hot-meta-row { display: flex; gap: 10px; font-size: var(--text-xs); color: var(--color-text-muted); }
-.hot-create-btn { flex-shrink: 0; min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-sm); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.hot-create-btn { flex-shrink: 0; min-height: 30px; padding: 0 14px; border: 1px solid var(--color-border-accent); border-radius: 999px; background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
 .hot-create-btn:hover { border-color: var(--color-accent-2); }
 .hot-skeleton-list { display: grid; gap: 6px; }
 .hot-skeleton { height: 40px; border-radius: var(--radius-sm); background: var(--surface-muted); animation: hot-skeleton-pulse 1.4s ease-in-out infinite; }

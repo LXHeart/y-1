@@ -1,3 +1,15 @@
+/* 品牌字体 self-host（grassland-design / grassland-admin 共用）：
+   Space Grotesk = display 标题，Inter = 正文/UI；中文回退系统字体，禁止外部字体 CDN。 */
+@import '@fontsource/inter/300.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/space-grotesk/300.css';
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/600.css';
+@import '@fontsource/space-grotesk/700.css';
+
 :root {
   /* --- Color System --- */
   --color-bg: #0d0f18;
@@ -9,16 +21,16 @@
   --color-text: #f0f2f8;
   --color-text-secondary: #b4bdd0;
   --color-text-muted: #6b7490;
-  --color-accent: #8b5cf6;
-  --color-accent-2: #a78bfa;
+  --color-accent: #665efd;
+  --color-accent-2: #b9b9f9;
   --color-accent-warm: #f59e0b;
   --color-danger: #ef6b6b;
   --color-success: #34d399;
   --color-warning: #f59e0b;
   --color-info: #60a5fa;
   --color-overlay: rgba(7, 9, 16, 0.75);
-  --color-surface-highlight: rgba(139, 92, 246, 0.08);
-  --color-border-accent: rgba(139, 92, 246, 0.24);
+  --color-surface-highlight: rgba(102, 94, 253, 0.1);
+  --color-border-accent: rgba(102, 94, 253, 0.28);
 
   /* --- Surfaces --- */
   --surface-page: rgba(255, 255, 255, 0.02);
@@ -28,16 +40,17 @@
   --surface-elevated: #212740;
 
   /* --- Gradients --- */
-  --gradient-accent: linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #4f46e5 100%);
+  --gradient-accent: linear-gradient(135deg, #665efd 0%, #533afd 50%, #4434d4 100%);
   --gradient-accent-warm: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-  --gradient-hero: linear-gradient(135deg, #8b5cf6 0%, #6366f1 40%, #3b82f6 100%);
+  --gradient-hero: linear-gradient(135deg, #665efd 0%, #533afd 45%, #1c1e54 100%);
   --gradient-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
 
   /* --- Radius --- */
-  --radius-xl: 24px;
-  --radius-lg: 18px;
-  --radius-md: 14px;
-  --radius-sm: 10px;
+  --radius-xl: 16px;
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
 
   /* --- Grassland 草场身份 ---
      苗绿是推荐官侧的结构色（地平线右半/垄眉/生长刻度底轨），
@@ -60,9 +73,9 @@
   /* --- Shadows --- */
   --shadow-card: 0 12px 36px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-elevated: 0 24px 56px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  --shadow-glow: 0 0 48px rgba(139, 92, 246, 0.18);
-  --shadow-glow-strong: 0 0 64px rgba(139, 92, 246, 0.28);
-  --focus-ring: 0 0 0 3px rgba(139, 92, 246, 0.2);
+  --shadow-glow: 0 0 48px rgba(102, 94, 253, 0.2);
+  --shadow-glow-strong: 0 0 64px rgba(102, 94, 253, 0.3);
+  --focus-ring: 0 0 0 3px rgba(102, 94, 253, 0.24);
 
   /* --- Typography --- */
   --text-hero: clamp(2rem, 1.2rem + 3vw, 3.5rem);
@@ -72,7 +85,7 @@
   --text-base: 0.875rem;
   --text-lg: 1rem;
   --text-xl: 1.25rem;
-  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   /* 台账等宽：金额/ID/阈值/计数等数字列走这套（tabular-nums 对齐） */
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'PingFang SC', monospace;
@@ -86,43 +99,58 @@
 }
 
 [data-theme="light"] {
-  --color-bg: #f6f5fb;
+  --color-bg: #f6f9fc;
   --color-surface: #ffffff;
-  --color-surface-hover: #f0eff8;
-  --color-surface-strong: #e8e6f4;
-  --color-border: rgba(30, 20, 60, 0.07);
-  --color-border-hover: rgba(30, 20, 60, 0.15);
-  --color-text: #1a1536;
-  --color-text-secondary: #524b75;
-  --color-text-muted: #8a82a6;
-  --color-accent: #7c3aed;
-  --color-accent-2: #8b5cf6;
+  --color-surface-hover: #eef2f8;
+  --color-surface-strong: #e3e8ee;
+  --color-border: rgba(13, 37, 61, 0.08);
+  --color-border-hover: rgba(13, 37, 61, 0.16);
+  --color-text: #0d253d;
+  --color-text-secondary: #273951;
+  --color-text-muted: #64748d;
+  --color-accent: #533afd;
+  --color-accent-2: #665efd;
   --color-accent-warm: #f59e0b;
   --color-danger: #dc5b5b;
   --color-success: #10b981;
   --color-warning: #b45309;
   --color-info: #2563eb;
-  --color-overlay: rgba(20, 16, 40, 0.36);
-  --color-surface-highlight: rgba(124, 58, 237, 0.06);
-  --color-border-accent: rgba(124, 58, 237, 0.2);
-  --surface-page: rgba(124, 58, 237, 0.025);
+  --color-overlay: rgba(13, 37, 61, 0.32);
+  --color-surface-highlight: rgba(83, 58, 253, 0.06);
+  --color-border-accent: rgba(83, 58, 253, 0.22);
+  --surface-page: rgba(83, 58, 253, 0.03);
   --surface-card: rgba(255, 255, 255, 0.82);
-  --surface-muted: #f0eff8;
-  --surface-hover: #e8e6f4;
+  --surface-muted: #eef2f8;
+  --surface-hover: #e3e8ee;
   --surface-elevated: #ffffff;
   /* 草场身份（浅色）：草绿加深保对比；田垄磁贴底染回紫调与全局表面一致 */
   --color-grass: #27754a;
   --color-grass-dim: rgba(39, 117, 74, 0.1);
-  --surface-furrow: rgba(124, 58, 237, 0.03);
-  --gradient-accent: linear-gradient(135deg, #7c3aed 0%, #6366f1 50%, #4f46e5 100%);
+  --surface-furrow: rgba(83, 58, 253, 0.035);
+  --gradient-accent: linear-gradient(135deg, #665efd 0%, #533afd 50%, #4434d4 100%);
   --gradient-accent-warm: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-  --gradient-hero: linear-gradient(135deg, #7c3aed 0%, #6366f1 40%, #3b82f6 100%);
+  --gradient-hero: linear-gradient(135deg, #533afd 0%, #4434d4 55%, #1c1e54 100%);
   --gradient-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(246, 245, 251, 0.96) 100%);
-  --shadow-card: 0 10px 32px rgba(30, 20, 60, 0.07), 0 0 0 1px rgba(30, 20, 60, 0.04);
-  --shadow-elevated: 0 20px 48px rgba(30, 20, 60, 0.12), 0 0 0 1px rgba(30, 20, 60, 0.06);
-  --shadow-glow: 0 0 48px rgba(124, 58, 237, 0.12);
-  --shadow-glow-strong: 0 0 64px rgba(124, 58, 237, 0.2);
-  --focus-ring: 0 0 0 3px rgba(124, 58, 237, 0.18);
+  --shadow-card: 0 1px 3px rgba(0, 55, 112, 0.08), 0 0 0 1px rgba(13, 37, 61, 0.05);
+  --shadow-elevated: 0 8px 24px rgba(0, 55, 112, 0.08), 0 2px 6px rgba(0, 55, 112, 0.04);
+  --shadow-glow: 0 0 40px rgba(83, 58, 253, 0.12);
+  --shadow-glow-strong: 0 0 56px rgba(83, 58, 253, 0.2);
+  --focus-ring: 0 0 0 3px rgba(83, 58, 253, 0.2);
+}
+/* ---------- 治理台作用域（ops.html 根节点挂 data-app="ops"，规范见 src/ops/DESIGN.md） ----------
+   与营销页共享品牌紫 #533afd；后台更平：纯色主按钮、纯白画布、中性冷灰文本、无渐变光晕。 */
+[data-app="ops"] {
+  --gradient-accent: linear-gradient(135deg, #533afd 0%, #533afd 100%);
+  --gradient-hero: linear-gradient(135deg, #533afd 0%, #4434d4 100%);
+  --shadow-glow: 0 8px 24px rgba(0, 55, 112, 0.08);
+  --shadow-glow-strong: 0 12px 32px rgba(0, 55, 112, 0.12);
+}
+
+[data-theme="light"][data-app="ops"] {
+  --color-bg: #ffffff;
+  --surface-muted: #f8f9fa;
+  --color-text-secondary: #374151;
+  --color-text-muted: #6b7280;
 }
 
 *, *::before, *::after {
@@ -142,9 +170,9 @@ body {
   color: var(--color-text);
   font-family: var(--font-body);
   background:
-    radial-gradient(ellipse 80% 50% at 15% -10%, rgba(139, 92, 246, 0.12), transparent),
-    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(99, 102, 241, 0.08), transparent),
-    radial-gradient(ellipse 40% 30% at 50% 50%, rgba(79, 70, 229, 0.03), transparent),
+    radial-gradient(ellipse 80% 50% at 15% -10%, rgba(102, 94, 253, 0.14), transparent),
+    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(83, 58, 253, 0.09), transparent),
+    radial-gradient(ellipse 40% 30% at 50% 50%, rgba(68, 52, 212, 0.04), transparent),
     var(--color-bg);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -153,8 +181,8 @@ body {
 
 [data-theme="light"] body {
   background:
-    radial-gradient(ellipse 80% 50% at 15% -10%, rgba(124, 58, 237, 0.07), transparent),
-    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(99, 102, 241, 0.05), transparent),
+    radial-gradient(ellipse 80% 50% at 15% -10%, rgba(83, 58, 253, 0.06), transparent),
+    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(68, 52, 212, 0.04), transparent),
     var(--color-bg);
   background-attachment: fixed;
 }
@@ -183,7 +211,7 @@ img {
   background: var(--surface-card);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-card);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
   padding: var(--space-lg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -224,11 +252,16 @@ img {
   color: var(--color-on-accent);
   border: none;
   font-weight: 600;
+  border-radius: 999px;
+  padding: 0 var(--space-md);
 }
 .gl-btn-primary:hover:not(:disabled) {
   filter: brightness(1.08);
   box-shadow: var(--shadow-glow);
 }
+
+/* 治理台主按钮不做胶囊（grassland-admin：8px 圆角矩形） */
+[data-app="ops"] .gl-btn-primary { border-radius: var(--radius-md); }
 
 /* 减弱动态效果：全局把动画/过渡压到瞬时（focus ring 等无动画依赖不受影响） */
 @media (prefers-reduced-motion: reduce) {
@@ -248,7 +281,7 @@ img {
 .gl-field button {
   min-height: 34px; padding: 0 var(--space-sm);
   border: 1px solid var(--color-border); background: transparent; color: var(--color-text);
-  border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm);
+  border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-sm);
   transition: border-color var(--duration-fast) var(--ease-out),
     background var(--duration-fast) var(--ease-out),
     transform var(--duration-fast) var(--ease-out);
@@ -261,7 +294,7 @@ img {
 .gl-field .gl-row input, .gl-field .gl-row select, .gl-field .gl-row textarea {
   flex: 1; min-width: 120px; min-height: 34px; padding: 4px var(--space-sm);
   border: 1px solid var(--color-border); background: var(--color-surface);
-  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm);
+  color: var(--color-text); border-radius: var(--radius-md); font-size: var(--text-sm);
 }
 .gl-field .gl-row input[type="number"] { flex: 0 0 96px; }
 .gl-field .gl-row textarea { width: 100%; resize: vertical; }
@@ -367,10 +400,10 @@ img {
 
 @keyframes glow-pulse {
   0%, 100% {
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+    box-shadow: 0 0 20px rgba(102, 94, 253, 0.16);
   }
   50% {
-    box-shadow: 0 0 36px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 36px rgba(102, 94, 253, 0.32);
   }
 }
 
@@ -395,18 +428,18 @@ img {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.18);
+  background: rgba(102, 94, 253, 0.2);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.32);
+  background: rgba(102, 94, 253, 0.36);
 }
 
 [data-theme="light"] ::-webkit-scrollbar-thumb {
-  background: rgba(124, 58, 237, 0.16);
+  background: rgba(83, 58, 253, 0.16);
 }
 
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(124, 58, 237, 0.3);
+  background: rgba(83, 58, 253, 0.3);
 }

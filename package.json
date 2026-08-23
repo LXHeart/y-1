@@ -26,6 +26,8 @@
     "e2e:seed": "DATABASE_URL=$npm_package_config_localDbUrl tsx scripts/e2e-seed.ts"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
     "bcryptjs": "^3.0.3",
     "dompurify": "^3.4.13",
     "marked": "^18.0.9",
