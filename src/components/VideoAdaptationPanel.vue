@@ -570,7 +570,7 @@ onMounted(() => loadHistory(true))
 }
 
 .history-error {
-  color: var(--color-danger, #b42318);
+  color: var(--color-danger);
 }
 
 .history-more {
@@ -643,8 +643,8 @@ onMounted(() => loadHistory(true))
 }
 
 .preview-remove:hover {
-  background: rgba(239, 107, 107, 0.2);
-  color: #ef6b6b;
+  background: color-mix(in srgb, var(--color-danger) 20%, transparent);
+  color: var(--color-danger);
 }
 
 .card-header {

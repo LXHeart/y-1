@@ -421,7 +421,7 @@ function go(view: AppView): void {
 .hot-fetched-note { font-size: var(--text-xs); color: var(--color-text-muted); }
 .hot-range-switch { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--color-border); border-radius: var(--radius-md); width: fit-content; margin-bottom: 12px; }
 .hot-range-tab { min-height: 30px; padding: 0 12px; border: none; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
-.hot-range-tab-active { background: var(--gradient-accent); color: #fff; }
+.hot-range-tab-active { background: var(--gradient-accent); color: var(--color-on-accent); }
 .hot-range-note { margin: 0 0 10px; font-size: var(--text-xs); color: var(--color-text-muted); }
 .hot-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
 .hot-tab { min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 999px; background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }

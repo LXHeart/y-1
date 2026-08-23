@@ -97,7 +97,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
   width: 72px;
   height: 72px;
   border-radius: 10px;
-  border: 1px solid var(--gl-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   object-fit: cover;
   flex: 0 0 auto;
 }

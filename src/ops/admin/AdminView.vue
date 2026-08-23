@@ -1014,14 +1014,14 @@ function formatBytes(value: number | null): string {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .modal-title {
   font-size: 0.95rem;
   font-weight: 600;
   margin: 0;
-  color: var(--color-text, #111);
+  color: var(--color-text);
 }
 
 .modal-close {
@@ -1218,7 +1218,7 @@ function formatBytes(value: number | null): string {
 }
 
 .btn-confirm.danger {
-  background: #b91c1c;
+  background: var(--color-danger);
 }
 
 .approve-btn:disabled,

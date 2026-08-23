@@ -159,29 +159,29 @@ onMounted(async () => {
 .vh-head h3 { margin: 0; font-size: 15px; }
 .vh-head p, .vh-muted { margin: 2px 0 0; font-size: 12px; opacity: 0.7; }
 .vh-close { width: 30px; height: 30px; border: 0; background: transparent; cursor: pointer; font-size: 22px; line-height: 1; }
-.vh-error { margin: 0; color: #b91c1c; font-size: 13px; }
-.vh-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-color, #d0d7de); }
-.vh-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-color, #d0d7de); }
+.vh-error { margin: 0; color: var(--color-danger); font-size: 13px; }
+.vh-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--color-border); }
+.vh-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--color-border); }
 .vh-select { display: grid; grid-template-columns: auto auto auto minmax(90px, 1fr) auto; align-items: center; gap: 8px; min-height: 42px; cursor: pointer; font-size: 13px; }
 .vh-version { font-weight: 600; }
-.vh-current, .vh-changed { padding: 2px 6px; border-radius: 999px; font-size: 11px; background: #dcfce7; color: #166534; }
+.vh-current, .vh-changed { padding: 2px 6px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
 .vh-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vh-item time { font-size: 12px; opacity: 0.65; }
-.vh-list-restore { border: 0; background: transparent; color: var(--accent-color, #2563eb); padding: 4px; cursor: pointer; font-size: 12px; }
+.vh-list-restore { border: 0; background: transparent; color: var(--color-accent); padding: 4px; cursor: pointer; font-size: 12px; }
 .vh-list-restore:disabled { opacity: 0.5; cursor: not-allowed; }
-.vh-more, .vh-restore { align-self: flex-start; border: 1px solid var(--accent-color, #2563eb); border-radius: 5px; background: transparent; color: var(--accent-color, #2563eb); padding: 5px 9px; cursor: pointer; }
+.vh-more, .vh-restore { align-self: flex-start; border: 1px solid var(--color-accent); border-radius: 5px; background: transparent; color: var(--color-accent); padding: 5px 9px; cursor: pointer; }
 .vh-more:disabled { opacity: 0.5; cursor: not-allowed; }
-.vh-compare-scroll { overflow-x: auto; border: 1px solid var(--border-color, #d0d7de); border-radius: 6px; }
+.vh-compare-scroll { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 6px; }
 .vh-compare { display: grid; grid-template-columns: 130px repeat(2, minmax(220px, 1fr)); min-width: 620px; }
-.vh-corner, .vh-column-head, .vh-field-label, .vh-value { padding: 9px; border-bottom: 1px solid var(--border-color, #d0d7de); border-right: 1px solid var(--border-color, #d0d7de); }
+.vh-corner, .vh-column-head, .vh-field-label, .vh-value { padding: 9px; border-bottom: 1px solid var(--color-border); border-right: 1px solid var(--color-border); }
 .vh-column-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .vh-column-head span { font-size: 11px; opacity: 0.7; }
 .vh-field-label { display: flex; align-items: center; justify-content: space-between; gap: 5px; font-size: 12px; font-weight: 600; }
-.vh-field-label.changed, .vh-value.changed { background: #fffbeb; }
-.vh-changed { background: #fef3c7; color: #92400e; }
+.vh-field-label.changed, .vh-value.changed { background: color-mix(in srgb, var(--color-warning) 8%, transparent); }
+.vh-changed { background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning); }
 .vh-value { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .vh-value.long { max-height: 180px; overflow: auto; }
-.vh-current-text { color: #166534; }
+.vh-current-text { color: var(--color-success); }
 @media (max-width: 640px) {
   .vh-select { grid-template-columns: auto auto auto minmax(0, 1fr); padding: 7px 0; }
   .vh-select time { grid-column: 4; }

@@ -145,7 +145,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
   gap: 8px;
 }
 .gl-profile-row dt {
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
 }
 .gl-profile-row dd {
   margin: 0;

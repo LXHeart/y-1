@@ -98,5 +98,5 @@ dl { margin: 5px 0 0; }
 dt { font-weight: 600; }
 dd { margin: 0 0 4px; color: var(--color-text-secondary); }
 ul { margin: 0; padding-left: 16px; }
-.match-invited { color: var(--color-success, #237a45); font-size: 12px; font-weight: 600; }
+.match-invited { color: var(--color-success); font-size: 12px; font-weight: 600; }
 </style>

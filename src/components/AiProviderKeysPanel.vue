@@ -163,7 +163,7 @@ function capabilityLabel(value: AiProviderCapability): string {
 .panel-heading h3 { font-size: 1.05rem; }.form-heading h4 { font-size: 0.95rem; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 0.82rem; }
 .primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: 6px; cursor: pointer; }
-.primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: #fff; font-weight: 700; }
+.primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
 .secondary-command, .row-actions button, .form-heading button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command { color: var(--color-danger); }
 .primary-command:disabled { opacity: .5; cursor: wait; }

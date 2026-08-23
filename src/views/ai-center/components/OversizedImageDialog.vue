@@ -71,11 +71,11 @@ function formatFileSize(bytes: number): string {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
 }
-.oversized-btn-primary { background: var(--gradient-accent); color: #fff; border: none; }
+.oversized-btn-primary { background: var(--gradient-accent); color: var(--color-on-accent); border: none; }
 .oversized-btn-primary:hover:not(:disabled) { opacity: 0.9; }
 .oversized-btn-secondary { background: var(--surface-card); color: var(--color-text-secondary); border: 1px solid var(--color-border); }
 .oversized-btn-secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--color-border-hover); }
 .oversized-btn-primary:disabled, .oversized-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
-.spinner-sm { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+.spinner-sm { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: var(--color-on-accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

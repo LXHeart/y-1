@@ -128,11 +128,11 @@ onMounted(() => void loadQueue())
 .reject-btn { border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 7%, transparent); color: var(--color-danger); }
 .review-actions { display: flex; gap: 6px; }
 .type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--surface-muted); white-space: nowrap; }
-.type-tag.status-review { border-color: #b45309; color: #b45309; }
+.type-tag.status-review { border-color: var(--color-warning); color: var(--color-warning); }
 .type-tag.status-blocked { border-color: var(--color-danger); color: var(--color-danger); }
 .type-tag.status-pass { border-color: var(--color-success); color: var(--color-success); }
 .loading-state { padding: var(--space-xl); text-align: center; color: var(--color-text-muted); font-size: 0.9rem; }
-.error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: rgba(239, 107, 107, 0.1); border: 1px solid rgba(239, 107, 107, 0.2); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
+.error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
 .td-time { white-space: nowrap; color: var(--color-text-muted); }
 .td-empty { text-align: center; padding: var(--space-xl); color: var(--color-text-muted); }
 .moderation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }

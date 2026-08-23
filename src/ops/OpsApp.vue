@@ -232,8 +232,8 @@ watch(() => isAuthenticated.value, (authed) => {
 .theme-toggle:hover, .ops-button:hover:not(:disabled) {
   background: var(--color-surface-hover); border-color: var(--color-border-hover); color: var(--color-text);
 }
-.ops-button-primary { background: var(--gradient-accent); border: none; color: #fff; font-weight: 600; }
-.ops-button-primary:hover { color: #fff; }
+.ops-button-primary { background: var(--gradient-accent); border: none; color: var(--color-on-accent); font-weight: 600; }
+.ops-button-primary:hover { color: var(--color-on-accent); }
 
 .ops-banner {
   margin: 0; padding: 12px 16px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-md);
@@ -248,7 +248,7 @@ watch(() => isAuthenticated.value, (authed) => {
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .ops-nav button:hover { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
-.ops-nav-active { background: var(--gradient-accent) !important; color: #fff !important; font-weight: 600; }
+.ops-nav-active { background: var(--gradient-accent) !important; color: var(--color-on-accent) !important; font-weight: 600; }
 
 .ops-view { flex: 1; display: flex; flex-direction: column; }
 .ops-empty { display: grid; gap: 8px; padding: var(--space-xl) var(--space-lg); border: 1px dashed var(--color-border); border-radius: var(--radius-md); align-self: start; }

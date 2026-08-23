@@ -91,13 +91,13 @@ function formatDateTime(value: string): string {
 .data-table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 0.82rem; }
 .data-table th, .data-table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--color-border); vertical-align: top; }
 .data-table tr:last-child td { border-bottom: 0; }
-.data-table th { color: var(--color-text-muted); background: var(--color-surface-muted); font-weight: 600; }
+.data-table th { color: var(--color-text-muted); background: var(--surface-muted); font-weight: 600; }
 .data-table td { color: var(--color-text-secondary); }
 .data-table strong, .data-table small { display: block; }
 .data-table strong { color: var(--color-text); }
 .data-table small { margin-top: 2px; color: var(--color-text-muted); }
-.status-tag { display: inline-block; padding: 3px 7px; border-radius: 5px; background: var(--color-surface-muted); }
-.status-completed { color: #15803d; }
+.status-tag { display: inline-block; padding: 3px 7px; border-radius: 5px; background: var(--surface-muted); }
+.status-completed { color: var(--color-success); }
 .status-failed { color: var(--color-danger); }
 .status-running { color: var(--color-accent); }
 </style>

@@ -386,7 +386,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 }
 
 .scene-image-error {
-  color: #e53e3e;
+  color: var(--color-danger);
 }
 
 .scene-gen-btn {
@@ -401,9 +401,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 }
 
 .scene-gen-btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
 .scene-gen-btn:disabled {
@@ -553,7 +553,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 }
 
 .recent-error {
-  color: var(--color-danger, #b42318);
+  color: var(--color-danger);
 }
 
 .lightbox-overlay {
@@ -586,7 +586,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   border: none;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+  color: var(--color-on-accent);
   cursor: pointer;
   transition: background 0.15s ease;
 }

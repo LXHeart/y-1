@@ -199,6 +199,6 @@ void loadHotItems()
 }
 
 .hot-error {
-  color: var(--color-danger, #b42318);
+  color: var(--color-danger);
 }
 </style>

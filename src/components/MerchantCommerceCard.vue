@@ -403,13 +403,13 @@ onBeforeUnmount(stopScanner)
 .compact-orders { max-height: 320px; overflow: auto; display: grid; gap: 8px; }
 .compact-order { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; }
 .compact-order p { margin: 0; font-size: 12px; }
-.compact-order.disputed { border-color: #a05b00; background: color-mix(in srgb, #a05b00 7%, transparent); }
+.compact-order.disputed { border-color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 7%, transparent); }
 .dispute-handle { margin-top: 6px; }
 .resolve-form { display: grid; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--color-border); }
 .resolve-form > p { margin: 0; font-size: 12px; opacity: .8; }
 .resolve-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .resolve-row input.amount { flex: 1; min-width: 160px; }
-.resolve-row button, button.warn { border-color: #a05b00; color: #a05b00; }
+.resolve-row button, button.warn { border-color: var(--color-warning); color: var(--color-warning); }
 input, button { min-height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface); color: var(--color-text); } button { cursor: pointer; }
 .package-list { display: grid; gap: 8px; }.package-row { padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; }.package-row span { margin-left: 8px; font-size: 11px; opacity: .7; }.package-row code { font-size: 10px; opacity: .6; }
 .row-actions { justify-content: flex-end; flex-wrap: wrap; }.promotion-box { align-items: stretch; padding: 14px; border-radius: 10px; background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: 8px; }.promotion-box img { width: 150px; height: 150px; }

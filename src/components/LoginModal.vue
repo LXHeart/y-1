@@ -433,7 +433,7 @@ function handleSubmit(): void {
   height: 4px;
   margin: 0 -28px 22px;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  background: var(--gradient-field, linear-gradient(90deg, #533afd, #10b981));
+  background: var(--gradient-field);
 }
 
 .login-header {
@@ -453,7 +453,7 @@ function handleSubmit(): void {
 
 .login-brand-mark {
   flex-shrink: 0;
-  filter: drop-shadow(0 2px 10px rgba(139, 92, 246, 0.35));
+  filter: drop-shadow(0 2px 10px color-mix(in srgb, var(--color-accent) 35%, transparent));
 }
 
 .login-brand-copy {
@@ -587,8 +587,8 @@ function handleSubmit(): void {
 }
 
 .login-identity-option-active .login-identity-dot {
-  border-color: var(--color-grass, #10b981);
-  background: var(--color-grass, #10b981);
+  border-color: var(--color-grass);
+  background: var(--color-grass);
   box-shadow: inset 0 0 0 3px var(--surface-card);
 }
 
@@ -750,18 +750,18 @@ function handleSubmit(): void {
   border: none;
   border-radius: var(--radius-md);
   background: var(--gradient-accent);
-  color: #ffffff;
+  color: var(--color-on-accent);
   font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--color-accent) 30%, transparent);
   transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .login-primary-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 22px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
 .login-primary-btn:disabled {

@@ -200,10 +200,10 @@ function formatSize(bytes: number): string {
 }
 
 .error-state {
-  color: #b3261e;
+  color: var(--color-danger);
 }
 
 .copy-hint {
-  color: #1b7f3b;
+  color: var(--color-success);
 }
 </style>

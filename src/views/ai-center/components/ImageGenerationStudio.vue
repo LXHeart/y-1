@@ -596,7 +596,7 @@ async function handleGenerate(): Promise<void> {
   width: 16px;
   height: 16px;
   border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  border-top-color: var(--color-on-accent);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
@@ -694,7 +694,7 @@ async function handleGenerate(): Promise<void> {
   border: none;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  color: var(--color-on-accent);
   font-size: 1.4rem;
   cursor: pointer;
   display: flex;

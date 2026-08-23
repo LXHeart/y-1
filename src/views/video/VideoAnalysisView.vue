@@ -542,7 +542,7 @@ watch(() => props.creationHandoff, (handoff) => {
 
 .recreation-error {
   margin: 0;
-  color: var(--color-danger, #b42318);
+  color: var(--color-danger);
   font-size: 0.84rem;
 }
 

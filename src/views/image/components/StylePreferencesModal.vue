@@ -234,7 +234,7 @@ defineEmits<{
 }
 
 .preference-action-btn:hover { color: var(--color-text); background: var(--surface-card); }
-.preference-delete-btn:hover { color: var(--color-danger); background: rgba(239, 107, 107, 0.08); }
+.preference-delete-btn:hover { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
 
 .preference-edit-input { flex: 1; min-width: 0; }
 
@@ -273,7 +273,7 @@ defineEmits<{
 }
 
 .optimize-diff-removed { color: var(--color-danger); }
-.optimize-diff-added { color: #48bb78; }
+.optimize-diff-added { color: var(--color-success); }
 
 .optimize-diff-list {
   list-style: none;
@@ -295,12 +295,12 @@ defineEmits<{
   line-height: 1.5;
 }
 
-.optimize-diff-item-old { background: rgba(239, 107, 107, 0.08); color: var(--color-text-secondary); text-decoration: line-through; }
-.optimize-diff-item-new { background: rgba(72, 187, 120, 0.08); color: var(--color-text); }
+.optimize-diff-item-old { background: color-mix(in srgb, var(--color-danger) 8%, transparent); color: var(--color-text-secondary); text-decoration: line-through; }
+.optimize-diff-item-new { background: color-mix(in srgb, var(--color-success) 8%, transparent); color: var(--color-text); }
 
 .optimize-diff-marker { flex-shrink: 0; font-weight: 700; width: 14px; text-align: center; }
 .optimize-diff-item-old .optimize-diff-marker { color: var(--color-danger); }
-.optimize-diff-item-new .optimize-diff-marker { color: #48bb78; }
+.optimize-diff-item-new .optimize-diff-marker { color: var(--color-success); }
 
 .optimize-diff-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 

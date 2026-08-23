@@ -356,7 +356,7 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 .store-media-section {
   margin-top: 24px;
   padding-top: 16px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
 }
 
 .store-media-section h4 {
@@ -367,13 +367,13 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 
 .sm-error {
   margin: 0 0 12px;
-  color: #b91c1c;
+  color: var(--color-danger);
   font-size: 13px;
 }
 
 .sm-hint {
   margin: 0 0 12px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -391,12 +391,12 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 .sm-kind-label {
   font-size: 13px;
   font-weight: 500;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .sm-kind-count {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 .sm-list {
@@ -407,15 +407,15 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 
 .sm-item {
   padding: 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--surface-muted);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
 }
 
 .sm-thumb {
   aspect-ratio: 4 / 3;
   margin-bottom: 6px;
-  background: #e5e7eb;
+  background: var(--color-surface-strong);
   border-radius: 4px;
   overflow: hidden;
   display: flex;
@@ -432,7 +432,7 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 
 .sm-thumb-broken {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 .sm-item-actions {
@@ -444,7 +444,7 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 .sm-item-actions button {
   padding: 2px 8px;
   font-size: 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border);
   background: white;
   border-radius: 4px;
   cursor: pointer;
@@ -456,26 +456,26 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 }
 
 .sm-item-actions .sm-confirm {
-  border-color: #ef4444;
-  color: #b91c1c;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .sm-empty {
   margin: 0 0 8px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 .sm-upload-progress {
   margin: 4px 0 0;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .sm-upload-error {
   margin: 4px 0 0;
   font-size: 12px;
-  color: #b91c1c;
+  color: var(--color-danger);
 }
 
 .sm-upload {
@@ -484,12 +484,12 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
   gap: 4px;
   margin-top: 8px;
   font-size: 13px;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .sm-upload input[type="file"] {
   padding: 6px;
-  border: 1px dashed #d1d5db;
+  border: 1px dashed var(--color-border);
   border-radius: 6px;
   cursor: pointer;
 }

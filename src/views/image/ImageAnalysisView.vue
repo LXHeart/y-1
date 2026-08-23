@@ -1598,8 +1598,8 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   margin: 0;
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  border: 1px solid rgba(114, 132, 248, 0.24);
-  background: rgba(114, 132, 248, 0.07);
+  border: 1px solid var(--color-border-accent);
+  background: var(--color-surface-highlight);
   color: var(--color-text-secondary);
   font-size: 0.84rem;
   line-height: 1.6;

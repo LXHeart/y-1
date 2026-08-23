@@ -84,6 +84,6 @@ onMounted(() => { void refresh() })
 .rename-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .rename-actions input { flex: 1; min-width: 180px; min-height: 34px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--surface-muted); color: var(--color-text); font-size: 13px; }
 .rename-actions button { min-height: 34px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; cursor: pointer; font-size: 13px; }
-.approve { color: var(--color-success, #059669); border-color: currentColor; }
+.approve { color: var(--color-success); border-color: currentColor; }
 .reject { color: var(--color-danger); border-color: currentColor; }
 </style>

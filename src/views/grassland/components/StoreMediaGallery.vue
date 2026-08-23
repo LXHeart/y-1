@@ -127,7 +127,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
 /* 固定宽高比占位：图片未加载/加载中不引起布局抖动。 */
 .gl-media-frame {
   aspect-ratio: 4 / 3;
-  background: var(--color-surface-muted, #f3f4f6);
+  background: var(--surface-muted);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -151,10 +151,10 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-muted, #f3f4f6);
-  border: 1px dashed var(--color-border, #e5e7eb);
+  background: var(--surface-muted);
+  border: 1px dashed var(--color-border);
   border-radius: 6px;
-  color: var(--color-text-secondary, #9ca3af);
+  color: var(--color-text-muted);
   font-size: 12px;
 }
 </style>

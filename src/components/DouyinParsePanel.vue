@@ -431,18 +431,18 @@ const analysisRunIdText = computed(() => {
 }
 
 .analysis-status-error {
-  border-color: rgba(239, 107, 107, 0.28);
-  background: rgba(239, 107, 107, 0.08);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
 }
 
 .analysis-status-warning {
-  border-color: rgba(255, 184, 77, 0.28);
-  background: rgba(255, 184, 77, 0.08);
+  border-color: color-mix(in srgb, var(--color-warning) 28%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 }
 
 .analysis-status-info {
-  border-color: rgba(114, 132, 248, 0.22);
-  background: rgba(114, 132, 248, 0.08);
+  border-color: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 }
 
 .analysis-status-empty {

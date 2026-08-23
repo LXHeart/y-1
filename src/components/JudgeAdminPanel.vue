@@ -186,14 +186,14 @@ onMounted(() => void loadJudges(false))
   min-height: 34px; padding: 0 11px; border-radius: 6px; border: 1px solid transparent;
   font: inherit; font-weight: 600; cursor: pointer;
 }
-.primary-btn { background: #2563eb; color: #fff; }
+.primary-btn { background: var(--color-accent); color: var(--color-on-accent); }
 .secondary-btn { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
-.danger-btn { background: #b42318; color: #fff; }
+.danger-btn { background: var(--color-danger); color: var(--color-on-accent); }
 .icon-btn { width: 34px; padding: 0; background: transparent; color: var(--color-text-muted); font-size: 20px; }
 button:disabled { opacity: .55; cursor: not-allowed; }
 .error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: 6px; font-size: 13px; }
-.error-msg { background: #fef3f2; color: #b42318; border: 1px solid #fecdca; }
-.success-msg { background: #ecfdf3; color: #067647; border: 1px solid #abefc6; }
+.error-msg { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); }
+.success-msg { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
 .loading-state { padding: 24px; text-align: center; color: var(--color-text-muted); }
 .judge-search { display: grid; grid-template-columns: minmax(260px, 520px) auto auto; align-items: end; gap: 8px; }
 .judge-search label { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 12px; }
@@ -207,8 +207,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .account-cell { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
 td input { width: 100%; min-width: 170px; height: 34px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text); }
 .row-actions { display: flex; gap: 6px; white-space: nowrap; }
-.state-good { color: #067647; font-weight: 700; }
-.state-warn { color: #b54708; font-weight: 700; }
+.state-good { color: var(--color-success); font-weight: 700; }
+.state-warn { color: var(--color-warning); font-weight: 700; }
 .state-muted { color: var(--color-text-muted); }
 .empty-cell { padding: 24px; text-align: center; color: var(--color-text-muted); }
 .audit-section { border-top: 1px solid var(--color-border); padding-top: 16px; }

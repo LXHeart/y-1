@@ -1115,7 +1115,7 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-subtabs::-webkit-scrollbar { display: none; }
 .gl-subtab { min-height: 36px; padding: 0 16px; border: none; border-radius: calc(var(--radius-md) - 4px); background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .gl-subtab:hover { color: var(--color-text-secondary); }
-.gl-subtab-active { background: var(--gradient-accent); color: #fff; }
+.gl-subtab-active { background: var(--gradient-accent); color: var(--color-on-accent); }
 .gl-workbench[data-side="recommender"] .gl-subtab-active { background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 70%, var(--color-info))); }
 .gl-workbench .gl-zone-title { transition: color var(--duration-normal) var(--ease-out); }
 .gl-workbench[data-side="merchant"] .gl-zone-title { color: var(--color-accent-2); }

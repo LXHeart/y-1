@@ -108,14 +108,14 @@ import { computed } from 'vue'
 
 .format-rule-warnings li {
   margin: 0;
-  color: var(--color-danger, #d97706);
+  color: var(--color-warning);
   font-size: 0.82rem;
   line-height: 1.5;
 }
 
 .format-rule-bar-warn {
-  border-color: rgba(239, 107, 107, 0.28);
-  background: rgba(239, 107, 107, 0.06);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
 }
 
 .completed-preview {

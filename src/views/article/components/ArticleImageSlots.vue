@@ -239,7 +239,7 @@ defineEmits<{
   align-items: center;
   padding: 2px 10px;
   border-radius: 999px;
-  background: rgba(114, 132, 248, 0.12);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent);
   font-size: 0.76rem;
   font-weight: 700;
@@ -376,7 +376,7 @@ defineEmits<{
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.45);
-  color: #fff;
+  color: var(--color-on-accent);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s ease;

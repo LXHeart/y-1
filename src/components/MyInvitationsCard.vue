@@ -118,7 +118,7 @@ async function decline(invitation: MyInvitation): Promise<void> {
 .inv { display: flex; flex-direction: column; gap: 10px; }
 .inv-head { display: flex; justify-content: space-between; align-items: center; }
 .inv-head h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-.inv-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--color-accent); color: #fff; }
+.inv-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--color-accent); color: var(--color-on-accent); }
 .inv-alert { margin: 0; padding: 7px 11px; border-radius: 6px; font-size: 13px; }
 .inv-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .inv-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }

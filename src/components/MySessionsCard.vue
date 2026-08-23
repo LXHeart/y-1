@@ -200,7 +200,7 @@ async function revoke(session: LoginSession): Promise<void> {
 .sess-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; }
 .sess-main { display: flex; flex-direction: column; gap: 2px; }
 .sess-name { font-size: 13px; display: flex; align-items: center; gap: 6px; }
-.sess-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-accent); color: #fff; }
+.sess-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-accent); color: var(--color-on-accent); }
 .sess-meta { font-size: 12px; opacity: 0.62; }
 .sess-head-actions { display: flex; align-items: center; gap: 6px; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: 6px; cursor: pointer; font-size: 13px; }

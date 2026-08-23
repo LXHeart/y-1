@@ -672,7 +672,7 @@ function handleResetAll(): void {
   height: 18px;
   border-radius: 999px;
   background: var(--color-overlay);
-  color: #fff;
+  color: var(--color-on-accent);
   border: none;
   cursor: pointer;
   display: flex;
@@ -690,7 +690,7 @@ function handleResetAll(): void {
   height: 16px;
   border-radius: 999px;
   background: var(--color-overlay);
-  color: #fff;
+  color: var(--color-on-accent);
   font-size: 10px;
   display: flex;
   align-items: center;
@@ -761,7 +761,7 @@ function handleResetAll(): void {
 
 .reference-platform-tab-active {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-on-accent);
 }
 
 .reference-input,
@@ -1052,7 +1052,7 @@ function handleResetAll(): void {
   height: 36px;
   border-radius: 999px;
   background: var(--color-border-hover);
-  color: #fff;
+  color: var(--color-on-accent);
   border: none;
   font-size: 20px;
   cursor: pointer;

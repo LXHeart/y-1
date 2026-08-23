@@ -502,10 +502,10 @@ onMounted(() => { if (sourceImage.value) render() })
 .studio-toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .studio-upload-btn { cursor: pointer; padding: 0.4rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .studio-upload-btn input { display: none; }
-.studio-file-name { font-size: 0.85rem; color: var(--text-secondary, #666); }
-.studio-warn { color: var(--warning, #b45309); font-size: 0.85rem; }
-.studio-ok { color: var(--success, #16a34a); font-size: 0.85rem; }
-.studio-empty { text-align: center; padding: 3rem 1rem; color: var(--text-secondary, #888); }
+.studio-file-name { font-size: 0.85rem; color: var(--color-text-muted); }
+.studio-warn { color: var(--color-warning); font-size: 0.85rem; }
+.studio-ok { color: var(--color-success); font-size: 0.85rem; }
+.studio-empty { text-align: center; padding: 3rem 1rem; color: var(--color-text-muted); }
 .studio-empty-hint { font-size: 0.85rem; margin-top: 0.5rem; }
 .studio-body { display: flex; gap: 1.5rem; }
 .studio-canvas-wrap { flex: 1; position: relative; background: var(--surface-muted); border-radius: var(--radius-md); overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 300px; }
@@ -518,7 +518,7 @@ onMounted(() => { if (sourceImage.value) render() })
 .panel-group legend { font-weight: 600; font-size: 0.85rem; padding: 0 0.3rem; }
 .ratio-btns { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .ratio-btn { padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
-.ratio-btn.active { background: var(--primary, #3b82f6); color: #fff; border-color: var(--primary, #3b82f6); }
+.ratio-btn.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
 .transform-btns { display: flex; gap: 0.3rem; }
 .transform-btns button { flex: 1; font-size: 0.75rem; padding: 0.3rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .slider-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; margin: 0.25rem 0; }

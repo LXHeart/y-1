@@ -439,13 +439,13 @@ onMounted(() => void loadPolicy())
   min-height: 36px; padding: 0 14px; border-radius: 6px; border: 1px solid transparent;
   font: inherit; font-weight: 600; cursor: pointer;
 }
-.primary-btn { background: #2563eb; color: #fff; }
+.primary-btn { background: var(--color-accent); color: var(--color-on-accent); }
 .secondary-btn { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
-.danger-btn { background: #b42318; color: #fff; }
+.danger-btn { background: var(--color-danger); color: var(--color-on-accent); }
 button:disabled { opacity: .55; cursor: not-allowed; }
 .error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: 6px; font-size: 13px; }
-.error-msg { background: #fef3f2; color: #b42318; border: 1px solid #fecdca; }
-.success-msg { background: #ecfdf3; color: #067647; border: 1px solid #abefc6; }
+.error-msg { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); }
+.success-msg { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
 .loading-state { padding: 24px; text-align: center; color: var(--color-text-muted); }
 .level-list { display: grid; gap: 10px; }
 .reputation-level-row { padding: 14px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); }
@@ -458,8 +458,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .level-heading input, .level-fields input, .account-search input { height: 34px; padding: 0 9px; }
 textarea { padding: 8px 9px; resize: vertical; }
 .status-tag { justify-self: start; padding: 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
-.status-invite { color: #9a3412; background: #fff7ed; }
-.status-judge { color: #166534; background: #f0fdf4; }
+.status-invite { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+.status-judge { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 .level-fields { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 12px; }
 .level-fields label, .benefits-field, .account-search label, .admission-note { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 12px; }
 .input-suffix { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; }
@@ -476,8 +476,8 @@ textarea { padding: 8px 9px; resize: vertical; }
 .detail-summary span { color: var(--color-text-muted); font-size: 12px; }
 .account-id-value { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 12px; }
 .eligibility-ok, .eligibility-warn { margin: 0; font-size: 13px; font-weight: 600; }
-.eligibility-ok { color: #067647; }
-.eligibility-warn { color: #b54708; }
+.eligibility-ok { color: var(--color-success); }
+.eligibility-warn { color: var(--color-warning); }
 .admission-note { max-width: 620px; }
 @media (max-width: 880px) {
   .level-fields { grid-template-columns: repeat(2, minmax(120px, 1fr)); }

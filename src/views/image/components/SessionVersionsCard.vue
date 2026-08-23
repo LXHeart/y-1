@@ -169,7 +169,7 @@ const selectedVersion = computed(() =>
 
 .session-version-remove:hover {
   color: var(--color-danger);
-  background: rgba(239, 107, 107, 0.08);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
 }
 
 .session-version-detail {

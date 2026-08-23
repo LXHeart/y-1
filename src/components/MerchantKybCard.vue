@@ -870,7 +870,7 @@ watch(() => props.orgId, (orgId) => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .kyb-tabs button {
@@ -883,12 +883,12 @@ watch(() => props.orgId, (orgId) => {
 }
 
 .kyb-tabs button:hover {
-  background: #f3f4f6;
+  background: var(--surface-muted);
 }
 
 .kyb-tabs button.active {
-  border-bottom-color: #3b82f6;
-  color: #3b82f6;
+  border-bottom-color: var(--color-accent);
+  color: var(--color-accent);
   font-weight: 500;
 }
 
@@ -898,38 +898,38 @@ watch(() => props.orgId, (orgId) => {
 
 .error-message {
   margin: 0 0 12px;
-  color: #b91c1c;
+  color: var(--color-danger);
   font-size: 13px;
 }
 
 .kyb-status {
   padding: 8px 12px;
   margin-bottom: 16px;
-  background: #f3f4f6;
+  background: var(--surface-muted);
   border-radius: 6px;
   font-size: 14px;
 }
 
 .status-draft {
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .status-pending,
 .status-under_review {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .status-approved {
-  color: #10b981;
+  color: var(--color-success);
 }
 
 .status-rejected {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .review-note {
   margin-left: 8px;
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .kyb-form {
@@ -949,14 +949,14 @@ watch(() => props.orgId, (orgId) => {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .form-row input,
 .form-row select,
 .form-row textarea {
   padding: 8px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -965,8 +965,8 @@ watch(() => props.orgId, (orgId) => {
 .form-row select:focus,
 .form-row textarea:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 .address-inputs {
@@ -987,7 +987,7 @@ watch(() => props.orgId, (orgId) => {
 
 .form-actions button {
   padding: 8px 16px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border);
   background: white;
   border-radius: 6px;
   cursor: pointer;
@@ -995,8 +995,8 @@ watch(() => props.orgId, (orgId) => {
 }
 
 .form-actions button:hover:not(:disabled) {
-  background: #f9fafb;
-  border-color: #9ca3af;
+  background: var(--surface-muted);
+  border-color: var(--color-text-muted);
 }
 
 .form-actions button:disabled {
@@ -1007,7 +1007,7 @@ watch(() => props.orgId, (orgId) => {
 .attachments-section {
   margin-top: 24px;
   padding-top: 16px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
 }
 
 .attachments-section h4 {
@@ -1028,18 +1028,18 @@ watch(() => props.orgId, (orgId) => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: #f9fafb;
+  background: var(--surface-muted);
   border-radius: 6px;
   font-size: 13px;
 }
 
 .attachment-type {
   font-weight: 500;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .attachment-info {
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .attachment-upload {
@@ -1053,12 +1053,12 @@ watch(() => props.orgId, (orgId) => {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .attachment-upload input[type="file"] {
   padding: 6px;
-  border: 1px dashed #d1d5db;
+  border: 1px dashed var(--color-border);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -1075,7 +1075,7 @@ watch(() => props.orgId, (orgId) => {
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background: #f9fafb;
+  background: var(--surface-muted);
   border-radius: 8px;
 }
 
@@ -1097,8 +1097,8 @@ watch(() => props.orgId, (orgId) => {
 
 .default-badge {
   padding: 2px 8px;
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  color: var(--color-info);
   border-radius: 4px;
   font-size: 12px;
 }
@@ -1126,14 +1126,14 @@ watch(() => props.orgId, (orgId) => {
 
 .store-selector select {
   padding: 8px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
 }
 
 .store-status {
   padding: 8px 12px;
   margin-bottom: 16px;
-  background: #f3f4f6;
+  background: var(--surface-muted);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -1141,6 +1141,6 @@ watch(() => props.orgId, (orgId) => {
 .empty-hint {
   padding: 24px;
   text-align: center;
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 </style>
