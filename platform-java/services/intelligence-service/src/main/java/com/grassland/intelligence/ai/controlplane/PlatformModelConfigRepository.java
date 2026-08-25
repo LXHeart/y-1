@@ -2,9 +2,11 @@ package com.grassland.intelligence.ai.controlplane;
 
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
+import java.net.URI;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.r2dbc.core.DatabaseClient;
 import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import org.springframework.stereotype.Component;
@@ -26,9 +28,46 @@ public class PlatformModelConfigRepository {
                     + "health_status, enabled, version, updated_by, created_at, updated_at";
 
     private final DatabaseClient db;
+    private final PlatformProviderCredentialRepository credentials;
 
-    public PlatformModelConfigRepository(DatabaseClient db) {
+    public PlatformModelConfigRepository(
+            DatabaseClient db, PlatformProviderCredentialRepository credentials) {
         this.db = db;
+        this.credentials = credentials;
+    }
+
+    /**
+     * 解析（或按需创建）该目的地的凭据，返回其 id（任务书 #47 S1）。
+     *
+     * <p>写入侧必须挂上 {@code credential_id}，否则 S1 与 S2 之间新建的模型配置行会是 NULL，
+     * V47 收 NOT NULL 时失败。自动建出的凭据无密钥——执行侧回落 env 兜底，语义与 V46 回填一致（D1/D8）。
+     * 命名沿用 V46 的确定性规则 {@code provider-host}；标签撞车时补随机后缀兜底（标签唯一索引限有效行）。
+     */
+    private Mono<UUID> resolveCredentialId(String provider, String baseUrl, String adminId) {
+        return credentials.findEnabledByDestination(provider, baseUrl)
+                .map(PlatformProviderCredential::id)
+                .switchIfEmpty(Mono.defer(() -> credentials
+                        .create(defaultCredentialName(provider, baseUrl), provider, baseUrl,
+                                null, null, null, adminId)
+                        .onErrorResume(DataIntegrityViolationException.class,
+                                error -> credentials.create(
+                                        defaultCredentialName(provider, baseUrl) + "-"
+                                                + UUID.randomUUID().toString().substring(0, 8),
+                                        provider, baseUrl, null, null, null, adminId))));
+    }
+
+    /** {@code provider-host}，与 V46 回填的命名规则一致；无法解析 host 时退化为 {@code provider-default}。 */
+    private static String defaultCredentialName(String provider, String baseUrl) {
+        String host = "default";
+        try {
+            String parsed = URI.create(baseUrl).getHost();
+            if (parsed != null && !parsed.isBlank()) {
+                host = parsed;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // baseUrl 已过 PlatformProviderPolicy 校验；此处只是命名兜底，不重复报错
+        }
+        return provider + "-" + host;
     }
 
     /** 当前有效的某个 (capability, model_role) 配置；无则空。 */
@@ -83,13 +122,13 @@ public class PlatformModelConfigRepository {
      * 调用方负责在 {@code TransactionalOperator} 内执行，并在前置检查中确认不存在。
      */
     public Mono<UUID> create(PlatformModelConfig c, String adminId) {
-        return db.sql("""
+        return resolveCredentialId(c.provider(), c.baseUrl(), adminId).flatMap(credentialId -> db.sql("""
                 INSERT INTO platform_model_config(
                     capability, model_role, provider, model, base_url, max_concurrency,
-                    health_status, enabled, version, updated_by
+                    health_status, enabled, version, updated_by, credential_id
                 ) VALUES (
                     :capability, :modelRole, :provider, :model, :baseUrl, :maxConcurrency,
-                    :healthStatus, true, 1, :adminId
+                    :healthStatus, true, 1, :adminId, CAST(:credentialId AS uuid)
                 )
                 RETURNING id::text
                 """)
@@ -101,12 +140,13 @@ public class PlatformModelConfigRepository {
                 .bind("maxConcurrency", nullable(c.maxConcurrency(), Integer.class))
                 .bind("healthStatus", c.healthStatus())
                 .bind("adminId", nullable(adminId, String.class))
+                .bind("credentialId", credentialId.toString())
                 .map((r, m) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString)
                 .flatMap(id -> createConcurrencySlots(id, c.maxConcurrency())
                         .then(insertHistory(id, c, 1, "create", adminId))
-                        .thenReturn(id));
+                        .thenReturn(id)));
     }
 
     /**
@@ -116,13 +156,14 @@ public class PlatformModelConfigRepository {
     public Mono<PlatformModelConfig> revise(String capability, String modelRole, PlatformModelConfig next, String adminId) {
         return findCurrent(capability, modelRole)
                 .flatMap(current -> disable(current.id(), adminId)
-                        .then(db.sql("""
+                        .then(resolveCredentialId(next.provider(), next.baseUrl(), adminId))
+                        .flatMap(credentialId -> db.sql("""
                                 INSERT INTO platform_model_config(
                                     capability, model_role, provider, model, base_url, max_concurrency,
-                                    health_status, enabled, version, updated_by
+                                    health_status, enabled, version, updated_by, credential_id
                                 ) VALUES (
                                     :capability, :modelRole, :provider, :model, :baseUrl, :maxConcurrency,
-                                    :healthStatus, true, :version, :adminId
+                                    :healthStatus, true, :version, :adminId, CAST(:credentialId AS uuid)
                                 )
                                 RETURNING id::text
                                 """)
@@ -135,6 +176,7 @@ public class PlatformModelConfigRepository {
                                 .bind("healthStatus", next.healthStatus())
                                 .bind("version", current.version() + 1)
                                 .bind("adminId", nullable(adminId, String.class))
+                                .bind("credentialId", credentialId.toString())
                                 .map((r, m) -> r.get("id", String.class))
                                 .one()
                                 .map(UUID::fromString)
