@@ -157,6 +157,66 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isNotFound();
     }
 
+    /**
+     * 任务书 #47 S0：seeder 用 provider=sandbox 种 voice/retrieval/image_edit 三行
+     * （{@code PlatformModelConfigSeeder.seedSandboxCapability}），但两个 Request 的
+     * provider 正则曾是 {@code qwen|openai-compatible} —— admin 对这些行的任何 PUT 都 400，
+     * 即运营改不动、也看不出「该能力其实跑在沙箱假数据上」。
+     * {@code PlatformProviderPolicy.validate} 本就支持 sandbox，仅 bean validation 失同步。
+     */
+    @Test
+    @DisplayName("sandbox provider 可创建与修订（正则与 PlatformProviderPolicy 对齐）")
+    void adminManagesSandboxCapability() {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"image_edit","modelRole":"primary","provider":"sandbox",
+                         "model":"sandbox-matting-v1","baseUrl":"https://sandbox.invalid"}
+                        """)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody().jsonPath("$.provider").isEqualTo("sandbox");
+
+        // 修订：S0 之前这一步是 400（正则拒 sandbox），运营无法改动 seeder 种下的行
+        client().put().uri("/api/admin/ai/models/image_edit/primary")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"provider":"sandbox","model":"sandbox-matting-v2",
+                         "baseUrl":"https://sandbox.invalid"}
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.version").isEqualTo(2)
+                .jsonPath("$.model").isEqualTo("sandbox-matting-v2");
+    }
+
+    @Test
+    @DisplayName("sandbox provider 仍被钉死在内置地址（放宽正则未开洞）")
+    void sandboxStillPinnedToBuiltInAddress() {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"image_edit","modelRole":"primary","provider":"sandbox",
+                         "model":"sandbox-matting-v1","baseUrl":"https://attacker.example/v1"}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+
+        // 未知 provider 仍被 bean validation 拒绝
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"anthropic",
+                         "model":"claude","baseUrl":"https://sandbox.invalid"}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+
+        assertThat(historyCount()).isZero();
+    }
+
     @Test
     @DisplayName("鉴权：非 admin → 403；缺断言 → 401")
     void adminGate() {
