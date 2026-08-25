@@ -244,6 +244,8 @@
     </div>
 
     <div v-else-if="activeSection === 'ai-models'" class="admin-panel" role="tabpanel">
+      <!-- 凭据在上、模型在下：模型配置引用凭据，先有凭据才谈得上指向它 -->
+      <AiPlatformCredentialsPanel />
       <AiPlatformModelsPanel />
     </div>
 
@@ -334,6 +336,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import AiPlatformCredentialsPanel from '../../components/AiPlatformCredentialsPanel.vue'
 import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'

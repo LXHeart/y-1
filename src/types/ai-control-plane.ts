@@ -91,3 +91,32 @@ export interface CreatePlatformModelInput {
 }
 
 export type UpdatePlatformModelInput = Omit<CreatePlatformModelInput, 'capability' | 'modelRole'>
+
+/**
+ * 平台通用凭据（任务书 #47 S1）。provider + baseUrl + 密钥同行，模型配置经 credentialId 引用。
+ *
+ * 后端只回掩码：`hasKey` 表示是否自带密钥（false = sandbox 或走 env 兜底），
+ * `maskedHint` 形如 `sk-****cdef`。密文与明文都不下发。
+ */
+export interface PlatformProviderCredential {
+  id: string
+  name: string
+  provider: string
+  baseUrl: string
+  hasKey: boolean
+  maskedHint: string | null
+  enabled: boolean
+  version: number
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface CreatePlatformCredentialInput {
+  name: string
+  provider: string
+  baseUrl: string
+  /** 可空：sandbox provider 无需密钥，也允许先建无密钥凭据回落 env 兜底。 */
+  apiKey?: string
+}
+
+export type UpdatePlatformCredentialInput = Omit<CreatePlatformCredentialInput, 'apiKey'>

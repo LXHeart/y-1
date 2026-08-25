@@ -3,10 +3,13 @@ import type {
   AiProviderKey,
   AiRun,
   CreateAiProviderKeyInput,
+  CreatePlatformCredentialInput,
   CreatePlatformModelInput,
   PlatformModelConfig,
   PlatformModelRole,
+  PlatformProviderCredential,
   UpdateAiProviderKeyInput,
+  UpdatePlatformCredentialInput,
   UpdatePlatformModelInput,
 } from '../types/ai-control-plane'
 import { fetchApi } from './grassland-http'
@@ -97,6 +100,25 @@ export function useAiControlPlane() {
     method: 'PUT', body: jsonBody(input),
   }).then((body) => body.data)
 
+  // ---------- 平台通用凭据（任务书 #47 S1）----------
+
+  const credentialsPath = '/api/admin/ai/credentials'
+  const listCredentials = () => request<PlatformProviderCredential[]>(credentialsPath)
+  const createCredential = (input: CreatePlatformCredentialInput) =>
+    request<PlatformProviderCredential>(credentialsPath, { method: 'POST', body: jsonBody(input) })
+  const updateCredential = (id: string, input: UpdatePlatformCredentialInput) =>
+    request<PlatformProviderCredential>(`${credentialsPath}/${encodeURIComponent(id)}`, {
+      method: 'PUT', body: jsonBody(input),
+    })
+  /** 轮换走独立端点——改连接信息的 PUT 刻意不含密钥。 */
+  const rotateCredentialKey = (id: string, apiKey: string) =>
+    request<PlatformProviderCredential>(`${credentialsPath}/${encodeURIComponent(id)}/key`, {
+      method: 'PUT', body: jsonBody({ apiKey }),
+    })
+  /** 软删；仍被有效模型配置引用时后端回 409 并在 error 里报引用数。 */
+  const disableCredential = (id: string) =>
+    request<void>(`${credentialsPath}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
   const listModels = () => request<PlatformModelConfig[]>('/api/admin/ai/models')
   const createModel = (input: CreatePlatformModelInput) => request<PlatformModelConfig>('/api/admin/ai/models', {
     method: 'POST', body: jsonBody(input),
@@ -121,6 +143,11 @@ export function useAiControlPlane() {
     disableOrgKey,
     getOrgByokPolicy,
     saveOrgByokPolicy,
+    listCredentials,
+    createCredential,
+    updateCredential,
+    rotateCredentialKey,
+    disableCredential,
     listModels,
     createModel,
     updateModel,
