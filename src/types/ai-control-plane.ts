@@ -122,3 +122,20 @@ export interface CreatePlatformCredentialInput {
 }
 
 export type UpdatePlatformCredentialInput = Omit<CreatePlatformCredentialInput, 'apiKey'>
+
+/**
+ * 个人 BYOK 开关（任务书 #47 D11–D14）。按 capability 一项。
+ *
+ * `configured=false` 表示走「无行即 on」的默认（D14），前端据此区分「未配置」与「显式设为 true」；
+ * 保存时把 `version` 原样回传作 `expectedVersion`。
+ */
+export interface AiProviderPreference {
+  capability: AiProviderCapability
+  useOwnKey: boolean
+  configured: boolean
+  version: number
+  updatedAt: string | null
+}
+
+/** 计费主体（D21 常驻显示）：用户必须一眼看出「我现在在用谁的模型、谁付钱」。 */
+export type AiBillingSubject = 'own-key' | 'organization' | 'platform'

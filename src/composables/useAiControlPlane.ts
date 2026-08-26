@@ -1,6 +1,8 @@
 import type {
   AiOrgByokPolicyState,
+  AiProviderCapability,
   AiProviderKey,
+  AiProviderPreference,
   AiRun,
   CreateAiProviderKeyInput,
   CreatePlatformCredentialInput,
@@ -100,6 +102,21 @@ export function useAiControlPlane() {
     method: 'PUT', body: jsonBody(input),
   }).then((body) => body.data)
 
+  // ---------- 个人 BYOK 开关（任务书 #47 S5）----------
+
+  /** 偏好端点走 {success, data} 信封（同组织策略约定），这里解包。 */
+  const listPreferences = () =>
+    request<{ data: { items: AiProviderPreference[] } }>('/api/ai/preferences')
+      .then((body) => body.data.items)
+  /** `expectedVersion` 原样回传服务端给的 version；冲突时后端回 409。 */
+  const setPreference = (
+    capability: AiProviderCapability,
+    input: { useOwnKey: boolean; expectedVersion: number },
+  ) => request<{ data: AiProviderPreference }>(
+    `/api/ai/preferences/${encodeURIComponent(capability)}`,
+    { method: 'PUT', body: jsonBody(input) },
+  ).then((body) => body.data)
+
   // ---------- 平台通用凭据（任务书 #47 S1）----------
 
   const credentialsPath = '/api/admin/ai/credentials'
@@ -143,6 +160,8 @@ export function useAiControlPlane() {
     disableOrgKey,
     getOrgByokPolicy,
     saveOrgByokPolicy,
+    listPreferences,
+    setPreference,
     listCredentials,
     createCredential,
     updateCredential,
