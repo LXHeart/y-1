@@ -389,9 +389,15 @@ class AiRunControllerIT extends IntelligenceItSupport {
         CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
     }
 
+    /**
+     * 任务书 #47 D16：本用例原本正是 D16 要修的场景——组织只配了 image_generation 密钥，
+     * text 运行就被 DENIED，而 org admin 完全不会预期「配了一个能力会让另一个能力对全组织不可用」。
+     * 故断言顺序反转：先验<b>无行默认允许</b>，再验<b>显式 false</b> 才严格拒绝。
+     * D-11 的「双闸」语义保留——严格模式下 allowFallback=true 也照样拒。
+     */
     @Test
-    @DisplayName("组织配了密钥：策略未允许时 allowFallback=true 也拒绝；策略允许后才回退平台（D-11 双闸）")
-    void orgFallbackRequiresPolicyEvenWhenRequestAllows() {
+    @DisplayName("组织配了密钥：无策略行默认回退平台（D16）；显式 false 后 allowFallback=true 也拒（D-11 双闸）")
+    void orgFallbackDefaultsToAllowAndExplicitFalseStillDenies() {
         stubQwenOk();
         // 组织只配 image_generation 密钥：text 能力两级未命中 → 策略介入
         db.sql("""
@@ -405,25 +411,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .bind("encrypted", encryption.encrypt("sk-org-run-secret"))
                 .then().block();
 
-        client().post().uri("/api/ai/runs")
-                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("""
-                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
-                        """)
-                .exchange()
-                .expectStatus().isForbidden()
-                .expectBody()
-                .jsonPath("$.error").isEqualTo("无 BYOK 且未授权回退平台模型");
-
-        CREDITS.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
-
-        db.sql("INSERT INTO ai_org_byok_policy(organization_id, allow_platform_fallback, updated_by_account_id) "
-                        + "VALUES (:org, true, :owner)")
-                .bind("org", ORG)
-                .bind("owner", ORG_ACCOUNT)
-                .then().block();
-
+        // 无策略行 → D16 默认允许：text 走平台，不再莫名 DENIED
         client().post().uri("/api/ai/runs")
                 .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -435,6 +423,24 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .expectBody()
                 .jsonPath("$.taskContext.resolutionType").isEqualTo("PLATFORM")
                 .jsonPath("$.taskContext.fallbackAuthorized").isEqualTo(true);
+
+        // org admin 显式关掉 → 回到严格模式，即使调用方 allowFallback=true 也拒
+        db.sql("INSERT INTO ai_org_byok_policy(organization_id, allow_platform_fallback, updated_by_account_id) "
+                        + "VALUES (:org, false, :owner)")
+                .bind("org", ORG)
+                .bind("owner", ORG_ACCOUNT)
+                .then().block();
+
+        client().post().uri("/api/ai/runs")
+                .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","prompt":"x","maxTokens":16,"allowFallback":true}
+                        """)
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.error").isEqualTo("无 BYOK 且未授权回退平台模型");
     }
 
     @Test
@@ -525,12 +531,15 @@ class AiRunControllerIT extends IntelligenceItSupport {
         db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_cents_per_run, enabled) "
                         + "VALUES (:org, 'text', 'platform', 0, true)")
                 .bind("org", ORG).then().block();
+        // 任务书 #47 D9：商家视角（signWithOrg 带 orgId）跳过个人密钥，故本用例的 BYOK 场景
+        // 必须用组织密钥。ADR-D11 下组织密钥同样 0 cents、不扣平台积分，断言口径不变。
         db.sql("""
-                INSERT INTO ai_provider_key(owner_account_id, capability, provider, base_url, model,
+                INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider, base_url, model,
                     encrypted_key, key_version, masked_hint, enabled)
-                VALUES (:owner, 'text', 'openai-compatible', 'https://api.example.com', 'unpriced-byok',
+                VALUES (:org, :owner, 'text', 'openai-compatible', 'https://api.example.com', 'unpriced-byok',
                     :encrypted, 'v1', 'sk-***', true)
                 """)
+                .bind("org", ORG)
                 .bind("owner", ORG_ACCOUNT)
                 .bind("encrypted", encryption.encrypt("sk-byok-secret"))
                 .then().block();
@@ -601,12 +610,14 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 + "VALUES (:org, 'text', 'platform', 1000, true), "
                 + "(:org, 'text', 'openai-compatible', 1, true)")
                 .bind("org", ORG).then().block();
+        // D9：商家视角的 BYOK 场景 = 组织密钥（个人密钥在该视角下不参与路由）
         db.sql("""
-                INSERT INTO ai_provider_key(owner_account_id, capability, provider, base_url, model,
+                INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider, base_url, model,
                     encrypted_key, key_version, masked_hint, enabled)
-                VALUES (:owner, 'text', 'openai-compatible', 'https://api.example.com', 'byok-model',
+                VALUES (:org, :owner, 'text', 'openai-compatible', 'https://api.example.com', 'byok-model',
                     :encrypted, 'v1', 'sk-***', true)
                 """)
+                .bind("org", ORG)
                 .bind("owner", ORG_ACCOUNT)
                 .bind("encrypted", encryption.encrypt("sk-byok-secret"))
                 .then().block();
@@ -683,12 +694,14 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
         db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
                 + "VALUES (:org, 'text', 'openai-compatible', 1000, true)").bind("org", ORG).then().block();
+        // D9：商家视角的 BYOK 场景 = 组织密钥（个人密钥在该视角下不参与路由）
         db.sql("""
-                INSERT INTO ai_provider_key(owner_account_id, capability, provider, base_url, model,
+                INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider, base_url, model,
                     encrypted_key, key_version, masked_hint, enabled)
-                VALUES (:owner, 'text', 'openai-compatible', 'https://api.example.com', 'byok-model',
+                VALUES (:org, :owner, 'text', 'openai-compatible', 'https://api.example.com', 'byok-model',
                     :encrypted, 'v1', 'sk-***', true)
                 """)
+                .bind("org", ORG)
                 .bind("owner", ORG_ACCOUNT)
                 .bind("encrypted", encryption.encrypt("sk-byok-secret"))
                 .then().block();

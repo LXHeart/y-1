@@ -11,15 +11,23 @@ import reactor.core.publisher.Mono;
 /**
  * BYOK 与平台模型分发服务（GL-P3-AI-001 Phase 5 / 控制面闭环；组织级 ADR-D17）。
  *
- * <p>运行时按能力解析 provider，层级为：<b>个人 BYOK &gt; 组织 BYOK &gt; 平台模型</b>。
- * 个人优先保证既有语义零变更；组织密钥是成员无个人密钥时的兜底（成员「可用不可见」，D-11）。
+ * <p><b>任务书 #47 D9 起按活动身份分叉</b>（不再是单一优先级链）：
+ * <ul>
+ *   <li><b>merchant 活动身份</b>（{@code organizationId} 非空）→ <b>组织 BYOK &gt; 平台</b>，
+ *       跳过个人密钥。商家侧由组织统一配置模型，个人密钥数据保留但不参与路由。</li>
+ *   <li><b>recommender / 消费者</b>（{@code organizationId} 为 null）→ <b>个人 BYOK &gt; 平台</b>。
+ *       这一支在 D9 之前就是现状（orgId 恒 null 时原本也进不了组织层），故推荐官行为零变更。</li>
+ * </ul>
+ * 分叉依据是 edge 的不变量：{@code SessionIdentityResolver:75-80} 保证只有 merchant 活动身份才带
+ * org/tier，其注释明说破坏它就破坏 HLD 7.4「活动身份 ↔ 组织上下文」。故运行时每个 session 的
+ * 链路是<b>单一确定</b>的，不存在「同时看两层」的歧义。
  *
- * <p>平台回退（两级密钥都未命中）的授权口径：
+ * <p>平台回退的授权口径：
  * <ul>
  *   <li>组织<b>未</b>配置任何有效组织密钥：沿用调用方显式 {@code allowFallback}（与组织级开启前一致）；</li>
  *   <li>组织配置了有效组织密钥（即「组织选择了 BYOK」）：须组织回退策略
- *       （{@code ai_org_byok_policy}，默认不允许）<b>且</b> {@code allowFallback} 双满足，否则 DENIED
- *       ——不静默扣平台额度（D-11 / HLD §12.3 硬规则）。</li>
+ *       （{@code ai_org_byok_policy}，<b>D16 起无行默认允许</b>）<b>且</b> {@code allowFallback} 双满足。
+ *       已显式设 {@code false} 的组织仍严格 DENIED——不静默扣平台额度（D-11 / HLD §12.3 硬规则）。</li>
  * </ul>
  *
  * <p>解密<b>不在本层</b>：BYOK 解析仍回传密文 {@code encryptedKey}，明文解密在执行层
@@ -59,13 +67,18 @@ public class ByokRoutingService {
             String capability,
             boolean allowFallback) {
 
+        // 任务书 #47 D9：按活动身份分叉。edge 保证「organizationId 非空 ⟺ merchant 活动身份」
+        // （SessionIdentityResolver:75-80 的不变量，注释明说破坏它就破坏 HLD 7.4），故非空即商家视角：
+        // 商家侧由组织统一配置模型，个人密钥不参与——**跳过个人查询**，不是降级排序。
+        if (organizationId != null) {
+            return resolveOrgTier(organizationId, capability, allowFallback);
+        }
+        // 推荐官（及消费者）视角：个人 > 平台。这一条在 D9 之前就是现状——orgId 恒 null 时
+        // 原本也走不到组织层，故推荐官行为逐字节不变。
         return keyRepository.findByPersonalAndCapability(accountId, capability)
                 .map(key -> ProviderResolution.byok(
                         key.provider(), key.baseUrl(), key.model(), key.encryptedKey(), key.keyVersion(), null))
-                .switchIfEmpty(Mono.defer(() ->
-                        organizationId == null
-                                ? fallbackStage(capability, allowFallback)
-                                : resolveOrgTier(organizationId, capability, allowFallback)));
+                .switchIfEmpty(Mono.defer(() -> fallbackStage(capability, allowFallback)));
     }
 
     /** 组织层：组织密钥命中 → BYOK；未命中但组织配有组织密钥 → 按组织策略决定回退。 */
@@ -80,9 +93,13 @@ public class ByokRoutingService {
                                 // 组织未选择 BYOK：与组织级开启前完全一致
                                 return fallbackStage(capability, allowFallback);
                             }
+                            // 任务书 #47 D16：无行默认翻为 **允许**。D15「组织配了该 capability 的 key
+                            // 就用、没配就走平台」与原默认 false（DENIED）在「配了 text、没配 image」时
+                            // 直接冲突——保留原默认会让 org admin 配完 text 后，图片能力对全组织突然
+                            // 不可用，且他完全不会预期。已显式设 false 的组织仍严格拒绝（那是明示选择）。
                             return policyRepository.find(organizationId)
                                     .map(AiOrgByokPolicy::allowPlatformFallback)
-                                    .defaultIfEmpty(false)
+                                    .defaultIfEmpty(true)
                                     .flatMap(orgAllows -> {
                                         if (!orgAllows) {
                                             logger.info("Org={} has BYOK keys but fallback policy not allowed"

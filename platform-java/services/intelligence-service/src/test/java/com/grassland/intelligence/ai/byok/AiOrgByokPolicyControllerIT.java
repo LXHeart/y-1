@@ -13,7 +13,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import reactor.core.publisher.Mono;
 
-/** 组织 BYOK 回退策略（ADR-D17 / D-11）：默认不允许、乐观锁、member 404 隐藏。 */
+/**
+ * 组织 BYOK 回退策略（ADR-D17 / D-11；默认值按任务书 #47 D16 翻转）：
+ * 未配置默认<b>允许</b>回退（与 ByokRoutingService 的无行默认一致）、乐观锁、member 404 隐藏。
+ */
 @DisplayName("AiOrgByokPolicyController (组织回退策略)")
 class AiOrgByokPolicyControllerIT extends IntelligenceItSupport {
 
@@ -32,8 +35,13 @@ class AiOrgByokPolicyControllerIT extends IntelligenceItSupport {
         when(orgAuthorization.require(ADMIN, ORG, "admin")).thenReturn(Mono.empty());
     }
 
+    /**
+     * 任务书 #47 D16：未配置的默认 {@code allowPlatformFallback} 由 false 翻为 true，与
+     * {@code ByokRoutingService} 的无行默认一致——否则面板显示「不允许」而运行时允许。
+     * {@code configured=false}/{@code version=0} 不变，故仍可区分「未配置」与「显式 true」。
+     */
     @Test
-    @DisplayName("未配置返回默认（不允许/version 0）；创建后 version 1；更新递增")
+    @DisplayName("未配置返回默认（允许回退/version 0，D16）；创建后 version 1；更新递增")
     void defaultThenCreateThenUpdate() {
         client().get().uri(path())
                 .header("X-Grassland-Identity", sign(ADMIN, "merchant"))
@@ -41,16 +49,17 @@ class AiOrgByokPolicyControllerIT extends IntelligenceItSupport {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.data.configured").isEqualTo(false)
-                .jsonPath("$.data.allowPlatformFallback").isEqualTo(false)
+                .jsonPath("$.data.allowPlatformFallback").isEqualTo(true)
                 .jsonPath("$.data.version").isEqualTo(0);
 
-        put("{\"expectedVersion\":0,\"allowPlatformFallback\":true}")
+        // 显式设为 false 才是严格模式；configured 随之变 true
+        put("{\"expectedVersion\":0,\"allowPlatformFallback\":false}")
                 .jsonPath("$.data.configured").isEqualTo(true)
-                .jsonPath("$.data.allowPlatformFallback").isEqualTo(true)
+                .jsonPath("$.data.allowPlatformFallback").isEqualTo(false)
                 .jsonPath("$.data.version").isEqualTo(1);
 
-        put("{\"expectedVersion\":1,\"allowPlatformFallback\":false}")
-                .jsonPath("$.data.allowPlatformFallback").isEqualTo(false)
+        put("{\"expectedVersion\":1,\"allowPlatformFallback\":true}")
+                .jsonPath("$.data.allowPlatformFallback").isEqualTo(true)
                 .jsonPath("$.data.version").isEqualTo(2);
     }
 

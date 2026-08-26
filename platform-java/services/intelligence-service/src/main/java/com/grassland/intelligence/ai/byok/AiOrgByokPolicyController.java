@@ -89,10 +89,18 @@ public class AiOrgByokPolicyController {
         return data;
     }
 
+    /**
+     * 未配置时的默认响应。
+     *
+     * <p>任务书 #47 D16：{@code allowPlatformFallback} 随路由默认一同翻为 {@code true}——
+     * {@code ByokRoutingService.resolveOrgTier} 对无行按允许处理，若这里仍回 {@code false}，
+     * admin 面板会显示「不允许」而运行时实际允许，那是比默认值本身更坏的问题。
+     * {@code configured=false} + {@code version=0} 不变，前端据此仍能区分「未配置」与「显式设为 true」。
+     */
     private static Map<String, Object> defaultResponse() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("configured", false);
-        data.put("allowPlatformFallback", false);
+        data.put("allowPlatformFallback", true);
         data.put("version", 0);
         data.put("updatedAt", null);
         return data;

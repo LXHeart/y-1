@@ -29,7 +29,7 @@
     <div class="policy-band" data-testid="org-byok-policy">
       <div>
         <strong>允许成员回退平台模型</strong>
-        <p>主体配置了主体密钥后，成员无密钥的能力默认不可回退平台（不静默扣平台额度）；开启后仍需调用方显式授权</p>
+        <p>主体密钥没有覆盖的能力，默认回退平台模型（按平台积分计费）；关闭后这些能力将直接不可用</p>
       </div>
       <label class="policy-toggle">
         <input
@@ -37,7 +37,7 @@
           type="checkbox"
           role="switch"
           data-action="toggle-org-fallback"
-          :checked="policy?.allowPlatformFallback ?? false"
+          :checked="policy?.allowPlatformFallback ?? true"
           :disabled="policySaving || !policyLoaded"
           @change="togglePolicy"
         />
