@@ -40,14 +40,17 @@ public class ByokRoutingService {
 
     private final AiProviderKeyRepository keyRepository;
     private final AiOrgByokPolicyRepository policyRepository;
+    private final AiProviderPreferenceRepository preferenceRepository;
     private final PlatformModelControlPlaneService platformModelControlPlane;
 
     public ByokRoutingService(
             AiProviderKeyRepository keyRepository,
             AiOrgByokPolicyRepository policyRepository,
+            AiProviderPreferenceRepository preferenceRepository,
             PlatformModelControlPlaneService platformModelControlPlane) {
         this.keyRepository = keyRepository;
         this.policyRepository = policyRepository;
+        this.preferenceRepository = preferenceRepository;
         this.platformModelControlPlane = platformModelControlPlane;
     }
 
@@ -75,9 +78,17 @@ public class ByokRoutingService {
         }
         // 推荐官（及消费者）视角：个人 > 平台。这一条在 D9 之前就是现状——orgId 恒 null 时
         // 原本也走不到组织层，故推荐官行为逐字节不变。
+        //
+        // 任务书 #47 D11–D14：命中个人密钥后还要看该能力的开关。**先查密钥再查偏好**是刻意的——
+        // 绝大多数账号没有个人密钥，反序会让每个请求都多一次无用往返。无偏好行即 on（D14），
+        // 所以从未碰过开关的账号连这次查询的结果都与旧行为一致。
         return keyRepository.findByPersonalAndCapability(accountId, capability)
-                .map(key -> ProviderResolution.byok(
-                        key.provider(), key.baseUrl(), key.model(), key.encryptedKey(), key.keyVersion(), null))
+                .flatMap(key -> preferenceRepository.isOwnKeyEnabled(accountId, capability)
+                        .flatMap(useOwnKey -> useOwnKey
+                                ? Mono.just(ProviderResolution.byok(key.provider(), key.baseUrl(), key.model(),
+                                        key.encryptedKey(), key.keyVersion(), null))
+                                // 开关 off：密钥密文照旧留在库里（D12 可逆），本次不参与路由
+                                : fallbackStage(capability, allowFallback)))
                 .switchIfEmpty(Mono.defer(() -> fallbackStage(capability, allowFallback)));
     }
 

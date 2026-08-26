@@ -37,6 +37,9 @@ class ByokRoutingServiceTest {
     AiProviderKeyRepository keyRepository;
     @Mock
     AiOrgByokPolicyRepository policyRepository;
+    /** 任务书 #47 S5：个人开关；推荐官分支命中密钥后查它。 */
+    @Mock
+    AiProviderPreferenceRepository preferenceRepository;
     @Mock
     PlatformModelControlPlaneService platformModelControlPlane;
     @InjectMocks
@@ -101,6 +104,7 @@ class ByokRoutingServiceTest {
     @DisplayName("推荐官视角：个人密钥生效，组织层不参与（D9 后行为不变）")
     void recommenderUsesPersonalKey() {
         when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.just(key(null, "v1")));
+        when(preferenceRepository.isOwnKeyEnabled("acct", "text")).thenReturn(Mono.just(true));
 
         ProviderResolution r = service.resolveProvider(null, "acct", "text", false).block();
 
@@ -174,6 +178,39 @@ class ByokRoutingServiceTest {
 
         assertThat(r.isPlatform()).isTrue();
         verifyNoMoreInteractions(policyRepository);
+    }
+
+    /**
+     * 任务书 #47 D12/D14：开关 off 时个人密钥不参与路由，但密钥本身不动——
+     * 本例证明「有密钥 + 开关 off」走平台，而非 BYOK。
+     */
+    @Test
+    @DisplayName("推荐官：有个人密钥但开关 off → 走平台（密钥保留不用，D12）")
+    void personalKeySkippedWhenPreferenceOff() {
+        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.just(key(null, "v1")));
+        when(preferenceRepository.isOwnKeyEnabled("acct", "text")).thenReturn(Mono.just(false));
+        when(platformModelControlPlane.resolve("text")).thenReturn(
+                Mono.just(Optional.of(new ResolvedPlatformModel(
+                        UUID.randomUUID(), "qwen", "qwen-plus", "http://host", 1, "primary", 4))));
+
+        ProviderResolution r = service.resolveProvider(null, "acct", "text", true).block();
+
+        assertThat(r.isPlatform()).isTrue();
+        assertThat(r.chargesPlatformFee()).isTrue();   // 计费主体变为平台
+    }
+
+    /** D14：无偏好行即 on——从未碰过开关的账号与改造前逐字节一致。 */
+    @Test
+    @DisplayName("推荐官：有个人密钥且无偏好行 → 仍走个人密钥（D14 无行即 on）")
+    void personalKeyUsedWhenPreferenceAbsent() {
+        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.just(key(null, "v1")));
+        when(preferenceRepository.isOwnKeyEnabled("acct", "text")).thenReturn(Mono.just(true));
+
+        ProviderResolution r = service.resolveProvider(null, "acct", "text", true).block();
+
+        assertThat(r.isByok()).isTrue();
+        assertThat(r.modelVersionKey()).isEqualTo("byok:v1");
+        assertThat(r.chargesPlatformFee()).isFalse();
     }
 
     @Test
