@@ -65,12 +65,17 @@ public class AiExecutionService {
 	private final CreditsCentsPolicyProperties creditsCentsPolicy;
 	private final CreditUsageSettlementRepository usageSettlements;
 
+	/** env 平台凭据（任务书 #47 D1/D8）：凭据表未配密钥时的 bootstrap 兜底。 */
+	private final com.grassland.intelligence.ai.PlatformModelConfig platformDefaults;
+
 	public AiExecutionService(ModelBudgetService budgetService, ByokRoutingService routingService,
 			PriceTableService priceTableService, IntelligenceCallerResolver callers, CreditsClient credits,
 			ObjectProvider<EnvelopeEncryption> encryptionProvider, OutboxRepository outbox,
 			TransactionalOperator transactions, CreditCompensationRepository compensationRepository,
 			CreditCompensationDispatcher compensationDispatcher, FrozenAiConfigResolver frozenAiConfigs,
-			CreditsCentsPolicyProperties creditsCentsPolicy, CreditUsageSettlementRepository usageSettlements) {
+			CreditsCentsPolicyProperties creditsCentsPolicy, CreditUsageSettlementRepository usageSettlements,
+			com.grassland.intelligence.ai.PlatformModelConfig platformDefaults) {
+		this.platformDefaults = platformDefaults;
 		this.budgetService = budgetService;
 		this.routingService = routingService;
 		this.priceTableService = priceTableService;
@@ -461,16 +466,39 @@ public class AiExecutionService {
 				completion.providerRunId());
 	}
 
-	/** BYOK 密钥解密（同步）。平台 run 返回 null；无 KEK 抛 503（fail-closed，平台 run 不受影响）。 */
+	/**
+	 * 解析本次 Run 要用的密钥明文（同步）。任务书 #47 S2 起同时服务 BYOK 与平台凭据。
+	 *
+	 * <p>三条路径：
+	 * <ul>
+	 * <li>有密文（BYOK 或平台凭据）→ 解密；无 KEK 抛 503（fail-closed，绝不退化）。</li>
+	 * <li>平台解析但凭据无密钥 → 回落 env {@code ai.qwen.api-key}（D1/D8 bootstrap 兜底）。兜底集中在
+	 * 这一处，5 个执行点因此不必各自判断 {@code isPlatform()}。</li>
+	 * <li>其余（DENIED 等）→ null。</li>
+	 * </ul>
+	 *
+	 * <p>返回的明文只活在 {@code ExecutionContext} 里，不入日志/响应/outbox（TaskContext 刻意不含它）。
+	 */
 	private String decryptIfNeeded(ProviderResolution provider) {
-		if (!provider.needsKeyDecryption()) {
+		if (provider.needsKeyDecryption()) {
+			EnvelopeEncryption crypto = encryptionProvider.getIfAvailable();
+			if (crypto == null) {
+				throw new IntelligenceException(503, provider.isPlatform()
+						? "平台凭据解密不可用：未配置 CRYPTO_KEK_BASE64"
+						: "BYOK 解密不可用：未配置 CRYPTO_KEK_BASE64");
+			}
+			return crypto.decrypt(provider.encryptedKey());
+		}
+		if (!provider.isPlatform()) {
 			return null;
 		}
-		EnvelopeEncryption crypto = encryptionProvider.getIfAvailable();
-		if (crypto == null) {
-			throw new IntelligenceException(503, "BYOK 解密不可用：未配置 CRYPTO_KEK_BASE64");
+		// 平台凭据未配密钥：回落启动期 env 兜底（V46 回填出的行即此状态）。
+		// 两者都没有 → 按 capability 503，不拿空 bearer 去打上游换一个语义模糊的 401（D8）。
+		if (!platformDefaults.hasBootstrapKey()) {
+			throw new IntelligenceException(503,
+					"平台凭据缺失：该能力的凭据未配置密钥，且未提供 ai.qwen.api-key 兜底");
 		}
-		return crypto.decrypt(provider.encryptedKey());
+		return platformDefaults.apiKey();
 	}
 
 	/** 价目表无该模型时不崩结算（记日志、按 0 计）——价目表覆盖度是已知缺口。 */

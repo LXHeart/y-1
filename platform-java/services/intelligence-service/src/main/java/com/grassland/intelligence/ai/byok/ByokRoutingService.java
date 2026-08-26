@@ -107,8 +107,9 @@ public class ByokRoutingService {
     }
 
     private static ProviderResolution toPlatform(ResolvedPlatformModel rpm) {
+        // 任务书 #47 S2：平台凭据密文随解析结果下传，执行层按需解密；为 null 则回落 env bootstrap（D1/D8）
         return ProviderResolution.platform(rpm.configId(), rpm.provider(), rpm.baseUrl(), rpm.model(), rpm.version(),
-                rpm.maxConcurrency());
+                rpm.maxConcurrency(), rpm.credentialEncryptedKey(), rpm.credentialVersion());
     }
 
     /**
@@ -126,13 +127,14 @@ public class ByokRoutingService {
             int platformModelVersion,   // 平台配置版本（TaskContext 冻结用）；非平台为 0
             UUID platformConfigId,
             Integer maxConcurrency,
-            String denialReason         // DENIED 时的原因；其余为 null
+            String denialReason,        // DENIED 时的原因；其余为 null
+            Long credentialVersion      // 平台凭据版本（任务书 #47 D7）；BYOK/无凭据为 null
     ) {
         public static ProviderResolution byok(
                 String provider, String baseUrl, String model, String encryptedKey, String keyVersion,
                 String byokOrganizationId) {
             return new ProviderResolution(ResolutionType.BYOK, provider, baseUrl, model, encryptedKey,
-                    keyVersion, byokOrganizationId, false, 0, null, null, null);
+                    keyVersion, byokOrganizationId, false, 0, null, null, null, null);
         }
 
         /** 个人 BYOK（组织维度为 null）。 */
@@ -141,16 +143,30 @@ public class ByokRoutingService {
             return byok(provider, baseUrl, model, encryptedKey, keyVersion, null);
         }
 
+        /** 无凭据的平台解析（env bootstrap 兜底路径，以及不经控制面的固定 provider 分支）。 */
         public static ProviderResolution platform(
                 UUID configId, String provider, String baseUrl, String model,
                 int version, Integer maxConcurrency) {
-            return new ProviderResolution(ResolutionType.PLATFORM, provider, baseUrl, model, null,
-                    null, null, true, version, configId, maxConcurrency, null);
+            return platform(configId, provider, baseUrl, model, version, maxConcurrency, null, null);
+        }
+
+        /**
+         * 带平台凭据的解析（任务书 #47 S2）。
+         *
+         * <p>{@code credentialEncryptedKey} 复用 {@code encryptedKey} 字段承载——它此前只服务 BYOK，
+         * 语义扩为「本次解析要用的密文，无论来源」。为 null 表示凭据无密钥，执行层回落 env（D1/D8）。
+         */
+        public static ProviderResolution platform(
+                UUID configId, String provider, String baseUrl, String model,
+                int version, Integer maxConcurrency, String credentialEncryptedKey, Long credentialVersion) {
+            return new ProviderResolution(ResolutionType.PLATFORM, provider, baseUrl, model,
+                    credentialEncryptedKey, null, null, true, version, configId, maxConcurrency, null,
+                    credentialVersion);
         }
 
         public static ProviderResolution denied(String reason) {
             return new ProviderResolution(
-                    ResolutionType.DENIED, null, null, null, null, null, null, false, 0, null, null, reason);
+                    ResolutionType.DENIED, null, null, null, null, null, null, false, 0, null, null, reason, null);
         }
 
         public boolean isByok() {
@@ -165,9 +181,25 @@ public class ByokRoutingService {
             return type == ResolutionType.DENIED;
         }
 
-        /** BYOK 是否需要解密（有密文）。 */
+        /**
+         * 是否需要解密（有密文即需要）。
+         *
+         * <p>任务书 #47 S2 起<b>不再限定 BYOK</b>：平台凭据也带密文。平台凭据无密钥时仍为 false，
+         * 由执行层回落 env bootstrap（D1/D8）。
+         */
         public boolean needsKeyDecryption() {
-            return isByok() && encryptedKey != null;
+            return encryptedKey != null && !encryptedKey.isBlank();
+        }
+
+        /**
+         * 平台解析<b>且</b>凭据自带密钥（任务书 #47 S2）。
+         *
+         * <p>给那些本就有 provider 专属凭据配置的执行点用（Embedding / Speech）：它们的既有优先级是
+         * 「专属配置 &gt; env qwen」，而 {@code ExecutionContext.decryptedKey()} 在平台分支已含 env 兜底，
+         * 直接替换会让专属配置被 env 悄悄顶掉。用本方法可精确表达「凭据真配了密钥才优先」。
+         */
+        public boolean hasPlatformCredentialKey() {
+            return isPlatform() && needsKeyDecryption();
         }
 
         public String modelVersionKey() {

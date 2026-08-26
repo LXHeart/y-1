@@ -100,6 +100,33 @@ public class PlatformModelConfigRepository {
                 .all();
     }
 
+    /**
+     * 某能力的当前有效配置 + 各自凭据（任务书 #47 S2 运行时解析用）。
+     *
+     * <p>LEFT JOIN：V47 收 NOT NULL 之前允许 {@code credential_id} 为空，此时投影回落配置列的 base_url。
+     * 只 JOIN 有效凭据（{@code credential.enabled}）——凭据被停用等于该目的地不可用，应触发 503 而非
+     * 悄悄拿一把已停用的密钥继续跑。
+     */
+    public Flux<PlatformModelWithCredential> findCurrentWithCredentialByCapability(String capability) {
+        return db.sql("""
+                        SELECT config.id::text AS config_id, config.capability, config.model_role,
+                               config.provider, config.model, config.base_url, config.max_concurrency,
+                               config.health_status, config.enabled, config.version, config.updated_by,
+                               config.created_at, config.updated_at,
+                               credential.id::text  AS credential_id,
+                               credential.base_url  AS credential_base_url,
+                               credential.encrypted_key AS credential_encrypted_key,
+                               credential.version   AS credential_version
+                        FROM platform_model_config AS config
+                        LEFT JOIN platform_provider_credential AS credential
+                               ON credential.id = config.credential_id AND credential.enabled = true
+                        WHERE config.capability = :capability AND config.enabled = true
+                        """)
+                .bind("capability", capability)
+                .map(PlatformModelConfigRepository::mapWithCredential)
+                .all();
+    }
+
     /** 列出所有当前有效配置（admin 看板）。 */
     public Flux<PlatformModelConfig> findAllCurrent() {
         return db.sql("SELECT " + SELECT_COLS
@@ -243,6 +270,30 @@ public class PlatformModelConfigRepository {
                 .bind("changedBy", nullable(changedBy, String.class))
                 .bind("changeType", changeType)
                 .then();
+    }
+
+    /** 联表行 → 投影。config 部分的列名带 config_id 前缀区分，其余与 {@link #map} 同名。 */
+    private static PlatformModelWithCredential mapWithCredential(Row row, RowMetadata meta) {
+        PlatformModelConfig config = new PlatformModelConfig(
+                uuidFromString(row.get("config_id", String.class)),
+                row.get("capability", String.class),
+                row.get("model_role", String.class),
+                row.get("provider", String.class),
+                row.get("model", String.class),
+                row.get("base_url", String.class),
+                row.get("max_concurrency", Integer.class),
+                row.get("health_status", String.class),
+                row.get("enabled", Boolean.class),
+                row.get("version", Integer.class),
+                row.get("updated_by", String.class),
+                toInstant(row.get("created_at", OffsetDateTime.class)),
+                toInstant(row.get("updated_at", OffsetDateTime.class)));
+        return new PlatformModelWithCredential(
+                config,
+                uuidFromString(row.get("credential_id", String.class)),
+                row.get("credential_base_url", String.class),
+                row.get("credential_encrypted_key", String.class),
+                row.get("credential_version", Long.class));
     }
 
     private static PlatformModelConfig map(Row row, RowMetadata meta) {

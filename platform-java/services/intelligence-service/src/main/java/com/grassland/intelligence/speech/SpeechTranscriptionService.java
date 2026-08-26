@@ -301,7 +301,9 @@ public final class SpeechTranscriptionService {
 		if ("sandbox".equalsIgnoreCase(context.provider().provider())) {
 			return null;
 		}
-		String bearer = context.provider().isByok()
+		// 任务书 #47 S2：优先级 BYOK > 平台凭据自带密钥 > 语音专属配置 > env qwen。
+		// 刻意不直接用 decryptedKey()——它在平台分支已含 env 兜底，会把专属配置顶掉。
+		String bearer = context.provider().isByok() || context.provider().hasPlatformCredentialKey()
 				? context.decryptedKey()
 				: configuredPlatformBearer(context.provider().provider(), context.provider().baseUrl());
 		try {

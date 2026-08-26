@@ -1,7 +1,6 @@
 package com.grassland.intelligence.contentsafety;
 
 import com.grassland.intelligence.ai.ChatMessage;
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionResult;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
@@ -34,20 +33,18 @@ public class ContentSafetyAiChecker {
 
     private final AiExecutionService executions;
     private final TextCompletionClient textClient;
-    private final PlatformModelConfig platformDefaults;
     private final PlatformConcurrencyLimiter concurrencyLimiter;
     private final ContentSafetyProperties properties;
     private final DeepCheckJsonParser parser = new DeepCheckJsonParser();
 
+    // 任务书 #47 S2：不再注入 env 平台凭据——密钥统一由 ExecutionContext.decryptedKey 提供
     public ContentSafetyAiChecker(
             AiExecutionService executions,
             TextCompletionClient textClient,
-            PlatformModelConfig platformDefaults,
             PlatformConcurrencyLimiter concurrencyLimiter,
             ContentSafetyProperties properties) {
         this.executions = executions;
         this.textClient = textClient;
-        this.platformDefaults = platformDefaults;
         this.concurrencyLimiter = concurrencyLimiter;
         this.properties = properties;
     }
@@ -78,8 +75,8 @@ public class ContentSafetyAiChecker {
 
     private Mono<List<Finding>> executePrepared(
             AiExecutionService.ExecutionContext context, List<ChatMessage> messages) {
-        String bearer = context.provider().isPlatform()
-                ? platformDefaults.apiKey() : context.decryptedKey();
+        // 任务书 #47 S2：平台凭据与 BYOK 统一走 decryptedKey——env 兜底已集中在 AiExecutionService
+        String bearer = context.decryptedKey();
         return Mono.usingWhen(
                         Mono.just(context),
                         ignored -> Mono.usingWhen(

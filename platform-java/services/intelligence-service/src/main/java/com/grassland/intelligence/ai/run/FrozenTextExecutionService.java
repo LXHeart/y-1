@@ -1,7 +1,6 @@
 package com.grassland.intelligence.ai.run;
 
 import com.grassland.intelligence.ai.ChatMessage;
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.nio.charset.StandardCharsets;
@@ -21,14 +20,13 @@ import reactor.core.publisher.Mono;
 public class FrozenTextExecutionService {
 	private final AiExecutionService executions;
 	private final TextCompletionClient textClient;
-	private final PlatformModelConfig platformDefaults;
 	private final PlatformConcurrencyLimiter concurrencyLimiter;
 
+	// 任务书 #47 S2：不再注入 env 平台凭据——密钥统一由 ExecutionContext.decryptedKey 提供
 	public FrozenTextExecutionService(AiExecutionService executions, TextCompletionClient textClient,
-			PlatformModelConfig platformDefaults, PlatformConcurrencyLimiter concurrencyLimiter) {
+			PlatformConcurrencyLimiter concurrencyLimiter) {
 		this.executions = executions;
 		this.textClient = textClient;
-		this.platformDefaults = platformDefaults;
 		this.concurrencyLimiter = concurrencyLimiter;
 	}
 
@@ -138,7 +136,8 @@ public class FrozenTextExecutionService {
 
 	private <T> Mono<Traced<T>> executePipelinePrepared(AiExecutionService.ExecutionContext context,
 			java.time.Duration timeout, int maxTokensPerRound, Function<IndependentStageExecutor, Mono<T>> pipeline) {
-		String bearer = context.provider().isPlatform() ? platformDefaults.apiKey() : context.decryptedKey();
+		// 任务书 #47 S2：平台凭据与 BYOK 统一走 decryptedKey——env 兜底已集中在 AiExecutionService
+		String bearer = context.decryptedKey();
 		return Mono.usingWhen(Mono.just(context),
 				ignored -> Mono.usingWhen(concurrencyLimiter.acquire(context.provider()), lease -> {
 					java.util.concurrent.atomic.AtomicLong inputTokens = new java.util.concurrent.atomic.AtomicLong();
@@ -199,7 +198,8 @@ public class FrozenTextExecutionService {
 
 	private <T> Mono<T> executePrepared(AiExecutionService.ExecutionContext context, List<ChatMessage> messages,
 			int maxTokens, java.time.Duration timeout, Function<TextCompletionResult, T> transform) {
-		String bearer = context.provider().isPlatform() ? platformDefaults.apiKey() : context.decryptedKey();
+		// 任务书 #47 S2：同上，密钥来源收敛到 ExecutionContext
+		String bearer = context.decryptedKey();
 		return Mono
 				.usingWhen(Mono.just(context), ignored -> Mono
 						.usingWhen(concurrencyLimiter.acquire(context.provider()),
@@ -224,7 +224,8 @@ public class FrozenTextExecutionService {
 	private <T> Mono<T> executePreparedBatch(AiExecutionService.ExecutionContext context,
 			List<List<ChatMessage>> messageBatches, int maxTokens, java.time.Duration timeout,
 			Function<List<TextCompletionResult>, T> transform) {
-		String bearer = context.provider().isPlatform() ? platformDefaults.apiKey() : context.decryptedKey();
+		// 任务书 #47 S2：同上，密钥来源收敛到 ExecutionContext
+		String bearer = context.decryptedKey();
 		return Mono
 				.usingWhen(Mono.just(context), ignored -> Mono
 						.usingWhen(concurrencyLimiter.acquire(context.provider()),

@@ -1,6 +1,5 @@
 package com.grassland.intelligence.imagestudio;
 
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.PlatformConcurrencyLimiter;
 import com.grassland.intelligence.articleimage.GeneratedImageStore;
@@ -46,8 +45,8 @@ public final class ImageStudioService {
     private final PlatformConcurrencyLimiter concurrencyLimiter;
     private final GeneratedImageStore imageStore;
     private final SandboxImageMattingProvider sandboxProvider;
-    private final PlatformModelConfig platformDefaults;
 
+    // 任务书 #47 S2：不再注入 env 平台凭据——密钥统一由 ExecutionContext.decryptedKey 提供
     public ImageStudioService(
             IntelligenceCallerResolver callers,
             MediaReferenceRepository mediaReferences,
@@ -55,8 +54,7 @@ public final class ImageStudioService {
             AiExecutionService executions,
             PlatformConcurrencyLimiter concurrencyLimiter,
             GeneratedImageStore imageStore,
-            SandboxImageMattingProvider sandboxProvider,
-            PlatformModelConfig platformDefaults) {
+            SandboxImageMattingProvider sandboxProvider) {
         this.callers = callers;
         this.mediaReferences = mediaReferences;
         this.storageProvider = storageProvider;
@@ -64,7 +62,6 @@ public final class ImageStudioService {
         this.concurrencyLimiter = concurrencyLimiter;
         this.imageStore = imageStore;
         this.sandboxProvider = sandboxProvider;
-        this.platformDefaults = platformDefaults;
     }
 
     /**
@@ -152,11 +149,12 @@ public final class ImageStudioService {
         if ("sandbox".equalsIgnoreCase(providerName)) {
             return sandboxProvider;
         }
-        // 平台模型：baseUrl / model 来自控制面，apiKey 沿用平台默认
+        // 平台模型：baseUrl / model 来自控制面；密钥来自凭据（任务书 #47 S2），无凭据密钥时已在
+        // AiExecutionService 回落 env 兜底，故此处统一取 decryptedKey
         return new OpenAiCompatibleImageMattingProvider(
                 context.provider().baseUrl(),
                 context.provider().model(),
-                platformDefaults.apiKey());
+                context.decryptedKey());
     }
 
     private Mono<MattingResponse> storeResult(ImageMattingProvider.MattingResult result) {

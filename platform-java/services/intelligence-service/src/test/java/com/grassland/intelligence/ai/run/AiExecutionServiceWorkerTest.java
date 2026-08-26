@@ -71,8 +71,21 @@ class AiExecutionServiceWorkerTest {
 	CreditsCentsPolicyProperties creditsCentsPolicy;
 	@Mock
 	CreditUsageSettlementRepository usageSettlements;
+	/** 任务书 #47 S2：env bootstrap 兜底密钥源，平台 run 的 bearer 解析要用。 */
+	@Mock
+	com.grassland.intelligence.ai.PlatformModelConfig platformDefaults;
 	@InjectMocks
 	AiExecutionService execution;
+
+	/**
+	 * 平台 run 会走 {@code decryptIfNeeded} 的 env 兜底分支（凭据未配密钥），需要 bootstrap key 就位；
+	 * 否则按 D8 抛 503。用 lenient 是因为部分用例（如 denied 分支）根本走不到这里。
+	 */
+	@org.junit.jupiter.api.BeforeEach
+	void stubBootstrapKey() {
+		org.mockito.Mockito.lenient().when(platformDefaults.hasBootstrapKey()).thenReturn(true);
+		org.mockito.Mockito.lenient().when(platformDefaults.apiKey()).thenReturn("sk-synthetic-bootstrap-key");
+	}
 
 	@Test
 	void pricedPlatformRunReservesConvertedUsageUnderFrozenPolicy() {

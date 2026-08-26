@@ -25,14 +25,25 @@ class PlatformModelConfigTest {
     }
 
     @Test
-    @DisplayName("base-url/api-key 任一缺失 → fail-fast")
-    void missingConfigFailsFast() {
-        assertThatThrownBy(() -> with("https://dashscope.aliyuncs.com", null, null).validate())
-                .isInstanceOf(IllegalStateException.class);
+    @DisplayName("base-url 缺失 → fail-fast（受信 origin 集失去锚点）")
+    void missingBaseUrlFailsFast() {
         assertThatThrownBy(() -> with(null, VALID_KEY, null).validate())
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> with("  ", "  ", null).validate())
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    /**
+     * 任务书 #47 D8：api-key 缺失<b>不再</b>拒绝启动——平台密钥的真相源已是
+     * {@code platform_provider_credential}，env 只是兜底。严格 fail-fast 会与 ADR-D16
+     * 「content_safety 缺省不种、深检降级为仅 L1」打架。代价改为运行时按 capability 503。
+     */
+    @Test
+    @DisplayName("api-key 缺失 → 启动通过（凭据表是真相源），hasBootstrapKey=false")
+    void missingApiKeyNoLongerFailsFast() {
+        PlatformModelConfig cfg = with("https://dashscope.aliyuncs.com", null, null);
+        cfg.validate();
+        assertThat(cfg.hasBootstrapKey()).isFalse();
     }
 
     @Test

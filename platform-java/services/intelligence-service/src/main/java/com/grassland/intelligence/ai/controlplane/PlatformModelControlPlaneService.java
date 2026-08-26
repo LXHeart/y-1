@@ -20,25 +20,31 @@ public class PlatformModelControlPlaneService {
         this.repository = repository;
     }
 
-    /** 解析某能力的平台模型（primary 健康优先，否则 backup）。无任何可用配置 → 空。 */
+    /**
+     * 解析某能力的平台模型（primary 健康优先，否则 backup）。无任何可用配置 → 空。
+     *
+     * <p>任务书 #47 S2：连凭据一起解析——baseUrl 取凭据（D2 凭据是目的地真相源），密文交执行层解密，
+     * 凭据无密钥时由执行层回落 env bootstrap（D1/D8）。
+     */
     public Mono<Optional<ResolvedPlatformModel>> resolve(String capability) {
-        return repository.findCurrentByCapability(capability)
+        return repository.findCurrentWithCredentialByCapability(capability)
                 .collectList()
                 .map(rows -> {
-                    PlatformModelConfig primary = null;
-                    PlatformModelConfig backup = null;
-                    for (PlatformModelConfig c : rows) {
-                        if (PlatformModelConfig.ROLE_PRIMARY.equalsIgnoreCase(c.modelRole())) {
-                            primary = c;
-                        } else if (PlatformModelConfig.ROLE_BACKUP.equalsIgnoreCase(c.modelRole())) {
-                            backup = c;
+                    PlatformModelWithCredential primary = null;
+                    PlatformModelWithCredential backup = null;
+                    for (PlatformModelWithCredential row : rows) {
+                        if (PlatformModelConfig.ROLE_PRIMARY.equalsIgnoreCase(row.config().modelRole())) {
+                            primary = row;
+                        } else if (PlatformModelConfig.ROLE_BACKUP.equalsIgnoreCase(row.config().modelRole())) {
+                            backup = row;
                         }
                     }
-                    PlatformModelConfig chosen = pick(primary, backup);
-                    return Optional.ofNullable(chosen)
-                            .map(c -> new ResolvedPlatformModel(
-                                    c.id(), c.provider(), c.model(), c.baseUrl(), c.version(), c.modelRole(),
-                                    c.maxConcurrency()));
+                    return Optional.ofNullable(pick(primary, backup))
+                            .map(row -> new ResolvedPlatformModel(
+                                    row.config().id(), row.config().provider(), row.config().model(),
+                                    row.effectiveBaseUrl(), row.config().version(), row.config().modelRole(),
+                                    row.config().maxConcurrency(),
+                                    row.credentialId(), row.credentialEncryptedKey(), row.credentialVersion()));
                 });
     }
 
@@ -49,20 +55,27 @@ public class PlatformModelControlPlaneService {
                 .defaultIfEmpty(Optional.empty());
     }
 
-    private static PlatformModelConfig pick(PlatformModelConfig primary, PlatformModelConfig backup) {
-        if (primary != null && primary.isHealthy()) {
+    private static PlatformModelWithCredential pick(
+            PlatformModelWithCredential primary, PlatformModelWithCredential backup) {
+        if (primary != null && primary.config().isHealthy()) {
             return primary;
         }
-        if (backup != null && backup.isHealthy()) {
+        if (backup != null && backup.config().isHealthy()) {
             return backup;
         }
-        if (primary != null && primary.isAvailable()) {
+        if (primary != null && primary.config().isAvailable()) {
             return primary;
         }
-        return backup != null && backup.isAvailable() ? backup : null;
+        return backup != null && backup.config().isAvailable() ? backup : null;
     }
 
-    /** 解析结果（运行时路由消费；version 供 TaskContext 冻结）。 */
+    /**
+     * 解析结果（运行时路由消费；version 供 TaskContext 冻结）。
+     *
+     * <p>{@code credentialEncryptedKey} 是<b>密文</b>，解密在执行层按需进行（{@code AiExecutionService}），
+     * 绝不入日志/响应/outbox。为 null 表示该凭据无密钥（sandbox 或走 env bootstrap 兜底）。
+     * {@code credentialVersion} 供 {@code ai_run.credential_version} 冻结（D7，S3 接线）。
+     */
     public record ResolvedPlatformModel(
             UUID configId,
             String provider,
@@ -70,6 +83,16 @@ public class PlatformModelControlPlaneService {
             String baseUrl,
             int version,
             String modelRole,
-            Integer maxConcurrency) {
+            Integer maxConcurrency,
+            UUID credentialId,
+            String credentialEncryptedKey,
+            Long credentialVersion) {
+
+        /** 旧构造形状（无凭据），供既有测试与不关心凭据的调用方使用。 */
+        public ResolvedPlatformModel(
+                UUID configId, String provider, String model, String baseUrl,
+                int version, String modelRole, Integer maxConcurrency) {
+            this(configId, provider, model, baseUrl, version, modelRole, maxConcurrency, null, null, null);
+        }
     }
 }

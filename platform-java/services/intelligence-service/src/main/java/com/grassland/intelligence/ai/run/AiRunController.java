@@ -1,6 +1,5 @@
 package com.grassland.intelligence.ai.run;
 
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -42,21 +41,19 @@ public class AiRunController {
     private final AiExecutionService aiExecution;
     private final TextCompletionClient textClient;
     private final AiRunRepository runRepository;
-    private final PlatformModelConfig platformDefaults;
     private final PlatformConcurrencyLimiter concurrencyLimiter;
 
+    // 任务书 #47 S2：不再注入 env 平台凭据——密钥统一由 ExecutionContext.decryptedKey 提供
     public AiRunController(
             IntelligenceCallerResolver callers,
             AiExecutionService aiExecution,
             TextCompletionClient textClient,
             AiRunRepository runRepository,
-            PlatformModelConfig platformDefaults,
             PlatformConcurrencyLimiter concurrencyLimiter) {
         this.callers = callers;
         this.aiExecution = aiExecution;
         this.textClient = textClient;
         this.runRepository = runRepository;
-        this.platformDefaults = platformDefaults;
         this.concurrencyLimiter = concurrencyLimiter;
     }
 
@@ -75,7 +72,8 @@ public class AiRunController {
 
     private Mono<ResponseEntity<AiRunResponse>> doExecute(
             AiExecutionService.ExecutionContext ctx, String prompt, int maxTokens) {
-        String bearer = ctx.provider().isPlatform() ? platformDefaults.apiKey() : ctx.decryptedKey();
+        // 任务书 #47 S2：平台凭据与 BYOK 统一走 decryptedKey——env 兜底已集中在 AiExecutionService
+        String bearer = ctx.decryptedKey();
         return Mono.usingWhen(
                         Mono.just(ctx),
                         ignored -> executeWithLease(ctx, prompt, maxTokens, bearer)
