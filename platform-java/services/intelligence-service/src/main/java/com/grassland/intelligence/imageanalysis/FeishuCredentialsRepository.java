@@ -2,6 +2,10 @@ package com.grassland.intelligence.imageanalysis;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.crypto.EnvelopeEncryption;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -16,11 +20,15 @@ import reactor.core.publisher.Mono;
 @Component
 public class FeishuCredentialsRepository {
 
-    private final DatabaseClient db;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private static final Logger logger = LoggerFactory.getLogger(FeishuCredentialsRepository.class);
 
-    public FeishuCredentialsRepository(DatabaseClient db) {
+    private final DatabaseClient db;
+    private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
+
+    public FeishuCredentialsRepository(
+            DatabaseClient db, ObjectProvider<EnvelopeEncryption> encryptionProvider) {
         this.db = db;
+        this.encryptionProvider = encryptionProvider;
     }
 
     public Mono<FeishuCredentials> find(String accountId) {
@@ -33,10 +41,17 @@ public class FeishuCredentialsRepository {
                 .bind("accountId", accountId)
                 .map(r -> r.get("settings_json", String.class))
                 .one()
-                .map(FeishuCredentialsRepository::parse);
+                .map(this::parse);
     }
 
-    private static FeishuCredentials parse(String json) {
+    /**
+     * 解析飞书凭据。任务书 #47 S7：{@code appSecret} <b>密文优先、明文回落</b>。
+     *
+     * <p>{@code LegacySecretMigrationRunner} 把密文写进独立键 {@code appSecretEncrypted} 而不原地替换
+     * ——原地加密后本方法无法区分「已加密」与「还是明文」，试解密再回落是启发式的、不可靠。
+     * 独立键让优先级明确：有密文就解密用，没有才回落明文（V51 清空明文后回落分支自然失效）。
+     */
+    private FeishuCredentials parse(String json) {
         try {
             JsonNode root = new ObjectMapper().readTree(json);
             JsonNode feishu = root.path("integrations").path("feishu");
@@ -45,10 +60,31 @@ public class FeishuCredentialsRepository {
             }
             return new FeishuCredentials(
                     text(feishu, "appId"),
-                    text(feishu, "appSecret"),
+                    resolveAppSecret(feishu),
                     text(feishu, "folderToken"));
         } catch (Exception e) {
             return new FeishuCredentials(null, null, null);
+        }
+    }
+
+    private String resolveAppSecret(JsonNode feishu) {
+        String encrypted = text(feishu, "appSecretEncrypted");
+        String plaintext = text(feishu, "appSecret");
+        if (encrypted == null) {
+            return plaintext;
+        }
+        EnvelopeEncryption crypto = encryptionProvider.getIfAvailable();
+        if (crypto == null) {
+            // KEK 不可用：回落明文（若还在）而不是让导出功能整体不可用
+            logger.warn("Feishu appSecret ciphertext present but KEK unavailable; falling back to plaintext");
+            return plaintext;
+        }
+        try {
+            return crypto.decrypt(encrypted);
+        } catch (RuntimeException e) {
+            // 解密失败不吞：回落明文并告警，便于运维在 V51 之前发现问题（不记密钥值）
+            logger.warn("Feishu appSecret decryption failed, falling back to plaintext: {}", e.getMessage());
+            return plaintext;
         }
     }
 
