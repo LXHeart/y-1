@@ -152,7 +152,7 @@ public class AiOrgProviderKeyController {
         return requireAdmin(organizationId, exchange)
                 .then(repository.findOrgByIdAndOrganization(id, organizationId)
                         .flatMap(ignored -> {
-                            encryption.rotateKey();
+                            // 同 AiProviderKeyController：组织换自己的 API key 不该动平台 KEK 版本号
                             String encryptedKey = encryption.encrypt(body.apiKey());
                             String maskedHint = MaskedKey.mask(body.apiKey());
                             String newKeyVersion = encryption.keyVersion(encryptedKey);

@@ -328,6 +328,11 @@ trust:
 # GL-P3-MERCHANT-001：KYB 敏感字段（法人身份证号/收款账号）信封加密。
 # 与 intelligence BYOK 共用同一 KEK 变量名。未配置时 EnvelopeEncryption bean 不装配，
 # KybFieldCrypto 对敏感字段 fail-closed 返 503——绝不退化为存明文。
+#
+# KEK 轮换（双 KEK 并存）：与 intelligence 必须配一致的 version/previous——同一密文要在两个服务
+# 解出同一结果。轮换顺序见 docs/生产发布与灾备运行手册.md「CRYPTO_KEK_BASE64 的特殊轮换语义」。
 crypto:
   kek:
     encoded: ${CRYPTO_KEK_BASE64:}
+    version: ${CRYPTO_KEK_VERSION:1}
+    previous: ${CRYPTO_KEK_PREVIOUS:}

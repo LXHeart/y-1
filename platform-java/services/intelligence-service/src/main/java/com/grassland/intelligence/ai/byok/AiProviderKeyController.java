@@ -175,7 +175,9 @@ public class AiProviderKeyController {
         return callers.resolve(exchange.getRequest())
                 .flatMap(caller -> repository.findPersonalByIdAndOwner(id, caller.accountId())
                         .flatMap(key -> {
-                            encryption.rotateKey();
+                            // 不再调 encryption.rotateKey()：那是平台 KEK 的版本号，与「用户换自己的
+                            // API key」无关。原实现每次用户轮换都把全局版本 +1 却不换 KEK 材料，
+                            // 使密文首字节与密钥材料失去对应（且计数器重启归 1）。
                             String encryptedKey = encryption.encrypt(body.apiKey());
                             String maskedHint = MaskedKey.mask(body.apiKey());
                             String newKeyVersion = encryption.keyVersion(encryptedKey);

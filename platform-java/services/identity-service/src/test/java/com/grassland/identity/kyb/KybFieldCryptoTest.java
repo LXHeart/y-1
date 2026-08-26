@@ -23,7 +23,7 @@ class KybFieldCryptoTest {
 
     private static KybFieldCrypto withKek() {
         EnvelopeEncryption envelope = new BouncyCastleEnvelopeEncryption(
-                new CryptoProperties(new CryptoProperties.Kek(KEK)));
+                new CryptoProperties(CryptoProperties.Kek.of(KEK)));
         return new KybFieldCrypto(provider(envelope));
     }
 
@@ -60,7 +60,7 @@ class KybFieldCryptoTest {
     @DisplayName("加解密往返：密文不含明文，解密还原")
     void roundTrip() {
         EnvelopeEncryption envelope = new BouncyCastleEnvelopeEncryption(
-                new CryptoProperties(new CryptoProperties.Kek(KEK)));
+                new CryptoProperties(CryptoProperties.Kek.of(KEK)));
         KybFieldCrypto crypto = new KybFieldCrypto(provider(envelope));
         String plaintext = "310101199001011234";
 
