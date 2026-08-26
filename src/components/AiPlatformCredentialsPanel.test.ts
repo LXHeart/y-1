@@ -111,6 +111,77 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(rotateCall[1]).toMatchObject({ method: 'PUT' })
   })
 
+  test('fetch-models merges upstream list with the already-ticked set', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([{ id: 'qwen-plus' }, { id: 'qwen-max' }]))
+      .mockResolvedValueOnce(json([{ id: 'qwen-plus' }, { id: 'qwen-retired' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiPlatformCredentialsPanel)
+    await flushPromises()
+
+    await wrapper.get('button[data-action="fetch-models"]').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/admin/ai/credentials/cred-1/models')
+    expect(fetchMock.mock.calls[2][0]).toContain('/api/admin/ai/credentials/cred-1/selected-models')
+
+    // 上游两个 + 已勾选但上游未返回的 qwen-retired（保留并标注）
+    const ids = wrapper.findAll('.model-picker .model-id').map((node) => node.text())
+    expect(ids).toEqual(['qwen-plus', 'qwen-max', 'qwen-retired'])
+    expect(wrapper.get('.stale-tag').text()).toContain('上游本次未返回')
+
+    // 勾选态来自 selected-models，不是「上游有就勾」
+    const boxes = wrapper.findAll('.model-picker input[type="checkbox"]')
+    expect((boxes[0].element as HTMLInputElement).checked).toBe(true)
+    expect((boxes[1].element as HTMLInputElement).checked).toBe(false)
+    expect((boxes[2].element as HTMLInputElement).checked).toBe(true)
+  })
+
+  test('saving ticked models PUTs the whole set and carries ownedBy', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([{ id: 'qwen-plus', ownedBy: 'aliyun' }, { id: 'qwen-max' }]))
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json([{ id: 'qwen-plus', ownedBy: 'aliyun' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiPlatformCredentialsPanel)
+    await flushPromises()
+
+    await wrapper.get('button[data-action="fetch-models"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.findAll('.model-picker input[type="checkbox"]')[0].setValue(true)
+    await wrapper.get('button[data-action="save-models"]').trigger('click')
+    await flushPromises()
+
+    const put = fetchMock.mock.calls.find((call) => call[1]?.method === 'PUT')
+    if (!put) throw new Error('expected a PUT to /selected-models')
+    expect(put[0]).toContain('/selected-models')
+    expect(JSON.parse(put[1].body)).toEqual({ models: [{ id: 'qwen-plus', ownedBy: 'aliyun' }] })
+    // 保存成功后收起面板
+    expect(wrapper.find('.model-picker').exists()).toBe(false)
+  })
+
+  test('upstream failure keeps the existing ticked set instead of wiping it', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json({ error: 'AI base-url 指向内网/私有/环回地址，已拒绝' }, 400))
+      .mockResolvedValueOnce(json([{ id: 'qwen-plus' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiPlatformCredentialsPanel)
+    await flushPromises()
+
+    await wrapper.get('button[data-action="fetch-models"]').trigger('click')
+    await flushPromises()
+
+    // 一次网络故障不该擦掉运营已做的选择
+    const ids = wrapper.findAll('.model-picker .model-id').map((node) => node.text())
+    expect(ids).toEqual(['qwen-plus'])
+    expect((wrapper.get('.model-picker input[type="checkbox"]').element as HTMLInputElement).checked)
+      .toBe(true)
+  })
+
   test('surfaces the 409 reference count when disabling a credential in use', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))

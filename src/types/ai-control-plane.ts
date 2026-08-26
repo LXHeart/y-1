@@ -67,6 +67,17 @@ export interface AiOrgByokPolicyState {
 export type PlatformModelRole = 'primary' | 'backup'
 export type PlatformModelHealth = 'healthy' | 'degraded' | 'unhealthy'
 
+/**
+ * 真正经控制面解析的能力全集（与后端 `CreatePlatformModelRequest` 的 capability 正则逐值一致）。
+ *
+ * `image_generation` / `video_generation` 刻意不在其中——它们走 `preparePlatformAsyncExecution`
+ * 的专用 adapter 配置，在平台模型表里建行不会被任何执行路径读取（旧表单是自由文本框，
+ * 填这两个值或拼错成 `txet` 都能建出永不生效的死配置）。
+ */
+export const PLATFORM_CAPABILITIES = ['text', 'voice', 'retrieval', 'image_edit', 'content_safety'] as const
+
+export type PlatformCapability = (typeof PLATFORM_CAPABILITIES)[number]
+
 export interface PlatformModelConfig {
   id: string
   capability: string
@@ -82,12 +93,23 @@ export interface PlatformModelConfig {
   updatedAt: string
 }
 
+/**
+ * 建平台模型配置。凭据两种给法（后端 `resolveDestination` 归一）：
+ *
+ * - 推荐 `credentialId`：provider/baseUrl 留空，由该凭据带出。治理台表单走这条——
+ *   凭据才是地址与密钥的真相源（运行时是 `COALESCE(credential.base_url, config.base_url)`）。
+ * - 兼容 `provider` + `baseUrl`：后端按 (provider, baseUrl) 反查凭据，查不到会**隐式新建**一条
+ *   无密钥凭据，容易积出空壳行。
+ *
+ * 两者都不给 → 400。同时给 → 以 `credentialId` 为准。
+ */
 export interface CreatePlatformModelInput {
-  capability: string
+  capability: PlatformCapability
   modelRole: PlatformModelRole
-  provider: string
+  credentialId?: string
+  provider?: string
   model: string
-  baseUrl: string
+  baseUrl?: string
   maxConcurrency?: number
   healthStatus?: PlatformModelHealth
 }
@@ -122,6 +144,16 @@ export interface CreatePlatformCredentialInput {
 }
 
 export type UpdatePlatformCredentialInput = Omit<CreatePlatformCredentialInput, 'apiKey'>
+
+/**
+ * 一个上游模型。两处共用同一形状：
+ * - `GET {credential}/models` —— 实时问上游「这把 key 能用什么」（要触网，可能失败）
+ * - `GET/PUT {credential}/selected-models` —— admin 勾选的子集（落库，平台模型表单读这个）
+ */
+export interface UpstreamModel {
+  id: string
+  ownedBy?: string
+}
 
 /**
  * 个人 BYOK 开关（任务书 #47 D11–D14）。按 capability 一项。

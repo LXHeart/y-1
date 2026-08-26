@@ -5,6 +5,8 @@ import com.grassland.crypto.MaskedKey;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -50,18 +52,26 @@ public class PlatformProviderCredentialController {
     private final TransactionalOperator transactions;
     /** KEK 未配时 bean 不存在（CryptoAutoConfiguration:27 的 @Conditional）——用 ObjectProvider 才能转 503。 */
     private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
+    /** 复用用户 BYOK 的固定地址出站路径列上游模型，不自建 WebClient。 */
+    private final com.grassland.intelligence.settings.ModelListingService modelListing;
+    /** admin 勾选集（V51）；平台模型表单的下拉读这里，不触网。 */
+    private final PlatformCredentialModelRepository selectedModels;
 
     public PlatformProviderCredentialController(
             IntelligenceCallerResolver callers,
             PlatformProviderCredentialRepository repository,
             PlatformProviderPolicy providerPolicy,
             TransactionalOperator transactions,
-            ObjectProvider<EnvelopeEncryption> encryptionProvider) {
+            ObjectProvider<EnvelopeEncryption> encryptionProvider,
+            com.grassland.intelligence.settings.ModelListingService modelListing,
+            PlatformCredentialModelRepository selectedModels) {
         this.callers = callers;
         this.repository = repository;
         this.providerPolicy = providerPolicy;
         this.transactions = transactions;
         this.encryptionProvider = encryptionProvider;
+        this.modelListing = modelListing;
+        this.selectedModels = selectedModels;
     }
 
     @GetMapping
@@ -78,6 +88,82 @@ public class PlatformProviderCredentialController {
                 .flatMap(admin -> repository.findEnabledById(id)
                         .map(c -> ResponseEntity.ok(PlatformProviderCredentialResponse.from(c)))
                         .switchIfEmpty(Mono.error(notFound(id))));
+    }
+
+    /**
+     * 列出该凭据上游实际可用的模型（GET {baseUrl}/models），供治理台「平台模型」表单的模型名下拉。
+     *
+     * <p>出站复用 {@code ModelListingService.listModelsAt}——与用户 BYOK 同一条固定地址连接路径
+     * （HTTPS、无 userinfo、全部 DNS 解析为公网、与已固定集合一致、不跟随重定向、响应体有上限）。
+     * 这里刻意不自建 WebClient：SSRF/DNS-rebinding 防护分叉就会漏掉一侧。
+     *
+     * <p>只回模型 id 列表，**不回密钥任何形态**。密钥明文只活在 Authorization 头，不落日志不入响应。
+     * KEK 未配 → 503（与写端点同口径，404 会让 admin 以为功能不存在）；无密钥凭据 → 400。
+     */
+    @GetMapping("/{id}/models")
+    public Mono<ResponseEntity<List<Map<String, Object>>>> listUpstreamModels(
+            @PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireAdmin(exchange.getRequest())
+                .flatMap(admin -> repository.findEnabledById(id)
+                        .switchIfEmpty(Mono.error(notFound(id)))
+                        .flatMap(credential -> {
+                            if (!credential.hasKey()) {
+                                return Mono.error(new IntelligenceException(400,
+                                        "该凭据未配置密钥，无法列出模型"));
+                            }
+                            String plaintext = requireEncryption().decrypt(credential.encryptedKey());
+                            return modelListing.listModelsAt(credential.baseUrl(), plaintext);
+                        })
+                        .map(ResponseEntity::ok));
+    }
+
+    /**
+     * 读该凭据下 admin 已勾选的模型（V51）。平台模型表单的模型下拉数据源——不触网。
+     *
+     * <p>与 {@code /models} 的区别：那个实时问上游「这把 key 能用什么」，这个回「运营决定用什么」。
+     */
+    @GetMapping("/{id}/selected-models")
+    public Mono<ResponseEntity<List<Map<String, Object>>>> listSelectedModels(
+            @PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireAdmin(exchange.getRequest())
+                .flatMap(admin -> repository.findEnabledById(id)
+                        .switchIfEmpty(Mono.error(notFound(id)))
+                        .flatMap(credential -> selectedModels.findByCredential(id)
+                                .map(PlatformProviderCredentialController::selectedModelPayload)
+                                .collectList())
+                        .map(ResponseEntity::ok));
+    }
+
+    /**
+     * 整份覆盖勾选集。空数组合法（= 取消全部勾选）。
+     *
+     * <p>刻意**不**校验勾选项是否仍在上游列表里：保存时再问一次上游就把「改配置」绑死在
+     * 上游可达性上（DNS 劫持、上游故障时就存不了）。上游少了某个模型是运行时错误，不是保存时错误。
+     */
+    @PutMapping("/{id}/selected-models")
+    public Mono<ResponseEntity<List<Map<String, Object>>>> replaceSelectedModels(
+            @PathVariable UUID id,
+            @Valid @RequestBody ReplaceSelectedModelsRequest body,
+            ServerWebExchange exchange) {
+        return callers.requireAdmin(exchange.getRequest())
+                .flatMap(admin -> repository.findEnabledById(id)
+                        .switchIfEmpty(Mono.error(notFound(id)))
+                        .flatMap(credential -> transactions.transactional(
+                                selectedModels.replaceAll(id, body.toDomain(), admin.accountId()))
+                                .thenMany(selectedModels.findByCredential(id))
+                                .map(PlatformProviderCredentialController::selectedModelPayload)
+                                .collectList())
+                        .map(ResponseEntity::ok));
+    }
+
+    private static Map<String, Object> selectedModelPayload(
+            PlatformCredentialModelRepository.SelectedModel model) {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("id", model.modelId());
+        if (model.ownedBy() != null) {
+            payload.put("ownedBy", model.ownedBy());
+        }
+        return payload;
     }
 
     @PostMapping

@@ -154,6 +154,69 @@ public class PlatformModelConfigRepository {
     }
 
     /** 列出所有当前有效配置（admin 看板）。 */
+    /**
+     * 含已停用行的全量列表（治理台「显示已停用」开关）。
+     *
+     * <p>排序把生效行放在各 (capability, role) 组的最前，其余按 version 倒序——停用的历史版本
+     * 紧跟在当前行下方，读起来是「现在用这个，之前是那些」。
+     */
+    public Flux<PlatformModelConfig> findAllIncludingDisabled() {
+        return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL
+                + " ORDER BY config.capability, config.model_role,"
+                + " config.enabled DESC, config.version DESC")
+                .map(PlatformModelConfigRepository::map)
+                .all();
+    }
+
+    /**
+     * 恢复一行已停用配置（enabled=false → true）+ history(restore)。
+     *
+     * <p>不自动停用该 (capability, role) 现有的生效行：部分唯一索引会让这次 UPDATE 直接失败，
+     * 调用方据此转 409 让 admin 显式决定先停哪个。静默顶掉线上生效配置比报错危险得多。
+     *
+     * <p>{@code WHERE enabled = false} 让重复恢复成为空结果（幂等），调用方转 404/409。
+     */
+    public Mono<PlatformModelConfig> restore(UUID id, String adminId) {
+        return db.sql("""
+                UPDATE platform_model_config
+                SET enabled = true, updated_at = now(), updated_by = :adminId
+                WHERE id = CAST(:id AS uuid) AND enabled = false
+                RETURNING id::text
+                """)
+                .bind("id", id.toString())
+                .bind("adminId", nullable(adminId, String.class))
+                .map((r, m) -> r.get("id", String.class))
+                .one()
+                .map(UUID::fromString)
+                .flatMap(restored -> findById(restored)
+                        .flatMap(config -> insertHistory(restored, config, config.baseUrl(),
+                                config.version(), "restore", adminId)
+                                .thenReturn(config)));
+    }
+
+    /**
+     * 硬删一行**已停用**配置。先删并发槽位——{@code config_id} 是 ON DELETE RESTRICT，
+     * 不先删槽位数据库会直接拒绝。必须在事务内调用。
+     *
+     * <p>{@code WHERE enabled = false} 是安全闸：生效中的配置不可删，必须先停用（两步确认）。
+     * history 按值存快照且无外键，故删除后审计链仍完整；{@code ai_run.platform_model_version}
+     * 是冻结的 int 而非外键，历史运行记录也不受影响。
+     */
+    public Mono<Boolean> deleteDisabled(UUID id) {
+        return db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id = CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .then()
+                .then(db.sql("""
+                        DELETE FROM platform_model_config
+                        WHERE id = CAST(:id AS uuid) AND enabled = false
+                        RETURNING id::text
+                        """)
+                        .bind("id", id.toString())
+                        .map((r, m) -> r.get("id", String.class))
+                        .one()
+                        .hasElement());
+    }
+
     public Flux<PlatformModelConfig> findAllCurrent() {
         return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL
                 + " WHERE config.enabled = true"

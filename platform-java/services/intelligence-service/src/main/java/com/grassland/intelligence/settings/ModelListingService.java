@@ -46,12 +46,31 @@ public class ModelListingService {
 
 	/** 列出可用模型（GET {baseUrl}/models）。 */
 	public Mono<List<Map<String, Object>>> listModels(String accountId, String feature) {
-		return resolveProviderConfig(accountId, feature)
-				.flatMap(config -> pinnedClient(config).flatMap(client -> client.get().uri("/models")
-						.header("Authorization", "Bearer " + config.apiKey()).accept(MediaType.APPLICATION_JSON)
+		return resolveProviderConfig(accountId, feature).flatMap(config -> listModelsAt(config.baseUrl(), config.apiKey()));
+	}
+
+	/**
+	 * 按显式 baseUrl + apiKey 列模型，不经用户 analysis settings。
+	 *
+	 * <p>供平台凭据侧复用（治理台「平台模型」表单的模型名下拉）：出站口径与用户 BYOK 完全一致——
+	 * 同一个 {@link #pinnedClient} 固定地址连接、同一个 {@link #parseModels}。**刻意不复制这段逻辑**，
+	 * 因为 SSRF/DNS-rebinding 防护一旦分叉就会漏掉一侧。
+	 *
+	 * <p>{@code apiKey} 必须是已解密明文，只作 Authorization 头用，不落日志、不入响应。
+	 */
+	public Mono<List<Map<String, Object>>> listModelsAt(String baseUrl, String apiKey) {
+		if (baseUrl == null || baseUrl.isBlank()) {
+			return Mono.error(new IntelligenceException(400, "该凭据没有可用的 baseUrl"));
+		}
+		if (apiKey == null || apiKey.isBlank()) {
+			return Mono.error(new IntelligenceException(400, "该凭据未配置密钥，无法列出模型"));
+		}
+		return pinnedClient(new ProviderConfig(baseUrl, apiKey))
+				.flatMap(client -> client.get().uri("/models")
+						.header("Authorization", "Bearer " + apiKey).accept(MediaType.APPLICATION_JSON)
 						.retrieve().bodyToMono(String.class).timeout(Duration.ofMillis(15000)).map(this::parseModels)
 						.onErrorMap(e -> !(e instanceof IntelligenceException),
-								e -> new IntelligenceException(502, "模型列表获取失败：" + e.getMessage()))));
+								e -> new IntelligenceException(502, "模型列表获取失败：" + e.getMessage())));
 	}
 
 	/** 验证模型可用性（POST {baseUrl}/chat/completions, max_tokens=1）。 */

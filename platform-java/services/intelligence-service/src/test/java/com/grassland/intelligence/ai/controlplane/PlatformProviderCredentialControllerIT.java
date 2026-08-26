@@ -43,7 +43,98 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
         db.sql("DELETE FROM platform_model_config_history").then().block();
         db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
+        // 勾选集（V51）在凭据之前删：credential_id 外键指向 platform_provider_credential。
+        db.sql("DELETE FROM platform_credential_model").then().block();
         db.sql("DELETE FROM platform_provider_credential").then().block();
+    }
+
+    @Test
+    @DisplayName("勾选集：初始为空；PUT 整份覆盖后 GET 回勾选项（含 ownedBy）")
+    void replacesAndReadsSelectedModels() {
+        String id = createCredential("sel-cred", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+
+        client().get().uri("/api/admin/ai/credentials/" + id + "/selected-models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.length()").isEqualTo(0);
+
+        client().put().uri("/api/admin/ai/credentials/" + id + "/selected-models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"models":[{"id":"qwen-plus","ownedBy":"aliyun"},{"id":"qwen-max"}]}
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                // 仓储按 model_id 排序，故 qwen-max 在前
+                .jsonPath("$.length()").isEqualTo(2)
+                .jsonPath("$[0].id").isEqualTo("qwen-max")
+                .jsonPath("$[1].id").isEqualTo("qwen-plus")
+                .jsonPath("$[1].ownedBy").isEqualTo("aliyun");
+    }
+
+    @Test
+    @DisplayName("勾选集 PUT 是整份覆盖：第二次提交的集合完全取代第一次，空数组清空")
+    void replaceAllIsWholesale() {
+        String id = createCredential("sel-cred2", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+        putSelected(id, """
+                {"models":[{"id":"qwen-plus"},{"id":"qwen-max"}]}
+                """);
+
+        putSelected(id, """
+                {"models":[{"id":"qwen-turbo"}]}
+                """).jsonPath("$.length()").isEqualTo(1)
+                .jsonPath("$[0].id").isEqualTo("qwen-turbo");
+
+        // 空数组 = 取消全部勾选（合法输入，不是 400）
+        putSelected(id, """
+                {"models":[]}
+                """).jsonPath("$.length()").isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("勾选集：重复 id 去重；非法字符与超长 id → 400")
+    void rejectsInvalidModelIds() {
+        String id = createCredential("sel-cred3", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+
+        // 同一 id 提交两次不该撞唯一索引，去重后只留一条
+        putSelected(id, """
+                {"models":[{"id":"qwen-plus"},{"id":"qwen-plus"}]}
+                """).jsonPath("$.length()").isEqualTo(1);
+
+        client().put().uri("/api/admin/ai/credentials/" + id + "/selected-models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"models":[{"id":"bad id with spaces"}]}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("勾选集鉴权与归属：缺断言 → 401；凭据不存在 → 404")
+    void selectedModelsGate() {
+        client().get().uri("/api/admin/ai/credentials/"
+                        + "99999999-9999-9999-9999-999999999999/selected-models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isNotFound();
+
+        String id = createCredential("sel-cred4", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+        client().get().uri("/api/admin/ai/credentials/" + id + "/selected-models")
+                .exchange().expectStatus().isUnauthorized();
+    }
+
+    private org.springframework.test.web.reactive.server.WebTestClient.BodyContentSpec putSelected(
+            String id, String body) {
+        return client().put().uri("/api/admin/ai/credentials/" + id + "/selected-models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody();
     }
     @Test
     @DisplayName("创建 → 201 version=1；响应只回掩码，明文密钥不出响应体")

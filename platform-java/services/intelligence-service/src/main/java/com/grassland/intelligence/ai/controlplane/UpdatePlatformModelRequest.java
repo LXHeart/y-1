@@ -10,13 +10,16 @@ import jakarta.validation.constraints.Pattern;
  *
  * <p>{@code capability}/{@code modelRole} 取自路径；此处只带可变字段。修订 = 版本 +1 + disable 旧 + history。
  * {@code healthStatus} 可空，默认 healthy。
+ *
+ * <p>凭据给法与 {@link CreatePlatformModelRequest} 同口径：优先 {@code credentialId}，
+ * 留空则回落 {@code provider}+{@code baseUrl} 反查（兼容既有调用方）。两者都不给 → 400。
  */
 public record UpdatePlatformModelRequest(
-        @NotBlank(message = "provider 必填")
+        java.util.UUID credentialId,
         @Pattern(regexp = "qwen|openai-compatible|sandbox",
                 message = "平台 provider 必须是 qwen、openai-compatible 或 sandbox") String provider,
         @NotBlank(message = "model 必填") String model,
-        @NotBlank(message = "baseUrl 必填") String baseUrl,
+        String baseUrl,
         @Min(value = 1, message = "maxConcurrency 必须大于 0")
         @Max(value = 1000, message = "maxConcurrency 不能超过 1000") Integer maxConcurrency,
         @Pattern(regexp = "healthy|degraded|unhealthy", message = "healthStatus 必须是 healthy/degraded/unhealthy")

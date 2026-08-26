@@ -5,7 +5,14 @@
         <h3 id="platform-models-title">平台模型</h3>
         <p>按能力维护主模型、备用模型、健康状态和并发上限</p>
       </div>
-      <button type="button" class="primary-command" data-action="add-model" @click="openCreate">新增配置</button>
+      <div class="heading-actions">
+        <label class="toggle-disabled">
+          <input type="checkbox" name="includeDisabled" :checked="includeDisabled"
+                 @change="onToggleDisabled(($event.target as HTMLInputElement).checked)" />
+          显示已停用
+        </label>
+        <button type="button" class="primary-command" data-action="add-model" @click="openCreate">新增配置</button>
+      </div>
     </header>
 
     <p v-if="error" class="error-state" role="alert">{{ error }}</p>
@@ -15,16 +22,27 @@
       <table class="model-table">
         <thead><tr><th>能力</th><th>角色</th><th>Provider / 模型</th><th>健康</th><th>并发</th><th>版本</th><th>操作</th></tr></thead>
         <tbody>
-          <tr v-for="item in models" :key="item.id">
+          <tr v-for="item in models" :key="item.id" :class="{ 'row-disabled': !item.enabled }">
             <td>{{ capabilityLabel(item.capability) }}</td>
             <td>{{ item.modelRole === 'primary' ? '主模型' : '备用' }}</td>
             <td><strong>{{ item.model }}</strong><small>{{ item.provider }}</small></td>
             <td><span class="health-tag" :class="`health-${item.healthStatus}`">{{ healthLabel(item.healthStatus) }}</span></td>
             <td>{{ item.maxConcurrency == null ? '不限' : item.maxConcurrency }}</td>
-            <td>v{{ item.version }}</td>
+            <td>
+              v{{ item.version }}
+              <small v-if="!item.enabled" class="disabled-tag">已停用</small>
+            </td>
+            <!-- 停用行不给「修订」：修订走 (capability, role) 两段路径，只会命中当前生效行，
+                 在停用行上点它会改到别的行去。要改先恢复。 -->
             <td class="row-actions">
-              <button type="button" data-action="edit-model" @click="openEdit(item)">修订</button>
-              <button type="button" class="danger-command" data-action="disable-model" @click="disableModel(item)">禁用</button>
+              <template v-if="item.enabled">
+                <button type="button" data-action="edit-model" @click="openEdit(item)">修订</button>
+                <button type="button" class="danger-command" data-action="disable-model" @click="disableModel(item)">禁用</button>
+              </template>
+              <template v-else>
+                <button type="button" data-action="restore-model" @click="restoreModel(item)">恢复</button>
+                <button type="button" class="danger-command" data-action="delete-model" @click="deleteModel(item)">删除</button>
+              </template>
             </td>
           </tr>
         </tbody>
@@ -37,15 +55,42 @@
           <h4>{{ mode === 'create' ? '新增平台模型' : `修订配置 · v${target?.version}` }}</h4>
           <button type="button" aria-label="关闭模型表单" @click="closeForm">×</button>
         </header>
-        <label>能力<input v-model.trim="capability" name="capability" required maxlength="64" :disabled="mode === 'edit'" /></label>
+        <label>能力
+          <select v-model="capability" name="capability" :disabled="mode === 'edit'">
+            <option v-for="option in CAPABILITY_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
         <label>模型角色
           <select v-model="modelRole" name="modelRole" :disabled="mode === 'edit'">
             <option value="primary">主模型</option><option value="backup">备用模型</option>
           </select>
         </label>
-        <label>Provider<input v-model.trim="provider" name="provider" required maxlength="64" /></label>
-        <label>模型<input v-model.trim="model" name="model" required maxlength="128" /></label>
-        <label class="wide-field">API Base URL<input v-model.trim="baseUrl" name="baseUrl" type="url" required maxlength="1000" /></label>
+        <label class="wide-field">凭据
+          <select v-model="credentialId" name="credentialId" required>
+            <option value="" disabled>请选择平台通用凭据</option>
+            <option v-for="item in credentials" :key="item.id" :value="item.id">
+              {{ item.name }} · {{ item.provider }} · {{ item.hasKey ? item.maskedHint : '无密钥（回落 env）' }}
+            </option>
+          </select>
+        </label>
+        <!-- 模型名优先用上游 /models 拉到的列表；拉不到（无密钥/KEK 未配/上游不通）降级为手填，
+             不阻断表单——治理台不能因为上游一时不可达就没法改配置。 -->
+        <label>模型
+          <select v-if="upstreamModels.length > 0" v-model="model" name="model" required>
+            <option value="" disabled>请选择模型</option>
+            <option v-for="item in upstreamModels" :key="item.id" :value="item.id">{{ item.id }}</option>
+          </select>
+          <input v-else v-model.trim="model" name="model" required maxlength="128"
+                 :placeholder="modelsHint || '手动填写模型名'" />
+        </label>
+        <!-- provider / baseUrl 不再作为字段出现：它们由所选凭据唯一决定（运行时是
+             COALESCE(credential.base_url, config.base_url)），摆成只读框只是噪音。
+             凭据选项里已带 provider，选中后在下方一行摘要里复述地址，够确认用。 -->
+        <p v-if="selectedCredential" class="credential-summary wide-field">
+          将写入 <strong>{{ selectedCredential.provider }}</strong> · {{ selectedCredential.baseUrl }}
+        </p>
         <label>并发上限<input v-model="maxConcurrency" name="maxConcurrency" type="number" min="1" step="1" placeholder="留空表示不限" /></label>
         <label>健康状态
           <select v-model="healthStatus" name="healthStatus">
@@ -63,33 +108,90 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAiControlPlane } from '../composables/useAiControlPlane'
-import type { PlatformModelConfig, PlatformModelHealth, PlatformModelRole } from '../types/ai-control-plane'
+import { PLATFORM_CAPABILITIES } from '../types/ai-control-plane'
+import type {
+  PlatformCapability, PlatformModelConfig, PlatformModelHealth, PlatformModelRole,
+  PlatformProviderCredential,
+} from '../types/ai-control-plane'
+
+/** 能力下拉只列控制面真正解析的五个；标签与表格列共用 CAPABILITY_LABELS。 */
+const CAPABILITY_LABELS: Record<string, string> = {
+  text: '文本', voice: '语音', retrieval: '检索', image_edit: '图片编辑', content_safety: '内容安全',
+  vision: '视觉理解', image_generation: '图片生成', video_understanding: '视频理解',
+  video_generation: '视频生成',
+}
+const CAPABILITY_OPTIONS: Array<{ value: PlatformCapability; label: string }> =
+  PLATFORM_CAPABILITIES.map((value) => ({ value, label: CAPABILITY_LABELS[value] || value }))
 
 const api = useAiControlPlane()
 const models = ref<PlatformModelConfig[]>([])
+const credentials = ref<PlatformProviderCredential[]>([])
 const loading = ref(false)
 const error = ref('')
 const formError = ref('')
 const submitting = ref(false)
 const mode = ref<'create' | 'edit' | null>(null)
 const target = ref<PlatformModelConfig | null>(null)
-const capability = ref('text')
+const capability = ref<PlatformCapability>('text')
 const modelRole = ref<PlatformModelRole>('primary')
-const provider = ref('')
+const credentialId = ref('')
 const model = ref('')
-const baseUrl = ref('')
 const maxConcurrency = ref('')
 const healthStatus = ref<PlatformModelHealth>('healthy')
 
-onMounted(() => { void loadModels() })
+const includeDisabled = ref(false)
+const upstreamModels = ref<Array<{ id: string; ownedBy?: string }>>([])
+const modelsHint = ref('')
+
+const selectedCredential = computed(() =>
+  credentials.value.find((item) => item.id === credentialId.value) || null)
+
+/**
+ * 选中凭据后拉上游模型列表。失败只留提示、清空列表 → 模板降级为手填输入框。
+ * 刻意不写进 formError：那是提交态错误，拉列表失败不该让表单看起来已经出错。
+ */
+async function loadUpstreamModels(id: string): Promise<void> {
+  upstreamModels.value = []
+  modelsHint.value = ''
+  if (!id) return
+  try {
+    upstreamModels.value = [...await api.listSelectedModels(id)]
+    if (upstreamModels.value.length === 0) {
+      modelsHint.value = '该凭据尚未勾选模型，请先到「平台通用凭据」点「获取模型」勾选'
+    }
+  } catch (caught: unknown) {
+    modelsHint.value = caught instanceof Error ? `${caught.message}，请手动填写` : '勾选模型读取失败，请手动填写'
+  }
+}
+
+watch(credentialId, (next, previous) => {
+  if (next === previous) return
+  // 换凭据后旧模型名大概率在新上游不存在，清掉避免提交一个上游不认的名字
+  if (previous) model.value = ''
+  void loadUpstreamModels(next)
+})
+
+onMounted(() => { void loadModels(); void loadCredentials() })
+
+/**
+ * 凭据列表加载失败不阻断模型列表——表格仍可读，只是无法新建/修订。
+ * 单独的 error 态会掩盖模型列表本身的错误，故只在提交时以 formError 提示。
+ */
+async function loadCredentials(): Promise<void> {
+  try {
+    credentials.value = [...await api.listCredentials()]
+  } catch {
+    credentials.value = []
+  }
+}
 
 async function loadModels(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    models.value = [...await api.listModels()]
+    models.value = [...await api.listModels(includeDisabled.value)]
   } catch (caught: unknown) {
     models.value = []
     error.value = caught instanceof Error ? caught.message : '平台模型加载失败'
@@ -98,16 +200,58 @@ async function loadModels(): Promise<void> {
   }
 }
 
+function onToggleDisabled(next: boolean): void {
+  includeDisabled.value = next
+  void loadModels()
+}
+
+/**
+ * 恢复一行已停用配置。该能力+角色已有生效行时后端回 409——原样透出，
+ * 让运营知道要先停用现有的那行，而不是静默顶掉线上配置。
+ */
+async function restoreModel(item: PlatformModelConfig): Promise<void> {
+  error.value = ''
+  try {
+    await api.restoreModel(item.id)
+    await loadModels()
+  } catch (caught: unknown) {
+    error.value = caught instanceof Error ? caught.message : '平台模型恢复失败'
+  }
+}
+
+/** 硬删已停用行。不可逆，故二次确认里说清「审计仍在 history」这个边界。 */
+async function deleteModel(item: PlatformModelConfig): Promise<void> {
+  const label = `${capabilityLabel(item.capability)}·${item.modelRole === 'primary' ? '主模型' : '备用模型'}`
+  if (!window.confirm(
+    `确认永久删除 ${label} 的 v${item.version}（${item.model}）？\n`
+    + '配置行将从库中移除且不可恢复；变更审计仍保留在 history 表。')) {
+    return
+  }
+  error.value = ''
+  try {
+    await api.deleteModel(item.id)
+    await loadModels()
+  } catch (caught: unknown) {
+    error.value = caught instanceof Error ? caught.message : '平台模型删除失败'
+  }
+}
+
 function resetForm(): void {
-  target.value = null; capability.value = 'text'; modelRole.value = 'primary'; provider.value = ''
-  model.value = ''; baseUrl.value = ''; maxConcurrency.value = ''; healthStatus.value = 'healthy'; formError.value = ''
+  target.value = null; capability.value = 'text'; modelRole.value = 'primary'; credentialId.value = ''
+  model.value = ''; maxConcurrency.value = ''; healthStatus.value = 'healthy'; formError.value = ''
+  upstreamModels.value = []; modelsHint.value = ''
 }
 
 function openCreate(): void { resetForm(); mode.value = 'create' }
 function openEdit(item: PlatformModelConfig): void {
-  resetForm(); mode.value = 'edit'; target.value = item; capability.value = item.capability
-  modelRole.value = item.modelRole; provider.value = item.provider; model.value = item.model
-  baseUrl.value = item.baseUrl; maxConcurrency.value = item.maxConcurrency?.toString() || ''; healthStatus.value = item.healthStatus
+  resetForm(); mode.value = 'edit'; target.value = item
+  capability.value = item.capability as PlatformCapability
+  modelRole.value = item.modelRole; model.value = item.model
+  // 反查凭据：配置行只回 provider/baseUrl，没有 credentialId。匹配不到（凭据已停用或
+  // 该行由旧表单隐式建的空壳凭据支撑）就留空，逼用户显式选一个，而不是静默沿用不存在的凭据。
+  credentialId.value = credentials.value.find(
+    (candidate) => candidate.provider === item.provider && candidate.baseUrl === item.baseUrl)?.id || ''
+  maxConcurrency.value = item.maxConcurrency?.toString() || ''; healthStatus.value = item.healthStatus
 }
 function closeForm(): void { resetForm(); mode.value = null }
 
@@ -125,10 +269,16 @@ async function submit(): Promise<void> {
     formError.value = '并发上限必须是正整数'
     return
   }
+  if (!credentialId.value) {
+    formError.value = '请选择凭据'
+    return
+  }
   submitting.value = true
   formError.value = ''
+  // 只发 credentialId：provider/baseUrl 由后端从该凭据带出（resolveDestination），
+  // 不再手抄地址，也不会触发按 (provider, baseUrl) 反查时的隐式建凭据。
   const mutableFields = {
-    provider: provider.value, model: model.value, baseUrl: baseUrl.value,
+    credentialId: credentialId.value, model: model.value,
     maxConcurrency: concurrencyValue(), healthStatus: healthStatus.value,
   }
   try {
@@ -158,8 +308,7 @@ async function disableModel(item: PlatformModelConfig): Promise<void> {
 }
 
 function capabilityLabel(value: string): string {
-  return { text: '文本', vision: '视觉理解', image_generation: '图片生成', video_understanding: '视频理解',
-    video_generation: '视频生成', voice: '语音', content_safety: '内容安全', retrieval: '检索' }[value] || value
+  return CAPABILITY_LABELS[value] || value
 }
 function healthLabel(value: PlatformModelHealth): string {
   return { healthy: '健康', degraded: '降级', unhealthy: '不可用' }[value]
@@ -185,6 +334,13 @@ function healthLabel(value: PlatformModelHealth): string {
 .model-table td { color: var(--color-text-secondary); }.model-table strong, .model-table small { display: block; }.model-table strong { color: var(--color-text); }.model-table small { color: var(--color-text-muted); margin-top: 2px; }
 .row-actions { white-space: nowrap; }.row-actions button { min-height: 30px; padding: 0 9px; margin-right: 5px; }
 .health-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }.health-healthy { color: var(--color-success); }.health-degraded { color: var(--color-warning); }.health-unhealthy { color: var(--color-danger); }
+.heading-actions { display: flex; align-items: center; gap: 12px; }
+.toggle-disabled { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; cursor: pointer; }
+.toggle-disabled input { width: auto; min-height: 0; margin: 0; }
+.model-table .row-disabled td { opacity: .55; }
+.disabled-tag { display: block; margin-top: 2px; color: var(--color-warning); }
+.credential-summary { margin: 0; color: var(--color-text-muted); font-size: .8rem; }
+.credential-summary strong { color: var(--color-text-secondary); }
 .form-band { padding-top: 16px; border-top: 1px solid var(--color-border); }
 form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.form-heading, .form-actions, .wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; }

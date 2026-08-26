@@ -30,6 +30,7 @@
               <button type="button" data-action="edit-credential" @click="openEdit(item)">编辑</button>
               <button type="button" data-action="rotate-credential" @click="openRotate(item)">轮换</button>
               <button type="button" class="danger-command" data-action="disable-credential" @click="disableCredential(item)">停用</button>
+              <button type="button" data-action="fetch-models" @click="openPicker(item)">获取模型</button>
             </td>
           </tr>
         </tbody>
@@ -73,12 +74,49 @@
         </div>
       </form>
     </div>
+
+    <div v-if="pickerTarget" class="form-band">
+      <header class="form-heading">
+        <h4>{{ pickerTarget.name }} · 勾选可用模型</h4>
+        <button type="button" aria-label="关闭模型勾选" @click="closePicker">×</button>
+      </header>
+      <p class="form-hint">
+        勾选的模型才会出现在「平台模型」的模型下拉里。上游返回的全部模型见下；
+        已勾选但上游本次没返回的仍保留并标注，避免上游抖动时误删线上配置在用的模型。
+      </p>
+      <p v-if="pickerLoading" class="empty-state">正在获取模型...</p>
+      <p v-else-if="pickerError" class="error-state compact" role="alert">{{ pickerError }}</p>
+      <p v-else-if="pickerModels.length === 0" class="empty-state">上游未返回任何模型</p>
+      <ul v-else class="model-picker">
+        <li v-for="item in pickerModels" :key="item.id">
+          <label>
+            <input type="checkbox" :name="`model-${item.id}`" :checked="ticked.has(item.id)"
+                   @change="toggleModel(item.id, ($event.target as HTMLInputElement).checked)" />
+            <span class="model-id">{{ item.id }}</span>
+            <small v-if="item.ownedBy">{{ item.ownedBy }}</small>
+            <small v-if="item.staleSelection" class="stale-tag">上游本次未返回</small>
+          </label>
+        </li>
+      </ul>
+      <div class="form-actions">
+        <button type="button" class="secondary-command" @click="closePicker">取消</button>
+        <button type="button" class="primary-command" data-action="save-models"
+                :disabled="pickerSaving || pickerLoading" @click="saveTicked">
+          {{ pickerSaving ? '保存中...' : `保存勾选（${ticked.size}）` }}
+        </button>
+      </div>
+    </div>
   </section>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useAiControlPlane } from '../composables/useAiControlPlane'
-import type { PlatformProviderCredential } from '../types/ai-control-plane'
+import type { PlatformProviderCredential, UpstreamModel } from '../types/ai-control-plane'
+
+/** 勾选面板的一行：上游返回的模型，或「已勾选但上游本次没返回」的存量项。 */
+interface PickerRow extends UpstreamModel {
+  staleSelection?: boolean
+}
 
 type FormMode = 'create' | 'edit' | 'rotate' | null
 
@@ -101,7 +139,86 @@ const formTitle = computed(() => {
   return `编辑连接信息 · v${target.value?.version ?? ''}`
 })
 
+const pickerTarget = ref<PlatformProviderCredential | null>(null)
+const pickerModels = ref<PickerRow[]>([])
+const pickerLoading = ref(false)
+const pickerSaving = ref(false)
+const pickerError = ref('')
+const ticked = ref<Set<string>>(new Set())
+
 onMounted(() => { void loadCredentials() })
+
+/**
+ * 打开勾选面板：并发拉「上游实时列表」与「已勾选集」，然后合并。
+ *
+ * 合并而非直接用上游列表：上游抖动或临时不返回某模型时，若只显示上游结果，已勾选项会
+ * 悄悄消失，一保存就把线上配置在用的模型从白名单里删掉。故存量勾选项始终保留并标注。
+ * 上游整体失败时也不清空已勾选集——那样等于让一次网络故障擦掉运营的选择。
+ */
+async function openPicker(item: PlatformProviderCredential): Promise<void> {
+  closeForm()
+  pickerTarget.value = item
+  pickerLoading.value = true
+  pickerError.value = ''
+  pickerModels.value = []
+  ticked.value = new Set()
+  const [upstream, selected] = await Promise.all([
+    api.listCredentialModels(item.id).catch((caught: unknown) => {
+      pickerError.value = caught instanceof Error ? caught.message : '上游模型获取失败'
+      return [] as UpstreamModel[]
+    }),
+    api.listSelectedModels(item.id).catch(() => [] as UpstreamModel[]),
+  ])
+  ticked.value = new Set(selected.map((model) => model.id))
+  const upstreamIds = new Set(upstream.map((model) => model.id))
+  pickerModels.value = [
+    ...upstream,
+    ...selected.filter((model) => !upstreamIds.has(model.id))
+      .map((model) => ({ ...model, staleSelection: true })),
+  ]
+  // 上游失败但有存量勾选：清掉报错，面板仍可用（只是列不出新模型）
+  if (pickerError.value && pickerModels.value.length > 0) {
+    pickerError.value = ''
+  }
+  pickerLoading.value = false
+}
+
+function closePicker(): void {
+  pickerTarget.value = null
+  pickerModels.value = []
+  ticked.value = new Set()
+  pickerError.value = ''
+  pickerSaving.value = false
+}
+
+function toggleModel(id: string, checked: boolean): void {
+  const next = new Set(ticked.value)
+  if (checked) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  ticked.value = next
+}
+
+async function saveTicked(): Promise<void> {
+  const item = pickerTarget.value
+  if (!item) return
+  pickerSaving.value = true
+  pickerError.value = ''
+  try {
+    // 整份覆盖：带上 ownedBy 便于「平台模型」下拉展示归属
+    const payload = pickerModels.value
+      .filter((model) => ticked.value.has(model.id))
+      .map((model) => ({ id: model.id, ...(model.ownedBy ? { ownedBy: model.ownedBy } : {}) }))
+    await api.replaceSelectedModels(item.id, payload)
+    closePicker()
+  } catch (caught: unknown) {
+    pickerError.value = caught instanceof Error ? caught.message : '勾选保存失败'
+  } finally {
+    pickerSaving.value = false
+  }
+}
 
 async function loadCredentials(): Promise<void> {
   loading.value = true
@@ -199,6 +316,12 @@ async function disableCredential(item: PlatformProviderCredential): Promise<void
 .key-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }
 .key-present { color: var(--color-text); font-family: var(--font-mono, ui-monospace), monospace; }
 .key-absent { color: var(--color-text-muted); }
+.model-picker { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; margin: 0; padding: 12px 0; list-style: none; }
+.model-picker label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.model-picker input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
+.model-picker .model-id { color: var(--color-text); font-size: .84rem; }
+.model-picker small { color: var(--color-text-muted); font-size: .74rem; }
+.model-picker .stale-tag { color: var(--color-warning); }
 .form-band { padding-top: 16px; border-top: 1px solid var(--color-border); }
 form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
 .form-heading, .form-actions, .wide-field, .form-hint { grid-column: 1 / -1; }

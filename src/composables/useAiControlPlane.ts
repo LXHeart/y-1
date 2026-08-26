@@ -13,6 +13,7 @@ import type {
   UpdateAiProviderKeyInput,
   UpdatePlatformCredentialInput,
   UpdatePlatformModelInput,
+  UpstreamModel,
 } from '../types/ai-control-plane'
 import { fetchApi } from './grassland-http'
 
@@ -136,7 +137,37 @@ export function useAiControlPlane() {
   const disableCredential = (id: string) =>
     request<void>(`${credentialsPath}/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
-  const listModels = () => request<PlatformModelConfig[]>('/api/admin/ai/models')
+  /**
+   * 列该凭据上游实际可用的模型（供平台模型表单的模型名下拉）。
+   *
+   * 上游不通、无密钥或 KEK 未配都会抛——调用方应降级为手填而不是阻断表单。
+   */
+  const listCredentialModels = (id: string) =>
+    request<UpstreamModel[]>(`${credentialsPath}/${encodeURIComponent(id)}/models`)
+
+  /** 读 admin 已勾选的模型（平台模型表单的下拉数据源，不触网）。 */
+  const listSelectedModels = (id: string) =>
+    request<UpstreamModel[]>(`${credentialsPath}/${encodeURIComponent(id)}/selected-models`)
+
+  /** 整份覆盖勾选集；空数组 = 取消全部勾选。 */
+  const replaceSelectedModels = (id: string, models: UpstreamModel[]) =>
+    request<UpstreamModel[]>(`${credentialsPath}/${encodeURIComponent(id)}/selected-models`, {
+      method: 'PUT', body: jsonBody({ models }),
+    })
+
+  /** `includeDisabled=true` 时含已停用的历史版本（治理台开关）。 */
+  const listModels = (includeDisabled = false) =>
+    request<PlatformModelConfig[]>(
+      includeDisabled ? '/api/admin/ai/models?includeDisabled=true' : '/api/admin/ai/models')
+
+  /** 恢复一行已停用配置；该能力+角色已有生效行时后端回 409。 */
+  const restoreModel = (id: string) =>
+    request<PlatformModelConfig>(`/api/admin/ai/models/${encodeURIComponent(id)}/restore`,
+      { method: 'POST' })
+
+  /** 硬删一行已停用配置（生效中的后端回 409）。 */
+  const deleteModel = (id: string) =>
+    request<void>(`/api/admin/ai/models/${encodeURIComponent(id)}`, { method: 'DELETE' })
   const createModel = (input: CreatePlatformModelInput) => request<PlatformModelConfig>('/api/admin/ai/models', {
     method: 'POST', body: jsonBody(input),
   })
@@ -163,11 +194,16 @@ export function useAiControlPlane() {
     listPreferences,
     setPreference,
     listCredentials,
+    listCredentialModels,
+    listSelectedModels,
+    replaceSelectedModels,
     createCredential,
     updateCredential,
     rotateCredentialKey,
     disableCredential,
     listModels,
+    restoreModel,
+    deleteModel,
     createModel,
     updateModel,
     disableModel,
