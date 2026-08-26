@@ -6,7 +6,8 @@ import OrganizationBrandCard from './OrganizationBrandCard.vue'
 /**
  * 组织品牌资料卡片（#32 规格测试清单 9）组件契约测试：
  * 表单回填 / 保存 payload（含 expectedVersion）/ Logo 三步上传后 mediaId 随保存提交 /
- * 移除 Logo 后 null 清空提交 + 预览清空（含下拉 14 项断言）/ 409 提示 + 自动重拉 /
+ * 移除 Logo 后 null 清空提交 + 预览清空（含下拉 11 项断言：博彩/成人内容/其他已下架）/
+ * 已下架分类存量值回填归一为「未设置」/ 409 提示 + 自动重拉 /
  * member 只读 / 独立渲染不依赖 MerchantKybCard。
  *
  * 照 MerchantKybCard.test.ts 的 stubFetch 模式：字段名 typecheck 抓不到，靠断言实际请求体锁死。
@@ -170,7 +171,7 @@ describe('OrganizationBrandCard 契约', () => {
     expect(putBodyOf(spy).brandLogoMediaReferenceId).toBe('media-7')
   })
 
-  test('移除 Logo 后保存：PUT 提交 null 清空引用且预览清空；经营分类下拉共 14 项', async () => {
+  test('移除 Logo 后保存：PUT 提交 null 清空引用且预览清空；经营分类下拉共 11 项', async () => {
     let stored = { ...FILLED_PROFILE }
     const spy = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       if ((init as RequestInit | undefined)?.method === 'PUT') {
@@ -186,8 +187,12 @@ describe('OrganizationBrandCard 契约', () => {
     const wrapper = mount(OrganizationBrandCard, { props: { orgId: 'org-1', role: 'owner' } })
     await flushPromises()
 
-    // 13 值经营分类（镜像 identity Industry 枚举）+「未设置」空选项 = 14。
-    expect(wrapper.find('select').findAll('option')).toHaveLength(14)
+    // 10 值经营分类（博彩/成人内容/其他已下架）+「未设置」空选项 = 11。
+    const optionTexts = wrapper.find('select').findAll('option').map((option) => option.text())
+    expect(optionTexts).toHaveLength(11)
+    expect(optionTexts).not.toContain('博彩')
+    expect(optionTexts).not.toContain('成人内容')
+    expect(optionTexts).not.toContain('其他')
 
     expect(wrapper.find('img[alt="品牌 Logo 预览"]').exists()).toBe(true)
     await wrapper.findAll('button').find((button) => button.text() === '移除 Logo')!.trigger('click')
@@ -201,6 +206,30 @@ describe('OrganizationBrandCard 契约', () => {
     expect(putBodyOf(spy).brandLogoMediaReferenceId).toBeNull()
     // 保存回包（服务端 logoUrl=null）后预览仍为空。
     expect(wrapper.find('img[alt="品牌 Logo 预览"]').exists()).toBe(false)
+  })
+
+  test('已下架分类存量值（如 other）回填归一为未设置，保存提交 null 清空', async () => {
+    let stored = { ...FILLED_PROFILE, industry: 'other' as const, version: 2 }
+    const spy = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if ((init as RequestInit | undefined)?.method === 'PUT') {
+        const body = JSON.parse(String(init!.body)) as Record<string, unknown>
+        stored = { ...stored, ...body, version: stored.version + 1 } as unknown as typeof stored
+        return success(stored)
+      }
+      return success({ ...stored })
+    })
+    vi.stubGlobal('fetch', spy)
+
+    const wrapper = mount(OrganizationBrandCard, { props: { orgId: 'org-1', role: 'owner' } })
+    await flushPromises()
+
+    // 存量 other 不在下拉选项中：回填为「未设置」而非死值，避免再提交被后端 400。
+    expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('')
+    expect(wrapper.find('select').text()).not.toContain('其他')
+
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+    expect(putBodyOf(spy).industry).toBeNull()
   })
 
   test('409 乐观锁冲突：展示后端冲突文案并自动重拉最新资料回填', async () => {

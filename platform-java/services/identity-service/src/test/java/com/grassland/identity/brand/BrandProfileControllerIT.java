@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.identity.IdentityItSupport;
 import java.net.URI;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -194,6 +195,15 @@ class BrandProfileControllerIT extends IdentityItSupport {
                 .bodyValue(Map.of("industry", "not_an_industry", "expectedVersion", 0))
                 .exchange().expectStatus().isBadRequest()
                 .expectBody().jsonPath("$.error").isEqualTo("经营分类无效");
+
+        // 已下架分类：博彩/成人内容（禁止准入）与「其他」同样 400（前端下拉已同口径移除）。
+        for (String removed : List.of("gambling", "adult", "other")) {
+            client().put().uri(uri(orgId)).contentType(MediaType.APPLICATION_JSON)
+                    .header("Cookie", "y1.sid=" + owner.cookie())
+                    .bodyValue(Map.of("industry", removed, "expectedVersion", 0))
+                    .exchange().expectStatus().isBadRequest()
+                    .expectBody().jsonPath("$.error").isEqualTo("经营分类不支持该行业");
+        }
 
         // 校验失败的 PUT 不得落行
         Long rows = db.sql("SELECT count(*) FROM organization_brand_profile "

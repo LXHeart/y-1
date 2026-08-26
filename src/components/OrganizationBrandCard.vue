@@ -25,7 +25,7 @@ const brandApi = useGrasslandIdentity(async (operation) => operation())
 
 const canEdit = computed(() => props.role === 'owner' || props.role === 'admin')
 
-/** 13 值经营分类（镜像 identity `Industry` 枚举 dbValue；与 organization.industry 互不影响，D10）。 */
+/** 10 值经营分类（identity `Industry` 枚举的可用子集；博彩/成人内容为禁止准入行业、不提供「其他」，与 organization.industry 互不影响，D10）。 */
 const INDUSTRY_OPTIONS: Array<{ value: Industry; label: string }> = [
   { value: 'catering', label: '餐饮' },
   { value: 'retail', label: '零售' },
@@ -37,9 +37,6 @@ const INDUSTRY_OPTIONS: Array<{ value: Industry; label: string }> = [
   { value: 'real_estate', label: '房地产' },
   { value: 'travel', label: '旅游' },
   { value: 'children', label: '母婴儿童' },
-  { value: 'gambling', label: '博彩' },
-  { value: 'adult', label: '成人内容' },
-  { value: 'other', label: '其他' },
 ]
 
 const industryLabel = (value: Industry | null | undefined): string =>
@@ -86,7 +83,11 @@ function applyProfile(value: BrandProfile): void {
   form.value = {
     brandName: value.brandName || '',
     description: value.description || '',
-    industry: value.industry || '',
+    // 已下架分类（博彩/成人内容/其他）的存量值回填为「未设置」，下次保存即清空，避免死值再提交被 400。
+    // 先判 null 再查白名单：`.some()` 不收窄类型，少了这一步 value.industry 在真分支仍是 Industry | null。
+    industry: value.industry && INDUSTRY_OPTIONS.some((option) => option.value === value.industry)
+      ? value.industry
+      : '',
   }
   logoMediaId.value = value.brandLogoMediaReferenceId ?? null
   clearPreview()

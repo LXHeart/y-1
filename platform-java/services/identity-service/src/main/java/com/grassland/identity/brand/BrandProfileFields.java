@@ -27,16 +27,25 @@ public final class BrandProfileFields {
         return optional(value, DESCRIPTION_MAX, "品牌简介");
     }
 
-    /** 经营分类：blank → null；其余解析为 {@link Industry} dbValue（大小写不敏感），非法值 400。 */
+    /**
+     * 经营分类：blank → null；其余解析为 {@link Industry} dbValue（大小写不敏感），非法值 400。
+     * 品牌资料仅开放 10 个常规行业——博彩/成人内容为禁止准入行业、不提供「其他」（前端下拉同口径），
+     * 三者提交均 400。
+     */
     public static String industry(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
+        Industry industry;
         try {
-            return Industry.fromDb(value).dbValue();
+            industry = Industry.fromDb(value);
         } catch (IllegalArgumentException e) {
             throw new IdentityException(400, "经营分类无效");
         }
+        if (industry.isProhibited() || industry == Industry.OTHER) {
+            throw new IdentityException(400, "经营分类不支持该行业");
+        }
+        return industry.dbValue();
     }
 
     private static String optional(String value, int maxLength, String label) {
