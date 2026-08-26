@@ -114,6 +114,66 @@ describe('ImageAnalysisView 大众点评探店定位', () => {
   })
 })
 
+/**
+ * 任务书 #47 S7a / D18②：飞书凭据从顶部「分析设置」modal 搬到本视图。
+ *
+ * <p>这个入口是 S7c 删 modal 的<b>前提</b>——modal 一旦删掉、这里又没有入口，用户就再也
+ * 配不了飞书凭据，而后端仍在读那些值（表现为「功能还在跑但改不了配置」）。
+ */
+describe('ImageAnalysisView 飞书凭据内联入口', () => {
+  test('挂载时不请求设置；折叠按钮就位', async () => {
+    const wrapper = mount(ImageAnalysisView)
+    await flushPromises()
+
+    // 挂载阶段不该为了这个折叠面板去拉设置
+    expect(fetchUrls.some((u) => u.includes('/api/settings/analysis'))).toBe(false)
+
+    const toggle = wrapper.find('button[data-action="toggle-feishu-config"]')
+    expect(toggle.exists()).toBe(true)
+    expect(toggle.text()).toContain('配置飞书导出凭据')
+  })
+
+  test('保存只提交 integrations.feishu 局部对象，密钥留空则不传', async () => {
+    const wrapper = mount(ImageAnalysisView)
+    await flushPromises()
+
+    await wrapper.find('button[data-action="toggle-feishu-config"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('input[name="feishuAppId"]').setValue('cli_test_app')
+    await wrapper.get('input[name="feishuFolderToken"]').setValue('fldtest')
+    // 刻意不填 appSecret：既有掩码语义是「留空 = 保持不变」
+    await wrapper.get('form.feishu-form').trigger('submit')
+    await flushPromises()
+
+    const putCall = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .find((call) => (call[1] as RequestInit | undefined)?.method === 'PUT')
+    expect(putCall).toBeTruthy()
+    const body = JSON.parse(String((putCall![1] as RequestInit).body))
+    // 只带飞书子树——后端掩码感知 merge 保证其余字段不动
+    expect(Object.keys(body)).toEqual(['integrations'])
+    expect(body.integrations.feishu.appId).toBe('cli_test_app')
+    expect(body.integrations.feishu.folderToken).toBe('fldtest')
+    expect(body.integrations.feishu).not.toHaveProperty('appSecret')
+  })
+
+  test('提交后明文密钥不留在 DOM 里', async () => {
+    const wrapper = mount(ImageAnalysisView)
+    await flushPromises()
+
+    await wrapper.find('button[data-action="toggle-feishu-config"]').trigger('click')
+    await flushPromises()
+
+    const secretInput = wrapper.get('input[name="feishuAppSecret"]')
+    await secretInput.setValue('secret-plaintext-value')
+    await wrapper.get('form.feishu-form').trigger('submit')
+    expect((secretInput.element as HTMLInputElement).value).toBe('')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('secret-plaintext-value')
+  })
+})
+
 describe('ImageAnalysisView 多版本对比入口', () => {
   test('右侧顶部渲染多版本对比卡与保存入口，初始为空态', async () => {
     const wrapper = mount(ImageAnalysisView)

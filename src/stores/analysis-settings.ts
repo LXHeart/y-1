@@ -170,6 +170,38 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
     }
   }
 
+  /**
+   * 只保存飞书导出凭据（任务书 #47 S7a）。
+   *
+   * <p>顶部「分析设置」modal 即将下线，飞书凭据改为在图片评价视图内联维护——它是唯一用到这组
+   * 凭据的地方。这里刻意 PUT 局部对象而不是整份 `AnalysisSettings`：后端
+   * `AnalysisSettingsService` 是掩码感知 merge（字段缺失→保留当前值、掩码→保留、空串→清空），
+   * 所以只传 `integrations.feishu` 不会动到其余字段。
+   *
+   * <p>`appSecret` 语义沿用既有约定：不传 = 保持不变；空格 = 清空。
+   */
+  async function saveFeishuCredentials(input: {
+    appId?: string
+    appSecret?: string
+    folderToken?: string
+  }): Promise<boolean> {
+    saving.value = true
+    saveError.value = ''
+    try {
+      const body = await loadSettingsEnvelope('/api/settings/analysis', {
+        method: 'PUT',
+        body: JSON.stringify({ integrations: { feishu: input } }),
+      }, '保存飞书凭据失败')
+      settings.value = normalizeSettings(body.data)
+      return true
+    } catch (err: unknown) {
+      saveError.value = err instanceof Error ? err.message : '保存飞书凭据失败'
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
   async function persistBeforeFeatureAction(settingsToSave?: AnalysisSettings, fallbackMessage?: string): Promise<void> {
     if (!settingsToSave) return
     const saveBody = await loadSettingsEnvelope('/api/settings/analysis', {
@@ -288,7 +320,7 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
 
   return {
     settings, loading, loaded, saving, error, saveError,
-    loadSettings, saveSettings,
+    loadSettings, saveSettings, saveFeishuCredentials,
     featureModelStates, fetchModels,
     verifyModel,
     clearModelState,

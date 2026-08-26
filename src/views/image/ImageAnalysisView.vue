@@ -135,6 +135,68 @@
             取消
           </button>
         </div>
+
+        <!-- 任务书 #47 S7a / D18②：飞书凭据从顶部「分析设置」modal 搬到这里——它是唯一用到这组
+             凭据的地方。放在上传卡片内（无条件渲染）而不是结果区：用户要先配好凭据才导得出，
+             藏在 v-else-if="result" 里等于「没结果就配不了」。modal 下线（S7c）前必须先有此入口。 -->
+        <div class="feishu-config">
+          <button
+            class="btn-secondary btn-sm"
+            type="button"
+            data-action="toggle-feishu-config"
+            @click="toggleFeishuConfig"
+          >
+            {{ showFeishuConfig ? '收起飞书凭据' : feishuConfigured ? '飞书导出凭据（已配置）' : '配置飞书导出凭据' }}
+          </button>
+
+          <form v-if="showFeishuConfig" class="feishu-form" @submit.prevent="submitFeishuCredentials">
+            <p class="feishu-hint">配置飞书应用凭证后，才能把评价结果导出到飞书文档。凭据加密保存，页面只显示掩码。</p>
+
+            <label class="result-label" for="feishu-inline-app-id">App ID</label>
+            <input
+              id="feishu-inline-app-id"
+              v-model.trim="feishuAppId"
+              class="field-input-sm"
+              type="text"
+              name="feishuAppId"
+              placeholder="飞书应用 App ID"
+              autocomplete="off"
+              spellcheck="false"
+            >
+
+            <label class="result-label" for="feishu-inline-app-secret">App Secret</label>
+            <p v-if="feishuSecretSaved" class="feishu-hint">已保存，留空保持不变；输入空格后保存可清空。</p>
+            <input
+              id="feishu-inline-app-secret"
+              v-model="feishuAppSecret"
+              class="field-input-sm"
+              type="password"
+              name="feishuAppSecret"
+              :placeholder="feishuSecretSaved ? '留空则保持现有 Secret' : '飞书应用 App Secret'"
+              autocomplete="new-password"
+            >
+
+            <label class="result-label" for="feishu-inline-folder">文档夹 Token（可选）</label>
+            <input
+              id="feishu-inline-folder"
+              v-model.trim="feishuFolderToken"
+              class="field-input-sm"
+              type="text"
+              name="feishuFolderToken"
+              placeholder="留空则创建到默认位置"
+              autocomplete="off"
+              spellcheck="false"
+            >
+
+            <p v-if="feishuSaveError" class="export-error" role="alert">{{ feishuSaveError }}</p>
+            <div class="feishu-actions">
+              <button class="btn-secondary btn-sm" type="button" @click="showFeishuConfig = false">取消</button>
+              <button class="btn-copy" type="submit" :disabled="savingFeishu">
+                {{ savingFeishu ? '保存中…' : '保存凭据' }}
+              </button>
+            </div>
+          </form>
+        </div>
       </article>
 
       <section class="preview-column">
@@ -345,6 +407,7 @@
             <button class="btn-copy-link" @click="copyDocLink">{{ copyLinkLabel }}</button>
           </div>
 
+
           <!-- Edit mode -->
           <div v-if="isEditing" class="result-block" :class="{ 'edit-saving': savingStyle }">
             <div v-if="result.title !== undefined" class="edit-field">
@@ -496,6 +559,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useImageAnalysis } from '../../composables/useImageAnalysis'
+import { useAnalysisSettings } from '../../composables/useAnalysisSettings'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { GenerationStage, ImageAnalysisProgressEvent, ImageAnalysisProgressStage, ImageAnalysisResult } from '../../types/image-analysis'
@@ -508,6 +572,60 @@ import StylePreferencesModal from './components/StylePreferencesModal.vue'
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
+
+// ---------- 飞书凭据内联维护（任务书 #47 S7a / D18②）----------
+const analysisSettings = useAnalysisSettings()
+const showFeishuConfig = ref(false)
+const feishuAppId = ref('')
+const feishuAppSecret = ref('')
+const feishuFolderToken = ref('')
+const feishuSaveError = ref('')
+const savingFeishu = ref(false)
+
+/** 后端只回掩码，故「已保存」由 appSecret 字段是否有值判断，不看具体内容。 */
+const feishuSecretSaved = computed(() =>
+  Boolean(analysisSettings.settings.value?.integrations?.feishu?.appSecret))
+const feishuConfigured = computed(() =>
+  Boolean(analysisSettings.settings.value?.integrations?.feishu?.appId) && feishuSecretSaved.value)
+
+async function toggleFeishuConfig(): Promise<void> {
+  if (showFeishuConfig.value) {
+    showFeishuConfig.value = false
+    return
+  }
+  feishuSaveError.value = ''
+  if (!analysisSettings.loaded.value) {
+    await analysisSettings.loadSettings()
+  }
+  const feishu = analysisSettings.settings.value?.integrations?.feishu
+  feishuAppId.value = feishu?.appId ?? ''
+  feishuFolderToken.value = feishu?.folderToken ?? ''
+  feishuAppSecret.value = ''      // 密钥永不回显，留空即保持不变
+  showFeishuConfig.value = true
+}
+
+async function submitFeishuCredentials(): Promise<void> {
+  // 明文只在这一瞬间存在于内存，取出后立刻清空绑定
+  const secret = feishuAppSecret.value
+  feishuAppSecret.value = ''
+  savingFeishu.value = true
+  feishuSaveError.value = ''
+  try {
+    const ok = await analysisSettings.saveFeishuCredentials({
+      appId: feishuAppId.value || undefined,
+      // 不传 = 保持不变（沿用既有掩码语义）；空格 = 清空
+      appSecret: secret === '' ? undefined : secret,
+      folderToken: feishuFolderToken.value || undefined,
+    })
+    if (ok) {
+      showFeishuConfig.value = false
+    } else {
+      feishuSaveError.value = analysisSettings.saveError.value || '保存飞书凭据失败'
+    }
+  } finally {
+    savingFeishu.value = false
+  }
+}
 
 const {
   images,
@@ -1209,6 +1327,21 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   background: var(--color-surface-hover);
   border-color: var(--color-border-hover);
 }
+
+/* 飞书凭据内联表单（任务书 #47 S7a）：跟着导出按钮走，不再藏在全局设置里 */
+.feishu-config { display: grid; gap: var(--space-sm); justify-items: start; }
+.feishu-form {
+  display: grid;
+  gap: var(--space-xs);
+  width: 100%;
+  max-width: 460px;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+.feishu-hint { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.5; }
+.feishu-actions { display: flex; justify-content: flex-end; gap: var(--space-xs); margin-top: var(--space-xs); }
 
 .export-error {
   padding: 12px 16px;
