@@ -93,28 +93,6 @@ class SettingsControllerIT extends IntelligenceItSupport {
                         Map.of("baseUrl", "http://127.0.0.1:8080/v1"))))
                 .exchange().expectStatus().isBadRequest();
 
-        // homepage：枚举 + 未知键丢弃 + token 掩码。
-        client().put().uri("/api/settings/homepage")
-                .header("X-Grassland-Identity", sign(account, null))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("hotItems", Map.of("provider", "alapi",
-                        "alapiToken", "alapi-secret-token", "junkKey", "x")))
-                .exchange().expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.data.hotItems.alapiToken").isEqualTo("****oken");
-
-        String homepageStored = db.sql("""
-                        SELECT settings_json::text FROM user_settings
-                        WHERE user_id = CAST(:uid AS uuid) AND settings_type = 'homepage'
-                        """)
-                .bind("uid", account).map(r -> r.get(0, String.class)).one().block();
-        assertThat(homepageStored).contains("alapi-secret-token").doesNotContain("junkKey");
-
-        client().put().uri("/api/settings/homepage")
-                .header("X-Grassland-Identity", sign(account, null))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("hotItems", Map.of("provider", "bogus")))
-                .exchange().expectStatus().isBadRequest();
     }
 
     private void seedUser(String account) {

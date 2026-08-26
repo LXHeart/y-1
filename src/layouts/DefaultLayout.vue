@@ -56,14 +56,6 @@
             {{ currentBalance }} 次
           </button>
 
-          <button v-if="isAuthenticated" class="settings-trigger" type="button" @click="handleOpenSettings">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M6.5 1.5l.7 2.1a4.5 4.5 0 012.6 0l.7-2.1M3.2 3.2l1.8 1.3a4.5 4.5 0 010 2.6L3.2 8.8M6.5 14.5l.7-2.1a4.5 4.5 0 002.6 0l.7 2.1M12.8 8.8l-1.8-1.3a4.5 4.5 0 000-2.6l1.8-1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-              <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
-            </svg>
-            <span>设置</span>
-          </button>
-
           <!-- 账号区：身份在登录时选定（会话内不切换；换身份=退出后重新登录选择） -->
           <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite">
             <span class="auth-pill-label">已登录</span>
@@ -165,22 +157,6 @@
       </router-view>
     </main>
 
-    <AnalysisSettingsModal
-      v-if="settingsModalMounted"
-      :visible="showSettingsModal"
-      :settings="analysisSettings"
-      :saving="settingsSaving"
-      :error="showSettingsModal ? (settingsSaveError || settingsLoadError) : ''"
-      :feature-model-states="featureModelStates"
-      :homepage-settings="homepageSettings"
-      :homepage-saving="homepageSaving"
-      :homepage-error="showSettingsModal ? (homepageSaveError || homepageLoadError) : ''"
-      @close="showSettingsModal = false"
-      @save="handleSaveSettings"
-      @fetch-models="handleFetchModels"
-      @verify-model="handleVerifyModel"
-    />
-
     <CreditsPackagesModal
       :open="showCreditsModal"
       :balance="currentBalance"
@@ -208,22 +184,18 @@ import { computed, defineAsyncComponent, nextTick, onMounted, provide, ref, watc
 import { useRoute, useRouter } from 'vue-router'
 import NotificationBell from '../components/NotificationBell.vue'
 
-const AnalysisSettingsModal = defineAsyncComponent(() => import('../components/AnalysisSettingsModal.vue'))
 const CreditsPackagesModal = defineAsyncComponent(() => import('../components/CreditsPackagesModal.vue'))
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
 
 import { useActiveIdentity } from '../composables/useActiveIdentity'
-import { useAnalysisSettings } from '../composables/useAnalysisSettings'
 import { useAuth } from '../composables/useAuth'
 import { useCredits } from '../composables/useCredits'
 import { useGrassland } from '../composables/useGrassland'
-import { useHomepageSettings } from '../composables/useHomepageSettings'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
 import type { LoginFormValues, LoginIdentity, RegisterFormValues } from '../types/auth'
 import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
 import type { AppView } from '../types/navigation'
-import type { AnalysisFeature, AnalysisProvider, AnalysisSettings, HomepageSettings } from '../types/settings'
 
 type HomeFeatureView = Exclude<AppView, 'home'>
 const route = useRoute()
@@ -242,10 +214,8 @@ const creationHandoff = ref<CreationHandoff | null>(null)
 let creationRevision = Date.now()
 const grasslandAnchor = ref('')
 const grasslandNavigationTarget = ref<NotificationLinkTarget | null>(null)
-const showSettingsModal = ref(false)
 const showCreditsModal = ref(false)
 const showLoginModal = ref(false)
-const settingsModalMounted = ref(false)
 const loginModalMounted = ref(false)
 const loginModalMessage = ref('')
 const authBannerMessage = ref('')
@@ -285,19 +255,6 @@ const activeSideBadge = computed(() => {
 
 const { currentBalance, loadBalance: loadCreditBalance } = useCredits()
 
-const {
-  settings: analysisSettings, loaded: settingsLoaded,
-  saving: settingsSaving, error: settingsLoadError, saveError: settingsSaveError,
-  loadSettings, saveSettings, featureModelStates,
-  fetchModels: fetchModelsAction, verifyModel: verifyModelAction, clearModelState,
-} = useAnalysisSettings()
-
-const {
-  settings: homepageSettings, loaded: homepageSettingsLoaded,
-  saving: homepageSaving, error: homepageLoadError, saveError: homepageSaveError,
-  loadSettings: loadHomepageSettingsAction, saveSettings: saveHomepageSettingsAction,
-} = useHomepageSettings()
-
 const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
 function cycleTheme(): void {
@@ -315,12 +272,6 @@ const currentViewProps = computed<Record<string, unknown>>(() => {
   }
   return {}
 })
-
-watch(showSettingsModal, (visible) => {
-  if (!visible) { clearModelState(); return }
-  if (!settingsLoaded.value) void loadSettings()
-  if (!homepageSettingsLoaded.value) void loadHomepageSettingsAction()
-}, { immediate: true })
 
 watch(authLoadError, (message) => {
   if (message) authBannerMessage.value = message
@@ -458,20 +409,6 @@ function handleOpenDispute(disputeId: string): void {
   grasslandNavigationTarget.value = { view: 'grassland', anchor: 'gl-disputes', disputeId }
 }
 
-function handleSaveSettings(newSettings: AnalysisSettings, newHomepageSettings: HomepageSettings): void {
-  Promise.all([saveSettings(newSettings), saveHomepageSettingsAction(newHomepageSettings)]).then(([a, b]) => {
-    if (a && b) showSettingsModal.value = false
-  })
-}
-
-function handleFetchModels(feature: AnalysisFeature, provider: AnalysisProvider | undefined, settings: AnalysisSettings): void {
-  void fetchModelsAction(feature, provider, settings)
-}
-
-function handleVerifyModel(feature: AnalysisFeature, provider: AnalysisProvider | undefined, model: string, settings: AnalysisSettings): void {
-  void verifyModelAction(feature, provider, model, settings)
-}
-
 function openLoginModal(message = ''): void {
   loginModalMounted.value = true
   clearLoginError(); clearRegisterError(); clearLogoutError()
@@ -529,7 +466,6 @@ async function handleLogout(): Promise<void> {
     authBannerMessage.value = logoutError.value || '退出登录失败，请稍后重试。'
     return
   }
-  showSettingsModal.value = false
   creationEntry.value = null
   creationHandoff.value = null
   router.push({ name: 'home' })
@@ -540,24 +476,6 @@ function handleCreditsRefreshed(): void {
   void loadCreditBalance()
 }
 
-async function handleOpenSettings(): Promise<void> {
-  const authOk = await loadCurrentUser(true)
-  if (!authOk && authLoadError.value) {
-    authBannerMessage.value = authLoadError.value
-    return
-  }
-  if (!isAuthenticated.value) {
-    openLoginModal('设置、模型和密钥已改为按账号隔离保存，请先登录。')
-    return
-  }
-  authBannerMessage.value = ''
-  await Promise.all([
-    settingsLoaded.value ? Promise.resolve() : loadSettings(),
-    homepageSettingsLoaded.value ? Promise.resolve() : loadHomepageSettingsAction(),
-  ])
-  settingsModalMounted.value = true
-  showSettingsModal.value = true
-}
 </script>
 
 <style scoped>

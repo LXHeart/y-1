@@ -45,6 +45,8 @@
         @click="activeSection = 'commerce'">订单核销</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
         :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
+      <button type="button" role="tab" :aria-selected="activeSection === 'homepage-hot'"
+        :class="{ active: activeSection === 'homepage-hot' }" @click="activeSection = 'homepage-hot'">首页热点</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'audit'"
         :class="{ active: activeSection === 'audit' }" @click="activeSection = 'audit'">统一审计</button>
       </template>
@@ -250,6 +252,11 @@
       <AiPriceTablePanel />
     </div>
 
+    <div v-else-if="activeSection === 'homepage-hot'" class="admin-panel" role="tabpanel">
+      <!-- 任务书 #47 S7b / D18①：热点数据源平台级配置（用户级每用户配置已下线） -->
+      <HomepageHotConfigPanel />
+    </div>
+
     <div v-else class="admin-panel" role="tabpanel">
       <UnifiedAuditPanel />
     </div>
@@ -340,6 +347,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AiPlatformCredentialsPanel from '../../components/AiPlatformCredentialsPanel.vue'
 import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import AiPriceTablePanel from '../../components/AiPriceTablePanel.vue'
+import HomepageHotConfigPanel from '../../components/HomepageHotConfigPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
@@ -382,7 +390,7 @@ const reviewerOnly = computed(() => Boolean(currentUser.value)
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

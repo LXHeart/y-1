@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 /**
- * 用户级分析设置 + 首页设置 HTTP 入口（GL: settings 迁移）。
+ * 用户级分析设置 HTTP 入口（GL: settings 迁移）。首页设置已随任务书 #47 S7b 升平台配置下线
+ * （/api/admin/homepage/hot-config），用户级 homepage 端点删除。
  *
  * <p>全部要求登录（IntelligenceCallerResolver.resolve → accountId）。响应契约与 legacy 1:1（前端零改动）。
  */
@@ -26,17 +27,14 @@ public class SettingsController {
 
     private final IntelligenceCallerResolver callers;
     private final AnalysisSettingsService analysisSettings;
-    private final HomepageSettingsService homepageSettings;
     private final ModelListingService modelListing;
 
     public SettingsController(
             IntelligenceCallerResolver callers,
             AnalysisSettingsService analysisSettings,
-            HomepageSettingsService homepageSettings,
             ModelListingService modelListing) {
         this.callers = callers;
         this.analysisSettings = analysisSettings;
-        this.homepageSettings = homepageSettings;
         this.modelListing = modelListing;
     }
 
@@ -75,23 +73,6 @@ public class SettingsController {
                 .flatMap(caller -> modelListing.verifyModel(caller.accountId(), feature, model))
                 .map(verified -> ResponseEntity.ok(Map.of("success", true,
                         "data", Map.of("verified", true, "modelId", verified))));
-    }
-
-    // ---------- homepage ----------
-
-    @GetMapping("/api/settings/homepage")
-    public Mono<ResponseEntity<Map<String, Object>>> getHomepage(ServerHttpRequest request) {
-        return callers.resolve(request)
-                .flatMap(caller -> homepageSettings.get(caller.accountId()))
-                .map(data -> ResponseEntity.ok(Map.of("success", true, "data", data)));
-    }
-
-    @PutMapping(value = "/api/settings/homepage", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<ResponseEntity<Map<String, Object>>> updateHomepage(
-            @RequestBody Map<String, Object> body, ServerHttpRequest request) {
-        return callers.resolve(request)
-                .flatMap(caller -> homepageSettings.update(caller.accountId(), body))
-                .map(data -> ResponseEntity.ok(Map.of("success", true, "data", data)));
     }
 
     // ---------- helpers ----------

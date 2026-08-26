@@ -13,13 +13,12 @@ import com.grassland.intelligence.hottopic.HotTopicClassifier;
 import com.grassland.intelligence.hottopic.HotTopicFilter;
 import com.grassland.intelligence.hottopic.HotTopicTaxonomy;
 import com.grassland.intelligence.security.IntelligenceException;
-import com.grassland.intelligence.settings.HomepageSettingsService;
-import com.grassland.intelligence.settings.UserSettingsRepository;
+import com.grassland.crypto.EnvelopeEncryption;
+import org.springframework.beans.factory.ObjectProvider;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,10 +30,11 @@ import reactor.test.StepVerifier;
  */
 class HomepageHotServiceTest {
 
-	private static final String ACCOUNT = "11111111-1111-1111-1111-111111111111";
-
-	private HomepageSettingsService homepageSettings;
-	private UserSettingsRepository settingsRepo;
+	private HomepageHotConfigRepository hotConfigRepo;
+	private EnvelopeEncryption crypto;
+	@SuppressWarnings("unchecked")
+	private final ObjectProvider<EnvelopeEncryption> encryptionProvider =
+			org.mockito.Mockito.mock(ObjectProvider.class);
 	private HotItems60sService sixtyS;
 	private HotItemsAlapiService alapi;
 	private HotTopicsCacheRepository cacheRepo;
@@ -46,8 +46,9 @@ class HomepageHotServiceTest {
 
 	@BeforeEach
 	void setUp() {
-		homepageSettings = mock(HomepageSettingsService.class);
-		settingsRepo = mock(UserSettingsRepository.class);
+		hotConfigRepo = mock(HomepageHotConfigRepository.class);
+		crypto = mock(EnvelopeEncryption.class);
+		org.mockito.Mockito.when(encryptionProvider.getIfAvailable()).thenReturn(crypto);
 		sixtyS = mock(HotItems60sService.class);
 		alapi = mock(HotItemsAlapiService.class);
 		cacheRepo = mock(HotTopicsCacheRepository.class);
@@ -56,7 +57,7 @@ class HomepageHotServiceTest {
 		org.mockito.Mockito.when(history.archive(org.mockito.ArgumentMatchers.anyString(),
 				org.mockito.ArgumentMatchers.any(java.time.Instant.class), org.mockito.ArgumentMatchers.anyString()))
 				.thenReturn(reactor.core.publisher.Mono.empty());
-		service = new HomepageHotService(homepageSettings, settingsRepo, sixtyS, alapi, cacheRepo, classifier, history);
+		service = new HomepageHotService(hotConfigRepo, encryptionProvider, sixtyS, alapi, cacheRepo, classifier, history);
 	}
 
 	@Test
@@ -65,7 +66,7 @@ class HomepageHotServiceTest {
 		when(cacheRepo.readLatest()).thenReturn(Mono.just(
 				new HotTopicsCacheRepository.CachedEntry(groupsJson(), Instant.now().minus(10, ChronoUnit.MINUTES))));
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT)).assertNext(result -> {
+		StepVerifier.create(service.loadHotItems()).assertNext(result -> {
 			assertThat(result.provider()).isEqualTo("60s");
 			assertThat(result.groups()).hasSize(1);
 			assertThat(result.items()).isEmpty();
@@ -86,7 +87,7 @@ class HomepageHotServiceTest {
 				List.of(new HotItemGroup("weibo", "微博", List.of(new HotItem(1, "新热点", null, null, null, "微博"))))));
 		when(cacheRepo.persist(anyString())).thenReturn(Mono.empty());
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT)).assertNext(result -> {
+		StepVerifier.create(service.loadHotItems()).assertNext(result -> {
 			assertThat(result.groups().getFirst().platform()).isEqualTo("weibo");
 			assertThat(result.groups().getFirst().items().getFirst().tags().taxonomyVersion())
 					.isEqualTo("hot-taxonomy-v1");
@@ -105,7 +106,7 @@ class HomepageHotServiceTest {
 				.thenReturn(Mono.just(new HotTopicsCacheRepository.CachedEntry(groupsJson(), staleAt)));
 		when(sixtyS.loadGroups()).thenReturn(Mono.error(new IllegalStateException("upstream down")));
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT)).assertNext(result -> {
+		StepVerifier.create(service.loadHotItems()).assertNext(result -> {
 			assertThat(result.groups().getFirst().platform()).isEqualTo("douyin");
 			assertThat(result.fetchedAt()).isEqualTo(staleAt.toString());
 		}).verifyComplete();
@@ -117,7 +118,7 @@ class HomepageHotServiceTest {
 		when(cacheRepo.readLatest()).thenReturn(Mono.empty());
 		when(sixtyS.loadGroups()).thenReturn(Mono.just(List.of()));
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT))
+		StepVerifier.create(service.loadHotItems())
 				.expectErrorSatisfies(error -> assertThat(((IntelligenceException) error).status()).isEqualTo(502))
 				.verify();
 	}
@@ -125,9 +126,8 @@ class HomepageHotServiceTest {
 	@Test
 	void alapiWithoutTokenIsBadRequest() {
 		stubProvider("alapi");
-		when(settingsRepo.findByAccountAndType(ACCOUNT, "homepage")).thenReturn(Mono.empty());
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT))
+		StepVerifier.create(service.loadHotItems())
 				.expectErrorSatisfies(error -> assertThat(((IntelligenceException) error).status()).isEqualTo(400))
 				.verify();
 
@@ -135,15 +135,13 @@ class HomepageHotServiceTest {
 	}
 
 	@Test
-	void alapiUsesUnmaskedStoredToken() {
-		stubProvider("alapi");
-		when(settingsRepo.findByAccountAndType(ACCOUNT, "homepage"))
-				.thenReturn(Mono.just("{\"hotItems\":{\"provider\":\"alapi\",\"alapiToken\":\"tok-real-1234\"}}"));
+	void alapiDecryptsPlatformToken() {
+		stubAlapiToken("cipher-alapi", "tok-real-1234");
 		when(alapi.loadGroups("tok-real-1234")).thenReturn(Mono
 				.just(List.of(new HotItemGroup("douyin", "抖音", List.of(new HotItem(1, "热点", null, null, null, "抖音"))),
 						new HotItemGroup("weibo", "微博", List.of(new HotItem(1, "微博热点", null, null, null, "微博"))))));
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT)).assertNext(result -> {
+		StepVerifier.create(service.loadHotItems()).assertNext(result -> {
 			assertThat(result.provider()).isEqualTo("alapi");
 			// 实时契约保持扁平 + 站点序全局重排
 			assertThat(result.items()).extracting(HotItem::title).containsExactly("热点", "微博热点");
@@ -164,25 +162,24 @@ class HomepageHotServiceTest {
 	/** alapi 空 groups（白名单站点全空）与旧空 items 同口径 502。 */
 	@Test
 	void alapiEmptyGroupsIsBadGateway() {
-		stubProvider("alapi");
-		when(settingsRepo.findByAccountAndType(ACCOUNT, "homepage"))
-				.thenReturn(Mono.just("{\"hotItems\":{\"alapiToken\":\"tok-real-1234\"}}"));
+		stubAlapiToken("cipher-alapi", "tok-real-1234");
 		when(alapi.loadGroups("tok-real-1234"))
 				.thenReturn(Mono.just(List.of(new HotItemGroup("douyin", "抖音", List.of()))));
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT))
+		StepVerifier.create(service.loadHotItems())
 				.expectErrorSatisfies(error -> assertThat(((IntelligenceException) error).status()).isEqualTo(502))
 				.verify();
 	}
 
-	/** 未登录（accountId=null）走平台默认 60s，不该因缺 token 报错。 */
+	/** 无配置行 → 平台默认 60s（findOrDefault 兜底在仓储层，此处直证服务透传）。 */
 	@Test
-	void anonymousFallsBackTo60s() throws Exception {
-		when(homepageSettings.getOrDefault(null)).thenReturn(Mono.just(Map.of("hotItems", Map.of("provider", "60s"))));
+	void defaultConfigIs60s() throws Exception {
+		when(hotConfigRepo.findOrDefault())
+				.thenReturn(Mono.just(HomepageHotConfig.platformDefault()));
 		when(cacheRepo.readLatest())
 				.thenReturn(Mono.just(new HotTopicsCacheRepository.CachedEntry(groupsJson(), Instant.now())));
 
-		StepVerifier.create(service.loadHotItems(null))
+		StepVerifier.create(service.loadHotItems())
 				.assertNext(result -> assertThat(result.provider()).isEqualTo("60s")).verifyComplete();
 	}
 
@@ -194,7 +191,7 @@ class HomepageHotServiceTest {
 				mapper.writeValueAsString(List.of(new HotItemGroup("douyin", "抖音", tagged))), Instant.now())));
 
 		HotTopicFilter filter = new HotTopicFilter(Set.of("catering", "retail"), Set.of("上海"), Set.of("tech"), false);
-		StepVerifier.create(service.loadHotItems(ACCOUNT, filter))
+		StepVerifier.create(service.loadHotItems(filter))
 				.assertNext(result -> assertThat(result.groups().getFirst().items()).extracting(HotItem::title)
 						.containsExactly("上海AI火锅发布会"))
 				.verifyComplete();
@@ -210,10 +207,10 @@ class HomepageHotServiceTest {
 				.thenReturn(Mono.just(new HotTopicsCacheRepository.CachedEntry(groupsJson(), fetchedAt)));
 		when(sixtyS.loadGroups()).thenReturn(Mono.error(new IllegalStateException("upstream down")));
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT)).assertNext(result -> assertThat(result.groups()).isEmpty())
+		StepVerifier.create(service.loadHotItems()).assertNext(result -> assertThat(result.groups()).isEmpty())
 				.verifyComplete();
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT, new HotTopicFilter(Set.of(), Set.of(), Set.of(), true)))
+		StepVerifier.create(service.loadHotItems(new HotTopicFilter(Set.of(), Set.of(), Set.of(), true)))
 				.assertNext(result -> {
 					HotItem item = result.groups().getFirst().items().getFirst();
 					assertThat(item.expired()).isTrue();
@@ -232,7 +229,7 @@ class HomepageHotServiceTest {
 				List.of(new HotItemGroup("douyin", "抖音", List.of(new HotItem(1, "上海火锅", null, null, null, "抖音"))))));
 		when(cacheRepo.persist(anyString())).thenReturn(Mono.empty());
 
-		StepVerifier.create(service.loadHotItems(ACCOUNT)).assertNext(
+		StepVerifier.create(service.loadHotItems()).assertNext(
 				result -> assertThat(result.groups().getFirst().items().getFirst().tags().city()).isEqualTo("上海"))
 				.verifyComplete();
 
@@ -241,8 +238,15 @@ class HomepageHotServiceTest {
 	}
 
 	private void stubProvider(String provider) {
-		when(homepageSettings.getOrDefault(any()))
-				.thenReturn(Mono.just(Map.of("hotItems", Map.of("provider", provider))));
+		when(hotConfigRepo.findOrDefault()).thenReturn(Mono.just(
+				new HomepageHotConfig(provider, null, null, null, 1L, "admin", Instant.EPOCH)));
+	}
+
+	private void stubAlapiToken(String encrypted, String decrypted) {
+		when(hotConfigRepo.findOrDefault()).thenReturn(Mono.just(new HomepageHotConfig(
+				"alapi", encrypted, "v1", "sk-***" + decrypted.substring(decrypted.length() - 4),
+				1L, "admin", Instant.EPOCH)));
+		when(crypto.decrypt(encrypted)).thenReturn(decrypted);
 	}
 
 	private String groupsJson() throws Exception {

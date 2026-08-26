@@ -175,6 +175,11 @@ edge:
     - path: /api/admin/ai
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_AI_INTELLIGENCE:true}
+    # 首页热点平台配置 admin 读写（任务书 #47 S7b / D18①）。⚠️ 精确前缀 /api/admin/homepage——
+    # 不抢公开的 /api/homepage/* 用户侧流量（同 /api/admin/ai 口径）。
+    - path: /api/admin/homepage
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_HOMEPAGE_INTELLIGENCE:true}
     # 财务对账台（GL-P2-ADMIN-006）→ finance。精确前缀，不抢 /api/finance/* 用户侧流量。
     - path: /api/admin/finance
       upstream: finance

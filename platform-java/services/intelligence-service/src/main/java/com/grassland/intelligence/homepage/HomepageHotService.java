@@ -2,16 +2,15 @@ package com.grassland.intelligence.homepage;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.hottopic.HotTopicClassifier;
 import com.grassland.intelligence.hottopic.HotTopicFilter;
-import com.grassland.intelligence.settings.HomepageSettingsService;
-import com.grassland.intelligence.settings.UserSettingsRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import com.grassland.intelligence.security.IntelligenceException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -20,10 +19,12 @@ import reactor.core.publisher.Mono;
  * 首页热点聚合编排（GL: homepage 迁移）。复刻 legacy {@code loadHomepageHotItems}。
  *
  * <p>
- * provider 由用户级 homepage settings 决定：
+ * provider 由<b>平台级</b>配置决定（任务书 #47 S7b / D18① / V50）：{@code homepage_hot_config} 单行表，
+ * 管理后台经 {@code /api/admin/homepage/hot-config} 维护，无行时默认 60s。热点是匿名可访问的平台
+ * 数据，不再读用户级 homepage settings——存量 user_settings 行自 S7b 起不生效（V50 C 方案保留数据）：
  * <ul>
  * <li>{@code 60s}：三平台 groups，DB 缓存 2h TTL，上游失败降级到过期缓存。
- * <li>{@code alapi}：扁平 items，进程内缓存 5min TTL（key=token）。
+ * <li>{@code alapi}：扁平 items，进程内缓存 5min TTL（key=解密后的平台 token）。
  * </ul>
  */
 @Service
@@ -34,8 +35,8 @@ public class HomepageHotService {
 	/** alapi 实时扁平榜单截断（legacy 语义：站点序展平后取前 100，再全局重排）。 */
 	private static final int ALAPI_MAX_ITEMS = 100;
 
-	private final HomepageSettingsService homepageSettings;
-	private final UserSettingsRepository settingsRepo;
+	private final HomepageHotConfigRepository hotConfigRepo;
+	private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
 	private final HotItems60sService sixtyS;
 	private final HotItemsAlapiService alapi;
 	private final HotTopicsCacheRepository cacheRepo;
@@ -51,11 +52,12 @@ public class HomepageHotService {
 	/** ALAPI 进程内缓存：key = token。 */
 	private final ConcurrentHashMap<String, AlapiCacheEntry> alapiCache = new ConcurrentHashMap<>();
 
-	public HomepageHotService(HomepageSettingsService homepageSettings, UserSettingsRepository settingsRepo,
+	public HomepageHotService(HomepageHotConfigRepository hotConfigRepo,
+			ObjectProvider<EnvelopeEncryption> encryptionProvider,
 			HotItems60sService sixtyS, HotItemsAlapiService alapi, HotTopicsCacheRepository cacheRepo,
 			HotTopicClassifier classifier, HotItemsHistoryService history) {
-		this.homepageSettings = homepageSettings;
-		this.settingsRepo = settingsRepo;
+		this.hotConfigRepo = hotConfigRepo;
+		this.encryptionProvider = encryptionProvider;
 		this.sixtyS = sixtyS;
 		this.alapi = alapi;
 		this.cacheRepo = cacheRepo;
@@ -63,35 +65,22 @@ public class HomepageHotService {
 		this.history = history;
 	}
 
-	/** accountId 可为 null（未登录）→ 用平台默认 settings（provider=60s）。 */
-	public Mono<HotItemsResult> loadHotItems(String accountId) {
-		return loadHotItems(accountId, HotTopicFilter.DEFAULT);
+	public Mono<HotItemsResult> loadHotItems() {
+		return loadHotItems(HotTopicFilter.DEFAULT);
 	}
 
-	/**
-	 * 当前账号的热点 provider（60s/alapi）；未登录或未配置 = 平台默认 60s。
-	 * 历史端点据此分源查询——用户看哪个源的实时榜，就看哪个源的历史。
-	 */
-	public Mono<String> providerFor(String accountId) {
-		return homepageSettings.getOrDefault(accountId).map(HomepageHotService::providerOf);
+	/** 平台热点 provider（60s/alapi）；未配置 = 默认 60s。历史端点据此分源查询。 */
+	public Mono<String> provider() {
+		return hotConfigRepo.findOrDefault().map(HomepageHotConfig::provider);
 	}
 
 	/** 筛选只作用于缓存结果：维度内 OR、跨维度 AND，且默认隐藏超过源级有效期的条目。 */
-	public Mono<HotItemsResult> loadHotItems(String accountId, HotTopicFilter filter) {
+	public Mono<HotItemsResult> loadHotItems(HotTopicFilter filter) {
 		HotTopicFilter effectiveFilter = filter == null ? HotTopicFilter.DEFAULT : filter;
-		return homepageSettings.getOrDefault(accountId).map(HomepageHotService::providerOf)
-				.flatMap(provider -> "alapi".equals(provider)
-						? loadAlapi(accountId, effectiveFilter)
+		return hotConfigRepo.findOrDefault()
+				.flatMap(config -> HomepageHotConfig.PROVIDER_ALAPI.equals(config.provider())
+						? loadAlapi(config, effectiveFilter)
 						: load60s(effectiveFilter));
-	}
-
-	@SuppressWarnings("unchecked")
-	private static String providerOf(Map<String, Object> settings) {
-		Object hotItems = settings.get("hotItems");
-		if (hotItems instanceof Map<?, ?> m && m.get("provider") instanceof String p) {
-			return p;
-		}
-		return "60s";
 	}
 
 	// ---------- 60s ----------
@@ -128,8 +117,8 @@ public class HomepageHotService {
 
 	// ---------- ALAPI ----------
 
-	private Mono<HotItemsResult> loadAlapi(String accountId, HotTopicFilter filter) {
-		return resolveAlapiToken(accountId).flatMap(token -> {
+	private Mono<HotItemsResult> loadAlapi(HomepageHotConfig config, HotTopicFilter filter) {
+		return resolveAlapiToken(config).flatMap(token -> {
 			AlapiCacheEntry cached = alapiCache.get(token);
 			if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
 				return Mono.just(buildAlapi(cached.items(), cached.fetchedAt(), filter));
@@ -203,25 +192,21 @@ public class HomepageHotService {
 				.map(item -> item.withValidity(validUntil.toString(), expired)).toList();
 	}
 
-	/** 读未掩码 token（不能走 HomepageSettingsService.get，那会掩码）。 */
-	@SuppressWarnings("unchecked")
-	private Mono<String> resolveAlapiToken(String accountId) {
-		if (accountId == null || accountId.isBlank()) {
-			return Mono.error(new IntelligenceException(400, "请先在设置中配置 ALAPI Token"));
+	/**
+	 * 解密平台 ALAPI token。密文缺失 → 400（admin 选了 alapi 但没配 token）；
+	 * KEK 未配 → 503 fail-closed（绝不退化，同 BYOK/平台凭据口径）。
+	 */
+	private Mono<String> resolveAlapiToken(HomepageHotConfig config) {
+		if (!config.hasAlapiToken()) {
+			return Mono.error(new IntelligenceException(400, "平台未配置 ALAPI Token，请联系管理员"));
 		}
-		return settingsRepo.findByAccountAndType(accountId, "homepage").mapNotNull(json -> {
-			try {
-				Map<String, Object> settings = mapper.readValue(json, new TypeReference<Map<String, Object>>() {
-				});
-				Object hotItems = settings.get("hotItems");
-				if (hotItems instanceof Map<?, ?> m && m.get("alapiToken") instanceof String t && !t.isBlank()) {
-					return t;
-				}
-			} catch (Exception ignored) {
-				// 解析失败视为未配置
+		return Mono.fromCallable(() -> {
+			EnvelopeEncryption crypto = encryptionProvider.getIfAvailable();
+			if (crypto == null) {
+				throw new IntelligenceException(503, "ALAPI Token 解密不可用：未配置 CRYPTO_KEK_BASE64");
 			}
-			return null;
-		}).switchIfEmpty(Mono.error(new IntelligenceException(400, "请先在设置中配置 ALAPI Token")));
+			return crypto.decrypt(config.alapiTokenEncrypted());
+		});
 	}
 
 	// ---------- JSON ----------

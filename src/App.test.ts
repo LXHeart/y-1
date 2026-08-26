@@ -67,7 +67,6 @@ vi.mock('./views/video-production/VideoProductionView.vue', () => ({ __esModule:
 vi.mock('./views/commerce/ConsumerCommerceView.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 
 // ── 共享组件 mock ──
-vi.mock('./components/AnalysisSettingsModal.vue', () => ({ __esModule: true, default: { template: '<div />' } }))
 vi.mock('./components/NotificationBell.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('./components/LoginModal.vue', () => ({ __esModule: true,
   default: {
