@@ -50,8 +50,8 @@ describe('ComedyWritingView 渲染骨架与初始状态', () => {
   test('锁定标题、说明、题材输入框', () => {
     const wrapper = mountView()
 
-    expect(wrapper.find('.section-title').text()).toBe('脱口秀创作')
-    expect(wrapper.find('.section-desc').text()).toContain('AI 帮你生成脱口秀文稿')
+    // 任务书 #47 S8：页面级标题栏已删（纯门面，无 PRD 口径挂在上面），只锁工作区本体
+    expect(wrapper.find('.section-title').exists()).toBe(false)
     const textarea = wrapper.find('textarea.topic-input')
     expect(textarea.exists()).toBe(true)
     expect(textarea.attributes('placeholder')).toContain('输入题材')

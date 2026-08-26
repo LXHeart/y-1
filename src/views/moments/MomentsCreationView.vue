@@ -68,11 +68,9 @@ async function copyResult(): Promise<void> {
 </script>
 
 <template>
-  <section class="moments-view gl-field" aria-labelledby="moments-title">
-    <header class="moments-head">
-      <h2 id="moments-title">朋友圈创作</h2>
-      <p class="moments-sub">精简文案 + 九宫格顺序建议 + 每图配文，一次生成</p>
-    </header>
+  <!-- 任务书 #47 S8：删页面级标题栏（它让这里看起来像独立工具）。原 aria-labelledby 指向被删的
+       h2，改用 aria-label 直接给出可访问名，避免该 section 失去无障碍名称。 -->
+  <section class="moments-view gl-field" aria-label="朋友圈创作">
 
     <div class="gl-zone moments-form">
       <p v-if="ruleSummary" data-test="moments-rule" class="rule-hint">{{ ruleSummary }}</p>
@@ -202,8 +200,6 @@ async function copyResult(): Promise<void> {
 
 <style scoped>
 .moments-view { display: grid; gap: var(--space-lg); max-width: 760px; margin: 0 auto; }
-.moments-head h2 { margin: 0; font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; color: var(--color-text); }
-.moments-sub { margin: 4px 0 0; color: var(--color-text-muted); font-size: var(--text-sm); }
 .rule-hint {
   margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm);
   background: var(--surface-furrow); color: var(--color-text-muted);

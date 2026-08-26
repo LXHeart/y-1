@@ -1,16 +1,5 @@
 <template>
   <div class="video-analysis-page gl-field">
-    <header class="view-header">
-      <div class="view-header-copy">
-        <p class="view-kicker">视频制作 · 可选输入手段</p>
-        <h1 class="view-title">视频参考提取</h1>
-        <p class="view-copy">提取与分析抖音 / B 站参考视频，作为视频制作过程中的可选参考输入；分析结果只产生创作建议，可在视频制作中带入脚本、分镜、角色、道具和场景生成。</p>
-      </div>
-      <button class="btn-secondary view-header-action" type="button" @click="emit('open-view', 'video-production')">
-        去视频制作
-      </button>
-    </header>
-
     <div class="video-analysis">
     <section class="input-column">
       <article class="editor-card gl-zone">
@@ -35,7 +24,24 @@
               B 站
             </button>
           </div>
-          <h2 class="card-title">{{ inputTitle }}</h2>
+          <div class="card-head-row">
+            <h2 class="card-title">{{ inputTitle }}</h2>
+            <!-- 任务书 #47 S8：页面级标题栏删除，但这个按钮是本视图跳转视频制作的唯一入口
+                 （emit('open-view','video-production') 全文件仅此一处），故移入工作区而非一并删掉。 -->
+            <button
+              class="btn-secondary card-head-action"
+              type="button"
+              @click="emit('open-view', 'video-production')"
+            >
+              去视频制作
+            </button>
+          </div>
+          <!-- PRD §4.2 的重定位口径：这里是视频制作的可选参考输入，不是独立成品工具。
+               页面级标题栏删了，但这句话不能删——否则用户会重新以为分析结果就是终产物。
+               VideoAnalysisView.test.ts 的「重定位文案」用例锁定它。 -->
+          <p class="card-head-note">
+            可选参考输入手段：分析结果只产生创作建议，可在视频制作中带入脚本、分镜、角色、道具和场景生成。
+          </p>
         </header>
 
         <label class="field-label" for="video-input">{{ inputLabel }}</label>
@@ -477,19 +483,6 @@ watch(() => props.creationHandoff, (handoff) => {
   gap: var(--space-lg);
 }
 
-.view-header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-}
-
-.view-header-copy {
-  display: grid;
-  gap: 6px;
-}
-
 .reference-handoff {
   display: flex;
   align-items: center;
@@ -583,39 +576,24 @@ watch(() => props.creationHandoff, (handoff) => {
   }
 }
 
-.view-kicker {
-  margin: 0;
-  font-size: 0.78rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  font-weight: 600;
+/* 任务书 #47 S8：页面级标题栏的样式随 header 一并删除；按钮移入 card-head 后复用下面的
+   card-head-row / card-head-action。 */
+.card-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
 }
 
-.view-title {
-  margin: 0;
-  font-size: 1.42rem;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--color-text);
-}
-
-.view-copy {
-  margin: 0;
-  max-width: 64ch;
-  color: var(--color-text-secondary);
-  font-size: 0.88rem;
-  line-height: 1.6;
-}
-
-.view-header-action {
-  min-height: 40px;
-  padding: 0 18px;
+.card-head-action {
+  min-height: 34px;
+  padding: 0 14px;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -624,10 +602,18 @@ watch(() => props.creationHandoff, (handoff) => {
     color var(--duration-fast) var(--ease-out);
 }
 
-.view-header-action:hover {
+.card-head-action:hover {
   border-color: var(--color-border-hover);
   color: var(--color-text);
   background: var(--color-surface-hover);
+}
+
+.card-head-note {
+  margin: 0;
+  max-width: 64ch;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
 }
 
 .video-analysis {

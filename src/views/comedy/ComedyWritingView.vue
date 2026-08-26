@@ -1,10 +1,5 @@
 <template>
   <section class="comedy-view gl-field">
-    <header class="section-header">
-      <h2 class="section-title">脱口秀创作</h2>
-      <p class="section-desc">输入一个题材，选择表达风格与时长，AI 帮你生成脱口秀文稿</p>
-    </header>
-
     <div class="style-selector">
       <p class="style-selector-label">表达风格</p>
       <div class="style-grid">
@@ -263,24 +258,6 @@ async function handleGenerate(): Promise<void> {
   gap: var(--space-lg);
   max-width: 820px;
   margin: 0 auto;
-}
-
-.section-header {
-  display: grid;
-  gap: var(--space-xs);
-}
-
-.section-title {
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--color-text);
-  margin: 0;
-}
-
-.section-desc {
-  font-size: 0.88rem;
-  color: var(--color-text-muted);
-  margin: 0;
 }
 
 .style-selector {

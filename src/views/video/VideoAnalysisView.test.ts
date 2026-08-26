@@ -43,10 +43,12 @@ describe('VideoAnalysisView 重定位文案', () => {
     const wrapper = mount(VideoAnalysisView)
     await flushPromises()
 
-    expect(wrapper.get('.view-title').text()).toBe('视频参考提取')
-    expect(wrapper.get('.view-kicker').text()).toContain('视频制作')
-    expect(wrapper.get('.view-copy').text()).toContain('可选参考输入')
-    expect(wrapper.get('.view-copy').text()).toContain('只产生创作建议')
+    // 任务书 #47 S8：页面级标题栏（view-title/view-kicker/view-copy）已删——它让这里看起来像
+    // 独立成品工具。但 PRD §4.2 的重定位口径不能跟着删，它迁到了工作区内联提示 card-head-note。
+    expect(wrapper.find('.view-title').exists()).toBe(false)
+    const note = wrapper.get('.card-head-note').text()
+    expect(note).toContain('可选参考输入')
+    expect(note).toContain('只产生创作建议')
   })
 
   test('「去视频制作」引导链接通过 open-view 切到 video-production', async () => {
