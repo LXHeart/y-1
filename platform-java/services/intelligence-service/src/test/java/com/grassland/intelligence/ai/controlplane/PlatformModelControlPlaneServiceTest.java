@@ -62,9 +62,14 @@ class PlatformModelControlPlaneServiceTest {
                 });
     }
 
-    /** 无凭据（V47 收 NOT NULL 前的过渡态）：回落配置列 base_url，密钥交 env 兜底。 */
+    /**
+     * 无凭据（未挂 credential_id，或凭据已停用被 LEFT JOIN 滤掉）：回落配置列 base_url。
+     *
+     * <p>这条回落在 V52 DROP COLUMN 之前是<b>必需</b>的——存量行可能没有配套凭据，硬切到凭据会让
+     * 它们 baseUrl 变 null 并在运行时 502。密钥则交 env bootstrap 兜底（D1/D8）。
+     */
     @Test
-    @DisplayName("无凭据时回落配置列 baseUrl，密文为空")
+    @DisplayName("无凭据时回落配置列 baseUrl，密文为空（V52 之前的过渡语义）")
     void fallsBackToConfigBaseUrlWithoutCredential() {
         when(repository.findCurrentWithCredentialByCapability("text")).thenReturn(Flux.just(
                 withoutCredential(config("primary", "healthy", 1))));

@@ -23,9 +23,31 @@ import reactor.core.publisher.Mono;
 @Component
 public class PlatformModelConfigRepository {
 
+    /**
+     * 读取列。任务书 #47 V50 第 1 步：{@code base_url} 改为<b>凭据优先、配置列兜底</b>。
+     *
+     * <p>为什么是 COALESCE 而不是直接只取凭据列：{@code platform_model_config.base_url} 仍是
+     * {@code NOT NULL}（V7:19），且存量行与测试夹具都可能没有配套凭据行。硬切到凭据会让这些行的
+     * baseUrl 变 null，运行时直接 502。凭据先成为真相源（D2），等收口迁移 DROP NOT NULL 之后再由
+     * 后续部署去掉兜底、V52 才 DROP COLUMN——见任务书「V50 发布安排」。
+     */
     private static final String SELECT_COLS =
-            "id::text, capability, model_role, provider, model, base_url, max_concurrency, "
-                    + "health_status, enabled, version, updated_by, created_at, updated_at";
+            "config.id::text, config.capability, config.model_role, config.provider, config.model, "
+                    + "config.max_concurrency, config.health_status, config.enabled, config.version, "
+                    + "config.updated_by, config.created_at, config.updated_at, "
+                    + "COALESCE(credential.base_url, config.base_url) AS base_url";
+
+    /**
+     * 单行读取的公共 FROM：LEFT JOIN 凭据取 base_url。
+     *
+     * <p>用 LEFT 而非 INNER：凭据后来被停用的配置行仍应可读（审计与快照复现），此时 baseUrl 为 null，
+     * 由调用方决定可用性——运行时解析走
+     * {@link #findCurrentWithCredentialByCapability}，它单独过滤 enabled 凭据。
+     */
+    private static final String FROM_WITH_CREDENTIAL =
+            " FROM platform_model_config AS config"
+                    + " LEFT JOIN platform_provider_credential AS credential"
+                    + " ON credential.id = config.credential_id";
 
     private final DatabaseClient db;
     private final PlatformProviderCredentialRepository credentials;
@@ -72,9 +94,9 @@ public class PlatformModelConfigRepository {
 
     /** 当前有效的某个 (capability, model_role) 配置；无则空。 */
     public Mono<PlatformModelConfig> findCurrent(String capability, String modelRole) {
-        return db.sql("SELECT " + SELECT_COLS
-                + " FROM platform_model_config"
-                + " WHERE capability = :capability AND model_role = :modelRole AND enabled = true")
+        return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL
+                + " WHERE config.capability = :capability AND config.model_role = :modelRole"
+                + " AND config.enabled = true")
                 .bind("capability", capability)
                 .bind("modelRole", modelRole)
                 .map(PlatformModelConfigRepository::map)
@@ -83,8 +105,8 @@ public class PlatformModelConfigRepository {
 
     /** 按不可变配置 ID 读取历史版本；供创作上下文快照复现运行时配置。 */
     public Mono<PlatformModelConfig> findById(UUID id) {
-        return db.sql("SELECT " + SELECT_COLS
-                + " FROM platform_model_config WHERE id = CAST(:id AS uuid)")
+        return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL
+                + " WHERE config.id = CAST(:id AS uuid)")
                 .bind("id", id.toString())
                 .map(PlatformModelConfigRepository::map)
                 .one();
@@ -92,9 +114,8 @@ public class PlatformModelConfigRepository {
 
     /** 某能力的全部当前有效配置（primary + backup）。 */
     public Flux<PlatformModelConfig> findCurrentByCapability(String capability) {
-        return db.sql("SELECT " + SELECT_COLS
-                + " FROM platform_model_config"
-                + " WHERE capability = :capability AND enabled = true")
+        return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL
+                + " WHERE config.capability = :capability AND config.enabled = true")
                 .bind("capability", capability)
                 .map(PlatformModelConfigRepository::map)
                 .all();
@@ -103,18 +124,19 @@ public class PlatformModelConfigRepository {
     /**
      * 某能力的当前有效配置 + 各自凭据（任务书 #47 S2 运行时解析用）。
      *
-     * <p>LEFT JOIN：V47 收 NOT NULL 之前允许 {@code credential_id} 为空，此时投影回落配置列的 base_url。
-     * 只 JOIN 有效凭据（{@code credential.enabled}）——凭据被停用等于该目的地不可用，应触发 503 而非
-     * 悄悄拿一把已停用的密钥继续跑。
+     * <p>只 JOIN 有效凭据（{@code credential.enabled}）——凭据被停用等于该目的地不可用，应触发 503
+     * 而非悄悄拿一把已停用的密钥继续跑。此时 baseUrl 为 null，由
+     * {@link PlatformModelControlPlaneService#resolve} 交给执行层判定。
      */
     public Flux<PlatformModelWithCredential> findCurrentWithCredentialByCapability(String capability) {
         return db.sql("""
                         SELECT config.id::text AS config_id, config.capability, config.model_role,
-                               config.provider, config.model, config.base_url, config.max_concurrency,
+                               config.provider, config.model, config.max_concurrency,
                                config.health_status, config.enabled, config.version, config.updated_by,
                                config.created_at, config.updated_at,
                                credential.id::text  AS credential_id,
                                credential.base_url  AS credential_base_url,
+                               COALESCE(credential.base_url, config.base_url) AS base_url,
                                credential.encrypted_key AS credential_encrypted_key,
                                credential.version   AS credential_version
                         FROM platform_model_config AS config
@@ -129,10 +151,9 @@ public class PlatformModelConfigRepository {
 
     /** 列出所有当前有效配置（admin 看板）。 */
     public Flux<PlatformModelConfig> findAllCurrent() {
-        return db.sql("SELECT " + SELECT_COLS
-                + " FROM platform_model_config"
-                + " WHERE enabled = true"
-                + " ORDER BY capability, model_role")
+        return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL
+                + " WHERE config.enabled = true"
+                + " ORDER BY config.capability, config.model_role")
                 .map(PlatformModelConfigRepository::map)
                 .all();
     }
@@ -149,6 +170,8 @@ public class PlatformModelConfigRepository {
      * 调用方负责在 {@code TransactionalOperator} 内执行，并在前置检查中确认不存在。
      */
     public Mono<UUID> create(PlatformModelConfig c, String adminId) {
+        // V50 第 1 步只改读路径：base_url 列仍是 NOT NULL（V7:19），停止写入会让每次 INSERT 违约。
+        // 该列要等收口迁移 DROP NOT NULL 之后才能停写，DROP COLUMN 更在其后（见任务书发布安排）。
         return resolveCredentialId(c.provider(), c.baseUrl(), adminId).flatMap(credentialId -> db.sql("""
                 INSERT INTO platform_model_config(
                     capability, model_role, provider, model, base_url, max_concurrency,
@@ -172,7 +195,7 @@ public class PlatformModelConfigRepository {
                 .one()
                 .map(UUID::fromString)
                 .flatMap(id -> createConcurrencySlots(id, c.maxConcurrency())
-                        .then(insertHistory(id, c, 1, "create", adminId))
+                        .then(insertHistory(id, c, c.baseUrl(), 1, "create", adminId))
                         .thenReturn(id)));
     }
 
@@ -208,7 +231,8 @@ public class PlatformModelConfigRepository {
                                 .one()
                                 .map(UUID::fromString)
                                 .flatMap(id -> createConcurrencySlots(id, next.maxConcurrency())
-                                        .then(insertHistory(id, next, current.version() + 1, "update", adminId))
+                                        .then(insertHistory(id, next, next.baseUrl(), current.version() + 1,
+                                                "update", adminId))
                                         .thenReturn(id)))
                         .flatMap(id -> findCurrent(capability, modelRole)));
     }
@@ -217,7 +241,8 @@ public class PlatformModelConfigRepository {
     public Mono<Boolean> disable(String capability, String modelRole, String adminId) {
         return findCurrent(capability, modelRole)
                 .flatMap(current -> disable(current.id(), adminId)
-                        .then(insertHistory(current.id(), current, current.version(), "disable", adminId))
+                        .then(insertHistory(current.id(), current, current.baseUrl(), current.version(),
+                                "disable", adminId))
                         .thenReturn(true));
     }
 
@@ -248,7 +273,13 @@ public class PlatformModelConfigRepository {
                 .then();
     }
 
-    private Mono<Void> insertHistory(UUID configId, PlatformModelConfig c, int version, String changeType, String changedBy) {
+    /**
+     * 落审计历史。{@code baseUrl} 单独传入而不从 {@code c} 取——V52 之后实体的该字段来自联表凭据，
+     * 写入路径上（create/revise）它来自请求体，disable 路径上来自刚读出的当前行；history 表自己的
+     * {@code base_url NOT NULL} 列保持不变（append-only 审计，不随主表收口而变）。
+     */
+    private Mono<Void> insertHistory(UUID configId, PlatformModelConfig c, String baseUrl, int version,
+            String changeType, String changedBy) {
         // configId 仅用于关联；history 表不设 FK（append-only 审计）
         return db.sql("""
                 INSERT INTO platform_model_config_history(
@@ -263,7 +294,7 @@ public class PlatformModelConfigRepository {
                 .bind("modelRole", c.modelRole())
                 .bind("provider", c.provider())
                 .bind("model", c.model())
-                .bind("baseUrl", c.baseUrl())
+                .bind("baseUrl", baseUrl)
                 .bind("maxConcurrency", nullable(c.maxConcurrency(), Integer.class))
                 .bind("healthStatus", c.healthStatus())
                 .bind("version", version)
@@ -272,7 +303,13 @@ public class PlatformModelConfigRepository {
                 .then();
     }
 
-    /** 联表行 → 投影。config 部分的列名带 config_id 前缀区分，其余与 {@link #map} 同名。 */
+    /**
+     * 联表行 → 投影。config 部分的列名带 config_id 前缀区分，其余与 {@link #map} 同名。
+     *
+     * <p>V50 起实体的 {@code baseUrl} 也来自凭据（查询里 {@code credential.base_url AS base_url}），
+     * 与 {@code credentialBaseUrl} 同值；保留两个字段是为了让
+     * {@link PlatformModelWithCredential#effectiveBaseUrl()} 的语义仍然显式。
+     */
     private static PlatformModelWithCredential mapWithCredential(Row row, RowMetadata meta) {
         PlatformModelConfig config = new PlatformModelConfig(
                 uuidFromString(row.get("config_id", String.class)),
