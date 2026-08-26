@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import ImageAnalysisView from '../../views/image/ImageAnalysisView.vue'
+import type { CreationHandoff } from '../../types/ai-creation'
 
 /**
  * ImageAnalysisView 特征测试（重构安全网）。
@@ -111,6 +112,73 @@ describe('ImageAnalysisView 大众点评探店定位', () => {
     expect(hint.text()).toContain('消费体验')
     expect(hint.text()).toContain('推荐理由')
     expect(hint.text()).toContain('真实体验')
+  })
+})
+
+/**
+ * 创作中心 → 大众点评图文 → 本页的 handoff 契约：
+ * 平台定死大众点评（不出现淘宝切换）、补充感受预填、页级返回创作中心入口。
+ */
+describe('ImageAnalysisView 创作中心 handoff 模式', () => {
+  function dianpingHandoff(): CreationHandoff {
+    return {
+      revision: 1,
+      platformId: 'dianping',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      workflowId: 'review-copy',
+      targetView: 'image',
+      prefill: { topic: '城西新开的本帮菜馆', instructions: '语气自然，突出招牌菜' },
+    }
+  }
+
+  test('handoff 后平台锁定大众点评：无淘宝切换、展示锁定标识与预填感受', async () => {
+    const wrapper = mount(ImageAnalysisView, { props: { creationHandoff: dianpingHandoff() } })
+    await flushPromises()
+
+    expect(wrapper.find('[aria-label="评价平台"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('淘宝')
+    const chip = wrapper.find('.platform-locked-chip')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('大众点评')
+
+    const feelings = wrapper.get('textarea')
+    expect((feelings.element as HTMLTextAreaElement).value).toContain('城西新开的本帮菜馆')
+    expect((feelings.element as HTMLTextAreaElement).value).toContain('语气自然，突出招牌菜')
+
+    const hint = wrapper.find('.platform-position-hint')
+    expect(hint.text()).toContain('探店评价')
+  })
+
+  test('清空不解除平台锁定：仍无淘宝切换', async () => {
+    const wrapper = mount(ImageAnalysisView, { props: { creationHandoff: dianpingHandoff() } })
+    await flushPromises()
+
+    const clearBtn = wrapper.find('.action-row').findAll('button').find((b) => b.text().includes('清空'))!
+    await clearBtn.trigger('click')
+
+    expect(wrapper.find('[aria-label="评价平台"]').exists()).toBe(false)
+    expect(wrapper.find('.platform-locked-chip').exists()).toBe(true)
+    expect(wrapper.find('.platform-position-hint').text()).toContain('探店评价')
+  })
+
+  test('页级返回入口 emit open-view 回创作中心', async () => {
+    const wrapper = mount(ImageAnalysisView)
+    await flushPromises()
+
+    const back = wrapper.find('.page-back .btn-back')
+    expect(back.exists()).toBe(true)
+    expect(back.text()).toContain('返回创作中心')
+    await back.trigger('click')
+    expect(wrapper.emitted('open-view')?.[0]).toEqual(['ai-center'])
+  })
+
+  test('无 handoff 直达时顶部仅返回入口、不显示流程上下文标识', async () => {
+    const wrapper = mount(ImageAnalysisView)
+    await flushPromises()
+
+    expect(wrapper.find('.page-back-context').exists()).toBe(false)
+    expect(wrapper.find('.platform-locked-chip').exists()).toBe(false)
   })
 })
 

@@ -1,5 +1,14 @@
 <template>
   <div class="image-analysis gl-field">
+    <nav class="page-back" aria-label="创作流程导航">
+      <button class="btn-back" type="button" @click="emit('open-view', 'ai-center')">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        返回创作中心
+      </button>
+      <span v-if="platformLocked" class="page-back-context">大众点评 · 图文创作</span>
+    </nav>
     <section class="image-shell">
       <article class="control-card gl-zone">
         <header class="section-head">
@@ -64,7 +73,16 @@
           </div>
 
           <div class="settings-row">
-            <div class="platform-toggle" role="tablist" aria-label="评价平台">
+            <!-- 创作中心带入的平台（大众点评图文流）在本页定死：不提供淘宝切换，避免跨平台误生成。 -->
+            <p v-if="platformLocked" class="platform-locked-chip">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="3" y="7.3" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M5.5 7.3V5.5a2.5 2.5 0 015 0v1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+              大众点评（由创作流程带入）
+            </p>
+
+            <div v-else class="platform-toggle" role="tablist" aria-label="评价平台">
               <button
                 type="button"
                 class="platform-btn"
@@ -501,7 +519,7 @@
         <section v-else class="empty-card gl-zone">
           <p class="section-kicker">等待生成</p>
           <h2 class="empty-title">上传图片后，这里会显示评价结果</h2>
-          <p class="empty-copy">生成完成后可直接复制标题、正文和标签，用于淘宝或大众点评发布。</p>
+          <p class="empty-copy">{{ platformLocked ? '生成完成后可直接复制标题、正文和标签，用于大众点评发布。' : '生成完成后可直接复制标题、正文和标签，用于淘宝或大众点评发布。' }}</p>
         </section>
       </section>
     </section>
@@ -571,6 +589,10 @@ import StylePreferencesModal from './components/StylePreferencesModal.vue'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
+}>()
+
+const emit = defineEmits<{
+  'open-view': [view: 'ai-center']
 }>()
 
 // ---------- 飞书凭据内联维护（任务书 #47 S7a / D18②）----------
@@ -698,12 +720,15 @@ const {
 } = useImageAnalysis()
 
 const hydratedCreationRevision = ref<number | null>(null)
+/** 创作中心带入的大众点评图文流：平台定死为大众点评，隐藏淘宝切换。 */
+const platformLocked = ref(false)
 
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'image' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
   reset()
   bindCreationContext(handoff.source.type === 'task', handoff.contextSnapshotId)
+  platformLocked.value = true
   platform.value = 'dianping'
   feelings.value = [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n')
 }, { immediate: true })
@@ -894,6 +919,8 @@ function handleReset(): void {
   sessionVersions.value = []
   selectedVersionId.value = null
   reset()
+  // composable 的 reset 会把平台翻回默认淘宝；锁定流必须翻回大众点评
+  if (platformLocked.value) platform.value = 'dianping'
 }
 
 function cancelAnalysis(): void {
@@ -981,6 +1008,56 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .image-analysis {
   display: grid;
   gap: var(--space-lg);
+}
+
+.page-back {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.btn-back:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.page-back-context {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.platform-locked-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 600;
 }
 
 .image-shell {

@@ -132,6 +132,27 @@ y1-rebuild() {
 
 之后改完代码 `y1-rebuild` 一条命令搞定。
 
+### ⚠️ 命名卷的属主漂移坑（2026-08-26 实录）
+
+`intelligence-service` 挂了命名卷 `intelligence_media_data:/var/lib/grassland-media`，Dockerfile 里对它做过
+`mkdir + chown grassland`（fd7ba5e，2026-08-10）。但**命名卷只在首次创建时从镜像拷贝内容与属主**——卷创建早于
+该 Dockerfile 变更的机器（本机正是），卷里目录的属主停留在旧镜像的 `997:997`，重建镜像/容器**永远不会**修正它。
+
+后果：Spring multipart 落盘目录（`-Djava.io.tmpdir=/var/lib/grassland-media/tmp`）不可写，任何带
+>32KB 图片的请求（`/api/image-analysis/step/draft`、video-recreation 等 multipart 流）一律
+`AccessDeniedException` → **500 Internal Server Error**；且 `FileStorage$TempFileStorage` 缓存了目录解析，
+**chown 之后必须重启容器**才生效。
+
+一次性修复（已在本机执行过，新机若复刻同路径踩坑时再用）：
+
+```bash
+docker exec -u root y-1-intelligence-service-1 chown -R 100:101 /var/lib/grassland-media
+docker restart y-1-intelligence-service-1
+```
+
+判断是否中招：`docker exec y-1-intelligence-service-1 ls -ld /var/lib/grassland-media/tmp` 属主不是
+`grassland grassland` 即中招。全新机器（卷首次从当前镜像初始化）不会遇到。
+
 ## 六、防再堆积的习惯
 
 1. **e2e 跑完随手整删**：`docker compose -p <e2e项目名> down --rmi all -v`。历史垃圾最大来源就是 e2e 每次换项目名（y1-e2e-mtlsfix / final3 / final4 / local...）留下一整套镜像
