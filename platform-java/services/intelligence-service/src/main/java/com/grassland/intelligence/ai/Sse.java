@@ -11,7 +11,7 @@ import reactor.core.publisher.Flux;
  *
  * <p>每帧 {@code data: <payload>\n\n}（冒号后有空格），末尾 {@code data: [DONE]\n\n}。
  * 用 {@link DataBuffer} 手写帧（不用 Spring {@code ServerSentEvent} 自动格式化——后者空格/转义差异会破坏契约）。
- * Flux 取消（客户端断开）由 Reactor 自动传播到上游 {@code QwenClient}（取消上游 HTTP 流）。
+ * Flux 取消（客户端断开）由 Reactor 自动传播到上游 HTTP 流。
  */
 public final class Sse {
 

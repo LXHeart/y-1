@@ -1,8 +1,7 @@
 package com.grassland.intelligence.imageanalysis;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
-import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -25,11 +24,11 @@ public class StylePreferencesService {
     static final int MAX_PREFERENCES = 100;
 
     private final StylePreferencesRepository repo;
-    private final AiCapabilityAdapter ai;
+    private final RoutedTextCompletionService routed;
 
-    public StylePreferencesService(StylePreferencesRepository repo, AiCapabilityAdapter ai) {
+    public StylePreferencesService(StylePreferencesRepository repo, RoutedTextCompletionService routed) {
         this.repo = repo;
-        this.ai = ai;
+        this.routed = routed;
     }
 
     public Mono<List<String>> loadPreferences(String accountId) {
@@ -48,31 +47,32 @@ public class StylePreferencesService {
         return repo.load(accountId).map(ImageAnalysisPrompts::buildStylePreferenceAppendix);
     }
 
-    /** LLM 合并近义规则（不落库），cap 100。镜像 legacy {@code optimizeStylePreferences}。 */
-    public Mono<List<String>> optimizePreferences(List<String> preferences) {
+    /** LLM 合并近义规则（不落库），cap 100。镜像 legacy {@code optimizeStylePreferences}；模型经统一路由。 */
+    public Mono<List<String>> optimizePreferences(String accountId, String organizationId, List<String> preferences) {
         String prompt = ImageAnalysisPrompts.buildStyleOptimizePrompt(preferences);
-        return complete(prompt, "风格偏好优化失败")
+        return complete(accountId, organizationId, prompt, "风格偏好优化失败")
                 .map(StylePreferencesService::parseRules)
                 .map(rules -> cap(rules, MAX_PREFERENCES))
                 .onErrorMap(StylePreferencesService::toOptimizeFailure);
     }
 
     /** 从原/编辑快照总结风格差异→合并入既有偏好→落库。原===编辑→不调 LLM，直接返回既有。 */
-    public Mono<List<String>> saveFromEdits(String accountId, StyleSnapshot original, StyleSnapshot edited) {
+    public Mono<List<String>> saveFromEdits(String accountId, String organizationId,
+            StyleSnapshot original, StyleSnapshot edited) {
         if (sameSnapshot(original, edited)) {
             return repo.load(accountId);
         }
         String prompt = ImageAnalysisPrompts.buildStyleSummaryPrompt(
                 ImageAnalysisPrompts.prettyJson(original), ImageAnalysisPrompts.prettyJson(edited));
-        return complete(prompt, "风格总结失败")
+        return complete(accountId, organizationId, prompt, "风格总结失败")
                 .map(StylePreferencesService::parseRules)
                 .flatMap(newRules -> repo.load(accountId).map(existing -> mergePreserving(existing, newRules)))
                 .flatMap(merged -> repo.save(accountId, cap(merged, MAX_PREFERENCES)));
     }
 
-    private Mono<String> complete(String prompt, String failureMessage) {
-        return ai.completeText(new TextCompletionCommand(
-                List.of(ChatMessage.user(prompt)), failureMessage, STYLE_LLM_TIMEOUT));
+    private Mono<String> complete(String accountId, String organizationId, String prompt, String failureMessage) {
+        return routed.completeFor(accountId, organizationId, List.of(ChatMessage.user(prompt)), 1024,
+                STYLE_LLM_TIMEOUT, failureMessage).map(result -> result.content());
     }
 
     /** 解析 LLM 文本为规则列表（strip 行首 bullet/编号，过滤空行）。镜像 legacy summarize 解析。 */

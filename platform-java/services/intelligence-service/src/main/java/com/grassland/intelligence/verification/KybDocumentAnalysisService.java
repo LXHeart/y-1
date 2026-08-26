@@ -2,10 +2,9 @@ package com.grassland.intelligence.verification;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
@@ -34,7 +33,7 @@ public class KybDocumentAnalysisService {
             "business_license", "legal_person_id_front", "legal_person_id_back");
     private static final String FAILURE_MESSAGE = "KYB 证照识别服务暂不可用";
 
-    private final AiCapabilityAdapter ai;
+    private final RoutedTextCompletionService routed;
     private final MediaReferenceRepository mediaRefs;
     private final ObjectStorageAdapter storage;
     private final ObjectMapper mapper;
@@ -43,13 +42,13 @@ public class KybDocumentAnalysisService {
     private final Duration timeout;
 
     public KybDocumentAnalysisService(
-            AiCapabilityAdapter ai,
+            RoutedTextCompletionService routed,
             MediaReferenceRepository mediaRefs,
             ObjectStorageAdapter storage,
             @Value("${ai.kyb-document.provider:qwen}") String provider,
             @Value("${ai.kyb-document.model:qwen-vl}") String model,
             @Value("${ai.kyb-document.timeout-ms:60000}") long timeoutMs) {
-        this.ai = ai;
+        this.routed = routed;
         this.mediaRefs = mediaRefs;
         this.storage = storage;
         this.mapper = new ObjectMapper();
@@ -65,12 +64,12 @@ public class KybDocumentAnalysisService {
         }
         return evidence(mediaId, organizationId)
                 .flatMap(ref -> readBytes(ref)
-                        .flatMap(bytes -> ai.completeText(new TextCompletionCommand(
+                        .flatMap(bytes -> routed.completePlatformOnly(
                                 List.of(ChatMessage.user(List.of(
                                         ContentPart.image(dataUri(ref.mimeType(), bytes)),
                                         ContentPart.text(prompt(type))))),
-                                FAILURE_MESSAGE,
-                                timeout))))
+                                2048, timeout, FAILURE_MESSAGE))
+                        .map(completion -> completion.content()))
                 .map(content -> normalize(content, type));
     }
 

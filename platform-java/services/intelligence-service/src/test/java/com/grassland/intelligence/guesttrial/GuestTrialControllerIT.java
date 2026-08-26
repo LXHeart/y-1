@@ -36,7 +36,7 @@ class GuestTrialControllerIT extends IntelligenceItSupport {
         when(rateLimiter.check(anyString(), anyString())).thenReturn(Mono.empty());  // 默认放行
         QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(aResponse().withStatus(200)
                 .withHeader("Content-Type", "application/json")
-                .withBody("{\"id\":\"chat-1\",\"choices\":[{\"message\":{\"content\":"
+                .withBody("{\"id\":\"chat-1\",\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5},\"choices\":[{\"message\":{\"content\":"
                         + "\"{\\\"titles\\\":[{\\\"title\\\":\\\"探店必看\\\",\\\"hook\\\":\\\"钩子\\\"}]}\"}}]}")));
     }
 

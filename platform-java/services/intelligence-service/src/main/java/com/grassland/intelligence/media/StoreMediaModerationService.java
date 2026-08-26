@@ -1,6 +1,6 @@
 package com.grassland.intelligence.media;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ContentPart;
 import java.time.Duration;
 import java.time.Instant;
@@ -37,16 +37,17 @@ public class StoreMediaModerationService {
 	private static final Logger log = LoggerFactory.getLogger(StoreMediaModerationService.class);
 	private static final Base64.Encoder BASE64 = Base64.getEncoder();
 	private static final String FRAME_MIME = "image/jpeg";
+	private static final String MODERATION_FAILURE = "媒体审核服务暂不可用";
 
-	private final AiCapabilityAdapter ai;
+	private final RoutedTextCompletionService routed;
 	private final StoreMediaModerationRepository moderation;
 	private final VideoFrameExtractor frameExtractor;
 	private final String provider;
 	private final Duration timeout;
 
-	public StoreMediaModerationService(AiCapabilityAdapter ai, StoreMediaModerationRepository moderation,
+	public StoreMediaModerationService(RoutedTextCompletionService routed, StoreMediaModerationRepository moderation,
 			VideoFrameExtractor frameExtractor, Environment environment) {
-		this.ai = ai;
+		this.routed = routed;
 		this.moderation = moderation;
 		this.frameExtractor = frameExtractor;
 		this.provider = environment.getProperty("ai.store-media-moderation.provider", "qwen");
@@ -96,7 +97,8 @@ public class StoreMediaModerationService {
 		}
 		return moderationParts(ref, bytes).flatMap(parts -> parts.isEmpty()
 				? Mono.<Verdict>empty()
-				: ai.completeMultimodalMeta(parts, timeout).map(meta -> parseVerdict(meta.content(), meta.runId()))
+				: routed.completePlatformOnly(java.util.List.of(com.grassland.intelligence.ai.ChatMessage.user(parts)), 1024, timeout, MODERATION_FAILURE)
+						.map(completion -> parseVerdict(completion.content(), completion.providerRunId()))
 						.onErrorResume(error -> {
 							log.warn("store media moderation unavailable mediaId={}", ref.id(), error);
 							return Mono.empty();

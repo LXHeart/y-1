@@ -138,7 +138,8 @@ public class ImageAnalysisController {
 
 	private Flux<String> draftEvents(ServerWebExchange exchange, ImageReviewInput baseInput,
 			List<UploadedImage> images) {
-		return appendixFor(exchange, baseInput).flatMapMany(in -> analysis.draft(images, in))
+		return appendixFor(exchange, baseInput).flatMapMany(
+				in -> analysis.draft(exchange, images, in))
 				.onErrorResume(e -> Flux.just(errorFrame(e, DRAFT_FALLBACK)));
 	}
 
@@ -151,7 +152,8 @@ public class ImageAnalysisController {
 					binding -> analysis.optimizeTask(body.review(), binding.input(), binding.binding(), exchange))
 					.map(result -> success(resultData(result, false, 0)));
 		}
-		return appendixFor(exchange, body.toInput()).flatMap(in -> analysis.optimize(body.review(), in))
+		return appendixFor(exchange, body.toInput()).flatMap(
+				in -> analysis.optimize(exchange, body.review(), in))
 				.map(result -> success(resultData(result, false, 0)));
 	}
 
@@ -162,7 +164,8 @@ public class ImageAnalysisController {
 					binding -> analysis.styleRefineTask(body.review(), binding.input(), binding.binding(), exchange))
 					.map(result -> success(resultData(result, false, 0)));
 		}
-		return appendixFor(exchange, body.toInput()).flatMap(in -> analysis.styleRefine(body.review(), in))
+		return appendixFor(exchange, body.toInput()).flatMap(
+				in -> analysis.styleRefine(exchange, body.review(), in))
 				.map(result -> success(resultData(result, false, 0)));
 	}
 
@@ -186,14 +189,16 @@ public class ImageAnalysisController {
 	@PostMapping(value = "/style-preferences/optimize", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<Map<String, Object>> optimizeStylePreferences(@RequestBody StyleOptimizeRequest body,
 			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> styles.optimizePreferences(body.preferences()))
+		return callers.resolve(exchange.getRequest()).flatMap(
+				caller -> styles.optimizePreferences(caller.accountId(), caller.organizationId(), body.preferences()))
 				.map(prefs -> success(Map.of("preferences", prefs)));
 	}
 
 	@PostMapping(value = "/save-style-memory", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<Map<String, Object>> saveStyleMemory(@RequestBody StyleSaveRequest body, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> styles.saveFromEdits(caller.accountId(), body.original(), body.edited()))
+				.flatMap(caller -> styles.saveFromEdits(caller.accountId(), caller.organizationId(),
+						body.original(), body.edited()))
 				.map(prefs -> success(Map.of("preferences", prefs, "updatedAt", Instant.now().toString())));
 	}
 

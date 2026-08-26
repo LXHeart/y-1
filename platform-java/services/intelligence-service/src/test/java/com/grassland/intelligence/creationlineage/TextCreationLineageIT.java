@@ -7,7 +7,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ChatChunk;
 import static org.mockito.ArgumentMatchers.anyInt;
 import com.grassland.intelligence.credits.CreditsClient;
@@ -31,8 +31,14 @@ class TextCreationLineageIT extends IntelligenceItSupport {
 
 	private static final String ACCOUNT = "51515151-5151-5151-5151-515151515151";
 
+	/** 路由决策替身：平台解析（provider=qwen），供 streamWith 两步桩使用。 */
+	private static final com.grassland.intelligence.ai.run.RoutedTextCompletionService.Routed ROUTED =
+			new com.grassland.intelligence.ai.run.RoutedTextCompletionService.Routed(
+					com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution.platform(
+							null, "qwen", "http://localhost/v1", "qwen-plus", 1, null), "synthetic-key");
+
 	@MockitoBean
-	private AiCapabilityAdapter ai;
+	private RoutedTextCompletionService ai;
 
 	@MockitoBean
 	private com.grassland.intelligence.ai.run.FrozenTextExecutionService frozenText;
@@ -50,7 +56,9 @@ class TextCreationLineageIT extends IntelligenceItSupport {
 	@Test
 	@DisplayName("文章正文独立模式 → 流式输出后落 kind=article 行（prompt/result 摘要）")
 	void articleIndependentStreamRecordsLineage() {
-		when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk("开头"), new ChatChunk("结尾")));
+		when(ai.resolveFor(any(), any())).thenReturn(Mono.just(ROUTED));
+		when(ai.streamWith(any(), any(), anyInt(), any(), any()))
+				.thenReturn(Flux.just(new ChatChunk("开头"), new ChatChunk("结尾")));
 
 		byte[] body = client().post().uri("/api/article-generation/content")
 				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)

@@ -2,12 +2,12 @@ package com.grassland.intelligence.contentsafety;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ChatChunk;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.credits.CreditsStubs;
 import java.time.Duration;
@@ -29,12 +29,18 @@ import reactor.core.publisher.Mono;
  */
 class ContentSafetyStreamIntegrationIT extends IntelligenceItSupport {
 
+	/** 路由决策替身（平台解析），供 streamWith 两步桩使用。 */
+	private static final com.grassland.intelligence.ai.run.RoutedTextCompletionService.Routed ROUTED =
+			new com.grassland.intelligence.ai.run.RoutedTextCompletionService.Routed(
+					com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution.platform(
+							null, "qwen", "http://localhost/v1", "qwen-plus", 1, null), "synthetic-key");
+
 	private static final String H = "X-Grassland-Identity";
 	/** 各流生成的文本（含三类命中词：极限词/违规承诺/导流）。 */
 	private static final String GENERATED = "这家店的甜品全城最好吃，无效退款，加微信 sweet8888";
 
 	@MockitoBean
-	private AiCapabilityAdapter ai;
+	private RoutedTextCompletionService ai;
 
 	@MockitoBean
 	private com.grassland.intelligence.ai.run.FrozenTextExecutionService frozenText;
@@ -47,10 +53,9 @@ class ContentSafetyStreamIntegrationIT extends IntelligenceItSupport {
 		Mockito.reset(ai, credits, frozenText);
 		CreditsStubs.stubDefaults(credits);
 		db.sql("DELETE FROM platform_model_config WHERE capability = 'content_safety'").then().block();
-		// 流式（chunk）与非流式（聚合）两种 adapter 形态都产出同一文本
-		when(ai.startTextRun(any())).thenReturn(Flux.just(new ChatChunk(GENERATED)));
-		when(ai.completeText(any(TextCompletionCommand.class))).thenReturn(Mono.just(GENERATED));
-		when(ai.completeMultimodal(any(), any(Duration.class))).thenReturn(Mono.just(GENERATED));
+		// 文章正文（免费 SSE）是仅存的直路由流：resolveFor + streamWith 两步桩产出同一文本
+		when(ai.resolveFor(any(), any())).thenReturn(Mono.just(ROUTED));
+		when(ai.streamWith(any(), any(), anyInt(), any(), any())).thenReturn(Flux.just(new ChatChunk(GENERATED)));
 	}
 
 	private String run(String uri, Map<String, Object> body) {
@@ -142,7 +147,8 @@ class ContentSafetyStreamIntegrationIT extends IntelligenceItSupport {
 	void generationErrorNotMaskedBySafety() {
 		// 喜剧等已迁执行环（失败在 SSE 前以 JSON 返回）；error 帧 + [DONE] 契约由仍流式的
 		// 文章正文（免费 SSE）承载断言
-		when(ai.startTextRun(any())).thenReturn(Flux.error(new RuntimeException("upstream down")));
+		when(ai.streamWith(any(), any(), anyInt(), any(), any()))
+				.thenReturn(Flux.error(new RuntimeException("upstream down")));
 		String stream = run("/api/article-generation/content",
 				Map.of("topic", "甜品探店", "title", "测试标题", "outline", "一、开店背景二、产品介绍三、总结", "platform", "xiaohongshu"));
 		assertThat(stream).contains("error");

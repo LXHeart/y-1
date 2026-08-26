@@ -11,8 +11,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
@@ -51,8 +49,6 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
             (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0};
 
     @MockitoBean
-    private AiCapabilityAdapter ai;
-    @MockitoBean
     private CreditsClient credits;
     @MockitoBean
     private FrozenTextExecutionService frozenText;
@@ -62,7 +58,7 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
 
     @BeforeEach
     void resetMocks() {
-        reset(ai, credits, frozenText);
+        reset(credits, frozenText);
         CreditsStubs.stubDefaults(credits);
         db.sql("DELETE FROM creation_context_snapshot").then().block();
     }
@@ -98,7 +94,6 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of("topic", "开业", "style", "lifestyle", "images", List.of(fakeJpeg)))
                 .exchange().expectStatus().isBadRequest();
         verify(credits, never()).consume(any(), any());
-        verify(ai, never()).completeText(any());
     }
 
     @Test
@@ -111,7 +106,6 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request("lifestyle"))
                 .exchange().expectStatus().isEqualTo(402);
-        verify(ai, never()).completeText(any());
     }
 
     @Test
@@ -240,7 +234,6 @@ class MomentsGenerationControllerIT extends IntelligenceItSupport {
         postTask(ACCOUNT, foreign).expectStatus().isForbidden();
         postTask(ACCOUNT, graphic).expectStatus().isEqualTo(409);
         postTask(ACCOUNT, null).expectStatus().isBadRequest();
-        verify(ai, never()).completeText(any());
         verify(frozenText, never()).execute(any(), any(), any(), anyInt(), any(), any());
     }
 

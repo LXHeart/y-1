@@ -3,8 +3,8 @@ package com.grassland.intelligence.imageanalysis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.imageanalysis.ImageAnalysisService.ImageAnalysisResult;
 import com.grassland.intelligence.imageanalysis.ImageAnalysisService.UploadedImage;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -15,12 +15,8 @@ import static org.mockito.Mockito.mock;
 /** 图片评价校验与结果解析的单元测试（镜像 legacy uploadedImageListSchema + normalizeImageAnalysisResult）。 */
 class ImageAnalysisServiceTest {
 
-    private final ImageAnalysisService service = new ImageAnalysisService(new AiCapabilityAdapter() {
-        @Override public reactor.core.publisher.Flux<com.grassland.intelligence.ai.ChatChunk> startTextRun(
-                com.grassland.intelligence.ai.TextRunCommand c) { throw new UnsupportedOperationException(); }
-        @Override public reactor.core.publisher.Mono<String> completeText(
-                com.grassland.intelligence.ai.TextCompletionCommand c) { throw new UnsupportedOperationException(); }
-    }, mock(FrozenTextExecutionService.class));
+    private final ImageAnalysisService service = new ImageAnalysisService(
+            mock(RoutedTextCompletionService.class), mock(FrozenTextExecutionService.class));
 
     // ---------------- validateAndEncode ----------------
 

@@ -59,8 +59,8 @@ public class ArticleImageController {
     public Mono<Map<String, Object>> recommend(
             @RequestBody RecommendationRequest body, ServerWebExchange exchange) {
         return callers.resolve(exchange.getRequest())
-                .flatMap(caller -> images.recommend(new RecommendCommand(
-                        body.content(), body.outline(), body.platform())))
+                .flatMap(caller -> images.recommend(caller.accountId(), caller.organizationId(),
+                        new RecommendCommand(body.content(), body.outline(), body.platform())))
                 .map(ArticleImageController::success);
     }
 

@@ -1,15 +1,13 @@
 package com.grassland.intelligence.videorecreation;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
-import com.grassland.intelligence.ai.run.TextCompletionClient;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
+import com.grassland.intelligence.ai.run.TextCompletionResult;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.creationlineage.CreationGeneration;
 import com.grassland.intelligence.creationlineage.CreationGenerationRecorder;
-import com.grassland.intelligence.security.IntelligenceException;
-import com.grassland.intelligence.settings.AnalysisByokResolver;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,46 +21,38 @@ import reactor.core.publisher.Mono;
  * 视频内容改编 provider 编排。
  *
  * <p>任务模式（{@link #adaptTask}）走 {@link FrozenTextExecutionService} 冻结执行（快照内 AI 配置 + 平台额度）。
- * 独立模式（{@link #adapt}）：优先使用用户 analysis settings 里的 BYOK 配置（features.video，
- * OpenAI 兼容 qwen 系；D-11 BYOK 不扣平台额度），经 {@code TextCompletionClient} BYOK 分支强制
- * HTTPS + 公网 DNS 固定（SSRF/rebinding 防护）；未配置 BYOK 时回落平台级 Qwen
- * （{@code ai.video-recreation.provider} 非 qwen → 400 不支持）。provider=coze 走独立协议，
- * 改编能力不支持（显式 400 引导切换）。
+ * 独立模式（{@link #adapt}）经 {@link RoutedTextCompletionService} 统一路由（2026-08-26 双通道收敛，
+ * 取代旧 {@code AnalysisByokResolver} 读 user_settings {@code features.video} 的老路）：登录用户按
+ * 「模型密钥」开关用自定义模型（BYOK，不扣平台额度）或平台内置模型（管理后台控制面）；匿名回落平台。
+ * BYOK 分支沿用 {@code TextCompletionClient} 的 HTTPS + 全量公网 DNS 钉扎（SSRF/rebinding 防护）。
  */
 @Service
 public class VideoRecreationAdaptationService {
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(180);
-    private static final String UNSUPPORTED = "当前视频分析服务不支持内容改编，请切换到 Qwen 后重试";
     private static final int MAX_COMPLETION_TOKENS = 4096;
 
-    private final AiCapabilityAdapter ai;
     private final VideoRecreationAdaptationResultNormalizer normalizer;
     private final FrozenTextExecutionService frozenText;
-    private final AnalysisByokResolver byok;
-    private final TextCompletionClient textCompletion;
+    private final RoutedTextCompletionService routed;
     private final CreationGenerationRecorder lineage;
     private final Duration timeout;
-    private final String provider;
 
     public VideoRecreationAdaptationService(
-            AiCapabilityAdapter ai, VideoRecreationAdaptationResultNormalizer normalizer,
-            FrozenTextExecutionService frozenText, AnalysisByokResolver byok,
-            TextCompletionClient textCompletion, CreationGenerationRecorder lineage,
+            VideoRecreationAdaptationResultNormalizer normalizer,
+            FrozenTextExecutionService frozenText, RoutedTextCompletionService routed,
+            CreationGenerationRecorder lineage,
             Environment environment) {
-        this.ai = ai;
         this.normalizer = normalizer;
         this.frozenText = frozenText;
-        this.byok = byok;
-        this.textCompletion = textCompletion;
+        this.routed = routed;
         this.lineage = lineage;
-        this.provider = environment.getProperty("ai.video-recreation.provider", "qwen");
         long timeoutMs = environment.getProperty(
                 "ai.video-recreation.timeout-ms", Long.class, DEFAULT_TIMEOUT.toMillis());
         this.timeout = Duration.ofMillis(Math.max(1, Math.min(timeoutMs, 600_000)));
     }
 
-    /** 独立模式改编：用户 BYOK（features.video）优先，未配置回落平台 Qwen。 */
+    /** 独立模式改编：统一路由（BYOK 开关/平台控制面）。 */
     public Mono<Map<String, Object>> adapt(VideoRecreationAdaptationRequest request, String accountId) {
         return adapt(request, accountId, null);
     }
@@ -72,56 +62,12 @@ public class VideoRecreationAdaptationService {
         String prompt = VideoRecreationAdaptationPrompts.build(request);
         List<ContentPart> parts = new ArrayList<>(request.referenceImages());
         parts.add(ContentPart.text(prompt));
-        if (accountId == null || accountId.isBlank()) {
-            return adaptWithPlatform(parts, request, prompt, accountId, organizationId);
-        }
-        return byok.resolve(accountId, "video")
-                .flatMap(config -> {
-                    if (config.provider() != null && !"qwen".equalsIgnoreCase(config.provider())) {
-                        return Mono.error(new IntelligenceException(400, UNSUPPORTED));
-                    }
-                    return config.complete()
-                            ? adaptWithByok(parts, config, request, prompt, accountId, organizationId)
-                            : adaptWithPlatform(parts, request, prompt, accountId, organizationId);
-                })
-                .switchIfEmpty(Mono.defer(() -> adaptWithPlatform(
-                        parts, request, prompt, accountId, organizationId)));
-    }
-
-    private Mono<Map<String, Object>> adaptWithPlatform(
-            List<ContentPart> parts, VideoRecreationAdaptationRequest request, String prompt,
-            String accountId, String organizationId) {
-        if (!"qwen".equalsIgnoreCase(provider)) {
-            return Mono.error(new IntelligenceException(400, UNSUPPORTED));
-        }
-        return ai.completeMultimodalMeta(parts, timeout)
-                .flatMap(meta -> {
-                    Map<String, Object> result = normalizer.normalize(meta.content(), meta.runId());
-                    return record(request, prompt, result, accountId, organizationId,
-                            CreationGeneration.Mode.INDEPENDENT, null, null,
-                            CreationGeneration.Resolution.PLATFORM,
-                            firstNonBlank(meta.provider(), provider), meta.model(), null, meta.runId())
-                            .thenReturn(result);
-                });
-    }
-
-    /** BYOK 改编：OpenAI 兼容多模态调用，D-11 不扣平台额度；baseUrl 执行前强制校验（HTTPS/DNS 固定）。 */
-    private Mono<Map<String, Object>> adaptWithByok(
-            List<ContentPart> parts, AnalysisByokResolver.ByokConfig config,
-            VideoRecreationAdaptationRequest request, String prompt,
-            String accountId, String organizationId) {
-        return textCompletion.completeMessages(
-                        config.baseUrl(), config.bearer(), config.model(),
-                        List.of(ChatMessage.user(parts)), MAX_COMPLETION_TOKENS, true)
-                .flatMap(completion -> {
-                    Map<String, Object> result = normalizer.normalize(completion.content(), null);
-                    return record(request, prompt, result, accountId, organizationId,
-                            CreationGeneration.Mode.INDEPENDENT, null, null,
-                            CreationGeneration.Resolution.BYOK,
-                            config.provider(), config.model(), null, null).thenReturn(result);
-                })
-                .onErrorMap(IllegalArgumentException.class,
-                        error -> new IntelligenceException(400, error.getMessage()));
+        return routed.resolveFor(accountId, organizationId)
+                .flatMap(resolution -> routed
+                        .completeWith(resolution, List.of(ChatMessage.user(parts)), MAX_COMPLETION_TOKENS,
+                                timeout, "视频内容改编失败，请稍后重试")
+                        .map(completion -> recordAdaptation(request, prompt, completion, resolution,
+                                accountId, organizationId)));
     }
 
     public Mono<Map<String, Object>> adaptTask(
@@ -146,6 +92,21 @@ public class VideoRecreationAdaptationService {
                         .thenReturn(trace.value()));
     }
 
+    /** 独立模式落痕：provider/model 取本次路由决策（旧 env 固定值作古）。 */
+    private Map<String, Object> recordAdaptation(VideoRecreationAdaptationRequest request, String prompt,
+            TextCompletionResult completion, RoutedTextCompletionService.Routed resolution,
+            String accountId, String organizationId) {
+        Map<String, Object> result = normalizer.normalize(completion.content(), completion.providerRunId());
+        record(request, prompt, result, accountId, organizationId,
+                CreationGeneration.Mode.INDEPENDENT, null, null,
+                resolution.byok() ? CreationGeneration.Resolution.BYOK : CreationGeneration.Resolution.PLATFORM,
+                resolution.resolution().provider(), resolution.resolution().model(),
+                resolution.resolution().platformModelVersion() == 0 ? null
+                        : resolution.resolution().platformModelVersion(),
+                completion.providerRunId());
+        return result;
+    }
+
     private Mono<CreationGeneration> record(
             VideoRecreationAdaptationRequest request, String prompt, Map<String, Object> result,
             String accountId, String organizationId, CreationGeneration.Mode mode,
@@ -161,9 +122,5 @@ public class VideoRecreationAdaptationService {
                 CreationGeneration.Kind.VIDEO_ADAPTATION, mode, contextSnapshotId, aiRunId,
                 resolution, actualProvider, model, platformModelVersion, upstreamRunId, prompt,
                 input, List.of(), result, List.of(), accountId, organizationId));
-    }
-
-    private static String firstNonBlank(String primary, String fallback) {
-        return primary == null || primary.isBlank() ? fallback : primary;
     }
 }

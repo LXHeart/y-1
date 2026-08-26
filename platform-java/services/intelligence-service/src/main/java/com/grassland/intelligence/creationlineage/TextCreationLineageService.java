@@ -13,9 +13,9 @@ import reactor.core.publisher.Mono;
  * <p>SSE 姿态：内容帧已发出后 lineage 落库失败不能再破坏流——recordAdvisory 吞错告警（区别于
  * videorecreation 非流式路径的强一致 inline 落痕）。游客（无 accountId）不落痕。
  *
- * <p>独立模式文本流走 {@code AiCapabilityAdapter}（平台 QwenClient）直连、无执行环元数据：provider
- * 固定 {@link #INDEPENDENT_PROVIDER}，model 取 {@link PlatformModelConfig}；任务模式经
- * {@code FrozenTextExecutionService.executeTraced} 携带真实 run/provider/model。
+ * <p>独立模式文本流经 {@code RoutedTextCompletionService} 路由：调用方自带 resolution 真实值时
+ * 优先（文章/朋友圈/改编均如此）；个别未携带的引导流回落 {@link #INDEPENDENT_PROVIDER} +
+ * {@link PlatformModelConfig}。任务模式经 {@code FrozenTextExecutionService.executeTraced} 携带真实 run/provider/model。
  */
 @Service
 public class TextCreationLineageService {

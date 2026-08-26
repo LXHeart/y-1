@@ -34,7 +34,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
     @BeforeEach
     void setUp() {
         reset(images, credits);
-        when(images.recommend(any())).thenReturn(Mono.just(new ImageRecommendation(1, List.of(
+        when(images.recommend(any(), any(), any())).thenReturn(Mono.just(new ImageRecommendation(1, List.of(
                 new ImagePlacement("封面", "概念图", "职场 插画", "现代商务插画")))));
         when(images.search(anyString(), anyInt())).thenReturn(Mono.just(List.of(
                 new ImageSearchResult("https://cdn.example/a.jpg", "https://cdn.example/t.jpg",

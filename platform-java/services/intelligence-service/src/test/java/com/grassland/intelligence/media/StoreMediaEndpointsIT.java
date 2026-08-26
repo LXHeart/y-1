@@ -614,7 +614,8 @@ class StoreMediaEndpointsIT {
 						? List.of()
 						: List.of(Map.of("category", "pornographic", "severity", "high", "advice", "画面含违规内容")));
 		Map<String, Object> response = Map.of("id", "chatcmpl-moderation", "choices",
-				List.of(Map.of("message", Map.of("content", mapper.writeValueAsString(content)))));
+				List.of(Map.of("message", Map.of("content", mapper.writeValueAsString(content)))),
+				"usage", Map.of("prompt_tokens", 10, "completion_tokens", 5));
 		QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(aResponse().withStatus(200)
 				.withHeader("Content-Type", "application/json").withBody(mapper.writeValueAsString(response))));
 	}
@@ -622,7 +623,8 @@ class StoreMediaEndpointsIT {
 	/** 桩模型返回任意原始文本（不可解析 → review，人工复核队列入口态）。 */
 	private void stubQwenRawContent(String rawContent) throws Exception {
 		Map<String, Object> response = Map.of("id", "chatcmpl-moderation", "choices",
-				List.of(Map.of("message", Map.of("content", rawContent))));
+				List.of(Map.of("message", Map.of("content", rawContent))),
+				"usage", Map.of("prompt_tokens", 10, "completion_tokens", 5));
 		QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(aResponse().withStatus(200)
 				.withHeader("Content-Type", "application/json").withBody(mapper.writeValueAsString(response))));
 	}

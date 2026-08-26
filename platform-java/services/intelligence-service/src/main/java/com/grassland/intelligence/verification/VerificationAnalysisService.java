@@ -1,9 +1,8 @@
 package com.grassland.intelligence.verification;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
@@ -29,11 +28,11 @@ import reactor.core.scheduler.Schedulers;
  * <p>marketplace 以服务断言调 {@link VerificationController}，传入待核验附件 media id 列表 + 任务上下文。
  * 本服务 intelligence 内部自读附件字节（{@link MediaReferenceRepository#findById} 过滤 purpose=engagement_attachment
  * + active + 未过期 → {@link ObjectStorageAdapter#getObject} → base64 data URI），逐张调
- * {@link AiCapabilityAdapter#completeText} 视觉判断，归一为 per-media tri-state。
+ * 经 {@link RoutedTextCompletionService#completePlatformOnly} 平台内置模型视觉判断，归一为 per-media tri-state。
  *
  * <p>provider guard：仅 Qwen 支持视觉核验（镜像 {@code VideoRecreationAdaptationService}），非 qwen→400。
  * 错误隔离：单张附件的存储/解析/AI 失败（含上游超时）一律降级为该附件 {@code inconclusive}，不拖垮整次核验；
- * 故 {@link com.grassland.intelligence.ai.qwen.QwenClient} 硬编码的「视频内容改编超时」文案不会泄露——
+ * 故路由层透传的上游失败文案不会泄露——
  * 既因本服务自定义 failureMessage（镜像 {@code ImageAnalysisService} 经 completeText 传入），又因所有错误被
  * onErrorResume 吞为 inconclusive。
  *
@@ -53,7 +52,7 @@ public class VerificationAnalysisService {
     private static final String AI_FAILURE_MESSAGE = "履约核验AI判断失败，请稍后重试";
     private static final String SERVICE_ATTACHMENT_PURPOSE = MediaPurpose.ENGAGEMENT_ATTACHMENT.db();
 
-    private final AiCapabilityAdapter ai;
+    private final RoutedTextCompletionService routed;
     private final MediaReferenceRepository mediaRefs;
     private final ObjectStorageAdapter storage;
     private final VerificationResultNormalizer normalizer;
@@ -61,12 +60,12 @@ public class VerificationAnalysisService {
     private final String provider;
 
     public VerificationAnalysisService(
-            AiCapabilityAdapter ai,
+            RoutedTextCompletionService routed,
             MediaReferenceRepository mediaRefs,
             ObjectStorageAdapter storage,
             VerificationResultNormalizer normalizer,
             Environment environment) {
-        this.ai = ai;
+        this.routed = routed;
         this.mediaRefs = mediaRefs;
         this.storage = storage;
         this.normalizer = normalizer;
@@ -127,9 +126,9 @@ public class VerificationAnalysisService {
         List<ContentPart> parts = new ArrayList<>();
         parts.add(ContentPart.image(dataUri));
         parts.add(ContentPart.text(prompt));
-        return ai.completeText(new TextCompletionCommand(
-                List.of(ChatMessage.user(parts)), AI_FAILURE_MESSAGE, timeout))
-                .map(normalizer::normalize)
+        return routed.completePlatformOnly(
+                List.of(ChatMessage.user(parts)), 2048, timeout, AI_FAILURE_MESSAGE)
+                .map(completion -> normalizer.normalize(completion.content()))
                 .map(verdict -> new MediaVerificationResult(mediaId, verdict.status(), verdict.detail()));
     }
 

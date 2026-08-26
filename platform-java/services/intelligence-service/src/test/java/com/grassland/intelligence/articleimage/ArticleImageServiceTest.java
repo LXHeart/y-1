@@ -7,7 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.media.MediaOwner;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
@@ -31,7 +31,7 @@ class ArticleImageServiceTest {
     private static final byte[] PNG = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 1, 2, 3};
 
     @Mock
-    private AiCapabilityAdapter ai;
+    private RoutedTextCompletionService routed;
     @Mock
     private BingImageSearchClient search;
     @Mock
@@ -50,7 +50,7 @@ class ArticleImageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ArticleImageService(ai, search, generation, store, mediaRefs, moderation, 1800);
+        service = new ArticleImageService(routed, search, generation, store, mediaRefs, moderation, 1800);
     }
 
     @Test

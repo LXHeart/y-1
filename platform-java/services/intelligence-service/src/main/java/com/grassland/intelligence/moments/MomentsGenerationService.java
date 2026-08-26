@@ -2,10 +2,8 @@ package com.grassland.intelligence.moments;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.moments.MomentsGenerationService.Caption;
@@ -40,14 +38,12 @@ public class MomentsGenerationService {
     static final int MAX_FILE_BYTES = 5 * 1024 * 1024;
     static final Set<String> ALLOWED_MIME = Set.of("image/jpeg", "image/png", "image/webp");
 
-    private final AiCapabilityAdapter ai;
     private final FrozenTextExecutionService frozenText;
     private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public MomentsGenerationService(AiCapabilityAdapter ai, FrozenTextExecutionService frozenText,
+    public MomentsGenerationService(FrozenTextExecutionService frozenText,
             com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
-        this.ai = ai;
         this.frozenText = frozenText;
         this.lineage = lineage;
     }

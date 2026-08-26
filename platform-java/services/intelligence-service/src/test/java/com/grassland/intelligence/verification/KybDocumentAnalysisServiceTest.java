@@ -3,13 +3,13 @@ package com.grassland.intelligence.verification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
-import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.media.MediaStatus;
@@ -22,18 +22,22 @@ import reactor.core.publisher.Mono;
 
 class KybDocumentAnalysisServiceTest {
 
-    private final AiCapabilityAdapter ai = mock(AiCapabilityAdapter.class);
+    private final RoutedTextCompletionService ai = mock(RoutedTextCompletionService.class);
     private final MediaReferenceRepository refs = mock(MediaReferenceRepository.class);
     private final ObjectStorageAdapter storage = mock(ObjectStorageAdapter.class);
     private final KybDocumentAnalysisService service = new KybDocumentAnalysisService(
             ai, refs, storage, "qwen", "qwen-vl", 5000);
+
+    private static Mono<com.grassland.intelligence.ai.run.TextCompletionResult> completion(String content) {
+        return Mono.just(new com.grassland.intelligence.ai.run.TextCompletionResult(content, 1, 1, null));
+    }
 
     @Test
     void readsOnlyTenantScopedKybEvidence() {
         UUID id = UUID.randomUUID();
         when(refs.findById(id)).thenReturn(Mono.just(reference(id, "org-a", "merchant_kyb", "org-a")));
         when(storage.getObject("kyb/object.png")).thenReturn(new byte[]{1, 2, 3});
-        when(ai.completeText(any(TextCompletionCommand.class))).thenReturn(Mono.just("""
+        when(ai.completePlatformOnly(any(), anyInt(), any(), any())).thenReturn(completion("""
                 {"documentType":"business_license","confidence":0.96,
                  "fields":{"companyName":"草场科技有限公司"}}
                 """));
@@ -54,7 +58,7 @@ class KybDocumentAnalysisServiceTest {
                 .isInstanceOf(IntelligenceException.class)
                 .satisfies(error -> assertThat(((IntelligenceException) error).status()).isEqualTo(404));
         verify(storage, never()).getObject(any());
-        verify(ai, never()).completeText(any());
+        verify(ai, never()).completePlatformOnly(any(), anyInt(), any(), any());
     }
 
     @Test

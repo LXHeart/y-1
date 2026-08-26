@@ -8,7 +8,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
 
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
-import com.grassland.intelligence.ai.qwen.QwenClient;
 import com.grassland.intelligence.ai.run.TextCompletionClient;
 import java.time.Duration;
 import java.util.Set;
@@ -103,18 +102,4 @@ class PinnedPlatformClientsTest {
 		assertThat(body).isEqualTo("pong");
 	}
 
-	@Test
-	@DisplayName("QwenClient（平台路径）：经钉扎地址完成文本调用")
-	void qwenClientPlatformPathIsPinned() {
-		MockEnvironment env = new MockEnvironment().withProperty("ai.qwen.base-url", pinnedBaseUrl + "/v1")
-				.withProperty("ai.qwen.api-key", "sk-test-platform-key-123456")
-				.withProperty("ai.qwen.model", "qwen-plus");
-		QwenClient client = new QwenClient(new com.grassland.intelligence.ai.PlatformModelConfig(env), resolver);
-
-		String content = client.completeText(new com.grassland.intelligence.ai.TextCompletionCommand(
-				java.util.List.of(com.grassland.intelligence.ai.ChatMessage.user("hi")), "失败", Duration.ofSeconds(5)))
-				.block(Duration.ofSeconds(10));
-
-		assertThat(content).isEqualTo("ok");
-	}
 }

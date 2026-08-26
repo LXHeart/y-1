@@ -22,6 +22,7 @@
 
     <!-- 四个能力开关 + 计费主体常驻显示（D11 / D21）。用户能一眼看出谁在付钱 -->
     <div v-else class="switch-band">
+      <p class="switch-band-note">「自定义模型」用你在下方登记的密钥（不扣积分）；「平台内置模型」用管理后台统一配置的模型。</p>
       <p v-if="preferenceError" class="error-state compact" role="alert">{{ preferenceError }}</p>
       <article v-for="row in capabilityRows" :key="row.capability" class="switch-row">
         <div class="switch-main">
@@ -37,7 +38,7 @@
             :disabled="preferenceSaving === row.capability || !preferencesLoaded"
             @change="onToggle(row)"
           />
-          <span>{{ row.useOwnKey ? '用我的模型' : '用系统默认' }}</span>
+          <span>{{ row.useOwnKey ? '使用自定义模型' : '使用平台内置模型' }}</span>
         </label>
       </article>
     </div>
@@ -188,7 +189,7 @@ async function loadPreferences(): Promise<void> {
 async function onToggle(row: { capability: AiProviderCapability; useOwnKey: boolean; version: number }): Promise<void> {
   const next = !row.useOwnKey
   if (!next && !window.confirm(
-    `关闭后「${capabilityLabel(row.capability)}」将使用平台默认模型，并按积分计费。确认关闭？`)) {
+    `关闭后「${capabilityLabel(row.capability)}」将使用平台内置模型（管理后台统一配置），并按积分计费。确认关闭？`)) {
     // 用户取消：重载以把 DOM 上已翻转的 checkbox 拉回真实状态
     await loadPreferences()
     return
@@ -216,9 +217,9 @@ async function onToggle(row: { capability: AiProviderCapability; useOwnKey: bool
 
 function billingLabel(subject: AiBillingSubject): string {
   return {
-    'own-key': '我的模型 · 不扣积分',
+    'own-key': '自定义模型 · 不扣积分',
     organization: '组织模型 · 不扣积分',
-    platform: '平台默认 · 扣积分',
+    platform: '平台内置 · 按积分计费',
   }[subject]
 }
 
@@ -314,6 +315,7 @@ function capabilityLabel(value: AiProviderCapability): string {
 .merchant-notice { margin: 0; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--color-text-secondary); font-size: .84rem; }
 .switch-band { display: grid; gap: 1px; background: var(--color-border); border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .switch-band .error-state.compact { background: var(--color-surface); padding: 11px 14px; }
+.switch-band-note { grid-column: 1 / -1; margin: 0; padding: 11px 14px; background: var(--color-surface); color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--color-surface); }
 .switch-main { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; min-width: 0; }
 .switch-main strong { color: var(--color-text); font-size: .88rem; }

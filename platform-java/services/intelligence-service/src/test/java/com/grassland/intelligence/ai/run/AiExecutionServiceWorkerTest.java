@@ -12,7 +12,6 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.ai.byok.ByokRoutingService;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.creationcontext.FrozenAiConfigResolver;
@@ -57,7 +56,7 @@ class AiExecutionServiceWorkerTest {
 	@Mock
 	CreditsClient credits;
 	@Mock
-	ObjectProvider<EnvelopeEncryption> encryptionProvider;
+	ProviderKeyDecryptor keyDecryptor;
 	@Mock
 	OutboxRepository outbox;
 	@Mock
@@ -72,20 +71,18 @@ class AiExecutionServiceWorkerTest {
 	CreditsCentsPolicyProperties creditsCentsPolicy;
 	@Mock
 	CreditUsageSettlementRepository usageSettlements;
-	/** 任务书 #47 S2：env bootstrap 兜底密钥源，平台 run 的 bearer 解析要用。 */
-	@Mock
-	com.grassland.intelligence.ai.PlatformModelConfig platformDefaults;
 	@InjectMocks
 	AiExecutionService execution;
 
 	/**
-	 * 平台 run 会走 {@code decryptIfNeeded} 的 env 兜底分支（凭据未配密钥），需要 bootstrap key 就位；
-	 * 否则按 D8 抛 503。用 lenient 是因为部分用例（如 denied 分支）根本走不到这里。
+	 * 平台 run 的 bearer 解析在 {@code ProviderKeyDecryptor}（凭据无密钥 → env bootstrap 兜底）。
+	 * 统一 stub 为「无密文 → bootstrap key」；lenient 因为部分用例（如 denied 分支）走不到解密。
 	 */
 	@org.junit.jupiter.api.BeforeEach
 	void stubBootstrapKey() {
-		org.mockito.Mockito.lenient().when(platformDefaults.hasBootstrapKey()).thenReturn(true);
-		org.mockito.Mockito.lenient().when(platformDefaults.apiKey()).thenReturn("sk-synthetic-bootstrap-key");
+		org.mockito.Mockito.lenient().when(keyDecryptor.decryptIfNeeded(org.mockito.ArgumentMatchers.argThat(
+				res -> res != null && !res.needsKeyDecryption())))
+				.thenReturn("sk-synthetic-bootstrap-key");
 	}
 
 	@Test
@@ -182,9 +179,9 @@ class AiExecutionServiceWorkerTest {
 		passthroughTransactions();
 		ProviderResolution provider = ProviderResolution.byok("openai-compatible", "https://api.example.invalid",
 				"embed-v1", "ciphertext", "v1");
-		EnvelopeEncryption encryption = mock(EnvelopeEncryption.class);
-		when(encryptionProvider.getIfAvailable()).thenReturn(encryption);
-		when(encryption.decrypt("ciphertext")).thenReturn("decrypted-key");
+		when(keyDecryptor.decryptIfNeeded(org.mockito.ArgumentMatchers.argThat(
+				res -> res != null && res.needsKeyDecryption())))
+				.thenReturn("decrypted-key");
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
 		when(budgetService.checkAndReserve("org-1", "retrieval", "openai-compatible", 40, 0))
 				.thenReturn(Mono.just(ModelBudgetService.BudgetCheckResult.allowed(null, null, 40, 0)));

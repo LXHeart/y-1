@@ -144,9 +144,9 @@ describe('AiProviderKeysPanel', () => {
     const rows = wrapper.findAll('.switch-row')
     expect(rows).toHaveLength(4)
     // text 配了密钥且开关 on → 我的模型
-    expect(rows[0].text()).toContain('我的模型 · 不扣积分')
+    expect(rows[0].text()).toContain('自定义模型 · 不扣积分')
     // image 开关 on 但没配密钥 → 仍是平台，否则用户会以为自己在付费
-    expect(rows[1].text()).toContain('平台默认 · 扣积分')
+    expect(rows[1].text()).toContain('平台内置 · 按积分计费')
   })
 
   test('disabling a switch asks for confirmation and states the billing change', async () => {
@@ -173,7 +173,7 @@ describe('AiProviderKeysPanel', () => {
     expect(String(confirmMock.mock.calls[0][0])).toContain('按积分计费')
     const putCall = fetchMock.mock.calls.find((call) => call[0] === '/api/ai/preferences/text')
     expect(JSON.parse(String(putCall![1]!.body))).toEqual({ useOwnKey: false, expectedVersion: 0 })
-    expect(wrapper.findAll('.switch-row')[0].text()).toContain('用系统默认')
+    expect(wrapper.findAll('.switch-row')[0].text()).toContain('使用平台内置模型')
   })
 
   test('cancelling the confirmation leaves the switch untouched', async () => {
@@ -187,7 +187,7 @@ describe('AiProviderKeysPanel', () => {
     await flushPromises()
 
     expect(fetchMock.mock.calls.some((call) => call[0] === '/api/ai/preferences/text')).toBe(false)
-    expect(wrapper.findAll('.switch-row')[0].text()).toContain('用我的模型')
+    expect(wrapper.findAll('.switch-row')[0].text()).toContain('使用自定义模型')
   })
 
   /**
@@ -234,6 +234,6 @@ describe('AiProviderKeysPanel', () => {
     await flushPromises()
 
     expect(confirmMock).not.toHaveBeenCalled()
-    expect(wrapper.findAll('.switch-row')[0].text()).toContain('用我的模型')
+    expect(wrapper.findAll('.switch-row')[0].text()).toContain('使用自定义模型')
   })
 })

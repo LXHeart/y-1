@@ -9,10 +9,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.credits.CreditsClient;

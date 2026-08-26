@@ -2,10 +2,9 @@ package com.grassland.intelligence.article;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.Sse;
-import com.grassland.intelligence.ai.TextRunCommand;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.article.ArticlePrompts.Platform;
 import com.grassland.intelligence.credits.CreditFeature;
@@ -43,18 +42,18 @@ public class ArticleController {
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 
 	private final IntelligenceCallerResolver callers;
-	private final AiCapabilityAdapter ai;
+	private final RoutedTextCompletionService routed;
 	private final FrozenTextExecutionService frozenText;
 	private final ArticleCreationContext creationContexts;
 	private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
 	private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
 
-	public ArticleController(IntelligenceCallerResolver callers, AiCapabilityAdapter ai,
+	public ArticleController(IntelligenceCallerResolver callers, RoutedTextCompletionService routed,
 			FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts,
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
 			com.grassland.intelligence.creationlineage.TextCreationLineageService lineage) {
 		this.callers = callers;
-		this.ai = ai;
+		this.routed = routed;
 		this.frozenText = frozenText;
 		this.creationContexts = creationContexts;
 		this.safety = safety;
@@ -103,14 +102,16 @@ public class ArticleController {
 							ArticlePrompts.outlineUser(body.topic(), body.title())),
 					2048, "大纲生成失败", false);
 		}
-		return callers.resolve(exchange.getRequest()).map(caller -> {
-			Flux<String> payloads = ai
-					.startTextRun(new TextRunCommand(List.of(ArticlePrompts.outlineSystem(platform),
-							ArticlePrompts.outlineUser(body.topic(), body.title()))))
-					.map(chunk -> frame(Map.of("content", chunk.content())))
-					.onErrorResume(e -> Flux.just(frame(Map.of("error", "大纲生成失败"))));
-			return sseEntity(payloads, exchange);
-		});
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> routed
+				.resolveFor(caller.accountId(), caller.organizationId())
+				.map(resolution -> {
+					Flux<String> payloads = routed
+							.streamWith(resolution, List.of(ArticlePrompts.outlineSystem(platform),
+									ArticlePrompts.outlineUser(body.topic(), body.title())), 2048, null, "大纲生成失败")
+							.map(chunk -> frame(Map.of("content", chunk.content())))
+							.onErrorResume(e -> Flux.just(frame(Map.of("error", "大纲生成失败"))));
+					return sseEntity(payloads, exchange);
+				}));
 	}
 
 	// ---------- content：免费 SSE ----------
@@ -122,13 +123,15 @@ public class ArticleController {
 		if (body.isTaskMode()) {
 			return contentTaskStream(exchange, body);
 		}
-		return callers.resolve(exchange.getRequest()).map(caller -> {
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> routed
+				.resolveFor(caller.accountId(), caller.organizationId())
+				.map(resolution -> {
 			StringBuilder accumulated = new StringBuilder();
 			java.util.function.Function<String, String> textOf = com.grassland.intelligence.contentsafety.ContentSafetyService
 					.contentFieldExtractor();
-			Flux<String> payloads = ai
-					.startTextRun(new TextRunCommand(List.of(ArticlePrompts.contentSystem(platform),
-							ArticlePrompts.contentUser(body.topic(), body.title(), body.outline()))))
+			Flux<String> payloads = routed
+					.streamWith(resolution, List.of(ArticlePrompts.contentSystem(platform),
+							ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())), 2048, null, "正文生成失败")
 					.map(chunk -> frame(Map.of("content", chunk.content()))).doOnNext(item -> {
 						String text = textOf.apply(item);
 						if (text != null) {
@@ -151,7 +154,7 @@ public class ArticleController {
 			return sseEntity(safety.appendSafetyFrame(exchange, payloads,
 					com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
 					body.platform(), null, null), exchange);
-		});
+		}));
 	}
 
 	// ---------- helpers ----------

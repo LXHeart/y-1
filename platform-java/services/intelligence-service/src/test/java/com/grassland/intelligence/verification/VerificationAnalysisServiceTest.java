@@ -7,7 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.storage.ObjectStorageAdapter;
@@ -31,7 +31,7 @@ class VerificationAnalysisServiceTest {
         when(env.getProperty(eq("ai.verification.timeout-ms"), eq(Long.class), anyLong())).thenReturn(60000L);
 
         VerificationAnalysisService service = new VerificationAnalysisService(
-                mock(AiCapabilityAdapter.class),
+                mock(RoutedTextCompletionService.class),
                 mock(MediaReferenceRepository.class),
                 mock(ObjectStorageAdapter.class),
                 new VerificationResultNormalizer(),

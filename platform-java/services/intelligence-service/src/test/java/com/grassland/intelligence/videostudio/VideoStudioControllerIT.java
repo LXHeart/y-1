@@ -12,7 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.ai.run.TextCompletionResult;
 import com.grassland.intelligence.credits.CreditCharge;
@@ -49,7 +49,7 @@ class VideoStudioControllerIT extends IntelligenceItSupport {
 	private CreditsClient credits;
 
 	@MockitoBean
-	private AiCapabilityAdapter ai;
+	private RoutedTextCompletionService ai;
 
 	@MockitoBean
 	private FrozenTextExecutionService frozenText;

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -42,6 +43,10 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
     /** BYOK 改编执行客户端打桩（真 pinned HTTPS 链路由 TextCompletionClient 自测覆盖）。 */
     @MockitoBean
     private TextCompletionClient textCompletion;
+    @MockitoBean
+    private com.grassland.intelligence.ai.byok.ByokRoutingService byokRouting;
+    @MockitoBean
+    private com.grassland.intelligence.ai.run.ProviderKeyDecryptor keyDecryptor;
 
     @BeforeEach
     void setUp() {
@@ -222,9 +227,10 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("adapt-content returns envelope and never forwards proxyVideoUrl to Qwen")
+    @DisplayName("adapt-content 平台路径：经统一路由调平台模型，proxyVideoUrl 不进上游消息")
     void adaptContentReturnsEnvelope() {
-        stubQwenAdapt();
+        stubPlatformRouting("https://platform.example.com/v1", "qwen-plus", "sk-platform");
+        stubTextCompletion("https://platform.example.com/v1", "sk-platform", "qwen-plus", false, "改编摘要");
         client().post().uri("/api/video-recreation/adapt-content")
                 .header("X-Grassland-Identity", signed())
                 .contentType(MediaType.APPLICATION_JSON)
@@ -233,11 +239,13 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .jsonPath("$.success").isEqualTo(true)
                 .jsonPath("$.data.adaptedSummary").isEqualTo("改编摘要");
 
-        // proxyVideoUrl 绝不能进入上游请求体。
-        List<com.github.tomakehurst.wiremock.stubbing.ServeEvent> events = QWEN.getAllServeEvents();
-        assertThat(events).hasSizeGreaterThan(0);
-        assertThat(events.get(events.size() - 1).getRequest().getBodyAsString())
-                .doesNotContain("secret-proxy-token");
+        // proxyVideoUrl 绝不能进入上游消息体（多模态 parts 序列化后断言）。
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<ChatMessage>> msgsCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(textCompletion).completeMessages(eq("https://platform.example.com/v1"), eq("sk-platform"),
+                eq("qwen-plus"), msgsCaptor.capture(), eq(4096), eq(false), any());
+        String serialized = msgsCaptor.getValue().toString();
+        assertThat(serialized).doesNotContain("secret-proxy-token");
         verify(credits, never()).consume(any(), any());
     }
 
@@ -252,17 +260,16 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("adapt-content 优先使用用户 BYOK（features.video），不触达平台 Qwen、不扣积分")
+    @DisplayName("adapt-content 优先使用用户 BYOK（模型密钥开关 on），不触达平台模型、不扣积分")
     void adaptContentPrefersUserByok() {
         String accountId = UUID.randomUUID().toString();
-        seedAnalysisByok(accountId, "qwen", "https://byok.example.com/v1", "byok-key", "byok-model");
-        when(textCompletion.completeMessages(
-                eq("https://byok.example.com/v1"), eq("byok-key"), eq("byok-model"),
-                any(), eq(4096), eq(true)))
-                .thenReturn(Mono.just(new TextCompletionResult(
-                        "{\"adapted_summary\":\"BYOK改编摘要\",\"adapted_script\":[],"
-                                + "\"character_sheets\":[],\"scene_cards\":[],\"prop_cards\":[]}",
-                        10, 5)));
+        com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution byok =
+                com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution.byok(
+                        "openai-compatible", "https://byok.example.com/v1", "byok-model", "cipher", "kv-1");
+        when(byokRouting.resolveProvider(isNull(), eq(accountId), eq("text"), eq(true)))
+                .thenReturn(Mono.just(byok));
+        when(keyDecryptor.decryptIfNeeded(byok)).thenReturn("byok-key");
+        stubTextCompletion("https://byok.example.com/v1", "byok-key", "byok-model", true, "BYOK改编摘要");
 
         client().post().uri("/api/video-recreation/adapt-content")
                 .header("X-Grassland-Identity", sign(accountId, "recommender"))
@@ -274,85 +281,52 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
         verify(textCompletion).completeMessages(
                 eq("https://byok.example.com/v1"), eq("byok-key"), eq("byok-model"),
                 argThat(messages -> messages.stream().allMatch(ChatMessage::multimodal)),
-                eq(4096), eq(true));
+                eq(4096), eq(true), any());
         verify(credits, never()).consume(any(), any());
     }
 
     @Test
-    @DisplayName("adapt-content BYOK 未配齐时回落平台 Qwen，BYOK 客户端不参与")
+    @DisplayName("adapt-content BYOK 未命中（无密钥/开关 off）→ 平台内置模型兜底")
     void adaptContentFallsBackToPlatformWithoutByok() {
-        stubQwenAdapt();
         String accountId = UUID.randomUUID().toString();
-        // 无 analysis 行 → 空配置 → 平台路径。
+        when(byokRouting.resolveProvider(isNull(), eq(accountId), eq("text"), eq(true)))
+                .thenReturn(Mono.just(com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution
+                        .platform(null, "qwen", "https://platform.example.com/v1", "qwen-plus", 1, null)));
+        when(keyDecryptor.decryptIfNeeded(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("sk-platform");
+        stubTextCompletion("https://platform.example.com/v1", "sk-platform", "qwen-plus", false, "平台改编摘要");
+
         client().post().uri("/api/video-recreation/adapt-content")
                 .header("X-Grassland-Identity", sign(accountId, "recommender"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(adaptBody("脚本内容"))
-                .exchange().expectStatus().isOk();
-        verify(textCompletion, never()).completeMessages(any(), any(), any(), any(), anyInt(), anyBoolean());
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.adaptedSummary").isEqualTo("平台改编摘要");
 
-        // 配置了 provider=coze（独立协议，改编不支持）→ 400 引导切换，不回落。
-        seedAnalysisByok(accountId, "coze", "https://byok.example.com/v1", "byok-key", null);
-        client().post().uri("/api/video-recreation/adapt-content")
-                .header("X-Grassland-Identity", sign(accountId, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(adaptBody("脚本内容"))
-                .exchange().expectStatus().isBadRequest();
+        // 平台兜底同样经 TextCompletionClient（byok=false），不再有 env 直连旁路。
+        verify(textCompletion).completeMessages(
+                eq("https://platform.example.com/v1"), eq("sk-platform"), eq("qwen-plus"),
+                any(), eq(4096), eq(false), any());
     }
 
-    private void seedAnalysisByok(
-            String accountId, String provider, String baseUrl, String apiKey, String model) {
-        db.sql("""
-                INSERT INTO app_users (id, email, password_hash)
-                VALUES (CAST(:uid AS uuid), :email, 'test-hash')
-                ON CONFLICT (id) DO NOTHING
-                """)
-                .bind("uid", UUID.fromString(accountId))
-                .bind("email", accountId + "@test.local")
-                .then().block();
-        Map<String, Object> video = new LinkedHashMap<>();
-        video.put("provider", provider);
-        video.put("baseUrl", baseUrl);
-        if (apiKey != null) {
-            video.put("apiKey", apiKey);
-        }
-        if (model != null) {
-            video.put("model", model);
-        }
-        Map<String, Object> settings = Map.of("features", Map.of("video", video));
-        try {
-            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(settings);
-            db.sql("""
-                    INSERT INTO user_settings (id, user_id, settings_type, settings_json)
-                    VALUES (:id, CAST(:uid AS uuid), 'analysis', CAST(:json AS jsonb))
-                    ON CONFLICT (user_id, settings_type)
-                        DO UPDATE SET settings_json = excluded.settings_json
-                    """)
-                    .bind("id", UUID.randomUUID())
-                    .bind("uid", UUID.fromString(accountId))
-                    .bind("json", json)
-                    .then().block();
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
+    /** 平台路由桩：resolveProvider → 平台解析 + 解密 bearer。 */
+    private void stubPlatformRouting(String baseUrl, String model, String bearer) {
+        com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution platform =
+                com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution.platform(
+                        null, "qwen", baseUrl, model, 1, null);
+        when(byokRouting.resolveProvider(any(), any(), eq("text"), anyBoolean()))
+                .thenReturn(Mono.just(platform));
+        when(keyDecryptor.decryptIfNeeded(platform)).thenReturn(bearer);
     }
 
-    private void stubQwenAdapt() {
-        String adaptation = "{\"adapted_summary\":\"改编摘要\",\"adapted_script\":[],"
-                + "\"character_sheets\":[],\"scene_cards\":[],\"prop_cards\":[]}";
-        Map<String, Object> response = Map.of("choices",
-                List.of(Map.of("message", Map.of("content", adaptation))));
-        String body;
-        try {
-            body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(response);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
-        QWEN.stubFor(com.github.tomakehurst.wiremock.client.WireMock.post(
-                com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo("/chat/completions"))
-                .willReturn(com.github.tomakehurst.wiremock.client.WireMock.ok()
-                        .withHeader("Content-Type", "application/json")
-                        .withBody(body)));
+    /** TextCompletionClient 桩：返回标准改编 JSON（usage 齐备）。 */
+    private void stubTextCompletion(String baseUrl, String bearer, String model, boolean byok, String summary) {
+        when(textCompletion.completeMessages(eq(baseUrl), eq(bearer), eq(model),
+                any(), eq(4096), eq(byok), any()))
+                .thenReturn(Mono.just(new TextCompletionResult(
+                        "{\"adapted_summary\":\"" + summary + "\",\"adapted_script\":[],"
+                                + "\"character_sheets\":[],\"scene_cards\":[],\"prop_cards\":[]}",
+                        10, 5)));
     }
 
     private Map<String, Object> adaptBody(String script) {

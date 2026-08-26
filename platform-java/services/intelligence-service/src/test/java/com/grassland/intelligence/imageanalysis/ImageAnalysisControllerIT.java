@@ -2,16 +2,16 @@ package com.grassland.intelligence.imageanalysis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.credits.CreditsStubs;
@@ -38,7 +38,13 @@ import reactor.core.publisher.Mono;
 class ImageAnalysisControllerIT extends IntelligenceItSupport {
 
 	@MockitoBean
-	protected AiCapabilityAdapter ai;
+	protected RoutedTextCompletionService ai;
+
+	/** routed 桩通用产物：内容 + 最小 usage（TextCompletionResult 解析要求 usage 存在）。 */
+	private static Mono<com.grassland.intelligence.ai.run.TextCompletionResult> completion(String content) {
+		return Mono.just(new com.grassland.intelligence.ai.run.TextCompletionResult(content, 1, 1, null));
+	}
+
 	@MockitoBean
 	protected CreditsClient credits;
 
@@ -48,7 +54,8 @@ class ImageAnalysisControllerIT extends IntelligenceItSupport {
 	void resetMocks() {
 		Mockito.reset(ai, credits);
 		CreditsStubs.stubDefaults(credits);
-		when(ai.completeText(any())).thenReturn(Mono.just(JSON_RESULT));
+		when(ai.complete(any(), any(), anyInt(), any(), any())).thenReturn(completion(JSON_RESULT));
+		when(ai.completeFor(any(), any(), any(), anyInt(), any(), any())).thenReturn(completion(JSON_RESULT));
 		db.sql("DELETE FROM intelligence_outbox").then().block();
 		db.sql("DELETE FROM ai_credit_compensation").then().block();
 		db.sql("DELETE FROM ai_run").then().block();
@@ -219,12 +226,13 @@ class ImageAnalysisControllerIT extends IntelligenceItSupport {
 
 	@Test
 	void stylePreferencesOptimizeCallsLlm() {
-		when(ai.completeText(any())).thenReturn(Mono.just("偏好短句\n偏好短句\n口语化"));
+		when(ai.completeFor(any(), any(), any(), anyInt(), any(), any()))
+				.thenReturn(completion("偏好短句\n偏好短句\n口语化"));
 		client().post().uri("/api/image-analysis/style-preferences/optimize")
 				.header(header(), sign("user-opt-pref", null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("preferences", List.of("偏好短句", "偏好短的句子"))).exchange().expectStatus().isOk()
 				.expectBody().jsonPath("$.data.preferences.length()").isEqualTo(3);
-		verify(ai).completeText(any());
+		verify(ai).completeFor(any(), any(), any(), anyInt(), any(), any());
 	}
 
 	@Test
@@ -233,7 +241,7 @@ class ImageAnalysisControllerIT extends IntelligenceItSupport {
 		client().post().uri("/api/image-analysis/save-style-memory").header(header(), sign("user-mem", null))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("original", snap, "edited", snap)).exchange()
 				.expectStatus().isOk();
-		verify(ai, never()).completeText(any());
+		verify(ai, never()).completeFor(any(), any(), any(), anyInt(), any(), any());
 	}
 
 	// ---------------- export-feishu ----------------

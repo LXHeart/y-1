@@ -7,10 +7,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
 import com.grassland.intelligence.moments.MomentsGenerationService.Caption;
 import com.grassland.intelligence.moments.MomentsGenerationService.MomentsResult;
 import com.grassland.intelligence.moments.MomentsGenerationService.OrderSuggestion;
@@ -38,8 +36,6 @@ class MomentsGenerationServiceTest {
     private static final byte[] JPEG_MAGIC = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe0, 0, 0};
 
     @Mock
-    private AiCapabilityAdapter ai;
-    @Mock
     private com.grassland.intelligence.ai.run.FrozenTextExecutionService frozenText;
     @Mock
     private com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
@@ -56,7 +52,7 @@ class MomentsGenerationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MomentsGenerationService(ai, frozenText, lineage);
+        service = new MomentsGenerationService(frozenText, lineage);
     }
 
     // ---------------- 素材图校验 ----------------

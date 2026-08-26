@@ -1,8 +1,8 @@
 package com.grassland.intelligence.guesttrial;
 
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
+import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,9 +11,10 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * 游客试用三能力的 provider 调用（R5）。全部走既有 {@link AiCapabilityAdapter}（reactive，无新增阻塞边界），
- * 非流式聚合 + 固定 JSON 解析（试用价值密度优先，流式逐 token 属登录后体验）。
- * prompt 为试用专用裁剪版（{@link GuestTrialPrompts}），不改既有文件。
+ * 游客试用三能力的 provider 调用（R5）。匿名端点 → 经
+ * {@link RoutedTextCompletionService#completePlatformOnly} 固定平台内置模型（管理后台控制面；
+ * 凭据无密钥回落 env bootstrap），非流式聚合 + 固定 JSON 解析（试用价值密度优先，流式逐 token
+ * 属登录后体验）。prompt 为试用专用裁剪版（{@link GuestTrialPrompts}），不改既有文件。
  */
 @Component
 public class GuestTrialService {
@@ -22,10 +23,10 @@ public class GuestTrialService {
     private static final Duration TIMEOUT = Duration.ofSeconds(60);
     private static final String FAILURE = "试用生成失败，请稍后再试";
 
-    private final AiCapabilityAdapter ai;
+    private final RoutedTextCompletionService routed;
 
-    public GuestTrialService(AiCapabilityAdapter ai) {
-        this.ai = ai;
+    public GuestTrialService(RoutedTextCompletionService routed) {
+        this.routed = routed;
     }
 
     /** article-titles：主题 → 5 个候选标题 JSON。 */
@@ -43,15 +44,15 @@ public class GuestTrialService {
         List<ContentPart> parts = new ArrayList<>();
         parts.add(ContentPart.image("data:" + mimeType + ";base64," + imageBase64));
         parts.add(ContentPart.text(GuestTrialPrompts.imageReviewInstruction()));
-        return ai.completeMultimodal(parts, TIMEOUT)
-                .map(GuestTrialService::requireJson)
-                .onErrorMap(this::asProviderError);
+        return routed.completePlatformOnly(List.of(ChatMessage.user(parts)), 1024, TIMEOUT, FAILURE)
+                .map(result -> requireJson(result.content()))
+                .onErrorMap(GuestTrialService::asProviderError);
     }
 
-    private Mono<String> complete(List<com.grassland.intelligence.ai.ChatMessage> messages) {
-        return ai.completeText(new TextCompletionCommand(messages, FAILURE, TIMEOUT))
-                .map(GuestTrialService::requireJson)
-                .onErrorMap(this::asProviderError);
+    private Mono<String> complete(List<ChatMessage> messages) {
+        return routed.completePlatformOnly(messages, 1024, TIMEOUT, FAILURE)
+                .map(result -> requireJson(result.content()))
+                .onErrorMap(GuestTrialService::asProviderError);
     }
 
     /** 试用帧契约：result 载荷必须是 JSON 对象（剥 markdown code fence；非对象 → provider_error）。 */
@@ -70,7 +71,7 @@ public class GuestTrialService {
         return stripped;
     }
 
-    private Throwable asProviderError(Throwable error) {
+    private static Throwable asProviderError(Throwable error) {
         return error instanceof IntelligenceException ? error : new IntelligenceException(502, FAILURE);
     }
 }

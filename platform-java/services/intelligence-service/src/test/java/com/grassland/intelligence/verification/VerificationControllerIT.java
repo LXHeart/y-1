@@ -5,14 +5,14 @@ import static com.grassland.identity.assertion.TestAssertionHelper.registerServi
 import static com.grassland.identity.assertion.TestAssertionHelper.serviceSigner;
 import static com.grassland.identity.assertion.TestAssertionHelper.userSigner;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
-import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
@@ -102,7 +102,12 @@ class VerificationControllerIT {
 	private MediaReferenceRepository mediaRefs;
 
 	@org.springframework.test.context.bean.override.mockito.MockitoBean
-	private AiCapabilityAdapter ai;
+	private RoutedTextCompletionService ai;
+
+	private static Mono<com.grassland.intelligence.ai.run.TextCompletionResult> completion(String content) {
+		return Mono.just(new com.grassland.intelligence.ai.run.TextCompletionResult(content, 1, 1, null));
+	}
+
 
 	@Test
 	@DisplayName("analyze 缺断言 → 401")
@@ -133,8 +138,8 @@ class VerificationControllerIT {
 	void analyzeReturnsPassedForActiveAttachment() {
 		String org = "org-" + UUID.randomUUID();
 		UUID mediaId = createActiveAttachment("acct-" + UUID.randomUUID(), org);
-		when(ai.completeText(any(TextCompletionCommand.class)))
-				.thenReturn(Mono.just("{\"status\":\"passed\",\"detail\":\"真实发布截图\"}"));
+		when(ai.completePlatformOnly(any(), anyInt(), any(), any()))
+				.thenReturn(completion("{\"status\":\"passed\",\"detail\":\"真实发布截图\"}"));
 
 		client().post().uri("/api/verification/analyze").header("X-Grassland-Identity", signService(org))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(analyzeBody(List.of(mediaId.toString()))).exchange()
@@ -150,9 +155,9 @@ class VerificationControllerIT {
 		String org = "org-" + UUID.randomUUID();
 		UUID failed = createActiveAttachment("acct-a-" + UUID.randomUUID(), org);
 		UUID passed = createActiveAttachment("acct-b-" + UUID.randomUUID(), org);
-		when(ai.completeText(any(TextCompletionCommand.class)))
-				.thenReturn(Mono.just("{\"status\":\"failed\",\"detail\":\"造假\"}"))
-				.thenReturn(Mono.just("{\"status\":\"passed\",\"detail\":\"真实\"}"));
+		when(ai.completePlatformOnly(any(), anyInt(), any(), any()))
+				.thenReturn(completion("{\"status\":\"failed\",\"detail\":\"造假\"}"))
+				.thenReturn(completion("{\"status\":\"passed\",\"detail\":\"真实\"}"));
 
 		client().post().uri("/api/verification/analyze").header("X-Grassland-Identity", signService(org))
 				.contentType(MediaType.APPLICATION_JSON)
@@ -168,8 +173,8 @@ class VerificationControllerIT {
 		UUID live = createActiveAttachment("acct-a-" + UUID.randomUUID(), org);
 		UUID missingObject = insertAttachment("acct-b-" + UUID.randomUUID(), org, MediaStatus.ACTIVE,
 				Instant.now().plusSeconds(3600));
-		when(ai.completeText(any(TextCompletionCommand.class)))
-				.thenReturn(Mono.just("{\"status\":\"passed\",\"detail\":\"真实\"}"));
+		when(ai.completePlatformOnly(any(), anyInt(), any(), any()))
+				.thenReturn(completion("{\"status\":\"passed\",\"detail\":\"真实\"}"));
 
 		client().post().uri("/api/verification/analyze").header("X-Grassland-Identity", signService(org))
 				.contentType(MediaType.APPLICATION_JSON)
@@ -196,7 +201,7 @@ class VerificationControllerIT {
 				.jsonPath("$.data.results[0].detail").isEqualTo("附件不可用").jsonPath("$.data.results[1].detail")
 				.isEqualTo("附件不可用").jsonPath("$.data.results[2].detail").isEqualTo("附件不可用");
 
-		verify(ai, never()).completeText(any(TextCompletionCommand.class));
+		verify(ai, never()).completePlatformOnly(any(), anyInt(), any(), any());
 	}
 
 	@Test
@@ -204,7 +209,7 @@ class VerificationControllerIT {
 	void aiFailureBecomesInconclusiveAndHardcodedTextDoesNotLeak() {
 		String org = "org-" + UUID.randomUUID();
 		UUID mediaId = createActiveAttachment("acct-" + UUID.randomUUID(), org);
-		when(ai.completeText(any(TextCompletionCommand.class)))
+		when(ai.completePlatformOnly(any(), anyInt(), any(), any()))
 				.thenReturn(Mono.error(new IntelligenceException(504, "视频内容改编超时，请稍后重试")));
 
 		String body = client().post().uri("/api/verification/analyze").header("X-Grassland-Identity", signService(org))

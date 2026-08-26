@@ -2,10 +2,9 @@ package com.grassland.intelligence.articleimage;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.grassland.intelligence.ai.AiCapabilityAdapter;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
-import com.grassland.intelligence.ai.TextCompletionCommand;
+import com.grassland.intelligence.ai.run.RoutedTextCompletionService;
 import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.media.MediaOwner;
 import com.grassland.intelligence.media.MediaPurpose;
@@ -34,7 +33,7 @@ public class ArticleImageService {
     private static final Duration CHAT_TIMEOUT = Duration.ofSeconds(30);
     private static final String GENERATED_PREFIX = "/api/article-generation/generated-images/";
 
-    private final AiCapabilityAdapter ai;
+    private final RoutedTextCompletionService routed;
     private final BingImageSearchClient search;
     private final ImageGenerationClient generation;
     private final GeneratedImageStore store;
@@ -44,14 +43,14 @@ public class ArticleImageService {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public ArticleImageService(
-            AiCapabilityAdapter ai,
+            RoutedTextCompletionService routed,
             BingImageSearchClient search,
             ImageGenerationClient generation,
             GeneratedImageStore store,
             MediaReferenceRepository mediaRefs,
             com.grassland.intelligence.media.StoreMediaModerationService moderation,
             @Value("${article-images.generated.ttl-seconds:1800}") long generatedTtlSeconds) {
-        this.ai = ai;
+        this.routed = routed;
         this.search = search;
         this.generation = generation;
         this.store = store;
@@ -60,13 +59,12 @@ public class ArticleImageService {
         this.generatedTtl = Duration.ofSeconds(generatedTtlSeconds);
     }
 
-    public Mono<ImageRecommendation> recommend(RecommendCommand command) {
-        TextCompletionCommand completion = new TextCompletionCommand(
-                List.of(ChatMessage.user(ArticleImagePrompts.recommendation(
-                        command.content(), command.outline(), command.platform()))),
-                "配图推荐失败，请稍后重试",
-                CHAT_TIMEOUT);
-        return ai.completeText(completion).map(this::parseRecommendation);
+    public Mono<ImageRecommendation> recommend(String accountId, String organizationId, RecommendCommand command) {
+        return routed.completeFor(accountId, organizationId,
+                        List.of(ChatMessage.user(ArticleImagePrompts.recommendation(
+                                command.content(), command.outline(), command.platform()))),
+                        2048, CHAT_TIMEOUT, "配图推荐失败，请稍后重试")
+                .map(result -> parseRecommendation(result.content()));
     }
 
     public Mono<List<ImageSearchResult>> search(String keywords, int count) {
@@ -85,7 +83,7 @@ public class ArticleImageService {
         Mono<String> prompt = command.images().isEmpty()
                 ? Mono.just(command.prompt())
                 : Flux.fromIterable(command.images())
-                        .concatMap(this::describe)
+                        .concatMap(image -> describe(owner, image))
                         .collectList()
                         .map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
         return prompt.flatMap(value -> generation.generate(value, command.size()))
@@ -96,16 +94,15 @@ public class ArticleImageService {
         return store.find(id);
     }
 
-    private Mono<String> describe(ReferenceImage image) {
+    private Mono<String> describe(MediaOwner owner, ReferenceImage image) {
         String dataUri = "data:" + image.mimeType() + ";base64,"
                 + Base64.getEncoder().encodeToString(image.bytes());
-        TextCompletionCommand command = new TextCompletionCommand(
+        return routed.completeFor(owner.accountId(), owner.organizationId(),
                 List.of(ChatMessage.user(List.of(
                         ContentPart.text(ArticleImagePrompts.referenceDescription()),
                         ContentPart.image(dataUri)))),
-                "参考图分析失败，请稍后重试",
-                CHAT_TIMEOUT);
-        return ai.completeText(command);
+                2048, CHAT_TIMEOUT, "参考图分析失败，请稍后重试")
+                .map(result -> result.content());
     }
 
     private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated, MediaOwner owner, MediaPurpose purpose) {

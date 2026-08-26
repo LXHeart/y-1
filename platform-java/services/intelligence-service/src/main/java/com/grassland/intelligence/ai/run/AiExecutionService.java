@@ -1,6 +1,5 @@
 package com.grassland.intelligence.ai.run;
 
-import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.ai.byok.ByokRoutingService;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.credits.CreditCharge;
@@ -21,7 +20,6 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.web.server.ServerWebExchange;
@@ -56,7 +54,7 @@ public class AiExecutionService {
 	private final PriceTableService priceTableService;
 	private final IntelligenceCallerResolver callers;
 	private final CreditsClient credits;
-	private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
+	private final ProviderKeyDecryptor keyDecryptor;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 	private final CreditCompensationRepository compensationRepository;
@@ -65,23 +63,18 @@ public class AiExecutionService {
 	private final CreditsCentsPolicyProperties creditsCentsPolicy;
 	private final CreditUsageSettlementRepository usageSettlements;
 
-	/** env 平台凭据（任务书 #47 D1/D8）：凭据表未配密钥时的 bootstrap 兜底。 */
-	private final com.grassland.intelligence.ai.PlatformModelConfig platformDefaults;
-
 	public AiExecutionService(ModelBudgetService budgetService, ByokRoutingService routingService,
 			PriceTableService priceTableService, IntelligenceCallerResolver callers, CreditsClient credits,
-			ObjectProvider<EnvelopeEncryption> encryptionProvider, OutboxRepository outbox,
+			ProviderKeyDecryptor keyDecryptor, OutboxRepository outbox,
 			TransactionalOperator transactions, CreditCompensationRepository compensationRepository,
 			CreditCompensationDispatcher compensationDispatcher, FrozenAiConfigResolver frozenAiConfigs,
-			CreditsCentsPolicyProperties creditsCentsPolicy, CreditUsageSettlementRepository usageSettlements,
-			com.grassland.intelligence.ai.PlatformModelConfig platformDefaults) {
-		this.platformDefaults = platformDefaults;
+			CreditsCentsPolicyProperties creditsCentsPolicy, CreditUsageSettlementRepository usageSettlements) {
+		this.keyDecryptor = keyDecryptor;
 		this.budgetService = budgetService;
 		this.routingService = routingService;
 		this.priceTableService = priceTableService;
 		this.callers = callers;
 		this.credits = credits;
-		this.encryptionProvider = encryptionProvider;
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.compensationRepository = compensationRepository;
@@ -472,38 +465,13 @@ public class AiExecutionService {
 	}
 
 	/**
-	 * 解析本次 Run 要用的密钥明文（同步）。任务书 #47 S2 起同时服务 BYOK 与平台凭据。
-	 *
-	 * <p>三条路径：
-	 * <ul>
-	 * <li>有密文（BYOK 或平台凭据）→ 解密；无 KEK 抛 503（fail-closed，绝不退化）。</li>
-	 * <li>平台解析但凭据无密钥 → 回落 env {@code ai.qwen.api-key}（D1/D8 bootstrap 兜底）。兜底集中在
-	 * 这一处，5 个执行点因此不必各自判断 {@code isPlatform()}。</li>
-	 * <li>其余（DENIED 等）→ null。</li>
-	 * </ul>
+	 * 解析本次 Run 要用的密钥明文。语义（BYOK/平台密文解密、env bootstrap 兜底、双缺 503）提炼到
+	 * {@link ProviderKeyDecryptor}，与用户态路由共用——兜底只允许存在一处。
 	 *
 	 * <p>返回的明文只活在 {@code ExecutionContext} 里，不入日志/响应/outbox（TaskContext 刻意不含它）。
 	 */
 	private String decryptIfNeeded(ProviderResolution provider) {
-		if (provider.needsKeyDecryption()) {
-			EnvelopeEncryption crypto = encryptionProvider.getIfAvailable();
-			if (crypto == null) {
-				throw new IntelligenceException(503, provider.isPlatform()
-						? "平台凭据解密不可用：未配置 CRYPTO_KEK_BASE64"
-						: "BYOK 解密不可用：未配置 CRYPTO_KEK_BASE64");
-			}
-			return crypto.decrypt(provider.encryptedKey());
-		}
-		if (!provider.isPlatform()) {
-			return null;
-		}
-		// 平台凭据未配密钥：回落启动期 env 兜底（V46 回填出的行即此状态）。
-		// 两者都没有 → 按 capability 503，不拿空 bearer 去打上游换一个语义模糊的 401（D8）。
-		if (!platformDefaults.hasBootstrapKey()) {
-			throw new IntelligenceException(503,
-					"平台凭据缺失：该能力的凭据未配置密钥，且未提供 ai.qwen.api-key 兜底");
-		}
-		return platformDefaults.apiKey();
+		return keyDecryptor.decryptIfNeeded(provider);
 	}
 
 	/**

@@ -134,6 +134,15 @@ public class ByokRoutingService {
                         .orElseGet(() -> ProviderResolution.denied("no_platform_model")));
     }
 
+    /**
+     * 平台直连解析（不走 BYOK 链）：匿名调用（游客试用、免费匿名流）与治理域固定平台
+     * （{@code RoutedTextCompletionService.completePlatformOnly}）共用——语义与 BYOK 未命中的
+     * 回落完全一致（含 no_platform_model DENIED），只是跳过密钥层查询。
+     */
+    public Mono<ProviderResolution> resolvePlatform(String capability) {
+        return fallbackStage(capability, true);
+    }
+
     private static ProviderResolution toPlatform(ResolvedPlatformModel rpm) {
         // 任务书 #47 S2：平台凭据密文随解析结果下传，执行层按需解密；为 null 则回落 env bootstrap（D1/D8）
         return ProviderResolution.platform(rpm.configId(), rpm.provider(), rpm.baseUrl(), rpm.model(), rpm.version(),
