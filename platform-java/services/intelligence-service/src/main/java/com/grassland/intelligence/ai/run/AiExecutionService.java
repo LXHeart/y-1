@@ -156,7 +156,9 @@ public class AiExecutionService {
 					&& !priceTableService.isZeroPricedModel(provider.model());
 			return reserveCreateAndCharge(provider, organizationId, accountId, capability, feature, allowFallback,
 					budgetOpId, decryptedKey, estimatedInputTokens, estimatedOutputTokens, estimatedTokens,
-					estimatedCents, "sync", "v1", contextSnapshotId, billablePlatformUsage);
+					// 冻结当前 active 的 label，而非硬编码 "v1"——否则调价后 Run 冻结的版本会对不上
+					estimatedCents, "sync", priceTableService.currentVersionLabel(), contextSnapshotId,
+					billablePlatformUsage);
 		}).onErrorResume(InsufficientCreditsException.class,
 				e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
 	}
@@ -244,8 +246,9 @@ public class AiExecutionService {
 			return 0;
 		}
 		try {
-			return priceTableService.calculateCost(provider.model(), estimatedInputTokens, estimatedOutputTokens,
-					estimatedImages, estimatedSeconds);
+			// 估价发生在 Run 起始，按当前 active 版本（null = current）；该版本随后冻结进 ai_run
+			return priceTableService.calculateCost(null, provider.model(), estimatedInputTokens,
+					estimatedOutputTokens, estimatedImages, estimatedSeconds);
 		} catch (IllegalArgumentException error) {
 			logger.error("Refusing unpriced platform model: {}", provider.model());
 			return null;
@@ -328,7 +331,8 @@ public class AiExecutionService {
 			int imagesGenerated, int videoSeconds) {
 
 		int actualCents = ctx.provider().isPlatform()
-				? safeCost(ctx.provider().model(), inputTokens, outputTokens, imagesGenerated, videoSeconds)
+				? safeCost(ctx.priceTableVersion(), ctx.provider().model(), inputTokens, outputTokens,
+						imagesGenerated, videoSeconds)
 				: 0;
 
 		return settleSuccessWithCost(ctx, actualCents, inputTokens, outputTokens, imagesGenerated, videoSeconds);
@@ -502,13 +506,20 @@ public class AiExecutionService {
 		return platformDefaults.apiKey();
 	}
 
-	/** 价目表无该模型时不崩结算（记日志、按 0 计）——价目表覆盖度是已知缺口。 */
-	private int safeCost(String model, Integer inputTokens, Integer outputTokens, int images, int seconds) {
+	/**
+	 * 价目表无该模型时不崩结算（记日志、按 0 计）——价目表覆盖度是已知缺口。
+	 *
+	 * <p>{@code priceTableVersion} 是 Run 起始冻结的版本：结算必须按当时的单价，
+	 * 否则运营在页面调价后，尚未结算的存量 Run 会按新价记账（V52 之前就是这个 bug）。
+	 */
+	private int safeCost(String priceTableVersion, String model, Integer inputTokens, Integer outputTokens,
+			int images, int seconds) {
 		try {
-			return priceTableService.calculateCost(model, inputTokens == null ? 0 : inputTokens,
+			return priceTableService.calculateCost(priceTableVersion, model, inputTokens == null ? 0 : inputTokens,
 					outputTokens == null ? 0 : outputTokens, images, seconds);
 		} catch (IllegalArgumentException e) {
-			logger.warn("No price table entry for model {}; actualCents recorded as 0", model);
+			logger.warn("No price for model {} in price table {}; actualCents recorded as 0",
+					model, priceTableVersion);
 			return 0;
 		}
 	}

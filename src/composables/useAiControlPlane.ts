@@ -12,6 +12,8 @@ import type {
   PlatformProviderCredential,
   UpdateAiProviderKeyInput,
   UpdatePlatformCredentialInput,
+  PriceModelEntry,
+  PriceTableVersion,
   UpdatePlatformModelInput,
   UpstreamModel,
 } from '../types/ai-control-plane'
@@ -155,6 +157,23 @@ export function useAiControlPlane() {
       method: 'PUT', body: jsonBody({ models }),
     })
 
+  const priceTablesPath = '/api/admin/ai/price-tables'
+  const listPriceTables = () => request<PriceTableVersion[]>(priceTablesPath)
+  const getPriceTable = (id: string) =>
+    request<PriceTableVersion>(`${priceTablesPath}/${encodeURIComponent(id)}`)
+  /** 新建 draft；`copyFromVersionId` 用于「复制现有版本再改」这条常规调价路径。 */
+  const createPriceTableDraft = (input: { label: string; note?: string; copyFromVersionId?: string }) =>
+    request<PriceTableVersion>(priceTablesPath, { method: 'POST', body: jsonBody(input) })
+  /** 整份覆盖某 draft 的明细；后端对 active/retired 回 409。 */
+  const replacePriceTableModels = (id: string, models: PriceModelEntry[]) =>
+    request<PriceTableVersion>(`${priceTablesPath}/${encodeURIComponent(id)}/models`,
+      { method: 'PUT', body: jsonBody({ models }) })
+  const activatePriceTable = (id: string) =>
+    request<PriceTableVersion>(`${priceTablesPath}/${encodeURIComponent(id)}/activate`,
+      { method: 'POST' })
+  const deletePriceTableDraft = (id: string) =>
+    request<void>(`${priceTablesPath}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
   /** `includeDisabled=true` 时含已停用的历史版本（治理台开关）。 */
   const listModels = (includeDisabled = false) =>
     request<PlatformModelConfig[]>(
@@ -201,6 +220,12 @@ export function useAiControlPlane() {
     updateCredential,
     rotateCredentialKey,
     disableCredential,
+    listPriceTables,
+    getPriceTable,
+    createPriceTableDraft,
+    replacePriceTableModels,
+    activatePriceTable,
+    deletePriceTableDraft,
     listModels,
     restoreModel,
     deleteModel,

@@ -155,6 +155,36 @@ export interface UpstreamModel {
   ownedBy?: string
 }
 
+export type PriceTableStatus = 'draft' | 'active' | 'retired'
+
+/**
+ * 价目表版本（V52）。单价单位是**分**，四个计量维度对应文本 token / 图片张数 / 视频秒数。
+ *
+ * 只有 `draft` 可改：`active` 与 `retired` 的单价必须冻结，否则存量 Run 按其
+ * `price_table_version` 查回来的价会变，等于篡改历史账。调价路径是「复制 → 改 → 激活」。
+ */
+export interface PriceTableVersion {
+  id: string
+  label: string
+  status: PriceTableStatus
+  note: string | null
+  createdBy: string | null
+  createdAt: string | null
+  activatedAt: string | null
+  /** 仅详情接口返回；列表接口不带。 */
+  models?: PriceModelEntry[]
+}
+
+export interface PriceModelEntry {
+  modelId: string
+  capability: string
+  provider: string
+  centsPer1kInputTokens: number
+  centsPer1kOutputTokens: number
+  centsPerImage: number
+  centsPerSecond: number
+}
+
 /**
  * 个人 BYOK 开关（任务书 #47 D11–D14）。按 capability 一项。
  *

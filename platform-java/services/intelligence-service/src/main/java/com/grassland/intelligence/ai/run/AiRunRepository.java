@@ -37,12 +37,13 @@ public class AiRunRepository {
                 INSERT INTO ai_run(
                     organization_id, account_id, capability, provider, model, run_type,
                     budget_cents, operation_id, platform_model_version, fallback_authorized, context_snapshot_id,
-                    credits_cents_policy_version, byok_organization_id, credential_version
+                    credits_cents_policy_version, byok_organization_id, credential_version,
+                    price_table_version
                 ) VALUES (
                     :orgId, :accountId, :capability, :provider, :model, :runType,
                     :budgetCents, CAST(:operationId AS uuid), :platformModelVersion, :fallbackAuthorized,
                     CAST(:contextSnapshotId AS uuid), :creditsCentsPolicyVersion, :byokOrganizationId,
-                    :credentialVersion
+                    :credentialVersion, :priceTableVersion
                 )
                 RETURNING id::text
                 """)
@@ -61,6 +62,8 @@ public class AiRunRepository {
                 .bind("creditsCentsPolicyVersion", nullable(run.creditsCentsPolicyVersion(), String.class))
                 .bind("byokOrganizationId", nullable(run.byokOrganizationId(), String.class))
                 .bind("credentialVersion", nullable(run.credentialVersion(), Long.class))
+                // 此前这一列没被绑定，一律吃 DB 默认 'v1'——调价后结算会按错版本查价（V52 修正）
+                .bind("priceTableVersion", nullable(run.priceTableVersion(), String.class))
                 .map((r, meta) -> r.get("id", String.class))
                 .one()
                 .map(UUID::fromString);

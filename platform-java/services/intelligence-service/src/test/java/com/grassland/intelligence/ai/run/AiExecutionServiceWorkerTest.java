@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -97,7 +98,9 @@ class AiExecutionServiceWorkerTest {
 				"priced-model", 4, null);
 		UUID runId = UUID.randomUUID();
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
-		when(priceTableService.calculateCost("priced-model", 40, 0, 0, 0)).thenReturn(300);
+		// nullable 首参：估价路径传 null，结算路径传 Run 冻结的 label，同一 stub 覆盖两者
+		when(priceTableService.calculateCost(nullable(String.class), eq("priced-model"), eq(40), eq(0), eq(0), eq(0)))
+				.thenReturn(300);
 		when(budgetService.checkAndReserve("org-1", "retrieval", "platform", 40, 300))
 				.thenReturn(Mono.just(ModelBudgetService.BudgetCheckResult.allowed(null, null, 40, 300)));
 		when(budgetService.createRun(any())).thenReturn(Mono.just(runId));
@@ -129,7 +132,8 @@ class AiExecutionServiceWorkerTest {
 		ProviderResolution provider = ProviderResolution.platform(UUID.randomUUID(), "qwen", "https://example.invalid",
 				"priced-model", 4, null);
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
-		when(priceTableService.calculateCost("priced-model", 0, 0, 0, 0)).thenReturn(0);
+		when(priceTableService.calculateCost(nullable(String.class), eq("priced-model"), eq(0), eq(0), eq(0), eq(0)))
+				.thenReturn(0);
 		when(priceTableService.isZeroPricedModel("priced-model")).thenReturn(false);
 		when(budgetService.checkAndReserve("org-1", "retrieval", "platform", 0, 0))
 				.thenReturn(Mono.just(ModelBudgetService.BudgetCheckResult.allowed(null, null, 0, 0)));
@@ -154,7 +158,8 @@ class AiExecutionServiceWorkerTest {
 		ProviderResolution provider = ProviderResolution.platform(UUID.randomUUID(), "sandbox",
 				"https://sandbox.invalid", "sandbox-embedding-v1", 4, null);
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
-		when(priceTableService.calculateCost("sandbox-embedding-v1", 40, 0, 0, 0)).thenReturn(0);
+		when(priceTableService.calculateCost(nullable(String.class), eq("sandbox-embedding-v1"), eq(40), eq(0), eq(0),
+				eq(0))).thenReturn(0);
 		when(priceTableService.isZeroPricedModel("sandbox-embedding-v1")).thenReturn(true);
 		when(budgetService.checkAndReserve("org-1", "retrieval", "platform", 40, 0))
 				.thenReturn(Mono.just(ModelBudgetService.BudgetCheckResult.allowed(null, null, 40, 0)));
@@ -254,7 +259,8 @@ class AiExecutionServiceWorkerTest {
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
 		when(budgetService.checkAndReserve("org-1", "retrieval", "platform", 40, 0))
 				.thenReturn(Mono.just(ModelBudgetService.BudgetCheckResult.allowed(null, null, 40, 0)));
-		when(priceTableService.calculateCost("sandbox-embedding-v1", 40, 0, 0, 0)).thenReturn(0);
+		when(priceTableService.calculateCost(nullable(String.class), eq("sandbox-embedding-v1"), eq(40), eq(0), eq(0),
+				eq(0))).thenReturn(0);
 		when(budgetService.createRun(any())).thenReturn(Mono.just(UUID.randomUUID()));
 
 		StepVerifier.create(execution.prepareExecution("acct-1", "org-1", "retrieval", null, 40, 0, true))
@@ -285,7 +291,8 @@ class AiExecutionServiceWorkerTest {
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
 		when(budgetService.checkAndReserve("org-1", "retrieval", "platform", 40, 100))
 				.thenReturn(Mono.just(reservation));
-		when(priceTableService.calculateCost("sandbox-embedding-v1", 40, 0, 0, 0)).thenReturn(100);
+		when(priceTableService.calculateCost(nullable(String.class), eq("sandbox-embedding-v1"), eq(40), eq(0), eq(0),
+				eq(0))).thenReturn(100);
 		when(budgetService.createRun(any())).thenReturn(Mono.just(runId));
 		when(credits.reserveUsage(eq("acct-1"), eq(CreditFeature.AI_RUN_EMBEDDING), any(), eq(100L), eq("money-v1")))
 				.thenReturn(Mono.defer(() -> {
@@ -321,7 +328,8 @@ class AiExecutionServiceWorkerTest {
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
 		when(budgetService.checkAndReserve("org-1", "retrieval", "platform", 40, 0))
 				.thenReturn(Mono.just(ModelBudgetService.BudgetCheckResult.denied("exceeds_daily_budget")));
-		when(priceTableService.calculateCost("sandbox-embedding-v1", 40, 0, 0, 0)).thenReturn(0);
+		when(priceTableService.calculateCost(nullable(String.class), eq("sandbox-embedding-v1"), eq(40), eq(0), eq(0),
+				eq(0))).thenReturn(0);
 
 		StepVerifier.create(execution.prepareExecution("acct-1", "org-1", "retrieval", null, 40, 0, true))
 				.assertNext(result -> {
