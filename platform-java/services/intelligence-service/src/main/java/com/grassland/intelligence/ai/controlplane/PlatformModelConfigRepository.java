@@ -124,9 +124,13 @@ public class PlatformModelConfigRepository {
     /**
      * 某能力的当前有效配置 + 各自凭据（任务书 #47 S2 运行时解析用）。
      *
-     * <p>只 JOIN 有效凭据（{@code credential.enabled}）——凭据被停用等于该目的地不可用，应触发 503
-     * 而非悄悄拿一把已停用的密钥继续跑。此时 baseUrl 为 null，由
-     * {@link PlatformModelControlPlaneService#resolve} 交给执行层判定。
+     * <p>只 JOIN 有效凭据（{@code credential.enabled}）：凭据被停用后不再提供密钥，执行层因此回落
+     * env bootstrap，绝不会拿一把已停用的密钥继续跑。
+     *
+     * <p><b>注意 V52 之前的实际语义</b>（实测，与「停用即不可用」的直觉不同）：{@code base_url} 走
+     * {@code COALESCE(credential.base_url, config.base_url)}，故停用凭据后<b>地址仍可解析</b>，
+     * 该能力只是退回 env 密钥。等 V52 DROP COLUMN、COALESCE 无处可落，baseUrl 才会变 null 并让执行层
+     * 按 capability 503。锁定在 {@code PlatformProviderCredentialControllerIT} 的验收 3 用例。
      */
     public Flux<PlatformModelWithCredential> findCurrentWithCredentialByCapability(String capability) {
         return db.sql("""

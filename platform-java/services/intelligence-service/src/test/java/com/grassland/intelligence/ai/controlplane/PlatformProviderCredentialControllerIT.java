@@ -20,6 +20,11 @@ import org.springframework.test.context.DynamicPropertySource;
 @DisplayName("PlatformProviderCredentialController (admin CRUD)")
 class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    PlatformModelControlPlaneService controlPlane;
+    @org.springframework.beans.factory.annotation.Autowired
+    com.grassland.crypto.EnvelopeEncryption encryption;
+
     /** 32 字节 KEK（0x00..0x1F）的 Base64，与既有 BYOK IT 同款测试常量。 */
     private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
@@ -263,7 +268,104 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
         assertThat(credentialVersion(id)).isEqualTo(3L);
     }
 
+    /**
+     * 任务书 #47 验收 1——本任务的头号能力:<b>admin 改凭据 key 后不重启,下一次解析即用新 key</b>。
+     *
+     * <p>机制是 {@code resolve} 每次都读库(不缓存),但「应该如此」和「确实如此」是两件事。
+     * 此前只有 commit 标题声称过这个能力,没有测试证明它。
+     */
+    @Test
+    @DisplayName("验收 1:轮换密钥后不重启,下一次 resolve 即拿到新密文")
+    void rotatedKeyTakesEffectWithoutRestart() {
+        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                         "model":"qwen-plus","baseUrl":"%s"}
+                        """.formatted(QWEN_URL))
+                .exchange().expectStatus().isCreated();
+
+        String before = resolvedCiphertext("text");
+        assertThat(before).isNotNull();
+
+        client().put().uri("/api/admin/ai/credentials/" + id + "/key")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"apiKey\":\"sk-test-rotated-no-restart-9999\"}")
+                .exchange().expectStatus().isOk();
+
+        // 同一个进程、同一个 bean,不重启
+        String after = resolvedCiphertext("text");
+        assertThat(after).isNotNull().isNotEqualTo(before);
+        assertThat(encryption.decrypt(after)).isEqualTo("sk-test-rotated-no-restart-9999");
+    }
+
+    /**
+     * 任务书 #47 验收 3 / ADR-D16 降级路径回归点:停用某 capability 的凭据后,该能力的目的地不可用,
+     * 但<b>其它 capability 照常</b>——凭据是按目的地隔离的,不是全局开关。
+     *
+     * <p>LEFT JOIN 只关联 {@code enabled=true} 凭据,故停用后 baseUrl 为 null,由执行层判定不可用
+     * (按 capability 503),而不是拿一把已停用的密钥继续跑。
+     */
+    @Test
+    @DisplayName("验收 3:停用某能力的凭据 → 该能力退回 env 密钥（V52 前），其它能力不受影响")
+    void disablingOneCredentialDoesNotAffectOtherCapabilities() {
+        String textCredential = createCredential("文本-通义", "qwen", QWEN_URL, TEST_KEY);
+        String safetyCredential = createCredential(
+                "安全-沙箱", "sandbox", "https://sandbox.invalid", null);
+        createModel("text", QWEN_URL, "qwen", "qwen-plus");
+        createModel("content_safety", "https://sandbox.invalid", "sandbox", "sandbox-safety-v1");
+
+        assertThat(resolvedBaseUrl("text")).isEqualTo(QWEN_URL);
+        assertThat(resolvedBaseUrl("content_safety")).isEqualTo("https://sandbox.invalid");
+
+        // D6 会拒绝停用被引用的凭据（API 层保护），故直接改库制造「引用仍在但凭据已停用」的状态
+        // ——这正是 LEFT JOIN `credential.enabled = true` 要处理的情形。
+        client().delete().uri("/api/admin/ai/credentials/" + safetyCredential)
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isEqualTo(409);   // 先证明 D6 确实在拦
+        db.sql("UPDATE platform_provider_credential SET enabled = false WHERE id = CAST(:id AS uuid)")
+                .bind("id", safetyCredential).then().block();
+
+        // **V52 之前的真实行为**（实测，与「停用即不可用」的直觉不同）：
+        // COALESCE 会回落 config.base_url，故地址仍可解析；但凭据密钥没了，
+        // 执行层回落 env bootstrap。即「停用凭据」= 该能力退回 env 密钥，不是立刻不可用。
+        // V52 DROP COLUMN 之后 COALESCE 无处可落，baseUrl 才会变 null。
+        assertThat(resolvedBaseUrl("content_safety")).isEqualTo("https://sandbox.invalid");
+        assertThat(resolvedCiphertext("content_safety")).isNull();   // 密钥确实不再来自凭据
+        // text 完全不受影响——凭据是按目的地隔离的，不是全局开关
+        assertThat(resolvedBaseUrl("text")).isEqualTo(QWEN_URL);
+        assertThat(resolvedCiphertext("text")).isNotNull();
+        assertThat(textCredential).isNotBlank();
+    }
+
     // ---------- 夹具 ----------
+
+    private void createModel(String capability, String baseUrl, String provider, String model) {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"%s","modelRole":"primary","provider":"%s",
+                         "model":"%s","baseUrl":"%s"}
+                        """.formatted(capability, provider, model, baseUrl))
+                .exchange().expectStatus().isCreated();
+    }
+
+    /** 经控制面解析,拿该 capability 当前的凭据密文——证明读的是库而非缓存。 */
+    private String resolvedCiphertext(String capability) {
+        return controlPlane.resolve(capability).block()
+                .map(PlatformModelControlPlaneService.ResolvedPlatformModel::credentialEncryptedKey)
+                .orElse(null);
+    }
+
+    private String resolvedBaseUrl(String capability) {
+        return controlPlane.resolve(capability).block()
+                .map(PlatformModelControlPlaneService.ResolvedPlatformModel::baseUrl)
+                .orElse(null);
+    }
 
     private Long credentialVersion(String id) {
         return db.sql("SELECT version FROM platform_provider_credential WHERE id = CAST(:id AS uuid)")
