@@ -229,10 +229,11 @@ public class AiExecutionService {
 			UUID budgetOpId, String runType, String priceTableVersion, UUID contextSnapshotId,
 			String moneyPolicyVersion, boolean chargeRequired) {
 
+		// 任务书 #47 D7：Run 起始一并冻结平台凭据版本——轮换后失败的那一批可据此定位用的哪把 key
 		AiRun run = AiRun.forCreate(orgId, accountId, capability, provider.provider(), provider.model(), runType,
 				budget.reservedCents(), budgetOpId, priceTableVersion,
 				provider.platformModelVersion() > 0 ? provider.platformModelVersion() : null, allowFallback,
-				contextSnapshotId, moneyPolicyVersion, provider.byokOrganizationId());
+				contextSnapshotId, moneyPolicyVersion, provider.byokOrganizationId(), provider.credentialVersion());
 		return budgetService.createRun(run).map(runId -> RunPreparation.allowed(runId, budget, run.priceTableVersion(),
 				moneyPolicyVersion, chargeRequired));
 	}

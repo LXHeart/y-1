@@ -10,6 +10,8 @@ export interface AiTaskContext {
   platformModelVersion: number | null
   fallbackAuthorized: boolean
   contextSnapshotId: string | null
+  /** 平台凭据版本快照（任务书 #47 D7）；BYOK / env 兜底 run 为 null。 */
+  credentialVersion: number | null
   startedAt: string
 }
 

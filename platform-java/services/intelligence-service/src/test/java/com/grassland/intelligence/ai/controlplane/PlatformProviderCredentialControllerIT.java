@@ -233,7 +233,43 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isBadRequest();
     }
 
+    /**
+     * 任务书 #47 S3（D7）：凭据轮换后，解析结果携带的凭据版本随之递增——{@code ai_run.credential_version}
+     * 据此冻结。没有这一列，「厂商 key 被封的那批 Run 用的哪把 key」只能靠时间戳猜。
+     */
+    @Test
+    @DisplayName("轮换后凭据版本递增，解析结果据此冻结（credential_version 的数据来源）")
+    void credentialVersionAdvancesOnRotation() {
+        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        assertThat(credentialVersion(id)).isEqualTo(1L);
+
+        client().put().uri("/api/admin/ai/credentials/" + id + "/key")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"apiKey\":\"sk-test-rotated-for-version-check\"}")
+                .exchange().expectStatus().isOk();
+
+        assertThat(credentialVersion(id)).isEqualTo(2L);
+
+        // 改连接信息也算一次变更（同一把 key 换了目的地，审计上必须可区分）
+        client().put().uri("/api/admin/ai/credentials/" + id)
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"name":"主力-通义","provider":"qwen","baseUrl":"%s"}
+                        """.formatted(QWEN_URL))
+                .exchange().expectStatus().isOk();
+
+        assertThat(credentialVersion(id)).isEqualTo(3L);
+    }
+
     // ---------- 夹具 ----------
+
+    private Long credentialVersion(String id) {
+        return db.sql("SELECT version FROM platform_provider_credential WHERE id = CAST(:id AS uuid)")
+                .bind("id", id)
+                .map((row, meta) -> row.get("version", Long.class)).one().block();
+    }
 
     private String createCredential(String name, String provider, String baseUrl, String apiKey) {
         return client().post().uri("/api/admin/ai/credentials")

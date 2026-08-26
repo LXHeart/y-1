@@ -50,7 +50,8 @@ public record AiRun(
     boolean fallbackAuthorized,   // 本次调用是否经授权回退平台（HLD §12.3 审计）
     UUID contextSnapshotId,        // PRD §4.12 task creation snapshot, nullable for independent runs
     String creditsCentsPolicyVersion, // priced platform run conversion snapshot; null for flat/BYOK
-    String byokOrganizationId      // 组织密钥命中的 Run 记录组织 ID（ADR-D17 审计）；个人 BYOK/平台为 null
+    String byokOrganizationId,     // 组织密钥命中的 Run 记录组织 ID（ADR-D17 审计）；个人 BYOK/平台为 null
+    Long credentialVersion         // 平台凭据版本快照（任务书 #47 D7）；BYOK / env 兜底 run 为 null
 ) {
     public AiRun(
             UUID id, String organizationId, String accountId, String capability, String provider, String model,
@@ -61,7 +62,7 @@ public record AiRun(
         this(id, organizationId, accountId, capability, provider, model, runType, inputTokens, outputTokens,
                 imagesGenerated, videoSeconds, budgetCents, actualCents, status, failureReason, startedAt,
                 completedAt, priceTableVersion, operationId, refundOperationId, createdAt, updatedAt,
-                platformModelVersion, fallbackAuthorized, null, null, null);
+                platformModelVersion, fallbackAuthorized, null, null, null, null);
     }
     /** 创建新 Run。 */
     public static AiRun forCreate(
@@ -121,6 +122,7 @@ public record AiRun(
                 fallbackAuthorized, contextSnapshotId, null, null);
     }
 
+    /** 不带凭据版本的重载（BYOK / env 兜底 run，以及不经控制面的固定 provider 分支）。 */
     public static AiRun forCreate(
         String organizationId,
         String accountId,
@@ -136,6 +138,29 @@ public record AiRun(
         UUID contextSnapshotId,
         String creditsCentsPolicyVersion,
         String byokOrganizationId
+    ) {
+        return forCreate(organizationId, accountId, capability, provider, model, runType, budgetCents,
+                operationId, priceTableVersion, platformModelVersion, fallbackAuthorized, contextSnapshotId,
+                creditsCentsPolicyVersion, byokOrganizationId, null);
+    }
+
+    /** 完整形状：含平台凭据版本快照（任务书 #47 D7）。 */
+    public static AiRun forCreate(
+        String organizationId,
+        String accountId,
+        String capability,
+        String provider,
+        String model,
+        String runType,
+        int budgetCents,
+        UUID operationId,
+        String priceTableVersion,
+        Integer platformModelVersion,
+        boolean fallbackAuthorized,
+        UUID contextSnapshotId,
+        String creditsCentsPolicyVersion,
+        String byokOrganizationId,
+        Long credentialVersion
     ) {
         return new AiRun(
             null,  // id 由数据库生成
@@ -164,7 +189,8 @@ public record AiRun(
                 fallbackAuthorized,
                 contextSnapshotId,
                 creditsCentsPolicyVersion,
-                byokOrganizationId
+                byokOrganizationId,
+                credentialVersion
         );
     }
 

@@ -22,6 +22,7 @@ public record TaskContext(
         UUID contextSnapshotId,
         String creditsCentsPolicyVersion,
         String byokOrganizationId,    // 组织密钥命中的 Run 记录组织 ID（ADR-D17）；个人 BYOK/平台为 null
+        Long credentialVersion,       // 平台凭据版本快照（任务书 #47 D7）；BYOK / env 兜底 run 为 null
         Instant startedAt) {
 
     public static TaskContext from(AiRun run) {
@@ -37,6 +38,7 @@ public record TaskContext(
                 run.contextSnapshotId(),
                 run.creditsCentsPolicyVersion(),
                 run.byokOrganizationId(),
+                run.credentialVersion(),
                 run.startedAt());
     }
 }
