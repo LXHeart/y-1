@@ -19,11 +19,6 @@ import reactor.core.publisher.Mono;
  * <p>
  * 解析规则：
  * <ul>
- * <li>{@code MembershipInvited} / {@code MembershipInvitationRevoked} /
- * {@code MembershipInvitationReminder}：payload 只有邀请邮箱 → 按归一化小写查
- * app_users；<b>查不到 → 静默跳过</b>（未注册用户靠邮件，且不得因此报错重试阻塞分区）。</li>
- * <li>{@code MembershipInvitationAccepted} / {@code Declined}：通知 org 的
- * owner/admin，排除操作者本人。</li>
  * <li>{@code MembershipGranted}：直接通知 payload.accountId。</li>
  * <li>{@code PermissionRequested} /
  * {@code PermissionReviewSlaBreached}：通知平台管理员审核队列。</li>
@@ -46,11 +41,6 @@ public class NotificationRecipientResolver {
 	Mono<java.util.List<String>> resolve(IdentityEventEnvelope envelope) {
 		JsonNode payload = envelope.payload();
 		return switch (envelope.eventType()) {
-			case "MembershipInvited", "MembershipInvitationRevoked", "MembershipInvitationReminder" ->
-				text(payload, "email").flatMap(this::findAccountIdByEmail).map(java.util.List::of)
-						.defaultIfEmpty(java.util.List.of());
-			case "MembershipInvitationAccepted", "MembershipInvitationDeclined" ->
-				orgManagersExcluding(payload, "accountId");
 			case "MembershipGranted" ->
 				text(payload, "accountId").map(java.util.List::of).defaultIfEmpty(java.util.List.of());
 			case "PermissionRequested", "PermissionReviewSlaBreached" -> findPlatformAdminAccountIds().collectList();
@@ -162,15 +152,6 @@ public class NotificationRecipientResolver {
 			deduped.remove(actorId);
 			return new java.util.ArrayList<>(deduped);
 		});
-	}
-
-	private Mono<String> findAccountIdByEmail(String email) {
-		if (email == null || email.isBlank()) {
-			return Mono.empty();
-		}
-		// email 归一化小写存储（V8 约定），两侧都归一化比较。
-		return db.sql("SELECT id::text FROM app_users WHERE lower(email) = lower(:email)").bind("email", email.trim())
-				.map(row -> row.get("id", String.class)).one();
 	}
 
 	private static boolean isUuidText(String value) {

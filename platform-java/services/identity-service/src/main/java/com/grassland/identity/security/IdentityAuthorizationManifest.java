@@ -55,7 +55,6 @@ public final class IdentityAuthorizationManifest {
                 "identityprofile.IdentityProfileController",
                 "identityprofile.IdentitySessionController",
                 "identityprofile.ReauthenticationController",
-                "invitation.MyInvitationController",
                 "membership.MyOrganizationScopeController",
                 "mobile.DeviceController",
                 "notification.NotificationController",
@@ -65,7 +64,6 @@ public final class IdentityAuthorizationManifest {
                 "store.MyStoreScopeController");
         register(policies, ORGANIZATION_SCOPED,
                 "brand.BrandProfileController",
-                "invitation.OrganizationInvitationController",
                 "kyb.MerchantAttachmentController",
                 "kyb.MerchantProfileController",
                 "kyb.WithdrawalAccountController",

@@ -31,7 +31,7 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * 真实 Kafka broker 端到端门禁（Slice 12 Stage 2）。镜像 marketplace {@code MarketplaceKafkaTestcontainersIT}
- * 的<b>子集</b>：发一条 {@code MembershipInvited} → 通知落库；发毒药消息（坏 JSON）→ 进 DLT 且后续正常消息继续被消费。
+ * 的<b>子集</b>：发一条 {@code OrgSubAccountCreated} → 通知落库；发毒药消息（坏 JSON）→ 进 DLT 且后续正常消息继续被消费。
  *
  * <p>处理器路由 / 事务原子性 / 幂等 / 收件人解析已由 {@link NotificationEventProcessorTest} +
  * {@link NotificationInboxIT} 覆盖；本测试只验「@KafkaListener 接线 + ack 模式 + DLT 路由」这条集成链
@@ -86,35 +86,35 @@ class NotificationKafkaTestcontainersIT extends IdentityItSupport {
     }
 
     @Test
-    void membershipInvitedEventProducesNotification() throws Exception {
-        var invitee = seedAccount("kafka-invitee@example.com");
+    void subAccountCreatedEventProducesNotification() throws Exception {
+        var account = seedAccount("kafka-subacct@example.com");
         String envelope = mapper.writeValueAsString(Map.of(
                 "eventId", "k-evt-" + RUN_ID,
-                "eventType", "MembershipInvited",
-                "aggregateType", "OrganizationInvitation",
+                "eventType", "OrgSubAccountCreated",
+                "aggregateType", "Organization",
                 "aggregateId", "inv-" + RUN_ID,
-                "payload", Map.of("email", "kafka-invitee@example.com", "organizationId", "org-kafka")));
+                "payload", Map.of("accountId", account.accountId(), "organizationId", "org-kafka")));
 
         try (var producer = producer()) {
             producer.send(new ProducerRecord<>(TOPIC, "inv-" + RUN_ID, envelope)).get(10, TimeUnit.SECONDS);
         }
 
         await().atMost(AWAIT).untilAsserted(() ->
-                assertThat(notifications.findByAccount(invitee.accountId(), false, 10, null, null)
+                assertThat(notifications.findByAccount(account.accountId(), false, 10, null, null)
                                 .collectList().block())
-                        .as("邀请事件经真 broker 消费后落通知")
+                        .as("子账号事件经真 broker 消费后落通知")
                         .hasSize(1));
     }
 
     @Test
     void poisonMessageGoesToDltAndSubsequentValidIsStillConsumed() throws Exception {
-        var invitee = seedAccount("kafka-poison-valid@example.com");
+        var account = seedAccount("kafka-poison-valid@example.com");
         String valid = mapper.writeValueAsString(Map.of(
                 "eventId", "k-valid-" + RUN_ID,
-                "eventType", "MembershipInvited",
-                "aggregateType", "OrganizationInvitation",
+                "eventType", "OrgSubAccountCreated",
+                "aggregateType", "Organization",
                 "aggregateId", "inv-valid-" + RUN_ID,
-                "payload", Map.of("email", "kafka-poison-valid@example.com", "organizationId", "org-kafka")));
+                "payload", Map.of("accountId", account.accountId(), "organizationId", "org-kafka")));
 
         try (var producer = producer()) {
             // 毒药：坏 JSON → 不可重试 → 直接 DLT，不阻塞分区
@@ -127,7 +127,7 @@ class NotificationKafkaTestcontainersIT extends IdentityItSupport {
         await().atMost(AWAIT).untilAsserted(() -> assertThat(dltRecordCount()).isGreaterThan(0));
         // 后续正常消息照常落通知
         await().atMost(AWAIT).untilAsserted(() ->
-                assertThat(notifications.findByAccount(invitee.accountId(), false, 10, null, null)
+                assertThat(notifications.findByAccount(account.accountId(), false, 10, null, null)
                                 .collectList().block())
                         .as("毒药进 DLT 后，分区仍继续消费正常消息")
                         .hasSize(1));

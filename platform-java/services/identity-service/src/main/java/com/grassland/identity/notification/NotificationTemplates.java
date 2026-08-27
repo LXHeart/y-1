@@ -16,7 +16,6 @@ import java.util.Map;
  */
 public final class NotificationTemplates {
 
-	static final String LINK_INVITATIONS = "/me/invitations";
 	static final String LINK_PERMISSION = "/me/organizations";
 	static final String LINK_ENGAGEMENTS = "/me/engagements";
 	static final String LINK_TASK_INVITATIONS = "/me/task-invitations";
@@ -32,17 +31,8 @@ public final class NotificationTemplates {
 	 */
 	static Template template(String eventType, JsonNode payload) {
 		return switch (eventType) {
-			case "MembershipInvited" -> new Template(NotificationCategory.INVITATION, "你收到了一份组织邀请", "有一个组织邀请你加入，点击查看",
-					LINK_INVITATIONS, orgPayload(payload));
-			case "MembershipInvitationReminder" -> new Template(NotificationCategory.INVITATION, "组织邀请提醒：仍待你接受",
-					"你有一份组织邀请尚未接受，即将过期，点击处理", LINK_INVITATIONS, orgPayload(payload));
-			case "MembershipInvitationAccepted", "MembershipInvitationDeclined" ->
-				new Template(NotificationCategory.INVITATION, "你的邀请已有回应", "你发出的组织邀请已被接受或谢绝，点击查看", LINK_INVITATIONS,
-						orgPayload(payload));
-			case "MembershipInvitationRevoked" ->
-				new Template(NotificationCategory.INVITATION, "你的邀请已被撤销", "发给你的组织邀请已被撤销", null, orgPayload(payload));
 			case "MembershipGranted" -> new Template(NotificationCategory.INVITATION, "你已加入组织", "你已被加入一个组织",
-					LINK_INVITATIONS, grantedPayload(payload));
+					LINK_PERMISSION, grantedPayload(payload));
 			case "PermissionRequested" -> new Template(NotificationCategory.PERMISSION, "收到商家权限升级申请",
 					"有商家提交权限升级申请，待平台审核", LINK_PERMISSION, orgPayload(payload));
 			case "PermissionReviewSlaBreached" -> new Template(NotificationCategory.PERMISSION, "商家权限审核已超时",
@@ -51,7 +41,7 @@ public final class NotificationTemplates {
 					LINK_PERMISSION, orgPayload(payload));
 			// ---------- 任务书 #48：成员子账号 ----------
 			case "OrgSubAccountCreated" -> new Template(NotificationCategory.INVITATION, "你的商家账号已创建",
-					"管理员已为你创建账号，首次登录需修改密码", LINK_INVITATIONS, orgPayload(payload));
+					"管理员已为你创建账号，首次登录需修改密码", LINK_PERMISSION, orgPayload(payload));
 			case "MemberSuspensionChanged" -> {
 				String action = stringField(payload, "action");
 				String body = "suspended".equals(action)
@@ -62,11 +52,11 @@ public final class NotificationTemplates {
 			}
 			case "StaffCreationReviewed" -> {
 				boolean approved = "approved".equals(stringField(payload, "decision"));
-				yield new Template(NotificationCategory.INVITATION,
-						approved ? "你的员工账号已通过审核" : "你添加的员工未通过审核",
-						approved ? "账号已启用，可以登录使用门店功能了"
-								: "该员工账号未通过主体审核，请联系管理员",
-						LINK_INVITATIONS, orgPayload(payload));
+					yield new Template(NotificationCategory.INVITATION,
+							approved ? "你的员工账号已通过审核" : "你添加的员工未通过审核",
+							approved ? "账号已启用，可以登录使用门店功能了"
+									: "该员工账号未通过主体审核，请联系管理员",
+							LINK_PERMISSION, orgPayload(payload));
 			}
 			default -> externalTemplate(eventType, payload);
 		};

@@ -19,9 +19,10 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * 用 {@code @MockitoSpyBean} 把 {@link OutboxRepository#append} 针对某事件类型注入失败，
- * 断言领域写（组织 / 门店）随之回滚。覆盖 create（switchIfEmpty 内单写）+ store 两种写形态； 其余
- * controller（membership/identityProfile/permission/invitation/register）同形态 （均
+ * 断言领域写（组织 / 门店 / 子账号状态）随之回滚。覆盖 create（switchIfEmpty 内单写）+ store 两种写形态； 其余
+ * controller（membership/identityProfile/permission/register）同形态 （均
  * {@code transactions.transactional(写+outbox)}），由既有 IT 守 happy path。
+ * 任务书 #49：邀请 accept 场景随邀请流下线移除，换成 #48 子账号停用的同事务原子性。
  */
 class OutboxAtomicityIT extends IdentityItSupport {
 
@@ -54,21 +55,17 @@ class OutboxAtomicityIT extends IdentityItSupport {
 	}
 
 	@Test
-	void acceptRollsBackWhenOutboxFails() {
+	void suspendSubAccountRollsBackWhenOutboxFails() {
 		var owner = seedAccount("atom-owner-" + UUID.randomUUID() + "@example.com");
 		String orgId = createOrg(owner.cookie(), "X");
-		String email = "atom-invitee-" + UUID.randomUUID() + "@example.com";
-		var invitee = seedAccount(email);
-		String invitationId = invite(orgId, owner.cookie(), email, "member");
-		long baseline = membershipCount(orgId);
+		String accountId = createSubAccount(orgId, owner.cookie());
 
-		failOutboxOn("MembershipInvitationAccepted");
-		client().post().uri("/api/me/invitations/" + invitationId + "/accept")
-				.header("Cookie", "y1.sid=" + invitee.cookie()).exchange().expectStatus().is5xxServerError();
+		failOutboxOn("MemberSuspensionChanged");
+		client().post().uri("/api/organizations/" + orgId + "/accounts/" + accountId + "/suspend")
+				.header("Cookie", "y1.sid=" + owner.cookie()).exchange().expectStatus().is5xxServerError();
 
-		// Slice 7C-2：邀请状态迁移 + 成员关系 + 两个 outbox 事件同事务——outbox 失败则全部回滚。
-		assertThat(invitationStatus(invitationId)).isEqualTo("pending"); // pending→accepted 回滚
-		assertThat(membershipCount(orgId)).isEqualTo(baseline); // 成员关系未落
+		// 复核轮修正 4：状态变更与 outbox 事件同事务——outbox 失败则状态回滚（仍 active）。
+		assertThat(accountStatus(accountId)).isEqualTo("active");
 	}
 
 	private void failOutboxOn(String eventType) {
@@ -88,25 +85,19 @@ class OutboxAtomicityIT extends IdentityItSupport {
 		return c == null ? 0L : c;
 	}
 
+	/** #48 主体直建一个组织成员子账号（email 形态为现状契约，任务书 #49 S2 改为 loginName 后同步更新）。 */
 	@SuppressWarnings("unchecked")
-	private String invite(String orgId, String cookie, String email, String role) {
-		Map<String, Object> body = client().post().uri("/api/organizations/" + orgId + "/invitations")
+	private String createSubAccount(String orgId, String cookie) {
+		String email = "atom-sub-" + UUID.randomUUID() + "@example.com";
+		Map<String, Object> body = client().post().uri("/api/organizations/" + orgId + "/accounts")
 				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-				.bodyValue("{\"email\":\"" + email + "\",\"role\":\"" + role + "\"}").exchange().expectStatus()
-				.isCreated().expectBody(Map.class).returnResult().getResponseBody();
-		return (String) ((Map<String, Object>) body.get("data")).get("id");
+				.bodyValue("{\"email\":\"" + email + "\",\"displayName\":\"A\",\"role\":\"member\"}").exchange()
+				.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		return (String) ((Map<String, Object>) ((Map<String, Object>) body.get("data")).get("account")).get("id");
 	}
 
-	private String invitationStatus(String id) {
-		return db.sql("SELECT status FROM organization_invitation WHERE id = CAST(:id AS uuid)").bind("id", id)
+	private String accountStatus(String accountId) {
+		return db.sql("SELECT status FROM app_users WHERE id = CAST(:id AS uuid)").bind("id", accountId)
 				.map(row -> row.get("status", String.class)).one().block();
-	}
-
-	private long membershipCount(String orgId) {
-		Long c = db
-				.sql("SELECT COUNT(*)::bigint AS c FROM organization_membership"
-						+ " WHERE organization_id = CAST(:o AS uuid)")
-				.bind("o", orgId).map(row -> row.get("c", Long.class)).one().block();
-		return c == null ? 0L : c;
 	}
 }

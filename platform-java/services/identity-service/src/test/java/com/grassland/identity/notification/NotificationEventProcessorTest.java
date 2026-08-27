@@ -89,16 +89,17 @@ class NotificationEventProcessorTest {
 	void missingRequiredFieldThrowsContractException() {
 		// envelope 缺 eventId
 		ConsumerRecord<String, String> record = new ConsumerRecord<>("t", 0, 0L, "k",
-				"{\"eventType\":\"MembershipInvited\",\"aggregateType\":\"X\",\"aggregateId\":\"a\",\"payload\":{}}");
+				"{\"eventType\":\"OrgSubAccountCreated\",\"aggregateType\":\"X\",\"aggregateId\":\"a\",\"payload\":{}}");
 
 		assertThatThrownBy(() -> processor.process(record).block()).isInstanceOf(EventContractException.class)
 				.hasMessageContaining("eventId");
 	}
 
 	@Test
-	void membershipInvitedFansOutToOneRecipient() {
-		ConsumerRecord<String, String> record = record("MembershipInvited", "inv-1",
-				Map.of("email", "someone@example.com", "organizationId", "org-1"));
+	void subAccountCreatedFansOutToOneRecipient() {
+		// 任务书 #49 邀请流下线后，INVITATION 类管线样板换成 #48 子账号欢迎通知
+		ConsumerRecord<String, String> record = record("OrgSubAccountCreated", "inv-1",
+				Map.of("accountId", "acct-1", "organizationId", "org-1"));
 		when(inbox.recordIfAbsent(anyString(), any(), any(), anyString())).thenReturn(Mono.just(true));
 		when(resolver.resolve(any(IdentityEventEnvelope.class))).thenReturn(Mono.just(List.of("acct-1")));
 		when(notifications.insertIfAbsent(eq("acct-1"), any(), anyString(), anyString(), any(), any(), eq("evt-1"),
@@ -112,9 +113,9 @@ class NotificationEventProcessorTest {
 
 	@Test
 	void noRecipientStillProcessedAndInboxRecorded() {
-		// 邀请邮箱未注册 → resolver 返回空列表 → 仍 PROCESSED（inbox 已记录），不插通知
-		ConsumerRecord<String, String> record = record("MembershipInvited", "inv-2",
-				Map.of("email", "nobody@example.com"));
+		// 收件人为空 → 仍 PROCESSED（inbox 已记录），不插通知
+		ConsumerRecord<String, String> record = record("OrgSubAccountCreated", "inv-2",
+				Map.of("organizationId", "org-1"));
 		when(inbox.recordIfAbsent(anyString(), any(), any(), anyString())).thenReturn(Mono.just(true));
 		when(resolver.resolve(any(IdentityEventEnvelope.class))).thenReturn(Mono.just(List.of()));
 
@@ -139,9 +140,9 @@ class NotificationEventProcessorTest {
 
 	@Test
 	void resolverExcludesActorFromManagers() {
-		// org 有 owner=admin1, admin=admin2；操作者 acct=admin1 → 只通知 admin2
-		ConsumerRecord<String, String> record = record("MembershipInvitationAccepted", "inv-3",
-				Map.of("organizationId", "org-1", "accountId", "admin1", "role", "member"));
+		// org 有 owner=admin1, admin=admin2；操作者 acct=admin1 → 只通知 admin2（resolver 职责，此处 mock）
+		ConsumerRecord<String, String> record = record("MemberSuspensionChanged", "inv-3",
+				Map.of("organizationId", "org-1", "operatorAccountId", "admin1", "accountId", "acct-9"));
 		when(inbox.recordIfAbsent(anyString(), any(), any(), anyString())).thenReturn(Mono.just(true));
 		when(resolver.resolve(any(IdentityEventEnvelope.class))).thenReturn(Mono.just(List.of("admin2")));
 		when(notifications.insertIfAbsent(eq("admin2"), any(), anyString(), anyString(), any(), any(), eq("evt-1"),
@@ -183,7 +184,7 @@ class NotificationEventProcessorTest {
 	}
 
 	private static Notification notification() {
-		return new Notification("n-1", "acct-1", NotificationCategory.INVITATION, "MembershipInvited", "t", null, null,
+		return new Notification("n-1", "acct-1", NotificationCategory.INVITATION, "OrgSubAccountCreated", "t", null, null,
 				"evt-1", Map.of(), null, java.time.Instant.now());
 	}
 }

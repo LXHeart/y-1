@@ -28,8 +28,8 @@ import reactor.core.publisher.Mono;
  * accountId（各自的收件箱）或按「同 eventId 重投的结果」判定，不依赖全局计数（见 ItSupport 注释）。
  *
  * <p>
- * 覆盖：① 邮箱→账号解析 + 通知落库；② 未注册邮箱→静默跳过但仍写 inbox（重投→DUPLICATE 证已记录）； ③ 重复
- * eventId→DUPLICATE；④ 同 ID 异 payload→契约冲突；⑤ org 扇出 owner/admin 排除操作者； ⑥
+ * 覆盖：① payload.accountId 直读 + 通知落库；② 无收件人→静默跳过但仍写 inbox（重投→DUPLICATE 证已记录）； ③ 重复
+ * eventId→DUPLICATE；④ 同 ID 异 payload→契约冲突；⑤ org 扇出 owner/admin 排除操作者并合并目标账号； ⑥
  * {@code PermissionReviewed} 经 merchant_permission_request 反查 requester；⑦
  * 通知插入失败→inbox 回滚（重投→PROCESSED 证回滚）。
  */
@@ -46,27 +46,28 @@ class NotificationInboxIT extends IdentityItSupport {
 	private final ObjectMapper mapper = new ObjectMapper();
 
 	@Test
-	void membershipInvitedResolvesRecipientByEmailAndInsertsNotification() {
-		var invitee = seedAccount("inbox-invitee@example.com");
-		ConsumerRecord<String, String> record = envelope("evt-A", "MembershipInvited", "inv-1",
-				Map.of("email", "inbox-invitee@example.com", "organizationId", "org-1"));
+	void subAccountCreatedNotifiesNewAccountDirectly() {
+		// 任务书 #49 邀请流下线后，INVITATION 类样板换成 #48 子账号欢迎通知（accountId 直读收件人）
+		var newAccount = seedAccount("inbox-subacct@example.com");
+		ConsumerRecord<String, String> record = envelope("evt-A", "OrgSubAccountCreated", "inv-1",
+				Map.of("accountId", newAccount.accountId(), "organizationId", "org-1"));
 
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
 
-		List<Notification> mine = notifications.findByAccount(invitee.accountId(), false, 10, null, null).collectList()
+		List<Notification> mine = notifications.findByAccount(newAccount.accountId(), false, 10, null, null).collectList()
 				.block();
 		assertThat(mine).hasSize(1);
-		assertThat(mine.get(0).eventType()).isEqualTo("MembershipInvited");
+		assertThat(mine.get(0).eventType()).isEqualTo("OrgSubAccountCreated");
 		assertThat(mine.get(0).category()).isEqualTo(NotificationCategory.INVITATION);
 		assertThat(mine.get(0).sourceEventId()).isEqualTo("evt-A");
 	}
 
 	@Test
-	void unknownEmailIsSkippedButInboxStillRecorded() {
-		ConsumerRecord<String, String> record = envelope("evt-B", "MembershipInvited", "inv-2",
-				Map.of("email", "not-registered-" + UUID.randomUUID() + "@example.com", "organizationId", "org-1"));
+	void missingRecipientIsSkippedButInboxStillRecorded() {
+		ConsumerRecord<String, String> record = envelope("evt-B", "OrgSubAccountCreated", "inv-2",
+				Map.of("organizationId", "org-1"));
 
-		// 首次：未注册 → 无通知但 PROCESSED（inbox 已记录）
+		// 首次：无收件人 → 无通知但 PROCESSED（inbox 已记录）
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
 		// 同 eventId 重投 → DUPLICATE，证 inbox 确实落了一行（否则会再次 PROCESSED）
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
@@ -74,8 +75,8 @@ class NotificationInboxIT extends IdentityItSupport {
 
 	@Test
 	void duplicateEventIdIsIdempotent() {
-		ConsumerRecord<String, String> record = envelope("evt-C", "MembershipInvited", "inv-3",
-				Map.of("email", "dup-" + UUID.randomUUID() + "@example.com", "organizationId", "org-1"));
+		ConsumerRecord<String, String> record = envelope("evt-C", "OrgSubAccountCreated", "inv-3",
+				Map.of("organizationId", "org-1"));
 
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
@@ -83,34 +84,38 @@ class NotificationInboxIT extends IdentityItSupport {
 
 	@Test
 	void conflictingPayloadForSameEventIdThrows() {
-		ConsumerRecord<String, String> first = envelope("evt-D", "MembershipInvited", "inv-4",
-				Map.of("email", "a-" + UUID.randomUUID() + "@example.com", "organizationId", "org-1"));
+		ConsumerRecord<String, String> first = envelope("evt-D", "OrgSubAccountCreated", "inv-4",
+				Map.of("accountId", "a-" + UUID.randomUUID(), "organizationId", "org-1"));
 		processor.process(first).block();
 
 		// 同 eventId 但 payload 不同 → 契约冲突（不可重试 → DLT）
-		ConsumerRecord<String, String> conflicting = envelope("evt-D", "MembershipInvited", "inv-4",
-				Map.of("email", "b-" + UUID.randomUUID() + "@example.com", "organizationId", "org-1"));
+		ConsumerRecord<String, String> conflicting = envelope("evt-D", "OrgSubAccountCreated", "inv-4",
+				Map.of("accountId", "b-" + UUID.randomUUID(), "organizationId", "org-1"));
 		assertThatThrownBy(() -> processor.process(conflicting).block()).isInstanceOf(EventContractException.class)
 				.hasMessageContaining("conflicting");
 	}
 
 	@Test
-	void invitationAcceptedFansOutToOrgManagersExcludingActor() {
+	void memberSuspensionFansOutToOrgManagersAndTargetAccount() {
 		var owner = seedAccount("inbox-owner@example.com");
 		var admin = seedAccount("inbox-admin@example.com");
 		var actor = seedAccount("inbox-actor@example.com");
+		var target = seedAccount("inbox-target@example.com");
 		String orgId = UUID.randomUUID().toString();
 		seedMember(orgId, owner.accountId(), "owner");
 		seedMember(orgId, admin.accountId(), "admin");
 		seedMember(orgId, actor.accountId(), "member");
 
-		ConsumerRecord<String, String> record = envelope("evt-E", "MembershipInvitationAccepted", "inv-5",
-				Map.of("organizationId", orgId, "accountId", actor.accountId(), "role", "member"));
+		// #48 停用通知：owner/admin（排除操作者）+ 目标账号本人
+		ConsumerRecord<String, String> record = envelope("evt-E", "MemberSuspensionChanged", "inv-5",
+				Map.of("organizationId", orgId, "operatorAccountId", actor.accountId(),
+						"accountId", target.accountId(), "action", "suspended"));
 		processor.process(record).block();
 
 		assertThat(unreadFor(owner.accountId())).as("owner 被通知").isEqualTo(1);
 		assertThat(unreadFor(admin.accountId())).as("admin 被通知").isEqualTo(1);
 		assertThat(unreadFor(actor.accountId())).as("操作者本人不被通知").isZero();
+		assertThat(unreadFor(target.accountId())).as("目标账号本人被通知").isEqualTo(1);
 	}
 
 	@Test
@@ -198,10 +203,10 @@ class NotificationInboxIT extends IdentityItSupport {
 
 	@Test
 	void notificationInsertFailureRollsBackInboxRow() {
-		// 必须先注册账号，resolver 才会解析出收件人，从而走到被注入失败的 insertIfAbsent
-		seedAccount("inbox-rollback@example.com");
-		ConsumerRecord<String, String> record = envelope("evt-G", "MembershipInvited", "inv-6",
-				Map.of("email", "inbox-rollback@example.com", "organizationId", "org-1"));
+		// resolver 按 payload.accountId 直读收件人，走到被注入失败的 insertIfAbsent
+		var account = seedAccount("inbox-rollback@example.com");
+		ConsumerRecord<String, String> record = envelope("evt-G", "OrgSubAccountCreated", "inv-6",
+				Map.of("accountId", account.accountId(), "organizationId", "org-1"));
 
 		// 同事务：通知插入恒失败 → inbox 行应随之回滚（不留半成品）
 		var spy = org.mockito.Mockito.spy(notifications);

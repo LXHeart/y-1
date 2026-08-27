@@ -22,7 +22,8 @@ class MailTemplatesTest {
 
     @Test
     void invitationEventProducesInvitationMail() {
-        MailTemplate t = MailTemplates.mailTemplate("MembershipInvited",
+        // 任务书 #49 邀请流下线后，INVITATION 类的邮件样板换成 #48 子账号欢迎通知
+        MailTemplate t = MailTemplates.mailTemplate("OrgSubAccountCreated",
                 payload(Map.of("organizationId", "org-1")));
         assertThat(t).isNotNull();
         assertThat(t.category()).isEqualTo("invitation");
@@ -154,8 +155,8 @@ class MailTemplatesTest {
     void mailSubjectBodyMatchNotificationTemplate_zeroDrift() {
         // 委托保证：邮件 subject/body 与站内通知 title/body 同源，无漂移
         JsonNode p = payload(Map.of("organizationId", "org-1"));
-        MailTemplate mail = MailTemplates.mailTemplate("MembershipInvited", p);
-        NotificationTemplates.Template notif = NotificationTemplates.template("MembershipInvited", p);
+        MailTemplate mail = MailTemplates.mailTemplate("OrgSubAccountCreated", p);
+        NotificationTemplates.Template notif = NotificationTemplates.template("OrgSubAccountCreated", p);
         assertThat(mail.subject()).isEqualTo(notif.title());
         assertThat(mail.body()).isEqualTo(notif.body());
     }

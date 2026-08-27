@@ -1,6 +1,5 @@
 package com.grassland.identity.notify.mail;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.grassland.identity.event.IdentityEventEnvelope;
 import com.grassland.identity.notification.MailTemplates;
 import com.grassland.identity.notification.MailTemplates.MailTemplate;
@@ -19,12 +18,7 @@ import reactor.core.publisher.Mono;
  *
  * <h3>收件人解析</h3>
  * <ul>
- * <li><b>邀请事件</b>（{@code MembershipInvited} /
- * {@code MembershipInvitationRevoked}）：收件人 =
- * {@code payload.email}——邀请本就发给<b>可能未注册</b>的邮箱，<b>不经</b> accountId→email 转换
- * （站内通知对未注册邮箱不产生行，但邮件必须发）。</li>
- * <li><b>其余事件</b>：收件人 =
- * {@code accountId → app_users.email}（{@code NotificationRecipientResolver} 返回的
+ * <li>收件人 = {@code accountId → app_users.email}（{@code NotificationRecipientResolver} 返回的
  * accountId 逐个反查；无 email 的账号跳过）。</li>
  * </ul>
  */
@@ -43,17 +37,12 @@ public class MailOutboxEnqueuer {
 	 * @param envelope
 	 *            通知事件
 	 * @param accountIds
-	 *            站内通知收件人（resolver 解析）；邀请事件忽略此参数（用 payload.email）
+	 *            站内通知收件人（resolver 解析）
 	 */
 	public Mono<Void> enqueue(IdentityEventEnvelope envelope, List<String> accountIds) {
 		MailTemplate template = MailTemplates.mailTemplate(envelope.eventType(), envelope.payload());
 		if (template == null) {
 			return Mono.empty(); // PERMISSION 或非关注类型 → 不入队邮件
-		}
-
-		if (isInvitationByEmail(envelope.eventType())) {
-			String email = text(envelope.payload(), "email");
-			return email == null ? Mono.empty() : append(envelope.eventId(), email, template);
 		}
 
 		if (accountIds == null || accountIds.isEmpty()) {
@@ -68,24 +57,18 @@ public class MailOutboxEnqueuer {
 		});
 	}
 
-	/** 邀请类事件：收件人是 payload.email（被邀请人可能未注册）。 */
-	private static boolean isInvitationByEmail(String eventType) {
-		return "MembershipInvited".equals(eventType) || "MembershipInvitationRevoked".equals(eventType)
-				|| "MembershipInvitationReminder".equals(eventType);
-	}
-
 	private Mono<String> lookupEmail(String accountId) {
-		return db.sql("SELECT email FROM app_users WHERE id = CAST(:id AS uuid) AND email IS NOT NULL")
-				.bind("id", accountId).map(row -> row.get("email", String.class)).one(); // 无 email → empty，不产生元素
+		// 任务书 #49：子账号未绑邮箱时 email 列是 @sub.grassland.invalid 占位符——外发必被退信，
+		// 在入队前短路（站内通知不受影响）。
+		return db.sql("""
+				SELECT email FROM app_users
+				WHERE id = CAST(:id AS uuid) AND email IS NOT NULL
+				  AND email NOT LIKE '%@sub.grassland.invalid'
+				""").bind("id", accountId).map(row -> row.get("email", String.class)).one(); // 无 email → empty，不产生元素
 	}
 
 	private Mono<Void> append(String eventId, String email, MailTemplate template) {
 		return repository.append(new MailOutboxRepository.MailMessage(eventId, email, template.subject(),
 				template.body(), template.category()));
-	}
-
-	private static String text(JsonNode payload, String field) {
-		JsonNode node = payload.get(field);
-		return (node == null || !node.isTextual() || node.asText().isBlank()) ? null : node.asText().trim();
 	}
 }

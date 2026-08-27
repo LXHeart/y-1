@@ -24,7 +24,7 @@ import reactor.core.publisher.Mono;
  * <p>所有读写都以 {@code accounts.resolve(request)} 拿到的当前账号为收件人，越权在 repo 的 SQL 层再封一道
  * （见 {@link NotificationRepository}）。列表走 {@code created_at DESC} keyset 分页，新通知持续插表头也不会让下一页重复。
  *
- * <p>响应信封与 {@code MyInvitationController} 一致：{@code {success, data}} / {@code {success:false, error}}。
+ * <p>响应信封：{@code {success, data}} / {@code {success:false, error}}。
  */
 @RestController
 @RequestMapping("/api/me/notifications")
