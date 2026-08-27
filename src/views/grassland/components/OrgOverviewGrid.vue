@@ -125,10 +125,9 @@ const teamCard = computed<OverviewCard>(() => {
   const team = props.team
   if (!team) return { key: 'team', label: '成员与门店', value: '—', tone: 'muted', hint: null, section: 'team' }
 
-  // 待办优先级：待审核成员（挡着人登录）> 待接受邀请（等对方动作）。
+  // 待办：待审核成员（挡着人登录）。邀请待办已随邀请流下线（任务书 #49）。
   const pending: string[] = []
   if (team.pendingReviewCount > 0) pending.push(`${team.pendingReviewCount} 人待审核`)
-  if (team.pendingInvitationCount > 0) pending.push(`${team.pendingInvitationCount} 条邀请待接受`)
 
   return {
     key: 'team', label: '成员与门店',

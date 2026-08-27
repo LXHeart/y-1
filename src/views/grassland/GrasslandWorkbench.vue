@@ -8,7 +8,6 @@ import MerchantKybCard from '../../components/MerchantKybCard.vue'
 import MerchantCommerceCard from '../../components/MerchantCommerceCard.vue'
 import MerchantPermissionCard from '../../components/MerchantPermissionCard.vue'
 import MerchantMonthlyBillCard from '../../components/MerchantMonthlyBillCard.vue'
-import MyInvitationsCard from '../../components/MyInvitationsCard.vue'
 import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.vue'
 import MySessionsCard from '../../components/MySessionsCard.vue'
 import PersonalDataComplianceCard from '../../components/PersonalDataComplianceCard.vue'
@@ -242,13 +241,11 @@ const ANCHOR_TAB: Readonly<Record<'merchant' | 'recommender', Readonly<Record<st
     'gl-engagements': 'tasks',
     'gl-organizations': 'org',
     'gl-wallet': 'finance',
-    'gl-invitations': 'account',
   },
   recommender: {
     'gl-wallet': 'earnings',
     'gl-task-hall': 'hall',
     'gl-engagements': 'engagements',
-    'gl-invitations': 'account',
   },
 }
 
@@ -1102,10 +1099,7 @@ watch(grasslandNavigationTarget, async (target) => {
         <h3 class="gl-zone-title">账号与合规</h3>
       </div>
       <div class="gl-zone-body">
-        <article id="gl-invitations" class="gl-tile">
-          <MyInvitationsCard @joined="() => loadOrganizations()" />
-        </article>
-
+        <!-- 任务书 #49：MyInvitationsCard（我的邀请）已随邀请流下线移除 -->
         <article class="gl-tile">
           <MySessionsCard />
         </article>

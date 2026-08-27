@@ -72,7 +72,9 @@ export interface NotificationLinkTarget {
 }
 
 export const NOTIFICATION_LINK_TARGETS: Record<string, NotificationLinkTarget> = {
-  '/me/invitations': { view: 'grassland', anchor: 'gl-invitations' },
+  // 任务书 #49 邀请流下线：存量通知（老邀请事件）的 linkPath 兜底落到组织区——
+  // 邀请入口已不存在，成员管理在 gl-organizations。
+  '/me/invitations': { view: 'grassland', anchor: 'gl-organizations' },
   '/me/organizations': { view: 'grassland', anchor: 'gl-organizations' },
   '/me/engagements': { view: 'grassland', anchor: 'gl-engagements' },
   '/me/disputes': { view: 'grassland', anchor: 'gl-disputes' },

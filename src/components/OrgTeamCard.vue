@@ -2,10 +2,8 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
-  InvitationStatus,
   Membership,
   MembershipRole,
-  OrgInvitation,
   OrgTeamSummary,
   Store,
   StoreMembership,
@@ -15,16 +13,11 @@ import type {
 /**
  * 组织成员 + 门店 + 门店成员管理（Slice 2F / 2G / 2J 的前端）。
  *
- * 后端三级权限早已建好且全测通，但此前零 UI——多门店、多成员的商家没法自助管理。
- *
- * 加成员的主路径是**按邮箱邀请**（identity 没有、也刻意不做「按邮箱查人」——那等于账号枚举探针）：
- * 邀请只记邮箱，由对方登录后在「我的邀请」里自行接受。填 UUID 直接添加保留为次要入口。
+ * 任务书 #49：邀请流（按邮箱邀请 + 「我的邀请」接受侧）整条下线——成员只能经主体直建子账号产生。
  *
  * 授权分档（后端口径，UI 只做提示，真正门禁在服务端）：
- * - 组织成员增删 / 发邀请 / 撤销邀请：org **OWNER**（且不能经此端点授予 owner）
- * - 建门店：org **ADMIN+**
  * - 门店列表：org MEMBER+；门店成员列表：门店 STAFF+
- * - 任命门店 manager：org **ADMIN+**；加 staff：**门店 MANAGER+**（店长可自管本店员工）
+ * - 任命门店 manager：org **ADMIN+**；店长建 staff：**门店 MANAGER+**（店长可自管本店员工）
  * - 守卫：移除最后一个 owner / 唯一 manager 均 409
  */
 
@@ -34,21 +27,12 @@ const props = defineProps<{ orgId: string }>()
 const grassland = useGrassland()
 
 const members = ref<Membership[]>([])
-const invitations = ref<OrgInvitation[]>([])
 const stores = ref<Store[]>([])
 const selectedStoreId = ref('')
 const storeMembers = ref<StoreMembership[]>([])
 const notice = ref('')
 
-const newMemberEmail = ref('')
-const newMemberAccount = ref('')
-const newMemberRole = ref<'admin' | 'member'>('member')
 const newStoreName = ref('')
-const newStoreMemberAccount = ref('')
-const newStoreMemberRole = ref<StoreRole>('staff')
-const newStoreMemberEmail = ref('')
-/** 邀请记录里的门店名（storeId → name），列表渲染用。 */
-const storeNameById = computed(() => new Map(stores.value.map((store) => [store.id, store.name])))
 
 const ROLE_LABEL: Record<MembershipRole, string> = {
   owner: '所有者',
@@ -61,27 +45,13 @@ const STORE_ROLE_LABEL: Record<StoreRole, string> = {
   staff: '店员',
 }
 
-/** 邀请角色标签：组织级 admin/member 与门店级 staff/manager 并存，逐档回退。 */
-function invitationRoleLabel(role: OrgInvitation['role']): string {
-  return ROLE_LABEL[role as MembershipRole] || STORE_ROLE_LABEL[role as StoreRole] || role
-}
-
-const INVITATION_STATUS_LABEL: Record<InvitationStatus, string> = {
-  pending: '待接受',
-  accepted: '已接受',
-  revoked: '已撤销',
-  declined: '已谢绝',
-}
-
 async function refresh(): Promise<void> {
   if (!props.orgId) return
   selectedStoreId.value = ''
   storeMembers.value = []
   const m = await grassland.listMemberships(props.orgId)
-  const i = await grassland.listInvitations(props.orgId)
   const s = await grassland.listStores(props.orgId)
   if (m) members.value = m
-  if (i) invitations.value = i
   if (s) stores.value = s
   await loadReviewToggle()
 }
@@ -100,11 +70,9 @@ watch(
     // Array.isArray 守卫：load 只判 truthy，上游给非数组时摘要不能连带崩掉整卡
     // （卡身用 v-for 能容忍，`.length`/`.filter` 不能）。
     const memberList = Array.isArray(members.value) ? members.value : []
-    const invitationList = Array.isArray(invitations.value) ? invitations.value : []
     return {
       memberCount: memberList.length,
       storeCount: Array.isArray(stores.value) ? stores.value.length : 0,
-      pendingInvitationCount: invitationList.filter((item) => item.status === 'pending' && !item.expired).length,
       pendingReviewCount: memberList.filter((item) => item.accountStatus === 'pending_review').length,
     }
   },
@@ -117,63 +85,8 @@ async function reloadMembers(): Promise<void> {
   if (list) members.value = list
 }
 
-async function addMember(): Promise<void> {
-  const accountId = newMemberAccount.value.trim()
-  if (!accountId) return
-  notice.value = ''
-  const added = await grassland.addMembership(props.orgId, accountId, newMemberRole.value)
-  if (!added) return
-  newMemberAccount.value = ''
-  notice.value = `已添加${ROLE_LABEL[newMemberRole.value]}`
-  await reloadMembers()
-}
-
-async function reloadInvitations(): Promise<void> {
-  const list = await grassland.listInvitations(props.orgId)
-  if (list) invitations.value = list
-}
-
-async function sendInvite(): Promise<void> {
-  const email = newMemberEmail.value.trim()
-  if (!email) return
-  notice.value = ''
-  const created = await grassland.inviteMember(props.orgId, email, newMemberRole.value)
-  if (!created) return
-  newMemberEmail.value = ''
-  // emailSent 如实反映后端是否真的发出邮件：本地未配 SMTP 时为 false，此时必须由邀请人自己通知对方
-  notice.value = created.emailSent
-    ? `已向 ${created.email} 发出邀请邮件`
-    : `已记录对 ${created.email} 的邀请（未配置邮件服务，请自行通知对方登录后接受）`
-  await reloadInvitations()
-}
-
-/** 复制「邀请直达」链接：对方打开后落到草场工作台的「我的邀请」（链接不含邀请 id，见 DefaultLayout 注释）。 */
-async function copyInviteLink(): Promise<void> {
-  const url = new URL(window.location.origin + window.location.pathname)
-  url.searchParams.set('invite', '1')
-  try {
-    await navigator.clipboard.writeText(url.toString())
-    notice.value = '邀请链接已复制——对方打开后会直达「我的邀请」'
-  } catch {
-    notice.value = `邀请链接：${url.toString()}`
-  }
-}
-
-async function revokeInvite(invitation: OrgInvitation): Promise<void> {
-  notice.value = ''
-  const revoked = await grassland.revokeInvitation(props.orgId, invitation.id)
-  if (revoked === null) return  // 已被接受/谢绝等 409 由 error 条呈现
-  notice.value = '邀请已撤销'
-  await reloadInvitations()
-}
-
-async function removeMember(m: Membership): Promise<void> {
-  notice.value = ''
-  const removed = await grassland.removeMembership(props.orgId, m.accountId)
-  if (removed === null) return  // 失败（如末位 owner 守卫 409）已由 error 条呈现
-  notice.value = '成员已移除'
-  await reloadMembers()
-}
+// 任务书 #49：挂靠入口（填 accountId 直接添加 / 「移除」仅解除关系）已随挂靠通路下线。
+// 成员移除走「删除」动作（S5：解除关系 + 账号永久作废 + 输入账号名强确认）。
 
 async function addStore(): Promise<void> {
   const name = newStoreName.value.trim()
@@ -195,38 +108,7 @@ async function selectStore(storeId: string): Promise<void> {
   if (list) storeMembers.value = list
 }
 
-async function sendStoreInvite(): Promise<void> {
-  const email = newStoreMemberEmail.value.trim()
-  if (!email || !selectedStoreId.value) return
-  notice.value = ''
-  const created = await grassland.inviteMember(props.orgId, email, newStoreMemberRole.value, selectedStoreId.value)
-  if (!created) return
-  newStoreMemberEmail.value = ''
-  notice.value = created.emailSent
-    ? `已向 ${created.email} 发出${STORE_ROLE_LABEL[newStoreMemberRole.value]}邀请邮件`
-    : `已记录对 ${created.email} 的${STORE_ROLE_LABEL[newStoreMemberRole.value]}邀请（未配置邮件服务，请自行通知对方登录后接受）`
-  await reloadInvitations()
-}
-
-async function addStoreMember(): Promise<void> {
-  const accountId = newStoreMemberAccount.value.trim()
-  if (!accountId || !selectedStoreId.value) return
-  notice.value = ''
-  const added = await grassland.addStoreMembership(
-    props.orgId, selectedStoreId.value, accountId, newStoreMemberRole.value)
-  if (!added) return
-  newStoreMemberAccount.value = ''
-  notice.value = `已添加${STORE_ROLE_LABEL[newStoreMemberRole.value]}`
-  await selectStore(selectedStoreId.value)
-}
-
-async function removeStoreMember(m: StoreMembership): Promise<void> {
-  notice.value = ''
-  const removed = await grassland.removeStoreMembership(props.orgId, selectedStoreId.value, m.accountId)
-  if (removed === null) return  // 末位 manager 守卫 409 等由 error 条呈现
-  notice.value = '门店成员已移除'
-  await selectStore(selectedStoreId.value)
-}
+// 任务书 #49：门店挂靠函数（addStoreMember/removeStoreMember）已随挂靠通路下线。
 
 // ---------- 任务书 #48：子账号直建 / 停用恢复 / 审核开关 ----------
 
@@ -401,43 +283,12 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
             <td>
               <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
               <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
-              <button
-                type="button" class="team-quiet"
-                :disabled="grassland.loading.value"
-                @click="removeMember(m)"
-              >移除</button>
             </td>
           </tr>
         </tbody>
       </table>
 
-      <div class="team-row">
-        <input v-model="newMemberEmail" type="email" placeholder="对方邮箱" @keyup.enter="sendInvite" />
-        <select v-model="newMemberRole">
-          <option value="member">成员</option>
-          <option value="admin">管理员</option>
-        </select>
-        <button type="button" :disabled="grassland.loading.value || !newMemberEmail.trim()" @click="sendInvite">
-          发出邀请
-        </button>
-      </div>
-      <p class="team-hint">
-        需主体所有者权限；所有者角色只能在创建主体时产生，不能在此授予。
-        <strong>系统不会告诉你该邮箱是否已注册</strong>——无论如何都记下邀请，由对方登录后自行接受（防账号枚举）。
-      </p>
-
-      <details class="team-adv">
-        <summary>已知账号 ID？直接添加</summary>
-        <div class="team-row">
-          <input v-model="newMemberAccount" placeholder="账号 ID（UUID）" />
-          <button
-            type="button"
-            :disabled="grassland.loading.value || !newMemberAccount.trim()"
-            @click="addMember"
-          >直接添加</button>
-        </div>
-        <p class="team-hint">跳过邀请直接入组，仅在你确知对方账号 ID 时可用；角色取上方下拉框的选择。</p>
-      </details>
+      <!-- 任务书 #49：邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（成员经下方主体直建产生） -->
 
       <!-- 主体直建子账号（任务书 #48）：对方没有平台账号也能入组；管理员可选任意角色并挂门店 -->
       <details class="team-adv">
@@ -465,42 +316,6 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
           选店长/店员时须指定门店。若邮箱已是平台账号，会提示你确认后改为「关联」，原密码不受影响。
         </p>
       </details>
-    </section>
-
-    <!-- 邀请 -->
-    <section class="team-sec">
-      <h4>邀请记录</h4>
-      <p v-if="invitations.length === 0" class="team-hint">暂无邀请。</p>
-      <table v-else class="team-table">
-        <thead><tr><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr v-for="i in invitations" :key="i.id">
-            <td>{{ i.email }}</td>
-            <td>
-              <span v-if="i.storeId" class="team-tag">{{ storeNameById.get(i.storeId) || '门店' }}</span>
-              {{ invitationRoleLabel(i.role) }}
-            </td>
-            <td>
-              {{ INVITATION_STATUS_LABEL[i.status] || i.status }}
-              <span v-if="i.expired" class="team-tag">已过期</span>
-            </td>
-            <td>
-              <template v-if="i.status === 'pending'">
-                <button
-                  type="button" class="team-quiet"
-                  :disabled="grassland.loading.value"
-                  @click="copyInviteLink"
-                >复制链接</button>
-                <button
-                  type="button" class="team-quiet"
-                  :disabled="grassland.loading.value"
-                  @click="revokeInvite(i)"
-                >撤销</button>
-              </template>
-            </td>
-          </tr>
-        </tbody>
-      </table>
     </section>
 
     <!-- 门店 -->
@@ -547,47 +362,14 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
               </template>
-              <button
-                type="button" class="team-quiet"
-                :disabled="grassland.loading.value"
-                @click="removeStoreMember(m)"
-              >移除</button>
             </td>
           </tr>
         </tbody>
       </table>
 
-      <div class="team-row">
-        <input v-model="newStoreMemberEmail" type="email" placeholder="对方邮箱" @keyup.enter="sendStoreInvite" />
-        <select v-model="newStoreMemberRole">
-          <option value="staff">店员</option>
-          <option value="manager">店长</option>
-        </select>
-        <button
-          type="button"
-          :disabled="grassland.loading.value || !newStoreMemberEmail.trim()"
-          @click="sendStoreInvite"
-        >发出邀请</button>
-      </div>
-      <p class="team-hint">
-        邀请店员需本店店长及以上；邀请店长需主体管理员及以上。对方登录后在「我的邀请」接受，
-        直接成为本店成员（不占主体成员席位）。系统不会透露该邮箱是否已注册。
-      </p>
+      <!-- 任务书 #49：门店邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（本店员工经下方店长直建产生） -->
 
-      <details class="team-adv">
-        <summary>已知账号 ID？直接添加</summary>
-        <div class="team-row">
-          <input v-model="newStoreMemberAccount" placeholder="账号 ID（UUID）" />
-          <button
-            type="button"
-            :disabled="grassland.loading.value || !newStoreMemberAccount.trim()"
-            @click="addStoreMember"
-          >直接添加</button>
-        </div>
-        <p class="team-hint">跳过邀请直接入店；角色取上方下拉框的选择。</p>
-      </details>
-
-      <!-- 店长代建员工（任务书 #48）：固定建店员（任命店长走上方主体入口或既有邀请流） -->
+      <!-- 店长代建员工（任务书 #48）：固定建店员（任命店长走上方主体入口） -->
       <details class="team-adv">
         <summary>对方没有平台账号？直接创建店员账号</summary>
         <div class="team-row">
@@ -601,7 +383,7 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
         </div>
         <p class="team-hint">
           系统生成一次性初始密码供你线下转交，对方首次登录须改密。此处固定创建店员；
-          任命店长需主体管理员在上方主体入口创建或走邀请。开启审核后新建为「待审核」，主体通过后才能登录。
+          任命店长需主体管理员在上方主体入口创建。开启审核后新建为「待审核」，主体通过后才能登录。
         </p>
       </details>
     </section>

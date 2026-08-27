@@ -16,8 +16,6 @@ import type { PermissionTier } from './organization'
 export interface OrgTeamSummary {
   memberCount: number
   storeCount: number
-  /** 待接受的邀请数。 */
-  pendingInvitationCount: number
   /** 状态为 pending_review 的成员数（店长代建待主体审核）。 */
   pendingReviewCount: number
 }

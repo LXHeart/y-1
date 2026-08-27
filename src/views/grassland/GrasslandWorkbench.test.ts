@@ -818,9 +818,10 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
  * 消费后置空（同一锚点能被再次点击触发）、以及**不替用户切换商家/推荐官视角**。
  */
 describe('GrasslandWorkbench 通知锚点', () => {
-  const ANCHORS = ['gl-invitations', 'gl-organizations', 'gl-engagements', 'gl-disputes', 'gl-wallet']
+  // 任务书 #49：gl-invitations 已随邀请流下线（存量通知链接在 NOTIFICATION_LINK_TARGETS 兜底到 gl-organizations）
+  const ANCHORS = ['gl-organizations', 'gl-engagements', 'gl-disputes', 'gl-wallet']
 
-  test('商家视角下五个锚点都在 DOM 里', async () => {
+  test('商家视角下四个锚点都在 DOM 里', async () => {
     stubFetch()
     const wrapper = mountWorkbench({ attachTo: document.body })
     currentUser.value = asUser('acct-1', 'merchant@test.local')

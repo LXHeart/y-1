@@ -8,8 +8,8 @@ import type {
   IdentityProfile, Organization, StoreAccessScope, OrganizationAccessScope, IdentityType,
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
-  Membership, LoginSession, OrgInvitation, MyInvitation,
-  InvitationAcceptResult, Store, StoreMembership, StoreRole, PublicBrandProfile, StorePublicProfile, StorePublicMedia,
+  Membership, LoginSession,
+  Store, StoreMembership, StoreRole, PublicBrandProfile, StorePublicProfile, StorePublicMedia,
   SubAccountMutationResult,
   MediaUploadTicket, MediaMetadata, BrandProfile, SaveBrandProfileInput,
   AccountClosureCheck, AccountClosureRequest, PersonalDataExport, PiiLifecycleAudit,
@@ -160,19 +160,8 @@ export function useGrasslandIdentity(run: RunFn) {
   const listMemberships = (orgId: string) =>
     run(() => request<Membership[]>(`/api/organizations/${orgId}/memberships`))
 
-  /**
-   * 加组织成员（需 org **OWNER**）。role 仅 admin/member——
-   * 后端显式拒绝经此端点授予 owner；重复添加 409。
-   */
-  const addMembership = (orgId: string, accountId: string, role: 'admin' | 'member') =>
-    run(() => request<Membership>(`/api/organizations/${orgId}/memberships`, {
-      method: 'POST',
-      body: JSON.stringify({ accountId, role }),
-    }))
-
-  /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
-  const removeMembership = (orgId: string, accountId: string) =>
-    run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+  // 任务书 #49：挂靠端点（POST/DELETE memberships，按 accountId 挂既有账号）已下线——
+  // 成员只能经主体直建子账号产生，移除走 /accounts/{id} 删除端点（永久作废）。
 
   // ---------- identity：成员子账号（任务书 #48）----------
 
@@ -269,46 +258,9 @@ export function useGrasslandIdentity(run: RunFn) {
     run(() => request<{ entries: PiiLifecycleAudit[] }>(
       `/api/me/compliance/audit?limit=${Math.max(1, Math.min(limit, 100))}`))
 
-  // ---------- identity：按邮箱邀请成员 ----------
-
-  /**
-   * 按邮箱邀请成员（需 org **OWNER**）。
-   *
-   * ⚠️ 请求体字段是 `email` + `role`（后端 `CreateInvitationRequest(email, role)`），
-   * 与直接加成员的 `accountId` 不同；role 仅 admin/member。
-   *
-   * 后端**不回答该邮箱是否已注册**——存在与否都返回 201（防账号枚举）。
-   * 响应的 `emailSent` 表示是否真的发出了通知邮件（本地未配 SMTP 时为 false，需邀请人自行告知对方）。
-   */
-  /** 门店级邀请传 storeId（角色为 staff/manager）；缺省为组织级邀请（admin/member）。 */
-  const inviteMember = (orgId: string, email: string, role: 'admin' | 'member' | 'staff' | 'manager',
-    storeId?: string) =>
-    run(() => request<OrgInvitation>(`/api/organizations/${orgId}/invitations`, {
-      method: 'POST',
-      body: JSON.stringify({ email, role, ...(storeId ? { storeId } : {}) }),
-    }))
-
-  /** 列本组织的邀请（含终态，需 org MEMBER+）。列表项**不带** `emailSent`。 */
-  const listInvitations = (orgId: string) =>
-    run(() => request<OrgInvitation[]>(`/api/organizations/${orgId}/invitations`))
-
-  /** 撤销待接受邀请（需 org OWNER）。已被接受/谢绝/撤销 → 409。 */
-  const revokeInvitation = (orgId: string, invitationId: string) =>
-    run(() => request<unknown>(
-      `/api/organizations/${orgId}/invitations/${invitationId}`, { method: 'DELETE' }))
-
-  /** 列发给「我这个邮箱」的待接受邀请。响应带 `organizationName`，**不带** email/status。 */
-  const listMyInvitations = () =>
-    run(() => request<MyInvitation[]>('/api/me/invitations'))
-
-  /** 接受邀请（无请求体）。本就是成员时不报错，返回 `alreadyMember: true`。 */
-  const acceptInvitation = (invitationId: string) =>
-    run(() => request<InvitationAcceptResult>(
-      `/api/me/invitations/${invitationId}/accept`, { method: 'POST' }))
-
-  /** 谢绝邀请（无请求体）。 */
-  const declineInvitation = (invitationId: string) =>
-    run(() => request<unknown>(`/api/me/invitations/${invitationId}/decline`, { method: 'POST' }))
+  // 任务书 #49：邀请流整条下线（inviteMember/listInvitations/revokeInvitation/
+  // listMyInvitations/acceptInvitation/declineInvitation 均已移除）。
+  // 存量 pending 邀请由 V45 迁移作废；「我的邀请」卡片同步删除。
 
   /** 列门店（需 org MEMBER+）。 */
   const listStores = (orgId: string) =>
@@ -345,21 +297,8 @@ export function useGrasslandIdentity(run: RunFn) {
   const listStoreMemberships = (orgId: string, storeId: string) =>
     run(() => request<StoreMembership[]>(`/api/organizations/${orgId}/stores/${storeId}/memberships`))
 
-  /**
-   * 加门店成员。授权分档（Slice 2J）：
-   * 任命 `manager` 需 **org ADMIN+**；加 `staff` 只需**门店 MANAGER+**（店长可自管本店员工）。
-   */
-  const addStoreMembership = (orgId: string, storeId: string, accountId: string, role: StoreRole) =>
-    run(() => request<StoreMembership>(
-      `/api/organizations/${orgId}/stores/${storeId}/memberships`, {
-        method: 'POST',
-        body: JSON.stringify({ accountId, role }),
-      }))
-
-  /** 移除门店成员（需门店 MANAGER+）。移除唯一经理 → 409（末位 MANAGER 守卫）。 */
-  const removeStoreMembership = (orgId: string, storeId: string, accountId: string) =>
-    run(() => request<unknown>(
-      `/api/organizations/${orgId}/stores/${storeId}/memberships/${accountId}`, { method: 'DELETE' }))
+  // 任务书 #49：门店挂靠端点（addStoreMembership/removeStoreMembership）已随挂靠通路下线——
+  // 门店成员经主体直建（店长建 staff）产生，移除走 /accounts/{id} 删除端点。
 
   // ---------- identity：组织品牌资料（#32）----------
 
@@ -419,17 +358,14 @@ export function useGrasslandIdentity(run: RunFn) {
     createPermissionRequest, listPermissionRequests, appealPermissionRequest,
     listPendingPermissionRequests, claimPermissionRequest, listPermissionRequestAudit,
     reviewPermissionRequest,
-    listMemberships, addMembership, removeMembership,
+    listMemberships,
     createSubAccount, createStaffSubAccount,
     suspendSubAccount, restoreSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
     getMemberReviewRequired, setMemberReviewRequired,
     listMySessions, revokeOtherSessions, revokeSession,
     checkAccountClosure, requestPersonalDataExport, getPersonalDataExport,
     requestAccountClosure, listPiiLifecycleAudit,
-    inviteMember, listInvitations, revokeInvitation,
-    listMyInvitations, acceptInvitation, declineInvitation,
-    listStores, createStore, getStorePublicProfile, getPublicBrandProfile, getStorePublicMedia, listStoreMemberships, addStoreMembership,
-    removeStoreMembership,
+    listStores, createStore, getStorePublicProfile, getPublicBrandProfile, getStorePublicMedia, listStoreMemberships,
     getBrandProfile, updateBrandProfile, uploadBrandLogo,
     requestOrgRename, listOrgRenameRequests, listAdminOrgRenames, reviewAdminOrgRename,
   }
