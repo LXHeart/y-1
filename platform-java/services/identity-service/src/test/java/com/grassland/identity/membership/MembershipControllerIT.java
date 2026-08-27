@@ -65,7 +65,9 @@ class MembershipControllerIT extends IdentityItSupport {
                 .expectStatus().isOk().expectBody()
                 .jsonPath("$.data.length()").isEqualTo(1)
                 .jsonPath("$.data[0].role").isEqualTo("owner")
-                .jsonPath("$.data[0].accountId").isEqualTo(owner.accountId());
+                .jsonPath("$.data[0].accountId").isEqualTo(owner.accountId())
+                // owner 是注册用户、无 account_username 行：账号名为 null（2026-08-28 起 username 回显）
+                .jsonPath("$.data[0].username").value(org.hamcrest.Matchers.nullValue());
     }
 
     @Test

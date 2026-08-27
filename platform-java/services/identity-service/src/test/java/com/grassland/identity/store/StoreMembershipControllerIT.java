@@ -30,7 +30,10 @@ class StoreMembershipControllerIT extends IdentityItSupport {
                 .expectStatus().isOk().expectBody()
                 .jsonPath("$.data.length()").isEqualTo(1)
                 .jsonPath("$.data[0].role").isEqualTo("staff")
-                .jsonPath("$.data[0].accountStatus").isEqualTo("active");
+                .jsonPath("$.data[0].accountStatus").isEqualTo("active")
+                // 2026-08-28：列表回显账号名（前缀-登录名）——此前 toBody 丢弃，行里只剩 accountId 前 8 位
+                .jsonPath("$.data[0].username").value(
+                        org.hamcrest.Matchers.matchesRegex("[a-z0-9]+-smstaff1"));
     }
 
     @Test

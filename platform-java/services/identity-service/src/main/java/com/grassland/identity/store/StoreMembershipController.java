@@ -62,6 +62,8 @@ public class StoreMembershipController {
 		map.put("role", m.role());
 		// 任务书 #48：账号状态（additive）；pending_review 行据此渲染审核入口
 		map.put("accountStatus", m.accountStatus());
+		// 账号名（前缀-登录名）：行展示与删除强确认都要用，仓储已联 account_username
+		map.put("username", m.username());
 		map.put("createdAt", m.createdAt() == null ? null : m.createdAt().toString());
 		return map;
 	}
