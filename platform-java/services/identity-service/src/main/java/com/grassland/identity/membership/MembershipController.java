@@ -74,7 +74,7 @@ public class MembershipController {
 	@GetMapping
 	public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String orgId, ServerHttpRequest request) {
 		return authz.requireRole(request, orgId, MembershipRole.MEMBER)
-				.flatMap(account -> memberships.findByOrganization(orgId).collectList().map(list -> ResponseEntity
+				.flatMap(account -> memberships.findByOrganizationWithAccountStatus(orgId).collectList().map(list -> ResponseEntity
 						.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
 	}
 
@@ -112,6 +112,8 @@ public class MembershipController {
 		map.put("organizationId", m.organizationId());
 		map.put("accountId", m.accountId());
 		map.put("role", m.role());
+		// 任务书 #48：账号状态（additive，旧客户端可忽略）；null=账号行不存在
+		map.put("accountStatus", m.accountStatus());
 		map.put("createdAt", m.createdAt() == null ? null : m.createdAt().toString());
 		return map;
 	}

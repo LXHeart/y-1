@@ -49,6 +49,20 @@ public class StoreMembershipRepository {
                 .map(StoreMembershipRepository::map).one();
     }
 
+    /** 列门店成员并带账号状态（任务书 #48：UI 需展示待审/停用并给出审核入口）。 */
+    public Flux<StoreMembership> findByStoreWithAccountStatus(String storeId) {
+        return db.sql("""
+                SELECT sm.id::text, sm.store_id::text, sm.account_id::text, sm.role,
+                       sm.created_at, sm.updated_at, u.status AS account_status
+                FROM store_membership sm
+                LEFT JOIN app_users u ON u.id = sm.account_id
+                WHERE sm.store_id = CAST(:store AS uuid)
+                ORDER BY sm.created_at
+                """)
+                .bind("store", storeId)
+                .map(StoreMembershipRepository::mapWithStatus).all();
+    }
+
     public Flux<StoreMembership> findByStore(String storeId) {
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM store_membership WHERE store_id = CAST(:store AS uuid) ORDER BY created_at")
@@ -182,6 +196,18 @@ public class StoreMembershipRepository {
                 row.get("role", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
+        );
+    }
+
+    private static StoreMembership mapWithStatus(Readable row) {
+        return new StoreMembership(
+                row.get("id", String.class),
+                row.get("store_id", String.class),
+                row.get("account_id", String.class),
+                row.get("role", String.class),
+                toInstant(row.get("created_at", OffsetDateTime.class)),
+                toInstant(row.get("updated_at", OffsetDateTime.class)),
+                row.get("account_status", String.class)
         );
     }
 

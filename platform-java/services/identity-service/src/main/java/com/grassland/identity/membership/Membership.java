@@ -6,6 +6,7 @@ import java.time.Instant;
  * 组织成员关系。草场身份域 Slice 2F 实体（HLD 5.2 merchant-organization：成员关系和权限委派）。
  *
  * <p>{@code role} 存 DB 小写字符串（owner/admin/member），按需用 {@link MembershipRole#fromDb} 转枚举做权限判定。
+ * {@code accountStatus}（任务书 #48）是列表联 app_users 带出的账号状态，缺席（null）= 未选/账号行不存在。
  */
 public record Membership(
         String id,
@@ -13,5 +14,12 @@ public record Membership(
         String accountId,
         String role,
         Instant createdAt,
-        Instant updatedAt
-) {}
+        Instant updatedAt,
+        String accountStatus
+) {
+    /** 兼容无状态视角的旧构造。 */
+    public Membership(String id, String organizationId, String accountId, String role,
+            Instant createdAt, Instant updatedAt) {
+        this(id, organizationId, accountId, role, createdAt, updatedAt, null);
+    }
+}

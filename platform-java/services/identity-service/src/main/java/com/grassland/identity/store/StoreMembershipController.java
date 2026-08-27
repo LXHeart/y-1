@@ -64,7 +64,7 @@ public class StoreMembershipController {
 	public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String orgId, @PathVariable String storeId,
 			ServerHttpRequest request) {
 		return storeAuthz.requireStoreRole(request, orgId, storeId, StoreRole.STAFF)
-				.flatMap(account -> storeMemberships.findByStore(storeId).collectList().map(list -> ResponseEntity
+				.flatMap(account -> storeMemberships.findByStoreWithAccountStatus(storeId).collectList().map(list -> ResponseEntity
 						.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
 	}
 
@@ -132,6 +132,8 @@ public class StoreMembershipController {
 		map.put("storeId", m.storeId());
 		map.put("accountId", m.accountId());
 		map.put("role", m.role());
+		// 任务书 #48：账号状态（additive）；pending_review 行据此渲染审核入口
+		map.put("accountStatus", m.accountStatus());
 		map.put("createdAt", m.createdAt() == null ? null : m.createdAt().toString());
 		return map;
 	}

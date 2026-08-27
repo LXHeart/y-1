@@ -55,6 +55,20 @@ public class MembershipRepository {
                 .map(MembershipRepository::map).one();
     }
 
+    /** 列组织成员并带账号状态（任务书 #48：UI 展示停用态与恢复入口）。 */
+    public Flux<Membership> findByOrganizationWithAccountStatus(String organizationId) {
+        return db.sql("""
+                SELECT m.id::text, m.organization_id::text, m.account_id::text, m.role,
+                       m.created_at, m.updated_at, u.status AS account_status
+                FROM organization_membership m
+                LEFT JOIN app_users u ON u.id = m.account_id
+                WHERE m.organization_id = CAST(:org AS uuid)
+                ORDER BY m.created_at
+                """)
+                .bind("org", organizationId)
+                .map(MembershipRepository::mapWithStatus).all();
+    }
+
     public Flux<Membership> findByOrganization(String organizationId) {
         return db.sql("SELECT " + SELECT_COLS
                 + " FROM organization_membership WHERE organization_id = CAST(:org AS uuid) ORDER BY created_at")
@@ -126,6 +140,18 @@ public class MembershipRepository {
                 row.get("role", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class))
+        );
+    }
+
+    private static Membership mapWithStatus(Readable row) {
+        return new Membership(
+                row.get("id", String.class),
+                row.get("organization_id", String.class),
+                row.get("account_id", String.class),
+                row.get("role", String.class),
+                toInstant(row.get("created_at", OffsetDateTime.class)),
+                toInstant(row.get("updated_at", OffsetDateTime.class)),
+                row.get("account_status", String.class)
         );
     }
 

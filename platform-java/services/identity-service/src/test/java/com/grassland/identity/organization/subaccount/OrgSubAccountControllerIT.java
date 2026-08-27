@@ -99,15 +99,20 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         review(orgId, pendingId, cookie, "approve").expectStatus().isOk();
         assertThat(statusOf(pendingId)).isEqualTo("active");
 
-        // 开关关闭的对照：同一店长再建即 active
+        // 开关关闭的对照：owner 直建（ADMIN+ 永不 pending，D6）
         toggleReview(orgId, cookie, false);
         String storeB = createStore(orgId, cookie, "分店B");
-        // 店长的 manager 身份只在分店A；对照路径走 owner 直建
         Map<String, Object> offCase = createAccount(orgId, cookie,
                 staffJson(storeB, "sa-instant@example.com", "即启用员工"))
                 .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         offCase = (Map<String, Object>) offCase.get("data");
         assertThat(((Map<?, ?>) offCase.get("account")).get("status")).isEqualTo("active");
+
+        // 列表带账号状态（任务书 #48 审核闭环的读侧契约）
+        client().get().uri("/api/organizations/" + orgId + "/stores/" + storeB + "/memberships")
+                .header("Cookie", "y1.sid=" + cookie).exchange()
+                .expectStatus().isOk().expectBody()
+                .jsonPath("$.data[?(@.role=='staff')].accountStatus").isEqualTo("active");
     }
 
     // ---------- 四守卫 ----------

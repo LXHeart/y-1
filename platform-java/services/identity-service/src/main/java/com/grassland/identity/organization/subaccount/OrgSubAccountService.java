@@ -208,9 +208,11 @@ public class OrgSubAccountService {
                         return Mono.error(new IdentityException(403, "商家主体所有者的账号不可被停用"));
                     }
                     return requireOperatorAuthority(operatorAccountId, organizationId, targetAccountId)
-                            .then(executeSuspension(organizationId, targetAccountId, action))
-                            .then(notifySuspensionChanged(organizationId, targetAccountId, operatorAccountId,
-                                    action));
+                            // 状态变更与审计/知会事件同事务（D12）：中途失败不能留下「已停用却无事件」的状态
+                            .then(transactions.transactional(
+                                    executeSuspension(organizationId, targetAccountId, action)
+                                            .then(notifySuspensionChanged(organizationId, targetAccountId,
+                                                    operatorAccountId, action))));
                 });
     }
 
@@ -304,11 +306,13 @@ public class OrgSubAccountService {
         }
         return ensureTargetInOrg(targetAccountId, organizationId)
                 .then(requireAdminPlus(operatorAccountId, organizationId))
-                .then(approve
+                // 迁移与审计事件同事务，理由同 changeSuspension
+                .then(transactions.transactional(approve
                         ? guardedStatusUpdate(targetAccountId, "active", "pending_review", "账号不在待审状态")
                                 .then(appendReviewedEvent(organizationId, targetAccountId, operatorAccountId, true))
                         : guardedStatusUpdate(targetAccountId, "rejected", "pending_review", "账号不在待审状态")
-                                .then(appendReviewedEvent(organizationId, targetAccountId, operatorAccountId, false)));
+                                .then(appendReviewedEvent(organizationId, targetAccountId, operatorAccountId,
+                                        false))));
     }
 
     /** 账号显式版 ADMIN+ 门禁（内部调用无 request 可解析，与 {@code OrgAuthorization.requireRole} 同判据）。 */
@@ -347,14 +351,17 @@ public class OrgSubAccountService {
                             String freshPassword = PasswordGenerator.generate();
                             return Mono.fromCallable(() -> argon2Hasher.hash(freshPassword))
                                     .subscribeOn(Schedulers.boundedElastic())
-                                    .flatMap(hash -> db.sql(
+                                    // 密码置换与首登改密旗标同事务：只换密码不置旗标会留下
+                                    // 「新密码已生效却不强制改密」的窗口（D3 意图落空）
+                                    .flatMap(hash -> transactions.transactional(db.sql(
                                                     "UPDATE app_users SET password_hash = :hash, updated_at = NOW()"
                                                             + " WHERE id = CAST(:id AS uuid)")
                                             .bind("hash", hash).bind("id", targetAccountId)
                                             .fetch().rowsUpdated()
-                                            .then(flags.markMustChangePassword(targetAccountId))
+                                            .then(flags.markMustChangePassword(targetAccountId)))
                                             .thenReturn(new CreatedSubAccount(targetAccountId, account.email(),
-                                                    account.displayName(), null, account.status(), freshPassword)));
+                                                    account.displayName(), null, account.status(),
+                                                    freshPassword)));
                         }));
     }
 
