@@ -243,6 +243,8 @@ export interface Membership {
   createdAt: string | null
   /** 任务书 #48：账号状态（列表端点 additive 字段）；缺席 = 旧响应/账号行不存在 */
   accountStatus?: SubAccountStatus
+  /** 任务书 #49：登录名（列表联 account_username）；删除强确认据此输入，缺席回退 accountId */
+  username?: string
 }
 
 /** 任务书 #48：主体直建子账号的变更结果；initialPassword 是一次性明文，仅此一次。 */
@@ -328,6 +330,8 @@ export interface StoreMembership {
   createdAt: string | null
   /** 任务书 #48：账号状态（列表端点 additive 字段）；pending_review 据此渲染审核入口 */
   accountStatus?: SubAccountStatus
+  /** 任务书 #49：登录名（列表联 account_username）；删除强确认据此输入 */
+  username?: string
 }
 
 // ---------- identity：组织品牌资料（#32）----------

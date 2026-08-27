@@ -220,13 +220,27 @@ public class OrgSubAccountService {
                     if ("suspended".equals(action) && targetAccountId.equals(org.ownerAccountId())) {
                         return Mono.error(new IdentityException(403, "商家主体所有者的账号不可被停用"));
                     }
-                    return requireOperatorAuthority(operatorAccountId, organizationId, targetAccountId)
+                    // D8：deleted 是终态，restore 必须给出明确 409（先于关系守卫——关系已清时
+                    // ensureTargetInOrg 会 404，误导操作者以为查错了组织）
+                    return rejectDeletedTerminal(targetAccountId, "账号已删除，不可恢复")
+                            .then(requireOperatorAuthority(operatorAccountId, organizationId, targetAccountId))
                             // 状态变更与审计/知会事件同事务（D12）：中途失败不能留下「已停用却无事件」的状态
                             .then(transactions.transactional(
                                     executeSuspension(organizationId, targetAccountId, action)
                                             .then(notifySuspensionChanged(organizationId, targetAccountId,
                                                     operatorAccountId, action))));
                 });
+    }
+
+    /** deleted 终态预检：非 deleted 直接放行（empty）；deleted → 409 专用文案。 */
+    private Mono<Void> rejectDeletedTerminal(String targetAccountId, String message) {
+        return db.sql("SELECT status FROM app_users WHERE id = CAST(:id AS uuid)")
+                .bind("id", targetAccountId)
+                .map(row -> row.get("status", String.class)).one()
+                .switchIfEmpty(Mono.error(new IdentityException(404, "账号不存在")))
+                .flatMap(status -> "deleted".equalsIgnoreCase(status)
+                        ? Mono.error(new IdentityException(409, message))
+                        : Mono.<Void>empty());
     }
 
     /**
@@ -289,7 +303,9 @@ public class OrgSubAccountService {
                                 .map(row -> row.get("status", String.class)).one()
                                 .switchIfEmpty(Mono.error(new IdentityException(404, "账号不存在")))
                                 .<Void>flatMap(current -> Mono.error(
-                                        new IdentityException(409, current.equals(to) ? "已是该状态" : conflictMessage))));
+                                        new IdentityException(409, current.equals(to) ? "已是该状态"
+                                                : "deleted".equals(current) ? "账号已删除，不可恢复"
+                                                        : conflictMessage))));
     }
 
     private Mono<Void> notifySuspensionChanged(String organizationId, String targetAccountId,
@@ -300,6 +316,67 @@ public class OrgSubAccountService {
         payload.put("operatorAccountId", operatorAccountId);
         payload.put("action", action);
         EventEnvelope event = new EventEnvelope(UUID.randomUUID().toString(), "MemberSuspensionChanged",
+                "OrganizationSubAccount", targetAccountId, 1, Instant.now(), null, payload);
+        return outbox.append(event);
+    }
+
+    // ---------- 删除（任务书 #49 D8：永久作废，逻辑删除留痕）----------
+
+    /**
+     * 删除成员 = 解除本主体下全部组织/门店成员关系 + 账号转 {@code deleted}（{@code deleted_at}
+     * 留痕，不物理删行），同事务写 outbox {@code OrgSubAccountDeleted}。不可恢复——restore
+     * 对 deleted 一律 409。守卫同停用（自己/owner/最后 active 经理/权限分档）。
+     */
+    public Mono<Void> deleteSubAccount(String operatorAccountId, String organizationId, String targetAccountId) {
+        if (operatorAccountId.equals(targetAccountId)) {
+            return Mono.error(new IdentityException(403, "不能删除自己的账号"));
+        }
+        return organizations.findById(organizationId)
+                .switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
+                .flatMap(org -> {
+                    if (targetAccountId.equals(org.ownerAccountId())) {
+                        return Mono.error(new IdentityException(403, "商家主体所有者的账号不可被删除"));
+                    }
+                    // D8：重删给出明确 409（同 restore 的终态预检理由——关系已清时关系守卫只会 404）
+                    return rejectDeletedTerminal(targetAccountId, "账号已删除，不可重复删除")
+                            .then(requireOperatorAuthority(operatorAccountId, organizationId, targetAccountId))
+                            .then(transactions.transactional(
+                                    guardLastActiveManager(organizationId, targetAccountId)
+                                            .then(guardedDelete(organizationId, targetAccountId))
+                                            .then(appendDeletedEvent(organizationId, targetAccountId,
+                                                    operatorAccountId))));
+                });
+    }
+
+    /** 删除态迁移：仅接受非 deleted 现值；deleted 重删 → 409 终态文案。 */
+    private Mono<Void> guardedDelete(String organizationId, String targetAccountId) {
+        return db.sql("""
+                        UPDATE app_users SET status = 'deleted', deleted_at = NOW(), updated_at = NOW()
+                        WHERE id = CAST(:id AS uuid) AND status <> 'deleted'
+                        """)
+                .bind("id", targetAccountId).fetch().rowsUpdated()
+                .flatMap(rows -> rows > 0 ? Mono.<Void>empty()
+                        : db.sql("SELECT status FROM app_users WHERE id = CAST(:id AS uuid)")
+                                .bind("id", targetAccountId)
+                                .map(row -> row.get("status", String.class)).one()
+                                .switchIfEmpty(Mono.error(new IdentityException(404, "账号不存在")))
+                                .<Void>flatMap(current -> Mono.error(new IdentityException(409,
+                                        "deleted".equals(current) ? "账号已删除，不可重复删除" : "当前状态不可删除"))))
+                // 关系解除放在状态迁移之后同事务：迁移被守卫拦下时不动任何关系
+                .then(db.sql("DELETE FROM organization_membership"
+                        + " WHERE organization_id = CAST(:org AS uuid) AND account_id = CAST(:acct AS uuid)")
+                        .bind("org", organizationId).bind("acct", targetAccountId).then())
+                .then(db.sql("DELETE FROM store_membership WHERE account_id = CAST(:acct AS uuid)"
+                        + " AND store_id IN (SELECT id FROM store WHERE organization_id = CAST(:org AS uuid))")
+                        .bind("org", organizationId).bind("acct", targetAccountId).then());
+    }
+
+    private Mono<Void> appendDeletedEvent(String organizationId, String targetAccountId, String deletedBy) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("organizationId", organizationId);
+        payload.put("accountId", targetAccountId);
+        payload.put("deletedBy", deletedBy);
+        EventEnvelope event = new EventEnvelope(UUID.randomUUID().toString(), "OrgSubAccountDeleted",
                 "OrganizationSubAccount", targetAccountId, 1, Instant.now(), null, payload);
         return outbox.append(event);
     }

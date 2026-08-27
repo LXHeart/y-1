@@ -60,6 +60,9 @@ public final class NotificationTemplates {
 			// 任务书 #49：子账号绑定邮箱成功——站内知会（账号名与邮箱此后均可登录）
 			case "EmailBound" -> new Template(NotificationCategory.SYSTEM, "邮箱绑定成功",
 					"你的账号已绑定该邮箱，此后账号名与邮箱均可登录", null, orgPayload(payload));
+			// 任务书 #49：成员账号被主体删除（永久作废）——知会主体 owner/admin（排除操作者）。
+			case "OrgSubAccountDeleted" -> new Template(NotificationCategory.INVITATION, "一个成员账号已被删除",
+					"一个成员账号已被永久删除且不可恢复，该账号此后无法登录", LINK_PERMISSION, orgPayload(payload));
 			default -> externalTemplate(eventType, payload);
 		};
 	}

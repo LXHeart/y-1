@@ -221,6 +221,13 @@ export function useGrasslandIdentity(run: RunFn) {
   const suspendSubAccount = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/suspend`, { method: 'POST' }))
 
+  /**
+   * 删除成员（任务书 #49 D8）：解除全部成员关系 + 账号永久作废（逻辑删除留痕）。
+   * 不可恢复（restore 对 deleted 409）；UI 必须输入完整账号名强确认后才可调用。
+   */
+  const deleteSubAccount = (orgId: string, accountId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}`, { method: 'DELETE' }))
+
   /** 恢复停用成员（仅 suspended 态可恢复；rejected 是终态 → 409）。 */
   const restoreSubAccount = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/restore`, { method: 'POST' }))
@@ -389,7 +396,7 @@ export function useGrasslandIdentity(run: RunFn) {
     createSubAccount, createStaffSubAccount,
     getAccountPrefix, setAccountPrefix,
     sendBindEmailCode, bindEmail,
-    suspendSubAccount, restoreSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
+    suspendSubAccount, restoreSubAccount, deleteSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
     getMemberReviewRequired, setMemberReviewRequired,
     listMySessions, revokeOtherSessions, revokeSession,
     checkAccountClosure, requestPersonalDataExport, getPersonalDataExport,

@@ -13,6 +13,7 @@ import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -101,6 +102,13 @@ public class OrgSubAccountController {
     public Mono<ResponseEntity<Map<String, Object>>> suspend(@PathVariable String orgId,
             @PathVariable String accountId, ServerHttpRequest request) {
         return actOnTargetVoid(request, operator -> subAccounts.suspend(operator, orgId, accountId));
+    }
+
+    /** 删除成员（任务书 #49 D8）：关系解除 + 账号永久作废（逻辑删除留痕）；前端须输入账号名强确认。 */
+    @DeleteMapping("/accounts/{accountId}")
+    public Mono<ResponseEntity<Map<String, Object>>> delete(@PathVariable String orgId,
+            @PathVariable String accountId, ServerHttpRequest request) {
+        return actOnTargetVoid(request, operator -> subAccounts.deleteSubAccount(operator, orgId, accountId));
     }
 
     @PostMapping("/accounts/{accountId}/restore")

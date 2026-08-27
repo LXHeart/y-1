@@ -266,6 +266,75 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         restore(orgId, targetId, cookie).expectStatus().isEqualTo(409);
     }
 
+    // ---------- 删除（任务书 #49 D8：永久作废 + 逻辑删除留痕）----------
+
+    @Test
+    void deleteSubAccount_relationsCleared_statusDeletedWithTrace_restoreRejected() {
+        var owner = seedAccount("sa-del@example.com");
+        String cookie = owner.cookie();
+        String orgId = createOrg(cookie, "删除主体");
+        String storeId = createStore(orgId, cookie, "删除店");
+
+        Map<String, Object> staff = createAccount(orgId, cookie, staffJson(storeId, "delstaff", "将被删"))
+                .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String staffId = (String) ((Map<?, ?>) ((Map<?, ?>) staff.get("data")).get("account")).get("id");
+
+        // 门店唯一经理不可删（同停用守卫）：先给店配经理，员工才可删
+        createAccount(orgId, cookie, managerJson(storeId, "delmgr", "守店经理")).expectStatus().isCreated();
+
+        client().delete().uri("/api/organizations/" + orgId + "/accounts/" + staffId)
+                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isOk();
+
+        // 关系清零 + 账号软删留痕（行仍在库）
+        Long orgRows = db.sql("SELECT COUNT(*)::int AS c FROM organization_membership"
+                        + " WHERE organization_id = CAST(:org AS uuid) AND account_id = CAST(:acct AS uuid)")
+                .bind("org", orgId).bind("acct", staffId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        Long storeRows = db.sql("SELECT COUNT(*)::int AS c FROM store_membership"
+                        + " WHERE account_id = CAST(:acct AS uuid) AND store_id = CAST(:store AS uuid)")
+                .bind("acct", staffId).bind("store", storeId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(orgRows).isZero();
+        assertThat(storeRows).isZero();
+        assertThat(statusOf(staffId)).isEqualTo("deleted");
+        String deletedAt = db.sql("SELECT deleted_at::text FROM app_users WHERE id = CAST(:id AS uuid)")
+                .bind("id", staffId).map(r -> r.get(0, String.class)).one().block();
+        assertThat(deletedAt).isNotBlank();
+
+        // 终态：restore 409（D8 拍板：删除不可恢复）+ 重删 409（终态预检先于关系守卫）
+        restore(orgId, staffId, cookie).expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("账号已删除，不可恢复");
+        client().delete().uri("/api/organizations/" + orgId + "/accounts/" + staffId)
+                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("账号已删除，不可重复删除");
+
+        // 事件落 outbox
+        Long events = db.sql("SELECT COUNT(*)::int AS c FROM outbox"
+                        + " WHERE event_type = 'OrgSubAccountDeleted' AND payload->>'accountId' = :acct")
+                .bind("acct", staffId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(events).isEqualTo(1);
+    }
+
+    @Test
+    void deleteSubAccount_guards_selfOwnerAndLastManager() {
+        var owner = seedAccount("sa-delg@example.com");
+        String cookie = owner.cookie();
+        String orgId = createOrg(cookie, "删守卫主体");
+        String storeId = createStore(orgId, cookie, "独店");
+
+        // 自己不可删；owner 不可被他人删
+        client().delete().uri("/api/organizations/" + orgId + "/accounts/" + owner.accountId())
+                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isForbidden();
+
+        // 店内唯一经理不可删
+        Map<String, Object> mgr = createAccount(orgId, cookie, managerJson(storeId, "onlydel", "唯一经理"))
+                .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String mgrId = (String) ((Map<?, ?>) ((Map<?, ?>) mgr.get("data")).get("account")).get("id");
+        client().delete().uri("/api/organizations/" + orgId + "/accounts/" + mgrId)
+                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isEqualTo(409);
+    }
+
     // ---------- helpers ----------
 
     private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec createAccount(

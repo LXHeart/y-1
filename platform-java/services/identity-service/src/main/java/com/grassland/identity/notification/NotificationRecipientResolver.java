@@ -68,6 +68,8 @@ public class NotificationRecipientResolver {
 			case "StaffCreationReviewed" -> Mono.just(accountIds(payload, "accountId"));
 			// 任务书 #49：绑定邮箱成功——通知账号本人。
 			case "EmailBound" -> Mono.just(accountIds(payload, "accountId"));
+			// 任务书 #49：成员账号被删除——知会 org owner/admin（排除操作者；目标账号已不可登录）。
+			case "OrgSubAccountDeleted" -> orgManagersExcluding(payload, "deletedBy");
 			default -> Mono.just(externalRecipients(envelope.eventType(), payload));
 		};
 	}

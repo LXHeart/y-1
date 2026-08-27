@@ -53,9 +53,10 @@ public class StoreMembershipRepository {
     public Flux<StoreMembership> findByStoreWithAccountStatus(String storeId) {
         return db.sql("""
                 SELECT sm.id::text, sm.store_id::text, sm.account_id::text, sm.role,
-                       sm.created_at, sm.updated_at, u.status AS account_status
+                       sm.created_at, sm.updated_at, u.status AS account_status, n.username
                 FROM store_membership sm
                 LEFT JOIN app_users u ON u.id = sm.account_id
+                LEFT JOIN account_username n ON n.account_id = sm.account_id
                 WHERE sm.store_id = CAST(:store AS uuid)
                 ORDER BY sm.created_at
                 """)
@@ -207,7 +208,8 @@ public class StoreMembershipRepository {
                 row.get("role", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
-                row.get("account_status", String.class)
+                row.get("account_status", String.class),
+                row.get("username", String.class)
         );
     }
 

@@ -7,6 +7,7 @@ import java.time.Instant;
  *
  * <p>{@code role} 存 DB 小写字符串（owner/admin/member），按需用 {@link MembershipRole#fromDb} 转枚举做权限判定。
  * {@code accountStatus}（任务书 #48）是列表联 app_users 带出的账号状态，缺席（null）= 未选/账号行不存在。
+ * {@code username}（任务书 #49）是列表联 account_username 带出的登录名，删除强确认据此输入。
  */
 public record Membership(
         String id,
@@ -15,11 +16,12 @@ public record Membership(
         String role,
         Instant createdAt,
         Instant updatedAt,
-        String accountStatus
+        String accountStatus,
+        String username
 ) {
     /** 兼容无状态视角的旧构造。 */
     public Membership(String id, String organizationId, String accountId, String role,
             Instant createdAt, Instant updatedAt) {
-        this(id, organizationId, accountId, role, createdAt, updatedAt, null);
+        this(id, organizationId, accountId, role, createdAt, updatedAt, null, null);
     }
 }

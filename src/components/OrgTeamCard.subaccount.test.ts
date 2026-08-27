@@ -192,4 +192,48 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(wrapper.text()).toContain('已通过审核')
     void calls
   })
+
+  test('删除成员须输入完整账号名强确认，不匹配时按钮禁用（任务书 #49 D9）', async () => {
+    let deleted = false
+    const { wrapper } = await mountedWith((url, opts) => {
+      const method = opts?.method ?? 'GET'
+      if (method === 'DELETE' && url.endsWith(`/api/organizations/${ORG_ID}/accounts/acc-member`)) {
+        deleted = true
+        return envelopeResponse({ success: true })
+      }
+      return baseHandler(url)
+    })
+
+    // 组织成员表：非 owner 行有「删除」入口（owner 行不渲染）
+    const orgSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '主体成员')!
+    const delButton = orgSection.findAll('button').find((b) => b.text() === '删除')
+    expect(delButton, '成员行有删除入口').toBeTruthy()
+    const ownerRowHasDelete = orgSection.findAll('tbody tr')
+      .filter((row) => row.text().includes('所有者'))
+      .flatMap((row) => row.findAll('button'))
+      .some((b) => b.text() === '删除')
+    expect(ownerRowHasDelete).toBe(false)
+
+    await delButton!.trigger('click')
+    await flushPromises()
+
+    // 强确认弹窗：确认物 = 列表行的 username（无则 accountId）；不匹配不可确认
+    const dialog = wrapper.find('[data-testid="delete-confirm"]')
+    expect(dialog.exists()).toBe(true)
+    const confirmBtn = dialog.findAll('button').find((b) => b.text() === '永久删除')!
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(true)
+
+    const input = dialog.find('input')
+    await input.setValue('caoyuan-wrong')
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(true)
+
+    await input.setValue('acc-member')
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(false)
+    await confirmBtn.trigger('click')
+    await flushPromises()
+
+    expect(deleted).toBe(true)
+    expect(wrapper.find('[data-testid="delete-confirm"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('不可恢复')
+  })
 })

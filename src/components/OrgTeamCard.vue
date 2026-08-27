@@ -256,6 +256,36 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
   if (selectedStoreId.value) await selectStore(selectedStoreId.value)
 }
 
+// ---------- 删除成员（任务书 #49 D8：永久作废 + 输入账号名强确认）----------
+
+/** 待删除目标：username 供强确认比对（列表行由后端 LEFT JOIN account_username 带出）。 */
+const deleteTarget = ref<{ accountId: string; username: string } | null>(null)
+const deleteConfirmInput = ref('')
+/** 输入与目标账号名完全一致才允许确认——防误点的一票否决。 */
+const deleteConfirmable = computed(() =>
+  deleteTarget.value !== null && deleteConfirmInput.value.trim() === deleteTarget.value.username)
+
+function askDelete(accountId: string, username: string | null): void {
+  // 无登录名（存量挂靠过渡态/账号行缺失）时以 accountId 作确认物——强确认语义不降级
+  deleteTarget.value = { accountId, username: username || accountId }
+  deleteConfirmInput.value = ''
+}
+
+async function confirmDelete(): Promise<void> {
+  if (!deleteTarget.value || !deleteConfirmable.value) return
+  notice.value = ''
+  const target = deleteTarget.value
+  const done = await grassland.deleteSubAccount(props.orgId, target.accountId)
+  if (done === null) {
+    deleteTarget.value = null
+    return
+  }
+  deleteTarget.value = null
+  deleteConfirmInput.value = ''
+  notice.value = '成员已删除：账号已永久作废，不可恢复'
+  await Promise.all([reloadMembers(), selectedStoreId.value ? selectStore(selectedStoreId.value) : null])
+}
+
 </script>
 
 <template>
@@ -312,12 +342,19 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
         <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="m in members" :key="m.id">
-            <td><code>{{ m.accountId.slice(0, 8) }}…</code></td>
+            <td><code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code></td>
             <td>{{ ROLE_LABEL[m.role] || m.role }}</td>
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
               <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
               <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+              <!-- owner 永不可删（服务端守卫 403），不渲染入口 -->
+              <button
+                v-if="m.role !== 'owner'"
+                type="button" class="team-quiet team-danger"
+                :disabled="grassland.loading.value"
+                @click="askDelete(m.accountId, m.username ?? null)"
+              >删除</button>
             </td>
           </tr>
         </tbody>
@@ -391,7 +428,7 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
         <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="m in storeMembers" :key="m.id">
-            <td><code>{{ m.accountId.slice(0, 8) }}…</code></td>
+            <td><code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code></td>
             <td>{{ STORE_ROLE_LABEL[m.role] || m.role }}</td>
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
@@ -403,6 +440,11 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
               </template>
+              <button
+                type="button" class="team-quiet team-danger"
+                :disabled="grassland.loading.value"
+                @click="askDelete(m.accountId, m.username ?? null)"
+              >删除</button>
             </td>
           </tr>
         </tbody>
@@ -433,6 +475,35 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
         </p>
       </details>
     </section>
+    <!-- 删除强确认（任务书 #49 D9）：输入完整账号名且完全一致才可确认；红色警示 -->
+    <div v-if="deleteTarget" class="team-del-mask" role="dialog" aria-modal="true" aria-label="删除成员确认">
+      <div class="team-del-dialog" data-testid="delete-confirm">
+        <h4 class="team-del-title">删除成员账号</h4>
+        <p class="team-del-warn">
+          将永久作废 <code>{{ deleteTarget.username }}</code>：解除全部成员关系，账号此后无法登录，
+          <strong>不可恢复</strong>（停用才是可逆动作）。此操作仅在库里留痕，不物理删除。
+        </p>
+        <label class="team-del-label" :for="'del-confirm-' + deleteTarget.accountId">
+          输入完整账号名 <code>{{ deleteTarget.username }}</code> 以确认
+        </label>
+        <input
+          :id="'del-confirm-' + deleteTarget.accountId"
+          v-model.trim="deleteConfirmInput"
+          class="team-del-input"
+          autocomplete="off"
+          spellcheck="false"
+          @keyup.enter="confirmDelete"
+        />
+        <div class="team-del-actions">
+          <button type="button" class="team-quiet" @click="deleteTarget = null">取消</button>
+          <button
+            type="button" class="team-del-confirm"
+            :disabled="grassland.loading.value || !deleteConfirmable"
+            @click="confirmDelete"
+          >永久删除</button>
+        </div>
+      </div>
+    </div>
   </article>
 </template>
 
@@ -471,4 +542,15 @@ button:hover:not(:disabled) { border-color: var(--color-border-hover); backgroun
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .team-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
 .team-prefix-input { min-width: 150px; }
+.team-danger { color: var(--color-danger); }
+/* 删除强确认弹窗：遮罩 + 居中卡片，警示色走 token */
+.team-del-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--color-bg, #000) 55%, transparent); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.team-del-dialog { width: min(420px, calc(100vw - 32px)); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.team-del-title { margin: 0; font-size: 15px; color: var(--color-danger); }
+.team-del-warn { margin: 0; font-size: 13px; }
+.team-del-label { font-size: 12px; opacity: 0.8; }
+.team-del-input { width: 100%; }
+.team-del-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.team-del-confirm { padding: 6px 16px; border-radius: var(--radius-sm); border: 1px solid var(--color-danger); background: var(--color-danger); color: var(--color-accent-contrast, #fff); cursor: pointer; font-size: 13px; }
+.team-del-confirm:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>
