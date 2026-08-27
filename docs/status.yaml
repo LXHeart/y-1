@@ -19,7 +19,7 @@
       { "id": 41, "status": "completed" }, { "id": 42, "status": "completed" },
       { "id": 43, "status": "completed" }, { "id": 44, "status": "completed" },
       { "id": 45, "status": "completed" }, { "id": 46, "status": "completed" },
-      { "id": 47, "status": "completed" },
+      { "id": 47, "status": "in_progress", "title": "模型密钥统一（剩 S7 明文清偿/V50 收口/S8 开场 UI 清理）" },
       { "id": 48, "status": "completed", "title": "商家成员子账号体系（主体直建直发）" }
     ]
   },
