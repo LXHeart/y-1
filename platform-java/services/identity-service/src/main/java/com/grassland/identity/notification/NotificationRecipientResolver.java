@@ -19,7 +19,6 @@ import reactor.core.publisher.Mono;
  * <p>
  * 解析规则：
  * <ul>
- * <li>{@code MembershipGranted}：直接通知 payload.accountId。</li>
  * <li>{@code PermissionRequested} /
  * {@code PermissionReviewSlaBreached}：通知平台管理员审核队列。</li>
  * <li>{@code PermissionReviewed}：payload 只有 orgId+decision → 用 aggregateId（=
@@ -41,9 +40,8 @@ public class NotificationRecipientResolver {
 	Mono<java.util.List<String>> resolve(IdentityEventEnvelope envelope) {
 		JsonNode payload = envelope.payload();
 		return switch (envelope.eventType()) {
-			case "MembershipGranted" ->
-				text(payload, "accountId").map(java.util.List::of).defaultIfEmpty(java.util.List.of());
-			case "PermissionRequested", "PermissionReviewSlaBreached" -> findPlatformAdminAccountIds().collectList();
+		// 任务书 #49：MembershipGranted 随挂靠端点下线，解析分支一并移除。
+		case "PermissionRequested", "PermissionReviewSlaBreached" -> findPlatformAdminAccountIds().collectList();
 			case "PermissionReviewed" -> findPermissionRequester(envelope.aggregateId()).map(java.util.List::of)
 					.defaultIfEmpty(java.util.List.of());
 			// intelligence：组织 AI 预算阈值告警（任务书 #37 登记项）——收件人=组织 owner/admin。

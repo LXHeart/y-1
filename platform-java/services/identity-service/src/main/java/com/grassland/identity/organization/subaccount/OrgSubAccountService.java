@@ -25,12 +25,13 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 商家主体子账号服务（任务书 #48）。
+ * 商家主体子账号服务（任务书 #48；#49 单一模型改造）。
  *
- * <p><b>建号</b>（D1/D2/D5）：owner/admin 直建任意角色；店长仅能代建本店 staff（D6 开关决定
- * active / pending_review）。一次事务完成「插 app_users + 插成员行 + 置首登改密标记 + outbox」。
- * 邮箱已存在时不静默绑定——409 要求管理员显式 {@code confirmBindExisting}，关联路径
- * <b>绝不触碰既有凭据</b>；店长代建不开放绑定（走既有邀请流）。
+ * <p><b>建号</b>（D1/D2；#49 D4/D6）：owner/admin 直建任意角色；店长仅能代建本店 staff
+ * （D6 开关决定 active / pending_review）。一次事务完成「插 app_users（占位邮箱）+ 写
+ * account_username 登录名 + 插成员行 + 置首登改密标记 + outbox」。登录名 =
+ * {@code 主体前缀-登录名}（各段 ^[a-z0-9]{3,24}$）；#49 起建号不填邮箱，撞名 409 换名，
+ * #48 的 confirmBindExisting 关联既有账号分支已随挂靠通路下线删除。
  *
  * <p><b>状态真相源 = app_users.status</b>（D4）：{@code active / suspended / pending_review /
  * rejected}。停用即时生效依赖平台两道既有闸（edge 每请求 {@code lower(status)='active'} 过滤、
@@ -42,6 +43,12 @@ import reactor.core.scheduler.Schedulers;
  */
 @Service
 public class OrgSubAccountService {
+
+    /** 登录名各段规则（D4）：仅小写字母数字、3–24 位；输入大写先归一。 */
+    static final java.util.regex.Pattern LOGIN_NAME_PATTERN = java.util.regex.Pattern.compile("^[a-z0-9]{3,24}$");
+
+    /** 占位邮箱域（D6）：RFC 保留 TLD，不与真实邮箱冲突；外部邮件外发在 MailOutboxEnqueuer 短路。 */
+    static final String PLACEHOLDER_EMAIL_SUFFIX = "@sub.grassland.invalid";
 
     private final DatabaseClient db;
     private final TransactionalOperator transactions;
@@ -77,22 +84,38 @@ public class OrgSubAccountService {
     /** owner/admin 直建：任意角色，永不 pending（D6）。role=member 时不得带 storeId。 */
     public Mono<CreatedSubAccount> createByOrg(String operatorAccountId, String organizationId,
             CreateSubAccountRequest req) {
-        RoleTarget target = RoleTarget.of(req);
-        return ensureStoreInOrg(organizationId, target)
-                .then(doCreate(operatorAccountId, organizationId, target, "active", true));
+        return prepareTarget(organizationId, req)
+                .flatMap(target -> ensureStoreInOrg(organizationId, target)
+                        .then(doCreate(operatorAccountId, organizationId, target, "active")));
     }
 
     /** 店长代建本店 staff：审核开关 on → pending_review，off → active（D6）。 */
     public Mono<CreatedSubAccount> createStaffByManager(String operatorAccountId, String organizationId,
             String storeId, CreateSubAccountRequest req) {
-        RoleTarget fixedStaff = new RoleTarget("staff", normalizedEmail(req.email()), req.displayName(),
-                storeId, Boolean.FALSE);
-        Mono<String> statusMono = organizations.selectMemberReviewRequired(organizationId)
-                .defaultIfEmpty(Boolean.FALSE)
-                .map(reviewRequired -> Boolean.TRUE.equals(reviewRequired) ? "pending_review" : "active");
-        return ensureStoreInOrg(organizationId, fixedStaff)
-                .then(statusMono.flatMap(status -> doCreate(operatorAccountId, organizationId, fixedStaff,
-                        status, false)));
+        return prepareTarget(organizationId, req).flatMap(input -> {
+            RoleTarget fixedStaff = new RoleTarget("staff", input.loginName(), input.displayName(), storeId);
+            Mono<String> statusMono = organizations.selectMemberReviewRequired(organizationId)
+                    .defaultIfEmpty(Boolean.FALSE)
+                    .map(reviewRequired -> Boolean.TRUE.equals(reviewRequired) ? "pending_review" : "active");
+            return ensureStoreInOrg(organizationId, fixedStaff)
+                    .then(statusMono.flatMap(status -> doCreate(operatorAccountId, organizationId, fixedStaff,
+                            status)));
+        });
+    }
+
+    /** 先读主体前缀再拼完整登录名（D4/D5）：前缀缺失是异常态（V43 NOT NULL 兜底），建号直接 409。 */
+    private Mono<RoleTarget> prepareTarget(String organizationId, CreateSubAccountRequest req) {
+        String loginName = normalizedLoginName(req.loginName());
+        if (req.role() == null || !java.util.Set.of("member", "manager", "staff").contains(req.role())) {
+            return Mono.error(new IdentityException(400, "role 仅支持 member/manager/staff"));
+        }
+        if (req.displayName() == null || req.displayName().isBlank() || req.displayName().length() > 64) {
+            return Mono.error(new IdentityException(400, "显示名必填且不超过 64 字"));
+        }
+        return organizations.selectAccountPrefix(organizationId)
+                .switchIfEmpty(Mono.error(new IdentityException(409, "主体账号前缀缺失，请联系平台方")))
+                .map(prefix -> new RoleTarget(req.role(), prefix + "-" + loginName, req.displayName(),
+                        req.storeId()));
     }
 
     private Mono<Void> ensureStoreInOrg(String organizationId, RoleTarget target) {
@@ -110,35 +133,15 @@ public class OrgSubAccountService {
                 .then();
     }
 
+    /**
+     * #49 单条建号路径（挂靠关联分支已删）：占位邮箱插 app_users + 登录名旁表 + 成员行 +
+     * 首登改密标记 + outbox，全程一个事务。登录名撞（同主体或跨主体）→ 409 换名。
+     */
     private Mono<CreatedSubAccount> doCreate(String operatorAccountId, String organizationId, RoleTarget target,
-            String status, boolean adminCreated) {
-        return users.findByEmail(target.email())
-                .flatMap(existing -> bindExistingPath(operatorAccountId, organizationId, target, existing,
-                        adminCreated))
-                // switchIfEmpty 参数在装配期求值：副作用必须包 defer，否则每次装配都会 hash 一次 Argon2。
-                .switchIfEmpty(Mono.defer(() -> createNewAccount(operatorAccountId, organizationId, target, status)));
-    }
-
-    private Mono<CreatedSubAccount> bindExistingPath(String operatorAccountId, String organizationId,
-            RoleTarget target, com.grassland.identity.user.LoginUser existing, boolean adminCreated) {
-        if (!adminCreated || !Boolean.TRUE.equals(target.confirmBindExisting())) {
-            return Mono.error(new IdentityException(409,
-                    "该邮箱已是平台账号：换个邮箱重建，或由管理员确认后直接关联为成员"));
-        }
-        return transactions.transactional(
-                grantMembership(organizationId, existing.id(), target)
-                        .onErrorMap(DataIntegrityViolationException.class,
-                                e -> new IdentityException(409, "该账号已是该范围的成员"))
-                        .then(appendCreatedEvent(organizationId, existing.id(), target.role(), target.storeId(),
-                                operatorAccountId, existing.status()))
-                        .thenReturn(new CreatedSubAccount(existing.id(), existing.email(),
-                                existing.displayName(), target.role(), existing.status(), null)));
-    }
-
-    private Mono<CreatedSubAccount> createNewAccount(String operatorAccountId, String organizationId,
-            RoleTarget target, String status) {
+            String status) {
         String userId = UUID.randomUUID().toString();
         String initialPassword = PasswordGenerator.generate();
+        String placeholderEmail = target.loginName() + PLACEHOLDER_EMAIL_SUFFIX;
         // 与 RegisterController 同款约束：Argon2 是 64MB/3 轮重操作，必须离开 Netty 事件循环。
         return Mono.fromCallable(() -> argon2Hasher.hash(initialPassword))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -148,18 +151,27 @@ public class OrgSubAccountService {
                                 VALUES (CAST(:id AS uuid), :email, :hash, :name, 'user', :status)
                                 ON CONFLICT (email) DO NOTHING RETURNING id::text
                                 """)
-                        .bind("id", userId).bind("email", target.email()).bind("hash", hash)
+                        .bind("id", userId).bind("email", placeholderEmail).bind("hash", hash)
                         .bind("name", target.displayName()).bind("status", status)
                         .map(r -> r.get(0, String.class)).one()
-                        // 存在性检查与 INSERT 不同事务，并发注册同一邮箱落到这里时对齐注册流的 409 口径。
-                        .switchIfEmpty(Mono.error(new IdentityException(409, "该邮箱已被并发创建，请重试")))
-                        .flatMap(uid -> grantMembership(organizationId, uid, target)
+                        // 0 行 = 占位邮箱已存在（同登录名并发建号）→ 409 换名
+                        .switchIfEmpty(Mono.error(new IdentityException(409, "该登录名已被使用，请换一个")))
+                        .flatMap(uid -> db.sql("""
+                                INSERT INTO account_username(account_id, username)
+                                VALUES (CAST(:id AS uuid), :username)
+                                """)
+                                .bind("id", uid).bind("username", target.loginName())
+                                .fetch().rowsUpdated()
+                                // username UNIQUE 冲突（与 app_users 占位冲突同源，事务序不同到达）→ 409 换名
                                 .onErrorMap(DataIntegrityViolationException.class,
-                                        e -> new IdentityException(409, "该账号已是该范围的成员"))
+                                        e -> new IdentityException(409, "该登录名已被使用，请换一个"))
+                                .then(grantMembership(organizationId, uid, target)
+                                        .onErrorMap(DataIntegrityViolationException.class,
+                                                e -> new IdentityException(409, "该账号已是该范围的成员")))
                                 .then(flags.markMustChangePassword(uid))
                                 .then(appendCreatedEvent(organizationId, uid, target.role(), target.storeId(),
-                                        operatorAccountId, status))
-                                .thenReturn(new CreatedSubAccount(uid, target.email(), target.displayName(),
+                                        operatorAccountId, status, target.loginName()))
+                                .thenReturn(new CreatedSubAccount(uid, target.loginName(), target.displayName(),
                                         target.role(), status, initialPassword)))));
     }
 
@@ -171,10 +183,11 @@ public class OrgSubAccountService {
     }
 
     private Mono<Void> appendCreatedEvent(String organizationId, String accountId, String role, String storeId,
-            String createdBy, String status) {
+            String createdBy, String status, String username) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("organizationId", organizationId);
         payload.put("accountId", accountId);
+        payload.put("username", username);
         payload.put("role", role);
         if (storeId != null && !storeId.isBlank()) {
             payload.put("storeId", storeId);
@@ -347,7 +360,10 @@ public class OrgSubAccountService {
                 .then(requireAdminPlus(operatorAccountId, organizationId))
                 .then(users.findById(targetAccountId)
                         .switchIfEmpty(Mono.error(new IdentityException(404, "账号不存在")))
-                        .flatMap(account -> {
+                        // 展示名取登录名（子账号），非子账号回退 email（存量挂靠清理前的过渡态）
+                        .flatMap(account -> users.findUsernameById(targetAccountId)
+                                .defaultIfEmpty(account.email())
+                                .flatMap(displayName -> {
                             String freshPassword = PasswordGenerator.generate();
                             return Mono.fromCallable(() -> argon2Hasher.hash(freshPassword))
                                     .subscribeOn(Schedulers.boundedElastic())
@@ -359,10 +375,10 @@ public class OrgSubAccountService {
                                             .bind("hash", hash).bind("id", targetAccountId)
                                             .fetch().rowsUpdated()
                                             .then(flags.markMustChangePassword(targetAccountId)))
-                                            .thenReturn(new CreatedSubAccount(targetAccountId, account.email(),
+                                            .thenReturn(new CreatedSubAccount(targetAccountId, displayName,
                                                     account.displayName(), null, account.status(),
                                                     freshPassword)));
-                        }));
+                                })));
     }
 
     // ---------- 公共小件 ----------
@@ -375,28 +391,26 @@ public class OrgSubAccountService {
                                         : Mono.error(new IdentityException(404, "账号不属于该组织"))));
     }
 
-    private static String normalizedEmail(String email) {
-        if (email == null || email.isBlank() || email.length() > 254 || !email.contains("@")) {
-            throw new IdentityException(400, "邮箱格式不正确");
+    /** 登录名归一（D4）：小写化后必须 ^[a-z0-9]{3,24}$，非法直接 400。 */
+    private static String normalizedLoginName(String loginName) {
+        if (loginName == null) {
+            throw new IdentityException(400, "登录名必填（3-24 位字母或数字）");
         }
-        return email.trim().toLowerCase();
+        String normalized = loginName.trim().toLowerCase();
+        if (!LOGIN_NAME_PATTERN.matcher(normalized).matches()) {
+            throw new IdentityException(400, "登录名仅支持 3-24 位字母或数字");
+        }
+        return normalized;
     }
 
     /**
-     * 建号目标：role/displayName 在构造期校验（record 收敛约束）。email 由工厂方法先行规整，
-     * 店长路径绕过用户输入的 role 字段、锁死 staff。
+     * 建号目标（#49）：loginName 存<b>完整账号名</b>（前缀-登录名，由 {@link #prepareTarget} 拼好），
+     * role/displayName 在构造期校验（record 收敛约束）；店长路径绕过用户输入的 role、锁死 staff。
      */
-    record RoleTarget(String role, String email, String displayName, String storeId, Boolean confirmBindExisting) {
-
-        private static final java.util.Set<String> ALLOWED_ROLES = java.util.Set.of("member", "manager", "staff");
-
-        static RoleTarget of(CreateSubAccountRequest req) {
-            return new RoleTarget(req.role(), normalizedEmail(req.email()), req.displayName(), req.storeId(),
-                    req.confirmBindExisting());
-        }
+    record RoleTarget(String role, String loginName, String displayName, String storeId) {
 
         RoleTarget {
-            if (role == null || !ALLOWED_ROLES.contains(role)) {
+            if (role == null || !java.util.Set.of("member", "manager", "staff").contains(role)) {
                 throw new IdentityException(400, "role 仅支持 member/manager/staff");
             }
             if (displayName == null || displayName.isBlank() || displayName.length() > 64) {
@@ -409,8 +423,11 @@ public class OrgSubAccountService {
         }
     }
 
-    /** 建号结果；{@code initialPassword} 仅新建时有值且只在本次响应出现一次（D2），绑定路径为 null。 */
-    public record CreatedSubAccount(String accountId, String email, String displayName, String role,
+    /**
+     * 建号结果；{@code initialPassword} 只在本次响应出现一次（D2）。
+     * {@code username} 是完整账号名（前缀-登录名），重置密码路径回填目标账号的用户名。
+     */
+    public record CreatedSubAccount(String accountId, String username, String displayName, String role,
             String status, String initialPassword) {
     }
 }

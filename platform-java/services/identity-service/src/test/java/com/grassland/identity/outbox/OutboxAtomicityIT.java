@@ -85,13 +85,14 @@ class OutboxAtomicityIT extends IdentityItSupport {
 		return c == null ? 0L : c;
 	}
 
-	/** #48 主体直建一个组织成员子账号（email 形态为现状契约，任务书 #49 S2 改为 loginName 后同步更新）。 */
+	/** #48 主体直建一个组织成员子账号（#49 起 body 为 loginName，密码为一次性明文）。 */
 	@SuppressWarnings("unchecked")
 	private String createSubAccount(String orgId, String cookie) {
-		String email = "atom-sub-" + UUID.randomUUID() + "@example.com";
 		Map<String, Object> body = client().post().uri("/api/organizations/" + orgId + "/accounts")
 				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-				.bodyValue("{\"email\":\"" + email + "\",\"displayName\":\"A\",\"role\":\"member\"}").exchange()
+				.bodyValue("{\"role\":\"member\",\"loginName\":\"atomsub" + UUID.randomUUID().toString().substring(0, 6)
+						+ "\",\"displayName\":\"A\"}")
+				.exchange()
 				.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
 		return (String) ((Map<String, Object>) ((Map<String, Object>) body.get("data")).get("account")).get("id");
 	}

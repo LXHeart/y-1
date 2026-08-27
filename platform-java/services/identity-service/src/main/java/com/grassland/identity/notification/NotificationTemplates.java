@@ -31,8 +31,7 @@ public final class NotificationTemplates {
 	 */
 	static Template template(String eventType, JsonNode payload) {
 		return switch (eventType) {
-			case "MembershipGranted" -> new Template(NotificationCategory.INVITATION, "你已加入组织", "你已被加入一个组织",
-					LINK_PERMISSION, grantedPayload(payload));
+			// 任务书 #49：MembershipGranted/StoreMembershipGranted 随挂靠端点下线，通知模板一并移除。
 			case "PermissionRequested" -> new Template(NotificationCategory.PERMISSION, "收到商家权限升级申请",
 					"有商家提交权限升级申请，待平台审核", LINK_PERMISSION, orgPayload(payload));
 			case "PermissionReviewSlaBreached" -> new Template(NotificationCategory.PERMISSION, "商家权限审核已超时",
@@ -268,13 +267,6 @@ public final class NotificationTemplates {
 		putIfText(map, payload, "periodKey");
 		putIfNumber(map, payload, "usage");
 		putIfNumber(map, payload, "limit");
-		return map;
-	}
-
-	private static Map<String, Object> grantedPayload(JsonNode payload) {
-		Map<String, Object> map = new LinkedHashMap<>();
-		putIfText(map, payload, "organizationId");
-		putIfText(map, payload, "role");
 		return map;
 	}
 

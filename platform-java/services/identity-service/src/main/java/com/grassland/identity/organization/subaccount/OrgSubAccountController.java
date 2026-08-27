@@ -141,7 +141,7 @@ public class OrgSubAccountController {
     private Map<String, Object> toBody(OrgSubAccountService.CreatedSubAccount created) {
         Map<String, Object> account = new LinkedHashMap<>();
         account.put("id", created.accountId());
-        account.put("email", created.email());
+        account.put("username", created.username());
         account.put("displayName", created.displayName());
         account.put("role", created.role());
         account.put("status", created.status());

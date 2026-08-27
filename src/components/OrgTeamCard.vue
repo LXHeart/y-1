@@ -113,16 +113,22 @@ async function selectStore(storeId: string): Promise<void> {
 // ---------- 任务书 #48：子账号直建 / 停用恢复 / 审核开关 ----------
 
 const memberReviewRequired = ref(false)
-const orgCreateEmail = ref('')
+/** 主体成员账号前缀（#49 D5）：建号预览与设置用；组织成员可读。 */
+const accountPrefix = ref('')
+const prefixInput = ref('')
+const orgCreateLoginName = ref('')
 const orgCreateName = ref('')
 /** 组织级建号目标角色：member=主体成员；manager/staff 须再选门店（D1：任命店长仅 ADMIN+，本入口本身就是 ADMIN+ 门禁）。 */
 const orgCreateRole = ref<'member' | 'manager' | 'staff'>('member')
 const orgCreateStoreId = ref('')
-const storeCreateEmail = ref('')
+const storeCreateLoginName = ref('')
 const storeCreateName = ref('')
 
+/** 登录名规则（#49 D4）：仅小写字母数字、3-24 位；输入即时小写化。 */
+const LOGIN_NAME_RE = /^[a-z0-9]{3,24}$/
+const loginNameValid = (v: string) => LOGIN_NAME_RE.test(v.trim().toLowerCase())
+
 /** 门店级建号锁定店员（D1：店长仅能建本店 staff；任命店长走上方主体入口）。 */
-const STORE_CREATE_ROLE_LABEL = '店员'
 
 const ACCOUNT_STATUS_LABEL: Record<string, string> = {
   active: '正常',
@@ -131,21 +137,45 @@ const ACCOUNT_STATUS_LABEL: Record<string, string> = {
   rejected: '已驳回',
 }
 
-/** 组织级建号选了门店角色但未选门店时禁用提交。 */
+/** 组织级建号：登录名合法且选了门店角色但未选门店时禁用提交。 */
 const orgCreateDisabled = computed(() =>
-  !orgCreateEmail.value.trim() || !orgCreateName.value.trim()
+  !loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim()
   || (orgCreateRole.value !== 'member' && !orgCreateStoreId.value))
+
+/** 建号预览：前缀-登录名（后端拼同样规则，前端只做提示）。 */
+const orgUsernamePreview = computed(() =>
+  accountPrefix.value && orgCreateLoginName.value.trim()
+    ? `${accountPrefix.value}-${orgCreateLoginName.value.trim().toLowerCase()}`
+    : '')
+const storeUsernamePreview = computed(() =>
+  accountPrefix.value && storeCreateLoginName.value.trim()
+    ? `${accountPrefix.value}-${storeCreateLoginName.value.trim().toLowerCase()}`
+    : '')
 
 /**
  * 建号/重置刚返回的一次性初始密码——响应之后任何接口都取不到，展示区只存在到
  * 用户点「我已保存」为止。这是「商家直建、线下交付」模型的安全底线（PRD §2.1）。
  */
-const oneTimePassword = ref<{ email: string; password: string } | null>(null)
+const oneTimePassword = ref<{ username: string; password: string } | null>(null)
 
 async function loadReviewToggle(): Promise<void> {
   if (!props.orgId) return
   const state = await grassland.getMemberReviewRequired(props.orgId)
   if (state) memberReviewRequired.value = state.required
+  const prefix = await grassland.getAccountPrefix(props.orgId)
+  if (prefix) accountPrefix.value = prefix.prefix
+}
+
+/** 改前缀（#49 D5）：ADMIN+；成功后只影响之后新建的账号。 */
+async function savePrefix(): Promise<void> {
+  const next = prefixInput.value.trim().toLowerCase()
+  if (!LOGIN_NAME_RE.test(next)) return
+  notice.value = ''
+  const updated = await grassland.setAccountPrefix(props.orgId, next)
+  if (!updated) return
+  accountPrefix.value = next
+  prefixInput.value = ''
+  notice.value = `前缀已改为 ${next}（只影响之后新建的账号）`
 }
 
 async function toggleReview(event: Event): Promise<void> {
@@ -164,52 +194,45 @@ async function toggleReview(event: Event): Promise<void> {
 }
 
 async function createOrgAccount(): Promise<void> {
-  const email = orgCreateEmail.value.trim()
+  const loginName = orgCreateLoginName.value.trim().toLowerCase()
   const displayName = orgCreateName.value.trim()
-  if (!email || !displayName) return
+  if (!loginNameValid(loginName) || !displayName) return
   if (orgCreateRole.value !== 'member' && !orgCreateStoreId.value) return
   notice.value = ''
   const created = await grassland.createSubAccount(props.orgId, {
     role: orgCreateRole.value,
-    email,
+    loginName,
     displayName,
     ...(orgCreateRole.value !== 'member' ? { storeId: orgCreateStoreId.value } : {}),
   })
   if (!created) return
-  orgCreateEmail.value = ''
+  orgCreateLoginName.value = ''
   orgCreateName.value = ''
   const roleLabel = orgCreateRole.value === 'member' ? ROLE_LABEL.member
     : STORE_ROLE_LABEL[orgCreateRole.value]
-  if (created.initialPassword) {
-    oneTimePassword.value = { email: created.account.email, password: created.initialPassword }
-    notice.value = `${roleLabel}账号已创建，凭据请线下转交`
-  } else {
-    // 无初始密码 = 邮箱已被注册且被确认关联为成员，原账号凭据不受影响
-    notice.value = `已将既有平台账号 ${created.account.email} 关联为${roleLabel}`
-  }
+  oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
+  notice.value = created.account.status === 'pending_review'
+    ? `${roleLabel}账号已登记，待审核通过后才能登录使用`
+    : `${roleLabel}账号已创建，凭据请线下转交`
   await reloadMembers()
   if (orgCreateRole.value !== 'member') await selectStore(orgCreateStoreId.value)
 }
 
 async function createStoreAccount(): Promise<void> {
-  const email = storeCreateEmail.value.trim()
+  const loginName = storeCreateLoginName.value.trim().toLowerCase()
   const displayName = storeCreateName.value.trim()
-  if (!email || !displayName || !selectedStoreId.value) return
+  if (!loginNameValid(loginName) || !displayName || !selectedStoreId.value) return
   notice.value = ''
   const created = await grassland.createStaffSubAccount(props.orgId, selectedStoreId.value, {
-    email, displayName,
+    loginName, displayName,
   })
   if (!created) return
-  storeCreateEmail.value = ''
+  storeCreateLoginName.value = ''
   storeCreateName.value = ''
-  if (created.initialPassword) {
-    oneTimePassword.value = { email: created.account.email, password: created.initialPassword }
-    notice.value = created.account.status === 'pending_review'
-      ? '员工账号已登记，待主体审核通过后才能登录使用'
-      : '账号已创建，凭据请线下转交'
-  } else {
-    notice.value = `已将既有平台账号 ${created.account.email} 关联为本店${STORE_CREATE_ROLE_LABEL}`
-  }
+  oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
+  notice.value = created.account.status === 'pending_review'
+    ? '员工账号已登记，待主体审核通过后才能登录使用'
+    : '账号已创建，凭据请线下转交'
   await selectStore(selectedStoreId.value)
 }
 
@@ -248,11 +271,23 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
     <!-- 一次性初始密码（任务书 #48）：仅建号/重置的响应里存在一次，此后接口不可再取 -->
     <div v-if="oneTimePassword" class="team-alert team-pw" data-testid="one-time-password">
       <p class="team-pw-line">
-        <strong>{{ oneTimePassword.email }}</strong> 的初始密码：
+        账号 <strong>{{ oneTimePassword.username }}</strong> 的初始密码：
         <code class="team-pw-code">{{ oneTimePassword.password }}</code>
       </p>
-      <p class="team-pw-hint">请立即线下转交本人；对方首次登录须改密。关闭后无法再次查看。</p>
+      <p class="team-pw-hint">请立即线下转交本人；对方用该账号名登录，首次登录须改密。关闭后无法再次查看。</p>
       <button type="button" class="team-quiet" @click="oneTimePassword = null">我已妥善保存</button>
+    </div>
+
+    <!-- 成员账号前缀（任务书 #49 D5）：改前缀只影响之后新建的账号 -->
+    <div class="team-row">
+      <span class="team-tag">账号前缀 {{ accountPrefix || '…' }}</span>
+      <input v-model="prefixInput" class="team-prefix-input" placeholder="新前缀（字母数字）" />
+      <button
+        type="button" class="team-quiet"
+        :disabled="grassland.loading.value || !loginNameValid(prefixInput)"
+        @click="savePrefix"
+      >改前缀</button>
+      <span class="team-hint">成员账号名 = 前缀-登录名；需管理员</span>
     </div>
 
     <!-- 审核开关：仅影响店长代建路径，owner/admin 直建永不 pending（任务书 #48 D6） -->
@@ -290,11 +325,16 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
 
       <!-- 任务书 #49：邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（成员经下方主体直建产生） -->
 
-      <!-- 主体直建子账号（任务书 #48）：对方没有平台账号也能入组；管理员可选任意角色并挂门店 -->
+      <!-- 主体直建子账号（任务书 #48/#49）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定 -->
       <details class="team-adv">
-        <summary>对方没有平台账号？主体直接创建</summary>
+        <summary>添加成员：主体直接创建账号</summary>
         <div class="team-row">
-          <input v-model="orgCreateEmail" type="email" placeholder="新账号邮箱" />
+          <input
+            v-model="orgCreateLoginName"
+            placeholder="登录名（3-24 位字母数字）"
+            @keyup.enter="createOrgAccount"
+          />
+          <span v-if="orgUsernamePreview" class="team-tag">{{ orgUsernamePreview }}</span>
           <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
           <select v-model="orgCreateRole">
             <option value="member">组织成员</option>
@@ -312,8 +352,9 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
           >创建账号</button>
         </div>
         <p class="team-hint">
-          创建即生效（管理员直建不受审核开关影响）；系统生成一次性初始密码供你线下转交，对方首次登录须改密。
-          选店长/店员时须指定门店。若邮箱已是平台账号，会提示你确认后改为「关联」，原密码不受影响。
+          创建即生效（管理员直建不受审核开关影响）；账号名 = 前缀-登录名（如 {{ accountPrefix ? accountPrefix + '-zhangsan' : '前缀-zhangsan' }}），
+          系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
+          选店长/店员时须指定门店。
         </p>
       </details>
     </section>
@@ -369,21 +410,26 @@ async function reviewCreation(accountId: string, decision: 'approve' | 'reject')
 
       <!-- 任务书 #49：门店邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（本店员工经下方店长直建产生） -->
 
-      <!-- 店长代建员工（任务书 #48）：固定建店员（任命店长走上方主体入口） -->
+      <!-- 店长代建员工（任务书 #48/#49）：固定建店员（任命店长走上方主体入口） -->
       <details class="team-adv">
-        <summary>对方没有平台账号？直接创建店员账号</summary>
+        <summary>添加店员：直接创建账号</summary>
         <div class="team-row">
-          <input v-model="storeCreateEmail" type="email" placeholder="新账号邮箱" />
+          <input
+            v-model="storeCreateLoginName"
+            placeholder="登录名（3-24 位字母数字）"
+            @keyup.enter="createStoreAccount"
+          />
+          <span v-if="storeUsernamePreview" class="team-tag">{{ storeUsernamePreview }}</span>
           <input v-model="storeCreateName" placeholder="员工姓名" @keyup.enter="createStoreAccount" />
           <button
             type="button"
-            :disabled="grassland.loading.value || !storeCreateEmail.trim() || !storeCreateName.trim()"
+            :disabled="grassland.loading.value || !loginNameValid(storeCreateLoginName) || !storeCreateName.trim()"
             @click="createStoreAccount"
           >创建店员账号</button>
         </div>
         <p class="team-hint">
-          系统生成一次性初始密码供你线下转交，对方首次登录须改密。此处固定创建店员；
-          任命店长需主体管理员在上方主体入口创建。开启审核后新建为「待审核」，主体通过后才能登录。
+          账号名 = 前缀-登录名，系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
+          此处固定创建店员；任命店长需主体管理员在上方主体入口创建。开启审核后新建为「待审核」，主体通过后才能登录。
         </p>
       </details>
     </section>
@@ -424,4 +470,5 @@ button { padding: 6px 14px; border: 1px solid var(--color-border); background: t
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .team-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
+.team-prefix-input { min-width: 150px; }
 </style>

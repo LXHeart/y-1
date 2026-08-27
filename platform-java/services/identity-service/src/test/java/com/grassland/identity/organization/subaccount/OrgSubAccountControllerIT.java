@@ -8,35 +8,48 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
 /**
- * 子账号体系端到端（任务书 #48）。继承 {@link IdentityItSupport}，共享容器数据按邮箱前缀隔离。
+ * 子账号体系端到端（任务书 #48；#49 loginName 改造）。继承 {@link IdentityItSupport}，
+ * 共享容器数据按登录名前缀隔离。
  *
- * <p>覆盖矩阵：直建 happy path、邮箱冲突两分支、审核开关驱动的 pending/active、
- * 四守卫（最后经理/owner 自保护/自操作）、纯门店经理权限边界、审批 approve/reject 与终态语义。
+ * <p>覆盖矩阵：直建 happy path（前缀拼接/旁表/占位邮箱）、撞登录名 409、格式校验 4xx、
+ * 审核开关驱动的 pending/active、四守卫（最后经理/owner 自保护/自操作）、纯门店经理
+ * 权限边界、审批 approve/reject 与终态语义、前缀读改端点。
  */
 class OrgSubAccountControllerIT extends IdentityItSupport {
 
-    // ---------- 建号 ----------
+    // ---------- 建号（loginName 契约） ----------
 
     @Test
-    void createManager_subaccountActiveWithOneTimePassword() {
+    void createManager_subaccountActiveWithUsernameAndOneTimePassword() {
         var owner = seedAccount("sa-owner4@example.com");
         String orgId = createOrg(owner.cookie(), "直建主体");
         String storeId = createStore(orgId, owner.cookie(), "旗舰店");
 
         Map<String, Object> data = createAccount(orgId, owner.cookie(),
-                "{\"role\":\"manager\",\"storeId\":\"" + storeId + "\",\"email\":\"sa-mgr4@example.com\","
+                "{\"role\":\"manager\",\"storeId\":\"" + storeId + "\",\"loginName\":\"mgr4\","
                         + "\"displayName\":\"王经理\"}")
                 .expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         // expectBody(Map) 拿到的是整包 {success,data}；业务体在 data 键下
         data = (Map<String, Object>) data.get("data");
+        String accountId = (String) ((Map<?, ?>) data.get("account")).get("id");
 
         assertThat(((Map<?, ?>) data.get("account")).get("status")).isEqualTo("active");
         assertThat((String) data.get("initialPassword")).hasSize(16);
 
+        // #49：账号名 = 主体前缀-登录名；email 列是占位符（.invalid 域）；旁表有登录名行
+        String prefix = accountPrefix(orgId);
+        assertThat(((Map<?, ?>) data.get("account")).get("username")).isEqualTo(prefix + "-mgr4");
+        String email = db.sql("SELECT email FROM app_users WHERE id = CAST(:id AS uuid)")
+                .bind("id", accountId).map(r -> r.get("email", String.class)).one().block();
+        assertThat(email).isEqualTo(prefix + "-mgr4@sub.grassland.invalid");
+        String usernameRow = db.sql("SELECT username FROM account_username WHERE account_id = CAST(:id AS uuid)")
+                .bind("id", accountId).map(r -> r.get("username", String.class)).one().block();
+        assertThat(usernameRow).isEqualTo(prefix + "-mgr4");
+
         Boolean flagged = db.sql(
                         "SELECT must_change_password FROM account_flag WHERE account_id = CAST(:id AS uuid)")
-                .bind("id", ((Map<?, ?>) data.get("account")).get("id"))
+                .bind("id", accountId)
                 .map(r -> r.get("must_change_password", Boolean.class)).one().block();
         assertThat(flagged).isTrue();
 
@@ -49,33 +62,71 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
     }
 
     @Test
-    void existingEmail_withoutConfirmRejected_withConfirmBindsSafely() {
-        var owner = seedAccount("sa-bind@example.com");
-        String orgId = createOrg(owner.cookie(), "关联主体");
-        String storeId = createStore(orgId, owner.cookie(), "老店");
-        var existing = seedAccount("sa-worker@example.com");
+    void duplicateLoginName_rejected409_andFormatValidated() {
+        var owner = seedAccount("sa-dup@example.com");
+        String orgId = createOrg(owner.cookie(), "撞名主体");
+        String storeId = createStore(orgId, owner.cookie(), "撞名店");
 
+        createAccount(orgId, owner.cookie(), staffJson(storeId, "dup1", "先来"))
+                .expectStatus().isCreated();
+
+        // 同主体同名 → 409 换名（占位邮箱 UNIQUE 与旁表 UNIQUE 双闸）
+        createAccount(orgId, owner.cookie(), staffJson(storeId, "dup1", "后到"))
+                .expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("该登录名已被使用，请换一个");
+
+        // 格式：过短 / 非法字符 / 缺失
+        createAccount(orgId, owner.cookie(), staffJson(storeId, "ab", "过短"))
+                .expectStatus().isBadRequest();
+        createAccount(orgId, owner.cookie(), staffJson(storeId, "bad_name", "下划线非法"))
+                .expectStatus().isBadRequest();
         createAccount(orgId, owner.cookie(),
-                "{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"email\":\"sa-worker@example.com\","
-                        + "\"displayName\":\"张三\"}")
-                .expectStatus().isEqualTo(409);
-
-        // 显式确认 → 关联为成员；绝不触碰既有凭据（seed 的占位哈希必须原样）
-        Map<String, Object> data = createAccount(orgId, owner.cookie(),
-                "{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"email\":\"sa-worker@example.com\","
-                        + "\"displayName\":\"张三\",\"confirmBindExisting\":true}")
-                .expectStatus().isCreated()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        data = (Map<String, Object>) data.get("data");
-
-        assertThat(data.get("initialPassword")).isNull();
-        assertThat(((Map<?, ?>) data.get("account")).get("id")).isEqualTo(existing.accountId());
-
-        String hash = db.sql("SELECT password_hash FROM app_users WHERE id = CAST(:id AS uuid)")
-                .bind("id", existing.accountId())
-                .map(r -> r.get("password_hash", String.class)).one().block();
-        assertThat(hash).isEqualTo("x");
+                "{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"loginName\":\"okname\","
+                        + "\"displayName\":\"缺登录名对照\"}")
+                .expectStatus().isCreated();
     }
+
+    @Test
+    void accountPrefix_readByMember_changedByAdmin_onlyAffectsNewAccounts() {
+        var owner = seedAccount("sa-prefix@example.com");
+        String orgId = createOrg(owner.cookie(), "前缀主体");
+
+        // 建主体即生成默认前缀（org + id 前 8 位 hex，V43 同规则）
+        String generated = accountPrefix(orgId);
+        assertThat(generated).matches("^org[0-9a-f]{8}$");
+
+        // 改前缀：ADMIN+；非法值 400；被占用 409（造第二个主体占住目标前缀）
+        client().patch().uri("/api/organizations/" + orgId + "/account-prefix")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"prefix\":\"grass-milk\"}")
+                .exchange().expectStatus().isBadRequest();
+
+        client().patch().uri("/api/organizations/" + orgId + "/account-prefix")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"prefix\":\"milkshop\"}")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.prefix").isEqualTo("milkshop");
+
+        var otherOwner = seedAccount("sa-prefix2@example.com");
+        String otherOrg = createOrg(otherOwner.cookie(), "占位主体");
+        client().patch().uri("/api/organizations/" + otherOrg + "/account-prefix")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + otherOwner.cookie())
+                .bodyValue("{\"prefix\":\"milkshop\"}")
+                .exchange().expectStatus().isEqualTo(409);
+
+        // 成员可读（建号表单预览）；非成员 403
+        var member = seedAccount("sa-prefix-mem@example.com");
+        seedOrgRole(orgId, member.accountId(), "member");
+        client().get().uri("/api/organizations/" + orgId + "/account-prefix")
+                .header("Cookie", "y1.sid=" + member.cookie()).exchange()
+                .expectStatus().isOk().expectBody().jsonPath("$.data.prefix").isEqualTo("milkshop");
+        var outsider = seedAccount("sa-prefix-out@example.com");
+        client().get().uri("/api/organizations/" + orgId + "/account-prefix")
+                .header("Cookie", "y1.sid=" + outsider.cookie()).exchange()
+                .expectStatus().isForbidden();
+    }
+
+    // ---------- 审核开关 ----------
 
     @Test
     void reviewToggle_switchesStaffCreationBetweenPendingAndActive() {
@@ -86,10 +137,10 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
 
         toggleReview(orgId, cookie, true);
 
-        var manager = seedManagerViaStore(orgId, storeId, cookie, "sa-rev-mgr@example.com", "李店长");
+        var manager = createManagerViaOrg(orgId, storeId, cookie, "revmgr", "李店长");
 
         Map<String, Object> created = createStoreAccount(orgId, storeId, manager.cookie(),
-                "sa-pending@example.com", "新员工").expectStatus().isCreated()
+                "pending9", "新员工").expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         created = (Map<String, Object>) created.get("data");
         assertThat(((Map<?, ?>) created.get("account")).get("status")).isEqualTo("pending_review");
@@ -103,7 +154,7 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         toggleReview(orgId, cookie, false);
         String storeB = createStore(orgId, cookie, "分店B");
         Map<String, Object> offCase = createAccount(orgId, cookie,
-                staffJson(storeB, "sa-instant@example.com", "即启用员工"))
+                staffJson(storeB, "instant7", "即启用员工"))
                 .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         offCase = (Map<String, Object>) offCase.get("data");
         assertThat(((Map<?, ?>) offCase.get("account")).get("status")).isEqualTo("active");
@@ -127,7 +178,7 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
 
         // ② OWNER 账号不可被其他管理员停用
         var secondAdmin = seedAccount("sa-guard-admin@example.com");
-        grantOrgRole(orgId, owner.cookie(), secondAdmin.accountId(), "admin");
+        seedOrgRole(orgId, secondAdmin.accountId(), "admin");
         suspend(orgId, owner.accountId(), secondAdmin.cookie()).expectStatus().isForbidden()
                 .expectBody().jsonPath("$.error").isEqualTo("商家主体所有者的账号不可被停用");
     }
@@ -140,7 +191,7 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         String storeId = createStore(orgId, cookie, "独苗店");
 
         Map<String, Object> mgr = createAccount(orgId, cookie,
-                managerJson(storeId, "sa-lm@example.com", "唯一经理"))
+                managerJson(storeId, "onlymgr", "唯一经理"))
                 .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         mgr = (Map<String, Object>) mgr.get("data");
         String mgrId = (String) ((Map<?, ?>) mgr.get("account")).get("id");
@@ -150,7 +201,7 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
                 .expectBody().jsonPath("$.error").isEqualTo("不能停用最后一个可用门店经理");
 
         // 补第二位 active 经理后停用成功；恢复一次后再恢复报冲突
-        createAccount(orgId, cookie, managerJson(storeId, "sa-lm2@example.com", "替补经理"))
+        createAccount(orgId, cookie, managerJson(storeId, "backupmgr", "替补经理"))
                 .expectStatus().isCreated();
 
         suspend(orgId, mgrId, cookie).expectStatus().isOk();
@@ -170,11 +221,11 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         String orgId = createOrg(cookie, "边界主体");
         String storeId = createStore(orgId, cookie, "边界店");
 
-        var manager = seedManagerViaStore(orgId, storeId, cookie, "sa-bnd-mgr@example.com", "边界店长");
+        var manager = createManagerViaOrg(orgId, storeId, cookie, "bndmgr", "边界店长");
         var outsider = seedAccount("sa-bnd-out@example.com");
 
         Map<String, Object> staff = createStoreAccount(orgId, storeId, manager.cookie(),
-                "sa-bnd-staff@example.com", "受管员工").expectStatus().isCreated()
+                "bndstaff", "受管员工").expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         staff = (Map<String, Object>) staff.get("data");
         String staffId = (String) ((Map<?, ?>) staff.get("account")).get("id");
@@ -198,12 +249,12 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         String cookie = owner.cookie();
         String orgId = createOrg(cookie, "终态主体");
         String storeId = createStore(orgId, cookie, "终态店");
-        var manager = seedManagerViaStore(orgId, storeId, cookie, "sa-term-mgr@example.com", "终态店长");
+        var manager = createManagerViaOrg(orgId, storeId, cookie, "termmgr", "终态店长");
 
         toggleReview(orgId, cookie, true);
 
         Map<String, Object> created = createStoreAccount(orgId, storeId, manager.cookie(),
-                "sa-term-staff@example.com", "待拒员工").expectStatus().isCreated()
+                "termstaff", "待拒员工").expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         created = (Map<String, Object>) created.get("data");
         String targetId = (String) ((Map<?, ?>) created.get("account")).get("id");
@@ -224,23 +275,45 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
                 .bodyValue(json).exchange();
     }
 
-    private String managerJson(String storeId, String email, String displayName) {
-        return "{\"role\":\"manager\",\"storeId\":\"" + storeId + "\",\"email\":\"" + email
+    private String managerJson(String storeId, String loginName, String displayName) {
+        return "{\"role\":\"manager\",\"storeId\":\"" + storeId + "\",\"loginName\":\"" + loginName
                 + "\",\"displayName\":\"" + displayName + "\"}";
     }
 
-    private String staffJson(String storeId, String email, String displayName) {
-        return "{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"email\":\"" + email
+    private String staffJson(String storeId, String loginName, String displayName) {
+        return "{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"loginName\":\"" + loginName
                 + "\",\"displayName\":\"" + displayName + "\"}";
     }
 
     private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec createStoreAccount(
-            String orgId, String storeId, String cookie, String email, String displayName) {
+            String orgId, String storeId, String cookie, String loginName, String displayName) {
         return client().post()
                 .uri("/api/organizations/" + orgId + "/stores/" + storeId + "/accounts")
                 .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-                .bodyValue("{\"role\":\"staff\",\"email\":\"" + email + "\",\"displayName\":\"" + displayName
+                .bodyValue("{\"role\":\"staff\",\"loginName\":\"" + loginName + "\",\"displayName\":\"" + displayName
                         + "\"}").exchange();
+    }
+
+    /**
+     * #49：任命经理唯一通路 = 主体直建（org 入口 role=manager+storeId）。
+     * 返回带登录态的子账号（cookieFor 把任意 accountId 转登录态）。
+     */
+    @SuppressWarnings("unchecked")
+    private Seeded createManagerViaOrg(String orgId, String storeId, String ownerCookie,
+            String loginName, String displayName) {
+        Map<String, Object> data = createAccount(orgId, ownerCookie,
+                managerJson(storeId, loginName, displayName))
+                .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+        String accountId = (String) ((Map<String, Object>) ((Map<String, Object>) data.get("data")).get("account"))
+                .get("id");
+        return new Seeded(cookieFor(accountId), accountId);
+    }
+
+    /** 挂靠端点已下线（#49），组织角色用 SQL 直插（IT 造数，非业务通路）。 */
+    private void seedOrgRole(String orgId, String accountId, String role) {
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role)"
+                        + " VALUES (gen_random_uuid(), CAST(:org AS uuid), CAST(:acct AS uuid), :role)")
+                .bind("org", orgId).bind("acct", accountId).bind("role", role).then().block();
     }
 
     private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec suspend(
@@ -272,24 +345,9 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isOk();
     }
 
-    /** 借既有门店成员端点把一个新造账号任命为本店经理（ADMIN+ 门禁），返回其登录态。 */
-    private IdentityItSupport.Seeded seedManagerViaStore(String orgId, String storeId, String ownerCookie,
-            String email, String displayName) {
-        var seeded = seedAccount(email);
-        db.sql("UPDATE app_users SET display_name = :name WHERE id = CAST(:id AS uuid)")
-                .bind("name", displayName).bind("id", seeded.accountId()).then().block();
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + ownerCookie)
-                .bodyValue("{\"accountId\":\"" + seeded.accountId() + "\",\"role\":\"manager\"}")
-                .exchange().expectStatus().isCreated();
-        return seeded;
-    }
-
-    private void grantOrgRole(String orgId, String operatorCookie, String accountId, String role) {
-        client().post().uri("/api/organizations/" + orgId + "/memberships")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + operatorCookie)
-                .bodyValue("{\"accountId\":\"" + accountId + "\",\"role\":\"" + role + "\"}")
-                .exchange().expectStatus().isCreated();
+    private String accountPrefix(String orgId) {
+        return db.sql("SELECT account_prefix FROM organization WHERE id = CAST(:id AS uuid)")
+                .bind("id", orgId).map(r -> r.get("account_prefix", String.class)).one().block();
     }
 
     private String statusOf(String accountId) {

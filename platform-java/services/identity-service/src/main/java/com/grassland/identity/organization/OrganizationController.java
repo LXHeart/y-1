@@ -20,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -191,6 +192,44 @@ public class OrganizationController {
 	public Mono<ResponseEntity<Map<String, Object>>> listMine(ServerHttpRequest request) {
 		return accounts.resolve(request).flatMap(acc -> organizations.findForAccount(acc.id()).collectList().map(
 				list -> ResponseEntity.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
+	}
+
+	// ---------- 任务书 #49 D5：成员账号前缀 ----------
+
+	/** 前缀读：本组织任意成员（建号表单预览用）；非成员 403。 */
+	@GetMapping("/{id}/account-prefix")
+	public Mono<ResponseEntity<Map<String, Object>>> getAccountPrefix(@PathVariable String id,
+			ServerHttpRequest request) {
+		return accounts.resolve(request)
+				.flatMap(operator -> authz.roleOfAccount(operator.id(), id)
+						.switchIfEmpty(Mono.error(new IdentityException(403, "无权访问该组织")))
+						.then(organizations.selectAccountPrefix(id))
+					 .map(prefix -> ResponseEntity.ok(Map.of("success", true, "data", Map.of("prefix", prefix)))));
+	}
+
+	/** 前缀改：ADMIN+；^[a-z0-9]{3,24}$；被其他主体占用 → 409。只影响之后新建的账号。 */
+	@PatchMapping("/{id}/account-prefix")
+	public Mono<ResponseEntity<Map<String, Object>>> updateAccountPrefix(@PathVariable String id,
+			@RequestBody AccountPrefixRequest body, ServerHttpRequest request) {
+		String prefix = body.prefix() == null ? "" : body.prefix().trim().toLowerCase();
+		if (!prefix.matches("^[a-z0-9]{3,24}$")) {
+			return Mono.just(ResponseEntity.badRequest()
+					.body(Map.of("success", false, "error", "前缀仅支持 3-24 位字母或数字")));
+		}
+		return authz.requireRole(request, id, MembershipRole.ADMIN)
+				.flatMap(operator -> organizations.updateAccountPrefix(id, prefix)
+						.map(rows -> rows > 0
+								? ResponseEntity.ok(Map.<String, Object>of("success", true,
+										"data", Map.of("prefix", prefix)))
+								: ResponseEntity.status(404).<Map<String, Object>>body(
+										Map.of("success", false, "error", "组织不存在"))))
+				.onErrorResume(org.springframework.dao.DataIntegrityViolationException.class,
+						e -> Mono.just(ResponseEntity.status(409)
+								.body(Map.of("success", false, "error", "该前缀已被其他主体使用"))));
+	}
+
+	/** 前缀改请求体（任务书 #49）。 */
+	record AccountPrefixRequest(String prefix) {
 	}
 
 	/** best-effort 种 OWNER 成员行：失败不阻断 org 创建（鉴权兜底靠 owner_account_id）。 */

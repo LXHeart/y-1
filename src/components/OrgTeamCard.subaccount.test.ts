@@ -46,7 +46,6 @@ function baseHandler(url: string): Response | undefined {
       { id: 'm2', organizationId: ORG_ID, accountId: 'acc-member', role: 'member', createdAt: null, accountStatus: 'active' },
     ])
   }
-  if (url.includes('/invitations')) return envelopeResponse([])
   if (url.includes('/stores') && !url.includes('/memberships')) return envelopeResponse([
     { id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active' },
   ])
@@ -54,18 +53,19 @@ function baseHandler(url: string): Response | undefined {
     { id: 'sm1', storeId: 'store-1', accountId: 'acc-staff', role: 'staff', createdAt: null, accountStatus: 'active' },
   ])
   if (url.includes('member-review-required')) return envelopeResponse({ required: false })
+  if (url.includes('account-prefix')) return envelopeResponse({ prefix: 'caoyuan' })
   return undefined
 }
 
-describe('OrgTeamCard · 子账号管控（任务书 #48）', () => {
-  test('主体直建成员账号：一次性密码明文展示一次，点「我已保存」后销毁', async () => {
+describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
+  test('主体直建成员账号：loginName 表单 + 一次性密码明文展示一次，点「我已保存」后销毁', async () => {
     let created = false
     const { wrapper } = await mountedWith((url, opts) => {
       const method = opts?.method ?? 'GET'
       if (method === 'POST' && url.endsWith(`/api/organizations/${ORG_ID}/accounts`)) {
         created = true
         return envelopeResponse({
-          account: { id: 'new-1', email: 'sa@example.com', displayName: '王成员', role: 'member', status: 'active' },
+          account: { id: 'new-1', username: 'caoyuan-wang', displayName: '王成员', role: 'member', status: 'active' },
           initialPassword: 'zmX28J86LvHbevBn',
           mustChangePassword: true,
         })
@@ -73,11 +73,13 @@ describe('OrgTeamCard · 子账号管控（任务书 #48）', () => {
       return baseHandler(url)
     })
 
-    const emailInput = wrapper.find('input[type="email"][placeholder="新账号邮箱"]')
+    const loginInput = wrapper.find('input[placeholder="登录名（3-24 位字母数字）"]')
     const nameInput = wrapper.find('input[placeholder="显示名"]')
-    expect(emailInput.exists()).toBe(true)
-    await emailInput.setValue('sa@example.com')
+    expect(loginInput.exists()).toBe(true)
+    await loginInput.setValue('wang')
     await nameInput.setValue('王成员')
+    // 前缀预览随输入实时拼接
+    expect(wrapper.text()).toContain('caoyuan-wang')
     const button = wrapper.findAll('button').find((b) => b.text() === '创建账号')
     expect(button, '创建按钮存在且可点').toBeTruthy()
     await button!.trigger('click')
@@ -86,6 +88,7 @@ describe('OrgTeamCard · 子账号管控（任务书 #48）', () => {
     expect(created).toBe(true)
     const panel = wrapper.find('[data-testid="one-time-password"]')
     expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('caoyuan-wang')
     expect(panel.text()).toContain('zmX28J86LvHbevBn')
     expect(panel.text()).toContain('关闭后无法再次查看')
 

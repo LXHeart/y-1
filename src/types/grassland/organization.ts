@@ -249,7 +249,8 @@ export interface Membership {
 export interface SubAccountMutationResult {
   account: {
     id: string
-    email: string
+    /** 完整账号名（主体前缀-登录名，任务书 #49）；重置密码路径回填目标账号的登录名/邮箱。 */
+    username: string
     displayName?: string | null
     role?: string | null
     status: string

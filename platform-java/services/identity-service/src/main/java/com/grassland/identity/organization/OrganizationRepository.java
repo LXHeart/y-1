@@ -28,12 +28,16 @@ public class OrganizationRepository {
 
     public Mono<Organization> create(String ownerAccountId, String name, String industry) {
         String id = UUID.randomUUID().toString();
+        // 任务书 #49 D5：建主体即生成成员账号前缀（org + id 前 8 位 hex，与 V43 回填同规则，
+        // id 唯一故前缀唯一）；管理员可在主体设置里改，改后只影响新建账号。
+        String accountPrefix = "org" + id.replace("-", "").substring(0, 8);
         return db.sql("""
-                INSERT INTO organization(id, owner_account_id, name, status, industry)
-                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), :name, 'active', :industry)
+                INSERT INTO organization(id, owner_account_id, name, status, industry, account_prefix)
+                VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), :name, 'active', :industry, :prefix)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("owner", ownerAccountId).bind("name", name).bind("industry", industry)
+                .bind("prefix", accountPrefix)
                 .map(OrganizationRepository::map).one();
     }
 
@@ -92,6 +96,23 @@ public class OrganizationRepository {
         return db.sql("UPDATE organization SET member_review_required = :required, updated_at = now()"
                         + " WHERE id = CAST(:id AS uuid)")
                 .bind("required", required).bind("id", organizationId)
+                .fetch().rowsUpdated();
+    }
+
+    // ---------- 任务书 #49 D5：成员账号前缀（刻意不进 record，同 member_review_required 先例） ----------
+
+    public Mono<String> selectAccountPrefix(String organizationId) {
+        return db.sql("SELECT account_prefix FROM organization WHERE id = CAST(:id AS uuid)")
+                .bind("id", organizationId)
+                .map(row -> row.get("account_prefix", String.class))
+                .one();
+    }
+
+    /** UNIQUE 冲突（前缀被其他主体占用）由调用方映射 409。 */
+    public Mono<Long> updateAccountPrefix(String organizationId, String prefix) {
+        return db.sql("UPDATE organization SET account_prefix = :prefix, updated_at = now()"
+                        + " WHERE id = CAST(:id AS uuid)")
+                .bind("prefix", prefix).bind("id", organizationId)
                 .fetch().rowsUpdated();
     }
 

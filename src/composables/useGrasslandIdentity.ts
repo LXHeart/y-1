@@ -163,16 +163,16 @@ export function useGrasslandIdentity(run: RunFn) {
   // 任务书 #49：挂靠端点（POST/DELETE memberships，按 accountId 挂既有账号）已下线——
   // 成员只能经主体直建子账号产生，移除走 /accounts/{id} 删除端点（永久作废）。
 
-  // ---------- identity：成员子账号（任务书 #48）----------
+  // ---------- identity：成员子账号（任务书 #48；#49 loginName 改造）----------
 
   /**
    * 主体直建子账号（owner/admin）。一次动作 = 建号 + 赋角色 + 挂门店，免审默认即时生效。
+   * #49：入参是登录名（3-24 位小写字母数字），后端拼「主体前缀-登录名」为完整账号；
    * 响应 `initialPassword` 是一次性明文（此后任何接口不可再取），调用方必须立刻展示/转交。
-   * 邮箱已存在且未带 confirmBindExisting → 后端 409，error 条呈现提示二选一。
    */
   const createSubAccount = (
     orgId: string,
-    input: { role: 'member' | 'manager' | 'staff'; email: string; displayName: string; storeId?: string; confirmBindExisting?: boolean },
+    input: { role: 'member' | 'manager' | 'staff'; loginName: string; displayName: string; storeId?: string },
   ) =>
     run(() => request<SubAccountMutationResult>(`/api/organizations/${orgId}/accounts`, {
       method: 'POST',
@@ -183,11 +183,22 @@ export function useGrasslandIdentity(run: RunFn) {
   const createStaffSubAccount = (
     orgId: string,
     storeId: string,
-    input: { email: string; displayName: string; confirmBindExisting?: boolean },
+    input: { loginName: string; displayName: string },
   ) =>
     run(() => request<SubAccountMutationResult>(`/api/organizations/${orgId}/stores/${storeId}/accounts`, {
       method: 'POST',
       body: JSON.stringify({ role: 'staff', ...input }),
+    }))
+
+  /** 成员账号前缀读（组织成员可读，建号表单预览用）。 */
+  const getAccountPrefix = (orgId: string) =>
+    run(() => request<{ prefix: string }>(`/api/organizations/${orgId}/account-prefix`))
+
+  /** 成员账号前缀改（ADMIN+；仅 3-24 位字母数字；只影响之后新建的账号）。 */
+  const setAccountPrefix = (orgId: string, prefix: string) =>
+    run(() => request<{ prefix: string }>(`/api/organizations/${orgId}/account-prefix`, {
+      method: 'PATCH',
+      body: JSON.stringify({ prefix }),
     }))
 
   /** 停用成员账号：即时生效，事后站内知会主体（后端守卫报「最后一个店长」等冲突）。 */
@@ -360,6 +371,7 @@ export function useGrasslandIdentity(run: RunFn) {
     reviewPermissionRequest,
     listMemberships,
     createSubAccount, createStaffSubAccount,
+    getAccountPrefix, setAccountPrefix,
     suspendSubAccount, restoreSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
     getMemberReviewRequired, setMemberReviewRequired,
     listMySessions, revokeOtherSessions, revokeSession,
