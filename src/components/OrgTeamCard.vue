@@ -68,10 +68,9 @@ async function refresh(): Promise<void> {
   const s = await grassland.listStores(props.orgId)
   if (m) members.value = m
   if (s) stores.value = s
-  // 单店模式：唯一门店隐式选中（门店成员区直接呈现，无选择动作）；建号默认店员（拍板②）
+  // 单店模式：唯一门店隐式选中（门店成员区直接呈现，无选择动作）
   if (stores.value.length === 1) {
     await selectStore(stores.value[0]!.id)
-    if (orgCreateRole.value === 'member') orgCreateRole.value = 'staff'
   }
   await loadReviewToggle()
 }
@@ -178,11 +177,11 @@ const memberReviewRequired = ref(false)
 const accountPrefix = ref('')
 const orgCreateLoginName = ref('')
 const orgCreateName = ref('')
-/** 组织级建号目标角色：member=主体成员；manager/staff 须再选门店（D1：任命店长仅 ADMIN+，本入口本身就是 ADMIN+ 门禁）。 */
-const orgCreateRole = ref<'member' | 'manager' | 'staff'>('member')
-const orgCreateStoreId = ref('')
 const storeCreateLoginName = ref('')
 const storeCreateName = ref('')
+/** 门店区任命店长表单（2026-08-28 二轮收敛：任命自主体区下沉至门店成员区，按店内联）。 */
+const managerCreateLoginName = ref('')
+const managerCreateName = ref('')
 
 /** 登录名规则（#49 D4）：仅小写字母数字、3-24 位；输入即时小写化。 */
 const LOGIN_NAME_RE = /^[a-z0-9]{3,24}$/
@@ -197,15 +196,13 @@ const ACCOUNT_STATUS_LABEL: Record<string, string> = {
   rejected: '已驳回',
 }
 
-/** 组织级建号：登录名合法，且选了门店角色（店长/店员）但未选门店时禁用提交。 */
-const orgCreateDisabled = computed(() => {
-  if (!loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim()) return true
-  return orgCreateRole.value !== 'member' && !orgCreateStoreId.value
-})
+/** 组织级建号（2026-08-28 二轮收敛：固定建组织成员）：登录名与显示名合法即可提交。 */
+const orgCreateDisabled = computed(() =>
+  !loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim())
 
-/** 门店角色的目标门店（多店显式选择；组织成员不挂门店）。 */
-const effectiveStoreId = computed(() =>
-  orgCreateRole.value === 'member' ? undefined : orgCreateStoreId.value)
+/** 门店区任命店长：登录名与显示名合法即可提交（门店取当前选中店）。 */
+const managerCreateDisabled = computed(() =>
+  !loginNameValid(managerCreateLoginName.value) || !managerCreateName.value.trim())
 
 /** 建号预览：前缀-登录名（后端拼同样规则，前端只做提示）。 */
 const orgUsernamePreview = computed(() =>
@@ -215,6 +212,10 @@ const orgUsernamePreview = computed(() =>
 const storeUsernamePreview = computed(() =>
   accountPrefix.value && storeCreateLoginName.value.trim()
     ? `${accountPrefix.value}-${storeCreateLoginName.value.trim().toLowerCase()}`
+    : '')
+const managerUsernamePreview = computed(() =>
+  accountPrefix.value && managerCreateLoginName.value.trim()
+    ? `${accountPrefix.value}-${managerCreateLoginName.value.trim().toLowerCase()}`
     : '')
 
 /**
@@ -250,30 +251,49 @@ async function toggleReview(event: Event): Promise<void> {
   notice.value = required ? '已开启：店长添加的员工须经主体审核后启用' : '已关闭：店长添加员工即时生效'
 }
 
+/**
+ * 组织级建号：固定建组织成员（不挂门店）。店长/店员在门店成员区按店创建
+ * （2026-08-28 二轮收敛：主体区与门店区各司其职，消除「两条路建出同一个店员」的重叠）。
+ */
 async function createOrgAccount(): Promise<void> {
   const loginName = orgCreateLoginName.value.trim().toLowerCase()
   const displayName = orgCreateName.value.trim()
   if (!loginNameValid(loginName) || !displayName) return
-  const targetStoreId = effectiveStoreId.value
-  if (orgCreateRole.value !== 'member' && !targetStoreId) return
   notice.value = ''
   const created = await grassland.createSubAccount(props.orgId, {
-    role: orgCreateRole.value,
-    loginName,
-    displayName,
-    ...(orgCreateRole.value !== 'member' ? { storeId: targetStoreId } : {}),
+    role: 'member', loginName, displayName,
   })
   if (!created) return
   orgCreateLoginName.value = ''
   orgCreateName.value = ''
-  const roleLabel = orgCreateRole.value === 'member' ? ROLE_LABEL.member
-    : STORE_ROLE_LABEL[orgCreateRole.value]
   oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
   notice.value = created.account.status === 'pending_review'
-    ? `${roleLabel}账号已登记，待审核通过后才能登录使用`
-    : `${roleLabel}账号已创建，凭据请线下转交`
+    ? '组织成员账号已登记，待审核通过后才能登录使用'
+    : '组织成员账号已创建，凭据请线下转交'
   await reloadMembers()
-  if (orgCreateRole.value !== 'member') await selectStore(targetStoreId as string)
+}
+
+/**
+ * 任命店长（2026-08-28 二轮收敛：自主体区角色下拉下沉到门店成员区内联任命）。
+ * D1 权限不变：仅主体 ADMIN+ 可任命（店长不能任命店长），越权由后端 403 呈现。
+ */
+async function appointManager(): Promise<void> {
+  const loginName = managerCreateLoginName.value.trim().toLowerCase()
+  const displayName = managerCreateName.value.trim()
+  const storeId = selectedStoreId.value
+  if (!loginNameValid(loginName) || !displayName || !storeId) return
+  notice.value = ''
+  const created = await grassland.createSubAccount(props.orgId, {
+    role: 'manager', loginName, displayName, storeId,
+  })
+  if (!created) return
+  managerCreateLoginName.value = ''
+  managerCreateName.value = ''
+  oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
+  notice.value = created.account.status === 'pending_review'
+    ? '店长账号已登记，待审核通过后才能登录使用'
+    : '店长账号已创建，凭据请线下转交'
+  await Promise.all([reloadMembers(), selectStore(storeId)])
 }
 
 async function createStoreAccount(): Promise<void> {
@@ -295,13 +315,17 @@ async function createStoreAccount(): Promise<void> {
 }
 
 /**
- * 本店员工 = 主体账号（owner/admin 隐式店长）+ store_membership 真实行。
+ * 门店人员 = 真实 store_membership 行；仅单店额外派生主体账号（owner/admin）隐式店长行。
  *
- * 主体账号排在前面且不给停用/恢复/删除入口——那些是主体级动作，在「主体成员」表里做；
- * 已显式建过 store_membership 的账号按真实行呈现（不重复渲染合成行）。
+ * 单店（#51 第 4 条前半）：本店员工默认主体账号为店长，隐式行排最前、标「主体账号」、
+ * 不给停用/恢复/删除（主体级动作在「主体成员」表做）。
+ * 多店（2026-08-28 二轮收敛）：只呈现真实任命/创建的成员——主体管理员对全部门店保有
+ * 管理权（后端 orgSuperUserAsManager），但那是权限不是身份，不再画成每个店的「店长」行；
+ * 无店长的店由主体账号代管，见模板中的代管提示与内联任命入口。
  */
 const storeStaffRows = computed<StoreStaffRow[]>(() => {
   const explicit = Array.isArray(storeMembers.value) ? storeMembers.value : []
+  if (!singleStore.value) return explicit
   const explicitAccountIds = new Set(explicit.map((m) => m.accountId))
   const memberList = Array.isArray(members.value) ? members.value : []
   const implicitRows: StoreStaffRow[] = memberList
@@ -317,6 +341,12 @@ const storeStaffRows = computed<StoreStaffRow[]>(() => {
       implicit: true,
     }))
   return [...implicitRows, ...explicit]
+})
+
+/** 当前门店是否已有真实店长（多店无店长时提示「主体账号代管」并引导内联任命）。 */
+const hasStoreManager = computed(() => {
+  const explicit = Array.isArray(storeMembers.value) ? storeMembers.value : []
+  return explicit.some((m) => m.role === 'manager')
 })
 
 /**
@@ -465,9 +495,10 @@ async function confirmDelete(): Promise<void> {
         进入多店管理后即可创建店长/店员账号。
       </p>
 
-      <!-- 主体直建子账号（任务书 #48/#49/#50；#51 起整块仅多店呈现）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定 -->
+      <!-- 主体直建组织成员（任务书 #48/#49/#50；#51 起仅多店呈现；2026-08-28 二轮收敛：
+           主体区只建组织成员——店长任命下沉门店成员区、店员只在门店区建，每个能力一个入口） -->
       <details v-else class="team-adv">
-        <summary>添加成员：主体直接创建账号</summary>
+        <summary>添加组织成员：主体直接创建账号</summary>
         <div class="team-row">
           <input
             v-model="orgCreateLoginName"
@@ -476,15 +507,6 @@ async function confirmDelete(): Promise<void> {
           />
           <span v-if="orgUsernamePreview" class="team-tag">{{ orgUsernamePreview }}</span>
           <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
-          <select v-model="orgCreateRole">
-            <option value="member">组织成员</option>
-            <option value="manager">店长</option>
-            <option value="staff">店员</option>
-          </select>
-          <select v-if="orgCreateRole !== 'member'" v-model="orgCreateStoreId">
-            <option value="" disabled>选择门店</option>
-            <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
           <button
             type="button"
             :disabled="grassland.loading.value || orgCreateDisabled"
@@ -493,7 +515,8 @@ async function confirmDelete(): Promise<void> {
         </div>
         <p class="team-hint">
           创建即生效（管理员直建不受审核开关影响）；账号名 = 前缀-登录名（如 {{ accountPrefix ? accountPrefix + '-zhangsan' : '前缀-zhangsan' }}），
-          系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。选店长/店员时须指定门店。
+          系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
+          组织成员不挂门店；门店的店长/店员在下方「门店成员」区按店创建。
         </p>
       </details>
     </section>
@@ -614,28 +637,60 @@ async function confirmDelete(): Promise<void> {
         你的主体账号默认就是本店店长，无需添加。需要为员工开账号请先开分店（上方「门店」区）。
       </p>
 
-      <!-- 店长代建员工（任务书 #48/#49）：固定建店员（任命店长走上方主体入口） -->
-      <details v-else class="team-adv">
-        <summary>添加店员：直接创建账号</summary>
-        <div class="team-row">
-          <input
-            v-model="storeCreateLoginName"
-            placeholder="登录名（3-24 位字母数字）"
-            @keyup.enter="createStoreAccount"
-          />
-          <span v-if="storeUsernamePreview" class="team-tag">{{ storeUsernamePreview }}</span>
-          <input v-model="storeCreateName" placeholder="员工姓名" @keyup.enter="createStoreAccount" />
-          <button
-            type="button"
-            :disabled="grassland.loading.value || !loginNameValid(storeCreateLoginName) || !storeCreateName.trim()"
-            @click="createStoreAccount"
-          >创建店员账号</button>
-        </div>
-        <p class="team-hint">
-          账号名 = 前缀-登录名，系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
-          此处固定创建店员；任命店长需主体管理员在上方主体入口创建。开启审核后新建为「待审核」，主体通过后才能登录。
+      <template v-else>
+        <!-- 多店无店长（2026-08-28 二轮收敛）：新分店默认无人被任命为店长，主体账号代管
+             （后端 orgSuperUserAsManager 保有管理权——权限不是身份，故不再画隐式店长行） -->
+        <p v-if="!hasStoreManager" class="team-hint">
+          该门店尚未任命店长，当前由主体账号代管。请在下方任命店长，或先直接添加店员。
         </p>
-      </details>
+
+        <!-- 任命店长（2026-08-28 二轮收敛：自主体区角色下沉至此，按店内联任命；
+             D1 权限不变——仅主体 ADMIN+，越权由后端 403 呈现） -->
+        <details class="team-adv">
+          <summary>任命店长：为本店创建店长账号</summary>
+          <div class="team-row">
+            <input
+              v-model="managerCreateLoginName"
+              placeholder="登录名（3-24 位字母数字）"
+              @keyup.enter="appointManager"
+            />
+            <span v-if="managerUsernamePreview" class="team-tag">{{ managerUsernamePreview }}</span>
+            <input v-model="managerCreateName" placeholder="店长姓名" @keyup.enter="appointManager" />
+            <button
+              type="button"
+              :disabled="grassland.loading.value || managerCreateDisabled"
+              @click="appointManager"
+            >任命并创建账号</button>
+          </div>
+          <p class="team-hint">
+            店长可管理本店资料与本店员工（建店员、停用恢复）；账号名 = 前缀-登录名，
+            任命即生效，一次性初始密码请线下转交，对方首次登录须改密。
+          </p>
+        </details>
+
+        <!-- 店员直建（任务书 #48/#49）：固定建店员；任命店长用上方内联入口 -->
+        <details class="team-adv">
+          <summary>添加店员：直接创建账号</summary>
+          <div class="team-row">
+            <input
+              v-model="storeCreateLoginName"
+              placeholder="登录名（3-24 位字母数字）"
+              @keyup.enter="createStoreAccount"
+            />
+            <span v-if="storeUsernamePreview" class="team-tag">{{ storeUsernamePreview }}</span>
+            <input v-model="storeCreateName" placeholder="员工姓名" @keyup.enter="createStoreAccount" />
+            <button
+              type="button"
+              :disabled="grassland.loading.value || !loginNameValid(storeCreateLoginName) || !storeCreateName.trim()"
+              @click="createStoreAccount"
+            >创建店员账号</button>
+          </div>
+          <p class="team-hint">
+            账号名 = 前缀-登录名，系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
+            此处固定创建店员；任命店长请用上方「任命店长」入口。开启审核后新建为「待审核」，主体通过后才能登录。
+          </p>
+        </details>
+      </template>
     </section>
     <!-- 删除强确认（任务书 #49 D9）：输入完整账号名且完全一致才可确认；红色警示 -->
     <div v-if="deleteTarget" class="team-del-mask" role="dialog" aria-modal="true" aria-label="删除成员确认">

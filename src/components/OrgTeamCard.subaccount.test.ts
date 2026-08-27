@@ -76,12 +76,12 @@ function baseHandler(url: string): Response | undefined {
 
 describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
   // 多店：建号入口只在多店呈现（#51 第 3 条），故本用例走 multiStoreHandler
-  test('主体直建成员账号：loginName 表单 + 一次性密码明文展示一次，点「我已保存」后销毁', async () => {
-    let created = false
+  test('主体直建组织成员（2026-08-28 收敛：固定 member、无角色/门店下拉）+ 一次性密码明文展示一次', async () => {
+    let createdBody: unknown = null
     const { wrapper } = await mountedWith((url, opts) => {
       const method = opts?.method ?? 'GET'
       if (method === 'POST' && url.endsWith(`/api/organizations/${ORG_ID}/accounts`)) {
-        created = true
+        createdBody = JSON.parse((opts as unknown as { body?: string }).body ?? '{}')
         return envelopeResponse({
           account: { id: 'new-1', username: 'caoyuan-wang', displayName: '王成员', role: 'member', status: 'active' },
           initialPassword: 'zmX28J86LvHbevBn',
@@ -91,19 +91,22 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
       return multiStoreHandler(url)
     })
 
-    const loginInput = wrapper.find('input[placeholder="登录名（3-24 位字母数字）"]')
-    const nameInput = wrapper.find('input[placeholder="显示名"]')
+    const orgSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '主体成员')!
+    // 二轮收敛：主体区只建组织成员——角色/门店下拉退役，全卡无 <select>
+    expect(wrapper.findAll('select').length).toBe(0)
+    const loginInput = orgSection.find('input[placeholder="登录名（3-24 位字母数字）"]')
+    const nameInput = orgSection.find('input[placeholder="显示名"]')
     expect(loginInput.exists()).toBe(true)
     await loginInput.setValue('wang')
     await nameInput.setValue('王成员')
     // 前缀预览随输入实时拼接
-    expect(wrapper.text()).toContain('caoyuan-wang')
-    const button = wrapper.findAll('button').find((b) => b.text() === '创建账号')
+    expect(orgSection.text()).toContain('caoyuan-wang')
+    const button = orgSection.findAll('button').find((b) => b.text() === '创建账号')
     expect(button, '创建按钮存在且可点').toBeTruthy()
     await button!.trigger('click')
     await flushPromises()
 
-    expect(created).toBe(true)
+    expect(createdBody).toEqual({ role: 'member', loginName: 'wang', displayName: '王成员' })
     const panel = wrapper.find('[data-testid="one-time-password"]')
     expect(panel.exists()).toBe(true)
     expect(panel.text()).toContain('caoyuan-wang')
@@ -321,7 +324,7 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(wrapper.find('.team-toggle').exists()).toBe(false)
   })
 
-  test('多店：门店成员区保留店长代建入口，主体账号仍以隐式行呈现', async () => {
+  test('多店：门店成员区只呈现真实成员，无店长时提示主体代管并提供内联任命（2026-08-28 二轮收敛）', async () => {
     const { wrapper } = await mountedWith((url) => {
       if (url.includes('/stores') && !url.includes('/memberships') && !url.includes('/accounts')) {
         return envelopeResponse([
@@ -337,13 +340,61 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     await flushPromises()
 
     const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '门店成员')!
-    expect(storeSection.find('input[placeholder="员工姓名"]').exists()).toBe(true)
-    const ownerRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('主体账号'))
-    expect(ownerRow, '多店同样呈现隐式主体账号行').toBeTruthy()
+    // 不再画主体账号隐式店长行——orgSuperUserAsManager 是权限不是身份
+    expect(storeSection.findAll('tbody tr').some((row) => row.text().includes('主体账号'))).toBe(false)
     // 真实 store_membership 行（acc-staff）操作入口不受影响
     const staffRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('acc-staf'))!
     expect(staffRow.findAll('button').some((b) => b.text() === '停用账号')).toBe(true)
     expect(staffRow.findAll('button').some((b) => b.text() === '删除')).toBe(true)
+    // baseHandler 的 store-1 只有店员没有店长 → 代管提示 + 内联任命入口 + 建店员入口
+    expect(storeSection.text()).toContain('尚未任命店长')
+    expect(storeSection.text()).toContain('由主体账号代管')
+    expect(storeSection.findAll('details').some((d) => d.find('summary')?.text().includes('任命店长'))).toBe(true)
+    expect(storeSection.find('input[placeholder="员工姓名"]').exists()).toBe(true)
+  })
+
+  test('任命店长：门店区内联任命 → POST role=manager 挂当前店，任命后代管提示消失（2026-08-28 二轮收敛）', async () => {
+    let appointBody: unknown = null
+    let appointed = false
+    const { wrapper } = await mountedWith((url, opts) => {
+      const method = opts?.method ?? 'GET'
+      if (url.includes('/stores/store-1/memberships')) {
+        return envelopeResponse(appointed
+          ? [{ id: 'sm9', storeId: 'store-1', accountId: 'acc-manager', username: 'caoyuan-zhang', role: 'manager', createdAt: null, accountStatus: 'active' }]
+          : [])
+      }
+      if (method === 'POST' && url.endsWith(`/api/organizations/${ORG_ID}/accounts`)) {
+        appointed = true
+        appointBody = JSON.parse((opts as unknown as { body?: string }).body ?? '{}')
+        return envelopeResponse({
+          account: { id: 'acc-manager', username: 'caoyuan-zhang', displayName: '张店长', role: 'manager', status: 'active' },
+          initialPassword: 'zmX28J86LvHbevBn',
+          mustChangePassword: true,
+        })
+      }
+      return multiStoreHandler(url)
+    })
+
+    await wrapper.findAll('.team-link').find((b) => b.text() === '旗舰店')!.trigger('click')
+    await flushPromises()
+
+    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '门店成员')!
+    expect(storeSection.text()).toContain('尚未任命店长')
+
+    const appointDetails = storeSection.findAll('details').find((d) => d.find('summary')?.text().includes('任命店长'))!
+    await appointDetails.find('input[placeholder="登录名（3-24 位字母数字）"]').setValue('zhang')
+    await appointDetails.find('input[placeholder="店长姓名"]').setValue('张店长')
+    await appointDetails.findAll('button').find((b) => b.text() === '任命并创建账号')!.trigger('click')
+    await flushPromises()
+
+    expect(appointBody).toEqual({ role: 'manager', loginName: 'zhang', displayName: '张店长', storeId: 'store-1' })
+    const panel = wrapper.find('[data-testid="one-time-password"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('caoyuan-zhang')
+    // 任命后门店有了店长：代管提示消失、店长行呈现
+    expect(storeSection.text()).not.toContain('尚未任命店长')
+    const managerRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('caoyuan-zhang'))!
+    expect(managerRow.text()).toContain('店长')
   })
 
   test('单店且只有 owner：主体成员表不渲染操作列（任务书 #51 第 5 条）', async () => {
