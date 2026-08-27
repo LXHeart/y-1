@@ -364,19 +364,18 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(ownerRow.findAll('button').length).toBe(0)
   })
 
-  test('单店但存在非 owner 成员：操作列保留（多店回落单店不能困住这批人）', async () => {
+  test('单店即使存在非 owner 成员也不呈现操作列（2026-08-28 严格字面拍板；回落单店的成员由运营台处置）', async () => {
     const { wrapper } = await mountedWith((url) => baseHandler(url))
 
     // baseHandler 的成员表含 owner + member 两行，门店只有一家（单店）
     const orgSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '主体成员')!
-    expect(orgSection.findAll('thead th').map((th) => th.text())).toContain('操作')
-    // owner 行仍无操作按钮，非 owner 行有停用/恢复/删除
+    expect(orgSection.findAll('thead th').map((th) => th.text())).toEqual(['账号', '角色', '状态'])
     const rows = orgSection.findAll('tbody tr')
-    const ownerRow = rows.find((r) => r.text().includes('所有者'))!
-    const memberRow = rows.find((r) => r.text().includes('成员'))!
-    expect(ownerRow.findAll('button').length).toBe(0)
-    expect(ownerRow.text()).toContain('主体所有者')
-    expect(memberRow.findAll('button').map((b) => b.text())).toEqual(['停用账号', '恢复', '删除'])
+    expect(rows.length).toBe(2)
+    // 非 owner 行同样无任何操作按钮——多店期建的成员回落单店后，停用/删除只能走治理台；
+    // 「主体所有者」标记位于操作列单元格内，随整列一起不渲染
+    expect(rows.every((row) => row.findAll('button').length === 0)).toBe(true)
+    expect(rows.some((row) => row.text().includes('所有者'))).toBe(true)
   })
 
   test('删除成员须输入完整账号名强确认，不匹配时按钮禁用（任务书 #49 D9）', async () => {
@@ -387,7 +386,8 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
         deleted = true
         return envelopeResponse({ success: true })
       }
-      return baseHandler(url)
+      // 多店桩：#51 第 5 条严格字面后，操作列只在多店呈现
+      return multiStoreHandler(url)
     })
 
     // 组织成员表：非 owner 行有「删除」入口（owner 行不渲染）

@@ -320,17 +320,13 @@ const storeStaffRows = computed<StoreStaffRow[]>(() => {
 })
 
 /**
- * 主体成员表是否呈现操作列（任务书 #51 第 5 条）。
+ * 主体成员表是否呈现操作列（任务书 #51 第 5 条，2026-08-28 拍板严格字面）：单店一律不呈现。
  *
- * 单店常态下成员只有 owner 一人，而 owner 的停用/删除服务端一律 403——整列都是死按钮，
- * 故不渲染。**但只要存在非 owner 成员就必须保留**：多店期建的 `role=member` 成员不挂门店，
- * 删分店回落单店时不受删店守卫限制（守卫只数 store_membership），无条件隐藏会让这批人
- * 永久失去停用/删除入口，只能靠运营台处置。
+ * 单店只有主体账号一个用户，owner 的停用/删除服务端一律 403——整列都是死按钮。代价由
+ * 运营台兜底：多店期建的 `role=member` 成员不挂门店，删分店回落单店后商家侧不再有
+ * 停用/删除入口，只能由平台运营在治理台处置。
  */
-const showMemberActions = computed(() => {
-  const memberList = Array.isArray(members.value) ? members.value : []
-  return !singleStore.value || memberList.some((m) => m.role !== 'owner')
-})
+const showMemberActions = computed(() => !singleStore.value)
 
 /** 停用 / 恢复即时生效；守卫冲突（最后一个店长、owner 保护等）由 error 条原样呈现。 */
 async function setAccountActive(accountId: string, active: boolean): Promise<void> {
