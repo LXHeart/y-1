@@ -277,6 +277,55 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(wrapper.find('.team-list').exists()).toBe(true)
   })
 
+  test('单店：本店员工含主体账号隐式店长行（无停用/删除入口），且不再有第二个建店员入口', async () => {
+    const { wrapper } = await mountedWith((url) => {
+      // 该门店没有任何 store_membership 行——正是「新注册单店商家」的真实起点
+      if (url.includes('/stores/store-1/memberships')) return envelopeResponse([])
+      return baseHandler(url)
+    })
+
+    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '本店员工')!
+    // 主体账号（owner）以隐式店长呈现，取代原来的「该门店暂无成员」空态
+    expect(storeSection.text()).not.toContain('该门店暂无成员')
+    const ownerRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('acc-owne'))
+    expect(ownerRow, '主体账号行渲染').toBeTruthy()
+    expect(ownerRow!.text()).toContain('主体账号')
+    expect(ownerRow!.text()).toContain('店长')
+    // 隐式行不给停用/恢复/删除——主体级动作只在「主体成员」表做
+    expect(ownerRow!.findAll('button').length).toBe(0)
+    expect(ownerRow!.text()).toContain('默认管理本店')
+
+    // 单店只保留一个建号入口（上方主体入口，已默认店员+隐式唯一门店）
+    expect(storeSection.find('input[placeholder="员工姓名"]').exists()).toBe(false)
+    expect(storeSection.text()).toContain('你的主体账号默认就是本店店长，无需添加')
+    expect(wrapper.findAll('details').some((d) => d.text().includes('添加员工：主体直接创建账号'))).toBe(true)
+  })
+
+  test('多店：门店成员区保留店长代建入口，主体账号仍以隐式行呈现', async () => {
+    const { wrapper } = await mountedWith((url) => {
+      if (url.includes('/stores') && !url.includes('/memberships') && !url.includes('/accounts')) {
+        return envelopeResponse([
+          { id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active', createdAt: null },
+          { id: 'store-2', organizationId: ORG_ID, name: '分店', status: 'active', createdAt: null },
+        ])
+      }
+      return baseHandler(url)
+    })
+
+    // 多店：门店需显式点选（单店的自动选中不适用）
+    await wrapper.findAll('.team-link').find((b) => b.text() === '旗舰店')!.trigger('click')
+    await flushPromises()
+
+    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '门店成员')!
+    expect(storeSection.find('input[placeholder="员工姓名"]').exists()).toBe(true)
+    const ownerRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('主体账号'))
+    expect(ownerRow, '多店同样呈现隐式主体账号行').toBeTruthy()
+    // 真实 store_membership 行（acc-staff）操作入口不受影响
+    const staffRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('acc-staf'))!
+    expect(staffRow.findAll('button').some((b) => b.text() === '停用账号')).toBe(true)
+    expect(staffRow.findAll('button').some((b) => b.text() === '删除')).toBe(true)
+  })
+
   test('删除成员须输入完整账号名强确认，不匹配时按钮禁用（任务书 #49 D9）', async () => {
     let deleted = false
     const { wrapper } = await mountedWith((url, opts) => {

@@ -50,6 +50,16 @@ const STORE_ROLE_LABEL: Record<StoreRole, string> = {
   staff: '店员',
 }
 
+/**
+ * 门店员工行的视图模型：`implicit` 标记「主体账号隐式管理本店」的合成行。
+ *
+ * 后端 `StoreAuthorization` 早已把 org OWNER/ADMIN 隐式视为门店 MANAGER，但
+ * `store_membership` 里没有那一行——列表接口只查表，于是单店商家看到「暂无成员」+
+ * 添加入口，UI 在逼用户把自己加进自己的店。这里把既有授权真相显式呈现，
+ * 不落库、不改契约（合成行 id 带 `implicit:` 前缀，不与真实行冲突）。
+ */
+type StoreStaffRow = StoreMembership & { implicit?: boolean }
+
 async function refresh(): Promise<void> {
   if (!props.orgId) return
   selectedStoreId.value = ''
@@ -295,6 +305,31 @@ async function createStoreAccount(): Promise<void> {
   await selectStore(selectedStoreId.value)
 }
 
+/**
+ * 本店员工 = 主体账号（owner/admin 隐式店长）+ store_membership 真实行。
+ *
+ * 主体账号排在前面且不给停用/恢复/删除入口——那些是主体级动作，在「主体成员」表里做；
+ * 已显式建过 store_membership 的账号按真实行呈现（不重复渲染合成行）。
+ */
+const storeStaffRows = computed<StoreStaffRow[]>(() => {
+  const explicit = Array.isArray(storeMembers.value) ? storeMembers.value : []
+  const explicitAccountIds = new Set(explicit.map((m) => m.accountId))
+  const memberList = Array.isArray(members.value) ? members.value : []
+  const implicitRows: StoreStaffRow[] = memberList
+    .filter((m) => (m.role === 'owner' || m.role === 'admin') && !explicitAccountIds.has(m.accountId))
+    .map((m) => ({
+      id: `implicit:${m.accountId}`,
+      storeId: selectedStoreId.value,
+      accountId: m.accountId,
+      role: 'manager' as StoreRole,
+      createdAt: null,
+      accountStatus: m.accountStatus,
+      username: m.username,
+      implicit: true,
+    }))
+  return [...implicitRows, ...explicit]
+})
+
 /** 停用 / 恢复即时生效；守卫冲突（最后一个店长、owner 保护等）由 error 条原样呈现。 */
 async function setAccountActive(accountId: string, active: boolean): Promise<void> {
   notice.value = ''
@@ -424,7 +459,8 @@ async function confirmDelete(): Promise<void> {
       <!-- 主体直建子账号（任务书 #48/#49/#50）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定。
            单店模式（拍板②）：角色默认店员、免选门店；店长藏进高级选项 -->
       <details class="team-adv">
-        <summary>添加成员：主体直接创建账号</summary>
+        <!-- 单店：这是唯一的建号入口，且默认建店员——按「员工」措辞更贴用户心智 -->
+        <summary>{{ singleStore ? '添加员工：主体直接创建账号' : '添加成员：主体直接创建账号' }}</summary>
         <div class="team-row">
           <input
             v-model="orgCreateLoginName"
@@ -548,16 +584,21 @@ async function confirmDelete(): Promise<void> {
     <!-- 门店成员：单店时唯一门店自动选中，直呼本店员工 -->
     <section v-if="selectedStoreId" class="team-sec">
       <h4>{{ singleStore ? '本店员工' : '门店成员' }}</h4>
-      <p v-if="storeMembers.length === 0" class="team-hint">该门店暂无成员。</p>
+      <p v-if="storeStaffRows.length === 0" class="team-hint">该门店暂无成员。</p>
       <table v-else class="team-table">
         <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
-          <tr v-for="m in storeMembers" :key="m.id">
-            <td><code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code></td>
+          <tr v-for="m in storeStaffRows" :key="m.id">
+            <td>
+              <code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code>
+              <!-- 主体账号（owner/admin）默认就是店长，不需要也不该被「添加」成本店成员 -->
+              <span v-if="m.implicit" class="team-tag">主体账号</span>
+            </td>
             <td>{{ STORE_ROLE_LABEL[m.role] || m.role }}</td>
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
-              <template v-if="m.accountStatus === 'pending_review'">
+              <span v-if="m.implicit" class="team-hint">默认管理本店（在「主体成员」处管理）</span>
+              <template v-else-if="m.accountStatus === 'pending_review'">
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="reviewCreation(m.accountId, 'approve')">通过</button>
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="reviewCreation(m.accountId, 'reject')">驳回</button>
               </template>
@@ -566,6 +607,7 @@ async function confirmDelete(): Promise<void> {
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
               </template>
               <button
+                v-if="!m.implicit"
                 type="button" class="team-quiet team-danger"
                 :disabled="grassland.loading.value"
                 @click="askDelete(m.accountId, m.username ?? null)"
@@ -577,8 +619,14 @@ async function confirmDelete(): Promise<void> {
 
       <!-- 任务书 #49：门店邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（本店员工经下方店长直建产生） -->
 
+      <!-- 单店：主体账号本身就是店长，雇人走上方「添加员工」（已默认店员+隐式唯一门店），
+           这里不再开第二个同义入口——两个入口指向同一动作是单店 UI 的主要困惑源 -->
+      <p v-if="singleStore" class="team-hint">
+        你的主体账号默认就是本店店长，无需添加。雇了人再用上方「添加员工」建店员账号。
+      </p>
+
       <!-- 店长代建员工（任务书 #48/#49）：固定建店员（任命店长走上方主体入口） -->
-      <details class="team-adv">
+      <details v-else class="team-adv">
         <summary>添加店员：直接创建账号</summary>
         <div class="team-row">
           <input
