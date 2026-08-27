@@ -85,12 +85,12 @@ class NotificationInboxIT extends IdentityItSupport {
 	@Test
 	void conflictingPayloadForSameEventIdThrows() {
 		ConsumerRecord<String, String> first = envelope("evt-D", "OrgSubAccountCreated", "inv-4",
-				Map.of("accountId", "a-" + UUID.randomUUID(), "organizationId", "org-1"));
+				Map.of("accountId", UUID.randomUUID().toString(), "organizationId", "org-1"));
 		processor.process(first).block();
 
 		// 同 eventId 但 payload 不同 → 契约冲突（不可重试 → DLT）
 		ConsumerRecord<String, String> conflicting = envelope("evt-D", "OrgSubAccountCreated", "inv-4",
-				Map.of("accountId", "b-" + UUID.randomUUID(), "organizationId", "org-1"));
+				Map.of("accountId", UUID.randomUUID().toString(), "organizationId", "org-1"));
 		assertThatThrownBy(() -> processor.process(conflicting).block()).isInstanceOf(EventContractException.class)
 				.hasMessageContaining("conflicting");
 	}

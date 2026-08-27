@@ -108,12 +108,11 @@ class InternalOrgAuthorizationControllerIT extends IdentityItSupport {
                 .bodyValue(body).exchange();
     }
 
+    /** 任务书 #49：挂靠端点已下线，IT 造数改 SQL 直插。 */
     private void addOrgMember(String cookie, String orgId, String accountId, String role) {
-        client().post().uri("/api/organizations/" + orgId + "/memberships")
-                .header("Cookie", "y1.sid=" + cookie)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("accountId", accountId, "role", role))
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:org AS uuid), CAST(:acct AS uuid), :role)")
+                .bind("org", orgId).bind("acct", accountId).bind("role", role).then().block();
     }
 
     private String serviceAssertion(String principal) {

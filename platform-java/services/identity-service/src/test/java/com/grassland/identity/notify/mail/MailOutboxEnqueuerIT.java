@@ -48,16 +48,18 @@ class MailOutboxEnqueuerIT extends IdentityItSupport {
     }
 
     @Test
-    void membershipInvitedEnqueuesMailEvenForUnregisteredEmail() {
-        // 邀请发给未注册邮箱：站内通知无行（resolver 查不到 accountId），但邮件必须入队（特殊路径用 payload.email）
+    void subAccountPlaceholderEmailIsShortCircuitedFromMailQueue() {
+        // 任务书 #49 D10：子账号未绑邮箱时 email 列是 @sub.grassland.invalid 占位——
+        // 站内通知照常落库，但邮件入队短路（防 .invalid 域退信）
         String eventId = UUID.randomUUID().toString();
+        var sub = seedAccount("prefix-zhang@sub.grassland.invalid");
 
-        var result = processor.process(record(eventId, "MembershipInvited", "inv-1",
-                Map.of("email", "nobody-unregistered@example.com", "organizationId", "org-1"))).block();
+        var result = processor.process(record(eventId, "OrgSubAccountCreated", "sub-1",
+                Map.of("accountId", sub.accountId(), "organizationId", "org-1"))).block();
 
         assertThat(result).isEqualTo(NotificationProcessingResult.PROCESSED);
-        assertThat(notificationCount(eventId)).isZero(); // 未注册 → 无站内通知
-        assertThat(mailRecipients(eventId)).containsExactly("nobody-unregistered@example.com");
+        assertThat(notificationCount(eventId)).isEqualTo(1);
+        assertThat(mailRecipients(eventId)).isEmpty();
     }
 
     @Test

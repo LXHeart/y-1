@@ -31,7 +31,7 @@ class NotificationEndpointControllerIT extends IdentityItSupport {
 
         String eventId = "push-event-" + UUID.randomUUID();
         String json = """
-                {"eventId":"%s","eventType":"MembershipGranted","aggregateType":"membership",
+                {"eventId":"%s","eventType":"OrgSubAccountCreated","aggregateType":"orgSubAccount",
                  "aggregateId":"%s","payload":{"accountId":"%s","organizationId":"%s","role":"member"}}
                 """.formatted(eventId, UUID.randomUUID(), account.accountId(), UUID.randomUUID());
         assertThat(processor.process(new ConsumerRecord<>("identity", 0, 0, eventId, json)).block())

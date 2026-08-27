@@ -117,8 +117,10 @@ class OrganizationControllerIT {
         // 避免多写 OrganizationCreated outbox 事件污染共享库上的计数断言）
         seedOwnerWithCookie("org-owner@example.com");
         String orgId = UUID.randomUUID().toString();
-        db.sql("INSERT INTO organization(id, owner_account_id, name, status) VALUES (CAST(:id AS uuid), "
-                        + "(SELECT id FROM app_users WHERE email = 'org-owner@example.com'), '成员可见主体', 'active')")
+        db.sql("INSERT INTO organization(id, owner_account_id, name, status, account_prefix)"
+                        + " VALUES (CAST(:id AS uuid),"
+                        + " (SELECT id FROM app_users WHERE email = 'org-owner@example.com'), '成员可见主体', 'active',"
+                        + " 'itprefix1')")
                 .bind("id", orgId).then().block();
 
         String memberCookie = seedOwnerWithCookie("org-member@example.com");

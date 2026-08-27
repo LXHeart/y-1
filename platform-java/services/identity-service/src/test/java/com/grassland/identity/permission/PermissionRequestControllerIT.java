@@ -84,10 +84,9 @@ class PermissionRequestControllerIT extends IdentityItSupport {
         var owner = seedAccount("pr-owner2@example.com");
         String orgId = createOrg(owner.cookie(), "成员守卫主体");
         var member = seedAccount("pr-member@example.com");
-        client().post().uri("/api/organizations/" + orgId + "/memberships")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-                .bodyValue("{\"accountId\":\"" + member.accountId() + "\",\"role\":\"member\"}")
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:org AS uuid), CAST(:acct AS uuid), 'member')")
+                .bind("org", orgId).bind("acct", member.accountId()).then().block();
         // member 申请 → 403（需 OWNER，鉴权先于材料校验）
         client().post().uri("/api/organizations/" + orgId + "/permission-requests")
                 .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + member.cookie())

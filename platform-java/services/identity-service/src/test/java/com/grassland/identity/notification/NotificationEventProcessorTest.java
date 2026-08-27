@@ -127,8 +127,8 @@ class NotificationEventProcessorTest {
 
 	@Test
 	void duplicateEventSkipsEmission() {
-		ConsumerRecord<String, String> record = record("MembershipGranted", "m-1",
-				Map.of("accountId", "acct-1", "organizationId", "org-1", "role", "member"));
+		ConsumerRecord<String, String> record = record("OrgSubAccountCreated", "m-1",
+				Map.of("accountId", "acct-1", "organizationId", "org-1"));
 		when(inbox.recordIfAbsent(anyString(), any(), any(), anyString())).thenReturn(Mono.just(false));
 
 		StepVerifier.create(processor.process(record)).expectNext(NotificationProcessingResult.DUPLICATE)

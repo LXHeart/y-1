@@ -126,12 +126,11 @@ class InternalStoreAuthorizationControllerIT extends IdentityItSupport {
                 .bodyValue(body).exchange();
     }
 
+    /** 任务书 #49：挂靠端点已下线，IT 造数改 SQL 直插。 */
     private void addStoreMember(String cookie, String orgId, String storeId, String accountId, String role) {
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
-                .header("Cookie", "y1.sid=" + cookie)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("accountId", accountId, "role", role))
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO store_membership(id, store_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:store AS uuid), CAST(:acct AS uuid), :role)")
+                .bind("store", storeId).bind("acct", accountId).bind("role", role).then().block();
     }
 
     private String serviceAssertion(String principal) {

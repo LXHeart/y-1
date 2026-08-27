@@ -41,18 +41,18 @@ class StoreMediaControllerIT extends IdentityItSupport {
                 .fetch().rowsUpdated().block();
     }
 
+    /** 任务书 #49：挂靠端点已下线，IT 造数改 SQL 直插。 */
     private void addStoreStaff(String orgId, String storeId, String ownerCookie, String accountId) {
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + ownerCookie)
-                .bodyValue("{\"accountId\":\"" + accountId + "\",\"role\":\"staff\"}")
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO store_membership(id, store_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:store AS uuid), CAST(:acct AS uuid), 'staff')")
+                .bind("store", storeId).bind("acct", accountId).then().block();
     }
 
+    /** 任务书 #49：挂靠端点已下线，IT 造数改 SQL 直插。 */
     private void addStoreManager(String orgId, String storeId, String ownerCookie, String accountId) {
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + ownerCookie)
-                .bodyValue("{\"accountId\":\"" + accountId + "\",\"role\":\"manager\"}")
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO store_membership(id, store_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:store AS uuid), CAST(:acct AS uuid), 'manager')")
+                .bind("store", storeId).bind("acct", accountId).then().block();
     }
 
     @Test

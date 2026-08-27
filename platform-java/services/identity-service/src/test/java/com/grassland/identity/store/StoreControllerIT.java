@@ -281,11 +281,9 @@ class StoreControllerIT extends IdentityItSupport {
 
         // 组织普通成员（无门店角色）：读可见（回落 MEMBER），写 403。
         var orgMember = seedAccount("store-kyb-org-member@example.com");
-        client().post().uri("/api/organizations/" + orgId + "/memberships")
-                .header("Cookie", "y1.sid=" + owner.cookie())
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("accountId", orgMember.accountId(), "role", "member"))
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:org AS uuid), CAST(:acct AS uuid), 'member')")
+                .bind("org", orgId).bind("acct", orgMember.accountId()).then().block();
         String memberCookie = "y1.sid=" + orgMember.cookie();
         client().get().uri(uri).header("Cookie", memberCookie)
                 .exchange().expectStatus().isOk();
@@ -314,12 +312,11 @@ class StoreControllerIT extends IdentityItSupport {
         assertThat(queued).isEqualTo(1);
     }
 
+    /** 任务书 #49：挂靠端点已下线，IT 造数改 SQL 直插。 */
     private void addStoreMember(String cookie, String orgId, String storeId, String accountId, String role) {
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
-                .header("Cookie", "y1.sid=" + cookie)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("accountId", accountId, "role", role))
-                .exchange().expectStatus().isCreated();
+        db.sql("INSERT INTO store_membership(id, store_id, account_id, role)"
+                + " VALUES (gen_random_uuid(), CAST(:store AS uuid), CAST(:acct AS uuid), :role)")
+                .bind("store", storeId).bind("acct", accountId).bind("role", role).then().block();
     }
 
     @Test
