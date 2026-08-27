@@ -81,6 +81,11 @@ edge:
       path: /api/auth/login
       upstream: identity
       enabled: ${EDGE_ROUTE_AUTH_LOGIN_IDENTITY:true}
+    # 任务书 #48：首登强制改密端点（登录态必需；旗标置位形态免旧密由服务层判 account_flag）
+    - method: POST
+      path: /api/auth/change-password
+      upstream: identity
+      enabled: ${EDGE_ROUTE_AUTH_CHANGEPASSWORD_IDENTITY:true}
     - method: POST
       path: /api/auth/logout
       upstream: identity
