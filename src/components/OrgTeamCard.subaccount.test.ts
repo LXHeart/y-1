@@ -184,6 +184,61 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     void calls
   })
 
+  test('多店行提供停用/恢复/删除（守卫冲突由后端 409 呈现）；单店行只有停用/恢复', async () => {
+    const suspended: string[] = []
+    const restored: string[] = []
+    const deleted: string[] = []
+    const MULTI = [
+      { id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active', createdAt: null },
+      { id: 'store-2', organizationId: ORG_ID, name: '分店', status: 'active', createdAt: null },
+    ]
+    let current = [...MULTI]
+    const { wrapper } = await mountedWith((url, opts) => {
+      const method = opts?.method ?? 'GET'
+      if (url.includes('/stores/store-1/suspend') && method === 'POST') {
+        suspended.push('store-1'); current = current.map((st) => st.id === 'store-1' ? { ...st, status: 'suspended' } : st)
+        return envelopeResponse({ success: true })
+      }
+      if (url.includes('/stores/store-1/restore') && method === 'POST') {
+        restored.push('store-1'); current = current.map((st) => st.id === 'store-1' ? { ...st, status: 'active' } : st)
+        return envelopeResponse({ success: true })
+      }
+      if (url.endsWith('/stores/store-2') && method === 'DELETE') {
+        deleted.push('store-2'); current = current.filter((st) => st.id !== 'store-2')
+        return envelopeResponse({ success: true })
+      }
+      if (url.includes('/stores') && !url.includes('/memberships') && !url.includes('/accounts') && method === 'GET') {
+        return envelopeResponse(current)
+      }
+      return baseHandler(url)
+    })
+
+    // 多店：每行 停用+删除；停用后按钮翻转为恢复
+    const rows = wrapper.findAll('.team-store-row')
+    expect(rows.length).toBe(2)
+    await rows[1]!.findAll('button').find((b) => b.text() === '停用')!.trigger('click')
+    await flushPromises()
+    expect(suspended).toEqual([])
+    // rows[0] 是旗舰店：停用它
+    await rows[0]!.findAll('button').find((b) => b.text() === '停用')!.trigger('click')
+    await flushPromises()
+    expect(suspended).toEqual(['store-1'])
+    expect(wrapper.text()).toContain('已停用（对外隐藏，可随时恢复）')
+
+    // 删除：确认弹窗 → 确认后调端点并从列表消失
+    await wrapper.findAll('.team-store-row')[1]!.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
+    await flushPromises()
+    const dialog = wrapper.find('[data-testid="store-delete-confirm"]')
+    expect(dialog.exists()).toBe(true)
+    await dialog.findAll('button').find((b) => b.text() === '确认删除')!.trigger('click')
+    await flushPromises()
+    expect(deleted).toEqual(['store-2'])
+    expect(wrapper.text()).toContain('不可恢复')
+    // 删到一家 → 单店模式（推导）：门店行只剩停用/恢复，无删除
+    expect(wrapper.find('.team-store-row').exists()).toBe(false)
+    expect(wrapper.text()).toContain('唯一门店不可删除')
+  })
+
   test('单店模式（任务书 #50）：门店列表收敛为「我的门店」，建号免选门店，开分店后切换多店', async () => {
     const createdStores = [{ id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active' }]
     let createCalls: Array<{ name?: string }> = []

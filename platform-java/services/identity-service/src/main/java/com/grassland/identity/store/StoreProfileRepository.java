@@ -237,7 +237,7 @@ public class StoreProfileRepository {
                 FROM store s
                 INNER JOIN store_profile sp ON sp.store_id = s.id
                 INNER JOIN organization o ON o.id = s.organization_id
-                WHERE s.id = CAST(:id AS uuid) AND s.status = 'active' AND o.status = 'active'
+                WHERE s.id = CAST(:id AS uuid) AND s.status = 'active' AND o.status = 'active' AND s.deleted_at IS NULL
                 """.formatted(PUBLIC_COLS))
                 .bind("id", storeId)
                 .map(StoreProfileRepository::mapPublic).one();
@@ -256,7 +256,7 @@ public class StoreProfileRepository {
                 FROM store s
                 LEFT JOIN store_profile sp ON sp.store_id = s.id
                 INNER JOIN organization o ON o.id = s.organization_id
-                WHERE s.id = ANY(CAST(:ids AS uuid[])) AND s.status = 'active' AND o.status = 'active'
+                WHERE s.id = ANY(CAST(:ids AS uuid[])) AND s.status = 'active' AND o.status = 'active' AND s.deleted_at IS NULL
                 ORDER BY s.id
                 """.formatted(PUBLIC_COLS))
                 .bind("ids", storeIds.toArray(String[]::new))

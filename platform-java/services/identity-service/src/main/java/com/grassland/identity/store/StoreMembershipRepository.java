@@ -71,6 +71,13 @@ public class StoreMembershipRepository {
                 .map(StoreMembershipRepository::map).all();
     }
 
+    /** 店内成员总数（删除门店守卫②）。 */
+    public Mono<Long> countByStore(String storeId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM store_membership WHERE store_id = CAST(:store AS uuid)")
+                .bind("store", storeId)
+                .map(row -> row.get("c", Integer.class).longValue()).one();
+    }
+
     public Mono<String> findRole(String storeId, String accountId) {
         return db.sql("SELECT role FROM store_membership"
                 + " WHERE store_id = CAST(:store AS uuid) AND account_id = CAST(:acct AS uuid)")
@@ -87,7 +94,7 @@ public class StoreMembershipRepository {
                 FROM store_membership sm
                 JOIN store s ON s.id = sm.store_id
                 JOIN organization o ON o.id = s.organization_id
-                WHERE sm.account_id = CAST(:acct AS uuid)
+                WHERE sm.account_id = CAST(:acct AS uuid) AND s.deleted_at IS NULL
                 ORDER BY o.name, s.name, s.id
                 """)
                 .bind("acct", accountId)

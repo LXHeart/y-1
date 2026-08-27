@@ -300,6 +300,21 @@ export function useGrasslandIdentity(run: RunFn) {
   const listStores = (orgId: string) =>
     run(() => request<Store[]>(`/api/organizations/${orgId}/stores`))
 
+  /** 停用门店（可逆）：对外即刻隐藏（公开页/媒体 gate），店内管理与授权不受影响；需 ADMIN+。 */
+  const suspendStore = (orgId: string, storeId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/stores/${storeId}/suspend`, { method: 'POST' }))
+
+  /** 恢复停用的门店。 */
+  const restoreStore = (orgId: string, storeId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/stores/${storeId}/restore`, { method: 'POST' }))
+
+  /**
+   * 删除门店（软删不可逆）：守卫=主体保留至少一家店/店内无成员/店内无任务（冲突 409 由
+   * error 条呈现）；删除后从列表与授权中消失。
+   */
+  const deleteStore = (orgId: string, storeId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/stores/${storeId}`, { method: 'DELETE' }))
+
   /** 建门店（需 org ADMIN+）。 */
   const createStore = (orgId: string, name: string) =>
     run(() => request<Store>(`/api/organizations/${orgId}/stores`, {
@@ -401,7 +416,7 @@ export function useGrasslandIdentity(run: RunFn) {
     listMySessions, revokeOtherSessions, revokeSession,
     checkAccountClosure, requestPersonalDataExport, getPersonalDataExport,
     requestAccountClosure, listPiiLifecycleAudit,
-    listStores, createStore, getStorePublicProfile, getPublicBrandProfile, getStorePublicMedia, listStoreMemberships,
+    listStores, createStore, suspendStore, restoreStore, deleteStore, getStorePublicProfile, getPublicBrandProfile, getStorePublicMedia, listStoreMemberships,
     getBrandProfile, updateBrandProfile, uploadBrandLogo,
     requestOrgRename, listOrgRenameRequests, listAdminOrgRenames, reviewAdminOrgRename,
   }

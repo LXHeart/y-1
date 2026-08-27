@@ -65,21 +65,26 @@ public class StoreController {
 	private final StoreAuthorization storeAuthz;
 	private final StoreRepository stores;
 	private final StoreProfileRepository storeProfiles;
+	private final StoreMembershipRepository storeMemberships;
 	private final KybSubmissionService submissions;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
+	private final org.springframework.r2dbc.core.DatabaseClient db;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public StoreController(OrgAuthorization authz, StoreAuthorization storeAuthz, StoreRepository stores,
-			StoreProfileRepository storeProfiles, KybSubmissionService submissions, OutboxRepository outbox,
-			TransactionalOperator transactions) {
+			StoreProfileRepository storeProfiles, StoreMembershipRepository storeMemberships,
+			KybSubmissionService submissions, OutboxRepository outbox,
+			TransactionalOperator transactions, org.springframework.r2dbc.core.DatabaseClient db) {
 		this.authz = authz;
 		this.storeAuthz = storeAuthz;
 		this.stores = stores;
 		this.storeProfiles = storeProfiles;
+		this.storeMemberships = storeMemberships;
 		this.submissions = submissions;
 		this.outbox = outbox;
 		this.transactions = transactions;
+		this.db = db;
 	}
 
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -102,6 +107,92 @@ public class StoreController {
 																.thenReturn(store)))
 								.map(store -> ResponseEntity.status(201)
 										.body(Map.of("success", true, "data", toBody(store)))));
+	}
+
+	// ---------- 门店停用/恢复/删除（2026-08-27：门店此前只能新增） ----------
+
+	/** 停用（可逆）：对外即刻隐藏（公开页/媒体 gate 已认 status），店内管理与授权不受影响。 */
+	@PostMapping("/{storeId}/suspend")
+	public Mono<ResponseEntity<Map<String, Object>>> suspend(@PathVariable String orgId,
+			@PathVariable String storeId, ServerHttpRequest request) {
+		return changeStoreStatus(orgId, storeId, "suspended", "active", request);
+	}
+
+	@PostMapping("/{storeId}/restore")
+	public Mono<ResponseEntity<Map<String, Object>>> restore(@PathVariable String orgId,
+			@PathVariable String storeId, ServerHttpRequest request) {
+		return changeStoreStatus(orgId, storeId, "active", "suspended", request);
+	}
+
+	private Mono<ResponseEntity<Map<String, Object>>> changeStoreStatus(String orgId, String storeId,
+			String to, String from, ServerHttpRequest request) {
+		return authz.requireRole(request, orgId, MembershipRole.ADMIN)
+				.flatMap(account -> storeAuthz.ensureStoreInOrg(orgId, storeId)
+						.then(transactions.transactional(stores.updateStatusGuarded(storeId, to, from)
+								.flatMap(rows -> rows > 0
+										? outbox.append(new EventEnvelope(UUID.randomUUID().toString(),
+												"StoreStatusChanged", "Store", storeId, 1, Instant.now(), null,
+												Map.of("storeId", storeId, "organizationId", orgId, "status", to)))
+												.thenReturn(ResponseEntity.ok(Map.of("success", true)))
+										// 0 行 = 状态不符或已删，给可读文案
+										: Mono.<ResponseEntity<Map<String, Object>>>error(new IdentityException(409,
+												"suspended".equals(to) ? "门店当前状态不可停用" : "门店当前状态不可恢复"))))));
+	}
+
+	/**
+	 * 删除（软删，不可逆）：置 deleted_at 留痕，不物理删行（任务/媒体/KYB 挂接事实保留）。
+	 * 三守卫：①主体必须保留至少一家未删门店；②店内有成员先清人（#49 删除动作）；
+	 * ③店内有任何任务（历史数据完整性——含草稿）。
+	 */
+	@DeleteMapping("/{storeId}")
+	public Mono<ResponseEntity<Map<String, Object>>> delete(@PathVariable String orgId,
+			@PathVariable String storeId, ServerHttpRequest request) {
+		return authz.requireRole(request, orgId, MembershipRole.ADMIN)
+				.flatMap(account -> storeAuthz.ensureStoreInOrg(orgId, storeId)
+						.then(guardNotLastStore(orgId, storeId))
+						.then(guardStoreHasNoMembers(storeId))
+						.then(guardStoreHasNoTasks(storeId))
+						.then(transactions.transactional(stores.markDeleted(storeId)
+								.flatMap(rows -> rows > 0 ? outbox.append(new EventEnvelope(
+										UUID.randomUUID().toString(), "StoreDeleted", "Store", storeId, 1,
+										Instant.now(), null,
+										Map.of("storeId", storeId, "organizationId", orgId)))
+										.thenReturn(ok())
+										: Mono.error(new IdentityException(404, "门店不存在或已删除"))))));
+	}
+
+	/** 守卫①：主体至少保留一家未删门店（对齐「最后一个店长」守卫口径）。 */
+	private Mono<Void> guardNotLastStore(String orgId, String storeId) {
+		return stores.countActiveByOrganization(orgId)
+				.flatMap(count -> count <= 1
+						? Mono.<Void>error(new IdentityException(409, "主体必须保留至少一家门店；不经营可停用"))
+						: Mono.<Void>empty());
+	}
+
+	/** 守卫②：店内有成员（含店长/店员子账号）→ 先走 #49 删除动作清人。 */
+	private Mono<Void> guardStoreHasNoMembers(String storeId) {
+		return storeMemberships.countByStore(storeId)
+				.flatMap(count -> count > 0
+						? Mono.<Void>error(new IdentityException(409, "门店下仍有成员，请先删除该店全部成员"))
+						: Mono.<Void>empty());
+	}
+
+	/**
+	 * 守卫③：店内有任何任务（含草稿）不可删——任务/履约/归因的历史完整性优先于清理诉求。
+	 * 五服务共库逻辑隔离的现实下一个只读 COUNT（不写不拥有，仅为删除守卫服务）；
+	 * 若未来物理分库，此守卫需改为 marketplace 内部端点。
+	 */
+	private Mono<Void> guardStoreHasNoTasks(String storeId) {
+		return db.sql("SELECT COUNT(*)::int AS c FROM task WHERE store_id = CAST(:store AS uuid)")
+				.bind("store", storeId)
+				.map(row -> row.get("c", Integer.class)).one()
+				.flatMap(count -> count != null && count > 0
+						? Mono.<Void>error(new IdentityException(409, "门店下存在任务记录，不可删除；可停用"))
+						: Mono.<Void>empty());
+	}
+
+	private ResponseEntity<Map<String, Object>> ok() {
+		return ResponseEntity.ok().body(Map.of("success", true));
 	}
 
 	@GetMapping

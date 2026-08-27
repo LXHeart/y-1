@@ -107,6 +107,7 @@ public class StoreMediaRepository {
                     :mimeType, :sizeBytes, CAST(:uploadedBy AS uuid)
                 FROM store s
                 WHERE s.id = CAST(:store AS uuid) AND s.organization_id = CAST(:org AS uuid)
+                  AND s.deleted_at IS NULL
                 RETURNING %s
                 """.formatted(RETURNING_COLS))
                 .bind("org", organizationId)
@@ -187,6 +188,7 @@ public class StoreMediaRepository {
                 FROM store s
                 WHERE sm.store_id = s.id
                   AND s.organization_id = CAST(:org AS uuid)
+                  AND s.deleted_at IS NULL
                   AND sm.store_id = CAST(:store AS uuid)
                   AND sm.kind = :kind
                   AND sm.media_reference_id = CAST(:media AS uuid)
@@ -224,7 +226,7 @@ public class StoreMediaRepository {
                 FROM store_media sm
                 INNER JOIN store s ON s.id = sm.store_id
                 INNER JOIN organization o ON o.id = s.organization_id
-                WHERE sm.store_id = CAST(:id AS uuid) AND s.status = 'active' AND o.status = 'active'
+                WHERE sm.store_id = CAST(:id AS uuid) AND s.status = 'active' AND o.status = 'active' AND s.deleted_at IS NULL
                 ORDER BY sm.kind, sm.position, sm.created_at
                 """.formatted(SELECT_COLS))
                 .bind("id", storeId)

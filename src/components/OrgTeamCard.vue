@@ -115,6 +115,43 @@ async function addStore(): Promise<void> {
   emit('stores-changed')
 }
 
+// ---------- 门店停用/恢复/删除（2026-08-27：门店此前只能新增） ----------
+
+/** 待删除门店的确认态：显示警示弹窗，点确认才调端点（守卫冲突 409 由 error 条呈现）。 */
+const deleteStoreTarget = ref<Store | null>(null)
+
+async function setStoreActive(store: Store, active: boolean): Promise<void> {
+  notice.value = ''
+  const done = active
+    ? await grassland.restoreStore(props.orgId, store.id)
+    : await grassland.suspendStore(props.orgId, store.id)
+  if (done === null) return
+  notice.value = active
+    ? `门店「${store.name}」已恢复`
+    : `门店「${store.name}」已停用（对外隐藏，可随时恢复）`
+  emit('stores-changed')
+  const list = await grassland.listStores(props.orgId)
+  if (list) stores.value = list
+}
+
+async function confirmDeleteStore(): Promise<void> {
+  const target = deleteStoreTarget.value
+  if (!target) return
+  notice.value = ''
+  const done = await grassland.deleteStore(props.orgId, target.id)
+  if (done === null) {
+    deleteStoreTarget.value = null
+    return
+  }
+  deleteStoreTarget.value = null
+  notice.value = `门店「${target.name}」已删除（不可恢复）`
+  emit('stores-changed')
+  const list = await grassland.listStores(props.orgId)
+  if (list) stores.value = list
+  // 删除后门店数变化可能触发模式推导变化（多店→单店），重选唯一门店
+  await refresh()
+}
+
 async function selectStore(storeId: string): Promise<void> {
   selectedStoreId.value = storeId
   storeMembers.value = []
@@ -442,7 +479,20 @@ async function confirmDelete(): Promise<void> {
       <div v-if="stores.length === 1" class="team-row">
         <span class="team-tag">我的门店</span>
         <strong>{{ stores[0]!.name }}</strong>
-        <span class="team-hint">门店资料与认证在「认证」分节维护</span>
+        <span v-if="stores[0]!.status === 'suspended'" class="team-tag">已停用（对外隐藏）</span>
+        <button
+          v-if="stores[0]!.status === 'suspended'"
+          type="button" class="team-quiet"
+          :disabled="grassland.loading.value"
+          @click="setStoreActive(stores[0]!, true)"
+        >恢复</button>
+        <button
+          v-else
+          type="button" class="team-quiet"
+          :disabled="grassland.loading.value"
+          @click="setStoreActive(stores[0]!, false)"
+        >停用</button>
+        <span class="team-hint">唯一门店不可删除，不经营可停用；资料与认证在「认证」分节</span>
       </div>
       <p v-else class="team-hint">暂无门店。</p>
       <details class="team-adv">
@@ -459,13 +509,30 @@ async function confirmDelete(): Promise<void> {
     <section v-else class="team-sec">
       <h4>门店</h4>
       <ul class="team-list">
-        <li v-for="s in stores" :key="s.id">
+        <li v-for="s in stores" :key="s.id" class="team-store-row">
           <button
             type="button" class="team-link"
             :class="{ active: selectedStoreId === s.id }"
             @click="selectStore(s.id)"
           >{{ s.name }}</button>
-          <span class="team-tag">{{ s.status }}</span>
+          <span class="team-tag">{{ s.status === 'suspended' ? '已停用' : s.status }}</span>
+          <button
+            v-if="s.status === 'suspended'"
+            type="button" class="team-quiet"
+            :disabled="grassland.loading.value"
+            @click="setStoreActive(s, true)"
+          >恢复</button>
+          <button
+            v-else
+            type="button" class="team-quiet"
+            :disabled="grassland.loading.value"
+            @click="setStoreActive(s, false)"
+          >停用</button>
+          <button
+            type="button" class="team-quiet team-danger"
+            :disabled="grassland.loading.value"
+            @click="deleteStoreTarget = s"
+          >删除</button>
         </li>
       </ul>
 
@@ -562,6 +629,24 @@ async function confirmDelete(): Promise<void> {
         </div>
       </div>
     </div>
+    <!-- 门店删除确认（不可逆；守卫冲突如店内有任务/成员由后端 409 呈现） -->
+    <div v-if="deleteStoreTarget" class="team-del-mask" role="dialog" aria-modal="true" aria-label="删除门店确认">
+      <div class="team-del-dialog" data-testid="store-delete-confirm">
+        <h4 class="team-del-title">删除门店</h4>
+        <p class="team-del-warn">
+          将删除门店 <code>{{ deleteStoreTarget.name }}</code>：从主体与公开页面中移除，
+          <strong>不可恢复</strong>（不经营建议改用停用）。店内须无成员、无任务记录，否则会被拒绝。
+        </p>
+        <div class="team-del-actions">
+          <button type="button" class="team-quiet" @click="deleteStoreTarget = null">取消</button>
+          <button
+            type="button" class="team-del-confirm"
+            :disabled="grassland.loading.value"
+            @click="confirmDeleteStore"
+          >确认删除</button>
+        </div>
+      </div>
+    </div>
   </article>
 </template>
 
@@ -601,6 +686,7 @@ button:hover:not(:disabled) { border-color: var(--color-border-hover); backgroun
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .team-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
 .team-prefix-input { min-width: 150px; }
+.team-store-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .team-danger { color: var(--color-danger); }
 /* 删除强确认弹窗：遮罩 + 居中卡片，警示色走 token */
 .team-del-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--color-bg, #000) 55%, transparent); display: flex; align-items: center; justify-content: center; z-index: 60; }

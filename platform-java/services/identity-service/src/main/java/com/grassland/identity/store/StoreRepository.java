@@ -37,23 +37,53 @@ public class StoreRepository {
                 .map(StoreRepository::map).one();
     }
 
+    // 三个查询统一带 deleted_at IS NULL：删除（软删，V47）后门店从列表、授权校验
+    // （StoreAuthorization.ensureStoreInOrg）、子账号挂店校验全部消失——收口在此。
+
     public Mono<Store> findById(String id) {
-        return db.sql("SELECT " + SELECT_COLS + " FROM store WHERE id = CAST(:id AS uuid)")
+        return db.sql("SELECT " + SELECT_COLS
+                        + " FROM store WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL")
                 .bind("id", id)
                 .map(StoreRepository::map).one();
     }
 
     public Flux<Store> findByOrganization(String organizationId) {
-        return db.sql("SELECT " + SELECT_COLS + " FROM store WHERE organization_id = CAST(:org AS uuid) ORDER BY created_at")
+        return db.sql("SELECT " + SELECT_COLS + " FROM store WHERE organization_id = CAST(:org AS uuid)"
+                        + " AND deleted_at IS NULL ORDER BY created_at")
                 .bind("org", organizationId)
                 .map(StoreRepository::map).all();
     }
 
     public Mono<Store> findByOrganizationAndId(String organizationId, String id) {
         return db.sql("SELECT " + SELECT_COLS
-                + " FROM store WHERE organization_id = CAST(:org AS uuid) AND id = CAST(:id AS uuid)")
+                        + " FROM store WHERE organization_id = CAST(:org AS uuid) AND id = CAST(:id AS uuid)"
+                        + " AND deleted_at IS NULL")
                 .bind("org", organizationId).bind("id", id)
                 .map(StoreRepository::map).one();
+    }
+
+    /** 停用/恢复（可逆）：单边胜出的 guarded UPDATE，0 行=状态不符或已删，回查给可读错误。 */
+    public Mono<Long> updateStatusGuarded(String storeId, String to, String from) {
+        return db.sql("UPDATE store SET status = :to, updated_at = NOW()"
+                        + " WHERE id = CAST(:id AS uuid) AND status = :from AND deleted_at IS NULL")
+                .bind("to", to).bind("id", storeId).bind("from", from)
+                .fetch().rowsUpdated();
+    }
+
+    /** 软删（V47）：置 deleted_at；守卫（成员/任务/最后一家店）由调用方先行。 */
+    public Mono<Long> markDeleted(String storeId) {
+        return db.sql("UPDATE store SET deleted_at = NOW(), updated_at = NOW()"
+                        + " WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL")
+                .bind("id", storeId)
+                .fetch().rowsUpdated();
+    }
+
+    /** 组织内未删门店数（守卫①：主体必须保留至少一家门店）。 */
+    public Mono<Long> countActiveByOrganization(String organizationId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM store"
+                        + " WHERE organization_id = CAST(:org AS uuid) AND deleted_at IS NULL")
+                .bind("org", organizationId)
+                .map(row -> row.get("c", Integer.class).longValue()).one();
     }
 
     private static Store map(Readable row) {
