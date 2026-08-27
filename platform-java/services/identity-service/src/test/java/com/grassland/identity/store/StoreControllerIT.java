@@ -29,11 +29,12 @@ class StoreControllerIT extends IdentityItSupport {
                 .jsonPath("$.data.organizationId").isEqualTo(orgId)
                 .jsonPath("$.data.status").isEqualTo("active");
 
+        // 任务书 #50：注册即开店——注册时的默认门店也发 StoreCreated（defaultStore=true）
         Long count = db.sql("SELECT COUNT(*)::int AS c FROM outbox"
                         + " WHERE event_type = 'StoreCreated' AND payload->>'organizationId' = :orgId")
                 .bind("orgId", orgId)
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
-        assertThat(count).isEqualTo(1);
+        assertThat(count).isEqualTo(2);
     }
 
     @Test
@@ -46,8 +47,8 @@ class StoreControllerIT extends IdentityItSupport {
         client().get().uri("/api/organizations/" + orgId + "/stores")
                 .header("Cookie", "y1.sid=" + owner.cookie()).exchange()
                 .expectStatus().isOk().expectBody()
-                .jsonPath("$.data.length()").isEqualTo(2)
-                .jsonPath("$.data[0].name").isEqualTo("门店一");
+                .jsonPath("$.data.length()").isEqualTo(3)
+                .jsonPath("$.data[1].name").isEqualTo("门店一");
 
         client().get().uri("/api/organizations/" + orgId + "/stores/" + storeId)
                 .header("Cookie", "y1.sid=" + owner.cookie()).exchange()

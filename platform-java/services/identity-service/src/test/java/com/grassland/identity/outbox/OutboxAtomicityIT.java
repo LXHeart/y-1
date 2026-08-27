@@ -51,7 +51,8 @@ class OutboxAtomicityIT extends IdentityItSupport {
 				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue("{\"name\":\"S\"}").exchange().expectStatus()
 				.is5xxServerError();
 
-		assertThat(storeCountByOrg(orgId)).isZero(); // 门店未建
+		// 任务书 #50：注册即开店——回滚后只剩注册时的默认门店（手动建的店未落）
+		assertThat(storeCountByOrg(orgId)).isEqualTo(1);
 	}
 
 	@Test

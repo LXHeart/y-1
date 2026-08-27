@@ -56,6 +56,7 @@ public class OrganizationController {
 	private final OrganizationRepository organizations;
 	private final OrganizationRenameRepository renames;
 	private final MembershipRepository memberships;
+	private final com.grassland.identity.store.StoreRepository stores;
 	private final OrgAuthorization authz;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
@@ -66,7 +67,8 @@ public class OrganizationController {
 	public OrganizationController(CurrentAccountResolver accounts, OrganizationRepository organizations,
 			OrganizationRenameRepository renames,
 			MembershipRepository memberships, OrgAuthorization authz,
-			OutboxRepository outbox, TransactionalOperator transactions) {
+			OutboxRepository outbox, TransactionalOperator transactions,
+			com.grassland.identity.store.StoreRepository stores) {
 		this.accounts = accounts;
 		this.organizations = organizations;
 		this.renames = renames;
@@ -74,6 +76,7 @@ public class OrganizationController {
 		this.authz = authz;
 		this.outbox = outbox;
 		this.transactions = transactions;
+		this.stores = stores;
 	}
 
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -93,6 +96,18 @@ public class OrganizationController {
 												.switchIfEmpty(organizations
 														.create(owner.id(), body.name(), normalizeIndustry(body.industry())))
 												.flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))
+												// 任务书 #50 D2：注册即开店——同事务自动建默认门店（名=主体名），
+												// 单店商家从此不需要「建店」这个动作；StoreCreated 与手动建店同款（审计/下游一致）。
+												.flatMap(org -> stores.create(org.id(), org.name())
+														.flatMap(defaultStore -> outbox
+																.append(new EventEnvelope(UUID.randomUUID().toString(),
+																		"StoreCreated", "Store", defaultStore.id(), 1,
+																		Instant.now(), null,
+																		Map.of("storeId", defaultStore.id(),
+																				"organizationId", org.id(),
+																				"name", defaultStore.name(),
+																				"defaultStore", true)))
+																.thenReturn(org)))
 												.flatMap(org -> outbox
 														.append(new EventEnvelope(UUID.randomUUID().toString(),
 																"OrganizationCreated", "Organization", org.id(), 1,
