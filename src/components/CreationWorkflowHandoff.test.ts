@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import ArticleCreationView from '../views/article/ArticleCreationView.vue'
 import ComedyWritingView from '../views/comedy/ComedyWritingView.vue'
 import VideoAnalysisView from '../views/video/VideoAnalysisView.vue'
@@ -63,6 +64,26 @@ vi.mock('../composables/useArticleCreation', async () => {
 
 enableAutoUnmount(afterEach)
 afterEach(() => vi.unstubAllGlobals())
+
+/**
+ * ArticleCreationView 用 useRouter() 提供「返回创作中心」，挂载时必须装 router，
+ * 否则 provide 缺失只发 warning、点击跳转静默失效。每个测试一个独立实例。
+ */
+function mountArticleView(handoff: CreationHandoff) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      // memory history 初始位置是 ""，缺 '/' 兜底会警告 No match found
+      { path: '/', name: 'home', component: { template: '<div />' } },
+      { path: '/article', name: 'article', component: ArticleCreationView },
+      { path: '/ai-center', name: 'ai-center', component: { template: '<div />' } },
+    ],
+  })
+  return mount(ArticleCreationView, {
+    props: { creationHandoff: handoff },
+    global: { plugins: [router], provide: { articleInitialTopic: ref('') } },
+  })
+}
 
 function articleHandoff(revision: number, topic: string): CreationHandoff {
   return {
@@ -133,10 +154,7 @@ function stubBackendFetch(): void {
 describe('创作工作流 handoff', () => {
   test('同一 revision 不覆盖文章页面中的后续编辑，新 revision 才重置预填', async () => {
     const first = articleHandoff(1, '最初主题')
-    const wrapper = mount(ArticleCreationView, {
-      props: { creationHandoff: first },
-      global: { provide: { articleInitialTopic: ref('') } },
-    })
+    const wrapper = mountArticleView(first)
     const textarea = wrapper.get('textarea.topic-input')
     await textarea.setValue('用户已修改')
 
@@ -150,19 +168,14 @@ describe('创作工作流 handoff', () => {
   })
 
   test('抖音图文 handoff 进入文章视图并启用抖音图集模式', () => {
-    const wrapper = mount(ArticleCreationView, {
-      props: {
-        creationHandoff: {
-          revision: 5,
-          platformId: 'douyin',
-          contentFormId: 'graphic',
-          source: { type: 'hot-topic', title: '城市夜经济升温' },
-          workflowId: 'longform',
-          targetView: 'article',
-          prefill: { topic: '城市夜经济升温' },
-        },
-      },
-      global: { provide: { articleInitialTopic: ref('') } },
+    const wrapper = mountArticleView({
+      revision: 5,
+      platformId: 'douyin',
+      contentFormId: 'graphic',
+      source: { type: 'hot-topic', title: '城市夜经济升温' },
+      workflowId: 'longform',
+      targetView: 'article',
+      prefill: { topic: '城市夜经济升温' },
     })
 
     expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('城市夜经济升温')
