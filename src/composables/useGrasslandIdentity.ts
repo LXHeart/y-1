@@ -10,7 +10,7 @@ import type {
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
   Membership, LoginSession,
   Store, StoreMembership, StoreRole, PublicBrandProfile, StorePublicProfile, StorePublicMedia,
-  SubAccountMutationResult,
+  SubAccountMutationResult, AdminOrganizationSummary,
   MediaUploadTicket, MediaMetadata, BrandProfile, SaveBrandProfileInput,
   AccountClosureCheck, AccountClosureRequest, PersonalDataExport, PiiLifecycleAudit,
 } from '../types/grassland'
@@ -195,7 +195,23 @@ export function useGrasslandIdentity(run: RunFn) {
     run(() => request<{ prefix: string }>(`/api/organizations/${orgId}/account-prefix`))
 
   // 任务书 #51：商家侧 setAccountPrefix 已删除——后端 PATCH /api/organizations/{id}/account-prefix
-  // 已下线（前缀自动生成、商家只读）。改名走运营侧 setAdminAccountPrefix（连带重写成员登录名）。
+  // 已下线（前缀自动生成、商家只读）。改名走下面两个运营侧方法。
+
+  /** 运营台主体搜索（平台 admin）：按主体名/前缀/id 模糊命中，带 memberCount = 改名影响面。 */
+  const searchAdminOrganizations = (query: string) =>
+    run(() => request<AdminOrganizationSummary[]>(
+      `/api/admin/organizations?q=${encodeURIComponent(query)}`))
+
+  /**
+   * 运营台改成员账号前缀（平台 admin）：**连带重写该主体下全部成员的登录名**与占位邮箱，
+   * 旧登录名立即失效（已登录成员不掉线）。响应回影响面供运营判断是否线下通知。
+   */
+  const setAdminAccountPrefix = (orgId: string, prefix: string) =>
+    run(() => request<{ prefix: string; rewrittenAccounts: number; rewrittenPlaceholderEmails: number }>(
+      `/api/admin/organizations/${orgId}/account-prefix`, {
+        method: 'PATCH',
+        body: JSON.stringify({ prefix }),
+      }))
 
   // ---------- identity：子账号绑定邮箱（任务书 #49 D10）----------
 
@@ -405,7 +421,7 @@ export function useGrasslandIdentity(run: RunFn) {
     reviewPermissionRequest,
     listMemberships,
     createSubAccount, createStaffSubAccount,
-    getAccountPrefix,
+    getAccountPrefix, searchAdminOrganizations, setAdminAccountPrefix,
     sendBindEmailCode, bindEmail,
     suspendSubAccount, restoreSubAccount, deleteSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
     getMemberReviewRequired, setMemberReviewRequired,

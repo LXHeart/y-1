@@ -60,10 +60,20 @@
         @click="activeSection = 'store-media'">
         门店媒体
       </button>
+      <!-- 任务书 #51：成员账号前缀改名（商家侧入口已下线，这里是全平台唯一入口）。
+           刻意放在页签末尾——本文件多处测试按数字下标点页签，插在中间会整片错位 -->
+      <button type="button" role="tab" :aria-selected="activeSection === 'org-prefix'"
+        :class="{ active: activeSection === 'org-prefix' }"
+        @click="activeSection = 'org-prefix'">
+        账号前缀
+      </button>
     </div>
 
     <div v-if="activeSection === 'org-renames'" class="admin-panel" role="tabpanel">
       <OrganizationRenameAdminPanel />
+    </div>
+    <div v-if="activeSection === 'org-prefix'" class="admin-panel" role="tabpanel">
+      <OrganizationPrefixAdminPanel />
     </div>
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
       <form class="panel-toolbar search-toolbar" @submit.prevent="loadUsers">
@@ -358,6 +368,7 @@ import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
 import OrganizationRenameAdminPanel from './components/OrganizationRenameAdminPanel.vue'
+import OrganizationPrefixAdminPanel from './components/OrganizationPrefixAdminPanel.vue'
 import StoreMediaModerationAdminPanel from './components/StoreMediaModerationAdminPanel.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import { useAuth } from '../../composables/useAuth'
@@ -390,7 +401,7 @@ const reviewerOnly = computed(() => Boolean(currentUser.value)
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

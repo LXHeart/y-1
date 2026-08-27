@@ -264,6 +264,18 @@ export interface SubAccountMutationResult {
 /** 子账号在 app_users.status 的生命周期（任务书 #48 D4）。 */
 export type SubAccountStatus = 'active' | 'suspended' | 'pending_review' | 'rejected'
 
+/**
+ * 运营台主体行（任务书 #51：`GET /api/admin/organizations?q=`）。
+ * `memberCount` 是「改前缀会改掉几个人的登录名」的直接依据，运营据此判断要不要线下通知。
+ */
+export interface AdminOrganizationSummary {
+  id: string
+  name: string
+  accountPrefix: string
+  status: string
+  memberCount: number
+}
+
 export interface Store {
   id: string
   organizationId: string

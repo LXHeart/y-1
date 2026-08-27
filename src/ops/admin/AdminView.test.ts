@@ -57,7 +57,9 @@ describe('AdminView KYB 审核', () => {
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
       ['用户与积分', 'KYB 审核', '主体更名', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
-        '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '首页热点', '统一审计', '公共素材', '门店媒体'])
+        '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '首页热点', '统一审计', '公共素材', '门店媒体',
+        // 任务书 #51：账号前缀改名（末尾追加——本文件多处按下标点页签）
+        '账号前缀'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
     const aiModelsTab = tabs.find((tab) => tab.text().trim() === 'AI 模型')!
