@@ -29,3 +29,10 @@ CREATE TABLE account_flag (
   must_change_password boolean NOT NULL DEFAULT false,
   updated_at           timestamptz NOT NULL DEFAULT now()
 );
+-- 任务书 #49：登录名旁表（identity V44）——登录标识双查/用户名展示都读它；
+-- 本 schema 的 app_users 手工建表晚于 Flyway，故必须在此同步声明（D14 双态约束）。
+CREATE TABLE account_username (
+  account_id uuid PRIMARY KEY,
+  username   text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);

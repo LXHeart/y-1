@@ -24,10 +24,13 @@ import reactor.core.publisher.Mono;
 public class MeController {
     private final CurrentAccountResolver accounts;
     private final AccountFlagRepository accountFlags;
+    private final com.grassland.identity.user.UserLookup users;
 
-    public MeController(CurrentAccountResolver accounts, AccountFlagRepository accountFlags) {
+    public MeController(CurrentAccountResolver accounts, AccountFlagRepository accountFlags,
+            com.grassland.identity.user.UserLookup users) {
         this.accounts = accounts;
         this.accountFlags = accountFlags;
+        this.users = users;
     }
 
     @GetMapping("/api/auth/me")
@@ -38,12 +41,20 @@ public class MeController {
 
     private Mono<ResponseEntity<Map<String, Object>>> toResponse(AuthUser user) {
         Mono<Boolean> mustChange = accountFlags.mustChangePassword(user.id()).defaultIfEmpty(Boolean.FALSE);
-        return mustChange.flatMap(flag -> accounts.resolveBackendRoles(user.id())
+        // 任务书 #49 D11：子账号带登录名与 hasEmail（占位邮箱不当真邮箱展示）
+        Mono<String> username = users.findUsernameById(user.id()).defaultIfEmpty("");
+        return Mono.zip(mustChange, username).flatMap(pair -> accounts.resolveBackendRoles(user.id())
                 .defaultIfEmpty(java.util.Set.of())
                 .map(roles -> {
                     Map<String, Object> userInfo = new LinkedHashMap<>();
                     userInfo.put("id", user.id());
                     userInfo.put("email", user.email());
+                    String loginName = pair.getT2();
+                    if (loginName != null && !loginName.isBlank()) {
+                        userInfo.put("username", loginName);
+                    }
+                    userInfo.put("hasEmail",
+                            user.email() != null && !user.email().endsWith("@sub.grassland.invalid"));
                     if (user.displayName() != null && !user.displayName().isBlank()) {
                         userInfo.put("displayName", user.displayName());
                     }
@@ -54,7 +65,7 @@ public class MeController {
                             .sorted()
                             .toList());
                     // 任务书 #48：管理员代建后的首登强制改密态；前端据此路由锁到改密页
-                    userInfo.put("mustChangePassword", Boolean.TRUE.equals(flag));
+                    userInfo.put("mustChangePassword", Boolean.TRUE.equals(pair.getT1()));
                     return ResponseEntity.ok(Map.of("success", true, "data", Map.of("user", userInfo)));
                 }));
     }

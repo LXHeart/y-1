@@ -26,7 +26,8 @@ import reactor.core.scheduler.Schedulers;
 
 @RestController
 public class LoginController {
-    private static final String LOGIN_ERROR = "\u90ae\u7bb1\u6216\u5bc6\u7801\u9519\u8bef";
+    // 任务书 #49：登录标识双轨（账号名或邮箱）后统一为「账号」
+    private static final String LOGIN_ERROR = "\u8d26\u53f7\u6216\u5bc6\u7801\u9519\u8bef";
 
     private final UserLookup userLookup;
     private final UserRepository userRepository;
@@ -61,7 +62,9 @@ public class LoginController {
             if (!rateCheck.allowed()) {
                 return Mono.just(build429(rateCheck));
             }
-            return userLookup.findByEmail(email == null ? null : email.trim().toLowerCase())
+            // 任务书 #49 D7：标识双查——先按登录名旁表命中子账号，miss 再按邮箱（存量路径零变化）；
+            // 限流键沿用输入原文（语义与行为同现状）。
+            return userLookup.findByIdentifier(email == null ? null : email.trim())
                 .flatMap(user -> attemptLogin(user, password, ip, email, request))
                 .switchIfEmpty(Mono.defer(() -> {
                     rateLimiter.recordOutcome(ip, email, true);
@@ -100,24 +103,26 @@ public class LoginController {
         String deviceInfo = header(request, "X-Device-Info");
         // 任务书 #48：管理员代建/重置密码后必须首登改密——登录响应携带标记，前端路由锁到改密页；
         // 服务端硬闸在 edge InternalAssertionFilter（428）。
+        // 任务书 #49 D11：子账号响应带登录名与 hasEmail（占位邮箱不暴露给前端当真邮箱）。
         Mono<Boolean> mustChange = accountFlags.mustChangePassword(user.id()).defaultIfEmpty(Boolean.FALSE);
+        Mono<String> username = userLookup.findUsernameById(user.id()).defaultIfEmpty("");
         if (deviceInfo != null && !deviceInfo.isBlank()) {
             if (!refreshTokens.isConfigured()) {
                 return Mono.just(build503());
             }
             return loginOps
-                .then(mustChange)
-                .flatMap(flag -> refreshTokens.issue(authUser, DeviceFingerprint.from(request),
+                .then(Mono.zip(mustChange, username))
+                .flatMap(pair -> refreshTokens.issue(authUser, DeviceFingerprint.from(request),
                         resolveDeviceName(request), deviceInfo).map(issued -> {
                             rateLimiter.recordOutcome(ip, email, false);
-                            return buildToken200(authUser, issued, Boolean.TRUE.equals(flag));
+                            return buildToken200(authUser, issued, Boolean.TRUE.equals(pair.getT1()), pair.getT2());
                         }));
         }
         return loginOps
-            .then(mustChange)
-            .flatMap(flag -> sessionWriter.createSession(authUser, request).map(created -> {
+            .then(Mono.zip(mustChange, username))
+            .flatMap(pair -> sessionWriter.createSession(authUser, request).map(created -> {
                 rateLimiter.recordOutcome(ip, email, false);
-                return build200(authUser, created.setCookieHeader(), Boolean.TRUE.equals(flag));
+                return build200(authUser, created.setCookieHeader(), Boolean.TRUE.equals(pair.getT1()), pair.getT2());
             }));
     }
 
@@ -135,31 +140,37 @@ public class LoginController {
         return request.getHeaders().getFirst(name);
     }
 
-    private ResponseEntity<Map<String, Object>> build200(AuthUser user, String setCookie, boolean mustChangePassword) {
+    private ResponseEntity<Map<String, Object>> build200(AuthUser user, String setCookie, boolean mustChangePassword,
+            String username) {
         return ResponseEntity.ok()
             .header("Set-Cookie", setCookie)
-            .body(Map.of("success", true, "data", Map.of("user", userInfo(user, mustChangePassword))));
+            .body(Map.of("success", true, "data", Map.of("user", userInfo(user, mustChangePassword, username))));
     }
 
     /**
      * 移动端 token 模式响应：与 Web 共用 user 字段，额外带 tokens，且刻意不发 Set-Cookie。
      */
     private ResponseEntity<Map<String, Object>> buildToken200(AuthUser user, RefreshTokenService.IssuedTokens issued,
-                                                              boolean mustChangePassword) {
+                                                              boolean mustChangePassword, String username) {
         Map<String, Object> tokens = new LinkedHashMap<>();
         tokens.put("access_token", issued.accessToken());
         tokens.put("refresh_token", issued.refreshToken());
         tokens.put("expires_in", issued.expiresInSeconds());
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("user", userInfo(user, mustChangePassword));
+        data.put("user", userInfo(user, mustChangePassword, username));
         data.put("tokens", tokens);
         return ResponseEntity.ok().body(Map.of("success", true, "data", data));
     }
 
-    private Map<String, Object> userInfo(AuthUser user, boolean mustChangePassword) {
+    private Map<String, Object> userInfo(AuthUser user, boolean mustChangePassword, String username) {
         Map<String, Object> userInfo = new LinkedHashMap<>();
         userInfo.put("id", user.id());
         userInfo.put("email", user.email());
+        // #49：子账号带登录名；hasEmail=false 表示 email 是占位符（未绑定真邮箱）
+        if (username != null && !username.isBlank()) {
+            userInfo.put("username", username);
+        }
+        userInfo.put("hasEmail", user.email() != null && !user.email().endsWith("@sub.grassland.invalid"));
         if (user.displayName() != null && !user.displayName().isBlank()) {
             userInfo.put("displayName", user.displayName());
         }

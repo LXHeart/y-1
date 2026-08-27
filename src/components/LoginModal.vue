@@ -87,7 +87,8 @@
         </div>
 
         <form class="login-form" autocomplete="off" @submit.prevent="handleSubmit">
-          <label class="login-label" for="login-email">邮箱</label>
+          <!-- 任务书 #49：登录接受「账号名或邮箱」双标识（子账号无邮箱）；注册仍是邮箱（验证码走邮箱） -->
+          <label class="login-label" for="login-email">{{ mode === 'login' ? '账号名或邮箱' : '邮箱' }}</label>
           <input
             id="login-email"
             v-model.trim="email"
@@ -98,7 +99,7 @@
             autocapitalize="off"
             autocorrect="off"
             spellcheck="false"
-            placeholder="you@example.com"
+            :placeholder="mode === 'login' ? '账号名（如 caoyuan-zhangsan）或邮箱' : 'you@example.com'"
             required
           >
 

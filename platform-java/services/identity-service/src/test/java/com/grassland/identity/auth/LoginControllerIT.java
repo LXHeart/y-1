@@ -44,6 +44,8 @@ class LoginControllerIT {
             s.execute("CREATE TABLE session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
             // 任务书 #48：登录响应/改密依赖 account_flag（identity 自有表，V42）；本类自备容器手工建表
             s.execute("CREATE TABLE IF NOT EXISTS account_flag (account_id uuid PRIMARY KEY, must_change_password boolean NOT NULL DEFAULT false, updated_at timestamptz NOT NULL DEFAULT now())");
+            // 任务书 #49：登录名旁表（V44）——双查与 username 回显依赖；同上自备容器须手工同步
+            s.execute("CREATE TABLE IF NOT EXISTS account_username (account_id uuid PRIMARY KEY, username text NOT NULL UNIQUE, created_at timestamptz NOT NULL DEFAULT now())");
         }
     }
 
@@ -75,7 +77,7 @@ class LoginControllerIT {
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue("{\"email\":\"wrong@example.com\",\"password\":\"bad-pass\"}")
             .exchange().expectStatus().isUnauthorized()
-            .expectBody().jsonPath("$.error").isEqualTo("\u90ae\u7bb1\u6216\u5bc6\u7801\u9519\u8bef");
+            .expectBody().jsonPath("$.error").isEqualTo("\u8d26\u53f7\u6216\u5bc6\u7801\u9519\u8bef");
     }
 
     @Test
@@ -84,7 +86,7 @@ class LoginControllerIT {
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue("{\"email\":\"nobody@example.com\",\"password\":\"anything\"}")
             .exchange().expectStatus().isUnauthorized()
-            .expectBody().jsonPath("$.error").isEqualTo("\u90ae\u7bb1\u6216\u5bc6\u7801\u9519\u8bef");
+            .expectBody().jsonPath("$.error").isEqualTo("\u8d26\u53f7\u6216\u5bc6\u7801\u9519\u8bef");
     }
 
     @Test
