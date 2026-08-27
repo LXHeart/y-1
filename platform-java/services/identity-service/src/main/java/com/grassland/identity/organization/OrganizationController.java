@@ -20,7 +20,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -222,30 +221,9 @@ public class OrganizationController {
 					 .map(prefix -> ResponseEntity.ok(Map.of("success", true, "data", Map.of("prefix", prefix)))));
 	}
 
-	/** 前缀改：ADMIN+；^[a-z0-9]{3,24}$；被其他主体占用 → 409。只影响之后新建的账号。 */
-	@PatchMapping("/{id}/account-prefix")
-	public Mono<ResponseEntity<Map<String, Object>>> updateAccountPrefix(@PathVariable String id,
-			@RequestBody AccountPrefixRequest body, ServerHttpRequest request) {
-		String prefix = body.prefix() == null ? "" : body.prefix().trim().toLowerCase();
-		if (!prefix.matches("^[a-z0-9]{3,24}$")) {
-			return Mono.just(ResponseEntity.badRequest()
-					.body(Map.of("success", false, "error", "前缀仅支持 3-24 位字母或数字")));
-		}
-		return authz.requireRole(request, id, MembershipRole.ADMIN)
-				.flatMap(operator -> organizations.updateAccountPrefix(id, prefix)
-						.map(rows -> rows > 0
-								? ResponseEntity.ok(Map.<String, Object>of("success", true,
-										"data", Map.of("prefix", prefix)))
-								: ResponseEntity.status(404).<Map<String, Object>>body(
-										Map.of("success", false, "error", "组织不存在"))))
-				.onErrorResume(org.springframework.dao.DataIntegrityViolationException.class,
-						e -> Mono.just(ResponseEntity.status(409)
-								.body(Map.of("success", false, "error", "该前缀已被其他主体使用"))));
-	}
-
-	/** 前缀改请求体（任务书 #49）。 */
-	record AccountPrefixRequest(String prefix) {
-	}
+	// 任务书 #51：商家侧改前缀（PATCH /{id}/account-prefix）已删除。前缀自动生成、商家只读，
+	// 改名是运营动作 —— 它会连带重写该主体下全部成员的登录名与占位邮箱，属平台侧处置，
+	// 见 OrganizationPrefixAdminController（PATCH /api/admin/organizations/{id}/account-prefix）。
 
 	/** best-effort 种 OWNER 成员行：失败不阻断 org 创建（鉴权兜底靠 owner_account_id）。 */
 	private Mono<Membership> seedOwnerMembership(Organization org, String ownerId) {

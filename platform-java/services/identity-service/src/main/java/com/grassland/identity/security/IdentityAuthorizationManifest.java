@@ -84,7 +84,9 @@ public final class IdentityAuthorizationManifest {
                         "getReviewRequired", AUTHENTICATED)));
         register(policies, ADMIN,
                 "admin.AdminUserController",
-                "kyb.KybVerificationController");
+                "kyb.KybVerificationController",
+                // 任务书 #51：成员账号前缀改名收归运营（搜索 + 改前缀连带重写登录名），两端点均 requireAdmin
+                "organization.OrganizationPrefixAdminController");
         // 任务书 #48 子账号：createByOrg / 停用恢复 / 重置密码均在 service 层做「操作者≥ADMIN 或
         // 纯门店经理」的资源级判定，清单口径登记为组织域；店长建员工走门店门禁，读开关仅需登录。
         policies.put(ROOT + "organization.subaccount.OrgSubAccountController", new ControllerPolicy(

@@ -157,6 +157,12 @@ edge:
     - path: /api/admin/org-rename-requests
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_ORGRENAME_IDENTITY:true}
+    # 平台 admin 主体搜索 + 成员账号前缀改名（任务书 #51）：改前缀连带重写该主体下全部成员登录名，
+    # 属平台处置（商家侧 PATCH 已删）。前缀不与 /api/admin/org-rename-requests 相交（匹配要求
+    # 全等或后接 '/'），声明序无歧义。
+    - path: /api/admin/organizations
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_ORGANIZATIONS_IDENTITY:true}
     # 平台 AI 控制面（GL-P3-AI-001）→ intelligence-service。
     # /api/ai 前缀：BYOK 密钥、控制面 Run 与组织 AI 预算统一由 intelligence 承载。
     - path: /api/ai
