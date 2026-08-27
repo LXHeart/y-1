@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 
 /**
  * 用户端路由（index.html 入口）。
@@ -74,6 +75,11 @@ const routes: RouteRecordRaw[] = [
         name: 'complaints',
         component: () => import('../views/complaints/ComplaintsView.vue'),
       },
+      {
+        path: 'first-password',
+        name: 'first-password',
+        component: () => import('../views/home/FirstPasswordChangeView.vue'),
+      },
     ],
   },
 ]
@@ -81,6 +87,20 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+// 首登强制改密的体验层闸（任务书 #48）：登录响应/me 已带 mustChangePassword 标记，
+// 命中且未解除时把业务路由拉到 /first-password。刻意不在这里发请求——硬闸在 edge
+// （业务 API 一律 428），此处只消费既有状态，避免双请求与测试环境的隐性网络依赖。
+router.beforeEach((to) => {
+  try {
+    const auth = useAuthStore()
+    if (!auth.loaded || !auth.mustChangePassword || to.name === 'first-password') return true
+    return { name: 'first-password' }
+  } catch {
+    // 无活动 Pinia（部分单测直挂视图）→ 放行，不参与导航
+    return true
+  }
 })
 
 export default router

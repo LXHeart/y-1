@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   InvitationStatus,
@@ -82,6 +82,7 @@ async function refresh(): Promise<void> {
   if (m) members.value = m
   if (i) invitations.value = i
   if (s) stores.value = s
+  await loadReviewToggle()
 }
 
 watch(() => props.orgId, refresh, { immediate: true })
@@ -201,6 +202,93 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
   notice.value = '门店成员已移除'
   await selectStore(selectedStoreId.value)
 }
+
+// ---------- 任务书 #48：子账号直建 / 停用恢复 / 审核开关 ----------
+
+const memberReviewRequired = ref(false)
+const orgCreateEmail = ref('')
+const orgCreateName = ref('')
+const storeCreateEmail = ref('')
+const storeCreateName = ref('')
+
+/**
+ * 建号/重置刚返回的一次性初始密码——响应之后任何接口都取不到，展示区只存在到
+ * 用户点「我已保存」为止。这是「商家直建、线下交付」模型的安全底线（PRD §2.1）。
+ */
+const oneTimePassword = ref<{ email: string; password: string } | null>(null)
+
+async function loadReviewToggle(): Promise<void> {
+  if (!props.orgId) return
+  const state = await grassland.getMemberReviewRequired(props.orgId)
+  if (state) memberReviewRequired.value = state.required
+}
+
+async function toggleReview(event: Event): Promise<void> {
+  const box = event.target as HTMLInputElement
+  const required = box.checked
+  notice.value = ''
+  const updated = await grassland.setMemberReviewRequired(props.orgId, required)
+  if (!updated) {
+    // 切换失败（如非管理员 403）回滚 UI；原生 checked 不受 Vue 状态绑定管理，须显式写回
+    memberReviewRequired.value = !required
+    await nextTick()
+    box.checked = !required
+    return
+  }
+  notice.value = required ? '已开启：店长添加的员工须经主体审核后启用' : '已关闭：店长添加员工即时生效'
+}
+
+async function createOrgAccount(): Promise<void> {
+  const email = orgCreateEmail.value.trim()
+  const displayName = orgCreateName.value.trim()
+  if (!email || !displayName) return
+  notice.value = ''
+  const created = await grassland.createSubAccount(props.orgId, { role: 'member', email, displayName })
+  if (!created) return
+  orgCreateEmail.value = ''
+  orgCreateName.value = ''
+  if (created.initialPassword) {
+    oneTimePassword.value = { email: created.account.email, password: created.initialPassword }
+    notice.value = '账号已创建，凭据请线下转交'
+  } else {
+    // 无初始密码 = 邮箱已被注册且被确认关联为成员，原账号凭据不受影响
+    notice.value = `已将既有平台账号 ${created.account.email} 关联为本主体成员`
+  }
+  await reloadMembers()
+}
+
+async function createStoreAccount(): Promise<void> {
+  const email = storeCreateEmail.value.trim()
+  const displayName = storeCreateName.value.trim()
+  if (!email || !displayName || !selectedStoreId.value) return
+  notice.value = ''
+  const created = await grassland.createStaffSubAccount(props.orgId, selectedStoreId.value, {
+    email, displayName,
+  })
+  if (!created) return
+  storeCreateEmail.value = ''
+  storeCreateName.value = ''
+  if (created.initialPassword) {
+    oneTimePassword.value = { email: created.account.email, password: created.initialPassword }
+    notice.value = created.account.status === 'pending_review'
+      ? '员工账号已登记，待主体审核通过后才能登录使用'
+      : '账号已创建，凭据请线下转交'
+  } else {
+    notice.value = `已将既有平台账号 ${created.account.email} 关联为本店${STORE_ROLE_LABEL[newStoreMemberRole.value]}`
+  }
+  await selectStore(selectedStoreId.value)
+}
+
+/** 停用 / 恢复即时生效；守卫冲突（最后一个店长、owner 保护等）由 error 条原样呈现。 */
+async function setAccountActive(accountId: string, active: boolean): Promise<void> {
+  notice.value = ''
+  const done = active
+    ? await grassland.restoreSubAccount(props.orgId, accountId)
+    : await grassland.suspendSubAccount(props.orgId, accountId)
+  if (done === null) return
+  notice.value = active ? '账号已恢复可用' : '账号已停用（立即生效，系统将站内知会主体）'
+}
+
 </script>
 
 <template>
@@ -213,6 +301,30 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
     <p v-if="grassland.error.value" class="team-alert team-err" role="alert">{{ grassland.error.value }}</p>
     <p v-if="notice" class="team-alert team-ok">{{ notice }}</p>
 
+    <!-- 一次性初始密码（任务书 #48）：仅建号/重置的响应里存在一次，此后接口不可再取 -->
+    <div v-if="oneTimePassword" class="team-alert team-pw" data-testid="one-time-password">
+      <p class="team-pw-line">
+        <strong>{{ oneTimePassword.email }}</strong> 的初始密码：
+        <code class="team-pw-code">{{ oneTimePassword.password }}</code>
+      </p>
+      <p class="team-pw-hint">请立即线下转交本人；对方首次登录须改密。关闭后无法再次查看。</p>
+      <button type="button" class="team-quiet" @click="oneTimePassword = null">我已妥善保存</button>
+    </div>
+
+    <!-- 审核开关：仅影响店长代建路径，owner/admin 直建永不 pending（任务书 #48 D6） -->
+    <div class="team-row">
+      <label class="team-toggle">
+        <input
+          type="checkbox"
+          :checked="memberReviewRequired"
+          :disabled="grassland.loading.value"
+          @change="toggleReview"
+        />
+        店长添加员工需主体审核
+      </label>
+      <span class="team-tag">切换需管理员</span>
+    </div>
+
     <!-- 组织成员 -->
     <section class="team-sec">
       <h4>主体成员</h4>
@@ -224,6 +336,8 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
             <td><code>{{ m.accountId.slice(0, 8) }}…</code></td>
             <td>{{ ROLE_LABEL[m.role] || m.role }}</td>
             <td>
+              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
+              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
               <button
                 type="button" class="team-quiet"
                 :disabled="grassland.loading.value"
@@ -260,6 +374,24 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
           >直接添加</button>
         </div>
         <p class="team-hint">跳过邀请直接入组，仅在你确知对方账号 ID 时可用；角色取上方下拉框的选择。</p>
+      </details>
+
+      <!-- 主体直建子账号（任务书 #48）：对方没有平台账号也能入组 -->
+      <details class="team-adv">
+        <summary>对方没有平台账号？主体直接创建</summary>
+        <div class="team-row">
+          <input v-model="orgCreateEmail" type="email" placeholder="新账号邮箱" />
+          <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
+          <button
+            type="button"
+            :disabled="grassland.loading.value || !orgCreateEmail.trim() || !orgCreateName.trim()"
+            @click="createOrgAccount"
+          >创建成员账号</button>
+        </div>
+        <p class="team-hint">
+          创建即生效并挂为本主体成员；系统生成一次性初始密码供你线下转交，对方首次登录须改密。
+          若邮箱已是平台账号，会提示你确认后改为「关联为成员」，原密码不受影响。
+        </p>
       </details>
     </section>
 
@@ -334,6 +466,8 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
             <td><code>{{ m.accountId.slice(0, 8) }}…</code></td>
             <td>{{ STORE_ROLE_LABEL[m.role] || m.role }}</td>
             <td>
+              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
+              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
               <button
                 type="button" class="team-quiet"
                 :disabled="grassland.loading.value"
@@ -373,6 +507,28 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
         </div>
         <p class="team-hint">跳过邀请直接入店；角色取上方下拉框的选择。</p>
       </details>
+
+      <!-- 店长代建员工（任务书 #48）：审核开关开启时登记为待启用，须主体过审后登录 -->
+      <details class="team-adv">
+        <summary>对方没有平台账号？主体直接创建</summary>
+        <div class="team-row">
+          <input v-model="storeCreateEmail" type="email" placeholder="新账号邮箱" />
+          <input v-model="storeCreateName" placeholder="显示名" @keyup.enter="createStoreAccount" />
+          <select v-model="newStoreMemberRole">
+            <option value="staff">店员</option>
+            <option value="manager">店长</option>
+          </select>
+          <button
+            type="button"
+            :disabled="grassland.loading.value || !storeCreateEmail.trim() || !storeCreateName.trim()"
+            @click="createStoreAccount"
+          >创建账号并挂到本店</button>
+        </div>
+        <p class="team-hint">
+          系统生成一次性初始密码供你线下转交，对方首次登录须改密。任命店长需主体管理员权限；
+          开启审核后新建店员为待启用状态。
+        </p>
+      </details>
     </section>
   </article>
 </template>
@@ -384,6 +540,13 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
 .team-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .team-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .team-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
+/* 一次性初始密码展示区：强调「现在不看就永远看不到」的紧迫感 */
+.team-pw { background: color-mix(in srgb, var(--color-warning) 16%, transparent); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.team-pw-line { margin: 0; font-size: 13px; }
+.team-pw-code { font-size: 15px; letter-spacing: 1px; padding: 2px 8px; border-radius: var(--radius-xs); background: var(--color-surface-strong); user-select: all; }
+.team-pw-hint { margin: 0; font-size: 12px; opacity: 0.72; }
+.team-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.team-toggle input { min-width: auto; }
 .team-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--color-border); }
 .team-sec h4 { margin: 0; font-size: 13px; }
 .team-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

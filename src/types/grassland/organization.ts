@@ -243,6 +243,22 @@ export interface Membership {
   createdAt: string | null
 }
 
+/** 任务书 #48：主体直建子账号的变更结果；initialPassword 是一次性明文，仅此一次。 */
+export interface SubAccountMutationResult {
+  account: {
+    id: string
+    email: string
+    displayName?: string | null
+    role?: string | null
+    status: string
+  }
+  initialPassword?: string
+  mustChangePassword?: boolean
+}
+
+/** 子账号在 app_users.status 的生命周期（任务书 #48 D4）。 */
+export type SubAccountStatus = 'active' | 'suspended' | 'pending_review' | 'rejected'
+
 export interface Store {
   id: string
   organizationId: string

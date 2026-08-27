@@ -10,6 +10,7 @@ import type {
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
   Membership, LoginSession, OrgInvitation, MyInvitation,
   InvitationAcceptResult, Store, StoreMembership, StoreRole, PublicBrandProfile, StorePublicProfile, StorePublicMedia,
+  SubAccountMutationResult,
   MediaUploadTicket, MediaMetadata, BrandProfile, SaveBrandProfileInput,
   AccountClosureCheck, AccountClosureRequest, PersonalDataExport, PiiLifecycleAudit,
 } from '../types/grassland'
@@ -172,6 +173,63 @@ export function useGrasslandIdentity(run: RunFn) {
   /** 移除组织成员（需 org OWNER）。移除最后一个 owner → 409（last-owner 守卫）。 */
   const removeMembership = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/memberships/${accountId}`, { method: 'DELETE' }))
+
+  // ---------- identity：成员子账号（任务书 #48）----------
+
+  /**
+   * 主体直建子账号（owner/admin）。一次动作 = 建号 + 赋角色 + 挂门店，免审默认即时生效。
+   * 响应 `initialPassword` 是一次性明文（此后任何接口不可再取），调用方必须立刻展示/转交。
+   * 邮箱已存在且未带 confirmBindExisting → 后端 409，error 条呈现提示二选一。
+   */
+  const createSubAccount = (
+    orgId: string,
+    input: { role: 'member' | 'manager' | 'staff'; email: string; displayName: string; storeId?: string; confirmBindExisting?: boolean },
+  ) =>
+    run(() => request<SubAccountMutationResult>(`/api/organizations/${orgId}/accounts`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  /** 店长代建本店 staff；组织开了审核开关时返回 status=pending_review。 */
+  const createStaffSubAccount = (
+    orgId: string,
+    storeId: string,
+    input: { email: string; displayName: string; confirmBindExisting?: boolean },
+  ) =>
+    run(() => request<SubAccountMutationResult>(`/api/organizations/${orgId}/stores/${storeId}/accounts`, {
+      method: 'POST',
+      body: JSON.stringify({ role: 'staff', ...input }),
+    }))
+
+  /** 停用成员账号：即时生效，事后站内知会主体（后端守卫报「最后一个店长」等冲突）。 */
+  const suspendSubAccount = (orgId: string, accountId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/suspend`, { method: 'POST' }))
+
+  /** 恢复停用成员（仅 suspended 态可恢复；rejected 是终态 → 409）。 */
+  const restoreSubAccount = (orgId: string, accountId: string) =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/restore`, { method: 'POST' }))
+
+  /** 店长代建员工的审批决定（approve / reject 终态）。 */
+  const reviewSubAccountCreation = (orgId: string, accountId: string, decision: 'approve' | 'reject') =>
+    run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    }))
+
+  /** 管理员重置成员密码：响应含新的一次性 initialPassword。 */
+  const resetSubAccountPassword = (orgId: string, accountId: string) =>
+    run(() => request<SubAccountMutationResult>(
+      `/api/organizations/${orgId}/accounts/${accountId}/reset-password`, { method: 'POST' }))
+
+  /** 成员添加审核开关读/切（切需 org ADMIN+）。 */
+  const getMemberReviewRequired = (orgId: string) =>
+    run(() => request<{ required: boolean }>(`/api/organizations/${orgId}/member-review-required`))
+
+  const setMemberReviewRequired = (orgId: string, required: boolean) =>
+    run(() => request<{ required: boolean }>(`/api/organizations/${orgId}/member-review-required`, {
+      method: 'PATCH',
+      body: JSON.stringify({ required }),
+    }))
 
   // ---------- identity：多设备登录会话（Slice 2I）----------
 
@@ -362,6 +420,9 @@ export function useGrasslandIdentity(run: RunFn) {
     listPendingPermissionRequests, claimPermissionRequest, listPermissionRequestAudit,
     reviewPermissionRequest,
     listMemberships, addMembership, removeMembership,
+    createSubAccount, createStaffSubAccount,
+    suspendSubAccount, restoreSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
+    getMemberReviewRequired, setMemberReviewRequired,
     listMySessions, revokeOtherSessions, revokeSession,
     checkAccountClosure, requestPersonalDataExport, getPersonalDataExport,
     requestAccountClosure, listPiiLifecycleAudit,

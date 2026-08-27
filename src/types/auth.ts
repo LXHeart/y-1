@@ -5,6 +5,8 @@ export interface AuthUser {
   role: string
   /** GL-P2-ADMIN-001：后端角色数组（多值，来自 backend_role 表）。旧用户可能缺失 → 视为空数组。 */
   roles?: string[]
+  /** 任务书 #48：管理员代建/重置后的首登强制改密态；改密成功即清除 */
+  mustChangePassword?: boolean
 }
 
 export interface AuthSuccessResponse {

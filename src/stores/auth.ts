@@ -20,6 +20,12 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => currentUser.value !== null)
 
   /**
+   * 首登强制改密态（任务书 #48）：主体直建/重置密码的子账号登录成功但未改密时为 true。
+   * 路由守卫据此锁到改密页；服务端还有 edge 的 428 硬闸兜底，前端只是体验层。
+   */
+  const mustChangePassword = computed(() => currentUser.value?.mustChangePassword === true)
+
+  /**
    * 当前账号的后台角色集合（GL-P2-ADMIN-001）。优先读 roles 数组；旧用户缺失时回落单值 role 兜底
    * （admin → platform_admin / customer_service → customer_service），保证向后兼容。
    */
@@ -142,6 +148,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * 本人改密（任务书 #48）：首登强制态下 currentPassword 可省（后端 account_flag 放行）；
+   * 成功即清除当前登录对象的标记，路由守卫随即放行业务页。
+   */
+  async function changePassword(newPassword: string, currentPassword?: string): Promise<boolean> {
+    try {
+      await request<{ success: true }>('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify(currentPassword ? { currentPassword, newPassword } : { newPassword }),
+      }, { fallbackError: '修改密码失败' })
+      if (currentUser.value) currentUser.value.mustChangePassword = false
+      return true
+    } catch (error: unknown) {
+      throw error instanceof Error ? error : new Error('修改密码失败')
+    }
+  }
+
   async function logout(): Promise<boolean> {
     loggingOut.value = true
     logoutError.value = ''
@@ -166,6 +189,8 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     currentUser,
     isAuthenticated,
+    mustChangePassword,
+    changePassword,
     backendRoles,
     hasBackendRole,
     loading,
