@@ -31,7 +31,9 @@ class RecommenderIdentityBackfillMigrationTest extends IdentityItSupport {
                     + "created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), "
                     + "UNIQUE(account_id, identity_type))");
             statement.execute("CREATE TABLE " + schema + ".recommender_profile (account_id uuid PRIMARY KEY)");
-            statement.execute("CREATE TABLE " + schema + ".identity_session (session_token text PRIMARY KEY)");
+            // 列结构与 V5 真实表对齐：V45 存量清理按 search_path 命中本 schema 的表并引用其列
+            statement.execute("CREATE TABLE " + schema + ".identity_session (session_token text PRIMARY KEY, "
+                    + "account_id uuid NOT NULL, active_identity_type varchar(32))");
             statement.execute("CREATE TABLE " + schema + ".identity_audit_log (id uuid PRIMARY KEY)");
             statement.execute("CREATE TABLE " + schema + ".outbox (id uuid PRIMARY KEY)");
             statement.execute("INSERT INTO " + schema + ".recommender_profile(account_id) VALUES ('"

@@ -44,6 +44,13 @@ class SingleMemberModelCleanupMigrationTest extends IdentityItSupport {
         db.sql("INSERT INTO store_membership(id, store_id, account_id, role)"
                 + " VALUES (gen_random_uuid(), CAST(:store AS uuid), CAST(:sm AS uuid), 'manager')")
                 .bind("store", storeId).bind("sm", storeOnly.accountId()).then().block();
+        // 被清成员的快照身份（V3：identity_profile 非实时解析，V45 须一并清）+ 活动身份停在 merchant
+        db.sql("INSERT INTO identity_profile(id, account_id, identity_type, organization_id, status)"
+                + " VALUES (gen_random_uuid(), CAST(:acct AS uuid), 'merchant', CAST(:org AS uuid), 'active')")
+                .bind("acct", member.accountId()).bind("org", orgId).then().block();
+        db.sql("INSERT INTO identity_session(session_token, account_id, active_identity_type)"
+                + " VALUES ('v45-sess-token', CAST(:acct AS uuid), 'merchant')")
+                .bind("acct", member.accountId()).then().block();
         db.sql("INSERT INTO organization_invitation(id, organization_id, email, role, status,"
                 + " invited_by_account_id, expires_at)"
                 + " VALUES (gen_random_uuid(), CAST(:org AS uuid), 'v45-pending@example.com', 'member', 'pending',"
@@ -73,6 +80,16 @@ class SingleMemberModelCleanupMigrationTest extends IdentityItSupport {
                         + " WHERE organization_id = CAST(:org AS uuid) AND email = 'v45-pending@example.com'")
                 .bind("org", orgId).map(r -> r.get("status", String.class)).one().block();
         org.assertj.core.api.Assertions.assertThat(invitationStatus).isEqualTo("cancelled");
+        // 快照身份同步清除 + 活动身份重置（幽灵主体不得残留在身份选择页）
+        Long ghostProfiles = db.sql("SELECT COUNT(*)::int AS c FROM identity_profile"
+                        + " WHERE account_id = CAST(:acct AS uuid) AND identity_type = 'merchant'")
+                .bind("acct", member.accountId())
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        org.assertj.core.api.Assertions.assertThat(ghostProfiles).isZero();
+        Boolean activeReset = db.sql("SELECT (active_identity_type IS NULL) AS is_null"
+                        + " FROM identity_session WHERE session_token = 'v45-sess-token'")
+                .map(r -> r.get("is_null", Boolean.class)).one().block();
+        org.assertj.core.api.Assertions.assertThat(activeReset).isTrue();
 
         // 幂等：重放第二次零副作用（通知不重复）
         runMigration("V45__single_member_model_cleanup.sql");
