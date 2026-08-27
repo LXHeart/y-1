@@ -11,9 +11,10 @@ import org.springframework.http.MediaType;
  * 子账号体系端到端（任务书 #48；#49 loginName 改造）。继承 {@link IdentityItSupport}，
  * 共享容器数据按登录名前缀隔离。
  *
- * <p>覆盖矩阵：直建 happy path（前缀拼接/旁表/占位邮箱）、撞登录名 409、格式校验 4xx、
- * 审核开关驱动的 pending/active、四守卫（最后经理/owner 自保护/自操作）、纯门店经理
- * 权限边界、审批 approve/reject 与终态语义、前缀读改端点。
+ * <p>覆盖矩阵（#52 池模型后）：直建 happy path（入池+挂店+前缀拼接/旁表/占位邮箱）、
+ * 撞登录名 409、格式校验 4xx、审核流退役（三端点 404 + 直建恒 active）、三守卫
+ * （owner 自保护/自操作）、一店一店长建号闸、纯门店经理权限边界、删除终态、前缀读端点。
+ * D8①「最后店长不可停/删」已废除（#52 决策 E），分配/移除/调度端点见 StoreAssignmentIT。
  */
 class OrgSubAccountControllerIT extends IdentityItSupport {
 
@@ -119,41 +120,36 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
                 .expectStatus().isForbidden();
     }
 
-    // ---------- 审核开关 ----------
+    // ---------- 审核流退役（#52 决策 A） ----------
 
     @Test
-    void reviewToggle_switchesStaffCreationBetweenPendingAndActive() {
+    void reviewFlowRetired_endpointsGone_creationAlwaysActive() {
         var owner = seedAccount("sa-review@example.com");
         String cookie = owner.cookie();
         String orgId = createOrg(cookie, "审核主体");
         String storeId = createStore(orgId, cookie, "分店A");
 
-        toggleReview(orgId, cookie, true);
+        // 三条退役路径一律 404（端点已删，不再有 pending 产生通路）
+        client().patch().uri("/api/organizations/" + orgId + "/member-review-required")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{}").exchange().expectStatus().isNotFound();
+        client().get().uri("/api/organizations/" + orgId + "/member-review-required")
+                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isNotFound();
+        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/accounts")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{}").exchange().expectStatus().isNotFound();
+        client().post().uri("/api/organizations/" + orgId + "/accounts/00000000-0000-0000-0000-000000000000/review")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+                .bodyValue("{}").exchange().expectStatus().isNotFound();
 
-        var manager = createManagerViaOrg(orgId, storeId, cookie, "revmgr", "李店长");
-
-        Map<String, Object> created = createStoreAccount(orgId, storeId, manager.cookie(),
-                "pending9", "新员工").expectStatus().isCreated()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        created = (Map<String, Object>) created.get("data");
-        assertThat(((Map<?, ?>) created.get("account")).get("status")).isEqualTo("pending_review");
-
-        // 审批放行 → active
-        String pendingId = (String) ((Map<?, ?>) created.get("account")).get("id");
-        review(orgId, pendingId, cookie, "approve").expectStatus().isOk();
-        assertThat(statusOf(pendingId)).isEqualTo("active");
-
-        // 开关关闭的对照：owner 直建（ADMIN+ 永不 pending，D6）
-        toggleReview(orgId, cookie, false);
-        String storeB = createStore(orgId, cookie, "分店B");
+        // 唯一建号路径（主体直建）恒 active；列表带账号状态（读侧契约保留）
         Map<String, Object> offCase = createAccount(orgId, cookie,
-                staffJson(storeB, "instant7", "即启用员工"))
+                staffJson(storeId, "instant7", "即启用员工"))
                 .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         offCase = (Map<String, Object>) offCase.get("data");
         assertThat(((Map<?, ?>) offCase.get("account")).get("status")).isEqualTo("active");
 
-        // 列表带账号状态（任务书 #48 审核闭环的读侧契约）
-        client().get().uri("/api/organizations/" + orgId + "/stores/" + storeB + "/memberships")
+        client().get().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")
                 .header("Cookie", "y1.sid=" + cookie).exchange()
                 .expectStatus().isOk().expectBody()
                 .jsonPath("$.data[?(@.role=='staff')].accountStatus").isEqualTo("active");
@@ -177,7 +173,7 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
     }
 
     @Test
-    void guard_lastActiveManagerCannotBeSuspended_thenRoundTripWorks() {
+    void uniqueManagerGate_and_suspendingSoleManagerAllowed() {
         var owner = seedAccount("sa-lastmgr@example.com");
         String cookie = owner.cookie();
         String orgId = createOrg(cookie, "末位经理主体");
@@ -189,14 +185,12 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         mgr = (Map<String, Object>) mgr.get("data");
         String mgrId = (String) ((Map<?, ?>) mgr.get("account")).get("id");
 
-        // ① 店内仅此一名经理 → 停用被拒
-        suspend(orgId, mgrId, cookie).expectStatus().isEqualTo(409)
-                .expectBody().jsonPath("$.error").isEqualTo("不能停用最后一个可用门店经理");
-
-        // 补第二位 active 经理后停用成功；恢复一次后再恢复报冲突
+        // 决策 B（建号闸）：同店再建第二位店长 → 409，一店一店长
         createAccount(orgId, cookie, managerJson(storeId, "backupmgr", "替补经理"))
-                .expectStatus().isCreated();
+                .expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("该门店已有店长，请先移除或调度原店长");
 
+        // 决策 E：D8① 已废除——停用唯一店长成功，店进入「主体代管」态
         suspend(orgId, mgrId, cookie).expectStatus().isOk();
         assertThat(statusOf(mgrId)).isEqualTo("suspended");
 
@@ -217,8 +211,9 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         var manager = createManagerViaOrg(orgId, storeId, cookie, "bndmgr", "边界店长");
         var outsider = seedAccount("sa-bnd-out@example.com");
 
-        Map<String, Object> staff = createStoreAccount(orgId, storeId, manager.cookie(),
-                "bndstaff", "受管员工").expectStatus().isCreated()
+        // #52：店长不再自建——员工由主体直建入池挂店，店长只有停用/恢复权
+        Map<String, Object> staff = createAccount(orgId, cookie, staffJson(storeId, "bndstaff", "受管员工"))
+                .expectStatus().isCreated()
                 .expectBody(Map.class).returnResult().getResponseBody();
         staff = (Map<String, Object>) staff.get("data");
         String staffId = (String) ((Map<?, ?>) staff.get("account")).get("id");
@@ -234,31 +229,6 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         suspend(orgId, outsider.accountId(), manager.cookie()).expectStatus().isNotFound();
     }
 
-    // ---------- reject 终态 ----------
-
-    @Test
-    void reviewReject_isTerminal_restoreThenFails() {
-        var owner = seedAccount("sa-term@example.com");
-        String cookie = owner.cookie();
-        String orgId = createOrg(cookie, "终态主体");
-        String storeId = createStore(orgId, cookie, "终态店");
-        var manager = createManagerViaOrg(orgId, storeId, cookie, "termmgr", "终态店长");
-
-        toggleReview(orgId, cookie, true);
-
-        Map<String, Object> created = createStoreAccount(orgId, storeId, manager.cookie(),
-                "termstaff", "待拒员工").expectStatus().isCreated()
-                .expectBody(Map.class).returnResult().getResponseBody();
-        created = (Map<String, Object>) created.get("data");
-        String targetId = (String) ((Map<?, ?>) created.get("account")).get("id");
-
-        review(orgId, targetId, cookie, "reject").expectStatus().isOk();
-        assertThat(statusOf(targetId)).isEqualTo("rejected");
-
-        // rejected 是终态：restore 不复活
-        restore(orgId, targetId, cookie).expectStatus().isEqualTo(409);
-    }
-
     // ---------- 删除（任务书 #49 D8：永久作废 + 逻辑删除留痕）----------
 
     @Test
@@ -271,9 +241,6 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         Map<String, Object> staff = createAccount(orgId, cookie, staffJson(storeId, "delstaff", "将被删"))
                 .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         String staffId = (String) ((Map<?, ?>) ((Map<?, ?>) staff.get("data")).get("account")).get("id");
-
-        // 门店唯一经理不可删（同停用守卫）：先给店配经理，员工才可删
-        createAccount(orgId, cookie, managerJson(storeId, "delmgr", "守店经理")).expectStatus().isCreated();
 
         client().delete().uri("/api/organizations/" + orgId + "/accounts/" + staffId)
                 .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isOk();
@@ -310,7 +277,7 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
     }
 
     @Test
-    void deleteSubAccount_guards_selfOwnerAndLastManager() {
+    void deleteSubAccount_guards_selfAndOwner_soleManagerDeletable() {
         var owner = seedAccount("sa-delg@example.com");
         String cookie = owner.cookie();
         String orgId = createOrg(cookie, "删守卫主体");
@@ -320,12 +287,17 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         client().delete().uri("/api/organizations/" + orgId + "/accounts/" + owner.accountId())
                 .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isForbidden();
 
-        // 店内唯一经理不可删
+        // 决策 E：店内唯一经理可删（D8① 已废除），删除后关系清零
         Map<String, Object> mgr = createAccount(orgId, cookie, managerJson(storeId, "onlydel", "唯一经理"))
                 .expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
         String mgrId = (String) ((Map<?, ?>) ((Map<?, ?>) mgr.get("data")).get("account")).get("id");
         client().delete().uri("/api/organizations/" + orgId + "/accounts/" + mgrId)
-                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isEqualTo(409);
+                .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isOk();
+        Long storeRows = db.sql("SELECT COUNT(*)::int AS c FROM store_membership"
+                        + " WHERE account_id = CAST(:acct AS uuid)")
+                .bind("acct", mgrId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+        assertThat(storeRows).isZero();
     }
 
     // ---------- helpers ----------
@@ -345,15 +317,6 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
     private String staffJson(String storeId, String loginName, String displayName) {
         return "{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"loginName\":\"" + loginName
                 + "\",\"displayName\":\"" + displayName + "\"}";
-    }
-
-    private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec createStoreAccount(
-            String orgId, String storeId, String cookie, String loginName, String displayName) {
-        return client().post()
-                .uri("/api/organizations/" + orgId + "/stores/" + storeId + "/accounts")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-                .bodyValue("{\"role\":\"staff\",\"loginName\":\"" + loginName + "\",\"displayName\":\"" + displayName
-                        + "\"}").exchange();
     }
 
     /**
@@ -390,21 +353,6 @@ class OrgSubAccountControllerIT extends IdentityItSupport {
         return client().post()
                 .uri("/api/organizations/" + orgId + "/accounts/" + accountId + "/restore")
                 .header("Cookie", "y1.sid=" + cookie).exchange();
-    }
-
-    private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec review(
-            String orgId, String accountId, String cookie, String decision) {
-        return client().post()
-                .uri("/api/organizations/" + orgId + "/accounts/" + accountId + "/review")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-                .bodyValue("{\"decision\":\"" + decision + "\"}").exchange();
-    }
-
-    private void toggleReview(String orgId, String cookie, boolean required) {
-        client().patch().uri("/api/organizations/" + orgId + "/member-review-required")
-                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-                .bodyValue("{\"required\":" + required + "}")
-                .exchange().expectStatus().isOk();
     }
 
     private String accountPrefix(String orgId) {

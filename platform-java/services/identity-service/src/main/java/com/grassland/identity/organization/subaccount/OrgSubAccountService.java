@@ -25,21 +25,22 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 商家主体子账号服务（任务书 #48；#49 单一模型改造）。
+ * 商家主体子账号服务（任务书 #48；#49 单一模型；#52 池模型）。
  *
- * <p><b>建号</b>（D1/D2；#49 D4/D6）：owner/admin 直建任意角色；店长仅能代建本店 staff
- * （D6 开关决定 active / pending_review）。一次事务完成「插 app_users（占位邮箱）+ 写
- * account_username 登录名 + 插成员行 + 置首登改密标记 + outbox」。登录名 =
- * {@code 主体前缀-登录名}（各段 ^[a-z0-9]{3,24}$）；#49 起建号不填邮箱，撞名 409 换名，
- * #48 的 confirmBindExisting 关联既有账号分支已随挂靠通路下线删除。
+ * <p><b>建号</b>：owner/admin 直建（唯一建号路径——#52 决策 A：店长代建与审核流已退役）。
+ * 一次事务完成「插 app_users（占位邮箱）+ 写 account_username 登录名 + <b>入主体池</b>
+ * （organization_membership.role=member）+ 可选挂店 + 置首登改密标记 + outbox」。登录名 =
+ * {@code 主体前缀-登录名}（各段 ^[a-z0-9]{3,24}$）；挂店角色 manager/staff 须带 storeId，
+ * 且 manager 过一店一店长闸（#52 决策 B）。
  *
- * <p><b>状态真相源 = app_users.status</b>（D4）：{@code active / suspended / pending_review /
- * rejected}。停用即时生效依赖平台两道既有闸（edge 每请求 {@code lower(status)='active'} 过滤、
+ * <p><b>状态真相源 = app_users.status</b>（D4）：{@code active / suspended / deleted}。
+ * 停用即时生效依赖平台两道既有闸（edge 每请求 {@code lower(status)='active'} 过滤、
  * identity resolver 403），本服务只负责改值与守卫。恢复只接受 suspended → active；
- * rejected 是终态，restore 无法复活。
+ * deleted 是终态，restore 无法复活。
  *
- * <p><b>四守卫</b>（D8）：①每店最后一个 active MANAGER 不可停；②org OWNER 账号不可被经此停用；
- * ③不可操作自己；④重复成员关系 409（沿用 UNIQUE 冲突口径）。
+ * <p><b>三守卫</b>：①org OWNER 账号不可被停用/删除；②不可操作自己；③重复成员关系 409。
+ * #48 D8①「每店最后一个 active MANAGER 不可停/删」已随 #52 池模型废除——店可无店长
+ * （主体代管兜底，新建分店即此态），停/移/调三种路径语义一致（#52 决策 E）。
  */
 @Service
 public class OrgSubAccountService {
@@ -81,26 +82,12 @@ public class OrgSubAccountService {
 
     // ---------- 建号 ----------
 
-    /** owner/admin 直建：任意角色，永不 pending（D6）。role=member 时不得带 storeId。 */
+    /** owner/admin 直建：member=入池不挂店；manager/staff=入池并挂指定门店（唯一建号路径，#52 决策 A）。 */
     public Mono<CreatedSubAccount> createByOrg(String operatorAccountId, String organizationId,
             CreateSubAccountRequest req) {
         return prepareTarget(organizationId, req)
                 .flatMap(target -> ensureStoreInOrg(organizationId, target)
                         .then(doCreate(operatorAccountId, organizationId, target, "active")));
-    }
-
-    /** 店长代建本店 staff：审核开关 on → pending_review，off → active（D6）。 */
-    public Mono<CreatedSubAccount> createStaffByManager(String operatorAccountId, String organizationId,
-            String storeId, CreateSubAccountRequest req) {
-        return prepareTarget(organizationId, req).flatMap(input -> {
-            RoleTarget fixedStaff = new RoleTarget("staff", input.loginName(), input.displayName(), storeId);
-            Mono<String> statusMono = organizations.selectMemberReviewRequired(organizationId)
-                    .defaultIfEmpty(Boolean.FALSE)
-                    .map(reviewRequired -> Boolean.TRUE.equals(reviewRequired) ? "pending_review" : "active");
-            return ensureStoreInOrg(organizationId, fixedStaff)
-                    .then(statusMono.flatMap(status -> doCreate(operatorAccountId, organizationId, fixedStaff,
-                            status)));
-        });
     }
 
     /** 先读主体前缀再拼完整登录名（D4/D5）：前缀缺失是异常态（V43 NOT NULL 兜底），建号直接 409。 */
@@ -175,11 +162,29 @@ public class OrgSubAccountService {
                                         target.role(), status, initialPassword)))));
     }
 
+    /**
+     * #52 池模型：一律先入主体池（organization_membership.role=member）；带门店角色时再挂
+     * store_membership。挂店为<b>店长</b>须过一店一店长闸（决策 B；店员不设限）——建号时
+     * 该账号尚无门店行，排除位传空。
+     */
     private Mono<String> grantMembership(String organizationId, String accountId, RoleTarget target) {
+        Mono<String> poolRow = orgMemberships.create(organizationId, accountId, "member").map(Membership::id);
         if (target.requiresStore()) {
-            return storeMemberships.create(target.storeId(), accountId, target.role()).map(m -> m.id());
+            Mono<String> gated = "manager".equals(target.role())
+                    ? poolRow.flatMap(id -> guardUniqueManager(target.storeId(), null).thenReturn(id))
+                    : poolRow;
+            return gated.then(storeMemberships.create(target.storeId(), accountId, target.role()))
+                    .map(m -> m.id());
         }
-        return orgMemberships.create(organizationId, accountId, "member").map(Membership::id);
+        return poolRow;
+    }
+
+    /** 一店一店长（#52 决策 B）：目标店已有店长关系行（同店改角色时排除自身）→ 409。 */
+    private Mono<Void> guardUniqueManager(String storeId, String excludeAccountId) {
+        return storeMemberships.countManagerRows(storeId, excludeAccountId)
+                .flatMap(count -> count > 0
+                        ? Mono.error(new IdentityException(409, "该门店已有店长，请先移除或调度原店长"))
+                        : Mono.<Void>empty());
     }
 
     private Mono<Void> appendCreatedEvent(String organizationId, String accountId, String role, String storeId,
@@ -276,19 +281,10 @@ public class OrgSubAccountService {
 
     private Mono<Void> executeSuspension(String organizationId, String targetAccountId, String action) {
         if ("suspended".equals(action)) {
-            return guardLastActiveManager(organizationId, targetAccountId)
-                    .then(guardedStatusUpdate(targetAccountId, "suspended", "active", "当前状态不可停用"));
+            // #52 决策 E：D8①「最后店长不可停」废除——店可无店长（主体代管兜底）
+            return guardedStatusUpdate(targetAccountId, "suspended", "active", "当前状态不可停用");
         }
         return guardedStatusUpdate(targetAccountId, "active", "suspended", "当前状态不可恢复");
-    }
-
-    /** 守卫①（D8）：目标在本组织内担任经理的每家店，扣除目标后仍须剩至少一名 active 经理。 */
-    private Mono<Void> guardLastActiveManager(String organizationId, String targetAccountId) {
-        return storeMemberships.findManagerStoreIdsByAccountInOrg(targetAccountId, organizationId)
-                .flatMap(storeId -> storeMemberships.countManagersExcluding(storeId, targetAccountId)
-                        .filter(count -> count >= 1)
-                        .switchIfEmpty(Mono.error(new IdentityException(409, "不能停用最后一个可用门店经理"))))
-                .then();
     }
 
     /** 单边胜出的 guarded UPDATE：只允许 from→to 迁移；0 行=状态不符，回查现值给可读错误。 */
@@ -325,7 +321,7 @@ public class OrgSubAccountService {
     /**
      * 删除成员 = 解除本主体下全部组织/门店成员关系 + 账号转 {@code deleted}（{@code deleted_at}
      * 留痕，不物理删行），同事务写 outbox {@code OrgSubAccountDeleted}。不可恢复——restore
-     * 对 deleted 一律 409。守卫同停用（自己/owner/最后 active 经理/权限分档）。
+     * 对 deleted 一律 409。守卫：自己/owner/权限分档（#52 决策 E：最后店长保护已废除）。
      */
     public Mono<Void> deleteSubAccount(String operatorAccountId, String organizationId, String targetAccountId) {
         if (operatorAccountId.equals(targetAccountId)) {
@@ -341,8 +337,7 @@ public class OrgSubAccountService {
                     return rejectDeletedTerminal(targetAccountId, "账号已删除，不可重复删除")
                             .then(requireOperatorAuthority(operatorAccountId, organizationId, targetAccountId))
                             .then(transactions.transactional(
-                                    guardLastActiveManager(organizationId, targetAccountId)
-                                            .then(guardedDelete(organizationId, targetAccountId))
+                                    guardedDelete(organizationId, targetAccountId)
                                             .then(appendDeletedEvent(organizationId, targetAccountId,
                                                     operatorAccountId))));
                 });
@@ -381,29 +376,7 @@ public class OrgSubAccountService {
         return outbox.append(event);
     }
 
-    // ---------- 审核（D6）----------
-
-    public Mono<Void> review(String operatorAccountId, String organizationId, String targetAccountId,
-            SubAccountReviewRequest req) {
-        boolean decisionKnown = req.decision() != null
-                && (req.isApprove() || "reject".equalsIgnoreCase(req.decision()));
-        if (!decisionKnown) {
-            return Mono.error(new IdentityException(400, "decision 仅支持 approve/reject"));
-        }
-        boolean approve = req.isApprove();
-        if (operatorAccountId.equals(targetAccountId)) {
-            return Mono.error(new IdentityException(403, "不能审批自己"));
-        }
-        return ensureTargetInOrg(targetAccountId, organizationId)
-                .then(requireAdminPlus(operatorAccountId, organizationId))
-                // 迁移与审计事件同事务，理由同 changeSuspension
-                .then(transactions.transactional(approve
-                        ? guardedStatusUpdate(targetAccountId, "active", "pending_review", "账号不在待审状态")
-                                .then(appendReviewedEvent(organizationId, targetAccountId, operatorAccountId, true))
-                        : guardedStatusUpdate(targetAccountId, "rejected", "pending_review", "账号不在待审状态")
-                                .then(appendReviewedEvent(organizationId, targetAccountId, operatorAccountId,
-                                        false))));
-    }
+    // ---------- 密码重置（D3）----------
 
     /** 账号显式版 ADMIN+ 门禁（内部调用无 request 可解析，与 {@code OrgAuthorization.requireRole} 同判据）。 */
     private Mono<Void> requireAdminPlus(String operatorAccountId, String organizationId) {
@@ -412,20 +385,6 @@ public class OrgSubAccountService {
                 .switchIfEmpty(Mono.error(new IdentityException(403, "权限不足")))
                 .then();
     }
-
-    private Mono<Void> appendReviewedEvent(String organizationId, String targetAccountId, String reviewedBy,
-            boolean approved) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("organizationId", organizationId);
-        payload.put("accountId", targetAccountId);
-        payload.put("reviewedBy", reviewedBy);
-        payload.put("decision", approved ? "approved" : "rejected");
-        EventEnvelope event = new EventEnvelope(UUID.randomUUID().toString(), "StaffCreationReviewed",
-                "OrganizationSubAccount", targetAccountId, 1, Instant.now(), null, payload);
-        return outbox.append(event);
-    }
-
-    // ---------- 密码重置（D3）----------
 
     /** 管理员重置成员密码：新一次性密码 + 重新置首登强制改密，旧密码即刻失效。 */
     public Mono<CreatedSubAccount> resetPassword(String operatorAccountId, String organizationId,

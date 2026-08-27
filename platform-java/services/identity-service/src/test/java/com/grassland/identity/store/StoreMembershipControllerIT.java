@@ -18,11 +18,11 @@ class StoreMembershipControllerIT extends IdentityItSupport {
         String orgId = createOrg(owner.cookie(), "门店成员主体");
         String storeId = createStore(orgId, owner.cookie(), "测试门店");
 
-        // 直建一名店员（唯一成员产生通路，#49），列表应回显其账号状态
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/accounts")
+        // 直建一名店员挂到本店（#52 唯一建号通路=主体直建+storeId），列表应回显其账号状态
+        client().post().uri("/api/organizations/" + orgId + "/accounts")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .header("Cookie", "y1.sid=" + owner.cookie())
-                .bodyValue("{\"role\":\"staff\",\"loginName\":\"smstaff1\",\"displayName\":\"门店员工\"}")
+                .bodyValue("{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"loginName\":\"smstaff1\",\"displayName\":\"门店员工\"}")
                 .exchange().expectStatus().isCreated();
 
         client().get().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/memberships")

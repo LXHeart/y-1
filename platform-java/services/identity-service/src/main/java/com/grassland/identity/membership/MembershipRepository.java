@@ -59,10 +59,21 @@ public class MembershipRepository {
     public Flux<Membership> findByOrganizationWithAccountStatus(String organizationId) {
         return db.sql("""
                 SELECT m.id::text, m.organization_id::text, m.account_id::text, m.role,
-                       m.created_at, m.updated_at, u.status AS account_status, n.username
+                       m.created_at, m.updated_at, u.status AS account_status, n.username,
+                       a.store_id::text, a.store_role, a.store_name
                 FROM organization_membership m
                 LEFT JOIN app_users u ON u.id = m.account_id
                 LEFT JOIN account_username n ON n.account_id = m.account_id
+                LEFT JOIN LATERAL (
+                    SELECT sm.store_id::text AS store_id, sm.role AS store_role, s.name AS store_name
+                    FROM store_membership sm
+                    JOIN store s ON s.id = sm.store_id
+                    WHERE sm.account_id = m.account_id
+                      AND s.organization_id = m.organization_id
+                      AND s.deleted_at IS NULL
+                    ORDER BY sm.created_at
+                    LIMIT 1
+                ) a ON TRUE
                 WHERE m.organization_id = CAST(:org AS uuid)
                 ORDER BY m.created_at
                 """)
@@ -153,7 +164,10 @@ public class MembershipRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("updated_at", OffsetDateTime.class)),
                 row.get("account_status", String.class),
-                row.get("username", String.class)
+                row.get("username", String.class),
+                row.get("store_id", String.class),
+                row.get("store_role", String.class),
+                row.get("store_name", String.class)
         );
     }
 

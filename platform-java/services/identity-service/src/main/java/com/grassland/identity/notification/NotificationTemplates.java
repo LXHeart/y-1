@@ -49,14 +49,6 @@ public final class NotificationTemplates {
 				yield new Template(NotificationCategory.INVITATION, "成员账号状态变更", body,
 						LINK_PERMISSION, orgPayload(payload));
 			}
-			case "StaffCreationReviewed" -> {
-				boolean approved = "approved".equals(stringField(payload, "decision"));
-					yield new Template(NotificationCategory.INVITATION,
-							approved ? "你的员工账号已通过审核" : "你添加的员工未通过审核",
-							approved ? "账号已启用，可以登录使用门店功能了"
-									: "该员工账号未通过主体审核，请联系管理员",
-							LINK_PERMISSION, orgPayload(payload));
-			}
 			// 任务书 #49：子账号绑定邮箱成功——站内知会（账号名与邮箱此后均可登录）
 			case "EmailBound" -> new Template(NotificationCategory.SYSTEM, "邮箱绑定成功",
 					"你的账号已绑定该邮箱，此后账号名与邮箱均可登录", null, orgPayload(payload));

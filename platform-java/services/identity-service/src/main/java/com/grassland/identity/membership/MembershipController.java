@@ -56,6 +56,10 @@ public class MembershipController {
 		map.put("accountStatus", m.accountStatus());
 		// 账号名（前缀-登录名）：行展示与删除强确认都要用，仓储已联 account_username
 		map.put("username", m.username());
+		// #52 池模型：该成员当前挂靠的门店（至多一店）；全 null = 未分配
+		map.put("storeId", m.storeId());
+		map.put("storeRole", m.storeRole());
+		map.put("storeName", m.storeName());
 		map.put("createdAt", m.createdAt() == null ? null : m.createdAt().toString());
 		return map;
 	}

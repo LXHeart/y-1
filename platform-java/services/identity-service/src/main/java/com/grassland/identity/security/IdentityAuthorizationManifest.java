@@ -73,27 +73,21 @@ public final class IdentityAuthorizationManifest {
                 "organization.subaccount.OrgSubAccountController",
                 "store.StoreController");
         register(policies, STORE_SCOPED,
-                "store.StoreMediaController",
-                "store.StoreMembershipController");
-        // 任务书 #48 子账号：createByOrg / 停用恢复 / 重置密码在 service 层做「操作者≥ADMIN 或
-        // 纯门店经理」的资源级判定，清单口径登记为组织域；店长建员工走门店门禁，读开关仅需登录。
-        policies.put(ROOT + "organization.subaccount.OrgSubAccountController", new ControllerPolicy(
-                ORGANIZATION_SCOPED,
+                "store.StoreMediaController");
+        // 任务书 #52 池模型：门店成员列表仍走门店门禁（店长工作台要渲染本店成员）；
+        // 分配/移除是主体级人事权（决策 C），端点内 requireRole(ADMIN)，清单登记组织域。
+        policies.put(ROOT + "store.StoreMembershipController", new ControllerPolicy(
+                STORE_SCOPED,
                 Map.of(
-                        "createByStoreManager", STORE_SCOPED,
-                        "getReviewRequired", AUTHENTICATED)));
+                        "assign", ORGANIZATION_SCOPED,
+                        "remove", ORGANIZATION_SCOPED)));
         register(policies, ADMIN,
                 "admin.AdminUserController",
                 "kyb.KybVerificationController",
                 // 任务书 #51：成员账号前缀改名收归运营（搜索 + 改前缀连带重写登录名），两端点均 requireAdmin
                 "organization.OrganizationPrefixAdminController");
-        // 任务书 #48 子账号：createByOrg / 停用恢复 / 重置密码均在 service 层做「操作者≥ADMIN 或
-        // 纯门店经理」的资源级判定，清单口径登记为组织域；店长建员工走门店门禁，读开关仅需登录。
-        policies.put(ROOT + "organization.subaccount.OrgSubAccountController", new ControllerPolicy(
-                ORGANIZATION_SCOPED,
-                Map.of(
-                        "createByStoreManager", STORE_SCOPED,
-                        "getReviewRequired", AUTHENTICATED)));
+        // #52 决策 A：店长代建（createByStoreManager）与审核开关（getReviewRequired）已退役，
+        // OrgSubAccountController 回归统一的组织域默认档（上方 register 登记）。
         register(policies, SERVICE,
                 "membership.InternalMembershipController",
                 "membership.InternalOrgAuthorizationController",

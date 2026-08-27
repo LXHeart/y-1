@@ -84,22 +84,8 @@ public class OrganizationRepository {
                 .map(OrganizationRepository::map).all();
     }
 
-    /** 成员添加审核开关（任务书 #48 V41/D6）。刻意向 record 外收敛：增列会波及全部构造点。 */
-    public Mono<Boolean> selectMemberReviewRequired(String organizationId) {
-        return db.sql("SELECT member_review_required FROM organization WHERE id = CAST(:id AS uuid)")
-                .bind("id", organizationId)
-                .map(row -> Boolean.TRUE.equals(row.get("member_review_required", Boolean.class)))
-                .one();
-    }
-
-    public Mono<Long> updateMemberReviewRequired(String organizationId, boolean required) {
-        return db.sql("UPDATE organization SET member_review_required = :required, updated_at = now()"
-                        + " WHERE id = CAST(:id AS uuid)")
-                .bind("required", required).bind("id", organizationId)
-                .fetch().rowsUpdated();
-    }
-
     // ---------- 任务书 #49 D5：成员账号前缀（刻意不进 record，同 member_review_required 先例） ----------
+    // #52 决策 A：member_review_required 的读写方法已随审核流退役删除（列保留，回滚友好）。
 
     public Mono<String> selectAccountPrefix(String organizationId) {
         return db.sql("SELECT account_prefix FROM organization WHERE id = CAST(:id AS uuid)")

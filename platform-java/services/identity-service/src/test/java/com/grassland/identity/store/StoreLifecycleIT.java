@@ -54,10 +54,11 @@ class StoreLifecycleIT extends IdentityItSupport {
         createStore(orgId, cookie, "主店");
         String storeId = createStore(orgId, cookie, "待删店");
 
-        // 守卫②：店内有成员 → 409
-        client().post().uri("/api/organizations/" + orgId + "/stores/" + storeId + "/accounts")
+        // 守卫②：店内有成员 → 409（#52 起造数走主体直建+挂店；店长代建端点已退役）
+        client().post().uri("/api/organizations/" + orgId + "/accounts")
                 .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
-                .bodyValue("{\"role\":\"staff\",\"loginName\":\"slguard" + java.util.UUID.randomUUID().toString().substring(0, 6) + "\",\"displayName\":\"占位员工\"}")
+                .bodyValue("{\"role\":\"staff\",\"storeId\":\"" + storeId + "\",\"loginName\":\"slguard"
+                        + java.util.UUID.randomUUID().toString().substring(0, 6) + "\",\"displayName\":\"占位员工\"}")
                 .exchange().expectStatus().isCreated();
         client().delete().uri("/api/organizations/" + orgId + "/stores/" + storeId)
                 .header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isEqualTo(409)

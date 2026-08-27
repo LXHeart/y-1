@@ -165,35 +165,33 @@ public class StoreMembershipRepository {
                 .map(row -> true).one().hasElement();
     }
 
-    /** 目标账号担任 manager 的门店（限定在本组织内，守卫①按店逐个校验）。 */
-    public Flux<String> findManagerStoreIdsByAccountInOrg(String accountId, String organizationId) {
-        return db.sql("""
-                SELECT sm.store_id::text AS store_id FROM store_membership sm
-                JOIN store s ON s.id = sm.store_id
-                WHERE sm.account_id = CAST(:acct AS uuid) AND sm.role = 'manager'
-                  AND s.organization_id = CAST(:org AS uuid)
-                ORDER BY sm.store_id
-                """)
-                .bind("acct", accountId).bind("org", organizationId)
-                .map(row -> row.get("store_id", String.class)).all();
-    }
-
     /**
-     * 守卫①计数：门店内扣除目标后剩余的 <b>active</b> 经理数——经理挂了 suspended 状态不算可用，
-     * 必须联 app_users 判状态。任务书 #48 D8。
+     * 一店一店长闸（#52 决策 B）：门店内已有的店长<b>关系行</b>数——不联 app_users 判状态
+     * （停用中的店长仍占着店长位，须先移除/调度才能指派新店长），排除自身仅在「同店改角色」
+     * 时传入。{@code excludeAccountId} 可空。
      */
-    public Mono<Long> countManagersExcluding(String storeId, String excludeAccountId) {
-        return db.sql("""
+    public Mono<Long> countManagerRows(String storeId, String excludeAccountId) {
+        var spec = db.sql("""
                 SELECT COUNT(*)::bigint AS c
                 FROM store_membership sm
-                JOIN app_users u ON u.id = sm.account_id
                 WHERE sm.store_id = CAST(:store AS uuid)
                   AND sm.role = 'manager'
-                  AND sm.account_id <> CAST(:excl AS uuid)
-                  AND lower(u.status) = 'active'
+                  AND (:excl IS NULL OR sm.account_id <> CAST(:excl AS uuid))
+                """).bind("store", storeId);
+        spec = excludeAccountId == null ? spec.bindNull("excl", String.class)
+                : spec.bind("excl", excludeAccountId);
+        return spec.map(row -> row.get("c", Long.class)).one();
+    }
+
+    /** 解除账号在本组织内的一切门店挂靠（#52 assign-or-move 的「先解旧」半步 + 移除回池）。 */
+    public Mono<Long> deleteAllByAccountInOrg(String accountId, String organizationId) {
+        return db.sql("""
+                DELETE FROM store_membership
+                WHERE account_id = CAST(:acct AS uuid)
+                  AND store_id IN (SELECT id FROM store WHERE organization_id = CAST(:org AS uuid))
                 """)
-                .bind("store", storeId).bind("excl", excludeAccountId)
-                .map(row -> row.get("c", Long.class)).one();
+                .bind("acct", accountId).bind("org", organizationId)
+                .fetch().rowsUpdated();
     }
 
     private static StoreMembership map(Readable row) {
