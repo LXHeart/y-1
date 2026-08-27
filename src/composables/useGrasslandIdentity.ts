@@ -201,6 +201,22 @@ export function useGrasslandIdentity(run: RunFn) {
       body: JSON.stringify({ prefix }),
     }))
 
+  // ---------- identity：子账号绑定邮箱（任务书 #49 D10）----------
+
+  /** 第一步：向目标邮箱发送绑定验证码（登录态；后端有邮箱级 pending 频控 + 账号级限流）。 */
+  const sendBindEmailCode = (email: string) =>
+    run(() => request<{ sent: boolean }>('/api/me/bind-email/code', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }))
+
+  /** 第二步：验码换绑。错码 4xx / 邮箱被占 409 由 error 条呈现；成功后账号名与邮箱均可登录。 */
+  const bindEmail = (email: string, code: string) =>
+    run(() => request<{ bound: boolean }>('/api/me/bind-email', {
+      method: 'POST',
+      body: JSON.stringify({ email, code }),
+    }))
+
   /** 停用成员账号：即时生效，事后站内知会主体（后端守卫报「最后一个店长」等冲突）。 */
   const suspendSubAccount = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/suspend`, { method: 'POST' }))
@@ -372,6 +388,7 @@ export function useGrasslandIdentity(run: RunFn) {
     listMemberships,
     createSubAccount, createStaffSubAccount,
     getAccountPrefix, setAccountPrefix,
+    sendBindEmailCode, bindEmail,
     suspendSubAccount, restoreSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
     getMemberReviewRequired, setMemberReviewRequired,
     listMySessions, revokeOtherSessions, revokeSession,

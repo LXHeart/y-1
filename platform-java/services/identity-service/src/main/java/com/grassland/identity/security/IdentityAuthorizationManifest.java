@@ -50,6 +50,8 @@ public final class IdentityAuthorizationManifest {
                 "auth.MeController",
                 // 任务书 #48：改密端点（登录态必需；首登强制改密形态免旧密由服务层判 account_flag）
                 "auth.ChangePasswordController",
+                // 任务书 #49：子账号绑定邮箱（登录态；两步 = 发码 + 验码换绑）
+                "auth.BindEmailController",
                 "compliance.ComplianceController",
                 "identityprofile.IdentityAuditController",
                 "identityprofile.IdentityProfileController",

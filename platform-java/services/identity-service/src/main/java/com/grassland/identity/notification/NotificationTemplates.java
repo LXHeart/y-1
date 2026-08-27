@@ -57,6 +57,9 @@ public final class NotificationTemplates {
 									: "该员工账号未通过主体审核，请联系管理员",
 							LINK_PERMISSION, orgPayload(payload));
 			}
+			// 任务书 #49：子账号绑定邮箱成功——站内知会（账号名与邮箱此后均可登录）
+			case "EmailBound" -> new Template(NotificationCategory.SYSTEM, "邮箱绑定成功",
+					"你的账号已绑定该邮箱，此后账号名与邮箱均可登录", null, orgPayload(payload));
 			default -> externalTemplate(eventType, payload);
 		};
 	}

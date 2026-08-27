@@ -66,6 +66,8 @@ public class NotificationRecipientResolver {
 					});
 			// 任务书 #48：店长代建员工的过审结果——通知被审账号本人。
 			case "StaffCreationReviewed" -> Mono.just(accountIds(payload, "accountId"));
+			// 任务书 #49：绑定邮箱成功——通知账号本人。
+			case "EmailBound" -> Mono.just(accountIds(payload, "accountId"));
 			default -> Mono.just(externalRecipients(envelope.eventType(), payload));
 		};
 	}
