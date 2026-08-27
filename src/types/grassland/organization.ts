@@ -245,6 +245,10 @@ export interface Membership {
   accountStatus?: SubAccountStatus
   /** 任务书 #49：登录名（列表联 account_username）；删除强确认据此输入，缺席回退 accountId */
   username?: string
+  /** 任务书 #52 池模型：当前挂靠的门店（至多一店，决策 D）；全缺席 = 未分配（池内待分配）。 */
+  storeId?: string | null
+  storeRole?: StoreRole | null
+  storeName?: string | null
 }
 
 /** 任务书 #48：主体直建子账号的变更结果；initialPassword 是一次性明文，仅此一次。 */

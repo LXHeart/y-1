@@ -166,7 +166,8 @@ export function useGrasslandIdentity(run: RunFn) {
   // ---------- identity：成员子账号（任务书 #48；#49 loginName 改造）----------
 
   /**
-   * 主体直建子账号（owner/admin）。一次动作 = 建号 + 赋角色 + 挂门店，免审默认即时生效。
+   * 主体直建子账号（ADMIN+，#52 唯一建号路径）。member = 入池不挂店；manager/staff =
+   * 入池并挂指定门店（manager 过一店一店长闸，冲突 409 由错误条呈现）。
    * #49：入参是登录名（3-24 位小写字母数字），后端拼「主体前缀-登录名」为完整账号；
    * 响应 `initialPassword` 是一次性明文（此后任何接口不可再取），调用方必须立刻展示/转交。
    */
@@ -177,17 +178,6 @@ export function useGrasslandIdentity(run: RunFn) {
     run(() => request<SubAccountMutationResult>(`/api/organizations/${orgId}/accounts`, {
       method: 'POST',
       body: JSON.stringify(input),
-    }))
-
-  /** 店长代建本店 staff；组织开了审核开关时返回 status=pending_review。 */
-  const createStaffSubAccount = (
-    orgId: string,
-    storeId: string,
-    input: { loginName: string; displayName: string },
-  ) =>
-    run(() => request<SubAccountMutationResult>(`/api/organizations/${orgId}/stores/${storeId}/accounts`, {
-      method: 'POST',
-      body: JSON.stringify({ role: 'staff', ...input }),
     }))
 
   /** 成员账号前缀读（组织成员可读，建号表单预览用）。 */
@@ -244,27 +234,27 @@ export function useGrasslandIdentity(run: RunFn) {
   const restoreSubAccount = (orgId: string, accountId: string) =>
     run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/restore`, { method: 'POST' }))
 
-  /** 店长代建员工的审批决定（approve / reject 终态）。 */
-  const reviewSubAccountCreation = (orgId: string, accountId: string, decision: 'approve' | 'reject') =>
-    run(() => request<unknown>(`/api/organizations/${orgId}/accounts/${accountId}/review`, {
-      method: 'POST',
-      body: JSON.stringify({ decision }),
-    }))
-
   /** 管理员重置成员密码：响应含新的一次性 initialPassword。 */
   const resetSubAccountPassword = (orgId: string, accountId: string) =>
     run(() => request<SubAccountMutationResult>(
       `/api/organizations/${orgId}/accounts/${accountId}/reset-password`, { method: 'POST' }))
 
-  /** 成员添加审核开关读/切（切需 org ADMIN+）。 */
-  const getMemberReviewRequired = (orgId: string) =>
-    run(() => request<{ required: boolean }>(`/api/organizations/${orgId}/member-review-required`))
+  // 任务书 #52 决策 A：审核开关与店长代建已退役（getMemberReviewRequired /
+  // setMemberReviewRequired / createStaffSubAccount / reviewSubAccountCreation 均已删除，
+  // 后端端点同批下线）。建号只在主体区一处，恒 active。
 
-  const setMemberReviewRequired = (orgId: string, required: boolean) =>
-    run(() => request<{ required: boolean }>(`/api/organizations/${orgId}/member-review-required`, {
-      method: 'PATCH',
-      body: JSON.stringify({ required }),
-    }))
+  /** 分配或调度（#52 决策 C：仅主体 ADMIN+）：池内成员 assign-or-move 到指定店；同店=改角色。 */
+  const assignStoreMember = (orgId: string, storeId: string, accountId: string, role: StoreRole) =>
+    run(() => request<StoreMembership>(
+      `/api/organizations/${orgId}/stores/${storeId}/memberships/${accountId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ role }),
+      }))
+
+  /** 移除回池（#52）：解除本店挂靠；账号保留为池内成员，可再分配。 */
+  const removeStoreMember = (orgId: string, storeId: string, accountId: string) =>
+    run(() => request<unknown>(
+      `/api/organizations/${orgId}/stores/${storeId}/memberships/${accountId}`, { method: 'DELETE' }))
 
   // ---------- identity：多设备登录会话（Slice 2I）----------
 
@@ -420,11 +410,10 @@ export function useGrasslandIdentity(run: RunFn) {
     listPendingPermissionRequests, claimPermissionRequest, listPermissionRequestAudit,
     reviewPermissionRequest,
     listMemberships,
-    createSubAccount, createStaffSubAccount,
+    createSubAccount, assignStoreMember, removeStoreMember,
     getAccountPrefix, searchAdminOrganizations, setAdminAccountPrefix,
     sendBindEmailCode, bindEmail,
-    suspendSubAccount, restoreSubAccount, deleteSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
-    getMemberReviewRequired, setMemberReviewRequired,
+    suspendSubAccount, restoreSubAccount, deleteSubAccount, resetSubAccountPassword,
     listMySessions, revokeOtherSessions, revokeSession,
     checkAccountClosure, requestPersonalDataExport, getPersonalDataExport,
     requestAccountClosure, listPiiLifecycleAudit,

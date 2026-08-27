@@ -101,7 +101,7 @@ function scrollBlockIntoView(elementId: string): void {
 const {
   side, orgs, stores, managerStoreScopes,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
-  activeOrg, activeOrgHasOrganizationAccess, activeOrganizationRole,
+  activeOrg, activeOrgHasOrganizationAccess, activeOrgStoreOnlyView, activeOrganizationRole,
   canManageAiBudget, canPublishBounty,
   loadOrganizations, loadActiveOrganizationStores, initForAccount, createOrg, refreshAccount, changeOrganization,
   provision, credit, switchSide, reset: resetSession,
@@ -788,10 +788,10 @@ watch(grasslandNavigationTarget, async (target) => {
           />
         </div>
 
-        <!-- 纯门店 MANAGER（无组织成员身份，#49 后主要是店长子账号）：门店资料 + 本店员工管理
-             （任务书 #50 阶段 2：店长建员工/停用恢复/过审复用 #48/#49 既有端点，零后端改动） -->
+        <!-- 门店工作台（#52 决策 H）：挂店 member（店长）视图——组织角色为 member 且有门店范围。
+             #52 后建号一律入池，店长也有组织身份，故不再以「无组织身份」判流。 -->
         <div
-          v-if="!activeOrgHasOrganizationAccess"
+          v-if="activeOrgStoreOnlyView"
           class="gl-zone-body"
         >
           <article
@@ -888,7 +888,7 @@ watch(grasslandNavigationTarget, async (target) => {
         </div>
         <div class="gl-zone-body">
           <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
-          <article v-if="activeOrgHasOrganizationAccess || managerStoreScopes.length === 0"
+          <article v-if="(activeOrgHasOrganizationAccess && !activeOrgStoreOnlyView) || managerStoreScopes.length === 0"
             id="gl-wallet" class="gl-tile">
             <h3>资金账户</h3>
             <p class="gl-balance">余额 <strong class="gl-num">{{ account ? formatYuan(account.balanceCents) : '¥—' }}</strong></p>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   Membership,
@@ -11,14 +11,14 @@ import type {
 } from '../types/grassland'
 
 /**
- * 组织成员 + 门店 + 门店成员管理（Slice 2F / 2G / 2J 的前端）。
+ * 组织成员（池）+ 门店 + 门店分配管理（Slice 2F / 2G / 2J 前端；任务书 #52 池模型）。
  *
- * 任务书 #49：邀请流（按邮箱邀请 + 「我的邀请」接受侧）整条下线——成员只能经主体直建子账号产生。
+ * 模型：建号一律入主体池（organization member），门店身份是池上的分配层（store_membership，
+ * 至多挂一店）。分配/移除/调度均为主体 ADMIN+ 人事权；一店一店长（冲突 409）。
  *
  * 授权分档（后端口径，UI 只做提示，真正门禁在服务端）：
- * - 门店列表：org MEMBER+；门店成员列表：门店 STAFF+
- * - 任命门店 manager：org **ADMIN+**；店长建 staff：**门店 MANAGER+**（店长可自管本店员工）
- * - 守卫：移除最后一个 owner / 唯一 manager 均 409
+ * - 建号/分配/移除/调度/停用恢复/删号：org **ADMIN+**（店长仅可停用/恢复本店员工）
+ * - 门店成员列表：门店 STAFF+；守卫：owner 保护 / 不可自操作（「最后店长」守卫已随 #52 决策 E 废除）
  */
 
 const emit = defineEmits<{ 'stores-changed': []; summary: [OrgTeamSummary] }>()
@@ -72,7 +72,7 @@ async function refresh(): Promise<void> {
   if (stores.value.length === 1) {
     await selectStore(stores.value[0]!.id)
   }
-  await loadReviewToggle()
+  await loadAccountPrefix()
 }
 
 watch(() => props.orgId, refresh, { immediate: true })
@@ -170,18 +170,23 @@ async function selectStore(storeId: string): Promise<void> {
 
 // 任务书 #49：门店挂靠函数（addStoreMember/removeStoreMember）已随挂靠通路下线。
 
-// ---------- 任务书 #48：子账号直建 / 停用恢复 / 审核开关 ----------
+// ---------- 任务书 #52：建号入池 / 门店分配 ----------
 
-const memberReviewRequired = ref(false)
 /** 主体成员账号前缀（#49 D5）：只读——建号预览与展示用；改名归运营（#51）。 */
 const accountPrefix = ref('')
 const orgCreateLoginName = ref('')
 const orgCreateName = ref('')
-const storeCreateLoginName = ref('')
-const storeCreateName = ref('')
-/** 门店区任命店长表单（2026-08-28 二轮收敛：任命自主体区下沉至门店成员区，按店内联）。 */
-const managerCreateLoginName = ref('')
-const managerCreateName = ref('')
+/** 建号时直接分配门店（#52 第 3 条）：'' = 暂不分配（纯池内成员）。 */
+const orgCreateStoreId = ref('')
+/** 建号分配的门店角色（选了门店才有意义；店长过一店一店长闸，冲突 409 由错误条呈现）。 */
+const orgCreateStoreRole = ref<'manager' | 'staff'>('staff')
+/** 从池中分配到当前选中门店（#52 第 2 条）。 */
+const assignAccountId = ref('')
+const assignRole = ref<'manager' | 'staff'>('staff')
+/** 行内调度表单（#52 第 4 条）：transferFor = 目标成员 accountId；null = 收起。 */
+const transferFor = ref<string | null>(null)
+const transferStoreId = ref('')
+const transferRole = ref<'manager' | 'staff'>('staff')
 
 /** 登录名规则（#49 D4）：仅小写字母数字、3-24 位；输入即时小写化。 */
 const LOGIN_NAME_RE = /^[a-z0-9]{3,24}$/
@@ -196,26 +201,20 @@ const ACCOUNT_STATUS_LABEL: Record<string, string> = {
   rejected: '已驳回',
 }
 
-/** 组织级建号（2026-08-28 二轮收敛：固定建组织成员）：登录名与显示名合法即可提交。 */
+/** 组织级建号：登录名与显示名合法即可提交（门店分配为可选）。 */
 const orgCreateDisabled = computed(() =>
   !loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim())
 
-/** 门店区任命店长：登录名与显示名合法即可提交（门店取当前选中店）。 */
-const managerCreateDisabled = computed(() =>
-  !loginNameValid(managerCreateLoginName.value) || !managerCreateName.value.trim())
+/** 池内未分配成员（#52）：门店区「从池中分配」的数据源；role=member 且未挂店。 */
+const poolMembers = computed(() => {
+  const memberList = Array.isArray(members.value) ? members.value : []
+  return memberList.filter((m) => m.role === 'member' && !m.storeId)
+})
 
 /** 建号预览：前缀-登录名（后端拼同样规则，前端只做提示）。 */
 const orgUsernamePreview = computed(() =>
   accountPrefix.value && orgCreateLoginName.value.trim()
     ? `${accountPrefix.value}-${orgCreateLoginName.value.trim().toLowerCase()}`
-    : '')
-const storeUsernamePreview = computed(() =>
-  accountPrefix.value && storeCreateLoginName.value.trim()
-    ? `${accountPrefix.value}-${storeCreateLoginName.value.trim().toLowerCase()}`
-    : '')
-const managerUsernamePreview = computed(() =>
-  accountPrefix.value && managerCreateLoginName.value.trim()
-    ? `${accountPrefix.value}-${managerCreateLoginName.value.trim().toLowerCase()}`
     : '')
 
 /**
@@ -224,10 +223,8 @@ const managerUsernamePreview = computed(() =>
  */
 const oneTimePassword = ref<{ username: string; password: string } | null>(null)
 
-async function loadReviewToggle(): Promise<void> {
+async function loadAccountPrefix(): Promise<void> {
   if (!props.orgId) return
-  const state = await grassland.getMemberReviewRequired(props.orgId)
-  if (state) memberReviewRequired.value = state.required
   const prefix = await grassland.getAccountPrefix(props.orgId)
   if (prefix) accountPrefix.value = prefix.prefix
 }
@@ -235,83 +232,77 @@ async function loadReviewToggle(): Promise<void> {
 // 任务书 #51：商家侧改前缀（savePrefix + prefixInput）已删除——前缀自动生成、商家只读，
 // 后端 PATCH /api/organizations/{id}/account-prefix 也已下线。改名是运营动作（会连带重写
 // 该主体下全部成员的登录名），入口在运营台「账号前缀」页签。
-
-async function toggleReview(event: Event): Promise<void> {
-  const box = event.target as HTMLInputElement
-  const required = box.checked
-  notice.value = ''
-  const updated = await grassland.setMemberReviewRequired(props.orgId, required)
-  if (!updated) {
-    // 切换失败（如非管理员 403）回滚 UI；原生 checked 不受 Vue 状态绑定管理，须显式写回
-    memberReviewRequired.value = !required
-    await nextTick()
-    box.checked = !required
-    return
-  }
-  notice.value = required ? '已开启：店长添加的员工须经主体审核后启用' : '已关闭：店长添加员工即时生效'
-}
+// 任务书 #52 决策 A：审核开关（member-review-required）与店长代建/审批端点同批退役。
 
 /**
- * 组织级建号：固定建组织成员（不挂门店）。店长/店员在门店成员区按店创建
- * （2026-08-28 二轮收敛：主体区与门店区各司其职，消除「两条路建出同一个店员」的重叠）。
+ * 建号入池（#52 唯一建号路径）：member = 入池不挂店；选了门店则同时分配为该店店长/店员。
+ * 一店一店长闸在后端（建号/分配/调度三处同闸），冲突 409 由错误条呈现。
  */
 async function createOrgAccount(): Promise<void> {
   const loginName = orgCreateLoginName.value.trim().toLowerCase()
   const displayName = orgCreateName.value.trim()
   if (!loginNameValid(loginName) || !displayName) return
+  const storeId = orgCreateStoreId.value || undefined
+  const role = storeId ? orgCreateStoreRole.value : 'member'
   notice.value = ''
   const created = await grassland.createSubAccount(props.orgId, {
-    role: 'member', loginName, displayName,
+    role, loginName, displayName, ...(storeId ? { storeId } : {}),
   })
   if (!created) return
   orgCreateLoginName.value = ''
   orgCreateName.value = ''
+  orgCreateStoreId.value = ''
+  orgCreateStoreRole.value = 'staff'
   oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
-  notice.value = created.account.status === 'pending_review'
-    ? '组织成员账号已登记，待审核通过后才能登录使用'
-    : '组织成员账号已创建，凭据请线下转交'
+  notice.value = storeId
+    ? `${STORE_ROLE_LABEL[role as StoreRole]}账号已创建并分配到门店，凭据请线下转交`
+    : '组织成员账号已创建（暂未分配门店），凭据请线下转交'
   await reloadMembers()
+  if (selectedStoreId.value) await selectStore(selectedStoreId.value)
 }
 
-/**
- * 任命店长（2026-08-28 二轮收敛：自主体区角色下拉下沉到门店成员区内联任命）。
- * D1 权限不变：仅主体 ADMIN+ 可任命（店长不能任命店长），越权由后端 403 呈现。
- */
-async function appointManager(): Promise<void> {
-  const loginName = managerCreateLoginName.value.trim().toLowerCase()
-  const displayName = managerCreateName.value.trim()
+/** 从池中分配到当前选中门店（#52 第 2 条）：assign-or-move——成员已在别店则先解除再挂本店。 */
+async function assignPoolMember(): Promise<void> {
   const storeId = selectedStoreId.value
-  if (!loginNameValid(loginName) || !displayName || !storeId) return
+  if (!storeId || !assignAccountId.value) return
   notice.value = ''
-  const created = await grassland.createSubAccount(props.orgId, {
-    role: 'manager', loginName, displayName, storeId,
-  })
-  if (!created) return
-  managerCreateLoginName.value = ''
-  managerCreateName.value = ''
-  oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
-  notice.value = created.account.status === 'pending_review'
-    ? '店长账号已登记，待审核通过后才能登录使用'
-    : '店长账号已创建，凭据请线下转交'
+  const done = await grassland.assignStoreMember(props.orgId, storeId, assignAccountId.value, assignRole.value)
+  if (done === null) return
+  notice.value = `已分配为本店${STORE_ROLE_LABEL[assignRole.value]}`
+  assignAccountId.value = ''
+  assignRole.value = 'staff'
   await Promise.all([reloadMembers(), selectStore(storeId)])
 }
 
-async function createStoreAccount(): Promise<void> {
-  const loginName = storeCreateLoginName.value.trim().toLowerCase()
-  const displayName = storeCreateName.value.trim()
-  if (!loginNameValid(loginName) || !displayName || !selectedStoreId.value) return
+/** 调度（#52 第 4 条）：把本店成员移到其他门店并设定其角色（同端点 assign-or-move）。 */
+function startTransfer(accountId: string): void {
+  transferFor.value = accountId
+  transferStoreId.value = ''
+  transferRole.value = 'staff'
+}
+
+async function confirmTransfer(): Promise<void> {
+  const accountId = transferFor.value
+  const currentStoreId = selectedStoreId.value
+  if (!accountId || !currentStoreId || !transferStoreId.value) return
   notice.value = ''
-  const created = await grassland.createStaffSubAccount(props.orgId, selectedStoreId.value, {
-    loginName, displayName,
-  })
-  if (!created) return
-  storeCreateLoginName.value = ''
-  storeCreateName.value = ''
-  oneTimePassword.value = { username: created.account.username, password: created.initialPassword ?? '' }
-  notice.value = created.account.status === 'pending_review'
-    ? '员工账号已登记，待主体审核通过后才能登录使用'
-    : '账号已创建，凭据请线下转交'
-  await selectStore(selectedStoreId.value)
+  const targetName = stores.value.find((s) => s.id === transferStoreId.value)?.name ?? '目标门店'
+  const done = await grassland.assignStoreMember(props.orgId, transferStoreId.value, accountId, transferRole.value)
+  if (done === null) return
+  notice.value = `已调度至「${targetName}」担任${STORE_ROLE_LABEL[transferRole.value]}`
+  transferFor.value = null
+  await Promise.all([reloadMembers(), selectStore(currentStoreId)])
+}
+
+/** 移除出本店（#52）：只解除挂靠，账号回池（组织关系保留），可再分配。删号在主体区。 */
+async function removeFromStore(accountId: string): Promise<void> {
+  const storeId = selectedStoreId.value
+  if (!storeId) return
+  notice.value = ''
+  const done = await grassland.removeStoreMember(props.orgId, storeId, accountId)
+  if (done === null) return
+  notice.value = '已移除出本店（账号保留在主体成员池，可再分配）'
+  await Promise.all([reloadMembers(), selectStore(storeId)])
 }
 
 /**
@@ -367,15 +358,6 @@ async function setAccountActive(accountId: string, active: boolean): Promise<voi
   if (done === null) return
   notice.value = active ? '账号已恢复可用' : '账号已停用（立即生效，系统将站内知会主体）'
   await Promise.all([reloadMembers(), selectedStoreId.value ? selectStore(selectedStoreId.value) : null])
-}
-
-/** 审核店长代建的员工（D6）：approve 即启用；reject 是终态，账号不可再用。 */
-async function reviewCreation(accountId: string, decision: 'approve' | 'reject'): Promise<void> {
-  notice.value = ''
-  const done = await grassland.reviewSubAccountCreation(props.orgId, accountId, decision)
-  if (done === null) return
-  notice.value = decision === 'approve' ? '已通过审核，该员工现在可以登录使用' : '已驳回，该账号将不可用'
-  if (selectedStoreId.value) await selectStore(selectedStoreId.value)
 }
 
 // ---------- 删除成员（任务书 #49 D8：永久作废 + 输入账号名强确认）----------
@@ -437,29 +419,14 @@ async function confirmDelete(): Promise<void> {
       <span class="team-hint">成员账号名 = 前缀-登录名；前缀由系统生成，如需修改请联系平台运营</span>
     </div>
 
-    <!-- 审核开关：仅影响店长代建路径，owner/admin 直建永不 pending（任务书 #48 D6）。
-         任务书 #51 第 2 条：单店无店长代建场景（本店只有主体账号），开关无意义故不呈现 -->
-    <div v-if="!singleStore" class="team-row">
-      <label class="team-toggle">
-        <input
-          type="checkbox"
-          :checked="memberReviewRequired"
-          :disabled="grassland.loading.value"
-          @change="toggleReview"
-        />
-        店长添加员工需主体审核
-      </label>
-      <span class="team-tag">切换需管理员</span>
-    </div>
-
-    <!-- 组织成员 -->
+    <!-- 组织成员（#52 池模型：全员入池，所属门店是分配层） -->
     <section class="team-sec">
       <h4>主体成员</h4>
       <p v-if="members.length === 0" class="team-hint">暂无成员记录。</p>
       <table v-else class="team-table">
         <thead>
           <tr>
-            <th>账号</th><th>角色</th><th>状态</th>
+            <th>账号</th><th>角色</th><th>所属门店</th><th>状态</th>
             <!-- 任务书 #51 第 5 条：单店（只有 owner）不呈现操作列——owner 的停用/删除服务端一律 403 -->
             <th v-if="showMemberActions">操作</th>
           </tr>
@@ -468,6 +435,11 @@ async function confirmDelete(): Promise<void> {
           <tr v-for="m in members" :key="m.id">
             <td><code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code></td>
             <td>{{ ROLE_LABEL[m.role] || m.role }}</td>
+            <!-- #52 池模型：挂靠门店（至多一店）；未分配 = 池内待分配 -->
+            <td>
+              <span v-if="m.storeName" class="team-tag">{{ m.storeName }}</span>
+              <span v-else class="team-hint">未分配</span>
+            </td>
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td v-if="showMemberActions">
               <!-- owner 行不给任何操作（服务端守卫 403：不可停用、不可删除、不可自操作） -->
@@ -495,10 +467,9 @@ async function confirmDelete(): Promise<void> {
         进入多店管理后即可创建店长/店员账号。
       </p>
 
-      <!-- 主体直建组织成员（任务书 #48/#49/#50；#51 起仅多店呈现；2026-08-28 二轮收敛：
-           主体区只建组织成员——店长任命下沉门店成员区、店员只在门店区建，每个能力一个入口） -->
+      <!-- 建号入池（#52 唯一建号路径）：可选在建号时就分配门店与角色（第 3 条） -->
       <details v-else class="team-adv">
-        <summary>添加组织成员：主体直接创建账号</summary>
+        <summary>添加成员：主体直接创建账号</summary>
         <div class="team-row">
           <input
             v-model="orgCreateLoginName"
@@ -507,6 +478,14 @@ async function confirmDelete(): Promise<void> {
           />
           <span v-if="orgUsernamePreview" class="team-tag">{{ orgUsernamePreview }}</span>
           <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
+          <select v-model="orgCreateStoreId">
+            <option value="">暂不分配门店</option>
+            <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+          <select v-if="orgCreateStoreId" v-model="orgCreateStoreRole">
+            <option value="staff">店员</option>
+            <option value="manager">店长</option>
+          </select>
           <button
             type="button"
             :disabled="grassland.loading.value || orgCreateDisabled"
@@ -514,9 +493,10 @@ async function confirmDelete(): Promise<void> {
           >创建账号</button>
         </div>
         <p class="team-hint">
-          创建即生效（管理员直建不受审核开关影响）；账号名 = 前缀-登录名（如 {{ accountPrefix ? accountPrefix + '-zhangsan' : '前缀-zhangsan' }}），
+          创建即生效；账号名 = 前缀-登录名（如 {{ accountPrefix ? accountPrefix + '-zhangsan' : '前缀-zhangsan' }}），
           系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
-          组织成员不挂门店；门店的店长/店员在下方「门店成员」区按店创建。
+          不选门店 = 纯主体成员（后续在「门店成员」区分配）；选门店即同时定岗为该店店长/店员
+          ——一个门店只能有一个店长，冲突会被拒绝。分配与调度也可随时在下方「门店成员」区调整。
         </p>
       </details>
     </section>
@@ -610,20 +590,15 @@ async function confirmDelete(): Promise<void> {
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
               <span v-if="m.implicit" class="team-hint">默认管理本店（在「主体成员」处管理）</span>
-              <template v-else-if="m.accountStatus === 'pending_review'">
-                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="reviewCreation(m.accountId, 'approve')">通过</button>
-                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="reviewCreation(m.accountId, 'reject')">驳回</button>
-              </template>
               <template v-else>
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
                 <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+                <!-- 调度/移除（#52 第 4 条）：分配层人事操作，仅多店且 ADMIN+（后端门禁） -->
+                <template v-if="!singleStore">
+                  <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="startTransfer(m.accountId)">调度</button>
+                  <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="removeFromStore(m.accountId)">移除</button>
+                </template>
               </template>
-              <button
-                v-if="!m.implicit"
-                type="button" class="team-quiet team-danger"
-                :disabled="grassland.loading.value"
-                @click="askDelete(m.accountId, m.username ?? null)"
-              >删除</button>
             </td>
           </tr>
         </tbody>
@@ -638,58 +613,63 @@ async function confirmDelete(): Promise<void> {
       </p>
 
       <template v-else>
-        <!-- 多店无店长（2026-08-28 二轮收敛）：新分店默认无人被任命为店长，主体账号代管
-             （后端 orgSuperUserAsManager 保有管理权——权限不是身份，故不再画隐式店长行） -->
+        <!-- 多店无店长：新分店默认无人挂店长位，主体账号代管（orgSuperUserAsManager 是权限
+             不是身份，不画店长行）；从池中分配一位店长即可 -->
         <p v-if="!hasStoreManager" class="team-hint">
-          该门店尚未任命店长，当前由主体账号代管。请在下方任命店长，或先直接添加店员。
+          该门店尚未任命店长，当前由主体账号代管。可从下方分配池内成员为本店店长。
         </p>
 
-        <!-- 任命店长（2026-08-28 二轮收敛：自主体区角色下沉至此，按店内联任命；
-             D1 权限不变——仅主体 ADMIN+，越权由后端 403 呈现） -->
+        <!-- 从池中分配（#52 第 2 条）：门店区不再建号，只做分配；成员经上方主体区创建 -->
         <details class="team-adv">
-          <summary>任命店长：为本店创建店长账号</summary>
+          <summary>从成员池分配到本店</summary>
           <div class="team-row">
-            <input
-              v-model="managerCreateLoginName"
-              placeholder="登录名（3-24 位字母数字）"
-              @keyup.enter="appointManager"
-            />
-            <span v-if="managerUsernamePreview" class="team-tag">{{ managerUsernamePreview }}</span>
-            <input v-model="managerCreateName" placeholder="店长姓名" @keyup.enter="appointManager" />
+            <select v-model="assignAccountId">
+              <option value="" disabled>选择未分配成员</option>
+              <option v-for="p in poolMembers" :key="p.id" :value="p.accountId">
+                {{ p.username || p.accountId.slice(0, 8) + '…' }}{{ p.storeName ? `（${p.storeName}）` : '' }}
+              </option>
+            </select>
+            <select v-model="assignRole">
+              <option value="staff">店员</option>
+              <option value="manager">店长</option>
+            </select>
             <button
               type="button"
-              :disabled="grassland.loading.value || managerCreateDisabled"
-              @click="appointManager"
-            >任命并创建账号</button>
+              :disabled="grassland.loading.value || !assignAccountId"
+              @click="assignPoolMember"
+            >分配到本店</button>
           </div>
+          <p v-if="poolMembers.length === 0" class="team-hint">
+            池内暂无未分配成员——先在上方「主体成员」区创建（可不选门店），再回到这里分配。
+          </p>
           <p class="team-hint">
-            店长可管理本店资料与本店员工（建店员、停用恢复）；账号名 = 前缀-登录名，
-            任命即生效，一次性初始密码请线下转交，对方首次登录须改密。
+            分配即定岗（店长/店员）；一个门店只能有一个店长，冲突会被拒绝。成员已挂他店时
+            分配到本店即完成调度（先解除原店）。
           </p>
         </details>
 
-        <!-- 店员直建（任务书 #48/#49）：固定建店员；任命店长用上方内联入口 -->
-        <details class="team-adv">
-          <summary>添加店员：直接创建账号</summary>
-          <div class="team-row">
-            <input
-              v-model="storeCreateLoginName"
-              placeholder="登录名（3-24 位字母数字）"
-              @keyup.enter="createStoreAccount"
-            />
-            <span v-if="storeUsernamePreview" class="team-tag">{{ storeUsernamePreview }}</span>
-            <input v-model="storeCreateName" placeholder="员工姓名" @keyup.enter="createStoreAccount" />
-            <button
-              type="button"
-              :disabled="grassland.loading.value || !loginNameValid(storeCreateLoginName) || !storeCreateName.trim()"
-              @click="createStoreAccount"
-            >创建店员账号</button>
-          </div>
-          <p class="team-hint">
-            账号名 = 前缀-登录名，系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
-            此处固定创建店员；任命店长请用上方「任命店长」入口。开启审核后新建为「待审核」，主体通过后才能登录。
-          </p>
-        </details>
+        <!-- 行内调度表单（#52 第 4 条）：点行内「调度」展开 -->
+        <div v-if="transferFor" class="team-row team-transfer">
+          <span class="team-tag">调度</span>
+          <select v-model="transferStoreId">
+            <option value="" disabled>目标门店</option>
+            <option v-for="s in stores.filter((x) => x.id !== selectedStoreId)" :key="s.id" :value="s.id">
+              {{ s.name }}
+            </option>
+          </select>
+          <select v-model="transferRole">
+            <option value="staff">店员</option>
+            <option value="manager">店长</option>
+          </select>
+          <button
+            type="button"
+            :disabled="grassland.loading.value || !transferStoreId"
+            @click="confirmTransfer"
+          >确认调度</button>
+          <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="transferFor = null">
+            取消
+          </button>
+        </div>
       </template>
     </section>
     <!-- 删除强确认（任务书 #49 D9）：输入完整账号名且完全一致才可确认；红色警示 -->

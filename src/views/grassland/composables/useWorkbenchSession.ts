@@ -83,6 +83,18 @@ export function useWorkbenchSession(
   const activeOrg = computed(() => orgs.value.find((o) => o.id === activeOrgId.value) || null)
   const managerStoreScopes = computed(() => storeScopes.value.filter((scope) => scope.role === 'manager'))
   const activeOrgHasOrganizationAccess = computed(() => organizationAccessIds.value.has(activeOrgId.value))
+
+  /**
+   * #52 决策 H（工作台路由）：入池后人人有组织身份，视图改按「组织角色 + 门店范围」分流——
+   * owner/admin 与纯池内 member → 主体工作台；挂店 member（有 manager 门店范围）→ 门店工作台
+   * （StoreStaffCard）。staff 范围的成员本就进不了商家侧（managerStoreScopes 才开通身份），不涉此分支。
+   */
+  const activeOrgStoreOnlyView = computed(() => {
+    const role = activeOrganizationRole.value
+    if (role === 'owner' || role === 'admin') return false
+    if (!activeOrgId.value) return false
+    return managerStoreScopes.value.some((scope) => scope.organizationId === activeOrgId.value)
+  })
   const activeOrganizationRole = computed(() => organizationRoles.value.get(activeOrgId.value) ?? null)
   const canManageAiBudget = computed(() =>
     activeOrganizationRole.value === 'owner' || activeOrganizationRole.value === 'admin',
@@ -143,7 +155,8 @@ export function useWorkbenchSession(
       selectedStoreId.value = ''
       return
     }
-    if (activeOrgHasOrganizationAccess.value) {
+    if (!activeOrgStoreOnlyView.value) {
+      // owner/admin 与纯池内 member：全量门店（listStores 门禁 MEMBER+，池内成员恰好满足）
       stores.value = (await grassland.listStores(activeOrgId.value)) ?? []
     } else {
       stores.value = managerStoreScopes.value
@@ -156,7 +169,7 @@ export function useWorkbenchSession(
           createdAt: null,
         }))
     }
-    if (!activeOrgHasOrganizationAccess.value
+    if (activeOrgStoreOnlyView.value
         && !stores.value.some((store) => store.id === selectedStoreId.value)) {
       selectedStoreId.value = stores.value[0]?.id ?? ''
     }
@@ -285,7 +298,7 @@ export function useWorkbenchSession(
     side, orgs, stores, storeScopes, organizationAccessIds, organizationRoles,
     hasMerchantIdentity, hasRecommenderIdentity, activeOrgId, selectedStoreId, account,
     newOrgName, creditAmountYuan, walletBalanceCents,
-    activeOrg, managerStoreScopes, activeOrgHasOrganizationAccess, activeOrganizationRole,
+    activeOrg, managerStoreScopes, activeOrgHasOrganizationAccess, activeOrgStoreOnlyView, activeOrganizationRole,
     canManageAiBudget, canPublishBounty, balanceYuan,
     loadOrganizations, loadActiveOrganizationStores, initForAccount,
     renameRequests, pendingRename, renaming, loadRenameRequests, requestRename,
