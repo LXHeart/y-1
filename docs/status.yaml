@@ -22,7 +22,8 @@
       { "id": 47, "status": "in_progress", "title": "模型密钥统一（剩 S7 明文清偿/V50 收口/S8 开场 UI 清理）" },
       { "id": 48, "status": "completed", "title": "商家成员子账号体系（主体直建直发）" },
       { "id": 49, "status": "completed", "title": "商家主体成员账号单一模型收敛（邀请流下线/账号名登录/绑邮箱/删除永久作废/V45 存量清理；纯门店经理子账号另行立项）" },
-      { "id": 50, "status": "in_progress", "title": "单店模式推导制+注册即开店（阶段1完成；阶段2 store-only 增强待拍板）" }
+      { "id": 50, "status": "in_progress", "title": "单店模式推导制+注册即开店（阶段1完成；阶段2 store-only 增强待拍板）" },
+      { "id": 51, "status": "in_progress", "title": "账号前缀收归运营（连带重写成员登录名）+ 单店UI收敛（S1-S4 已实现，待浏览器验收）" }
     ]
   },
   "platform": {
