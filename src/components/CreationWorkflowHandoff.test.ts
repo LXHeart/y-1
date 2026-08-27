@@ -145,7 +145,8 @@ describe('创作工作流 handoff', () => {
 
     await wrapper.setProps({ creationHandoff: articleHandoff(2, '新一轮主题') })
     expect((textarea.element as HTMLTextAreaElement).value).toBe('新一轮主题')
-    expect(wrapper.get('.platform-btn-active').text()).toContain('知乎')
+    // handoff 会话平台锁定为只读标签（知乎）
+    expect(wrapper.get('.platform-locked .badge').text()).toBe('知乎')
   })
 
   test('抖音图文 handoff 进入文章视图并启用抖音图集模式', () => {
@@ -165,7 +166,7 @@ describe('创作工作流 handoff', () => {
     })
 
     expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('城市夜经济升温')
-    expect(wrapper.get('.platform-btn-active').text()).toContain('抖音')
+    expect(wrapper.get('.platform-locked .badge').text()).toBe('抖音')
     expect(wrapper.get('.platform-mode-hint').text()).toContain('抖音定位图集短文案')
   })
 

@@ -427,7 +427,12 @@ export function useArticleCreation() {
     slotControllers.clear()
   }
 
-  function reset(): void {
+  /**
+   * 重置为第一步。keepPlatform：创作中心 handoff 会话内「重新开始」时保留已锁定的
+   * 发布平台（否则会退回默认 wechat，与创作中心的配置脱节）；无 handoff 的直入
+   * 场景保持原行为（回到默认公众号）。
+   */
+  function reset(options?: { keepPlatform?: boolean }): void {
     titlesController?.abort()
     outlineController?.abort()
     contentController?.abort()
@@ -439,7 +444,7 @@ export function useArticleCreation() {
 
     stage.value = 'topic'
     topic.value = ''
-    platform.value = 'wechat'
+    if (!options?.keepPlatform) platform.value = 'wechat'
     titles.value = []
     selectedTitle.value = ''
     outline.value = ''

@@ -8,6 +8,7 @@ import com.grassland.intelligence.ai.PinnedByokClients;
 import com.grassland.intelligence.ai.DnsPinningResolver;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
+import com.grassland.intelligence.ai.ThinkingContentFilter;
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
@@ -76,7 +77,7 @@ public class TextCompletionClient {
 		body.put("messages", messages.stream().map(TextCompletionClient::messageBody).toList());
 		body.put("stream", false);
 		body.put("max_tokens", maxTokens);
-		body.put("enable_thinking", false);
+		putThinkingDisabled(body);
 
 		return Mono.fromCallable(
 				() -> byok ? pinnedByokClient(baseUrl, effectiveTimeout) : platformClient(baseUrl, effectiveTimeout))
@@ -121,26 +122,39 @@ public class TextCompletionClient {
 		body.put("messages", messages.stream().map(TextCompletionClient::messageBody).toList());
 		body.put("stream", true);
 		body.put("max_tokens", maxTokens);
-		body.put("enable_thinking", false);
+		putThinkingDisabled(body);
 
-		return Mono.fromCallable(
-				() -> byok ? pinnedByokClient(baseUrl, effectiveTimeout) : platformClient(baseUrl, effectiveTimeout))
-				.subscribeOn(Schedulers.boundedElastic())
-				.flatMapMany(client -> client.post().uri("chat/completions").contentType(MediaType.APPLICATION_JSON)
-						.header("Authorization", "Bearer " + bearer).bodyValue(body)
-						.retrieve()
-						.onStatus(status -> status.is4xxClientError(),
-								r -> Mono.error(new IntelligenceException(400, "AI 上游拒绝请求")))
-						.onStatus(status -> status.is5xxServerError(),
-								r -> Mono.error(new IntelligenceException(502, "AI 上游暂不可用")))
-						.bodyToFlux(String.class))
-				.map(String::trim)
-				.filter(line -> line.startsWith("data: "))
-				.map(line -> line.substring("data: ".length()).trim())
-				.takeWhile(line -> !"[DONE]".equals(line))
-				.mapNotNull(this::extractDeltaContent)
-				.timeout(effectiveTimeout)
-				.onErrorMap(TimeoutException.class, e -> new IntelligenceException(504, "AI provider 调用超时"));
+		return Flux.defer(() -> {
+			// <think> 剥离器必须 per-subscription：标签可能被 token 边界切开，跨 chunk 状态不可共享。
+			ThinkingContentFilter.Stream thinker = new ThinkingContentFilter.Stream();
+			return Mono.fromCallable(
+					() -> byok ? pinnedByokClient(baseUrl, effectiveTimeout) : platformClient(baseUrl, effectiveTimeout))
+					.subscribeOn(Schedulers.boundedElastic())
+					.flatMapMany(client -> client.post().uri("chat/completions").contentType(MediaType.APPLICATION_JSON)
+							.header("Authorization", "Bearer " + bearer).bodyValue(body)
+							.retrieve()
+							.onStatus(status -> status.is4xxClientError(),
+									r -> Mono.error(new IntelligenceException(400, "AI 上游拒绝请求")))
+							.onStatus(status -> status.is5xxServerError(),
+									r -> Mono.error(new IntelligenceException(502, "AI 上游暂不可用")))
+							.bodyToFlux(String.class))
+					.map(String::trim)
+					// WebClient 对 text/event-stream 返回的元素已是 data 值（SSE reader 剥掉前缀，
+					// [DONE] 也无前缀）；text/plain 等原始行式则带 "data: " 前缀——此处归一化两种形态。
+					.map(line -> line.startsWith("data: ") ? line.substring("data: ".length()).trim() : line)
+					.takeWhile(line -> !"[DONE]".equals(line))
+					.mapNotNull(this::extractDeltaContent)
+					.flatMap(chunk -> {
+						String visible = thinker.feed(chunk.content());
+						return visible.isEmpty() ? Mono.<ChatChunk>empty() : Mono.just(new ChatChunk(visible));
+					})
+					// 流尾释放被疑似标签前缀扣住的正文残余；思考态残余（截断）丢弃。
+					.concatWith(Mono.fromSupplier(() -> thinker.flush()).filter(s -> !s.isEmpty())
+							.map(ChatChunk::new))
+					.timeout(effectiveTimeout)
+					.onErrorMap(TimeoutException.class,
+							e -> new IntelligenceException(504, "AI provider 调用超时"));
+		});
 	}
 
 	/** 上游错误体摘要（压缩空白、截断防刷屏）。 */
@@ -160,6 +174,17 @@ public class TextCompletionClient {
 		} catch (Exception e) {
 			return null;
 		}
+	}
+
+	/**
+	 * 关闭思考的两家方言并列发出：{@code thinking.type=disabled} 是 MiniMax-M3 的开关（缺省
+	 * adaptive，思考会内联进 content）；{@code enable_thinking=false} 是 Qwen/DashScope 惯例。
+	 * OpenAI 官方及多数兼容网关忽略未知字段；解析侧另有 {@link ThinkingContentFilter} 兜底，
+	 * 上游不认参数时仍能拿到干净正文。
+	 */
+	private static void putThinkingDisabled(Map<String, Object> body) {
+		body.put("enable_thinking", false);
+		body.put("thinking", Map.of("type", "disabled"));
 	}
 
 	private static Map<String, Object> messageBody(ChatMessage message) {		Map<String, Object> body = new LinkedHashMap<>();
@@ -201,7 +226,7 @@ public class TextCompletionClient {
 			JsonNode root = mapper.readTree(json);
 			JsonNode choices = root.path("choices");
 			String content = choices.isArray() && choices.size() > 0
-					? choices.get(0).path("message").path("content").asText("")
+					? ThinkingContentFilter.strip(choices.get(0).path("message").path("content").asText(""))
 					: "";
 			JsonNode usage = root.path("usage");
 			if (!usage.isObject()) {

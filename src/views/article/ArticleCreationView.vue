@@ -23,7 +23,7 @@
       :format-rule-summary="formatRuleSummary"
       :format-issues="formatIssues"
       @copy="copyContent"
-      @reset="reset"
+      @reset="resetWorkflow"
     />
 
     <SafetyFindingsPanel
@@ -36,9 +36,27 @@
     <template v-else>
     <section v-if="stage === 'topic'" class="stage-card gl-zone fade-in">
       <header class="card-head">
-        <p class="eyebrow">第一步</p>
-        <h2 class="card-title">先确定主题和发布平台</h2>
-        <p class="field-note">从一个明确主题开始，再决定内容更偏公众号、知乎、小红书还是抖音的表达方式。</p>
+        <div class="card-head-row">
+          <p class="eyebrow">第一步</p>
+          <button
+            v-if="fromCreationCenter"
+            class="btn-back"
+            type="button"
+            data-testid="back-to-center"
+            @click="goToCreationCenter"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            返回创作中心
+          </button>
+        </div>
+        <h2 class="card-title">{{ platformLocked ? '确定创作主题' : '先确定主题和发布平台' }}</h2>
+        <p class="field-note">
+          {{ platformLocked
+            ? `主题确认后，将按${platformLabel}的表达方式生成标题与正文。`
+            : '从一个明确主题开始，再决定内容更偏公众号、知乎、小红书还是抖音的表达方式。' }}
+        </p>
       </header>
 
       <textarea
@@ -50,7 +68,11 @@
       ></textarea>
 
       <div class="settings-row">
-        <div class="platform-toggle" role="tablist" aria-label="文章平台">
+        <div v-if="platformLocked" class="platform-locked">
+          <span class="badge">{{ platformLabel }}</span>
+          <p class="field-note">发布平台已在创作中心选定；如需更换平台或创作来源，请返回创作中心重新配置。</p>
+        </div>
+        <div v-else class="platform-toggle" role="tablist" aria-label="文章平台">
           <button
             type="button"
             class="platform-btn"
@@ -253,7 +275,7 @@
       </div>
 
       <div class="action-row">
-        <button class="btn-secondary" @click="reset">
+        <button class="btn-secondary" @click="resetWorkflow">
           重新开始
         </button>
         <button
@@ -307,6 +329,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useArticleCreation } from '../../composables/useArticleCreation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { useArticleFormatRule } from './composables/useArticleFormatRule'
@@ -318,6 +341,8 @@ import type { CreationHandoff } from '../../types/ai-creation'
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
+
+const router = useRouter()
 
 const {
   stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
@@ -334,6 +359,30 @@ const hydratedCreationRevision = ref<number | null>(null)
 
 // 抖音（图集短文案）复用现有小红书平台契约，仅前端提示词/文案层差异，API 契约不变。
 const isDouyinMode = ref(false)
+
+/**
+ * 创作中心 handoff 会话：平台/形式在创作中心配置完毕后带入，此视图内不再提供二次切换
+ * （换平台=换创作上下文，应回创作中心重新配置）；直入 /article 无 handoff 时保持四选。
+ */
+const platformLocked = ref(false)
+
+const fromCreationCenter = computed(() => props.creationHandoff != null)
+
+const platformLabel = computed(() => {
+  if (isDouyinMode.value) return '抖音'
+  if (platform.value === 'zhihu') return '知乎'
+  if (platform.value === 'xiaohongshu') return '小红书'
+  return '微信公众号'
+})
+
+function goToCreationCenter(): void {
+  router.push({ name: 'ai-center' })
+}
+
+/** 锁定会话内「重新开始/完成再来一篇」保留平台，其余状态照常清空。 */
+function resetWorkflow(): void {
+  reset({ keepPlatform: platformLocked.value })
+}
 
 function selectDouyin(): void {
   platform.value = 'xiaohongshu'
@@ -370,6 +419,7 @@ watch(() => props.creationHandoff, (handoff) => {
   } else if (handoff.platformId === 'douyin') {
     selectDouyin()
   }
+  platformLocked.value = true
 }, { immediate: true })
 
 const copied = ref(false)
@@ -632,6 +682,17 @@ const contentWithImages = computed(() => {
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
+}
+
+.platform-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.platform-locked .field-note {
+  margin: 0;
 }
 
 .platform-btn {

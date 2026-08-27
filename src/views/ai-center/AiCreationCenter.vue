@@ -576,13 +576,35 @@ function setSelectedMaterials(assetIds: string[]): void {
   materialIds.value = [...new Set(assetIds)].slice(0, 50)
 }
 
+/**
+ * 换平台＝换创作链路：来源选择与已填的上下文（主题/补充要求/参考链接/门店、热点拆解）全部作废。
+ * 上下文字段必须真实清值，只藏区块会让旧文本在下次选来源时回弹。
+ */
+function resetCreationSetup(): void {
+  hotRefineEpoch += 1
+  assistant.structuredTopic.value = null
+  pickedHotTitle.value = ''
+  topic.value = ''
+  instructions.value = ''
+  referenceUrl.value = ''
+  referencePlatform.value = 'douyin'
+  contextError.value = ''
+  sourceType.value = ''
+  clearStoreContext()
+}
+
 function selectPlatform(next: AiPlatformId): void {
-  const preservesEntryContext = props.entry?.source.type === 'hot-topic' && !platformId.value
-  if (sourceType.value === 'hot-topic') clearHotTopicContext(!preservesEntryContext)
+  // 首页热点卡等外部入口带入而平台未定的：首次点平台是完成配置而非放弃，保留预填；
+  // 之后改选任何平台都是用户主动重启，按新链路清空。任务注入的平台/形式被锁定，本就不经此处。
+  const preservesEntryPrefill = props.entry?.source.type === 'hot-topic' && !platformId.value
+  if (!preservesEntryPrefill && !taskSourceLocked.value) {
+    resetCreationSetup()
+  } else if (sourceType.value === 'hot-topic') {
+    clearHotTopicContext(!preservesEntryPrefill)
+  }
   platformId.value = next
   contentFormId.value = ''
   videoWorkflowId.value = 'video-script'
-  if (!props.entry) sourceType.value = ''
 }
 
 function selectContentForm(next: AiContentFormId): void {
@@ -590,7 +612,8 @@ function selectContentForm(next: AiContentFormId): void {
   if (sourceType.value === 'hot-topic') clearHotTopicContext(!preservesEntryContext)
   contentFormId.value = next
   videoWorkflowId.value = 'video-script'
-  if (!props.entry) sourceType.value = ''
+  // 与换平台同口径：清空来源链路时必须连字段值一起清，避免藏而不清、再选来源时回弹旧文本。
+  if (!props.entry) resetCreationSetup()
 }
 
 function clearHotTopicContext(clearSelection = true): void {

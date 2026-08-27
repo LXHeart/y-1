@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.ai.DnsPinningResolver;
+import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.ContentPart;
 import com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy;
@@ -108,6 +109,55 @@ class TextCompletionClientTest {
                 {"choices":[{"message":{"content":"ok"}}],
                  "usage":{"prompt_tokens":9223372036854775807,"completion_tokens":2}}
                 """);
+    }
+
+    @Test
+    @DisplayName("非流式：内联 <think> 思考块被剥掉，且请求带 thinking.type=disabled")
+    void stripsInlineThinkAndSendsThinkingDisabled() {
+        provider.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(okJson("""
+                        {"choices":[{"message":{"content":"<think>推理过程</think>{\\"titles\\":[{\\"title\\":\\"t\\"}]}"}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}
+                        """)));
+        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
+        when(policy.validateBaseUrl(provider.baseUrl()))
+                .thenReturn(java.net.URI.create(provider.baseUrl()));
+        TextCompletionClient client = new TextCompletionClient(5_000, DnsPinningResolver.create(), policy);
+
+        TextCompletionResult result = client.complete(
+                provider.baseUrl(), "key", "model", "prompt", 16, false).block();
+
+        assertThat(result.content()).isEqualTo("{\"titles\":[{\"title\":\"t\"}]}");
+        provider.verify(postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.containing(
+                        "\"thinking\":{\"type\":\"disabled\"}")));
+    }
+
+    @Test
+    @DisplayName("流式：delta 里的 <think> 块被跨 chunk 剥离，正文完整透传")
+    void streamsWithoutThinkBlocks() {
+        provider.stubFor(post(urlEqualTo("/chat/completions"))
+                .willReturn(com.github.tomakehurst.wiremock.client.WireMock.okForContentType("text/event-stream", """
+                        data: {"choices":[{"delta":{"content":"<th"}}]}
+
+                        data: {"choices":[{"delta":{"content":"ink>思考</th"}}]}
+
+                        data: {"choices":[{"delta":{"content":"ink>正文开始"}}]}
+
+                        data: {"choices":[{"delta":{"content":"正文结束 <"}}]}
+
+                        data: [DONE]
+
+                        """)));
+        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
+        when(policy.validateBaseUrl(provider.baseUrl()))
+                .thenReturn(java.net.URI.create(provider.baseUrl()));
+        TextCompletionClient client = new TextCompletionClient(5_000, DnsPinningResolver.create(), policy);
+
+        java.util.List<String> chunks = client.streamMessages(
+                provider.baseUrl(), "key", "model", List.of(ChatMessage.user("p")), 16, false, null)
+                .map(ChatChunk::content).collectList().block();
+
+        assertThat(chunks).containsExactly("正文开始", "正文结束 ", "<");
     }
 
     private void assertInvalidUsage(String responseBody) {

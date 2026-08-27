@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import ArticleCreationView from '../../views/article/ArticleCreationView.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 
@@ -47,9 +48,18 @@ afterEach(() => {
 enableAutoUnmount(afterEach)
 
 function mountView(handoff?: CreationHandoff | null) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'home', component: { template: '<div />' } },
+      { path: '/article', name: 'article', component: ArticleCreationView },
+      { path: '/ai-center', name: 'ai-center', component: { template: '<div />' } },
+    ],
+  })
   return mount(ArticleCreationView, {
     props: { creationHandoff: handoff ?? null },
     global: {
+      plugins: [router],
       provide: { articleInitialTopic: ref('') },
     },
   })
@@ -309,23 +319,69 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     }
   }
 
-  test('挂载时传入真实 handoff：watch 正常执行不抛错，预填主题并选中对应平台', async () => {
+  test('挂载时传入真实 handoff：预填主题、锁定平台并展示只读标签', async () => {
     const wrapper = mountView(buildHandoff('zhihu'))
     await flushPromises()
 
     expect((wrapper.find('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('餐饮创业复盘')
-    const buttons = wrapper.get('[aria-label="文章平台"]').findAll('button')
-    expect(buttons[1].classes()).toContain('platform-btn-active')
+    // 锁定态：平台切换按钮组不渲染，改为只读标签
+    expect(wrapper.find('[aria-label="文章平台"]').exists()).toBe(false)
+    expect(wrapper.get('.platform-locked .badge').text()).toBe('知乎')
+    expect(wrapper.get('.platform-locked .field-note').text()).toContain('创作中心')
+    expect(wrapper.get('.card-title').text()).toBe('确定创作主题')
     expect(wrapper.find('.platform-mode-hint').exists()).toBe(false)
   })
 
-  test('handoff platformId 为 douyin：进入抖音图集短文案模式', async () => {
+  test('handoff platformId 为 douyin：锁定态标签显示抖音并保留图集模式提示', async () => {
     const wrapper = mountView(buildHandoff('douyin'))
     await flushPromises()
 
-    const buttons = wrapper.get('[aria-label="文章平台"]').findAll('button')
-    expect(buttons[3].classes()).toContain('platform-btn-active')
+    expect(wrapper.find('[aria-label="文章平台"]').exists()).toBe(false)
+    expect(wrapper.get('.platform-locked .badge').text()).toBe('抖音')
     expect(wrapper.find('.platform-mode-hint').exists()).toBe(true)
+  })
+
+  test('handoff 会话显示「返回创作中心」，点击后跳转 ai-center', async () => {
+    const wrapper = mountView(buildHandoff('zhihu'))
+    await flushPromises()
+
+    const back = wrapper.get('[data-testid="back-to-center"]')
+    expect(back.text()).toContain('返回创作中心')
+    await back.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.name).toBe('ai-center')
+  })
+
+  test('无 handoff 直入：不显示返回创作中心，平台四选保持可选', async () => {
+    const wrapper = mountView()
+
+    expect(wrapper.find('[data-testid="back-to-center"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="文章平台"]').exists()).toBe(true)
+    expect(wrapper.get('.card-title').text()).toBe('先确定主题和发布平台')
+  })
+
+  test('锁定会话「重新开始」回到第一步且平台保持知乎', async () => {
+    stubFetch(() => ({
+      ok: true,
+      json: async () => ({ success: true, data: { titles: [{ title: '候选标题', hook: '' }] } }),
+    }))
+    const wrapper = mountView(buildHandoff('zhihu'))
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { stage: string; content: string }
+
+    vm.stage = 'content'
+    vm.content = '一段正文'
+    await flushPromises()
+    await wrapper.get('.action-row .btn-secondary').trigger('click') // 重新开始
+    await flushPromises()
+
+    expect(vm.stage).toBe('topic')
+    expect(wrapper.get('.platform-locked .badge').text()).toBe('知乎')
+
+    await wrapper.find('textarea.topic-input').setValue('新主题再来一篇')
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(String(calls[0].init?.body)).platform).toBe('zhihu')
   })
 
   test('任务 handoff 的标题请求强制携带 taskMode 与冻结快照 ID', async () => {

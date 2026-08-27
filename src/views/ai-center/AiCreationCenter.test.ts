@@ -718,6 +718,69 @@ describe('AI 内容创作中心', () => {
     expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
   })
 
+  test('切换平台会重置内容形式与创作来源，并清空已填上下文（含历史上开始过创作的会话）', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="zhihu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('知乎主题XYZ')
+
+    // 历史上点过「开始创作」后 entry 会常驻（DefaultLayout 直到登出才清），正是用户撞到的路径
+    await wrapper.setProps({ entry: {
+      revision: Date.now(),
+      platformId: 'zhihu',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      prefill: { topic: '知乎主题XYZ' },
+    } as CreationEntry })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="selection-summary"]').exists()).toBe(true)
+
+    await wrapper.get('[data-platform-id="moments"]').trigger('click')
+
+    // 内容形式与创作来源一并作废：底部摘要随来源清空而消失
+    expect(wrapper.find('[data-testid="selection-summary"]').exists()).toBe(false)
+    expect(wrapper.find('textarea[name="creation-topic"]').exists()).toBe(false)
+  })
+
+  test('切换平台清空的上下文不会在重新选择来源时回弹', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="zhihu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('textarea[name="creation-topic"]').setValue('知乎主题XYZ')
+
+    await wrapper.get('[data-platform-id="moments"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图片 + 文字').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+
+    expect((wrapper.get('textarea[name="creation-topic"]').element as HTMLTextAreaElement).value)
+      .toBe('')
+  })
+
+  test('热点带入未定平台时首次选择平台保留预填，改选平台即放弃预填', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: {
+      revision: Date.now(),
+      platformId: null,
+      contentFormId: null,
+      source: { type: 'hot-topic', title: '带进来的热点' },
+      prefill: { topic: '带进来的热点' },
+    } as CreationEntry } })
+    await flushPromises()
+
+    // 首次点平台是完成热点配置而非放弃
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    expect((wrapper.get('textarea[name="creation-topic"]').element as HTMLTextAreaElement).value)
+      .toBe('带进来的热点')
+    // 来源随注入已就位、形式未选：可继续配置但不能开始
+    expect(wrapper.get('[data-testid="selection-summary"]').text()).toContain('小红书')
+
+    // 之后改选任何平台＝主动重启创作链路，预填整体作废
+    await wrapper.get('[data-platform-id="douyin"]').trigger('click')
+    expect(wrapper.find('textarea[name="creation-topic"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="selection-summary"]').exists()).toBe(false)
+  })
+
   test('参考素材要求输入链接，并把链接交给对应视频分析工作流', async () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
     await wrapper.get('[data-platform-id="bilibili"]').trigger('click')
