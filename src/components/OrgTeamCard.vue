@@ -34,6 +34,11 @@ const notice = ref('')
 
 const newStoreName = ref('')
 
+/** 单店模式（任务书 #50 D1 推导制）：≤1 家门店即单店——门店管理 UI 收敛、建号免选门店。 */
+const singleStore = computed(() => stores.value.length <= 1)
+/** 建第二店成功即切换多店（推导自动生效，这里只补提示）。 */
+const wasSingleStore = ref(false)
+
 const ROLE_LABEL: Record<MembershipRole, string> = {
   owner: '所有者',
   admin: '管理员',
@@ -53,6 +58,11 @@ async function refresh(): Promise<void> {
   const s = await grassland.listStores(props.orgId)
   if (m) members.value = m
   if (s) stores.value = s
+  // 单店模式：唯一门店隐式选中（门店成员区直接呈现，无选择动作）；建号默认店员（拍板②）
+  if (stores.value.length === 1) {
+    await selectStore(stores.value[0]!.id)
+    if (orgCreateRole.value === 'member') orgCreateRole.value = 'staff'
+  }
   await loadReviewToggle()
 }
 
@@ -92,13 +102,17 @@ async function addStore(): Promise<void> {
   const name = newStoreName.value.trim()
   if (!name) return
   notice.value = ''
+  wasSingleStore.value = singleStore.value
   const created = await grassland.createStore(props.orgId, name)
   if (!created) return
   newStoreName.value = ''
-  notice.value = `门店「${created.name}」已创建`
-  emit('stores-changed')
   const list = await grassland.listStores(props.orgId)
   if (list) stores.value = list
+  // 推导制切换提示（任务书 #50 D1）：单店 → 多店由门店数自动生效
+  notice.value = wasSingleStore.value && stores.value.length >= 2
+    ? `门店「${created.name}」已创建——已切换到多店管理`
+    : `门店「${created.name}」已创建`
+  emit('stores-changed')
 }
 
 async function selectStore(storeId: string): Promise<void> {
@@ -137,10 +151,17 @@ const ACCOUNT_STATUS_LABEL: Record<string, string> = {
   rejected: '已驳回',
 }
 
-/** 组织级建号：登录名合法且选了门店角色但未选门店时禁用提交。 */
-const orgCreateDisabled = computed(() =>
-  !loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim()
-  || (orgCreateRole.value !== 'member' && !orgCreateStoreId.value))
+/** 组织级建号：登录名合法且（多店时）选了门店角色但未选门店时禁用提交。单店隐式用唯一门店。 */
+const orgCreateDisabled = computed(() => {
+  if (!loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim()) return true
+  if (singleStore.value) return false
+  return orgCreateRole.value !== 'member' && !orgCreateStoreId.value
+})
+
+/** 门店角色的目标门店：单店隐式取唯一门店（UI 不渲染选择），多店显式选择。 */
+const effectiveStoreId = computed(() =>
+  orgCreateRole.value === 'member' ? undefined
+    : singleStore.value ? (stores.value[0]?.id ?? '') : orgCreateStoreId.value)
 
 /** 建号预览：前缀-登录名（后端拼同样规则，前端只做提示）。 */
 const orgUsernamePreview = computed(() =>
@@ -197,13 +218,14 @@ async function createOrgAccount(): Promise<void> {
   const loginName = orgCreateLoginName.value.trim().toLowerCase()
   const displayName = orgCreateName.value.trim()
   if (!loginNameValid(loginName) || !displayName) return
-  if (orgCreateRole.value !== 'member' && !orgCreateStoreId.value) return
+  const targetStoreId = effectiveStoreId.value
+  if (orgCreateRole.value !== 'member' && !targetStoreId) return
   notice.value = ''
   const created = await grassland.createSubAccount(props.orgId, {
     role: orgCreateRole.value,
     loginName,
     displayName,
-    ...(orgCreateRole.value !== 'member' ? { storeId: orgCreateStoreId.value } : {}),
+    ...(orgCreateRole.value !== 'member' ? { storeId: targetStoreId } : {}),
   })
   if (!created) return
   orgCreateLoginName.value = ''
@@ -215,7 +237,7 @@ async function createOrgAccount(): Promise<void> {
     ? `${roleLabel}账号已登记，待审核通过后才能登录使用`
     : `${roleLabel}账号已创建，凭据请线下转交`
   await reloadMembers()
-  if (orgCreateRole.value !== 'member') await selectStore(orgCreateStoreId.value)
+  if (orgCreateRole.value !== 'member') await selectStore(targetStoreId as string)
 }
 
 async function createStoreAccount(): Promise<void> {
@@ -362,7 +384,8 @@ async function confirmDelete(): Promise<void> {
 
       <!-- 任务书 #49：邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（成员经下方主体直建产生） -->
 
-      <!-- 主体直建子账号（任务书 #48/#49）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定 -->
+      <!-- 主体直建子账号（任务书 #48/#49/#50）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定。
+           单店模式（拍板②）：角色默认店员、免选门店；店长藏进高级选项 -->
       <details class="team-adv">
         <summary>添加成员：主体直接创建账号</summary>
         <div class="team-row">
@@ -373,12 +396,18 @@ async function confirmDelete(): Promise<void> {
           />
           <span v-if="orgUsernamePreview" class="team-tag">{{ orgUsernamePreview }}</span>
           <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
-          <select v-model="orgCreateRole">
+          <template v-if="singleStore">
+            <select v-model="orgCreateRole">
+              <option value="staff">店员</option>
+              <option value="member">组织成员</option>
+            </select>
+          </template>
+          <select v-else v-model="orgCreateRole">
             <option value="member">组织成员</option>
             <option value="manager">店长</option>
             <option value="staff">店员</option>
           </select>
-          <select v-if="orgCreateRole !== 'member'" v-model="orgCreateStoreId">
+          <select v-if="!singleStore && orgCreateRole !== 'member'" v-model="orgCreateStoreId">
             <option value="" disabled>选择门店</option>
             <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
@@ -388,19 +417,48 @@ async function confirmDelete(): Promise<void> {
             @click="createOrgAccount"
           >创建账号</button>
         </div>
+        <!-- 单店高级选项（拍板②）：任命店长的能力保留、入口降级 -->
+        <details v-if="singleStore" class="team-adv team-adv-nested">
+          <summary>高级选项：任命店长</summary>
+          <div class="team-row">
+            <select v-model="orgCreateRole">
+              <option value="staff">店员</option>
+              <option value="manager">店长（管理本店与员工）</option>
+            </select>
+          </div>
+          <p class="team-hint">店长可管理门店资料与本店员工；单店通常由你本人管理，需要时再任命。</p>
+        </details>
         <p class="team-hint">
           创建即生效（管理员直建不受审核开关影响）；账号名 = 前缀-登录名（如 {{ accountPrefix ? accountPrefix + '-zhangsan' : '前缀-zhangsan' }}），
           系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
-          选店长/店员时须指定门店。
+          {{ singleStore ? '账号默认挂到你的门店。' : '选店长/店员时须指定门店。' }}
         </p>
       </details>
     </section>
 
-    <!-- 门店 -->
-    <section class="team-sec">
+    <!-- 门店：单店模式（任务书 #50 D1/D4）收敛为「我的门店」+ 开分店入口；多店保持列表管理 -->
+    <section v-if="singleStore" class="team-sec">
       <h4>门店</h4>
-      <p v-if="stores.length === 0" class="team-hint">暂无门店。</p>
-      <ul v-else class="team-list">
+      <div v-if="stores.length === 1" class="team-row">
+        <span class="team-tag">我的门店</span>
+        <strong>{{ stores[0]!.name }}</strong>
+        <span class="team-hint">门店资料与认证在「认证」分节维护</span>
+      </div>
+      <p v-else class="team-hint">暂无门店。</p>
+      <details class="team-adv">
+        <summary>开分店</summary>
+        <div class="team-row">
+          <input v-model="newStoreName" placeholder="分店名称" @keyup.enter="addStore" />
+          <button type="button" :disabled="grassland.loading.value || !newStoreName.trim()" @click="addStore">
+            创建分店
+          </button>
+        </div>
+        <p class="team-hint">开设第二家门店后自动进入多店管理（门店列表、按店管理成员）。</p>
+      </details>
+    </section>
+    <section v-else class="team-sec">
+      <h4>门店</h4>
+      <ul class="team-list">
         <li v-for="s in stores" :key="s.id">
           <button
             type="button" class="team-link"
@@ -420,9 +478,9 @@ async function confirmDelete(): Promise<void> {
       <p class="team-hint">建门店需主体管理员及以上。点门店名可管理其成员。</p>
     </section>
 
-    <!-- 门店成员 -->
+    <!-- 门店成员：单店时唯一门店自动选中，直呼本店员工 -->
     <section v-if="selectedStoreId" class="team-sec">
-      <h4>门店成员</h4>
+      <h4>{{ singleStore ? '本店员工' : '门店成员' }}</h4>
       <p v-if="storeMembers.length === 0" class="team-hint">该门店暂无成员。</p>
       <table v-else class="team-table">
         <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
@@ -535,6 +593,7 @@ async function confirmDelete(): Promise<void> {
 .team-adv { font-size: 12px; }
 .team-adv summary { cursor: pointer; opacity: 0.7; padding: 2px 0; }
 .team-adv > .team-row { margin-top: 6px; }
+.team-adv-nested { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--color-border); }
 input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
 input { min-width: 200px; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }

@@ -134,15 +134,9 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
       return baseHandler(url)
     })
 
-    // 选中门店以加载其成员表
-    const storeButton = wrapper.findAll('.team-link').find((b) => b.text() === '旗舰店')
-    expect(storeButton, '门店列表渲染').toBeTruthy()
-    await storeButton!.trigger('click')
-    await flushPromises()
-
-    // 只在「门店成员」分区内操作，避免误触主体成员表的同名按钮
-    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '门店成员')
-    expect(storeSection, '门店成员分区渲染').toBeTruthy()
+    // 任务书 #50 单店模式：唯一门店自动选中（门店成员区直接呈现，无点击动作）
+    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '本店员工')
+    expect(storeSection, '本店员工分区渲染（单店自动选中）').toBeTruthy()
 
     const suspendButton = storeSection!.findAll('button').find((b) => b.text() === '停用账号')
     expect(suspendButton).toBeTruthy()
@@ -175,10 +169,7 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
       return baseHandler(url)
     })
 
-    await wrapper.findAll('.team-link').find((b) => b.text() === '旗舰店')!.trigger('click')
-    await flushPromises()
-
-    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '门店成员')!
+    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '本店员工')!
     expect(storeSection.text()).toContain('待审核')
 
     const approve = storeSection.findAll('button').find((b) => b.text() === '通过')
@@ -191,6 +182,44 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(reviewBody).toBe('{"decision":"approve"}')
     expect(wrapper.text()).toContain('已通过审核')
     void calls
+  })
+
+  test('单店模式（任务书 #50）：门店列表收敛为「我的门店」，建号免选门店，开分店后切换多店', async () => {
+    const createdStores = [{ id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active' }]
+    let createCalls: Array<{ name?: string }> = []
+    const { wrapper } = await mountedWith((url, opts) => {
+      const method = opts?.method ?? 'GET'
+      if (url.includes('/stores') && !url.includes('/memberships') && !url.includes('/accounts')) {
+        if (method === 'POST') {
+          createCalls.push(JSON.parse((opts as unknown as { body?: string }).body ?? '{}'))
+          createdStores.push({ id: 'store-2', organizationId: ORG_ID, name: '分店', status: 'active' })
+          return envelopeResponse(createdStores[createdStores.length - 1], 201)
+        }
+        return envelopeResponse(createdStores)
+      }
+      return baseHandler(url)
+    })
+
+    // 单店：无门店列表/新建门店表单；有「我的门店」与开分店折叠
+    expect(wrapper.find('.team-list').exists()).toBe(false)
+    expect(wrapper.find('input[placeholder="新门店名称"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('我的门店')
+    expect(wrapper.text()).toContain('旗舰店')
+
+    // 建号：无门店下拉（单店隐式）；店长在高级选项内（默认不出现三角色下拉中的 manager）
+    const mainSelect = wrapper.findAll('select').find((sel) => sel.text().includes('店员') && sel.text().includes('组织成员'))
+    expect(mainSelect, '单店主角色下拉（店员/组织成员）').toBeTruthy()
+    expect(mainSelect!.text()).not.toContain('店长')
+    const advanced = wrapper.findAll('details').find((d) => d.text().includes('高级选项：任命店长'))
+    expect(advanced, '店长藏进高级选项').toBeTruthy()
+
+    // 开分店 → 门店数 2 → 推导切多店（列表展开）+ 切换提示
+    await wrapper.find('input[placeholder="分店名称"]').setValue('分店')
+    await wrapper.findAll('button').find((b) => b.text() === '创建分店')!.trigger('click')
+    await flushPromises()
+    expect(createCalls).toEqual([{ name: '分店' }])
+    expect(wrapper.text()).toContain('已切换到多店管理')
+    expect(wrapper.find('.team-list').exists()).toBe(true)
   })
 
   test('删除成员须输入完整账号名强确认，不匹配时按钮禁用（任务书 #49 D9）', async () => {
