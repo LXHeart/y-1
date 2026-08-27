@@ -39,6 +39,23 @@ async function mountedWith(handler: Handler) {
   return { wrapper, calls }
 }
 
+/**
+ * 多店门店列表。任务书 #51 起「建号入口」与「审核开关」只在多店模式呈现
+ * （单店只有主体账号一个用户），故凡要操作这两者的用例都得先进多店。
+ */
+const MULTI_STORES = [
+  { id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active', createdAt: null },
+  { id: 'store-2', organizationId: ORG_ID, name: '分店', status: 'active', createdAt: null },
+]
+
+/** baseHandler 的多店变体：只把门店列表换成两家，其余路由不变。 */
+function multiStoreHandler(url: string): Response | undefined {
+  if (url.includes('/stores') && !url.includes('/memberships') && !url.includes('/accounts')) {
+    return envelopeResponse(MULTI_STORES)
+  }
+  return baseHandler(url)
+}
+
 function baseHandler(url: string): Response | undefined {
   if (url.includes('/memberships') && !url.includes('/stores/store-1')) {
     return envelopeResponse([
@@ -58,6 +75,7 @@ function baseHandler(url: string): Response | undefined {
 }
 
 describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
+  // 多店：建号入口只在多店呈现（#51 第 3 条），故本用例走 multiStoreHandler
   test('主体直建成员账号：loginName 表单 + 一次性密码明文展示一次，点「我已保存」后销毁', async () => {
     let created = false
     const { wrapper } = await mountedWith((url, opts) => {
@@ -70,7 +88,7 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
           mustChangePassword: true,
         })
       }
-      return baseHandler(url)
+      return multiStoreHandler(url)
     })
 
     const loginInput = wrapper.find('input[placeholder="登录名（3-24 位字母数字）"]')
@@ -99,12 +117,13 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(wrapper.text()).not.toContain('zmX28J86LvHbevBn')
   })
 
+  // 多店：审核开关只在多店呈现（#51 第 2 条——单店无店长代建场景）
   test('审核开关切换失败时回滚勾选状态并呈现后端错误', async () => {
     const { wrapper } = await mountedWith((url, opts) => {
       if ((opts?.method ?? '') === 'PATCH' && url.includes('member-review-required')) {
         return envelopeResponse('需要平台管理员权限', 403)
       }
-      return baseHandler(url)
+      return multiStoreHandler(url)
     })
 
     const box = wrapper.find('.team-toggle input')
@@ -239,7 +258,7 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(wrapper.text()).toContain('唯一门店不可删除')
   })
 
-  test('单店模式（任务书 #50）：门店列表收敛为「我的门店」，建号免选门店，开分店后切换多店', async () => {
+  test('单店模式（#50 推导 + #51 收敛）：门店收敛为「我的门店」，无建号入口，开分店后切换多店', async () => {
     const createdStores = [{ id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active' }]
     let createCalls: Array<{ name?: string }> = []
     const { wrapper } = await mountedWith((url, opts) => {
@@ -261,12 +280,11 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(wrapper.text()).toContain('我的门店')
     expect(wrapper.text()).toContain('旗舰店')
 
-    // 建号：无门店下拉（单店隐式）；店长在高级选项内（默认不出现三角色下拉中的 manager）
-    const mainSelect = wrapper.findAll('select').find((sel) => sel.text().includes('店员') && sel.text().includes('组织成员'))
-    expect(mainSelect, '单店主角色下拉（店员/组织成员）').toBeTruthy()
-    expect(mainSelect!.text()).not.toContain('店长')
-    const advanced = wrapper.findAll('details').find((d) => d.text().includes('高级选项：任命店长'))
-    expect(advanced, '店长藏进高级选项').toBeTruthy()
+    // 任务书 #51 第 3 条：单店不呈现任何建号入口（本主体只有主体账号一人），
+    // 原 #50 的「角色下拉 + 店长高级选项」随之退役；改为一句「先开分店」引导
+    expect(wrapper.findAll('select').length).toBe(0)
+    expect(wrapper.findAll('details').some((d) => d.text().includes('主体直接创建账号'))).toBe(false)
+    expect(wrapper.text()).toContain('需要为员工开账号请先在下方「门店」区开分店')
 
     // 开分店 → 门店数 2 → 推导切多店（列表展开）+ 切换提示
     await wrapper.find('input[placeholder="分店名称"]').setValue('分店')
@@ -295,10 +313,12 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     expect(ownerRow!.findAll('button').length).toBe(0)
     expect(ownerRow!.text()).toContain('默认管理本店')
 
-    // 单店只保留一个建号入口（上方主体入口，已默认店员+隐式唯一门店）
+    // 任务书 #51 第 3 条：单店无任何建号入口（门店区的、主体区的都没有）
     expect(storeSection.find('input[placeholder="员工姓名"]').exists()).toBe(false)
     expect(storeSection.text()).toContain('你的主体账号默认就是本店店长，无需添加')
-    expect(wrapper.findAll('details').some((d) => d.text().includes('添加员工：主体直接创建账号'))).toBe(true)
+    expect(wrapper.findAll('details').some((d) => d.text().includes('主体直接创建账号'))).toBe(false)
+    // 第 2 条：审核开关也不呈现
+    expect(wrapper.find('.team-toggle').exists()).toBe(false)
   })
 
   test('多店：门店成员区保留店长代建入口，主体账号仍以隐式行呈现', async () => {
@@ -324,6 +344,39 @@ describe('OrgTeamCard · 子账号管控（任务书 #48/#49）', () => {
     const staffRow = storeSection.findAll('tbody tr').find((row) => row.text().includes('acc-staf'))!
     expect(staffRow.findAll('button').some((b) => b.text() === '停用账号')).toBe(true)
     expect(staffRow.findAll('button').some((b) => b.text() === '删除')).toBe(true)
+  })
+
+  test('单店且只有 owner：主体成员表不渲染操作列（任务书 #51 第 5 条）', async () => {
+    const { wrapper } = await mountedWith((url) => {
+      // 单店常态：成员只有 owner 一人
+      if (url.includes('/memberships') && !url.includes('/stores/store-1')) {
+        return envelopeResponse([
+          { id: 'm1', organizationId: ORG_ID, accountId: 'acc-owner', role: 'owner', createdAt: null, accountStatus: 'active' },
+        ])
+      }
+      return baseHandler(url)
+    })
+
+    const orgSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '主体成员')!
+    // 表头无「操作」列；owner 行无任何按钮（停用/删除服务端一律 403，整列都是死按钮）
+    expect(orgSection.findAll('thead th').map((th) => th.text())).toEqual(['账号', '角色', '状态'])
+    const ownerRow = orgSection.findAll('tbody tr')[0]!
+    expect(ownerRow.findAll('button').length).toBe(0)
+  })
+
+  test('单店但存在非 owner 成员：操作列保留（多店回落单店不能困住这批人）', async () => {
+    const { wrapper } = await mountedWith((url) => baseHandler(url))
+
+    // baseHandler 的成员表含 owner + member 两行，门店只有一家（单店）
+    const orgSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '主体成员')!
+    expect(orgSection.findAll('thead th').map((th) => th.text())).toContain('操作')
+    // owner 行仍无操作按钮，非 owner 行有停用/恢复/删除
+    const rows = orgSection.findAll('tbody tr')
+    const ownerRow = rows.find((r) => r.text().includes('所有者'))!
+    const memberRow = rows.find((r) => r.text().includes('成员'))!
+    expect(ownerRow.findAll('button').length).toBe(0)
+    expect(ownerRow.text()).toContain('主体所有者')
+    expect(memberRow.findAll('button').map((b) => b.text())).toEqual(['停用账号', '恢复', '删除'])
   })
 
   test('删除成员须输入完整账号名强确认，不匹配时按钮禁用（任务书 #49 D9）', async () => {

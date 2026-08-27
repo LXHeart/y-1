@@ -194,12 +194,8 @@ export function useGrasslandIdentity(run: RunFn) {
   const getAccountPrefix = (orgId: string) =>
     run(() => request<{ prefix: string }>(`/api/organizations/${orgId}/account-prefix`))
 
-  /** 成员账号前缀改（ADMIN+；仅 3-24 位字母数字；只影响之后新建的账号）。 */
-  const setAccountPrefix = (orgId: string, prefix: string) =>
-    run(() => request<{ prefix: string }>(`/api/organizations/${orgId}/account-prefix`, {
-      method: 'PATCH',
-      body: JSON.stringify({ prefix }),
-    }))
+  // 任务书 #51：商家侧 setAccountPrefix 已删除——后端 PATCH /api/organizations/{id}/account-prefix
+  // 已下线（前缀自动生成、商家只读）。改名走运营侧 setAdminAccountPrefix（连带重写成员登录名）。
 
   // ---------- identity：子账号绑定邮箱（任务书 #49 D10）----------
 
@@ -409,7 +405,7 @@ export function useGrasslandIdentity(run: RunFn) {
     reviewPermissionRequest,
     listMemberships,
     createSubAccount, createStaffSubAccount,
-    getAccountPrefix, setAccountPrefix,
+    getAccountPrefix,
     sendBindEmailCode, bindEmail,
     suspendSubAccount, restoreSubAccount, deleteSubAccount, reviewSubAccountCreation, resetSubAccountPassword,
     getMemberReviewRequired, setMemberReviewRequired,

@@ -174,9 +174,8 @@ async function selectStore(storeId: string): Promise<void> {
 // ---------- 任务书 #48：子账号直建 / 停用恢复 / 审核开关 ----------
 
 const memberReviewRequired = ref(false)
-/** 主体成员账号前缀（#49 D5）：建号预览与设置用；组织成员可读。 */
+/** 主体成员账号前缀（#49 D5）：只读——建号预览与展示用；改名归运营（#51）。 */
 const accountPrefix = ref('')
-const prefixInput = ref('')
 const orgCreateLoginName = ref('')
 const orgCreateName = ref('')
 /** 组织级建号目标角色：member=主体成员；manager/staff 须再选门店（D1：任命店长仅 ADMIN+，本入口本身就是 ADMIN+ 门禁）。 */
@@ -234,17 +233,9 @@ async function loadReviewToggle(): Promise<void> {
   if (prefix) accountPrefix.value = prefix.prefix
 }
 
-/** 改前缀（#49 D5）：ADMIN+；成功后只影响之后新建的账号。 */
-async function savePrefix(): Promise<void> {
-  const next = prefixInput.value.trim().toLowerCase()
-  if (!LOGIN_NAME_RE.test(next)) return
-  notice.value = ''
-  const updated = await grassland.setAccountPrefix(props.orgId, next)
-  if (!updated) return
-  accountPrefix.value = next
-  prefixInput.value = ''
-  notice.value = `前缀已改为 ${next}（只影响之后新建的账号）`
-}
+// 任务书 #51：商家侧改前缀（savePrefix + prefixInput）已删除——前缀自动生成、商家只读，
+// 后端 PATCH /api/organizations/{id}/account-prefix 也已下线。改名是运营动作（会连带重写
+// 该主体下全部成员的登录名），入口在运营台「账号前缀」页签。
 
 async function toggleReview(event: Event): Promise<void> {
   const box = event.target as HTMLInputElement
@@ -330,6 +321,19 @@ const storeStaffRows = computed<StoreStaffRow[]>(() => {
   return [...implicitRows, ...explicit]
 })
 
+/**
+ * 主体成员表是否呈现操作列（任务书 #51 第 5 条）。
+ *
+ * 单店常态下成员只有 owner 一人，而 owner 的停用/删除服务端一律 403——整列都是死按钮，
+ * 故不渲染。**但只要存在非 owner 成员就必须保留**：多店期建的 `role=member` 成员不挂门店，
+ * 删分店回落单店时不受删店守卫限制（守卫只数 store_membership），无条件隐藏会让这批人
+ * 永久失去停用/删除入口，只能靠运营台处置。
+ */
+const showMemberActions = computed(() => {
+  const memberList = Array.isArray(members.value) ? members.value : []
+  return !singleStore.value || memberList.some((m) => m.role !== 'owner')
+})
+
 /** 停用 / 恢复即时生效；守卫冲突（最后一个店长、owner 保护等）由 error 条原样呈现。 */
 async function setAccountActive(accountId: string, active: boolean): Promise<void> {
   notice.value = ''
@@ -402,20 +406,16 @@ async function confirmDelete(): Promise<void> {
       <button type="button" class="team-quiet" @click="oneTimePassword = null">我已妥善保存</button>
     </div>
 
-    <!-- 成员账号前缀（任务书 #49 D5）：改前缀只影响之后新建的账号 -->
+    <!-- 成员账号前缀（任务书 #51）：自动生成、商家只读。改前缀会连带改掉全部成员的登录名
+         （旧登录名立即失效），是平台处置动作，入口在运营台 -->
     <div class="team-row">
       <span class="team-tag">账号前缀 {{ accountPrefix || '…' }}</span>
-      <input v-model="prefixInput" class="team-prefix-input" placeholder="新前缀（字母数字）" />
-      <button
-        type="button" class="team-quiet"
-        :disabled="grassland.loading.value || !loginNameValid(prefixInput)"
-        @click="savePrefix"
-      >改前缀</button>
-      <span class="team-hint">成员账号名 = 前缀-登录名；需管理员</span>
+      <span class="team-hint">成员账号名 = 前缀-登录名；前缀由系统生成，如需修改请联系平台运营</span>
     </div>
 
-    <!-- 审核开关：仅影响店长代建路径，owner/admin 直建永不 pending（任务书 #48 D6） -->
-    <div class="team-row">
+    <!-- 审核开关：仅影响店长代建路径，owner/admin 直建永不 pending（任务书 #48 D6）。
+         任务书 #51 第 2 条：单店无店长代建场景（本店只有主体账号），开关无意义故不呈现 -->
+    <div v-if="!singleStore" class="team-row">
       <label class="team-toggle">
         <input
           type="checkbox"
@@ -433,22 +433,30 @@ async function confirmDelete(): Promise<void> {
       <h4>主体成员</h4>
       <p v-if="members.length === 0" class="team-hint">暂无成员记录。</p>
       <table v-else class="team-table">
-        <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+        <thead>
+          <tr>
+            <th>账号</th><th>角色</th><th>状态</th>
+            <!-- 任务书 #51 第 5 条：单店（只有 owner）不呈现操作列——owner 的停用/删除服务端一律 403 -->
+            <th v-if="showMemberActions">操作</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="m in members" :key="m.id">
             <td><code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code></td>
             <td>{{ ROLE_LABEL[m.role] || m.role }}</td>
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
-            <td>
-              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
-              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
-              <!-- owner 永不可删（服务端守卫 403），不渲染入口 -->
-              <button
-                v-if="m.role !== 'owner'"
-                type="button" class="team-quiet team-danger"
-                :disabled="grassland.loading.value"
-                @click="askDelete(m.accountId, m.username ?? null)"
-              >删除</button>
+            <td v-if="showMemberActions">
+              <!-- owner 行不给任何操作（服务端守卫 403：不可停用、不可删除、不可自操作） -->
+              <span v-if="m.role === 'owner'" class="team-hint">主体所有者</span>
+              <template v-else>
+                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
+                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+                <button
+                  type="button" class="team-quiet team-danger"
+                  :disabled="grassland.loading.value"
+                  @click="askDelete(m.accountId, m.username ?? null)"
+                >删除</button>
+              </template>
             </td>
           </tr>
         </tbody>
@@ -456,11 +464,16 @@ async function confirmDelete(): Promise<void> {
 
       <!-- 任务书 #49：邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（成员经下方主体直建产生） -->
 
-      <!-- 主体直建子账号（任务书 #48/#49/#50）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定。
-           单店模式（拍板②）：角色默认店员、免选门店；店长藏进高级选项 -->
-      <details class="team-adv">
-        <!-- 单店：这是唯一的建号入口，且默认建店员——按「员工」措辞更贴用户心智 -->
-        <summary>{{ singleStore ? '添加员工：主体直接创建账号' : '添加成员：主体直接创建账号' }}</summary>
+      <!-- 任务书 #51 第 3 条：单店只有主体账号一个用户，不呈现建号入口。
+           需要员工先开分店（下方「门店」区），进入多店管理后建号入口自动出现 -->
+      <p v-if="singleStore" class="team-hint">
+        单店模式下本主体只有你这一个账号。需要为员工开账号请先在下方「门店」区开分店，
+        进入多店管理后即可创建店长/店员账号。
+      </p>
+
+      <!-- 主体直建子账号（任务书 #48/#49/#50）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定 -->
+      <details v-else class="team-adv">
+        <summary>添加成员：主体直接创建账号</summary>
         <div class="team-row">
           <input
             v-model="orgCreateLoginName"
@@ -619,10 +632,10 @@ async function confirmDelete(): Promise<void> {
 
       <!-- 任务书 #49：门店邀请表单与「已知账号 ID 直接添加」挂靠入口均已下线（本店员工经下方店长直建产生） -->
 
-      <!-- 单店：主体账号本身就是店长，雇人走上方「添加员工」（已默认店员+隐式唯一门店），
-           这里不再开第二个同义入口——两个入口指向同一动作是单店 UI 的主要困惑源 -->
+      <!-- 单店：主体账号本身就是店长，无需添加；建号入口整体不在单店呈现（#51 第 3 条），
+           故这里也不指向任何入口，只说明「先开分店」这条唯一路径 -->
       <p v-if="singleStore" class="team-hint">
-        你的主体账号默认就是本店店长，无需添加。雇了人再用上方「添加员工」建店员账号。
+        你的主体账号默认就是本店店长，无需添加。需要为员工开账号请先开分店（上方「门店」区）。
       </p>
 
       <!-- 店长代建员工（任务书 #48/#49）：固定建店员（任命店长走上方主体入口） -->
