@@ -5,6 +5,7 @@ import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
 import MerchantKybCard from '../../components/MerchantKybCard.vue'
+import StoreStaffCard from '../../components/StoreStaffCard.vue'
 import MerchantCommerceCard from '../../components/MerchantCommerceCard.vue'
 import MerchantPermissionCard from '../../components/MerchantPermissionCard.vue'
 import MerchantMonthlyBillCard from '../../components/MerchantMonthlyBillCard.vue'
@@ -787,7 +788,8 @@ watch(grasslandNavigationTarget, async (target) => {
           />
         </div>
 
-        <!-- 纯门店 MANAGER（无组织成员身份）没有五分节可分，只维护自己门店的资料 -->
+        <!-- 纯门店 MANAGER（无组织成员身份，#49 后主要是店长子账号）：门店资料 + 本店员工管理
+             （任务书 #50 阶段 2：店长建员工/停用恢复/过审复用 #48/#49 既有端点，零后端改动） -->
         <div
           v-if="!activeOrgHasOrganizationAccess"
           class="gl-zone-body"
@@ -802,6 +804,9 @@ watch(grasslandNavigationTarget, async (target) => {
               :stores="stores.map((store) => ({ id: store.id, name: store.name }))"
               @changed="() => loadOrganizations()"
             />
+          </article>
+          <article class="gl-tile gl-tile-wide">
+            <StoreStaffCard :org-id="activeOrgId" :stores="stores" />
           </article>
         </div>
 
