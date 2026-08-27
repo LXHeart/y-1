@@ -208,8 +208,26 @@ async function removeStoreMember(m: StoreMembership): Promise<void> {
 const memberReviewRequired = ref(false)
 const orgCreateEmail = ref('')
 const orgCreateName = ref('')
+/** 组织级建号目标角色：member=主体成员；manager/staff 须再选门店（D1：任命店长仅 ADMIN+，本入口本身就是 ADMIN+ 门禁）。 */
+const orgCreateRole = ref<'member' | 'manager' | 'staff'>('member')
+const orgCreateStoreId = ref('')
 const storeCreateEmail = ref('')
 const storeCreateName = ref('')
+
+/** 门店级建号锁定店员（D1：店长仅能建本店 staff；任命店长走上方主体入口）。 */
+const STORE_CREATE_ROLE_LABEL = '店员'
+
+const ACCOUNT_STATUS_LABEL: Record<string, string> = {
+  active: '正常',
+  suspended: '已停用',
+  pending_review: '待审核',
+  rejected: '已驳回',
+}
+
+/** 组织级建号选了门店角色但未选门店时禁用提交。 */
+const orgCreateDisabled = computed(() =>
+  !orgCreateEmail.value.trim() || !orgCreateName.value.trim()
+  || (orgCreateRole.value !== 'member' && !orgCreateStoreId.value))
 
 /**
  * 建号/重置刚返回的一次性初始密码——响应之后任何接口都取不到，展示区只存在到
@@ -242,19 +260,28 @@ async function createOrgAccount(): Promise<void> {
   const email = orgCreateEmail.value.trim()
   const displayName = orgCreateName.value.trim()
   if (!email || !displayName) return
+  if (orgCreateRole.value !== 'member' && !orgCreateStoreId.value) return
   notice.value = ''
-  const created = await grassland.createSubAccount(props.orgId, { role: 'member', email, displayName })
+  const created = await grassland.createSubAccount(props.orgId, {
+    role: orgCreateRole.value,
+    email,
+    displayName,
+    ...(orgCreateRole.value !== 'member' ? { storeId: orgCreateStoreId.value } : {}),
+  })
   if (!created) return
   orgCreateEmail.value = ''
   orgCreateName.value = ''
+  const roleLabel = orgCreateRole.value === 'member' ? ROLE_LABEL.member
+    : STORE_ROLE_LABEL[orgCreateRole.value]
   if (created.initialPassword) {
     oneTimePassword.value = { email: created.account.email, password: created.initialPassword }
-    notice.value = '账号已创建，凭据请线下转交'
+    notice.value = `${roleLabel}账号已创建，凭据请线下转交`
   } else {
     // 无初始密码 = 邮箱已被注册且被确认关联为成员，原账号凭据不受影响
-    notice.value = `已将既有平台账号 ${created.account.email} 关联为本主体成员`
+    notice.value = `已将既有平台账号 ${created.account.email} 关联为${roleLabel}`
   }
   await reloadMembers()
+  if (orgCreateRole.value !== 'member') await selectStore(orgCreateStoreId.value)
 }
 
 async function createStoreAccount(): Promise<void> {
@@ -274,7 +301,7 @@ async function createStoreAccount(): Promise<void> {
       ? '员工账号已登记，待主体审核通过后才能登录使用'
       : '账号已创建，凭据请线下转交'
   } else {
-    notice.value = `已将既有平台账号 ${created.account.email} 关联为本店${STORE_ROLE_LABEL[newStoreMemberRole.value]}`
+    notice.value = `已将既有平台账号 ${created.account.email} 关联为本店${STORE_CREATE_ROLE_LABEL}`
   }
   await selectStore(selectedStoreId.value)
 }
@@ -287,6 +314,16 @@ async function setAccountActive(accountId: string, active: boolean): Promise<voi
     : await grassland.suspendSubAccount(props.orgId, accountId)
   if (done === null) return
   notice.value = active ? '账号已恢复可用' : '账号已停用（立即生效，系统将站内知会主体）'
+  await Promise.all([reloadMembers(), selectedStoreId.value ? selectStore(selectedStoreId.value) : null])
+}
+
+/** 审核店长代建的员工（D6）：approve 即启用；reject 是终态，账号不可再用。 */
+async function reviewCreation(accountId: string, decision: 'approve' | 'reject'): Promise<void> {
+  notice.value = ''
+  const done = await grassland.reviewSubAccountCreation(props.orgId, accountId, decision)
+  if (done === null) return
+  notice.value = decision === 'approve' ? '已通过审核，该员工现在可以登录使用' : '已驳回，该账号将不可用'
+  if (selectedStoreId.value) await selectStore(selectedStoreId.value)
 }
 
 </script>
@@ -330,11 +367,12 @@ async function setAccountActive(accountId: string, active: boolean): Promise<voi
       <h4>主体成员</h4>
       <p v-if="members.length === 0" class="team-hint">暂无成员记录。</p>
       <table v-else class="team-table">
-        <thead><tr><th>账号</th><th>角色</th><th>操作</th></tr></thead>
+        <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="m in members" :key="m.id">
             <td><code>{{ m.accountId.slice(0, 8) }}…</code></td>
             <td>{{ ROLE_LABEL[m.role] || m.role }}</td>
+            <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
               <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
               <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
@@ -376,21 +414,30 @@ async function setAccountActive(accountId: string, active: boolean): Promise<voi
         <p class="team-hint">跳过邀请直接入组，仅在你确知对方账号 ID 时可用；角色取上方下拉框的选择。</p>
       </details>
 
-      <!-- 主体直建子账号（任务书 #48）：对方没有平台账号也能入组 -->
+      <!-- 主体直建子账号（任务书 #48）：对方没有平台账号也能入组；管理员可选任意角色并挂门店 -->
       <details class="team-adv">
         <summary>对方没有平台账号？主体直接创建</summary>
         <div class="team-row">
           <input v-model="orgCreateEmail" type="email" placeholder="新账号邮箱" />
           <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
+          <select v-model="orgCreateRole">
+            <option value="member">组织成员</option>
+            <option value="manager">店长</option>
+            <option value="staff">店员</option>
+          </select>
+          <select v-if="orgCreateRole !== 'member'" v-model="orgCreateStoreId">
+            <option value="" disabled>选择门店</option>
+            <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
           <button
             type="button"
-            :disabled="grassland.loading.value || !orgCreateEmail.trim() || !orgCreateName.trim()"
+            :disabled="grassland.loading.value || orgCreateDisabled"
             @click="createOrgAccount"
-          >创建成员账号</button>
+          >创建账号</button>
         </div>
         <p class="team-hint">
-          创建即生效并挂为本主体成员；系统生成一次性初始密码供你线下转交，对方首次登录须改密。
-          若邮箱已是平台账号，会提示你确认后改为「关联为成员」，原密码不受影响。
+          创建即生效（管理员直建不受审核开关影响）；系统生成一次性初始密码供你线下转交，对方首次登录须改密。
+          选店长/店员时须指定门店。若邮箱已是平台账号，会提示你确认后改为「关联」，原密码不受影响。
         </p>
       </details>
     </section>
@@ -460,14 +507,21 @@ async function setAccountActive(accountId: string, active: boolean): Promise<voi
       <h4>门店成员</h4>
       <p v-if="storeMembers.length === 0" class="team-hint">该门店暂无成员。</p>
       <table v-else class="team-table">
-        <thead><tr><th>账号</th><th>角色</th><th>操作</th></tr></thead>
+        <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="m in storeMembers" :key="m.id">
             <td><code>{{ m.accountId.slice(0, 8) }}…</code></td>
             <td>{{ STORE_ROLE_LABEL[m.role] || m.role }}</td>
+            <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
-              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
-              <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+              <template v-if="m.accountStatus === 'pending_review'">
+                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="reviewCreation(m.accountId, 'approve')">通过</button>
+                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="reviewCreation(m.accountId, 'reject')">驳回</button>
+              </template>
+              <template v-else>
+                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
+                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+              </template>
               <button
                 type="button" class="team-quiet"
                 :disabled="grassland.loading.value"
@@ -508,25 +562,21 @@ async function setAccountActive(accountId: string, active: boolean): Promise<voi
         <p class="team-hint">跳过邀请直接入店；角色取上方下拉框的选择。</p>
       </details>
 
-      <!-- 店长代建员工（任务书 #48）：审核开关开启时登记为待启用，须主体过审后登录 -->
+      <!-- 店长代建员工（任务书 #48）：固定建店员（任命店长走上方主体入口或既有邀请流） -->
       <details class="team-adv">
-        <summary>对方没有平台账号？主体直接创建</summary>
+        <summary>对方没有平台账号？直接创建店员账号</summary>
         <div class="team-row">
           <input v-model="storeCreateEmail" type="email" placeholder="新账号邮箱" />
-          <input v-model="storeCreateName" placeholder="显示名" @keyup.enter="createStoreAccount" />
-          <select v-model="newStoreMemberRole">
-            <option value="staff">店员</option>
-            <option value="manager">店长</option>
-          </select>
+          <input v-model="storeCreateName" placeholder="员工姓名" @keyup.enter="createStoreAccount" />
           <button
             type="button"
             :disabled="grassland.loading.value || !storeCreateEmail.trim() || !storeCreateName.trim()"
             @click="createStoreAccount"
-          >创建账号并挂到本店</button>
+          >创建店员账号</button>
         </div>
         <p class="team-hint">
-          系统生成一次性初始密码供你线下转交，对方首次登录须改密。任命店长需主体管理员权限；
-          开启审核后新建店员为待启用状态。
+          系统生成一次性初始密码供你线下转交，对方首次登录须改密。此处固定创建店员；
+          任命店长需主体管理员在上方主体入口创建或走邀请。开启审核后新建为「待审核」，主体通过后才能登录。
         </p>
       </details>
     </section>

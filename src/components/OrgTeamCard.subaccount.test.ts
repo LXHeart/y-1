@@ -42,8 +42,8 @@ async function mountedWith(handler: Handler) {
 function baseHandler(url: string): Response | undefined {
   if (url.includes('/memberships') && !url.includes('/stores/store-1')) {
     return envelopeResponse([
-      { id: 'm1', organizationId: ORG_ID, accountId: 'acc-owner', role: 'owner', createdAt: null },
-      { id: 'm2', organizationId: ORG_ID, accountId: 'acc-member', role: 'member', createdAt: null },
+      { id: 'm1', organizationId: ORG_ID, accountId: 'acc-owner', role: 'owner', createdAt: null, accountStatus: 'active' },
+      { id: 'm2', organizationId: ORG_ID, accountId: 'acc-member', role: 'member', createdAt: null, accountStatus: 'active' },
     ])
   }
   if (url.includes('/invitations')) return envelopeResponse([])
@@ -51,7 +51,7 @@ function baseHandler(url: string): Response | undefined {
     { id: 'store-1', organizationId: ORG_ID, name: '旗舰店', status: 'active' },
   ])
   if (url.includes('/stores/store-1/memberships')) return envelopeResponse([
-    { id: 'sm1', storeId: 'store-1', accountId: 'acc-staff', role: 'staff', createdAt: null },
+    { id: 'sm1', storeId: 'store-1', accountId: 'acc-staff', role: 'staff', createdAt: null, accountStatus: 'active' },
   ])
   if (url.includes('member-review-required')) return envelopeResponse({ required: false })
   return undefined
@@ -78,7 +78,7 @@ describe('OrgTeamCard · 子账号管控（任务书 #48）', () => {
     expect(emailInput.exists()).toBe(true)
     await emailInput.setValue('sa@example.com')
     await nameInput.setValue('王成员')
-    const button = wrapper.findAll('button').find((b) => b.text().includes('创建成员账号'))
+    const button = wrapper.findAll('button').find((b) => b.text() === '创建账号')
     expect(button, '创建按钮存在且可点').toBeTruthy()
     await button!.trigger('click')
     await flushPromises()
@@ -154,5 +154,39 @@ describe('OrgTeamCard · 子账号管控（任务书 #48）', () => {
     await flushPromises()
     expect(restoreCalls.length).toBe(1)
     expect(wrapper.text()).toContain('账号已恢复可用')
+  })
+
+  test('待审核员工行展示审核入口：通过走 /review(approve)，行内不再出现停用按钮', async () => {
+    let reviewBody: unknown = null
+    const { wrapper, calls } = await mountedWith((url, opts) => {
+      const method = opts?.method ?? 'GET'
+      if (url.includes('/stores/store-1/memberships')) {
+        return envelopeResponse([
+          { id: 'sm1', storeId: 'store-1', accountId: 'acc-pending', role: 'staff', createdAt: null, accountStatus: 'pending_review' },
+        ])
+      }
+      if (method === 'POST' && url.endsWith(`/api/organizations/${ORG_ID}/accounts/acc-pending/review`)) {
+        reviewBody = (opts as unknown as { body?: string })?.body ?? null
+        return envelopeResponse({ success: true })
+      }
+      return baseHandler(url)
+    })
+
+    await wrapper.findAll('.team-link').find((b) => b.text() === '旗舰店')!.trigger('click')
+    await flushPromises()
+
+    const storeSection = wrapper.findAll('section').find((s) => s.find('h4')?.text() === '门店成员')!
+    expect(storeSection.text()).toContain('待审核')
+
+    const approve = storeSection.findAll('button').find((b) => b.text() === '通过')
+    expect(approve).toBeTruthy()
+    // pending 行的操作区是审核而非停用/恢复
+    expect(storeSection.findAll('button').some((b) => b.text() === '停用账号')).toBe(false)
+
+    await approve!.trigger('click')
+    await flushPromises()
+    expect(reviewBody).toBe('{"decision":"approve"}')
+    expect(wrapper.text()).toContain('已通过审核')
+    void calls
   })
 })
