@@ -6,6 +6,7 @@ import type {
   MerchantProfile,
   MerchantAttachment,
   MerchantAttachmentType,
+  OrgKybSummary,
   WithdrawalAccount,
   StoreProfile,
 } from '../types/grassland'
@@ -24,6 +25,8 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{
   changed: []
+  /** 认证状态冒泡给工作台的概览节（storeOnly 模式下 merchantStatus 恒为 null）。 */
+  summary: [OrgKybSummary]
 }>()
 
 const grassland = useGrassland()
@@ -515,6 +518,25 @@ watch(() => props.orgId, (orgId) => {
     loadStores(orgId, version),
   ])
 }, { immediate: true })
+
+/**
+ * 认证摘要冒泡（概览节的「认证」卡）。
+ *
+ * storeOnly 模式不拉组织级资料（会 403），merchantStatus 自然恒为 null——
+ * 概览节在该模式下也不渲染，两侧一致。
+ */
+watch(
+  (): OrgKybSummary => ({
+    merchantStatus: merchantProfile.value?.status ?? null,
+    // Array.isArray 守卫：load 只判 truthy，上游给非数组时这里不能连带崩掉整卡
+    // （卡身用 v-for 能容忍，`.filter` 不能）。
+    approvedWithdrawalCount: Array.isArray(withdrawalAccounts.value)
+      ? withdrawalAccounts.value.filter((item) => item.status === 'approved').length
+      : 0,
+  }),
+  (summary) => emit('summary', summary),
+  { immediate: true },
+)
 </script>
 
 <template>

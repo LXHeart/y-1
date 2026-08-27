@@ -6,6 +6,7 @@ import type {
   Membership,
   MembershipRole,
   OrgInvitation,
+  OrgTeamSummary,
   Store,
   StoreMembership,
   StoreRole,
@@ -27,7 +28,7 @@ import type {
  * - 守卫：移除最后一个 owner / 唯一 manager 均 409
  */
 
-const emit = defineEmits<{ 'stores-changed': [] }>()
+const emit = defineEmits<{ 'stores-changed': []; summary: [OrgTeamSummary] }>()
 const props = defineProps<{ orgId: string }>()
 
 const grassland = useGrassland()
@@ -86,6 +87,30 @@ async function refresh(): Promise<void> {
 }
 
 watch(() => props.orgId, refresh, { immediate: true })
+
+/**
+ * 向父组件冒泡摘要（概览节用）。
+ *
+ * 挂在**派生值**上而不是逐个 mutation 点：members/invitations/stores 有十来条改写路径
+ * （增删成员、发/撤邀请、建门店、停用恢复、审核…），逐个加 emit 必然漏。
+ * deep 不需要——这些 ref 都是整体替换而非原地改元素。
+ */
+watch(
+  (): OrgTeamSummary => {
+    // Array.isArray 守卫：load 只判 truthy，上游给非数组时摘要不能连带崩掉整卡
+    // （卡身用 v-for 能容忍，`.length`/`.filter` 不能）。
+    const memberList = Array.isArray(members.value) ? members.value : []
+    const invitationList = Array.isArray(invitations.value) ? invitations.value : []
+    return {
+      memberCount: memberList.length,
+      storeCount: Array.isArray(stores.value) ? stores.value.length : 0,
+      pendingInvitationCount: invitationList.filter((item) => item.status === 'pending' && !item.expired).length,
+      pendingReviewCount: memberList.filter((item) => item.accountStatus === 'pending_review').length,
+    }
+  },
+  (summary) => emit('summary', summary),
+  { immediate: true },
+)
 
 async function reloadMembers(): Promise<void> {
   const list = await grassland.listMemberships(props.orgId)

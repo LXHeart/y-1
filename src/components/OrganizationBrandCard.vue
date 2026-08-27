@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { GrasslandHttpError } from '../composables/grassland-http'
 import { useGrasslandIdentity } from '../composables/useGrasslandIdentity'
-import type { BrandProfile, Industry, MembershipRole } from '../types/grassland'
+import type { BrandProfile, Industry, MembershipRole, OrgBrandSummary } from '../types/grassland'
 
 /**
  * 组织品牌资料卡片（#32，D11）：独立于 MerchantKybCard 的门店资料（后者走 KYB 审核状态机，
@@ -16,6 +16,9 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), { role: null })
+
+/** 品牌资料完整度冒泡给父组件的概览节（本卡自身无其它对外事件）。 */
+const emit = defineEmits<{ summary: [OrgBrandSummary] }>()
 
 /**
  * 透传 run（照 AiOrgBudgetPanel 先例）：不吞错，保留 `GrasslandHttpError.status` 供
@@ -108,6 +111,23 @@ async function loadBrandProfile(orgId: string, version: number): Promise<void> {
     if (isCurrentOrganization(orgId, version)) loading.value = false
   }
 }
+
+/**
+ * 完整度摘要冒泡（概览节的「品牌」卡）。
+ *
+ * 看 `logoPreviewUrl` 而不是 `brandLogoMediaReferenceId`：有引用但取不到短时效 URL
+ * （logoUrl fail-soft 为 null）时概览不该报「已配置」——用户点进去看到的是空位。
+ */
+watch(
+  (): OrgBrandSummary => ({
+    hasBrandName: Boolean(form.value.brandName.trim()),
+    hasLogo: Boolean(logoPreviewUrl.value),
+    hasDescription: Boolean(form.value.description.trim()),
+    hasIndustry: Boolean(form.value.industry),
+  }),
+  (summary) => emit('summary', summary),
+  { immediate: true },
+)
 
 /** 409 冲突后的静默重拉：刷新 version 与表单为服务器最新态，不打断已展示的冲突提示。 */
 async function reloadLatest(orgId: string, version: number): Promise<void> {

@@ -29,6 +29,8 @@ import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 import BrandPublicProfilePanel from './components/BrandPublicProfilePanel.vue'
+import OrgIdentityStrip from './components/OrgIdentityStrip.vue'
+import OrgOverviewGrid, { type OrgSection } from './components/OrgOverviewGrid.vue'
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import StoreMediaGallery from './components/StoreMediaGallery.vue'
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
@@ -41,7 +43,14 @@ import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
-import type { Task, TaskApplication } from '../../types/grassland'
+import type {
+  OrgBrandSummary,
+  OrgKybSummary,
+  OrgPermissionSummary,
+  OrgTeamSummary,
+  Task,
+  TaskApplication,
+} from '../../types/grassland'
 import { formatYuan } from '../../lib/money'
 
 /**
@@ -71,14 +80,6 @@ const router = useRouter()
 const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
 
 const notice = ref('')
-const renameFormOpen = ref(false)
-
-async function submitRename(): Promise<void> {
-  await requestRename(newOrgName.value)
-  newOrgName.value = ''
-  renameFormOpen.value = false
-}
-
 function setNotice(message: string): void {
   notice.value = message
 }
@@ -189,6 +190,52 @@ const activeTabs = computed<readonly SubTab[]>(() =>
 watch(activeTabs, (tabs) => {
   if (!tabs.some((tab) => tab.id === subTab.value)) subTab.value = tabs[0].id
 }, { immediate: true })
+/**
+ * 「商家主体与门店」页签内的二级分节。
+ *
+ * 原先这一屏是 5 张全宽卡竖着堆（子组件合计 2600+ 行），认证状态与额度余量埋在第 2、
+ * 第 5 张卡内部要滚屏才看到。改为「身份条 + 概览 + 左侧竖栏分节」：常驻页眉答「我是谁、
+ * 现在什么状态」，概览答「哪项缺、去哪补」，五个域各自独立成节，首屏高度从五卡叠加降到一节。
+ */
+const ORG_SECTIONS: readonly { id: OrgSection; label: string }[] = [
+  { id: 'overview', label: '概览' },
+  { id: 'team', label: '成员与门店' },
+  { id: 'brand', label: '品牌资料' },
+  { id: 'kyb', label: '认证资料' },
+  { id: 'permission', label: '权限与额度' },
+]
+const orgSection = ref<OrgSection>('overview')
+
+/**
+ * 四张子卡冒泡上来的摘要（概览与身份条的数据源）。
+ *
+ * 分节用 `v-show` 而非 `v-if`：子卡常驻挂载才能在进概览时就已经有摘要可显示，
+ * 也保住锚点滚动与既有测试断言（隐藏元素仍在 DOM 里）。
+ * 换主体时清空——旧主体的数字停留在概览上就是错的事实。
+ */
+const teamSummary = ref<OrgTeamSummary | null>(null)
+const brandSummary = ref<OrgBrandSummary | null>(null)
+const kybSummary = ref<OrgKybSummary | null>(null)
+const permissionSummary = ref<OrgPermissionSummary | null>(null)
+
+watch(activeOrgId, () => {
+  teamSummary.value = null
+  brandSummary.value = null
+  kybSummary.value = null
+  permissionSummary.value = null
+  orgSection.value = 'overview'
+})
+
+/**
+ * 身份条把新 orgId 直接抛上来（原先是 select 的 v-model + @change 两步）。
+ * `changeOrganization` 读的是 `activeOrgId`，所以先写值再调它。
+ */
+async function selectOrganization(orgId: string): Promise<void> {
+  if (orgId === activeOrgId.value) return
+  activeOrgId.value = orgId
+  await changeOrganization()
+}
+
 /** 通知锚点 → 所属子页签（按身份侧）：滚动前先切页签（隐藏元素无法 scrollIntoView）。 */
 const ANCHOR_TAB: Readonly<Record<'merchant' | 'recommender', Readonly<Record<string, SubTabId>>>> = {
   merchant: {
@@ -715,78 +762,40 @@ watch(grasslandNavigationTarget, async (target) => {
         </div>
       </section>
 
-      <!-- 子页签② 组织与门店：主体、成员、品牌与 KYB -->
+      <!-- 子页签② 组织与门店：身份条常驻 + 左栏五分节（概览 / 成员门店 / 品牌 / 认证 / 权限） -->
       <section v-show="subTab === 'org'" class="gl-zone" aria-label="商家主体与门店">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">商家主体与门店</h3>
           <p class="gl-zone-note">商家主体、成员、品牌与认证资料</p>
         </div>
-        <div class="gl-zone-body">
-          <article id="gl-organizations" class="gl-tile">
-            <h3>我的商家主体</h3>
-            <div class="gl-row">
-              <select v-model="activeOrgId" aria-label="所属商家主体" name="organization" @change="changeOrganization">
-                <option value="" disabled>选择商家主体</option>
-                <option v-for="o in orgs" :key="o.id" :value="o.id">{{ o.name }}（{{ o.permissionTier }}）</option>
-              </select>
-            </div>
-            <!-- 产品规则（2026-08-23）：一个账号只能有一个商家主体关联（自建或加入），有即不显示创建入口 -->
-            <div v-if="orgs.length === 0" class="gl-row">
-              <input v-model="newOrgName" aria-label="新商家主体名称" name="organization-name" autocomplete="off" placeholder="新商家主体名称" @keyup.enter="createOrg" />
-              <button type="button" :disabled="grassland.loading.value" @click="createOrg">创建</button>
-            </div>
-            <p v-if="activeOrg" class="gl-hint">
-              当前等级 <code>{{ activeOrg.permissionTier }}</code>
-              <span v-if="!activeOrgHasOrganizationAccess">（仅门店经理权限）</span>
-              <span v-if="!canPublishBounty">（非 finance_transaction 等级不可发布赏金任务）</span>
-            </p>
 
-            <!-- 主体更名（V40）：审核生效 + 30 天冷却；owner/admin 可发起 -->
-            <div v-if="activeOrg && activeOrgHasOrganizationAccess" class="org-rename">
-              <template v-if="pendingRename">
-                <p class="gl-hint">
-                  更名审核中：「{{ activeOrg.name }}」→「{{ pendingRename.requestedName }}」，等待平台审核通过后生效。
-                </p>
-              </template>
-              <template v-else>
-                <button v-if="!renameFormOpen" type="button" class="quiet" @click="renameFormOpen = true">申请更名</button>
-                <div v-else class="gl-row">
-                  <input v-model="newOrgName" aria-label="新主体名称" name="org-rename-name" autocomplete="off" placeholder="新主体名称（经平台审核后生效，30 天内只能改一次）" />
-                  <button type="button" :disabled="renaming || grassland.loading.value" @click="submitRename">提交更名申请</button>
-                  <button type="button" class="quiet" @click="renameFormOpen = false">取消</button>
-                </div>
-              </template>
-            </div>
-          </article>
+        <!-- 身份条：取代原「我的商家主体」磁贴；id 保留给通知锚点 -->
+        <div id="gl-organizations">
+          <OrgIdentityStrip
+            :orgs="orgs"
+            :active-org-id="activeOrgId"
+            :active-org="activeOrg"
+            :has-organization-access="activeOrgHasOrganizationAccess"
+            :can-publish-bounty="canPublishBounty"
+            :can-rename="Boolean(activeOrg) && activeOrgHasOrganizationAccess"
+            :pending-rename="pendingRename"
+            :renaming="renaming"
+            :loading="grassland.loading.value"
+            :kyb="kybSummary"
+            :permission="permissionSummary"
+            :team="teamSummary"
+            @change-org="selectOrganization"
+            @rename="requestRename"
+          />
+        </div>
 
-          <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
-          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
-            <MerchantPermissionCard
-              :org-id="activeOrg.id"
-              :tier="activeOrg.permissionTier"
-              :industry="activeOrg.industry"
-              @changed="loadOrganizations"
-            />
-          </article>
-
-          <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
-          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
-            <OrgTeamCard :org-id="activeOrg.id" @stores-changed="loadActiveOrganizationStores" />
-          </article>
-
-          <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
-          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
-            <OrganizationBrandCard :org-id="activeOrg.id" :role="activeOrganizationRole" />
-          </article>
-
-          <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
-          <article v-if="activeOrg && activeOrgHasOrganizationAccess" class="gl-tile gl-tile-wide">
-            <MerchantKybCard :org-id="activeOrg.id" :stores="stores.map((store) => ({ id: store.id, name: store.name }))" @changed="() => loadOrganizations()" />
-          </article>
-
-          <!-- 独立门店 KYB：纯门店 MANAGER（无组织成员身份）也能维护自己门店的资料并走审核状态机。 -->
+        <!-- 纯门店 MANAGER（无组织成员身份）没有五分节可分，只维护自己门店的资料 -->
+        <div
+          v-if="!activeOrgHasOrganizationAccess"
+          class="gl-zone-body"
+        >
           <article
-            v-else-if="activeOrg && managerStoreScopes.some((scope) => scope.organizationId === activeOrgId)"
+            v-if="activeOrg && managerStoreScopes.some((scope) => scope.organizationId === activeOrgId)"
             class="gl-tile gl-tile-wide"
           >
             <MerchantKybCard
@@ -796,8 +805,75 @@ watch(grasslandNavigationTarget, async (target) => {
               @changed="() => loadOrganizations()"
             />
           </article>
+        </div>
 
-          <!-- 任务书 #29+#30 #30：商家月度账单（按月汇总资金流水） -->
+        <div v-else-if="activeOrg" class="org-split">
+          <!-- 左栏：竖向分节（与一级横向 pill 正交，避免两行横导航叠着） -->
+          <nav class="org-rail" role="tablist" aria-label="商家主体分节">
+            <button
+              v-for="section in ORG_SECTIONS"
+              :key="section.id"
+              type="button"
+              role="tab"
+              class="org-rail-item"
+              :class="{ 'org-rail-active': orgSection === section.id }"
+              :aria-selected="orgSection === section.id"
+              :tabindex="orgSection === section.id ? 0 : -1"
+              @click="orgSection = section.id"
+            >{{ section.label }}</button>
+          </nav>
+
+          <!-- 右栏：分节内容。v-show 常驻 —— 子卡保持挂载，摘要才能在概览就绪 -->
+          <div class="org-panel">
+            <div v-show="orgSection === 'overview'" class="org-panel-section">
+              <OrgOverviewGrid
+                :kyb="kybSummary"
+                :permission="permissionSummary"
+                :team="teamSummary"
+                :brand="brandSummary"
+                @open="(section: OrgSection) => orgSection = section"
+              />
+            </div>
+
+            <!-- 成员与门店：Slice 2F/2G/2J 的三级权限自助管理 -->
+            <div v-show="orgSection === 'team'" class="org-panel-section">
+              <OrgTeamCard
+                :org-id="activeOrg.id"
+                @stores-changed="loadActiveOrganizationStores"
+                @summary="(summary: OrgTeamSummary) => teamSummary = summary"
+              />
+            </div>
+
+            <!-- 组织品牌资料（#32）：独立于门店资料（KYB 卡的门店 tab）；member 只读，owner/admin 可编辑 -->
+            <div v-show="orgSection === 'brand'" class="org-panel-section">
+              <OrganizationBrandCard
+                :org-id="activeOrg.id"
+                :role="activeOrganizationRole"
+                @summary="(summary: OrgBrandSummary) => brandSummary = summary"
+              />
+            </div>
+
+            <!-- KYB 商家资料：GL-P3-MERCHANT-001 -->
+            <div v-show="orgSection === 'kyb'" class="org-panel-section">
+              <MerchantKybCard
+                :org-id="activeOrg.id"
+                :stores="stores.map((store) => ({ id: store.id, name: store.name }))"
+                @changed="() => loadOrganizations()"
+                @summary="(summary: OrgKybSummary) => kybSummary = summary"
+              />
+            </div>
+
+            <!-- 权限与额度：D-05 的商家侧入口（升级申请 / 申诉 / 额度已用-上限） -->
+            <div v-show="orgSection === 'permission'" class="org-panel-section">
+              <MerchantPermissionCard
+                :org-id="activeOrg.id"
+                :tier="activeOrg.permissionTier"
+                :industry="activeOrg.industry"
+                @changed="loadOrganizations"
+                @summary="(summary: OrgPermissionSummary) => permissionSummary = summary"
+              />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1120,6 +1196,39 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-workbench .gl-zone-title { transition: color var(--duration-normal) var(--ease-out); }
 .gl-workbench[data-side="merchant"] .gl-zone-title { color: var(--color-accent-2); }
 .gl-workbench[data-side="recommender"] .gl-zone-title { color: var(--color-grass); }
+/* ---------- 商家主体屏：左栏分节 + 右栏内容 ---------- */
+/* 竖栏与一级横向 pill 正交，避免同屏两行横导航；窄屏塌成横向滚动条 */
+.org-split { display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: var(--space-md); align-items: start; }
+.org-rail { display: flex; flex-direction: column; gap: 2px; position: sticky; top: var(--space-md); }
+.org-rail-item {
+  min-height: 34px; padding: 0 var(--space-sm);
+  border: none; border-left: 2px solid transparent; border-radius: var(--radius-xs);
+  background: transparent; color: var(--color-text-muted);
+  font-size: var(--text-sm); font-weight: 600; text-align: left; white-space: nowrap; cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+.org-rail-item:hover { color: var(--color-text-secondary); background: var(--surface-furrow); }
+.org-rail-active {
+  border-left-color: var(--color-accent-2); background: var(--color-surface-highlight);
+  color: var(--color-accent-2);
+}
+.org-panel { min-width: 0; }
+.org-panel-section { min-width: 0; }
+
+@media (max-width: 720px) {
+  .org-split { grid-template-columns: minmax(0, 1fr); }
+  .org-rail {
+    position: static; flex-direction: row; gap: 4px;
+    overflow-x: auto; scrollbar-width: none;
+    padding-bottom: 2px; border-bottom: 1px solid var(--color-border);
+  }
+  .org-rail::-webkit-scrollbar { display: none; }
+  .org-rail-item {
+    border-left: none; border-bottom: 2px solid transparent; border-radius: 0;
+  }
+  .org-rail-active { border-bottom-color: var(--color-accent-2); background: transparent; }
+}
+
 /* 资金账户：余额走台账等宽大字 */
 .gl-balance { margin: 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
 .gl-balance strong {

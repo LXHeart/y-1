@@ -7,6 +7,7 @@ import type {
   MerchantAttachment,
   MaterialType,
   OrganizationQuota,
+  OrgPermissionSummary,
   PermissionRequest,
   PermissionTier,
   TaskUsage,
@@ -24,8 +25,8 @@ import type {
  */
 
 const props = defineProps<{ orgId: string; tier: PermissionTier; industry: string | null }>()
-/** 审批通过后 org tier 变了，通知父组件重拉组织与额度。 */
-const emit = defineEmits<{ changed: [] }>()
+/** 审批通过后 org tier 变了，通知父组件重拉组织与额度。summary 供概览节呈现额度余量。 */
+const emit = defineEmits<{ changed: []; summary: [OrgPermissionSummary] }>()
 
 const grassland = useGrassland()
 
@@ -112,7 +113,12 @@ const upgradableTiers = computed<PermissionTier[]>(() => {
   return order.slice(order.indexOf(props.tier) + 1)
 })
 
-const hasPending = computed(() => requests.value.some((r) => r.status === 'pending' || r.status === 'under_review'))
+/**
+ * Array.isArray 守卫：`refresh` 只判 truthy 就赋值，上游返回非数组（如 `{}`）时
+ * `.some` 会抛。此前只有升级区渲染时才求值故少被触发，摘要 watch 每次都读它。
+ */
+const hasPending = computed(() => Array.isArray(requests.value)
+  && requests.value.some((r) => r.status === 'pending' || r.status === 'under_review'))
 
 const SLA_LABEL: Record<string, string> = {
   within: '审核中',
@@ -150,6 +156,23 @@ async function refresh(): Promise<void> {
 watch(() => props.orgId, refresh, { immediate: true })
 // tier 变化（审批通过）后额度随之变，重拉一次
 watch(() => props.tier, refresh)
+
+/**
+ * 向父组件冒泡摘要（概览节的「额度」卡）。
+ *
+ * `remainingActiveTasks` 保留 null 语义——用量是 best-effort（非绑定 org 时 marketplace 403），
+ * 概览必须能区分「余 0」和「看不到」，压成 0 会谎报额度用尽。
+ */
+watch(
+  (): OrgPermissionSummary => ({
+    tier: props.tier,
+    remainingActiveTasks: usage.value?.remainingActiveTasks ?? null,
+    maxActiveTasks: usage.value?.maxActiveTasks ?? quota.value?.maxActiveTasks ?? 0,
+    hasPendingRequest: hasPending.value,
+  }),
+  (summary) => emit('summary', summary),
+  { immediate: true },
+)
 
 /**
  * 手动刷新：**同时**让父组件重拉组织列表。
