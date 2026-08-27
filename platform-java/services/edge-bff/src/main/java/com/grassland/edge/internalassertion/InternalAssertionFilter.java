@@ -5,6 +5,7 @@ import com.grassland.edge.proxy.EdgeRoutingProperties;
 import com.grassland.identity.assertion.IdentityAssertion;
 import com.grassland.identity.assertion.IdentityAssertionProperties;
 import com.grassland.identity.assertion.IdentityAssertionSigner;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -12,6 +13,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -60,18 +63,47 @@ public class InternalAssertionFilter implements WebFilter {
         String method = request.getMethod().name();
         String path = request.getURI().getPath();
 
-        // 每个请求只 mutate 一次（原请求的 .mutate() 给出可变头部副本）：剥离内部头，必要时附加断言。
-        Mono<ServerHttpRequest> requestMono;
         if (!upstreamResolver.isInternalUpstream(method, path)) {
-            requestMono = Mono.just(stripInternalHeaders(request));
-        } else {
-            boolean accessTokenAuthenticated =
-                    exchange.getAttribute(AccessTokenFilter.RESOLVED_IDENTITY_ATTRIBUTE) != null;
-            requestMono = resolveIdentity(exchange)
-                    .map(identity -> stripAndSign(request, identity, method, path, accessTokenAuthenticated))
-                    .defaultIfEmpty(stripInternalHeaders(request));
+            return chain.filter(exchange.mutate().request(stripInternalHeaders(request)).build());
         }
-        return requestMono.flatMap(mutated -> chain.filter(exchange.mutate().request(mutated).build()));
+        boolean accessTokenAuthenticated =
+                exchange.getAttribute(AccessTokenFilter.RESOLVED_IDENTITY_ATTRIBUTE) != null;
+        // 关键：chain.filter/write 返回的 Mono<Void> 以「完成（空信号）」收尾——若直接挂在
+        // switchIfEmpty 下游，成功路径会被误判为「无身份」而二次放行同一请求。故每条分支
+        // 都以 thenReturn(true) 收敛成恒发射哨兵，让 switchIfEmpty 只服务「匿名」这一种空。
+        Mono<Boolean> handled = resolveIdentity(exchange)
+                .flatMap(identity -> {
+                    // 任务书 #48：首登强制改密硬闸——除豁免路径（认证族）外，标记未解除一律 428，
+                    // 不签断言不放行。停用账号到不了这里（status 过滤已在 resolver 层拦截为匿名）。
+                    if (identity.mustChangePassword() && !isPasswordChangeExempt(path)) {
+                        log.info("Blocked {} {} pending first-login password change (account={})",
+                                method, path, identity.accountId());
+                        return writePreconditionRequired(exchange).thenReturn(Boolean.TRUE);
+                    }
+                    ServerHttpRequest mutated =
+                            stripAndSign(request, identity, method, path, accessTokenAuthenticated);
+                    return chain.filter(exchange.mutate().request(mutated).build())
+                            .thenReturn(Boolean.TRUE);
+                });
+        return handled
+                .switchIfEmpty(Mono.defer(() ->
+                        chain.filter(exchange.mutate().request(stripInternalHeaders(request)).build())
+                                .thenReturn(Boolean.TRUE)))
+                .then();
+    }
+
+    /** 改密闸豁免面：认证族（含 change-password/logout/me）。刻意最小——通知等业务读也拦。 */
+    private static boolean isPasswordChangeExempt(String path) {
+        return path.startsWith("/api/auth/");
+    }
+
+    private Mono<Void> writePreconditionRequired(ServerWebExchange exchange) {
+        var response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.PRECONDITION_REQUIRED);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        byte[] body = "{\"success\":false,\"error\":\"首次登录请先修改密码\"}"
+                .getBytes(StandardCharsets.UTF_8);
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(body)));
     }
 
     /**

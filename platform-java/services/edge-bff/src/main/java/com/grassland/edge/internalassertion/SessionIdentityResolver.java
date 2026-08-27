@@ -6,6 +6,8 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpCookie;
@@ -27,6 +29,8 @@ import reactor.core.publisher.Mono;
 @Component
 @ConditionalOnProperty(name = "edge.identity.from-database-url", havingValue = "true")
 public class SessionIdentityResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(SessionIdentityResolver.class);
 
     private final DatabaseClient db;
     private final EdgeCookieSigner cookieSigner;
@@ -70,7 +74,8 @@ public class SessionIdentityResolver {
                         row.get("id", String.class),
                         row.get("status", String.class)))
                 .one()
-                .flatMap(account -> sessionState(sid).defaultIfEmpty(SessionState.EMPTY)
+                .flatMap(account -> mustChangePassword(accountId).flatMap(flag ->
+                        sessionState(sid).defaultIfEmpty(SessionState.EMPTY)
                         .flatMap(session -> {
                             // 仅商家活动身份才带 org/tier：推荐官/消费者断言即使该账号也拥有 merchant 档案，
                             // 也必须 organizationId/tier 为 null——否则推荐官 session 会拿到无关 merchant 组织，
@@ -90,8 +95,28 @@ public class SessionIdentityResolver {
                                             o.orgId(),
                                             o.tier(),
                                             session.reauthenticatedAt(),
-                                            session.authStrength())));
-                        }));
+                                            session.authStrength(),
+                                            flag)));
+                        })));
+    }
+
+    /**
+     * 首登强制改密标记（任务书 #48，account_flag 为 identity 自有表）。
+     *
+     * <p>无行 = false（存量账号零感知）。<b>查询失败降级 false</b>并告警：account_flag 未迁移到位的
+     * 环境里闸门自然失效，绝不能因旗标表缺席把全部请求打死。
+     */
+    private Mono<Boolean> mustChangePassword(String accountId) {
+        return db.sql("SELECT must_change_password FROM account_flag WHERE account_id = CAST(:id AS uuid)")
+                .bind("id", accountId)
+                .map(row -> Boolean.TRUE.equals(row.get("must_change_password", Boolean.class)))
+                .one()
+                .defaultIfEmpty(false)
+                .onErrorResume(e -> {
+                    log.warn("account_flag lookup failed for {} — password-change gate degraded to off: {}",
+                            accountId, e.getMessage());
+                    return Mono.just(false);
+                });
     }
 
     /** 读 backend_role 表的多值角色，拼成逗号分隔 claim（如 "platform_admin,content_reviewer"）。 */

@@ -126,6 +126,6 @@ class AccessTokenFilterTest {
     private static ResolvedIdentity identity() {
         return new ResolvedIdentity(
                 "11111111-1111-1111-1111-111111111111", "user", "active", "merchant", "refresh-id",
-                "org-1", "basic_publish", null, "level1");
+                "org-1", "basic_publish", null, "level1", false);
     }
 }

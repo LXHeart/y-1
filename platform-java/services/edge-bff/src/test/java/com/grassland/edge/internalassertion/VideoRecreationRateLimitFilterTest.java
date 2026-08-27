@@ -55,6 +55,6 @@ class VideoRecreationRateLimitFilterTest {
     }
 
     private static ResolvedIdentity identity() {
-        return new ResolvedIdentity("acct", "user", "active", "recommender", "sid", null, null, null, "level1");
+        return new ResolvedIdentity("acct", "user", "active", "recommender", "sid", null, null, null, "level1", false);
     }
 }

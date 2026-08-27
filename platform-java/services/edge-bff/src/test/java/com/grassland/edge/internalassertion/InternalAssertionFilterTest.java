@@ -156,6 +156,45 @@ class InternalAssertionFilterTest {
         assertThat(token).isEqualTo("none");
     }
 
+    // ---------- 任务书 #48：首登强制改密硬闸 ----------
+
+    @Test
+    void flaggedAccount_businessPath_is428WithoutAssertion() {
+        SessionIdentityResolver resolver = resolverReturning(flaggedIdentity());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/internal"));
+
+        client(filter)
+                .get().uri("/internal/api/tasks")
+                .cookie("y1.sid", "anything")
+                .exchange()
+                .expectStatus().isEqualTo(org.springframework.http.HttpStatus.PRECONDITION_REQUIRED)
+                .expectBody()
+                .jsonPath("$.success").isEqualTo(false)
+                .jsonPath("$.error").isEqualTo("首次登录请先修改密码");
+    }
+
+    @Test
+    void flaggedAccount_authEndpoints_areExemptFromGate() {
+        SessionIdentityResolver resolver = resolverReturning(flaggedIdentity());
+        var filter = new InternalAssertionFilter(resolver, signer, props, upstreamInternal("/api/auth"));
+
+        String token = readToken(client(filter)
+                .get().uri("/api/auth/me")
+                .cookie("y1.sid", "anything")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).returnResult().getResponseBody());
+
+        assertThat(signer.verify(token, null)).isPresent();
+    }
+
+    private static ResolvedIdentity flaggedIdentity() {
+        // 管理员代建后未改密的首登态（mustChangePassword=true）
+        return new ResolvedIdentity(
+                "11111111-1111-1111-1111-111111111111", "user", "active", "merchant", "sid-flagged",
+                "org-from-bff", "basic_publish", null, "level1", true);
+    }
+
     private WebTestClient client(InternalAssertionFilter filter) {
         return WebTestClient.bindToController(new EchoController())
                 .webFilter(filter)
@@ -182,14 +221,14 @@ class InternalAssertionFilterTest {
         // 普通登录：未重认证（reauthenticatedAt=null，authStrength=level1）
         return new ResolvedIdentity(
                 "11111111-1111-1111-1111-111111111111", "user", "active", "merchant", "sid-1",
-                "org-from-bff", "basic_publish", null, "level1");
+                "org-from-bff", "basic_publish", null, "level1", false);
     }
 
     /** 已 MFA 重认证的 session（V7）：断言须带上时刻与 level2，否则 trust 客服终审恒 403。 */
     private static ResolvedIdentity reauthenticatedIdentity(java.time.Instant reauthAt) {
         return new ResolvedIdentity(
                 "11111111-1111-1111-1111-111111111111", "user", "active", "customer_service", "sid-1",
-                null, null, reauthAt, "level2");
+                null, null, reauthAt, "level2", false);
     }
 
     /** 控制器返回 JSON {@code {"assertion":"<token>"}}；解析出 token（或 "none"）。 */

@@ -68,7 +68,10 @@ public class AccessTokenIdentityResolver {
                         row.get("id", String.class),
                         row.get("status", String.class)))
                 .one()
-                .flatMap(account -> backendRolesClaim(accountId)
+                // 与 SessionIdentityResolver.mustChangePassword 同款降级：account_flag 缺席环境闸门失效，
+                // 不能因旗标查询失败打死移动端（任务书 #48）。
+                .flatMap(account -> mustChangePassword(accountId).flatMap(flag ->
+                        backendRolesClaim(accountId)
                         .defaultIfEmpty("")
                         .flatMap(rolesClaim -> sessionState(refreshTokenId).defaultIfEmpty(SessionState.EMPTY)
                                 .flatMap(session -> {
@@ -84,8 +87,19 @@ public class AccessTokenIdentityResolver {
                                             o.orgId(),
                                             o.tier(),
                                             session.reauthenticatedAt(),
-                                            session.authStrength()));
-                                })));
+                                            session.authStrength(),
+                                            flag));
+                                }))));
+    }
+
+    /** 首登强制改密标记；无行=false，查询失败降级 false（同 SessionIdentityResolver）。 */
+    private Mono<Boolean> mustChangePassword(String accountId) {
+        return db.sql("SELECT must_change_password FROM account_flag WHERE account_id = CAST(:id AS uuid)")
+                .bind("id", accountId)
+                .map(row -> Boolean.TRUE.equals(row.get("must_change_password", Boolean.class)))
+                .one()
+                .defaultIfEmpty(false)
+                .onErrorResume(e -> Mono.just(false));
     }
 
     /** refresh_token 行存活复查（撤销即时生效）。 */
