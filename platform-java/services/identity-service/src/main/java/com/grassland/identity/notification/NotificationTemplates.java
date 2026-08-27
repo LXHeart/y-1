@@ -49,6 +49,25 @@ public final class NotificationTemplates {
 					"一条商家权限申请已超过审核时限，请尽快处理", LINK_PERMISSION, orgPayload(payload));
 			case "PermissionReviewed" -> new Template(NotificationCategory.PERMISSION, "你的权限申请已审核", "你的商家权限升级申请已有审核结果",
 					LINK_PERMISSION, orgPayload(payload));
+			// ---------- 任务书 #48：成员子账号 ----------
+			case "OrgSubAccountCreated" -> new Template(NotificationCategory.INVITATION, "你的商家账号已创建",
+					"管理员已为你创建账号，首次登录需修改密码", LINK_INVITATIONS, orgPayload(payload));
+			case "MemberSuspensionChanged" -> {
+				String action = stringField(payload, "action");
+				String body = "suspended".equals(action)
+						? "一个门店成员账号已被停用并立即生效；若是你本人的账号，恢复前将无法登录"
+						: "一个门店成员账号已恢复可用";
+				yield new Template(NotificationCategory.INVITATION, "成员账号状态变更", body,
+						LINK_PERMISSION, orgPayload(payload));
+			}
+			case "StaffCreationReviewed" -> {
+				boolean approved = "approved".equals(stringField(payload, "decision"));
+				yield new Template(NotificationCategory.INVITATION,
+						approved ? "你的员工账号已通过审核" : "你添加的员工未通过审核",
+						approved ? "账号已启用，可以登录使用门店功能了"
+								: "该员工账号未通过主体审核，请联系管理员",
+						LINK_INVITATIONS, orgPayload(payload));
+			}
 			default -> externalTemplate(eventType, payload);
 		};
 	}

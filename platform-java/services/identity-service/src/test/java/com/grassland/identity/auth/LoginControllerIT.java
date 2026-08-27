@@ -42,6 +42,8 @@ class LoginControllerIT {
              var s = c.createStatement()) {
             s.execute("CREATE TABLE app_users (id uuid PRIMARY KEY, email text NOT NULL UNIQUE, password_hash text NOT NULL, display_name text, role text NOT NULL DEFAULT 'user', status text NOT NULL DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), last_login_at timestamptz)");
             s.execute("CREATE TABLE session (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL)");
+            // 任务书 #48：登录响应/改密依赖 account_flag（identity 自有表，V42）；本类自备容器手工建表
+            s.execute("CREATE TABLE IF NOT EXISTS account_flag (account_id uuid PRIMARY KEY, must_change_password boolean NOT NULL DEFAULT false, updated_at timestamptz NOT NULL DEFAULT now())");
         }
     }
 
@@ -86,12 +88,14 @@ class LoginControllerIT {
     }
 
     @Test
-    void loginInactiveUserReturns401() {
+    void suspendedLoginReturns403WithDedicatedMessage() {
+        // 任务书 #48 S2：密码正确但账号停用 → 403 区分文案（不再与凭据错误的 401 混同）
         seedUser("inactive@example.com", "correct-pass", "suspended");
         client().post().uri("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue("{\"email\":\"inactive@example.com\",\"password\":\"correct-pass\"}")
-            .exchange().expectStatus().isUnauthorized();
+            .exchange().expectStatus().isForbidden()
+            .expectBody().jsonPath("$.error").isEqualTo("账号已停用，请联系商家管理员");
     }
 
     private String seedUser(String email, String password, String status) {

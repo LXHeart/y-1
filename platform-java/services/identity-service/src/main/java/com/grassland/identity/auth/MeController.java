@@ -2,6 +2,7 @@ package com.grassland.identity.auth;
 
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.organization.CurrentAccountResolver;
+import com.grassland.identity.user.AccountFlagRepository;
 import com.grassland.identity.user.AuthUser;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,9 +23,11 @@ import reactor.core.publisher.Mono;
 @RestController
 public class MeController {
     private final CurrentAccountResolver accounts;
+    private final AccountFlagRepository accountFlags;
 
-    public MeController(CurrentAccountResolver accounts) {
+    public MeController(CurrentAccountResolver accounts, AccountFlagRepository accountFlags) {
         this.accounts = accounts;
+        this.accountFlags = accountFlags;
     }
 
     @GetMapping("/api/auth/me")
@@ -34,7 +37,8 @@ public class MeController {
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> toResponse(AuthUser user) {
-        return accounts.resolveBackendRoles(user.id())
+        Mono<Boolean> mustChange = accountFlags.mustChangePassword(user.id()).defaultIfEmpty(Boolean.FALSE);
+        return mustChange.flatMap(flag -> accounts.resolveBackendRoles(user.id())
                 .defaultIfEmpty(java.util.Set.of())
                 .map(roles -> {
                     Map<String, Object> userInfo = new LinkedHashMap<>();
@@ -49,8 +53,10 @@ public class MeController {
                             .map(BackendRole::dbValue)
                             .sorted()
                             .toList());
+                    // 任务书 #48：管理员代建后的首登强制改密态；前端据此路由锁到改密页
+                    userInfo.put("mustChangePassword", Boolean.TRUE.equals(flag));
                     return ResponseEntity.ok(Map.of("success", true, "data", Map.of("user", userInfo)));
-                });
+                }));
     }
 
     @ExceptionHandler(IdentityException.class)

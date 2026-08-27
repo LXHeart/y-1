@@ -65,6 +65,19 @@ public class NotificationRecipientResolver {
 			case "AiPersonalBudgetThresholdCrossed" ->
 				text(payload, "accountId").filter(NotificationRecipientResolver::isUuidText).map(java.util.List::of)
 						.defaultIfEmpty(java.util.List.of());
+			// 任务书 #48：主体代建子账号完成——欢迎通知发新账号本人（凭据线下交接，通知说明账号来路）。
+			case "OrgSubAccountCreated" -> Mono.just(accountIds(payload, "accountId"));
+			// 任务书 #48：停用/恢复即时生效后知会组织 owner/admin（排除操作者），目标账号本人在列。
+			case "MemberSuspensionChanged" -> orgManagersExcluding(payload, "operatorAccountId")
+					.flatMap(managers -> {
+						java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(managers);
+						if (payload.hasNonNull("accountId")) {
+							merged.add(payload.get("accountId").asText());
+						}
+						return Mono.just(java.util.List.copyOf(merged));
+					});
+			// 任务书 #48：店长代建员工的过审结果——通知被审账号本人。
+			case "StaffCreationReviewed" -> Mono.just(accountIds(payload, "accountId"));
 			default -> Mono.just(externalRecipients(envelope.eventType(), payload));
 		};
 	}

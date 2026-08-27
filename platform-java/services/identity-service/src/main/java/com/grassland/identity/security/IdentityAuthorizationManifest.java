@@ -48,6 +48,8 @@ public final class IdentityAuthorizationManifest {
                 "mobile.RevokeController");
         register(policies, AUTHENTICATED,
                 "auth.MeController",
+                // 任务书 #48：改密端点（登录态必需；首登强制改密形态免旧密由服务层判 account_flag）
+                "auth.ChangePasswordController",
                 "compliance.ComplianceController",
                 "identityprofile.IdentityAuditController",
                 "identityprofile.IdentityProfileController",
@@ -68,13 +70,28 @@ public final class IdentityAuthorizationManifest {
                 "kyb.MerchantProfileController",
                 "kyb.WithdrawalAccountController",
                 "membership.MembershipController",
+                "organization.subaccount.OrgSubAccountController",
                 "store.StoreController");
         register(policies, STORE_SCOPED,
                 "store.StoreMediaController",
                 "store.StoreMembershipController");
+        // 任务书 #48 子账号：createByOrg / 停用恢复 / 重置密码在 service 层做「操作者≥ADMIN 或
+        // 纯门店经理」的资源级判定，清单口径登记为组织域；店长建员工走门店门禁，读开关仅需登录。
+        policies.put(ROOT + "organization.subaccount.OrgSubAccountController", new ControllerPolicy(
+                ORGANIZATION_SCOPED,
+                Map.of(
+                        "createByStoreManager", STORE_SCOPED,
+                        "getReviewRequired", AUTHENTICATED)));
         register(policies, ADMIN,
                 "admin.AdminUserController",
                 "kyb.KybVerificationController");
+        // 任务书 #48 子账号：createByOrg / 停用恢复 / 重置密码均在 service 层做「操作者≥ADMIN 或
+        // 纯门店经理」的资源级判定，清单口径登记为组织域；店长建员工走门店门禁，读开关仅需登录。
+        policies.put(ROOT + "organization.subaccount.OrgSubAccountController", new ControllerPolicy(
+                ORGANIZATION_SCOPED,
+                Map.of(
+                        "createByStoreManager", STORE_SCOPED,
+                        "getReviewRequired", AUTHENTICATED)));
         register(policies, SERVICE,
                 "membership.InternalMembershipController",
                 "membership.InternalOrgAuthorizationController",

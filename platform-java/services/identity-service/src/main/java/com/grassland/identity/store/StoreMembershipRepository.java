@@ -102,6 +102,78 @@ public class StoreMembershipRepository {
                 .map(row -> row.get("c", Long.class)).one();
     }
 
+    // ---------- 任务书 #48 子账号服务支撑 ----------
+
+    /** 目标账号在本组织全部门店的角色（含重复，供「仅有 staff」判定）。 */
+    public Flux<String> findRolesByAccountInOrg(String accountId, String organizationId) {
+        return db.sql("""
+                SELECT sm.role FROM store_membership sm
+                JOIN store s ON s.id = sm.store_id
+                WHERE sm.account_id = CAST(:acct AS uuid)
+                  AND s.organization_id = CAST(:org AS uuid)
+                ORDER BY sm.role
+                """)
+                .bind("acct", accountId).bind("org", organizationId)
+                .map(row -> row.get("role", String.class)).all();
+    }
+
+    /** 同上但去重（操作者判定只需要「有没有 manager」）。 */
+    public Flux<String> findDistinctRolesByAccountInOrg(String accountId, String organizationId) {
+        return db.sql("""
+                SELECT DISTINCT sm.role FROM store_membership sm
+                JOIN store s ON s.id = sm.store_id
+                WHERE sm.account_id = CAST(:acct AS uuid)
+                  AND s.organization_id = CAST(:org AS uuid)
+                ORDER BY sm.role
+                """)
+                .bind("acct", accountId).bind("org", organizationId)
+                .map(row -> row.get("role", String.class)).all();
+    }
+
+    /** 目标账号在本组织的门店归属是否存在（跨主体隔离判定；无任何行 → 404 口径）。 */
+    public Mono<Boolean> existsByAccountAndOrganization(String accountId, String organizationId) {
+        return db.sql("""
+                SELECT 1 AS hit FROM store_membership sm
+                JOIN store s ON s.id = sm.store_id
+                WHERE sm.account_id = CAST(:acct AS uuid)
+                  AND s.organization_id = CAST(:org AS uuid)
+                LIMIT 1
+                """)
+                .bind("acct", accountId).bind("org", organizationId)
+                .map(row -> true).one().hasElement();
+    }
+
+    /** 目标账号担任 manager 的门店（限定在本组织内，守卫①按店逐个校验）。 */
+    public Flux<String> findManagerStoreIdsByAccountInOrg(String accountId, String organizationId) {
+        return db.sql("""
+                SELECT sm.store_id::text AS store_id FROM store_membership sm
+                JOIN store s ON s.id = sm.store_id
+                WHERE sm.account_id = CAST(:acct AS uuid) AND sm.role = 'manager'
+                  AND s.organization_id = CAST(:org AS uuid)
+                ORDER BY sm.store_id
+                """)
+                .bind("acct", accountId).bind("org", organizationId)
+                .map(row -> row.get("store_id", String.class)).all();
+    }
+
+    /**
+     * 守卫①计数：门店内扣除目标后剩余的 <b>active</b> 经理数——经理挂了 suspended 状态不算可用，
+     * 必须联 app_users 判状态。任务书 #48 D8。
+     */
+    public Mono<Long> countManagersExcluding(String storeId, String excludeAccountId) {
+        return db.sql("""
+                SELECT COUNT(*)::bigint AS c
+                FROM store_membership sm
+                JOIN app_users u ON u.id = sm.account_id
+                WHERE sm.store_id = CAST(:store AS uuid)
+                  AND sm.role = 'manager'
+                  AND sm.account_id <> CAST(:excl AS uuid)
+                  AND lower(u.status) = 'active'
+                """)
+                .bind("store", storeId).bind("excl", excludeAccountId)
+                .map(row -> row.get("c", Long.class)).one();
+    }
+
     private static StoreMembership map(Readable row) {
         return new StoreMembership(
                 row.get("id", String.class),

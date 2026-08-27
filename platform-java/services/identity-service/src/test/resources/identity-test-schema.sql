@@ -23,3 +23,9 @@ CREATE TABLE backend_role (
   granted_by uuid,
   PRIMARY KEY (account_id, role)
 );
+-- 任务书 #48：/api/auth/me 响应带首登强制改密标记（identity V42）
+CREATE TABLE account_flag (
+  account_id           uuid PRIMARY KEY,
+  must_change_password boolean NOT NULL DEFAULT false,
+  updated_at           timestamptz NOT NULL DEFAULT now()
+);

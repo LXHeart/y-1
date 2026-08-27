@@ -80,6 +80,21 @@ public class OrganizationRepository {
                 .map(OrganizationRepository::map).all();
     }
 
+    /** 成员添加审核开关（任务书 #48 V41/D6）。刻意向 record 外收敛：增列会波及全部构造点。 */
+    public Mono<Boolean> selectMemberReviewRequired(String organizationId) {
+        return db.sql("SELECT member_review_required FROM organization WHERE id = CAST(:id AS uuid)")
+                .bind("id", organizationId)
+                .map(row -> Boolean.TRUE.equals(row.get("member_review_required", Boolean.class)))
+                .one();
+    }
+
+    public Mono<Long> updateMemberReviewRequired(String organizationId, boolean required) {
+        return db.sql("UPDATE organization SET member_review_required = :required, updated_at = now()"
+                        + " WHERE id = CAST(:id AS uuid)")
+                .bind("required", required).bind("id", organizationId)
+                .fetch().rowsUpdated();
+    }
+
     /**
      * 原子升级商家准入权限（Slice 2F）。只允许从低等级写到高等级；并发或陈旧审核绝不降级。
      * 返回 0 表示组织不存在，或当前等级已经达到/超过目标等级。

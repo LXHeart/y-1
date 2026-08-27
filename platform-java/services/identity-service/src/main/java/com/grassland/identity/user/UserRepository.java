@@ -32,4 +32,14 @@ public class UserRepository {
 					return Mono.empty();
 				});
 	}
+
+	/**
+	 * 改密主路径（任务书 #48 /api/auth/change-password）。与 {@link #upgradePasswordHash} 的区别：
+	 * <b>不吞错</b>——改密失败必须让用户看见，静默成功会留下「旧密码仍有效」的安全窗口。
+	 */
+	public Mono<Long> updatePasswordHash(String userId, String newHash) {
+		return db.sql("UPDATE app_users SET password_hash = :hash, updated_at = now() WHERE id = CAST(:id AS uuid)")
+				.bind("hash", newHash).bind("id", userId)
+				.fetch().rowsUpdated();
+	}
 }
