@@ -197,17 +197,15 @@ const ACCOUNT_STATUS_LABEL: Record<string, string> = {
   rejected: '已驳回',
 }
 
-/** 组织级建号：登录名合法且（多店时）选了门店角色但未选门店时禁用提交。单店隐式用唯一门店。 */
+/** 组织级建号：登录名合法，且选了门店角色（店长/店员）但未选门店时禁用提交。 */
 const orgCreateDisabled = computed(() => {
   if (!loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim()) return true
-  if (singleStore.value) return false
   return orgCreateRole.value !== 'member' && !orgCreateStoreId.value
 })
 
-/** 门店角色的目标门店：单店隐式取唯一门店（UI 不渲染选择），多店显式选择。 */
+/** 门店角色的目标门店（多店显式选择；组织成员不挂门店）。 */
 const effectiveStoreId = computed(() =>
-  orgCreateRole.value === 'member' ? undefined
-    : singleStore.value ? (stores.value[0]?.id ?? '') : orgCreateStoreId.value)
+  orgCreateRole.value === 'member' ? undefined : orgCreateStoreId.value)
 
 /** 建号预览：前缀-登录名（后端拼同样规则，前端只做提示）。 */
 const orgUsernamePreview = computed(() =>
@@ -471,7 +469,7 @@ async function confirmDelete(): Promise<void> {
         进入多店管理后即可创建店长/店员账号。
       </p>
 
-      <!-- 主体直建子账号（任务书 #48/#49/#50）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定 -->
+      <!-- 主体直建子账号（任务书 #48/#49/#50；#51 起整块仅多店呈现）：登录名 = 前缀-登录名，邮箱由成员登录后自行绑定 -->
       <details v-else class="team-adv">
         <summary>添加成员：主体直接创建账号</summary>
         <div class="team-row">
@@ -482,18 +480,12 @@ async function confirmDelete(): Promise<void> {
           />
           <span v-if="orgUsernamePreview" class="team-tag">{{ orgUsernamePreview }}</span>
           <input v-model="orgCreateName" placeholder="显示名" @keyup.enter="createOrgAccount" />
-          <template v-if="singleStore">
-            <select v-model="orgCreateRole">
-              <option value="staff">店员</option>
-              <option value="member">组织成员</option>
-            </select>
-          </template>
-          <select v-else v-model="orgCreateRole">
+          <select v-model="orgCreateRole">
             <option value="member">组织成员</option>
             <option value="manager">店长</option>
             <option value="staff">店员</option>
           </select>
-          <select v-if="!singleStore && orgCreateRole !== 'member'" v-model="orgCreateStoreId">
+          <select v-if="orgCreateRole !== 'member'" v-model="orgCreateStoreId">
             <option value="" disabled>选择门店</option>
             <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
@@ -503,21 +495,9 @@ async function confirmDelete(): Promise<void> {
             @click="createOrgAccount"
           >创建账号</button>
         </div>
-        <!-- 单店高级选项（拍板②）：任命店长的能力保留、入口降级 -->
-        <details v-if="singleStore" class="team-adv team-adv-nested">
-          <summary>高级选项：任命店长</summary>
-          <div class="team-row">
-            <select v-model="orgCreateRole">
-              <option value="staff">店员</option>
-              <option value="manager">店长（管理本店与员工）</option>
-            </select>
-          </div>
-          <p class="team-hint">店长可管理门店资料与本店员工；单店通常由你本人管理，需要时再任命。</p>
-        </details>
         <p class="team-hint">
           创建即生效（管理员直建不受审核开关影响）；账号名 = 前缀-登录名（如 {{ accountPrefix ? accountPrefix + '-zhangsan' : '前缀-zhangsan' }}），
-          系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。
-          {{ singleStore ? '账号默认挂到你的门店。' : '选店长/店员时须指定门店。' }}
+          系统生成一次性初始密码供你线下转交，对方首次登录须改密，登录后可自行绑定邮箱。选店长/店员时须指定门店。
         </p>
       </details>
     </section>
