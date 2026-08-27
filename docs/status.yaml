@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-19",
+  "updatedAt": "2026-08-27",
   "authority": "docs/草场开发进度与续接指南.md#四当前开放项速览按优先级",
   "backlog": {
-    "scope": "22-45",
+    "scope": "22-48",
     "items": [
       { "id": 22, "status": "completed" }, { "id": 23, "status": "completed" },
       { "id": 24, "status": "completed" }, { "id": 25, "status": "completed" },
@@ -18,7 +18,9 @@
       { "id": 40, "status": "completed", "title": "全文搜索与报表导出" },
       { "id": 41, "status": "completed" }, { "id": 42, "status": "completed" },
       { "id": 43, "status": "completed" }, { "id": 44, "status": "completed" },
-      { "id": 45, "status": "completed" }
+      { "id": 45, "status": "completed" }, { "id": 46, "status": "completed" },
+      { "id": 47, "status": "completed" },
+      { "id": 48, "status": "completed", "title": "商家成员子账号体系（主体直建直发）" }
     ]
   },
   "platform": {
