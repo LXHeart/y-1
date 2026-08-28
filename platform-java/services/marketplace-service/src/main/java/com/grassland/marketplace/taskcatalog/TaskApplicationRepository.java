@@ -491,6 +491,17 @@ public class TaskApplicationRepository {
     }
 
     /**
+     * 已报名成功的计数（PRD §2.3 修订守卫）：accepted + reserving——reserving 是资金预留中的
+     * 在途态，对外即「报名成功」（预留失败会补偿回滚，但修订入口必须在途即冻结）。
+     */
+    public Mono<Integer> countAcceptedOrReservingByTask(String taskId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM task_application"
+                + " WHERE task_id = CAST(:taskId AS uuid) AND status IN ('accepted', 'reserving')")
+                .bind("taskId", taskId)
+                .map(r -> r.get("c", Integer.class)).one();
+    }
+
+    /**
      * D-03 §5：某任务下「已 accept 但未提交凭证」的报名（商家 cancel 时全额返还商家；已提交/核实的照常结算）。
      * NOT EXISTS 子查询排除有 engagement_submission 的报名。
      */

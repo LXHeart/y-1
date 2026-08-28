@@ -284,13 +284,15 @@ public class TaskRepository {
     }
 
     /**
-     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本，全字段）。
+     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本）。
      *
-     * <p>全字段可改——accept/结算已读 {@code task_application.bounty_cents} 快照（V14 snapshot-pinning），故修订 task
-     * 赏金/平台只影响<b>新报名</b>（新 app 冻新值），已 accept 的履约仍按其 accept 时快照结算（HLD §2.3「配置不篡改历史」）。
+     * <p><b>报名守卫（PRD §2.3）</b>：已有人报名成功（accepted / reserving 任一存在）即不可修订——
+     * UPDATE 的 WHERE 内联 NOT EXISTS，与行锁同句原子判定，堵住控制器计数与落库之间的 TOCTOU 窗口
+     * （控制器另有一道带人数的 409，负责给出友好文案；此处兜底竞态）。仅剩 pending 报名不阻塞修订，
+     * 推荐官被接受那一刻冻结 {@code bounty_cents} 快照（V14 snapshot-pinning），按快照结算。
      *
      * <p>guarded {@code WHERE status='published' AND version=:expected}，version+1，同事务落新 {@code task_version} 快照。
-     * 0 行（非 published / 版本冲突）→ empty，调用方映射 409。
+     * 0 行（非 published / 版本冲突 / 有人报名成功）→ empty，调用方映射 409。
      */
     public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
                                       String contentForm, String platform, Integer maxSlots, Long bountyCents,
@@ -324,6 +326,8 @@ public class TaskRepository {
                                 freebie_deposit_cents = :freebieDeposit,
                                 version = version + 1, updated_at = now()
                 WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
+                  AND NOT EXISTS (SELECT 1 FROM task_application a
+                                  WHERE a.task_id = task.id AND a.status IN ('reserving', 'accepted'))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("expected", expectedVersion).bind("title", title);

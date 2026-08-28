@@ -50,6 +50,30 @@ export interface TaskStoreBlock {
   categories: string[]
 }
 
+/**
+ * 任务的报名/履约进度统计（后端列表端点 enrich 与 owner 视角详情注入 `progress` 块；
+ * feed 与公开详情路径不携带，故 Task 上为可选字段）。
+ */
+export interface TaskProgress {
+  totalApplications: number
+  pendingApplications: number
+  reservingApplications: number
+  acceptedApplications: number
+  rejectedApplications: number
+  withdrawnApplications: number
+  refundedApplications: number
+  /** 已报名成功人数（accepted + reserving）——有人报名成功后任务不可再修订（PRD §2.3，后端 revise 409 守卫）。 */
+  acceptedApplicationCount: number
+  occupiedSlots: number
+  maxSlots: number | null
+  remainingSlots: number | null
+  submittedDeliverables: number
+  confirmedDeliverables: number
+  settledEngagements: number
+  reservedBountyCents: number
+  settledBountyCents: number
+}
+
 export interface Task {
   id: string
   ownerAccountId: string
@@ -90,6 +114,8 @@ export interface Task {
   distanceKm?: number
   /** 任务书 #24：门店公开轻量块（storeName/city/categories），门店任务才有。 */
   store?: TaskStoreBlock
+  /** 列表 / owner 详情回带的进度统计（含 acceptedApplicationCount）；feed 与公开路径不带。 */
+  progress?: TaskProgress
   /** PRD 4.12 structured contract frozen into task_version when published or revised. */
   requirements: TaskRequirements
   /** 任务书 #27：自动通过最低等级门槛（1–5）；null = 关闭。开启后对存量待处理报名生效。 */
@@ -146,10 +172,11 @@ export interface UpdateTaskInput {
 }
 
 /**
- * 修订已发布任务请求（仅 published 态；GL-P1-TASK-001：编辑出新版本）。
+ * 修订已发布任务请求（仅 published 态且**无人报名成功**，PRD §2.3：accepted/reserving
+ * 任一存在即 409——后端 revise 端点守卫，API 直调同样被堵死）。
  *
- * 全字段可改——accept/结算已读 task_application.bounty_cents 快照（V14 snapshot-pinning），
- * 故修订 task 赏金/平台只影响新报名（新 app 冻新值），已 accept 的履约仍按其 accept 时快照结算。
+ * 无人报名成功的窗口内全字段可改——accept/结算读 task_application.bounty_cents 快照
+ * （V14 snapshot-pinning），推荐官被接受那一刻冻结赏金等值，按快照结算。
  */
 export interface ReviseTaskInput {
   expectedVersion: number

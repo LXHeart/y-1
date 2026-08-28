@@ -889,6 +889,98 @@ class TaskControllerIT extends MarketplaceItSupport {
         assertThat(taskStatus(id)).isEqualTo("published");
     }
 
+    // ---------- PRD §2.3：有人报名成功后不允许修改 ----------
+
+    /**
+     * 直插一条指定状态的报名（绕过申请端点，专注 revise 守卫本身）。
+     * reserving/accepted 触发 V21 快照约束，须一并带上声誉快照列（与 seedAcceptedApplication 同法）。
+     */
+    private void insertApplication(String taskId, String status) {
+        db.sql("INSERT INTO task_application(id, task_id, recommender_account_id, status, bounty_cents,"
+                        + " reputation_level_at_accept, reputation_policy_version_at_accept,"
+                        + " settlement_delay_days_at_accept, commission_bonus_bps_at_accept, premium_support_at_accept)"
+                        + " VALUES (CAST(:id AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), :status, 0,"
+                        + " 1, 1, 2, 0, false)")
+                .bind("id", UUID.randomUUID().toString()).bind("task", taskId)
+                .bind("rec", UUID.randomUUID().toString()).bind("status", status)
+                .then().block();
+    }
+
+    /** 有人报名成功（accepted / reserving 任一）→ 409 带人数文案；任务状态与版本不动。 */
+    @Test
+    void reviseBlockedWhenApplicantAcceptedOrReserving() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "有人报名", null);
+        insertApplication(id, "accepted");
+        insertApplication(id, "reserving");
+
+        client().post().uri("/api/tasks/" + id + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 2, "title", "改不动"))
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("已有 2 名推荐官报名成功，任务不可再修改");
+        assertThat(taskStatus(id)).isEqualTo("published");
+        Integer version = db.sql("SELECT version FROM task WHERE id = CAST(:id AS uuid)")
+                .bind("id", id).map(r -> r.get("version", Integer.class)).one().block();
+        assertThat(version).isEqualTo(2);
+    }
+
+    /** 仅剩 pending 报名不阻塞修订——推荐官被接受那一刻才冻结快照（snapshot-pinning 语义不变）。 */
+    @Test
+    void reviseAllowedWhenOnlyPendingApplications() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "仅待处理", null);
+        insertApplication(id, "pending");
+        client().post().uri("/api/tasks/" + id + "/revise")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", 2, "title", "可改"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.version").isEqualTo(3);
+    }
+
+    /** 列表 progress 块带 acceptedApplicationCount（accepted + reserving）——前端据此禁用修订入口。 */
+    @Test
+    void listCarriesAcceptedApplicationCount() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "计数", null);
+        insertApplication(id, "accepted");
+        insertApplication(id, "reserving");
+        insertApplication(id, "pending");
+        client().get().uri("/api/tasks?organizationId=" + org)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data[0].progress.acceptedApplicationCount").isEqualTo(2)
+                .jsonPath("$.data[0].progress.acceptedApplications").isEqualTo(1)
+                .jsonPath("$.data[0].progress.reservingApplications").isEqualTo(1);
+    }
+
+    /** owner 详情带 progress（修订入口判定）；公开（推荐官）详情刻意不带——progress 含商家经营数据。 */
+    @Test
+    void ownerDetailCarriesProgressAndPublicDetailDoesNot() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "详情计数", null);
+        insertApplication(id, "accepted");
+
+        client().get().uri("/api/tasks/" + id)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.progress.acceptedApplicationCount").isEqualTo(1);
+
+        client().get().uri("/api/tasks/" + id)
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.progress").doesNotExist();
+    }
+
     // ---------- GL-P1-TASK-001 Stage 2：全局任务大厅 feed ----------
 
     /** feed 跨组织、仅 published：我发的两条在、草稿不在、返回项全 published（单例容器数据累积，不锁总数）。 */

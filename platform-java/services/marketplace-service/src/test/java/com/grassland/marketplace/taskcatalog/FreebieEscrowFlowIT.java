@@ -417,10 +417,15 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
                 .isEqualTo("merchant");
     }
 
-    // ---------- D7：修订押金只影响新报名 ----------
+    // ---------- D7：修订押金只影响新报名（PRD §2.3 后前提收窄） ----------
 
+    /**
+     * 有人报名成功后修订即冻结（PRD §2.3，2026-08-29）：原「accept 后改押金、旧履约按旧值冻结」
+     * 的修订腿已不可达——快照不变式仍成立（已接受履约读自身冻结值 100，不随任务字段漂移），
+     * 但任务的 deposit 不再有第二个值，「新报名冻新值」腿随修订入口一并消失。
+     */
     @Test
-    void depositRevisionPinsAcceptedEngagement() {
+    void depositRevisionBlockedAfterAcceptanceAndSnapshotStaysFrozen() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String recommender = UUID.randomUUID().toString();
@@ -434,19 +439,18 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isAccepted();
         awaitReservation(merchant, task, app, "accepted");
 
-        // 修订押金 100 → 200
+        // 修订押金 100 → 200 被报名守卫拒绝（reserving/accepted 任一存在即 409）
         int version = taskVersion(task);
         client().post().uri("/api/tasks/" + task + "/revise")
                 .header(H, sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("expectedVersion", version, "title", "押金任务", "freebieDepositCents", 200L))
-                .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.freebieDepositCents").isEqualTo(200L);
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("已有 1 名推荐官报名成功，任务不可再修改");
 
-        // 已接受履约仍按 100 冻结；新报名冻结 200
+        // 快照不变式：已接受履约仍按接受时冻结的 100，任务字段未被改动
         assertThat(applicationRepo.findById(app).block().freebieDepositCents()).isEqualTo(100L);
-        String newApp = apply(UUID.randomUUID().toString(), task);
-        assertThat(applicationRepo.findById(newApp).block().freebieDepositCents()).isEqualTo(200L);
+        assertThat(taskVersion(task)).isEqualTo(version);
     }
 
     // ---------- helpers ----------

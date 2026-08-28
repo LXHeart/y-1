@@ -271,22 +271,26 @@ public class TaskController {
     }
 
     /**
-     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本，全字段）。
+     * 修订已发布任务（GL-P1-TASK-001：编辑出新版本）。
      *
-     * <p>owner + published；乐观锁；赏金变更走 tier 闸门（{@link #enforceBountyTierGate}，与发布同口径但不占额度）。
-     * 全字段可改——accept/结算读 task_application.bounty_cents 快照（V14），已 accept 履约不受影响。每次修订 version+1
+     * <p>owner + published + <b>无人报名成功</b>（PRD §2.3：accepted / reserving 任一存在即 409
+     * 「已有 N 名推荐官报名成功，任务不可再修改」，pending 报名不阻塞）；乐观锁；赏金变更走 tier 闸门
+     * （{@link #enforceBountyTierGate}，与发布同口径但不占额度）。推荐官被接受那一刻冻结
+     * {@code bounty_cents} 快照（V14 snapshot-pinning），按快照结算。每次修订 version+1
      * + 新 task_version 快照 + outbox TaskRevised。
      *
-     * <p>#26 D13：修订（含下调 maxSlots）提交成功的同一事务末尾触发一次 {@link TaskFullAutoCloser#closeIfFull}——
-     * 名额上限被下调到已接受数之下时任务收口为 closed（同事务发 {@code TaskClosed}/slots_full）。
+     * <p>#26 D13：修订提交成功的同一事务末尾仍触发一次 {@link TaskFullAutoCloser#closeIfFull}——
+     * 报名守卫（PRD §2.3）上线后常规路径已无「带 accepted 修订」，此处保留为并发竞态兜底：
+     * 守卫计数与落库之间理论上可有 pending 报名被接受，满员即收口 closed（同事务发 {@code TaskClosed}/slots_full）。
      */
     @PostMapping(value = "/api/tasks/{id}/revise", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, Object>>> revise(@PathVariable String id, @RequestBody ReviseTaskRequest body,
                                                             ServerHttpRequest request) {
         return callers.requireUser(request)
                 .flatMap(caller -> loadManageableTaskAccess(id, caller, "published")
-                        .flatMap(access -> enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
-                                        body.freebieDepositCents())
+                        .flatMap(access -> guardReviseApplications(id)
+                                .then(enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
+                                        body.freebieDepositCents()))
                                 .then(enforceFundingSingleMode(access.task(), body.requirements(), body.bountyCents(),
                                                 body.freebieDepositCents()))
                                 .then(enforceInteractionBinding(body.contentForm(),
@@ -308,6 +312,18 @@ public class TaskController {
                                                 .flatMap(revised -> taskFullAutoCloser
                                                         .closeIfFull(revised.id()).defaultIfEmpty(revised))))))
                 .map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+    }
+
+    /**
+     * PRD §2.3 修订守卫：有人报名成功（accepted + reserving，reserving 为资金预留中的在途态）
+     * 即冻结修改入口。仓储层 {@code revisePublished} 的 UPDATE 另内联 NOT EXISTS 兜底计数与落库间的竞态。
+     */
+    private Mono<Void> guardReviseApplications(String taskId) {
+        return apps.countAcceptedOrReservingByTask(taskId)
+                .flatMap(count -> count > 0
+                        ? Mono.error(new MarketplaceException(409,
+                                "已有 " + count + " 名推荐官报名成功，任务不可再修改"))
+                        : Mono.empty());
     }
 
     /**
@@ -724,34 +740,52 @@ public class TaskController {
                             if (!publicVisible && task.storeId() != null) {
                                 return taskAuthorization.requireScope(caller, task.organizationId(),
                                                 task.storeId(), "staff")
-                                        .then(okWithStore(task));
+                                        .then(okWithStore(task, true));
                             }
                             if (owner && task.storeId() == null) {
-                                return okWithStore(task);
+                                return okWithStore(task, true);
                             }
                             if (!publicVisible) {
                                 return Mono.error(new MarketplaceException(404, "任务不存在"));
                             }
                             return visibleRecommenderLevel(caller)
                                     .filter(level -> level >= task.minRecommenderLevel())
-                                    .flatMap(level -> okWithStore(task))
+                                    .flatMap(level -> okWithStore(task, false))
                                     .switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在")));
                         }));
     }
 
     /** 任务书 #24：任务详情携带门店公开块（storeName/city/categories）；无门店/降级时不带 store 键。 */
     private Mono<ResponseEntity<Map<String, Object>>> okWithStore(Task task) {
-        Map<String, Object> body = toBody(task);
+        return okWithStore(task, false);
+    }
+
+    /**
+     * 详情响应组装。withProgress：管理视角（owner / 门店 staff）附带 progress 块——含
+     * acceptedApplicationCount（PRD §2.3，前端据此禁用修订入口）；公开视角刻意不带，
+     * progress 含 settledBountyCents 等商家经营数据，不向推荐官泄露。
+     */
+    private Mono<ResponseEntity<Map<String, Object>>> okWithStore(Task task, boolean withProgress) {
+        Mono<Map<String, Object>> body = withProgress
+                ? metrics.findProgressByTaskIds(List.of(task.id())).next()
+                        .map(facts -> {
+                            Map<String, Object> enriched = toBody(task);
+                            enriched.put("progress", progressBody(task, facts));
+                            return enriched;
+                        })
+                        .defaultIfEmpty(toBody(task))
+                : Mono.just(toBody(task));
         if (task.storeId() == null) {
-            return Mono.just(ResponseEntity.ok(Map.of("success", true, "data", body)));
+            return body.map(b -> ResponseEntity.ok(Map.of("success", true, "data", b)));
         }
-        return storeEnrichment.loadStoreBlocks(List.of(task.storeId()))
-                .map(stores -> {
-                    Map<String, Object> block = stores.get(task.storeId());
+        return body.zipWith(storeEnrichment.loadStoreBlocks(List.of(task.storeId())))
+                .map(tuple -> {
+                    Map<String, Object> enriched = tuple.getT1();
+                    Map<String, Object> block = tuple.getT2().get(task.storeId());
                     if (block != null) {
-                        body.put("store", block);
+                        enriched.put("store", block);
                     }
-                    return ResponseEntity.ok(Map.of("success", true, "data", body));
+                    return ResponseEntity.ok(Map.of("success", true, "data", enriched));
                 });
     }
 
@@ -944,6 +978,9 @@ public class TaskController {
         body.put("pendingApplications", facts.pendingApplications());
         body.put("reservingApplications", facts.reservingApplications());
         body.put("acceptedApplications", facts.acceptedApplications());
+        // PRD §2.3：已报名成功人数（accepted + reserving）——前端据此禁用「编辑」并给行内原因。
+        body.put("acceptedApplicationCount",
+                facts.acceptedApplications() + facts.reservingApplications());
         body.put("rejectedApplications", facts.rejectedApplications());
         body.put("withdrawnApplications", facts.withdrawnApplications());
         body.put("refundedApplications", facts.refundedApplications());

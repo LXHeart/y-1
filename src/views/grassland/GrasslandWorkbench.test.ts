@@ -1245,3 +1245,78 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
     expect(summaries[0].props('compact')).toBe(true)
   })
 })
+
+// ---------- 问题 2 / 问题 3 共用的造数与挂载 helper（模块级，两个 describe 共享） ----------
+
+function takenTask(): Task {
+  return {
+    id: 'task-taken', ownerAccountId: 'acct-1', organizationId: 'org-1',
+    title: '有人报名的任务', description: null, status: 'published',
+    contentForm: null, platform: 'douyin', maxSlots: 5, bountyCents: 10000,
+    freebieDepositCents: 0, minRecommenderLevel: 1,
+    requirements: { mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [] },
+    version: 2, applicationDeadline: null, cancelledAt: null,
+    createdAt: '2026-08-29T00:00:00Z', autoAcceptMinLevel: null, publishedAt: '2026-08-29T00:00:00Z',
+    progress: {
+      totalApplications: 3, pendingApplications: 1, reservingApplications: 1, acceptedApplications: 1,
+      rejectedApplications: 0, withdrawnApplications: 0, refundedApplications: 0,
+      acceptedApplicationCount: 2, occupiedSlots: 2, maxSlots: 5, remainingSlots: 3,
+      submittedDeliverables: 0, confirmedDeliverables: 0, settledEngagements: 0,
+      reservedBountyCents: 0, settledBountyCents: 0,
+    },
+  } as unknown as Task
+}
+
+function openTask(): Task {
+  return {
+    id: 'task-open', ownerAccountId: 'acct-1', organizationId: 'org-1',
+    title: '无人报名的任务', description: null, status: 'published',
+    contentForm: null, platform: 'douyin', maxSlots: 1, bountyCents: 10000,
+    freebieDepositCents: 0, minRecommenderLevel: 1,
+    requirements: { mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [] },
+    version: 2, applicationDeadline: null, cancelledAt: null,
+    createdAt: '2026-08-29T00:00:00Z', autoAcceptMinLevel: null, publishedAt: '2026-08-29T00:00:00Z',
+  } as unknown as Task
+}
+
+function stubTasks(tasks: Task[]): void {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    let data: unknown = []
+    if (url === '/api/me/identities') {
+      data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+    } else if (url === '/api/organizations') {
+      data = [ORG]
+    } else if (url.startsWith('/api/tasks?') && url.includes('status=published')) {
+      data = tasks
+    } else if (url.startsWith('/api/tasks/feed')) {
+      data = { items: [], nextCursor: null, hasMore: false }
+    } else if (url.startsWith('/api/finance/accounts')) {
+      data = { organizationId: 'org-1', balanceCents: 100000 }
+    }
+    return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+  }))
+}
+
+async function loginAndMount(tasks: Task[]): Promise<ReturnType<typeof mount>> {
+  stubTasks(tasks)
+  const wrapper = mountWorkbench()
+  currentUser.value = asUser('acct-1', 'merchant@test.local')
+  await flushPromises()
+  return wrapper
+}
+
+/**
+ * 问题 2（PRD §2.3，2026-08-29 拍板）：有人报名成功（accepted+reserving）时已发布任务
+ * 「编辑」禁用并给行内原因——后端 revise 409 守卫的前端前置 + API 直调兜底。
+ */
+describe('GrasslandWorkbench 修订入口冻结（问题 2）', () => {
+  test('有人报名成功：「编辑」禁用并显示行内原因；无人报名的任务不受影响', async () => {
+    const wrapper = await loginAndMount([takenTask(), openTask()])
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text() === '编辑')
+    expect(editButtons).toHaveLength(2)
+    expect((editButtons[0].element as HTMLButtonElement).disabled).toBe(true)
+    expect((editButtons[1].element as HTMLButtonElement).disabled).toBe(false)
+    expect(wrapper.text()).toContain('已有 2 名推荐官报名成功，任务不可再修改')
+  })
+})

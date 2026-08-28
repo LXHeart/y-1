@@ -305,6 +305,16 @@ function taskStageIndex(task: Task): number {
   }
 }
 
+/**
+ * 已报名成功人数（accepted + reserving，reserving 是资金预留中的在途态）。
+ * 有人报名成功后任务不可再修订（PRD §2.3）；前端禁用「编辑」按钮 + 行内原因，
+ * 后端 revise 端点另有 409 守卫兜底（API 直调也堵死）。列表行没带 progress 时取 0——
+ * 容许编辑，提交时由后端拦下。
+ */
+function acceptedApplicationCount(task: Task): number {
+  return task.progress?.acceptedApplicationCount ?? 0
+}
+
 async function openAcceptedTaskCreation(application: TaskApplication): Promise<void> {
   const task = selectedTask.value
   if (!task || application.status !== 'accepted' || application.taskId !== task.id
@@ -674,9 +684,16 @@ watch(grasslandNavigationTarget, async (target) => {
                     <span class="gl-hint">平台审核中</span>
                     <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
                   </template>
-                  <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
+                  <!-- 已发布：编辑出新版本（有人报名成功即禁用，PRD §2.3）/ 关闭报名 / 取消 -->
                   <template v-else-if="t.status === 'published'">
-                    <button type="button" :disabled="grassland.loading.value" @click="openEditPublished(t)">编辑</button>
+                    <button
+                      type="button"
+                      :disabled="grassland.loading.value || acceptedApplicationCount(t) > 0"
+                      @click="openEditPublished(t)"
+                    >编辑</button>
+                    <span v-if="acceptedApplicationCount(t) > 0" class="gl-hint gl-reject-hint">
+                      已有 {{ acceptedApplicationCount(t) }} 名推荐官报名成功，任务不可再修改
+                    </span>
                     <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
                     <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消任务</button>
                   </template>

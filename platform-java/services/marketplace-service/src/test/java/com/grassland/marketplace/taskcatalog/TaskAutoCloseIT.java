@@ -264,9 +264,11 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
         assertThat(outboxCount("TaskCancelled", closedTask)).isZero();
     }
 
-    // 场景 10：revise 下调 maxSlots 至已接受数之下 → 提交成功后任务 closed + TaskClosed(slots_full)（D13）。
+    // 场景 10（PRD §2.3 改写）：原 D13「revise 下调 maxSlots 至已接受数之下 → 同事务 closed」的前提
+    // （有人 accepted 仍可 revise）已被 2026-08-29 新规则推翻——有人报名成功即 409 冻结修订。
+    // closeIfFull(revise 后) 保留为并发竞态兜底（守卫计数与落库之间有 pending 被接受的理论窗口）。
     @Test
-    void reviseLoweringCapBelowAcceptedClosesTask() {
+    void reviseWithAcceptedApplicationsIsRejectedByGuard() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
         String task = publishTask(merchant, org, 3);
@@ -280,13 +282,12 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("expectedVersion", taskVersion(task), "title", "下调名额", "maxSlots", 2))
-                .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.status").isEqualTo("closed");
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("已有 2 名推荐官报名成功，任务不可再修改");
 
-        assertThat(taskStatus(task)).isEqualTo("closed");
-        assertThat(outboxCount("TaskRevised", task)).isEqualTo(1);
-        assertThat(outboxCount("TaskClosed", task)).isEqualTo(1);
-        assertThat(outboxPayloadField("TaskClosed", task, "closeReason")).isEqualTo("slots_full");
+        assertThat(taskStatus(task)).isEqualTo("published");  // 任务原样：未关闭、未修订
+        assertThat(outboxCount("TaskRevised", task)).isEqualTo(0);
+        assertThat(outboxCount("TaskClosed", task)).isEqualTo(0);
     }
 
     // 场景 11（D10 护栏）：关闭后 pending 报名仍可拒绝/撤回；accept 满员 409。
