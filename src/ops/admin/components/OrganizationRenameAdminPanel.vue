@@ -8,7 +8,7 @@ import OpsPagination from './OpsPagination.vue'
  * 商家主体更名审核（V40 / 2026-08-23 产品规则）：更名须平台审核通过才生效。
  * approve = 生效（同事务改名）；reject = 驳回留痕（驳回不占 30 天冷却）。
  */
-const PAGE_SIZE = 50
+const pageSize = ref(10)
 const grassland = useGrassland()
 const requests = ref<OrganizationRenameRequest[]>([])
 const loading = ref(false)
@@ -19,7 +19,7 @@ const total = ref(0)
 
 async function refresh(): Promise<void> {
   loading.value = true
-  const list = await grassland.listAdminOrgRenames({ limit: PAGE_SIZE, offset: offset.value })
+  const list = await grassland.listAdminOrgRenames({ limit: pageSize.value, offset: offset.value })
   loading.value = false
   if (!list) return
   requests.value = list.items as OrganizationRenameRequest[]
@@ -29,6 +29,12 @@ async function refresh(): Promise<void> {
 /** 翻页：父组件持 offset 真源（任务 #3 分页契约）。 */
 function changePage(next: number): void {
   offset.value = next
+  void refresh()
+}
+
+function changeLimit(limit: number): void {
+  pageSize.value = limit
+  offset.value = 0
   void refresh()
 }
 
@@ -63,7 +69,8 @@ onMounted(() => { void refresh() })
     <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
     <p v-if="!loading && requests.length === 0" class="gl-empty">暂无待审核的主体更名申请。</p>
-    <ul v-if="requests.length > 0" class="rename-list">
+    <div v-if="requests.length > 0" class="rename-scroll">
+      <ul class="rename-list">
       <li v-for="r in requests" :key="r.id" class="rename-item">
         <div class="rename-main">
           <strong class="rename-names">「{{ r.currentName }}」→「{{ r.requestedName }}」</strong>
@@ -80,8 +87,10 @@ onMounted(() => { void refresh() })
           <button type="button" class="reject" :disabled="loading" @click="review(r.id, 'reject')">驳回</button>
         </div>
       </li>
-    </ul>
-    <OpsPagination v-if="total > 0" :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
+      </ul>
+    </div>
+    <OpsPagination v-if="total > 0" :total="total" :limit="pageSize" :offset="offset"
+      @change="changePage" @change-limit="changeLimit" />
   </article>
 </template>
 
@@ -89,6 +98,7 @@ onMounted(() => { void refresh() })
 .org-rename-panel { display: grid; gap: 10px; }
 .panel-head { display: flex; justify-content: space-between; align-items: center; }
 .panel-head h3 { margin: 0; font-size: 15px; }
+.rename-scroll { max-height: min(520px, 64vh); overflow: auto; }
 .rename-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .rename-item { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .rename-main { display: grid; gap: 2px; }

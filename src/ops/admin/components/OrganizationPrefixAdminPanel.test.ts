@@ -167,7 +167,7 @@ describe('OrganizationPrefixAdminPanel · 运营改前缀（任务书 #51）', (
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
   })
 
-  test('翻页：点下一页后搜索请求带 offset=50（任务 #3 分页契约）', async () => {
+  test('翻页：点下一页后搜索请求带 offset=10（任务 #3 分页契约）', async () => {
     vi.stubGlobal('confirm', vi.fn(() => true))
     const { wrapper, calls } = await mounted((url, opts) => {
       const method = opts?.method ?? 'GET'
@@ -184,6 +184,6 @@ describe('OrganizationPrefixAdminPanel · 运营改前缀（任务书 #51）', (
 
     await wrapper.findAll('button').find((b) => b.text() === '下一页')!.trigger('click')
     await flushPromises()
-    expect(calls.some((c) => c.url.includes('offset=50'))).toBe(true)
+    expect(calls.some((c) => c.url.includes('offset=10'))).toBe(true)
   })
 })

@@ -33,7 +33,8 @@
         </tbody>
       </table>
     </div>
-    <OpsPagination v-if="ordersTotal > 0" :total="ordersTotal" :limit="PAGE_SIZE" :offset="ordersOffset" @change="changeOrdersPage" />
+    <OpsPagination v-if="ordersTotal > 0" :total="ordersTotal" :limit="ordersLimit" :offset="ordersOffset"
+      @change="changeOrdersPage" @change-limit="changeOrdersLimit" />
     <div class="section-head">
       <div><h4>核销与分账流水</h4><p>单独展示核销处理中和已核销订单，便于定位分账重试。</p></div>
       <span>共 {{ redemptionsTotal }} 笔</span>
@@ -53,7 +54,8 @@
         </tbody>
       </table>
     </div>
-    <OpsPagination v-if="redemptionsTotal > 0" :total="redemptionsTotal" :limit="PAGE_SIZE" :offset="redemptionsOffset" @change="changeRedemptionsPage" />
+    <OpsPagination v-if="redemptionsTotal > 0" :total="redemptionsTotal" :limit="redemptionsLimit" :offset="redemptionsOffset"
+      @change="changeRedemptionsPage" @change-limit="changeRedemptionsLimit" />
   </section>
 </template>
 
@@ -63,8 +65,9 @@ import { useCommerce } from '../composables/useCommerce'
 import OpsPagination from '../ops/admin/components/OpsPagination.vue'
 import type { ConsumerOrder } from '../types/commerce'
 
-/** orders 与 redemptions 是两个独立分页列表（任务 #5），各自持 offset/total 真源。 */
-const PAGE_SIZE = 50
+/** orders 与 redemptions 是两个独立分页列表（任务 #5），各自持 offset/limit/total 真源。 */
+const ordersLimit = ref(10)
+const redemptionsLimit = ref(10)
 const commerce = useCommerce()
 const orders = ref<ConsumerOrder[]>([])
 const redemptions = ref<ConsumerOrder[]>([])
@@ -78,13 +81,13 @@ async function load(): Promise<void> {
   await Promise.all([loadOrders(), loadRedemptions()])
 }
 async function loadOrders(): Promise<void> {
-  const result = await commerce.listAdminOrders(status.value || undefined, { limit: PAGE_SIZE, offset: ordersOffset.value })
+  const result = await commerce.listAdminOrders(status.value || undefined, { limit: ordersLimit.value, offset: ordersOffset.value })
   if (!result) return
   orders.value = result.items
   ordersTotal.value = result.total
 }
 async function loadRedemptions(): Promise<void> {
-  const result = await commerce.listAdminRedemptions({ limit: PAGE_SIZE, offset: redemptionsOffset.value })
+  const result = await commerce.listAdminRedemptions({ limit: redemptionsLimit.value, offset: redemptionsOffset.value })
   if (!result) return
   redemptions.value = result.items
   redemptionsTotal.value = result.total
@@ -98,8 +101,18 @@ function changeOrdersPage(next: number): void {
   ordersOffset.value = next
   void loadOrders()
 }
+function changeOrdersLimit(limit: number): void {
+  ordersLimit.value = limit
+  ordersOffset.value = 0
+  void loadOrders()
+}
 function changeRedemptionsPage(next: number): void {
   redemptionsOffset.value = next
+  void loadRedemptions()
+}
+function changeRedemptionsLimit(limit: number): void {
+  redemptionsLimit.value = limit
+  redemptionsOffset.value = 0
   void loadRedemptions()
 }
 function short(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…` : value }
@@ -110,5 +123,5 @@ function statusLabel(value: ConsumerOrder['status']): string { return ({ pending
 
 <style scoped>
 .commerce-admin { display: grid; gap: 12px; }.commerce-admin > header, .filters, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.commerce-admin h3, .commerce-admin h4, .commerce-admin p { margin: 0; }.commerce-admin header p, .section-head p { font-size: 13px; opacity: .7; }
-button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.refund_pending, .status.pending_payment { color: var(--color-warning); }.status.redeemed { color: var(--color-success); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
+button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.refund_pending, .status.pending_payment { color: var(--color-warning); }.status.redeemed { color: var(--color-success); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
 </style>

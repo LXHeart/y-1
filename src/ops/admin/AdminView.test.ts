@@ -38,7 +38,7 @@ describe('AdminView KYB 审核', () => {
     await flushPromises()
 
     expect(fetchMock.mock.calls.map(([url]) => String(url)))
-      .toContain('/api/admin/users?limit=50&offset=0&q=alice%2Bops')
+      .toContain('/api/admin/users?limit=10&offset=0&q=alice%2Bops')
   })
 
   test('管理 tab 完整显示等级与信任治理入口，AI 模型面板仍懒挂载', async () => {
@@ -628,7 +628,6 @@ describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = await openTasksTab()
 
-    const callsBefore = fetchMock.mock.calls.length
     await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已驳回')!.trigger('click')
     await flushPromises()
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('status=rejected'))).toBe(true)
@@ -651,7 +650,7 @@ describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
     expect(fetchMock.mock.calls.length).toBe(callsAfterPublished)
   })
 
-  test('翻页：点下一页发 offset=50 请求，页码文案正确，搜索条件随请求保留', async () => {
+  test('翻页：点下一页发 offset=10 请求，页码文案正确，搜索条件随请求保留', async () => {
     const fetchMock = stubTaskReview(120)
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = await openTasksTab()
@@ -667,11 +666,11 @@ describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
     await wrapper.get('.ops-pagination .ops-page-btn:nth-child(3)').trigger('click')
     await flushPromises()
     const page2Call = fetchMock.mock.calls.map(([url]) => String(url))
-      .filter((url) => url.includes('offset=50')).pop()
+      .filter((url) => url.includes('offset=10')).pop()
     expect(page2Call).toContain('q=')
     expect(page2Call).toContain('status=pending_review')
-    // 第 2 / 3 页 · 共 120 条（limit=50）
-    expect(wrapper.get('.ops-page-info').text()).toBe('第 2 / 3 页 · 共 120 条')
+    // 第 2 / 12 页 · 共 120 条（默认 limit=10，120 条整除 10）
+    expect(wrapper.get('.ops-page-info').text()).toBe('第 2 / 12 页 · 共 120 条')
 
     // 翻页后重新搜索回到第 1 页
     await wrapper.get('input[placeholder="搜索任务标题或描述"]').setValue('新词')
@@ -680,6 +679,38 @@ describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
     const lastListCall = fetchMock.mock.calls.map(([url]) => String(url))
       .filter((url) => url.startsWith('/api/admin/tasks/review?')).pop()
     expect(lastListCall).toContain('offset=0')
+  })
+
+  test('切每页条数：发 limit=20 且 offset 归零重载', async () => {
+    const fetchMock = stubTaskReview(120)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = await openTasksTab()
+
+    // 先翻到第 2 页，再切页大小——应回到第 1 页并以新 limit 重载
+    await wrapper.get('.ops-pagination .ops-page-btn:nth-child(3)').trigger('click')
+    await flushPromises()
+    await wrapper.get('.ops-page-size-select').setValue('20')
+    await flushPromises()
+
+    const sizeCall = fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.startsWith('/api/admin/tasks/review?')).pop()
+    expect(sizeCall).toContain('limit=20')
+    expect(sizeCall).toContain('offset=0')
+    expect(wrapper.get('.ops-page-info').text()).toBe('第 1 / 6 页 · 共 120 条')
+  })
+
+  test('页签徽标恒为待审数：切到「已通过」视图后不跟随当前筛选总数', async () => {
+    const fetchMock = stubTaskReview(120)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = await openTasksTab()
+
+    // stubTaskReview 的 stats：pending=3——进页签即出徽标
+    expect(wrapper.get('[role="tab"][aria-selected="true"] .count-badge').text()).toBe('3')
+
+    await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已通过')!.trigger('click')
+    await flushPromises()
+    // 已通过视图 total=120，但徽标仍读 stats.pending 而非当前筛选总数
+    expect(wrapper.get('[role="tab"][aria-selected="true"] .count-badge').text()).toBe('3')
   })
 
   test('total=0 空态：分页器显示共 0 条，列表空态文案随视图切换', async () => {

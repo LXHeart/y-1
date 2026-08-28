@@ -21,16 +21,19 @@
     <div class="workspace">
       <div class="case-list" aria-label="风险案件列表">
         <div class="list-head"><strong>案件队列</strong><span>{{ total }} 条</span></div>
-        <button v-for="item in cases" :key="item.id" type="button" class="case-row"
-          :class="{ selected: selectedId === item.id }" @click="selectCase(item.id)">
-          <span class="severity" :data-severity="item.severity">{{ severityLabel(item.severity) }}</span>
-          <strong>{{ item.subjectKind }} · {{ compact(item.subjectRef) }}</strong>
-          <span>{{ statusLabel(item.status) }} · {{ item.score }} 分</span>
-          <time>{{ formatDate(item.updatedAt) }}</time>
-        </button>
-        <p v-if="!loading && cases.length === 0" class="empty">没有符合条件的案件</p>
+        <div class="case-scroll">
+          <button v-for="item in cases" :key="item.id" type="button" class="case-row"
+            :class="{ selected: selectedId === item.id }" @click="selectCase(item.id)">
+            <span class="severity" :data-severity="item.severity">{{ severityLabel(item.severity) }}</span>
+            <strong>{{ item.subjectKind }} · {{ compact(item.subjectRef) }}</strong>
+            <span>{{ statusLabel(item.status) }} · {{ item.score }} 分</span>
+            <time>{{ formatDate(item.updatedAt) }}</time>
+          </button>
+          <p v-if="!loading && cases.length === 0" class="empty">没有符合条件的案件</p>
+        </div>
         <div v-if="total > 0" class="list-pager">
-          <OpsPagination :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
+          <OpsPagination :total="total" :limit="pageSize" :offset="offset"
+            @change="changePage" @change-limit="changeLimit" />
         </div>
       </div>
 
@@ -89,7 +92,7 @@ import { useGrassland } from '../composables/useGrassland'
 import OpsPagination from '../ops/admin/components/OpsPagination.vue'
 import type { RiskCase, RiskCaseAction, RiskCaseDetail, RiskSeverity } from '../types/grassland'
 
-const PAGE_SIZE = 50
+const pageSize = ref(10)
 const grassland = useGrassland()
 const filters = reactive({ status: 'open', severity: '', subjectKind: '', subjectRef: '' })
 const cases = ref<RiskCase[]>([])
@@ -108,7 +111,7 @@ onMounted(() => void loadCases())
 async function loadCases(): Promise<void> {
   loading.value = true
   error.value = ''
-  const result = await grassland.listRiskCases({ ...filters, limit: PAGE_SIZE, offset: offset.value })
+  const result = await grassland.listRiskCases({ ...filters, limit: pageSize.value, offset: offset.value })
   loading.value = false
   if (!result) { error.value = grassland.error.value || '风险案件加载失败'; return }
   cases.value = result.items
@@ -129,6 +132,12 @@ function query(): void {
 
 function changePage(next: number): void {
   offset.value = next
+  void loadCases()
+}
+
+function changeLimit(limit: number): void {
+  pageSize.value = limit
+  offset.value = 0
   void loadCases()
 }
 
@@ -182,6 +191,7 @@ select, input, textarea { box-sizing: border-box; width: 100%; border: 1px solid
 .case-list { border-right: 1px solid var(--color-border); background: var(--color-surface); }
 .list-head { padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
 .list-head span { color: var(--color-text-muted); font-size: .78rem; }
+.case-scroll { max-height: min(520px, 64vh); overflow: auto; }
 .list-pager { padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--color-border); }
 .case-row { width: 100%; min-height: 88px; display: grid; grid-template-columns: auto 1fr; justify-content: initial; gap: 5px 9px; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; text-align: left; }
 .case-row.selected { background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface)); box-shadow: inset 3px 0 var(--color-accent); }

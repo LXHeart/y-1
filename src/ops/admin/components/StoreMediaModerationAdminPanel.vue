@@ -17,7 +17,8 @@
       </div>
       <p v-if="error" class="error-msg" role="alert">{{ error }}</p>
       <div v-if="loading" class="loading-state">加载中...</div>
-      <div v-else-if="items.length" class="moderation-grid">
+      <div v-else-if="items.length" class="moderation-scroll">
+        <div class="moderation-grid">
         <article v-for="item in items" :key="item.mediaId" class="moderation-item">
           <div class="media-preview">
             <img v-if="isImage(item) && item.downloadUrl" :src="item.downloadUrl" :alt="`媒体 ${item.mediaId}`">
@@ -50,8 +51,10 @@
           </div>
         </article>
       </div>
+      </div>
       <p v-else class="td-empty">{{ emptyHint }}</p>
-      <OpsPagination v-if="total > 0" :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
+      <OpsPagination v-if="total > 0" :total="total" :limit="pageSize" :offset="offset"
+        @change="changePage" @change-limit="changeLimit" />
     </section>
   </div>
 </template>
@@ -62,7 +65,7 @@ import { useGrassland } from '../../../composables/useGrassland'
 import type { StoreMediaModerationQueueItem } from '../../../types/grassland'
 import OpsPagination from './OpsPagination.vue'
 
-const PAGE_SIZE = 50
+const pageSize = ref(10)
 const grassland = useGrassland()
 const items = ref<StoreMediaModerationQueueItem[]>([])
 const statusFilter = ref<'review' | 'pass' | 'blocked'>('review')
@@ -79,7 +82,7 @@ const emptyHint = computed(() => statusFilter.value === 'review'
 
 async function loadQueue(): Promise<void> {
   loading.value = true; error.value = ''
-  const result = await grassland.listStoreMediaModerationQueue(statusFilter.value, { limit: PAGE_SIZE, offset: offset.value })
+  const result = await grassland.listStoreMediaModerationQueue(statusFilter.value, { limit: pageSize.value, offset: offset.value })
   if (!result) { error.value = grassland.error.value || '门店媒体复核队列加载失败'; loading.value = false; return }
   items.value = [...result.items]; total.value = result.total; loading.value = false
 }
@@ -92,6 +95,12 @@ function onStatusChange(): void {
 
 function changePage(next: number): void {
   offset.value = next
+  void loadQueue()
+}
+
+function changeLimit(limit: number): void {
+  pageSize.value = limit
+  offset.value = 0
   void loadQueue()
 }
 
@@ -151,6 +160,7 @@ onMounted(() => void loadQueue())
 .error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
 .td-time { white-space: nowrap; color: var(--color-text-muted); }
 .td-empty { text-align: center; padding: var(--space-xl); color: var(--color-text-muted); }
+.moderation-scroll { max-height: min(560px, 72vh); overflow: auto; }
 .moderation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .moderation-item { display: grid; grid-template-columns: 128px minmax(0, 1fr); min-height: 164px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; }
 .media-preview { display: grid; place-items: center; min-height: 164px; background: var(--surface-muted); color: var(--color-text-muted); font-size: 0.76rem; }

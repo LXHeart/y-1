@@ -35,8 +35,8 @@ describe('CommerceAdminPanel', () => {
     const wrapper = mount(CommerceAdminPanel)
     await flushPromises()
 
-    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/orders?limit=50&offset=0'))).toBe(true)
-    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/redemptions?limit=50&offset=0'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/orders?limit=10&offset=0'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/redemptions?limit=10&offset=0'))).toBe(true)
     expect(wrapper.text()).toContain('核销与分账流水')
     expect(wrapper.text()).toContain('已完成三方分账')
     expect(wrapper.text()).toContain('双人到店套餐')

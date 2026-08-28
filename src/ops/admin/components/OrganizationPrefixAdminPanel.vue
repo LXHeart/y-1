@@ -13,7 +13,7 @@ import OpsPagination from './OpsPagination.vue'
  */
 const grassland = useGrassland()
 
-const PAGE_SIZE = 50
+const pageSize = ref(10)
 const searchInput = ref('')
 const results = ref<AdminOrganizationSummary[]>([])
 const searched = ref(false)
@@ -40,7 +40,7 @@ const canSubmit = computed(() => prefixValid.value && !prefixUnchanged.value)
 async function search(keepNotice = false): Promise<void> {
   if (!keepNotice) notice.value = ''
   const list = await grassland.searchAdminOrganizations(
-    searchInput.value.trim(), { limit: PAGE_SIZE, offset: offset.value })
+    searchInput.value.trim(), { limit: pageSize.value, offset: offset.value })
   searched.value = true
   if (!list) return
   results.value = list.items
@@ -55,6 +55,12 @@ function submitSearch(): void {
 
 function changePage(next: number): void {
   offset.value = next
+  void search()
+}
+
+function changeLimit(limit: number): void {
+  pageSize.value = limit
+  offset.value = 0
   void search()
 }
 
@@ -122,6 +128,7 @@ async function applyRename(): Promise<void> {
 
     <p v-if="searched && results.length === 0" class="gl-empty">没有匹配的商家主体。</p>
     <div v-else-if="results.length > 0" class="table-card">
+      <div class="table-scroll">
       <table class="prefix-table">
         <thead>
           <tr><th>主体</th><th>当前前缀</th><th>成员数</th><th>状态</th><th>操作</th></tr>
@@ -141,7 +148,9 @@ async function applyRename(): Promise<void> {
           </tr>
         </tbody>
       </table>
-      <OpsPagination v-if="total > 0" :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
+      </div>
+      <OpsPagination v-if="total > 0" :total="total" :limit="pageSize" :offset="offset"
+        @change="changePage" @change-limit="changeLimit" />
     </div>
 
     <!-- 改名区：选中后出现。刻意与列表分离——危险动作不放在逐行里 -->
@@ -180,9 +189,11 @@ async function applyRename(): Promise<void> {
 .panel-toolbar { display: flex; gap: 8px; align-items: center; }
 .panel-toolbar input { flex: 1; min-width: 200px; min-height: 34px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--color-text); font-size: 13px; }
 .panel-toolbar button { min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; }
-.table-card { overflow-x: auto; display: grid; gap: 10px; }
+.table-card { display: grid; gap: 10px; }
+.table-scroll { overflow: auto; max-height: min(520px, 64vh); }
 .prefix-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .prefix-table th, .prefix-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
+.prefix-table th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }
 .prefix-table button { min-height: 30px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); cursor: pointer; font-size: 12px; }
 .row-id { font-size: 11px; opacity: 0.55; margin-left: 6px; }
 .rename-zone { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--color-danger); border-radius: var(--radius-md); }

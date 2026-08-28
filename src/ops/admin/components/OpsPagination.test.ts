@@ -71,4 +71,27 @@ describe('OpsPagination', () => {
     const wrapper = pager({ total: 25, limit: 10, offset: 20 })
     expect(wrapper.emitted('change')).toBeUndefined()
   })
+
+  test('页大小选择器：档位 10/20/50/100，切换发 change-limit，重复选当前档不发', async () => {
+    const wrapper = pager({ total: 120, limit: 10, offset: 0 })
+    const options = wrapper.findAll('.ops-page-size-select option')
+    expect(options.map((option) => (option.element as HTMLOptionElement).value)).toEqual(['10', '20', '50', '100'])
+
+    // happy-dom 的 select.setValue 须传字符串：数字匹配不到 option 会被重置为空串
+    await wrapper.get('.ops-page-size-select').setValue('50')
+    expect(wrapper.emitted('change-limit')).toEqual([[50]])
+    // 换档不自行发 offset（归零由父级处理器完成）
+    expect(wrapper.emitted('change')).toBeUndefined()
+
+    await wrapper.setProps({ limit: 50 })
+    await wrapper.get('.ops-page-size-select').setValue('50')
+    expect(wrapper.emitted('change-limit')).toHaveLength(1)
+  })
+
+  test('limit 不在标准档位时兜底渲染当前值，避免下拉空白', () => {
+    const wrapper = pager({ total: 60, limit: 30, offset: 0 })
+    const options = wrapper.findAll('.ops-page-size-select option')
+    expect(options.map((option) => (option.element as HTMLOptionElement).value)).toEqual(['30', '10', '20', '50', '100'])
+    expect((wrapper.get('.ops-page-size-select').element as HTMLSelectElement).value).toBe('30')
+  })
 })

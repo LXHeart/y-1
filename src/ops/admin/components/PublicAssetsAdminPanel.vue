@@ -20,14 +20,17 @@
       <div class="panel-toolbar"><div><h3 id="public-review-title">待审公共素材</h3><p>通过后进入公共素材库，驳回必须填写原因。</p></div><form class="review-search" @submit.prevent="submitPublicAssetSearch"><input v-model="publicAssetSearch" type="search" maxlength="100" placeholder="搜索标题或标签"><button class="refresh-btn" type="submit" :disabled="publicAssetsLoading">搜索</button></form></div>
       <p v-if="publicAssetsError" class="error-msg" role="alert">{{ publicAssetsError }}</p>
       <div v-if="publicAssetsLoading" class="loading-state">加载中...</div>
-      <div v-else-if="publicAssetReviews.length" class="public-review-grid">
+      <div v-else-if="publicAssetReviews.length" class="public-review-scroll">
+        <div class="public-review-grid">
         <article v-for="asset in publicAssetReviews" :id="`public-asset-${asset.id}`" :key="asset.id" class="public-review-item">
           <div class="public-asset-preview"><img v-if="publicAssetPreviewUrls[asset.id]" :src="publicAssetPreviewUrls[asset.id]" :alt="asset.title"><span v-else>暂无预览</span></div>
           <div class="public-asset-body"><div class="public-asset-heading"><h4>{{ asset.title }}</h4><span class="type-tag">{{ publicAssetCategoryLabel(asset.category) }}</span></div><p>{{ asset.tags.join(' · ') || '无标签' }}</p><p class="td-time">有效至 {{ formatDateTime(asset.validUntil || null) }}</p><label>审核备注<input v-model="publicAssetReviewNotes[asset.id]" class="field-input" type="text" maxlength="500" placeholder="驳回时必填"></label><div class="review-actions"><button class="approve-btn" type="button" :disabled="reviewingPublicAssetIds.has(asset.id)" @click="reviewPublicAsset(asset, 'approve')">通过</button><button class="reject-btn" type="button" :disabled="reviewingPublicAssetIds.has(asset.id)" @click="reviewPublicAsset(asset, 'reject')">驳回</button></div></div>
         </article>
       </div>
+      </div>
       <p v-else class="td-empty">暂无待审核公共素材</p>
-      <OpsPagination v-if="publicAssetsTotal > 0" :total="publicAssetsTotal" :limit="PAGE_SIZE" :offset="publicAssetsOffset" @change="changePublicAssetsPage" />
+      <OpsPagination v-if="publicAssetsTotal > 0" :total="publicAssetsTotal" :limit="pageSize" :offset="publicAssetsOffset"
+        @change="changePublicAssetsPage" @change-limit="changePublicAssetsLimit" />
     </section>
   </div>
 </template>
@@ -38,7 +41,7 @@ import { useGrassland } from '../../../composables/useGrassland'
 import type { ContentAsset, ContentAssetCategory, PublicAssetBatchGenerateResult, PublicAssetGenerationKind } from '../../../types/grassland'
 import OpsPagination from './OpsPagination.vue'
 
-const PAGE_SIZE = 50
+const pageSize = ref(10)
 const grassland = useGrassland()
 const publicAssetReviews = ref<ContentAsset[]>([])
 const publicAssetSearch = ref('')
@@ -62,7 +65,7 @@ const publicGeneration = ref<{ kind: PublicAssetGenerationKind; theme: string; s
 
 async function loadPublicAssetReviews(): Promise<void> {
   publicAssetsLoading.value = true; publicAssetsError.value = ''
-  const result = await grassland.listPendingPublicAssetReviews(publicAssetSearch.value, { limit: PAGE_SIZE, offset: publicAssetsOffset.value })
+  const result = await grassland.listPendingPublicAssetReviews(publicAssetSearch.value, { limit: pageSize.value, offset: publicAssetsOffset.value })
   if (!result) { publicAssetsError.value = grassland.error.value || '公共素材审核队列加载失败'; publicAssetsLoading.value = false; return }
   publicAssetReviews.value = [...result.items]
   publicAssetsTotal.value = result.total
@@ -78,6 +81,12 @@ function submitPublicAssetSearch(): void {
 
 function changePublicAssetsPage(next: number): void {
   publicAssetsOffset.value = next
+  void loadPublicAssetReviews()
+}
+
+function changePublicAssetsLimit(limit: number): void {
+  pageSize.value = limit
+  publicAssetsOffset.value = 0
   void loadPublicAssetReviews()
 }
 
@@ -124,5 +133,5 @@ onMounted(() => void loadPublicAssetReviews())
 .error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
 .td-time { white-space: nowrap; color: var(--color-text-muted); }
 .td-empty { text-align: center; padding: var(--space-xl); color: var(--color-text-muted); }
-.public-assets-panel,.public-assets-panel > section,.public-generation{display:grid;gap:16px}.public-assets-panel > section + section{padding-top:20px;border-top:1px solid var(--color-border)}.public-generation-form{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr)) auto;align-items:end;gap:12px}.public-generation-form label,.public-asset-body label{display:grid;gap:5px;color:var(--color-text-muted);font-size:.78rem}.public-generation-form input,.public-generation-form select,.public-asset-body input{width:100%;min-height:36px;padding:6px 9px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);color:var(--color-text);box-sizing:border-box}.generation-submit{min-height:36px;white-space:nowrap}.generation-results{display:grid;gap:8px;padding:12px 0}.generation-results ol{display:grid;gap:6px;margin:0;padding-left:22px}.generation-results li{overflow-wrap:anywhere}.generation-results li span:first-child{display:inline-block;min-width:62px}.generation-ok a{color:var(--color-accent)}.generation-failed{color:var(--color-danger)}.public-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}.public-review-item{display:grid;grid-template-columns:112px minmax(0,1fr);min-height:164px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface);overflow:hidden}.public-asset-preview{display:grid;place-items:center;min-height:164px;background:var(--surface-muted);color:var(--color-text-muted);font-size:.76rem}.public-asset-preview img{width:100%;height:100%;object-fit:cover}.public-asset-body{display:grid;align-content:start;gap:8px;min-width:0;padding:12px}.public-asset-heading{display:flex;align-items:start;justify-content:space-between;gap:8px}.public-asset-heading h4,.public-asset-body p{margin:0}.public-asset-heading h4{min-width:0;font-size:.9rem;overflow-wrap:anywhere}.public-asset-body p{color:var(--color-text-muted);font-size:.76rem}.approve-btn:disabled,.reject-btn:disabled{opacity:.5;cursor:not-allowed}@media(max-width:640px){.public-generation-form{grid-template-columns:1fr}.public-review-item{grid-template-columns:88px minmax(0,1fr)}}@media(min-width:641px) and (max-width:1100px){.public-generation-form{grid-template-columns:repeat(2,minmax(180px,1fr))}}
+.public-assets-panel,.public-assets-panel > section,.public-generation{display:grid;gap:16px}.public-assets-panel > section + section{padding-top:20px;border-top:1px solid var(--color-border)}.public-generation-form{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr)) auto;align-items:end;gap:12px}.public-generation-form label,.public-asset-body label{display:grid;gap:5px;color:var(--color-text-muted);font-size:.78rem}.public-generation-form input,.public-generation-form select,.public-asset-body input{width:100%;min-height:36px;padding:6px 9px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);color:var(--color-text);box-sizing:border-box}.generation-submit{min-height:36px;white-space:nowrap}.generation-results{display:grid;gap:8px;padding:12px 0}.generation-results ol{display:grid;gap:6px;margin:0;padding-left:22px}.generation-results li{overflow-wrap:anywhere}.generation-results li span:first-child{display:inline-block;min-width:62px}.generation-ok a{color:var(--color-accent)}.generation-failed{color:var(--color-danger)}.public-review-scroll{max-height:min(560px,72vh);overflow:auto}.public-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}.public-review-item{display:grid;grid-template-columns:112px minmax(0,1fr);min-height:164px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface);overflow:hidden}.public-asset-preview{display:grid;place-items:center;min-height:164px;background:var(--surface-muted);color:var(--color-text-muted);font-size:.76rem}.public-asset-preview img{width:100%;height:100%;object-fit:cover}.public-asset-body{display:grid;align-content:start;gap:8px;min-width:0;padding:12px}.public-asset-heading{display:flex;align-items:start;justify-content:space-between;gap:8px}.public-asset-heading h4,.public-asset-body p{margin:0}.public-asset-heading h4{min-width:0;font-size:.9rem;overflow-wrap:anywhere}.public-asset-body p{color:var(--color-text-muted);font-size:.76rem}.approve-btn:disabled,.reject-btn:disabled{opacity:.5;cursor:not-allowed}@media(max-width:640px){.public-generation-form{grid-template-columns:1fr}.public-review-item{grid-template-columns:88px minmax(0,1fr)}}@media(min-width:641px) and (max-width:1100px){.public-generation-form{grid-template-columns:repeat(2,minmax(180px,1fr))}}
 </style>

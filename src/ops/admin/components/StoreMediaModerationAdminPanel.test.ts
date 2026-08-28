@@ -43,7 +43,7 @@ describe('StoreMediaModerationAdminPanel', () => {
     const wrapper = mount(StoreMediaModerationAdminPanel)
     await flushPromises()
 
-    expect(api.listStoreMediaModerationQueue).toHaveBeenCalledWith('review', { limit: 50, offset: 0 })
+    expect(api.listStoreMediaModerationQueue).toHaveBeenCalledWith('review', { limit: 10, offset: 0 })
     expect(wrapper.get('img').attributes('src')).toBe('http://localhost:9002/media/media-1')
     expect(wrapper.text()).toContain('unparseable')
     expect(wrapper.text()).toContain('store-1')

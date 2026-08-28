@@ -23,7 +23,7 @@
       <button type="button" role="tab" :aria-selected="activeSection === 'tasks'"
         :class="{ active: activeSection === 'tasks' }"
         @click="activeSection = 'tasks'; void loadReviewTasks(); void loadReviewStats()">
-        任务审核 <span v-if="taskTotal" class="count-badge">{{ taskTotal }}</span>
+        任务审核 <span v-if="reviewStats?.pending" class="count-badge">{{ reviewStats.pending }}</span>
       </button>
       <button type="button" role="tab" :aria-selected="activeSection === 'reputation'"
         :class="{ active: activeSection === 'reputation' }"
@@ -84,6 +84,7 @@
       <div v-if="loading" class="loading-state">加载中...</div>
       <template v-else>
       <div class="table-card">
+        <div class="table-scroll">
         <table class="user-table">
           <thead><tr><th>邮箱</th><th>昵称</th><th>角色</th><th>积分余额</th><th>累计获得</th>
             <th>累计使用</th><th>注册时间</th><th>操作</th></tr></thead>
@@ -98,8 +99,10 @@
             <tr v-if="users.length === 0"><td colspan="8" class="td-empty">暂无用户</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
-      <OpsPagination :total="usersTotal" :limit="PAGE_LIMIT" :offset="usersOffset" @change="changeUsersPage" />
+      <OpsPagination :total="usersTotal" :limit="usersLimit" :offset="usersOffset"
+        @change="changeUsersPage" @change-limit="changeUsersLimit" />
       </template>
     </div>
 
@@ -112,6 +115,7 @@
       <div v-if="kybLoading" class="loading-state">加载中...</div>
       <template v-else>
       <div class="table-card">
+        <div class="table-scroll">
         <table class="user-table kyb-table">
           <thead><tr><th>类型</th><th>组织</th><th>目标</th><th>提交时间</th><th>审核时限</th><th>操作</th></tr></thead>
           <tbody>
@@ -131,8 +135,10 @@
             <tr v-if="kybRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核申请</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
-      <OpsPagination :total="kybTotal" :limit="PAGE_LIMIT" :offset="kybOffset" @change="changeKybPage" />
+      <OpsPagination :total="kybTotal" :limit="kybLimit" :offset="kybOffset"
+        @change="changeKybPage" @change-limit="changeKybLimit" />
       </template>
     </div>
 
@@ -145,6 +151,7 @@
       <div v-if="recommenderLoading" class="loading-state">加载中...</div>
       <template v-else>
       <div class="table-card">
+        <div class="table-scroll">
         <table class="user-table kyb-table">
           <thead><tr><th>账号</th><th>材料</th><th>提交时间</th><th>审核时限</th><th>审核原因</th><th>操作</th></tr></thead>
           <tbody>
@@ -164,8 +171,10 @@
             <tr v-if="recommenderRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核认证</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
-      <OpsPagination :total="recommenderTotal" :limit="PAGE_LIMIT" :offset="recommenderOffset" @change="changeRecommenderPage" />
+      <OpsPagination :total="recommenderTotal" :limit="recommenderLimit" :offset="recommenderOffset"
+        @change="changeRecommenderPage" @change-limit="changeRecommenderLimit" />
       </template>
     </div>
 
@@ -196,6 +205,7 @@
       <div v-if="taskReviewLoading" class="loading-state">加载中...</div>
       <template v-else>
         <div class="table-card">
+          <div class="table-scroll">
           <table class="user-table kyb-table">
             <thead><tr><th>标题</th><th>平台</th><th>赏金</th><th>组织</th><th>状态</th><th>驳回原因</th><th>操作</th></tr></thead>
             <tbody>
@@ -225,8 +235,10 @@
               <tr v-if="reviewTasks.length === 0"><td colspan="7" class="td-empty">{{ reviewStatusOption.empty }}</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
-        <OpsPagination :total="taskTotal" :limit="PAGE_LIMIT" :offset="taskOffset" @change="changeTaskPage" />
+        <OpsPagination :total="taskTotal" :limit="taskLimit" :offset="taskOffset"
+          @change="changeTaskPage" @change-limit="changeTaskLimit" />
       </template>
     </div>
 
@@ -253,6 +265,7 @@
       <div v-if="journalLoading" class="loading-state">加载中...</div>
       <template v-else>
       <div class="table-card">
+        <div class="table-scroll">
         <table class="user-table kyb-table">
           <thead><tr><th>类型</th><th>组织</th><th>关联</th><th>备注</th><th>幂等键</th><th>时间</th></tr></thead>
           <tbody>
@@ -267,8 +280,10 @@
             <tr v-if="journals.length === 0"><td colspan="6" class="td-empty">暂无流水</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
-      <OpsPagination :total="journalTotal" :limit="PAGE_LIMIT" :offset="journalOffset" @change="changeJournalPage" />
+      <OpsPagination :total="journalTotal" :limit="journalLimit" :offset="journalOffset"
+        @change="changeJournalPage" @change-limit="changeJournalLimit" />
       </template>
     </div>
 
@@ -441,8 +456,12 @@ interface UserItem {
 const { currentUser, hasBackendRole } = useAuth()
 const reviewerOnly = computed(() => Boolean(currentUser.value)
   && hasBackendRole('content_reviewer') && !hasBackendRole('platform_admin'))
-/** 五个内置列表统一页大小（与后端分页信封契约默认值一致）。 */
-const PAGE_LIMIT = 50
+/** 五个内置列表每页条数真源（默认 10，OpsPagination 触发 10/20/50/100 切换并归零 offset）。 */
+const usersLimit = ref(10)
+const kybLimit = ref(10)
+const recommenderLimit = ref(10)
+const taskLimit = ref(10)
+const journalLimit = ref(10)
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
 const usersOffset = ref(0)
@@ -556,7 +575,7 @@ async function loadReviewTasks(): Promise<void> {
   const result = await grassland.listReviewTasks({
     status: reviewStatus.value,
     q: taskSearch.value || undefined,
-    limit: PAGE_LIMIT,
+    limit: taskLimit.value,
     offset: taskOffset.value,
   })
   if (result) {
@@ -594,6 +613,13 @@ function changeTaskPage(offset: number): void {
   void loadReviewTasks()
 }
 
+/** 切每页条数：limit 生效 + offset 归零重载。 */
+function changeTaskLimit(limit: number): void {
+  taskLimit.value = limit
+  taskOffset.value = 0
+  void loadReviewTasks()
+}
+
 async function reviewTask(task: Task, decision: 'approve' | 'reject'): Promise<void> {
   const note = (taskReviewNotes.value[task.id] || '').trim()
   if (decision === 'reject' && !note) {
@@ -606,7 +632,8 @@ async function reviewTask(task: Task, decision: 'approve' | 'reject'): Promise<v
     : await grassland.rejectTaskReview(task.id, task.version, note)
   if (result) {
     // 带当前筛选条件重载本页，替代本地删行；删行致越界由 OpsPagination 收敛兑底。
-    await loadReviewTasks()
+    // 待审数变了：同步刷新统计条与页签徽标。
+    await Promise.all([loadReviewTasks(), loadReviewStats()])
     delete taskReviewNotes.value[task.id]
   } else {
     taskReviewError.value = grassland.error.value || '审核失败'
@@ -618,7 +645,7 @@ async function loadJournals(): Promise<void> {
   journalError.value = ''
   const result = await grassland.listFinanceJournals({
     organizationId: journalOrgFilter.value || undefined,
-    limit: PAGE_LIMIT,
+    limit: journalLimit.value,
     offset: journalOffset.value,
   })
   if (result) {
@@ -638,6 +665,12 @@ function applyJournalFilter(): void {
 
 function changeJournalPage(offset: number): void {
   journalOffset.value = offset
+  void loadJournals()
+}
+
+function changeJournalLimit(limit: number): void {
+  journalLimit.value = limit
+  journalOffset.value = 0
   void loadJournals()
 }
 
@@ -679,7 +712,7 @@ async function loadUsers(): Promise<void> {
   try {
     const query = userSearch.value.trim()
     const params = new URLSearchParams({
-      limit: String(PAGE_LIMIT),
+      limit: String(usersLimit.value),
       offset: String(usersOffset.value),
     })
     if (query) params.set('q', query)
@@ -708,10 +741,16 @@ function changeUsersPage(offset: number): void {
   void loadUsers()
 }
 
+function changeUsersLimit(limit: number): void {
+  usersLimit.value = limit
+  usersOffset.value = 0
+  void loadUsers()
+}
+
 async function loadKybRequests(): Promise<void> {
   kybLoading.value = true
   kybError.value = ''
-  const result = await grassland.listKybVerifications({ limit: PAGE_LIMIT, offset: kybOffset.value })
+  const result = await grassland.listKybVerifications({ limit: kybLimit.value, offset: kybOffset.value })
   if (result) {
     kybRequests.value = [...result.items]
     kybTotal.value = result.total
@@ -726,10 +765,16 @@ function changeKybPage(offset: number): void {
   void loadKybRequests()
 }
 
+function changeKybLimit(limit: number): void {
+  kybLimit.value = limit
+  kybOffset.value = 0
+  void loadKybRequests()
+}
+
 async function loadRecommenderRequests(): Promise<void> {
   recommenderLoading.value = true
   recommenderError.value = ''
-  const result = await grassland.listRecommenderVerifications({ limit: PAGE_LIMIT, offset: recommenderOffset.value })
+  const result = await grassland.listRecommenderVerifications({ limit: recommenderLimit.value, offset: recommenderOffset.value })
   if (result) {
     recommenderRequests.value = [...result.items]
     recommenderTotal.value = result.total
@@ -741,6 +786,12 @@ async function loadRecommenderRequests(): Promise<void> {
 
 function changeRecommenderPage(offset: number): void {
   recommenderOffset.value = offset
+  void loadRecommenderRequests()
+}
+
+function changeRecommenderLimit(limit: number): void {
+  recommenderLimit.value = limit
+  recommenderOffset.value = 0
   void loadRecommenderRequests()
 }
 
@@ -1120,7 +1171,13 @@ function formatBytes(value: number | null): string {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  overflow-x: auto;
+}
+
+/* 表格定高滚动层：约 10 行的高度封顶，行多则内部滚动（表头吸顶）；
+   宽表横向滚动也从 card 挪到本层，避免粘性表头漏出左右留白。 */
+.table-scroll {
+  max-height: min(520px, 64vh);
+  overflow: auto;
 }
 
 .user-table {
@@ -1130,6 +1187,10 @@ function formatBytes(value: number | null): string {
 }
 
 .user-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-card);
   text-align: left;
   padding: var(--space-sm) var(--space-md);
   font-weight: 600;
