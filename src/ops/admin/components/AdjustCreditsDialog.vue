@@ -1,9 +1,9 @@
 <template>
   <Teleport to="body">
     <div v-if="target" class="modal-overlay" @click.self="$emit('close')">
-      <div class="modal-card">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="adjust-credits-title">
         <header class="modal-header">
-          <h3 class="modal-title">调整积分 — {{ target.email }}</h3>
+          <h3 id="adjust-credits-title" class="modal-title">调整积分 — {{ target.email }}</h3>
           <button class="modal-close" type="button" @click="$emit('close')" aria-label="关闭">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>

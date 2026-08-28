@@ -1203,23 +1203,8 @@ function formatBytes(value: number | null): string {
   border-color: var(--color-border-accent);
 }
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-overlay);
-  backdrop-filter: blur(4px);
-}
-
-.modal-card {
-  width: min(440px, 92vw);
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-elevated);
-}
+/* 弹窗骨架（overlay/card/header/btn 等）已收口 src/style.css 全局层——
+   Teleport 到 body 后 scoped 够不着子组件，历史教训见 AdjustCreditsDialog */
 
 .review-modal {
   width: min(720px, 94vw);
@@ -1227,62 +1212,7 @@ function formatBytes(value: number | null): string {
   overflow-y: auto;
 }
 
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.modal-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin: 0;
-  color: var(--color-text);
-}
-
-.modal-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.modal-close:hover {
-  background: var(--surface-hover);
-}
-
-.modal-body {
-  padding: 20px;
-  display: grid;
-  gap: 16px;
-}
-
-.current-balance {
-  margin: 0;
-  font-size: 0.88rem;
-  color: var(--color-text-secondary);
-}
-
-.current-balance strong {
-  color: var(--color-accent);
-  font-size: 1.1rem;
-}
-
-.field-label {
-  display: grid;
-  gap: 6px;
-  font-size: 0.84rem;
-  color: var(--color-text-secondary);
-}
-
+/* 表格行内联备注输入（非弹窗上下文，勿删；弹窗内输入走全局 .modal-card .field-input） */
 .field-input {
   width: 100%;
   height: 40px;
@@ -1401,42 +1331,6 @@ function formatBytes(value: number | null): string {
   background: transparent;
   color: var(--color-accent);
   cursor: pointer;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-.btn-cancel {
-  padding: 8px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 0.86rem;
-  cursor: pointer;
-}
-
-.btn-confirm {
-  padding: 8px 20px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--gradient-accent);
-  color: var(--color-on-accent);
-  font-size: 0.86rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn-confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-confirm.danger {
-  background: var(--color-danger);
 }
 
 .approve-btn:disabled,

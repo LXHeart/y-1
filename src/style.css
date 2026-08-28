@@ -366,6 +366,155 @@ img {
 .gl-field .gl-tile-button-primary { border-color: var(--color-border-accent); background: var(--color-surface-highlight); }
 .gl-field .gl-tile-button-primary:hover:not(:disabled) { border-color: var(--color-border-accent); background: var(--color-surface-highlight); }
 
+/* ---------- 弹窗骨架共用层 ----------
+   治理台两处弹窗（AdminView 审核弹窗、AdjustCreditsDialog）共用类名。
+   弹窗经 Teleport 挂到 body，脱离任何 .gl-field 根，scoped 样式也够不着
+   （历史教训：子组件类名裸奔——AdjustCreditsDialog 曾因此整窗无样式平铺在页尾）。
+   统一收口在此；字段/报错类仅限 .modal-card 后代，避免波及用户端同名类。 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-overlay);
+  backdrop-filter: blur(4px);
+}
+
+.modal-card {
+  width: min(440px, 92vw);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background: var(--color-surface-hover);
+}
+
+.modal-body {
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn-cancel {
+  padding: 8px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.btn-confirm {
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--gradient-accent);
+  color: var(--color-on-accent);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-confirm.danger {
+  background: var(--color-danger);
+}
+
+.current-balance {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--color-text-secondary);
+}
+
+.current-balance strong {
+  color: var(--color-accent);
+  font-size: 1.1rem;
+}
+
+.modal-card .field-label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--color-text-secondary);
+}
+
+.modal-card .field-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text);
+  font-size: 0.88rem;
+  box-sizing: border-box;
+}
+
+.modal-card .field-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.modal-card .field-textarea {
+  min-height: 96px;
+  height: auto;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.modal-card .error-msg {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
+  color: var(--color-danger);
+  font-size: 0.86rem;
+  margin: 0;
+}
+
 .fade-in {
   animation: fade-in var(--duration-normal) var(--ease-out);
 }
