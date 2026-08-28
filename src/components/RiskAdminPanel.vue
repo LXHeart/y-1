@@ -13,14 +13,14 @@
         <select v-model="filters.severity"><option value="">全部</option><option value="critical">紧急</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select>
       </label>
       <label>主体类型<input v-model.trim="filters.subjectKind" placeholder="account / task / order" /></label>
-      <label>主体标识<input v-model.trim="filters.subjectRef" placeholder="账号或业务 ID" @keyup.enter="loadCases" /></label>
-      <button type="button" :disabled="loading" @click="loadCases">查询</button>
+      <label>主体标识<input v-model.trim="filters.subjectRef" placeholder="账号或业务 ID" @keyup.enter="query" /></label>
+      <button type="button" :disabled="loading" @click="query">查询</button>
     </div>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div class="workspace">
       <div class="case-list" aria-label="风险案件列表">
-        <div class="list-head"><strong>案件队列</strong><span>{{ cases.length }} 条</span></div>
+        <div class="list-head"><strong>案件队列</strong><span>{{ total }} 条</span></div>
         <button v-for="item in cases" :key="item.id" type="button" class="case-row"
           :class="{ selected: selectedId === item.id }" @click="selectCase(item.id)">
           <span class="severity" :data-severity="item.severity">{{ severityLabel(item.severity) }}</span>
@@ -29,6 +29,9 @@
           <time>{{ formatDate(item.updatedAt) }}</time>
         </button>
         <p v-if="!loading && cases.length === 0" class="empty">没有符合条件的案件</p>
+        <div v-if="total > 0" class="list-pager">
+          <OpsPagination :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
+        </div>
       </div>
 
       <div class="case-detail" aria-live="polite">
@@ -83,13 +86,17 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
+import OpsPagination from '../ops/admin/components/OpsPagination.vue'
 import type { RiskCase, RiskCaseAction, RiskCaseDetail, RiskSeverity } from '../types/grassland'
 
+const PAGE_SIZE = 50
 const grassland = useGrassland()
 const filters = reactive({ status: 'open', severity: '', subjectKind: '', subjectRef: '' })
 const cases = ref<RiskCase[]>([])
 const detail = ref<RiskCaseDetail | null>(null)
 const selectedId = ref('')
+const offset = ref(0)
+const total = ref(0)
 const loading = ref(false)
 const detailLoading = ref(false)
 const acting = ref(false)
@@ -101,15 +108,28 @@ onMounted(() => void loadCases())
 async function loadCases(): Promise<void> {
   loading.value = true
   error.value = ''
-  const result = await grassland.listRiskCases({ ...filters, limit: 100 })
+  const result = await grassland.listRiskCases({ ...filters, limit: PAGE_SIZE, offset: offset.value })
   loading.value = false
   if (!result) { error.value = grassland.error.value || '风险案件加载失败'; return }
-  cases.value = result
-  if (selectedId.value && !result.some(item => item.id === selectedId.value)) {
+  cases.value = result.items
+  total.value = result.total
+  // 翻页/筛选后选中项不在新页则清选；无选中时默认带出首行（双栏布局左侧队列主导右侧详情）
+  if (selectedId.value && !result.items.some(item => item.id === selectedId.value)) {
     selectedId.value = ''
     detail.value = null
   }
-  if (!selectedId.value && result[0]) await selectCase(result[0].id)
+  if (!selectedId.value && result.items[0]) await selectCase(result.items[0].id)
+}
+
+/** 筛选变化：点「查询」时 offset 归零重载（任务 #3 分页契约）。 */
+function query(): void {
+  offset.value = 0
+  void loadCases()
+}
+
+function changePage(next: number): void {
+  offset.value = next
+  void loadCases()
 }
 
 async function selectCase(id: string): Promise<void> {
@@ -162,6 +182,7 @@ select, input, textarea { box-sizing: border-box; width: 100%; border: 1px solid
 .case-list { border-right: 1px solid var(--color-border); background: var(--color-surface); }
 .list-head { padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
 .list-head span { color: var(--color-text-muted); font-size: .78rem; }
+.list-pager { padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--color-border); }
 .case-row { width: 100%; min-height: 88px; display: grid; grid-template-columns: auto 1fr; justify-content: initial; gap: 5px 9px; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; text-align: left; }
 .case-row.selected { background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface)); box-shadow: inset 3px 0 var(--color-accent); }
 .case-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

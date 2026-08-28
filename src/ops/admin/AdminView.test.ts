@@ -17,11 +17,16 @@ function response(data: unknown, envelope = true): Response {
   } as unknown as Response
 }
 
+/** 分页信封（任务 #3 契约）：`data: { items, total, limit, offset }`。 */
+function paged(items: unknown[], total = items.length, offset = 0) {
+  return { items, total, limit: 50, offset }
+}
+
 describe('AdminView KYB 审核', () => {
   test('用户搜索会对关键词编码并透传 q 参数', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url.startsWith('/api/admin/users')) return response({ users: [] }, true)
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       throw new Error(`unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -33,13 +38,13 @@ describe('AdminView KYB 审核', () => {
     await flushPromises()
 
     expect(fetchMock.mock.calls.map(([url]) => String(url)))
-      .toContain('/api/admin/users?q=alice%2Bops')
+      .toContain('/api/admin/users?limit=50&offset=0&q=alice%2Bops')
   })
 
   test('管理 tab 完整显示等级与信任治理入口，AI 模型面板仍懒挂载', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] }, true)
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       throw new Error(`unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -85,11 +90,14 @@ describe('AdminView KYB 审核', () => {
       },
       attachments: [],
     }
+    // 审核成功后后端会把该申请移出待审队列——mock 同步这层状态，二次拉取返回空页
+    let pendingKyb = [request]
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] }, true)
-      if (url === '/api/admin/kyb-requests') return response([request])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged(pendingKyb))
       if (url === '/api/admin/kyb-requests/request-1' && !init?.method) return response(detail)
       if (url === '/api/admin/kyb-requests/request-1/reject' && init?.method === 'POST') {
+        pendingKyb = []
         return response({ ...request, status: 'rejected', reviewNote: '地址无法核验' })
       }
       throw new Error(`unexpected request: ${url}`)
@@ -127,7 +135,7 @@ describe('AdminView KYB 审核', () => {
       request,
       subject: {
         type: 'merchant_profile', organizationId: 'org-2', legalName: '草场商贸',
-        unifiedSocialCreditCode: '91310000TEST000001', businessType: 'company',
+        unifiedSocialCreditCode: '91310000TEST000001', businessType: 'company', industry: 'retail',
         legalPersonName: '张三', legalPersonIdNumberMasked: '****1234',
         registeredCapitalCents: null, establishmentDate: null, businessAddress: null,
         contactPhone: null, contactEmail: null, status: 'pending',
@@ -135,8 +143,8 @@ describe('AdminView KYB 审核', () => {
       attachments: [],
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] }, true)
-      if (url === '/api/admin/kyb-requests') return response([request])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([request]))
       return response(detail)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -146,6 +154,9 @@ describe('AdminView KYB 审核', () => {
     await wrapper.findAll('[role="tab"]')[1].trigger('click')
     await wrapper.find('.reject-btn').trigger('click')
     await flushPromises()
+
+    expect(wrapper.text()).toContain('行业类型')
+    expect(wrapper.text()).toContain('零售')
     await wrapper.find('.btn-confirm.danger').trigger('click')
 
     expect(wrapper.text()).toContain('请填写拒绝原因')
@@ -160,8 +171,8 @@ describe('AdminView KYB 审核', () => {
       reviewDeadline: null, createdAt: null,
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] }, true)
-      if (url === '/api/admin/kyb-requests') return response([request])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([request]))
       if (url === '/api/admin/kyb-requests/request-3') {
         return {
           ok: false, status: 503, headers: { get: () => 'application/json' },
@@ -208,8 +219,8 @@ describe('AdminView 等级权益治理', () => {
 
   test('按服务端版本保存五级策略', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       if (url === '/api/admin/reputation-config' && init?.method === 'PUT') return response({ ...policy, version: 8 })
       if (url === '/api/admin/reputation-config') return response(policy)
       throw new Error(`unexpected request: ${url}`)
@@ -239,8 +250,8 @@ describe('AdminView 等级权益治理', () => {
 
   test('版本冲突时保留本地编辑内容', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       if (url === '/api/admin/reputation-config' && init?.method === 'PUT') {
         return {
           ok: false, status: 409, headers: { get: () => 'application/json' },
@@ -279,8 +290,8 @@ describe('AdminView 等级权益治理', () => {
     }
     let reputationReads = 0
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       if (url === `/api/admin/reputation/${accountId}/lv5-admission` && init?.method === 'PUT') {
         return response({ accountId, admitted: true, version: 3, note: '签约邀请' })
       }
@@ -332,8 +343,8 @@ describe('AdminView 等级权益治理', () => {
       admissionUpdatedAt: null,
     })
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       if (url === '/api/admin/reputation-config') return response(policy)
       if (url === `/api/admin/reputation/${olderAccount}`) return olderResponse
       if (url === `/api/admin/reputation/${newerAccount}`) {
@@ -373,8 +384,8 @@ describe('AdminView 审判官运营准入', () => {
       createdAt: '2026-08-07T08:00:00Z',
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       if (url.startsWith('/api/admin/trust/judges?') && !init?.method) {
         return response({ items: [judge], nextCursor: null, hasMore: false })
       }
@@ -413,8 +424,8 @@ describe('AdminView 审判官运营准入', () => {
       opsAdmittedBy: 'admin-1', createdAt: '2026-08-01T08:00:00Z',
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users: [] })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       if (url.startsWith('/api/admin/trust/judges?')) {
         return response({ items: [judge], nextCursor: null, hasMore: false })
       }
@@ -442,7 +453,7 @@ describe('AdminView 审判官运营准入', () => {
 })
 
 describe('AdminView 用户管理（identity 信封）', () => {
-  test('解析 {success,data:{users}} 信封并渲染用户列表 + 余额', async () => {
+  test('解析 {success,data:{items,total,limit,offset}} 分页信封并渲染用户列表 + 余额', async () => {
     const users = [
       { id: 'u-1', email: 'a@example.com', displayName: '用户A', role: 'user', status: 'active',
         createdAt: '2026-01-01T00:00:00Z', balance: 5, totalEarned: 10, totalSpent: 5 },
@@ -450,8 +461,8 @@ describe('AdminView 用户管理（identity 信封）', () => {
         createdAt: '2026-01-02T00:00:00Z', balance: 0, totalEarned: 0, totalSpent: 0 },
     ]
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/users') return response({ users })
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/users')) return response(paged(users))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       throw new Error(`unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -473,9 +484,9 @@ describe('AdminView 用户管理（identity 信封）', () => {
     ]
     let usersCallCount = 0
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') {
+      if (url.startsWith('/api/admin/users')) {
         usersCallCount++
-        return response({ users })
+        return response(paged(users))
       }
       if (url === '/api/admin/adjust-credits') {
         const body = JSON.parse(init?.body as string)
@@ -484,7 +495,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
         expect(body.note).toBe('扣减测试')
         return response({ adjusted: true })
       }
-      if (url === '/api/admin/kyb-requests') return response([])
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       throw new Error(`unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -515,9 +526,9 @@ describe('AdminView 公共素材审核台', () => {
       validUntil: '2026-09-01T00:00:00Z', createdAt: '2026-08-19T00:00:00Z', updatedAt: null,
     }
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/admin/users') return response({ users: [] }, true)
-      if (url === '/api/admin/kyb-requests') return response([])
-      if (url === '/api/admin/content-assets/review') return response({ items: [asset] })
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      if (url.startsWith('/api/admin/content-assets/review')) return response(paged([asset]))
       if (url === '/api/content-assets/asset-1/download-url') {
         return response({ downloadUrl: 'https://assets.test/asset-1.png', expiresIn: 300 })
       }
@@ -563,10 +574,124 @@ describe('AdminView 公共素材审核台', () => {
     await wrapper.get('.public-review-item .reject-btn').trigger('click')
     await flushPromises()
 
-    const rejectCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/content-assets/asset-1/review/reject')
-    expect(JSON.parse(String((rejectCall?.[1] as RequestInit).body))).toEqual({
-      expectedVersion: 1, note: '画面含品牌标识',
+      const rejectCall = fetchMock.mock.calls.find(([url]) => url === '/api/admin/content-assets/asset-1/review/reject')
+      expect(JSON.parse(String((rejectCall?.[1] as RequestInit).body))).toEqual({
+        expectedVersion: 1, note: '画面含品牌标识',
+      })
+      expect(wrapper.text()).toContain('暂无待审核公共素材')
     })
-    expect(wrapper.text()).toContain('暂无待审核公共素材')
+})
+
+describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
+  const rejectedTask = {
+    id: 'task-rej-1', title: '被驳回的任务', platform: 'douyin', bountyCents: 10000,
+    organizationId: 'org-1', status: 'draft', version: 3,
+    lastReviewAction: 'rejected', lastReviewNote: '标题涉嫌夸张宣传', lastReviewedAt: '2026-08-28T10:00:00Z',
+    lastRejectedNote: '标题涉嫌夸张宣传', lastRejectedAt: '2026-08-28T10:00:00Z',
+  }
+  const pendingTask = {
+    id: 'task-pending-1', title: '待审核的任务', platform: 'xhs', bountyCents: 5000,
+    organizationId: 'org-1', status: 'pending_review', version: 1,
+    lastReviewAction: 'submitted', lastReviewNote: null, lastReviewedAt: '2026-08-28T09:00:00Z',
+  }
+
+  /** 任务审核页签 mock：按 query 返回对应视图；stats 端点同 mock。 */
+  function stubTaskReview(total = 120) {
+    return vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      if (url === '/api/admin/tasks/review/stats') {
+        return response({ pending: 3, overdue: 1, approvedLast24Hours: 2, rejectedLast24Hours: 1 })
+      }
+      if (url.startsWith('/api/admin/tasks/review?')) {
+        const query = new URL(url, 'http://localhost').searchParams
+        const status = query.get('status') ?? 'pending_review'
+        const item = status === 'rejected' ? rejectedTask : pendingTask
+        const offset = Number(query.get('offset') ?? 0)
+        return response(paged(total === 0 || (status === 'rejected' && offset > 0) ? [] : [item], total, offset))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+  }
+
+  async function openTasksTab() {
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    // 页签按下标是红线（AdminView.vue 顶部注释）：0 users / 1 kyb / 2 org-renames / 3 recommenders / 4 tasks
+    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  test('三态筛选切换：请求带对应 status，重复点击同态不重发', async () => {
+    const fetchMock = stubTaskReview()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = await openTasksTab()
+
+    const callsBefore = fetchMock.mock.calls.length
+    await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已驳回')!.trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('status=rejected'))).toBe(true)
+    // rejected 视图行展示驳回原因与驳回徽标，操作列为 —（决策 F）
+    expect(wrapper.text()).toContain('被驳回的任务')
+    expect(wrapper.text()).toContain('标题涉嫌夸张宣传')
+    expect(wrapper.text()).toContain('已驳回')
+
+    // 统计条渲染 meta 数字
+    expect(wrapper.text()).toContain('24h 通过 2')
+
+    await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已通过')!.trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('status=published'))).toBe(true)
+
+    // 重复点击同态不重发列表请求
+    const callsAfterPublished = fetchMock.mock.calls.length
+    await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已通过')!.trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.length).toBe(callsAfterPublished)
+  })
+
+  test('翻页：点下一页发 offset=50 请求，页码文案正确，搜索条件随请求保留', async () => {
+    const fetchMock = stubTaskReview(120)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = await openTasksTab()
+
+    await wrapper.get('input[placeholder="搜索任务标题或描述"]').setValue('夸张')
+    await wrapper.get('.admin-panel form.search-toolbar').trigger('submit')
+    await flushPromises()
+    // 搜索提交后 offset 归零重载（带 q）
+    const searchCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('status=pending_review') && String(url).includes('q=%E5%A4%B8%E5%BC%A0'))
+    expect(searchCall).toBeDefined()
+
+    await wrapper.get('.ops-pagination .ops-page-btn:nth-child(3)').trigger('click')
+    await flushPromises()
+    const page2Call = fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.includes('offset=50')).pop()
+    expect(page2Call).toContain('q=')
+    expect(page2Call).toContain('status=pending_review')
+    // 第 2 / 3 页 · 共 120 条（limit=50）
+    expect(wrapper.get('.ops-page-info').text()).toBe('第 2 / 3 页 · 共 120 条')
+
+    // 翻页后重新搜索回到第 1 页
+    await wrapper.get('input[placeholder="搜索任务标题或描述"]').setValue('新词')
+    await wrapper.get('.admin-panel form.search-toolbar').trigger('submit')
+    await flushPromises()
+    const lastListCall = fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.startsWith('/api/admin/tasks/review?')).pop()
+    expect(lastListCall).toContain('offset=0')
+  })
+
+  test('total=0 空态：分页器显示共 0 条，列表空态文案随视图切换', async () => {
+    const fetchMock = stubTaskReview(0)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = await openTasksTab()
+
+    expect(wrapper.text()).toContain('暂无待审核任务')
+    expect(wrapper.get('.ops-page-info').text()).toContain('共 0 条')
+
+    await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已驳回')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无已驳回任务')
   })
 })

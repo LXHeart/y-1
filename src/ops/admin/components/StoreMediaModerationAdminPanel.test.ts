@@ -34,27 +34,27 @@ function queueItem(overrides: Record<string, unknown> = {}) {
 enableAutoUnmount(afterEach)
 beforeEach(() => {
   vi.clearAllMocks(); api.error.value = ''
-  api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [] })
+  api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [], total: 0 })
 })
 
 describe('StoreMediaModerationAdminPanel', () => {
   test('renders review queue with findings and preview, empty state otherwise', async () => {
-    api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [queueItem()] })
+    api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [queueItem()], total: 1 })
     const wrapper = mount(StoreMediaModerationAdminPanel)
     await flushPromises()
 
-    expect(api.listStoreMediaModerationQueue).toHaveBeenCalledWith('review')
+    expect(api.listStoreMediaModerationQueue).toHaveBeenCalledWith('review', { limit: 50, offset: 0 })
     expect(wrapper.get('img').attributes('src')).toBe('http://localhost:9002/media/media-1')
     expect(wrapper.text()).toContain('unparseable')
     expect(wrapper.text()).toContain('store-1')
 
-    api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [] })
+    api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [], total: 0 })
     await wrapper.get('button.refresh-btn').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('暂无待复核的门店媒体')
   })
 
   test('rejecting requires a note; approving posts expectedModeratedAt and reloads queue', async () => {
-    api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [queueItem()] })
+    api.listStoreMediaModerationQueue.mockResolvedValue({ status: 'review', items: [queueItem()], total: 1 })
     api.reviewStoreMediaModeration.mockResolvedValue({ mediaId: 'media-1', status: 'pass' })
     const wrapper = mount(StoreMediaModerationAdminPanel)
     await flushPromises()
@@ -71,7 +71,7 @@ describe('StoreMediaModerationAdminPanel', () => {
 
   test('video items render a video preview and decided items show the review trail', async () => {
     api.listStoreMediaModerationQueue.mockResolvedValue({
-      status: 'blocked',
+      status: 'blocked', total: 1,
       items: [
         queueItem({ mediaId: 'media-2', mimeType: 'video/mp4', status: 'blocked',
           reviewedBy: 'reviewer-9', reviewedAt: '2026-08-21T03:00:00Z', reviewNote: '画面含违禁品' }),

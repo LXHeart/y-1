@@ -244,14 +244,25 @@ describe('KYB 请求契约', () => {
   })
 
   test('admin KYB 审核使用 kyb-requests 的 approve/reject 叶子端点', async () => {
-    const spy = mockFetchOk()
+    // 任务 #3 信封契约：列表端点带默认查询串并解信封为 {items, total}（兼容数组）。409 等分支不变。
+    const spy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({
+        success: true,
+        data: { items: [{ id: 'request-1' }], total: 1, limit: 50, offset: 0 },
+      }),
+    })
+    vi.stubGlobal('fetch', spy)
     const { listKybVerifications, reviewKybVerification } = useGrassland()
 
-    await listKybVerifications()
+    const page = await listKybVerifications()
     await reviewKybVerification('request-1', 'approve', '材料齐全')
     await reviewKybVerification('request-2', 'reject', '证件模糊')
 
-    expect(spy.mock.calls[0][0]).toBe('/api/admin/kyb-requests')
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/kyb-requests?limit=50&offset=0')
+    expect(page?.items).toEqual([{ id: 'request-1' }])
+    expect(page?.total).toBe(1)
     expect(spy.mock.calls[1][0]).toBe('/api/admin/kyb-requests/request-1/approve')
     expect(bodyOf(spy, 1)).toEqual({ note: '材料齐全' })
     expect(spy.mock.calls[2][0]).toBe('/api/admin/kyb-requests/request-2/reject')

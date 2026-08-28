@@ -57,6 +57,8 @@ export interface RiskCaseQuery {
   subjectKind?: string
   subjectRef?: string
   limit?: number
+  /** 任务 #3：分页偏移（默认 0）。 */
+  offset?: number
 }
 
 export interface RiskSignalQuery {

@@ -41,11 +41,11 @@ async function mounted(handler: Handler) {
   return { wrapper, calls }
 }
 
-/** 搜索命中一行；改名成功回三个计数。 */
+/** 搜索命中一行（任务 #3 分页信封）；改名成功回三个计数。 */
 function baseHandler(url: string, opts?: { method?: string }): Response | undefined {
   const method = opts?.method ?? 'GET'
   if (method === 'GET' && url.includes('/api/admin/organizations?q=')) {
-    return envelopeResponse([ORG_ROW])
+    return envelopeResponse({ items: [ORG_ROW], total: 1, limit: 50, offset: 0 })
   }
   if (method === 'PATCH' && url.includes(`/api/admin/organizations/${ORG_ROW.id}/account-prefix`)) {
     return envelopeResponse({ prefix: 'milkshop', rewrittenAccounts: 3, rewrittenPlaceholderEmails: 2 })
@@ -165,5 +165,25 @@ describe('OrganizationPrefixAdminPanel · 运营改前缀（任务书 #51）', (
 
     expect(wrapper.find('[role="alert"]').text()).toContain('该前缀已被其他主体使用')
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
+  })
+
+  test('翻页：点下一页后搜索请求带 offset=50（任务 #3 分页契约）', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const { wrapper, calls } = await mounted((url, opts) => {
+      const method = opts?.method ?? 'GET'
+      if (method === 'GET' && url.includes('/api/admin/organizations?q=')) {
+        return envelopeResponse({ items: [ORG_ROW], total: 60, limit: 50, offset: 0 })
+      }
+      return undefined
+    })
+
+    await wrapper.find('input[aria-label="搜索商家主体（名称 / 前缀 / ID）"]').setValue('奶茶')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(calls.some((c) => c.url.includes('offset=0'))).toBe(true)
+
+    await wrapper.findAll('button').find((b) => b.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    expect(calls.some((c) => c.url.includes('offset=50'))).toBe(true)
   })
 })

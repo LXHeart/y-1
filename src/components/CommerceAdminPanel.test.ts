@@ -23,10 +23,11 @@ const redeemedOrder = {
 }
 
 describe('CommerceAdminPanel', () => {
-  it('同时加载订单列表与独立核销监控接口', async () => {
+  it('同时加载订单列表与独立核销监控接口（分页信封）', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (url === '/api/admin/commerce/orders') return response([redeemedOrder])
-      if (url === '/api/admin/commerce/redemptions') return response([redeemedOrder])
+      // 任务 #3 分页契约：两个端点都带 limit/offset 查询串并返回 {items,total,limit,offset} 信封
+      if (url.startsWith('/api/admin/commerce/orders')) return response({ items: [redeemedOrder], total: 1, limit: 50, offset: 0 })
+      if (url.startsWith('/api/admin/commerce/redemptions')) return response({ items: [redeemedOrder], total: 1, limit: 50, offset: 0 })
       throw new Error(`unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -34,8 +35,8 @@ describe('CommerceAdminPanel', () => {
     const wrapper = mount(CommerceAdminPanel)
     await flushPromises()
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/admin/commerce/orders', expect.any(Object))
-    expect(fetchMock).toHaveBeenCalledWith('/api/admin/commerce/redemptions', expect.any(Object))
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/orders?limit=50&offset=0'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/redemptions?limit=50&offset=0'))).toBe(true)
     expect(wrapper.text()).toContain('核销与分账流水')
     expect(wrapper.text()).toContain('已完成三方分账')
     expect(wrapper.text()).toContain('双人到店套餐')

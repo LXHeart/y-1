@@ -7,7 +7,7 @@
           <p>自动审核存疑（review）的门店公开媒体：通过恢复公开展示，驳回即拦截展示。</p>
         </div>
         <div class="queue-controls">
-          <label>状态<select v-model="statusFilter" @change="void loadQueue()">
+          <label>状态<select v-model="statusFilter" @change="onStatusChange">
             <option value="review">待复核</option>
             <option value="blocked">已拦截</option>
             <option value="pass">已通过</option>
@@ -51,6 +51,7 @@
         </article>
       </div>
       <p v-else class="td-empty">{{ emptyHint }}</p>
+      <OpsPagination v-if="total > 0" :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
     </section>
   </div>
 </template>
@@ -59,7 +60,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useGrassland } from '../../../composables/useGrassland'
 import type { StoreMediaModerationQueueItem } from '../../../types/grassland'
+import OpsPagination from './OpsPagination.vue'
 
+const PAGE_SIZE = 50
 const grassland = useGrassland()
 const items = ref<StoreMediaModerationQueueItem[]>([])
 const statusFilter = ref<'review' | 'pass' | 'blocked'>('review')
@@ -67,6 +70,8 @@ const notes = ref<Record<string, string>>({})
 const reviewingIds = ref(new Set<string>())
 const loading = ref(false)
 const error = ref('')
+const offset = ref(0)
+const total = ref(0)
 
 const emptyHint = computed(() => statusFilter.value === 'review'
   ? '暂无待复核的门店媒体'
@@ -74,9 +79,20 @@ const emptyHint = computed(() => statusFilter.value === 'review'
 
 async function loadQueue(): Promise<void> {
   loading.value = true; error.value = ''
-  const result = await grassland.listStoreMediaModerationQueue(statusFilter.value)
+  const result = await grassland.listStoreMediaModerationQueue(statusFilter.value, { limit: PAGE_SIZE, offset: offset.value })
   if (!result) { error.value = grassland.error.value || '门店媒体复核队列加载失败'; loading.value = false; return }
-  items.value = [...result.items]; loading.value = false
+  items.value = [...result.items]; total.value = result.total; loading.value = false
+}
+
+/** 筛选变化：状态切换时 offset 归零重载（任务 #3 分页契约）。 */
+function onStatusChange(): void {
+  offset.value = 0
+  void loadQueue()
+}
+
+function changePage(next: number): void {
+  offset.value = next
+  void loadQueue()
 }
 
 async function review(item: StoreMediaModerationQueueItem, decision: 'approve' | 'reject'): Promise<void> {

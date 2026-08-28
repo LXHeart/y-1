@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useGrassland } from '../../../composables/useGrassland'
 import type { AdminOrganizationSummary } from '../../../types/grassland'
+import OpsPagination from './OpsPagination.vue'
 
 /**
  * 成员账号前缀管理（任务书 #51 第 1 条）。前缀自动生成、商家只读，改名是<b>运营动作</b>：
@@ -12,10 +13,13 @@ import type { AdminOrganizationSummary } from '../../../types/grassland'
  */
 const grassland = useGrassland()
 
+const PAGE_SIZE = 50
 const searchInput = ref('')
 const results = ref<AdminOrganizationSummary[]>([])
 const searched = ref(false)
 const notice = ref('')
+const offset = ref(0)
+const total = ref(0)
 
 /** 改名目标：选中后才出现改名区（避免在列表里逐行放危险输入框）。 */
 const target = ref<AdminOrganizationSummary | null>(null)
@@ -35,9 +39,23 @@ const canSubmit = computed(() => prefixValid.value && !prefixUnchanged.value)
  */
 async function search(keepNotice = false): Promise<void> {
   if (!keepNotice) notice.value = ''
-  const list = await grassland.searchAdminOrganizations(searchInput.value.trim())
+  const list = await grassland.searchAdminOrganizations(
+    searchInput.value.trim(), { limit: PAGE_SIZE, offset: offset.value })
   searched.value = true
-  if (Array.isArray(list)) results.value = list as AdminOrganizationSummary[]
+  if (!list) return
+  results.value = list.items
+  total.value = list.total
+}
+
+/** 表单提交 = 新一轮搜索：筛选变化，offset 归零重载（任务 #3 分页契约）。 */
+function submitSearch(): void {
+  offset.value = 0
+  void search()
+}
+
+function changePage(next: number): void {
+  offset.value = next
+  void search()
 }
 
 function selectTarget(row: AdminOrganizationSummary): void {
@@ -92,7 +110,7 @@ async function applyRename(): Promise<void> {
     <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
     <!-- 显式无参调用：`@submit.prevent="search"` 会把 event 当作 keepNotice 传进去（truthy） -->
-    <form class="panel-toolbar" @submit.prevent="search()">
+    <form class="panel-toolbar" @submit.prevent="submitSearch">
       <input
         v-model="searchInput"
         aria-label="搜索商家主体（名称 / 前缀 / ID）"
@@ -123,6 +141,7 @@ async function applyRename(): Promise<void> {
           </tr>
         </tbody>
       </table>
+      <OpsPagination v-if="total > 0" :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
     </div>
 
     <!-- 改名区：选中后出现。刻意与列表分离——危险动作不放在逐行里 -->
@@ -161,7 +180,7 @@ async function applyRename(): Promise<void> {
 .panel-toolbar { display: flex; gap: 8px; align-items: center; }
 .panel-toolbar input { flex: 1; min-width: 200px; min-height: 34px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--color-text); font-size: 13px; }
 .panel-toolbar button { min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; }
-.table-card { overflow-x: auto; }
+.table-card { overflow-x: auto; display: grid; gap: 10px; }
 .prefix-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .prefix-table th, .prefix-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
 .prefix-table button { min-height: 30px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); cursor: pointer; font-size: 12px; }

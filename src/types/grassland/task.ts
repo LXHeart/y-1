@@ -94,6 +94,17 @@ export interface Task {
   requirements: TaskRequirements
   /** 任务书 #27：自动通过最低等级门槛（1–5）；null = 关闭。开启后对存量待处理报名生效。 */
   autoAcceptMinLevel: number | null
+  // ---------- 任务 #3：管理审核队列回带的最近审核留痕（列表端点可选携带） ----------
+  /** 最近一次审核动作（如 approved/rejected）；未审过为 null。 */
+  lastReviewAction?: string | null
+  /** 最近一次审核备注。 */
+  lastReviewNote?: string | null
+  /** 最近一次审核时刻（ISO）。 */
+  lastReviewedAt?: string | null
+  /** 最近一次驳回备注（与 lastReviewNote 分开：审核通过后仍可回看上次驳回原因）。 */
+  lastRejectedNote?: string | null
+  /** 最近一次驳回时刻（ISO）。 */
+  lastRejectedAt?: string | null
 }
 
 export interface CreateTaskInput {

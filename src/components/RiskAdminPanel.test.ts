@@ -30,7 +30,8 @@ function stubFetch() {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method, body: init?.body as string | undefined })
     const data = url.endsWith('/actions') ? { ...riskCase, status: 'resolved' }
-      : url.includes('/risk/cases/risk-1') ? detail : [riskCase]
+      : url.includes('/risk/cases/risk-1') ? detail
+      : { items: [riskCase], total: 1, limit: 50, offset: 0 }
     return { ok: true, headers: { get: () => 'application/json' },
       json: async () => ({ success: true, data }) }
   }))

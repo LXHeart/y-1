@@ -31,14 +31,16 @@ describe('useCommerce', () => {
     expect(commerce.error.value).toBe('该核销码已使用')
   })
 
-  it('loads the dedicated admin redemption monitor endpoint', async () => {
+  it('loads the dedicated admin redemption monitor endpoint with the pagination envelope', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      success: true, data: [],
+      success: true, data: { items: [], total: 0, limit: 50, offset: 0 },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     const commerce = useCommerce()
 
-    expect(await commerce.listAdminRedemptions()).toEqual([])
-    expect(fetchMock).toHaveBeenCalledWith('/api/admin/commerce/redemptions', expect.objectContaining({
+    const page = await commerce.listAdminRedemptions()
+    expect(page?.items).toEqual([])
+    expect(page?.total).toBe(0)
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/commerce/redemptions?limit=50&offset=0', expect.objectContaining({
       credentials: 'include',
     }))
   })

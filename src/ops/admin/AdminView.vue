@@ -11,19 +11,19 @@
         :class="{ active: activeSection === 'users' }" @click="activeSection = 'users'">用户与积分</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'kyb'"
         :class="{ active: activeSection === 'kyb' }" @click="activeSection = 'kyb'">
-        KYB 审核 <span v-if="kybRequests.length" class="count-badge">{{ kybRequests.length }}</span>
+        KYB 审核 <span v-if="kybTotal" class="count-badge">{{ kybTotal }}</span>
       </button>
       <button type="button" role="tab" :aria-selected="activeSection === 'org-renames'"
         :class="{ active: activeSection === 'org-renames' }" @click="activeSection = 'org-renames'">主体更名</button>
       <button type="button" role="tab" :aria-selected="activeSection === 'recommenders'"
         :class="{ active: activeSection === 'recommenders' }"
         @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
-        推荐官认证 <span v-if="recommenderRequests.length" class="count-badge">{{ recommenderRequests.length }}</span>
+        推荐官认证 <span v-if="recommenderTotal" class="count-badge">{{ recommenderTotal }}</span>
       </button>
       <button type="button" role="tab" :aria-selected="activeSection === 'tasks'"
         :class="{ active: activeSection === 'tasks' }"
-        @click="activeSection = 'tasks'; void loadReviewTasks()">
-        任务审核 <span v-if="reviewTasks.length" class="count-badge">{{ reviewTasks.length }}</span>
+        @click="activeSection = 'tasks'; void loadReviewTasks(); void loadReviewStats()">
+        任务审核 <span v-if="taskTotal" class="count-badge">{{ taskTotal }}</span>
       </button>
       <button type="button" role="tab" :aria-selected="activeSection === 'reputation'"
         :class="{ active: activeSection === 'reputation' }"
@@ -76,13 +76,14 @@
       <OrganizationPrefixAdminPanel />
     </div>
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
-      <form class="panel-toolbar search-toolbar" @submit.prevent="loadUsers">
+      <form class="panel-toolbar search-toolbar" @submit.prevent="searchUsers">
         <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
         <button class="refresh-btn" type="submit" :disabled="loading">搜索</button>
       </form>
       <p v-if="loadError" class="error-msg" role="alert">{{ loadError }}</p>
       <div v-if="loading" class="loading-state">加载中...</div>
-      <div v-else class="table-card">
+      <template v-else>
+      <div class="table-card">
         <table class="user-table">
           <thead><tr><th>邮箱</th><th>昵称</th><th>角色</th><th>积分余额</th><th>累计获得</th>
             <th>累计使用</th><th>注册时间</th><th>操作</th></tr></thead>
@@ -98,6 +99,8 @@
           </tbody>
         </table>
       </div>
+      <OpsPagination :total="usersTotal" :limit="PAGE_LIMIT" :offset="usersOffset" @change="changeUsersPage" />
+      </template>
     </div>
 
     <div v-else-if="activeSection === 'kyb'" class="admin-panel" role="tabpanel">
@@ -107,7 +110,8 @@
       </div>
       <p v-if="kybError" class="error-msg" role="alert">{{ kybError }}</p>
       <div v-if="kybLoading" class="loading-state">加载中...</div>
-      <div v-else class="table-card">
+      <template v-else>
+      <div class="table-card">
         <table class="user-table kyb-table">
           <thead><tr><th>类型</th><th>组织</th><th>目标</th><th>提交时间</th><th>审核时限</th><th>操作</th></tr></thead>
           <tbody>
@@ -128,6 +132,8 @@
           </tbody>
         </table>
       </div>
+      <OpsPagination :total="kybTotal" :limit="PAGE_LIMIT" :offset="kybOffset" @change="changeKybPage" />
+      </template>
     </div>
 
     <div v-else-if="activeSection === 'recommenders'" class="admin-panel" role="tabpanel">
@@ -137,7 +143,8 @@
       </div>
       <p v-if="recommenderError" class="error-msg" role="alert">{{ recommenderError }}</p>
       <div v-if="recommenderLoading" class="loading-state">加载中...</div>
-      <div v-else class="table-card">
+      <template v-else>
+      <div class="table-card">
         <table class="user-table kyb-table">
           <thead><tr><th>账号</th><th>材料</th><th>提交时间</th><th>审核时限</th><th>审核原因</th><th>操作</th></tr></thead>
           <tbody>
@@ -158,39 +165,69 @@
           </tbody>
         </table>
       </div>
+      <OpsPagination :total="recommenderTotal" :limit="PAGE_LIMIT" :offset="recommenderOffset" @change="changeRecommenderPage" />
+      </template>
     </div>
 
     <div v-else-if="activeSection === 'tasks'" class="admin-panel" role="tabpanel">
       <div class="panel-toolbar">
-        <div><h3>待审核任务</h3><p>全审政策：所有任务提交后需审核通过才在大厅上架</p></div>
-        <form class="search-toolbar" @submit.prevent="loadReviewTasks">
+        <div><h3>任务审核</h3><p>全审政策：所有任务提交后需审核通过才在大厅上架</p></div>
+        <form class="search-toolbar" @submit.prevent="submitTaskSearch">
           <input v-model="taskSearch" type="search" maxlength="100" placeholder="搜索任务标题或描述">
           <button class="refresh-btn" type="submit" :disabled="taskReviewLoading">搜索</button>
         </form>
       </div>
+      <div class="review-status-bar">
+        <div class="status-pill-group" aria-label="任务审核状态筛选">
+          <button v-for="option in REVIEW_STATUS_OPTIONS" :key="option.value" type="button"
+            class="status-pill" :class="{ active: reviewStatus === option.value }"
+            :aria-pressed="reviewStatus === option.value" @click="setReviewStatus(option.value)">
+            {{ option.label }}
+          </button>
+        </div>
+        <div v-if="reviewStats" class="review-stats" aria-label="审核统计">
+          <span class="badge badge-warning">待审 <span class="gl-num">{{ reviewStats.pending }}</span></span>
+          <span class="badge badge-danger">超时 <span class="gl-num">{{ reviewStats.overdue }}</span></span>
+          <span class="badge badge-success">24h 通过 <span class="gl-num">{{ reviewStats.approvedLast24Hours }}</span></span>
+          <span class="badge badge-danger">24h 驳回 <span class="gl-num">{{ reviewStats.rejectedLast24Hours }}</span></span>
+        </div>
+      </div>
       <p v-if="taskReviewError" class="error-msg" role="alert">{{ taskReviewError }}</p>
       <div v-if="taskReviewLoading" class="loading-state">加载中...</div>
-      <div v-else class="table-card">
-        <table class="user-table kyb-table">
-          <thead><tr><th>标题</th><th>平台</th><th>赏金</th><th>组织</th><th>驳回原因</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="t in reviewTasks" :key="t.id">
-              <td>{{ t.title }}</td>
-              <td><span class="type-tag">{{ t.platform || '—' }}</span></td>
-              <td class="td-balance">{{ t.bountyCents ? '¥' + (t.bountyCents / 100).toFixed(2) : '—' }}</td>
-              <td class="id-cell" :title="t.organizationId">{{ t.organizationId }}</td>
-              <td>
-                <input v-model="taskReviewNotes[t.id]" class="field-input" type="text" maxlength="500" placeholder="驳回原因（驳回必填）" />
-              </td>
-              <td class="review-actions">
-                <button class="approve-btn" type="button" @click="reviewTask(t, 'approve')">通过</button>
-                <button class="reject-btn" type="button" @click="reviewTask(t, 'reject')">驳回</button>
-              </td>
-            </tr>
-            <tr v-if="reviewTasks.length === 0"><td colspan="6" class="td-empty">暂无待审核任务</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <template v-else>
+        <div class="table-card">
+          <table class="user-table kyb-table">
+            <thead><tr><th>标题</th><th>平台</th><th>赏金</th><th>组织</th><th>状态</th><th>驳回原因</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr v-for="t in reviewTasks" :key="t.id">
+                <td>{{ t.title }}</td>
+                <td><span class="type-tag">{{ t.platform || '—' }}</span></td>
+                <td class="td-balance">{{ t.bountyCents ? '¥' + (t.bountyCents / 100).toFixed(2) : '—' }}</td>
+                <td class="id-cell" :title="t.organizationId">{{ t.organizationId }}</td>
+                <td><span class="badge" :class="reviewStatusOption.badge">{{ reviewStatusOption.label }}</span></td>
+                <td>
+                  <input v-if="reviewStatus === 'pending_review'" v-model="taskReviewNotes[t.id]" class="field-input" type="text" maxlength="500" placeholder="驳回原因（驳回必填）" />
+                  <div v-else-if="reviewStatus === 'rejected'" class="review-note-history">
+                    <span>{{ t.lastReviewNote || '—' }}</span>
+                    <span class="td-time">{{ formatDateTime(t.lastReviewedAt ?? null) }}</span>
+                  </div>
+                  <span v-else>—</span>
+                </td>
+                <td class="review-actions">
+                  <template v-if="reviewStatus === 'pending_review'">
+                    <button class="approve-btn" type="button" @click="reviewTask(t, 'approve')">通过</button>
+                    <button class="reject-btn" type="button" @click="reviewTask(t, 'reject')">驳回</button>
+                  </template>
+                  <!-- 已通过/已驳回视图不再给操作入口（决策 F：终态再审后端 409，前端不暴露入口） -->
+                  <span v-else>—</span>
+                </td>
+              </tr>
+              <tr v-if="reviewTasks.length === 0"><td colspan="7" class="td-empty">{{ reviewStatusOption.empty }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <OpsPagination :total="taskTotal" :limit="PAGE_LIMIT" :offset="taskOffset" @change="changeTaskPage" />
+      </template>
     </div>
 
     <div v-else-if="activeSection === 'reputation'" class="admin-panel" role="tabpanel">
@@ -208,13 +245,14 @@
       </div>
       <div class="ops-filters">
         <label>组织 ID
-          <input v-model="journalOrgFilter" type="text" placeholder="留空 = 全量" @keyup.enter="loadJournals" />
+          <input v-model="journalOrgFilter" type="text" placeholder="留空 = 全量" @keyup.enter="applyJournalFilter" />
         </label>
-        <button type="button" class="refresh-btn" :disabled="journalLoading" @click="loadJournals">查询</button>
+        <button type="button" class="refresh-btn" :disabled="journalLoading" @click="applyJournalFilter">查询</button>
       </div>
       <p v-if="journalError" class="error-msg" role="alert">{{ journalError }}</p>
       <div v-if="journalLoading" class="loading-state">加载中...</div>
-      <div v-else class="table-card">
+      <template v-else>
+      <div class="table-card">
         <table class="user-table kyb-table">
           <thead><tr><th>类型</th><th>组织</th><th>关联</th><th>备注</th><th>幂等键</th><th>时间</th></tr></thead>
           <tbody>
@@ -230,6 +268,8 @@
           </tbody>
         </table>
       </div>
+      <OpsPagination :total="journalTotal" :limit="PAGE_LIMIT" :offset="journalOffset" @change="changeJournalPage" />
+      </template>
     </div>
 
     <div v-else-if="activeSection === 'risk'" class="admin-panel" role="tabpanel">
@@ -302,6 +342,7 @@
                 <dt>法定名称</dt><dd>{{ reviewDetail.subject.legalName || '-' }}</dd>
                 <dt>信用代码</dt><dd>{{ reviewDetail.subject.unifiedSocialCreditCode || '-' }}</dd>
                 <dt>主体类型</dt><dd>{{ reviewDetail.subject.businessType || '-' }}</dd>
+                <dt>行业类型</dt><dd>{{ industryLabels[reviewDetail.subject.industry || ''] || reviewDetail.subject.industry || '-' }}</dd>
                 <dt>法人</dt><dd>{{ reviewDetail.subject.legalPersonName || '-' }}</dd>
                 <dt>法人证件</dt><dd>{{ reviewDetail.subject.legalPersonIdNumberMasked || '-' }}</dd>
                 <dt>成立日期</dt><dd>{{ reviewDetail.subject.establishmentDate || '-' }}</dd>
@@ -366,6 +407,7 @@ import CreditsPackagesPanel from '../../components/CreditsPackagesPanel.vue'
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
+import OpsPagination from './components/OpsPagination.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
 import OrganizationRenameAdminPanel from './components/OrganizationRenameAdminPanel.vue'
 import OrganizationPrefixAdminPanel from './components/OrganizationPrefixAdminPanel.vue'
@@ -377,6 +419,7 @@ import type {
   KybVerificationDetail,
   KybVerificationRequest,
   KybVerificationType,
+  PagedResult,
   RecommenderVerificationRequest,
   Task,
   MerchantAttachmentType,
@@ -398,8 +441,12 @@ interface UserItem {
 const { currentUser, hasBackendRole } = useAuth()
 const reviewerOnly = computed(() => Boolean(currentUser.value)
   && hasBackendRole('content_reviewer') && !hasBackendRole('platform_admin'))
+/** 五个内置列表统一页大小（与后端分页信封契约默认值一致）。 */
+const PAGE_LIMIT = 50
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
+const usersOffset = ref(0)
+const usersTotal = ref(0)
 const activeSection = ref<
   'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'public-assets' | 'store-media' | 'audit'
 >('users')
@@ -416,10 +463,14 @@ const grassland = useGrassland()
 const kybRequests = ref<KybVerificationRequest[]>([])
 const kybLoading = ref(false)
 const kybError = ref('')
+const kybOffset = ref(0)
+const kybTotal = ref(0)
 const recommenderRequests = ref<RecommenderVerificationRequest[]>([])
 const recommenderLoading = ref(false)
 const recommenderError = ref('')
 const recommenderNotes = ref<Record<string, string>>({})
+const recommenderOffset = ref(0)
+const recommenderTotal = ref(0)
 interface JournalEntry {
   id: string
   type: string
@@ -434,12 +485,36 @@ const journals = ref<JournalEntry[]>([])
 const journalLoading = ref(false)
 const journalError = ref('')
 const journalOrgFilter = ref('')
+const journalOffset = ref(0)
+const journalTotal = ref(0)
+
+/** 任务审核三态筛选项（后端 status 参数 + 行状态徽标 + 空态文案）。 */
+const REVIEW_STATUS_OPTIONS = [
+  { value: 'pending_review', label: '待审核', badge: 'badge-warning', empty: '暂无待审核任务' },
+  { value: 'published', label: '已通过', badge: 'badge-success', empty: '暂无已通过任务' },
+  { value: 'rejected', label: '已驳回', badge: 'badge-danger', empty: '暂无已驳回任务' },
+] as const
+type ReviewStatusFilter = typeof REVIEW_STATUS_OPTIONS[number]['value']
 
 const reviewTasks = ref<Task[]>([])
 const taskSearch = ref('')
 const taskReviewLoading = ref(false)
 const taskReviewError = ref('')
 const taskReviewNotes = ref<Record<string, string>>({})
+const reviewStatus = ref<ReviewStatusFilter>('pending_review')
+const taskOffset = ref(0)
+const taskTotal = ref(0)
+const reviewStatusOption = computed(() =>
+  REVIEW_STATUS_OPTIONS.find((option) => option.value === reviewStatus.value) ?? REVIEW_STATUS_OPTIONS[0])
+
+/** 任务审核统计条（进页签才请求，不进 onMounted）。 */
+interface ReviewStats {
+  pending: number
+  overdue: number
+  approvedLast24Hours: number
+  rejectedLast24Hours: number
+}
+const reviewStats = ref<ReviewStats | null>(null)
 const reviewTarget = ref<KybVerificationRequest | null>(null)
 const reviewDecision = ref<'approve' | 'reject'>('approve')
 const reviewNote = ref('')
@@ -461,6 +536,12 @@ const accountTypeLabels: Record<WithdrawalAccountType, string> = {
   wechat: '微信',
 }
 
+const industryLabels: Record<string, string> = {
+  catering: '餐饮', retail: '零售', beauty: '美业', education: '教育培训',
+  e_commerce: '电商', healthcare: '医疗健康', finance: '金融服务',
+  real_estate: '房地产', travel: '旅游', children: '母婴儿童', other: '其他',
+}
+
 const JOURNAL_TYPE_LABELS: Record<string, string> = {
   DEPOSIT: '充值', RESERVE: '预留', RELEASE: '释放',
   CAPTURE: '结算', REVERSE: '冲正', WITHDRAW: '提现', OPENING: '期初',
@@ -472,10 +553,45 @@ const JOURNAL_TYPE_LABELS: Record<string, string> = {
 async function loadReviewTasks(): Promise<void> {
   taskReviewLoading.value = true
   taskReviewError.value = ''
-  const result = await grassland.listPendingReviewTasks(taskSearch.value)
-  if (result) reviewTasks.value = [...result]
-  else taskReviewError.value = grassland.error.value || '待审核任务加载失败'
+  const result = await grassland.listReviewTasks({
+    status: reviewStatus.value,
+    q: taskSearch.value || undefined,
+    limit: PAGE_LIMIT,
+    offset: taskOffset.value,
+  })
+  if (result) {
+    reviewTasks.value = [...result.items]
+    taskTotal.value = result.total
+  } else {
+    taskReviewError.value = grassland.error.value || '任务审核列表加载失败'
+  }
   taskReviewLoading.value = false
+}
+
+async function loadReviewStats(): Promise<void> {
+  try {
+    reviewStats.value = await request<ReviewStats>('/api/admin/tasks/review/stats')
+  } catch {
+    reviewStats.value = null
+  }
+}
+
+/** 切三态：offset 归零重载（当前状态重复点击不重发请求）。 */
+function setReviewStatus(status: ReviewStatusFilter): void {
+  if (reviewStatus.value === status) return
+  reviewStatus.value = status
+  taskOffset.value = 0
+  void loadReviewTasks()
+}
+
+function submitTaskSearch(): void {
+  taskOffset.value = 0
+  void loadReviewTasks()
+}
+
+function changeTaskPage(offset: number): void {
+  taskOffset.value = offset
+  void loadReviewTasks()
 }
 
 async function reviewTask(task: Task, decision: 'approve' | 'reject'): Promise<void> {
@@ -489,7 +605,8 @@ async function reviewTask(task: Task, decision: 'approve' | 'reject'): Promise<v
     ? await grassland.approveTaskReview(task.id, task.version)
     : await grassland.rejectTaskReview(task.id, task.version, note)
   if (result) {
-    reviewTasks.value = reviewTasks.value.filter(item => item.id !== task.id)
+    // 带当前筛选条件重载本页，替代本地删行；删行致越界由 OpsPagination 收敛兑底。
+    await loadReviewTasks()
     delete taskReviewNotes.value[task.id]
   } else {
     taskReviewError.value = grassland.error.value || '审核失败'
@@ -501,11 +618,27 @@ async function loadJournals(): Promise<void> {
   journalError.value = ''
   const result = await grassland.listFinanceJournals({
     organizationId: journalOrgFilter.value || undefined,
-    limit: 100,
+    limit: PAGE_LIMIT,
+    offset: journalOffset.value,
   })
-  if (result) journals.value = result as unknown as JournalEntry[]
-  else journalError.value = grassland.error.value || '账本流水加载失败'
+  if (result) {
+    journals.value = result.items as unknown as JournalEntry[]
+    journalTotal.value = result.total
+  } else {
+    journalError.value = grassland.error.value || '账本流水加载失败'
+  }
   journalLoading.value = false
+}
+
+/** 应用组织筛选：offset 归零后重载。 */
+function applyJournalFilter(): void {
+  journalOffset.value = 0
+  void loadJournals()
+}
+
+function changeJournalPage(offset: number): void {
+  journalOffset.value = offset
+  void loadJournals()
 }
 
 const attachmentTypeLabels: Record<MerchantAttachmentType, string> = {
@@ -526,6 +659,15 @@ onMounted(() => {
   void Promise.all([loadUsers(), loadKybRequests()])
 })
 
+/**
+ * 冷会话直登治理台：AdminView 在登录前就已挂载，onMounted 的首拉会 401 并把错误留在默认页签
+ * （此前靠「先在用户端登录、cookie 已存在」掩盖）。身份从无到有时补拉一次默认列表。
+ */
+watch(() => currentUser.value?.id, (id, prev) => {
+  if (!id || id === prev || reviewerOnly.value) return
+  void Promise.all([loadUsers(), loadKybRequests()])
+})
+
 watch(reviewerOnly, (onlyReviewer) => {
   if (!onlyReviewer) return
   activeSection.value = 'public-assets'
@@ -536,12 +678,18 @@ async function loadUsers(): Promise<void> {
   loadError.value = ''
   try {
     const query = userSearch.value.trim()
-    const data = await request<{ users: UserItem[] }>(
-      `/api/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`,
+    const params = new URLSearchParams({
+      limit: String(PAGE_LIMIT),
+      offset: String(usersOffset.value),
+    })
+    if (query) params.set('q', query)
+    const data = await request<PagedResult<UserItem>>(
+      `/api/admin/users?${params.toString()}`,
       {},
       { fallbackError: '加载失败' },
     )
-    users.value = data.users
+    users.value = data.items
+    usersTotal.value = data.total
   } catch (e: unknown) {
     loadError.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -549,25 +697,51 @@ async function loadUsers(): Promise<void> {
   }
 }
 
+/** 搜索提交：offset 归零后重载。 */
+function searchUsers(): void {
+  usersOffset.value = 0
+  void loadUsers()
+}
+
+function changeUsersPage(offset: number): void {
+  usersOffset.value = offset
+  void loadUsers()
+}
+
 async function loadKybRequests(): Promise<void> {
   kybLoading.value = true
   kybError.value = ''
-  const result = await grassland.listKybVerifications()
+  const result = await grassland.listKybVerifications({ limit: PAGE_LIMIT, offset: kybOffset.value })
   if (result) {
-    kybRequests.value = [...result]
+    kybRequests.value = [...result.items]
+    kybTotal.value = result.total
   } else {
     kybError.value = grassland.error.value || 'KYB 审核队列加载失败'
   }
   kybLoading.value = false
 }
 
+function changeKybPage(offset: number): void {
+  kybOffset.value = offset
+  void loadKybRequests()
+}
+
 async function loadRecommenderRequests(): Promise<void> {
   recommenderLoading.value = true
   recommenderError.value = ''
-  const result = await grassland.listRecommenderVerifications()
-  if (result) recommenderRequests.value = [...result]
-  else recommenderError.value = grassland.error.value || '推荐官认证队列加载失败'
+  const result = await grassland.listRecommenderVerifications({ limit: PAGE_LIMIT, offset: recommenderOffset.value })
+  if (result) {
+    recommenderRequests.value = [...result.items]
+    recommenderTotal.value = result.total
+  } else {
+    recommenderError.value = grassland.error.value || '推荐官认证队列加载失败'
+  }
   recommenderLoading.value = false
+}
+
+function changeRecommenderPage(offset: number): void {
+  recommenderOffset.value = offset
+  void loadRecommenderRequests()
 }
 
 async function reviewRecommender(request: RecommenderVerificationRequest, decision: 'approve' | 'reject'): Promise<void> {
@@ -579,7 +753,8 @@ async function reviewRecommender(request: RecommenderVerificationRequest, decisi
   recommenderError.value = ''
   const result = await grassland.reviewRecommenderVerification(request.id, decision, note || undefined)
   if (result) {
-    recommenderRequests.value = recommenderRequests.value.filter(item => item.id !== request.id)
+    // 带当前筛选重载本页（替代本地删行）；越界由分页组件收敛。
+    await loadRecommenderRequests()
     delete recommenderNotes.value[request.id]
   } else {
     recommenderError.value = grassland.error.value || '审核失败'
@@ -625,8 +800,9 @@ async function handleReview(): Promise<void> {
   const result = await grassland.reviewKybVerification(
     target.id, reviewDecision.value, reviewNote.value.trim() || undefined)
   if (result) {
-    kybRequests.value = kybRequests.value.filter((item) => item.id !== target.id)
+    // 审核成功后带当前筛选重载本页（替代本地删行）；越界由分页组件收敛兑底。
     reviewTarget.value = null
+    await loadKybRequests()
   } else {
     reviewError.value = grassland.error.value || '审核提交失败'
   }
@@ -807,6 +983,24 @@ function formatBytes(value: number | null): string {
 .ops-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
 .ops-filters input { min-height: 32px; padding: 6px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
 .search-toolbar input { min-width: min(320px, 64vw); min-height: 34px; padding: 6px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+
+/* 任务审核三态筛选：DESIGN.md nav-pill-group + category-tab 范式——
+   pill 容器（surface-muted 底 + pill 圆角 + 6px 内边距）内嵌胶囊页签（激活=画布底 + 阴影）。 */
+.review-status-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); flex-wrap: wrap; }
+.status-pill-group { display: inline-flex; gap: 2px; padding: 6px; background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
+.status-pill {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.status-pill:hover { color: var(--color-text-secondary); }
+.status-pill.active { background: var(--color-surface); color: var(--color-text); font-weight: 600; box-shadow: var(--shadow-card); }
+.review-stats { display: inline-flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.review-note-history { display: grid; gap: 2px; font-size: 0.8rem; }
 
 .panel-toolbar h3 {
   font-size: 1rem;

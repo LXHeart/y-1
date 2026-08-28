@@ -2,22 +2,34 @@
 import { onMounted, ref } from 'vue'
 import { useGrassland } from '../../../composables/useGrassland'
 import type { OrganizationRenameRequest } from '../../../types/grassland'
+import OpsPagination from './OpsPagination.vue'
 
 /**
  * 商家主体更名审核（V40 / 2026-08-23 产品规则）：更名须平台审核通过才生效。
  * approve = 生效（同事务改名）；reject = 驳回留痕（驳回不占 30 天冷却）。
  */
+const PAGE_SIZE = 50
 const grassland = useGrassland()
 const requests = ref<OrganizationRenameRequest[]>([])
 const loading = ref(false)
 const notice = ref('')
 const notes = ref<Record<string, string>>({})
+const offset = ref(0)
+const total = ref(0)
 
 async function refresh(): Promise<void> {
   loading.value = true
-  const list = await grassland.listAdminOrgRenames()
-  if (Array.isArray(list)) requests.value = list as OrganizationRenameRequest[]
+  const list = await grassland.listAdminOrgRenames({ limit: PAGE_SIZE, offset: offset.value })
   loading.value = false
+  if (!list) return
+  requests.value = list.items as OrganizationRenameRequest[]
+  total.value = list.total
+}
+
+/** 翻页：父组件持 offset 真源（任务 #3 分页契约）。 */
+function changePage(next: number): void {
+  offset.value = next
+  void refresh()
 }
 
 async function review(id: string, decision: 'approve' | 'reject'): Promise<void> {
@@ -51,7 +63,7 @@ onMounted(() => { void refresh() })
     <p v-if="notice" class="gl-alert gl-alert-ok" role="status">{{ notice }}</p>
 
     <p v-if="!loading && requests.length === 0" class="gl-empty">暂无待审核的主体更名申请。</p>
-    <ul v-else class="rename-list">
+    <ul v-if="requests.length > 0" class="rename-list">
       <li v-for="r in requests" :key="r.id" class="rename-item">
         <div class="rename-main">
           <strong class="rename-names">「{{ r.currentName }}」→「{{ r.requestedName }}」</strong>
@@ -69,6 +81,7 @@ onMounted(() => { void refresh() })
         </div>
       </li>
     </ul>
+    <OpsPagination v-if="total > 0" :total="total" :limit="PAGE_SIZE" :offset="offset" @change="changePage" />
   </article>
 </template>
 

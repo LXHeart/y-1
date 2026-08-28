@@ -17,7 +17,7 @@
       </div>
     </section>
     <section aria-labelledby="public-review-title">
-      <div class="panel-toolbar"><div><h3 id="public-review-title">待审公共素材</h3><p>通过后进入公共素材库，驳回必须填写原因。</p></div><form class="review-search" @submit.prevent="loadPublicAssetReviews"><input v-model="publicAssetSearch" type="search" maxlength="100" placeholder="搜索标题或标签"><button class="refresh-btn" type="submit" :disabled="publicAssetsLoading">搜索</button></form></div>
+      <div class="panel-toolbar"><div><h3 id="public-review-title">待审公共素材</h3><p>通过后进入公共素材库，驳回必须填写原因。</p></div><form class="review-search" @submit.prevent="submitPublicAssetSearch"><input v-model="publicAssetSearch" type="search" maxlength="100" placeholder="搜索标题或标签"><button class="refresh-btn" type="submit" :disabled="publicAssetsLoading">搜索</button></form></div>
       <p v-if="publicAssetsError" class="error-msg" role="alert">{{ publicAssetsError }}</p>
       <div v-if="publicAssetsLoading" class="loading-state">加载中...</div>
       <div v-else-if="publicAssetReviews.length" class="public-review-grid">
@@ -27,6 +27,7 @@
         </article>
       </div>
       <p v-else class="td-empty">暂无待审核公共素材</p>
+      <OpsPagination v-if="publicAssetsTotal > 0" :total="publicAssetsTotal" :limit="PAGE_SIZE" :offset="publicAssetsOffset" @change="changePublicAssetsPage" />
     </section>
   </div>
 </template>
@@ -35,7 +36,9 @@
 import { onMounted, ref } from 'vue'
 import { useGrassland } from '../../../composables/useGrassland'
 import type { ContentAsset, ContentAssetCategory, PublicAssetBatchGenerateResult, PublicAssetGenerationKind } from '../../../types/grassland'
+import OpsPagination from './OpsPagination.vue'
 
+const PAGE_SIZE = 50
 const grassland = useGrassland()
 const publicAssetReviews = ref<ContentAsset[]>([])
 const publicAssetSearch = ref('')
@@ -44,6 +47,8 @@ const publicAssetReviewNotes = ref<Record<string, string>>({})
 const reviewingPublicAssetIds = ref(new Set<string>())
 const publicAssetsLoading = ref(false)
 const publicAssetsError = ref('')
+const publicAssetsOffset = ref(0)
+const publicAssetsTotal = ref(0)
 const publicGenerating = ref(false)
 const publicGenerationError = ref('')
 const publicGenerationResult = ref<PublicAssetBatchGenerateResult | null>(null)
@@ -57,11 +62,23 @@ const publicGeneration = ref<{ kind: PublicAssetGenerationKind; theme: string; s
 
 async function loadPublicAssetReviews(): Promise<void> {
   publicAssetsLoading.value = true; publicAssetsError.value = ''
-  const result = await grassland.listPendingPublicAssetReviews(publicAssetSearch.value)
+  const result = await grassland.listPendingPublicAssetReviews(publicAssetSearch.value, { limit: PAGE_SIZE, offset: publicAssetsOffset.value })
   if (!result) { publicAssetsError.value = grassland.error.value || '公共素材审核队列加载失败'; publicAssetsLoading.value = false; return }
   publicAssetReviews.value = [...result.items]
+  publicAssetsTotal.value = result.total
   const previews = await Promise.all(result.items.map(async (asset) => { const download = await grassland.getContentAssetDownloadUrl(asset.id); return [asset.id, download?.downloadUrl || ''] as const }))
   publicAssetPreviewUrls.value = Object.fromEntries(previews); publicAssetsLoading.value = false
+}
+
+/** 筛选变化：提交新搜索时 offset 归零重载（任务 #3 分页契约）。 */
+function submitPublicAssetSearch(): void {
+  publicAssetsOffset.value = 0
+  void loadPublicAssetReviews()
+}
+
+function changePublicAssetsPage(next: number): void {
+  publicAssetsOffset.value = next
+  void loadPublicAssetReviews()
 }
 
 async function generatePublicAssets(): Promise<void> {

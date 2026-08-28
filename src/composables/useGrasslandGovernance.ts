@@ -3,8 +3,10 @@
  */
 import type { RunFn } from './grassland-http'
 import { request, putToPresignedUrl } from './grassland-http'
+import { toPagedArray } from '../types/grassland'
 import { STORE_MEDIA_KIND_META } from '../types/grassland'
 import type {
+  PagedArrayCompat, PagedResult, PageQuery,
   DisputeCase, DeferredDisputeRequest, AdjudicationSnapshot, OpenDisputeResult,
   Judge, JudgeVote, VoteChoice, AdminJudge, AdminJudgePage, UpdateJudgeAdmissionInput,
   OpsCase, OpsCaseStatus, OpsCaseDetail, OpsCaseAction, OpsActionKind, OpsDltMessage,
@@ -26,14 +28,18 @@ import type {
 } from '../types/grassland'
 
 export function useGrasslandGovernance(run: RunFn) {
+  // 任务 #3 信封契约：触达端点响应 `{items,total,limit,offset}`，解信封收敛为 {items, total}；
+  // 经 toPagedArray 附数组兼容性，供尚未接入分页的旧调用方（#4/#5 清理）过渡。
   const listRiskCases = (input: RiskCaseQuery = {}) => {
     const qs = new URLSearchParams()
     if (input.status) qs.set('status', input.status)
     if (input.severity) qs.set('severity', input.severity)
     if (input.subjectKind) qs.set('subjectKind', input.subjectKind)
     if (input.subjectRef) qs.set('subjectRef', input.subjectRef)
-    qs.set('limit', String(input.limit ?? 100))
-    return run(() => request<RiskCase[]>(`/api/trust/risk/cases?${qs}`))
+    qs.set('limit', String(input.limit ?? 50))
+    qs.set('offset', String(input.offset ?? 0))
+    return run(async (): Promise<PagedArrayCompat<RiskCase>> =>
+      toPagedArray(await request<PagedResult<RiskCase>>(`/api/trust/risk/cases?${qs}`)))
   }
 
   const getRiskCase = (id: string) =>
@@ -481,11 +487,17 @@ export function useGrasslandGovernance(run: RunFn) {
         body: JSON.stringify(input),
       }))
 
-  /** 内容审核员的公共素材待审队列。 */
-  const listPendingPublicAssetReviews = (q?: string) => {
+  /** 内容审核员的公共素材待审队列（任务 #3：分页信封，默认 limit=50/offset=0）。 */
+  const listPendingPublicAssetReviews = (
+    q?: string,
+    { limit = 50, offset = 0 }: PageQuery = {},
+  ) => {
+    const qs = new URLSearchParams()
     const query = q?.trim()
-    return run(() => request<{ items: ContentAsset[] }>(
-      `/api/admin/content-assets/review${query ? `?q=${encodeURIComponent(query)}` : ''}`))
+    if (query) qs.set('q', query)
+    qs.set('limit', String(limit))
+    qs.set('offset', String(offset))
+    return run(() => request<PagedResult<ContentAsset>>(`/api/admin/content-assets/review?${qs}`))
   }
 
   const approvePublicAsset = (id: string, expectedVersion: number, note?: string) =>
@@ -633,9 +645,11 @@ export function useGrasslandGovernance(run: RunFn) {
    * 门店媒体审核人工复核队列（CONTENT_REVIEWER；缺口清偿之五遗留清偿）。
    * 默认 review（待复核）；pass/blocked 用于复查人工裁决史。
    */
-  const listStoreMediaModerationQueue = (status: 'review' | 'pass' | 'blocked' = 'review') =>
-    run(() => request<{ status: string; items: StoreMediaModerationQueueItem[] }>(
-      `/api/admin/store-media-moderation?status=${status}`))
+  const listStoreMediaModerationQueue = (
+    status: 'review' | 'pass' | 'blocked' = 'review',
+    { limit = 50, offset = 0 }: PageQuery = {},
+  ) => run(() => request<{ status: string } & PagedResult<StoreMediaModerationQueueItem>>(
+    `/api/admin/store-media-moderation?status=${status}&limit=${limit}&offset=${offset}`))
 
   /**
    * 人工裁决：approve→pass（恢复公开展示）/ reject→blocked（公开端点过滤，驳回必填 note）。
@@ -651,9 +665,11 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- KYB：审核申请（平台管理员）----------
 
-  /** 列出所有 KYB 审核申请（管理员专用）。 */
-  const listKybVerifications = () =>
-    run(() => request<KybVerificationRequest[]>('/api/admin/kyb-requests'))
+  /** 列出所有 KYB 审核申请（管理员专用；任务 #3：分页信封）。 */
+  const listKybVerifications = ({ limit = 50, offset = 0 }: PageQuery = {}) =>
+    run(async (): Promise<PagedArrayCompat<KybVerificationRequest>> =>
+      toPagedArray(await request<PagedResult<KybVerificationRequest>>(
+        `/api/admin/kyb-requests?limit=${limit}&offset=${offset}`)))
 
   const getKybVerificationDetail = (verificationId: string) =>
     run(() => request<KybVerificationDetail>(`/api/admin/kyb-requests/${verificationId}`))
@@ -671,8 +687,10 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- 推荐官平台认证审核（GL-P2-ADMIN-002）----------
 
-  const listRecommenderVerifications = () =>
-    run(() => request<RecommenderVerificationRequest[]>('/api/admin/recommender-requests'))
+  const listRecommenderVerifications = ({ limit = 50, offset = 0 }: PageQuery = {}) =>
+    run(async (): Promise<PagedArrayCompat<RecommenderVerificationRequest>> =>
+      toPagedArray(await request<PagedResult<RecommenderVerificationRequest>>(
+        `/api/admin/recommender-requests?limit=${limit}&offset=${offset}`)))
 
   const reviewRecommenderVerification = (
     verificationId: string,
@@ -696,12 +714,21 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
 
-  const listPendingReviewTasks = (q?: string) => {
+  /** 任务内容审核队列（任务 #3：改名自 listPendingReviewTasks，支持 status/q 筛选 + 分页信封）。 */
+  const listReviewTasks = (
+    { status, q, limit = 50, offset = 0 }: { status?: string; q?: string } & PageQuery = {},
+  ) => {
+    const qs = new URLSearchParams()
+    if (status) qs.set('status', status)
     const query = q?.trim()
-    return run(() => request<Task[]>(
-      `/api/admin/tasks/review${query ? `?q=${encodeURIComponent(query)}` : ''}`))
+    if (query) qs.set('q', query)
+    qs.set('limit', String(limit))
+    qs.set('offset', String(offset))
+    return run(async (): Promise<PagedArrayCompat<Task>> =>
+      toPagedArray(await request<PagedResult<Task>>(`/api/admin/tasks/review?${qs}`)))
   }
 
+  /** 审核通过任务（乐观锁=任务 version）。 */
   const approveTaskReview = (taskId: string, expectedVersion: number) =>
     run(() => request<Task>(`/api/admin/tasks/${encodeURIComponent(taskId)}/review/approve`, {
       method: 'POST', body: JSON.stringify({ expectedVersion }),
@@ -714,15 +741,18 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- 财务对账台（GL-P2-ADMIN-006）----------
 
-  const listFinanceJournals = (params?: { organizationId?: string; from?: string; to?: string; limit?: number }) =>
-    run(() => {
-      const qs = new URLSearchParams()
-      if (params?.organizationId) qs.set('organizationId', params.organizationId)
-      if (params?.from) qs.set('from', params.from)
-      if (params?.to) qs.set('to', params.to)
-      qs.set('limit', String(params?.limit ?? 50))
-      return request<Record<string, unknown>[]>(`/api/admin/finance/journals?${qs}`)
-    })
+  const listFinanceJournals = (
+    params?: { organizationId?: string; from?: string; to?: string } & PageQuery,
+  ) => run(async (): Promise<PagedArrayCompat<Record<string, unknown>>> => {
+    const qs = new URLSearchParams()
+    if (params?.organizationId) qs.set('organizationId', params.organizationId)
+    if (params?.from) qs.set('from', params.from)
+    if (params?.to) qs.set('to', params.to)
+    qs.set('limit', String(params?.limit ?? 50))
+    qs.set('offset', String(params?.offset ?? 0))
+    return toPagedArray(await request<PagedResult<Record<string, unknown>>>(
+      `/api/admin/finance/journals?${qs}`))
+  })
 
   const getJournalPostings = (journalId: string) =>
     run(() => request<Record<string, unknown>[]>(`/api/admin/finance/journals/${encodeURIComponent(journalId)}/postings`))
@@ -759,7 +789,7 @@ export function useGrasslandGovernance(run: RunFn) {
     listKybVerifications, getKybVerificationDetail, getKybAttachmentDownload, reviewKybVerification,
     listRecommenderVerifications, reviewRecommenderVerification,
     newOperationId,
-    listPendingReviewTasks, approveTaskReview, rejectTaskReview,
+    listReviewTasks, approveTaskReview, rejectTaskReview,
     listFinanceJournals, getJournalPostings, reconcileEscrow, reconcileWallet,
   }
 }

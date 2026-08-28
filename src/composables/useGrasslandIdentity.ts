@@ -4,7 +4,9 @@
 import type { RunFn } from './grassland-http'
 import { request, putToPresignedUrl } from './grassland-http'
 import { compressImageToFile } from './compress-image'
+import { toPagedArray } from '../types/grassland'
 import type {
+  PagedArrayCompat, PagedResult, PageQuery,
   IdentityProfile, Organization, StoreAccessScope, OrganizationAccessScope, IdentityType,
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
@@ -145,9 +147,11 @@ export function useGrasslandIdentity(run: RunFn) {
   const listOrgRenameRequests = (organizationId: string) =>
     run(() => request<unknown[]>(`/api/organizations/${organizationId}/rename-requests`))
 
-  /** 平台审核队列：待审更名申请。 */
-  const listAdminOrgRenames = () =>
-    run(() => request<unknown[]>('/api/admin/org-rename-requests'))
+  /** 平台审核队列：待审更名申请（任务 #3：分页信封）。 */
+  const listAdminOrgRenames = ({ limit = 50, offset = 0 }: PageQuery = {}) =>
+    run(async (): Promise<PagedArrayCompat<unknown>> =>
+      toPagedArray(await request<PagedResult<unknown>>(
+        `/api/admin/org-rename-requests?limit=${limit}&offset=${offset}`)))
 
   /** 审核更名申请：approve 生效 / reject 驳回留痕。 */
   const reviewAdminOrgRename = (id: string, decision: 'approve' | 'reject', note?: string) =>
@@ -187,10 +191,16 @@ export function useGrasslandIdentity(run: RunFn) {
   // 任务书 #51：商家侧 setAccountPrefix 已删除——后端 PATCH /api/organizations/{id}/account-prefix
   // 已下线（前缀自动生成、商家只读）。改名走下面两个运营侧方法。
 
-  /** 运营台主体搜索（平台 admin）：按主体名/前缀/id 模糊命中，带 memberCount = 改名影响面。 */
-  const searchAdminOrganizations = (query: string) =>
-    run(() => request<AdminOrganizationSummary[]>(
-      `/api/admin/organizations?q=${encodeURIComponent(query)}`))
+  /** 运营台主体搜索（平台 admin）：按主体名/前缀/id 模糊命中，带 memberCount = 改名影响面（任务 #3：分页信封）。 */
+  const searchAdminOrganizations = (query: string, { limit = 50, offset = 0 }: PageQuery = {}) =>
+    run(async (): Promise<PagedArrayCompat<AdminOrganizationSummary>> => {
+      const qs = new URLSearchParams()
+      qs.set('q', query)
+      qs.set('limit', String(limit))
+      qs.set('offset', String(offset))
+      return toPagedArray(await request<PagedResult<AdminOrganizationSummary>>(
+        `/api/admin/organizations?${qs}`))
+    })
 
   /**
    * 运营台改成员账号前缀（平台 admin）：**连带重写该主体下全部成员的登录名**与占位邮箱，

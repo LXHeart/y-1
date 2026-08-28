@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 import { request } from './grassland-http'
+import { toPagedArray } from '../types/grassland'
+import type { PagedArrayCompat, PagedResult, PageQuery } from '../types/grassland'
 import type {
   AfterSalesDispute,
   CommercePackage,
@@ -82,10 +84,21 @@ export function useCommerce() {
   const redeem = (code: string) => run(() => request<ConsumerOrder>('/api/v2/merchant/redemptions', {
     method: 'POST', body: JSON.stringify({ code }),
   }))
-  const listAdminOrders = (status?: string) => run(() => request<ConsumerOrder[]>(
-    `/api/admin/commerce/orders${status ? `?status=${encodeURIComponent(status)}` : ''}`))
-  const listAdminRedemptions = () => run(() => request<ConsumerOrder[]>(
-    '/api/admin/commerce/redemptions'))
+  /** 任务 #3：分页信封，保留 status 筛选位参；默认 limit=50/offset=0。 */
+  const listAdminOrders = (
+    status?: string,
+    { limit = 50, offset = 0 }: PageQuery = {},
+  ) => run(async (): Promise<PagedArrayCompat<ConsumerOrder>> => {
+    const qs = new URLSearchParams()
+    if (status) qs.set('status', status)
+    qs.set('limit', String(limit))
+    qs.set('offset', String(offset))
+    return toPagedArray(await request<PagedResult<ConsumerOrder>>(`/api/admin/commerce/orders?${qs}`))
+  })
+  const listAdminRedemptions = ({ limit = 50, offset = 0 }: PageQuery = {}) =>
+    run(async (): Promise<PagedArrayCompat<ConsumerOrder>> =>
+      toPagedArray(await request<PagedResult<ConsumerOrder>>(
+        `/api/admin/commerce/redemptions?limit=${limit}&offset=${offset}`)))
 
   return {
     loading, error,

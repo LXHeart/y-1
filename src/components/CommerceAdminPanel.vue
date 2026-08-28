@@ -5,7 +5,7 @@
       <button type="button" :disabled="commerce.loading.value" @click="load">刷新</button>
     </header>
     <div class="filters">
-      <select v-model="status" @change="load">
+      <select v-model="status" @change="onStatusChange">
         <option value="">全部状态</option><option value="pending_payment">支付处理中</option>
         <option value="paid">待核销</option><option value="redeeming">分账中</option>
         <option value="redeemed">已核销</option><option value="refund_pending">退款中</option>
@@ -13,7 +13,7 @@
         <option value="refunded">已退款</option><option value="after_sales_disputed">售后争议</option>
         <option value="payment_failed">支付失败</option><option value="cancelled">已取消</option>
       </select>
-      <span>共 {{ orders.length }} 笔</span>
+      <span>共 {{ ordersTotal }} 笔</span>
     </div>
     <p v-if="commerce.error.value" class="error-msg">{{ commerce.error.value }}</p>
     <div class="table-wrap">
@@ -33,9 +33,10 @@
         </tbody>
       </table>
     </div>
+    <OpsPagination v-if="ordersTotal > 0" :total="ordersTotal" :limit="PAGE_SIZE" :offset="ordersOffset" @change="changeOrdersPage" />
     <div class="section-head">
       <div><h4>核销与分账流水</h4><p>单独展示核销处理中和已核销订单，便于定位分账重试。</p></div>
-      <span>共 {{ redemptions.length }} 笔</span>
+      <span>共 {{ redemptionsTotal }} 笔</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -52,25 +53,54 @@
         </tbody>
       </table>
     </div>
+    <OpsPagination v-if="redemptionsTotal > 0" :total="redemptionsTotal" :limit="PAGE_SIZE" :offset="redemptionsOffset" @change="changeRedemptionsPage" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useCommerce } from '../composables/useCommerce'
+import OpsPagination from '../ops/admin/components/OpsPagination.vue'
 import type { ConsumerOrder } from '../types/commerce'
+
+/** orders 与 redemptions 是两个独立分页列表（任务 #5），各自持 offset/total 真源。 */
+const PAGE_SIZE = 50
 const commerce = useCommerce()
 const orders = ref<ConsumerOrder[]>([])
 const redemptions = ref<ConsumerOrder[]>([])
 const status = ref('')
+const ordersOffset = ref(0)
+const ordersTotal = ref(0)
+const redemptionsOffset = ref(0)
+const redemptionsTotal = ref(0)
 onMounted(load)
 async function load(): Promise<void> {
-  const [orderValues, redemptionValues] = await Promise.all([
-    commerce.listAdminOrders(status.value || undefined),
-    commerce.listAdminRedemptions(),
-  ])
-  if (orderValues) orders.value = orderValues
-  if (redemptionValues) redemptions.value = redemptionValues
+  await Promise.all([loadOrders(), loadRedemptions()])
+}
+async function loadOrders(): Promise<void> {
+  const result = await commerce.listAdminOrders(status.value || undefined, { limit: PAGE_SIZE, offset: ordersOffset.value })
+  if (!result) return
+  orders.value = result.items
+  ordersTotal.value = result.total
+}
+async function loadRedemptions(): Promise<void> {
+  const result = await commerce.listAdminRedemptions({ limit: PAGE_SIZE, offset: redemptionsOffset.value })
+  if (!result) return
+  redemptions.value = result.items
+  redemptionsTotal.value = result.total
+}
+/** 筛选变化：状态切换时 orders offset 归零重载（任务 #3 分页契约）。 */
+function onStatusChange(): void {
+  ordersOffset.value = 0
+  void loadOrders()
+}
+function changeOrdersPage(next: number): void {
+  ordersOffset.value = next
+  void loadOrders()
+}
+function changeRedemptionsPage(next: number): void {
+  redemptionsOffset.value = next
+  void loadRedemptions()
 }
 function short(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…` : value }
 function money(cents: number): string { return `¥${(cents / 100).toFixed(2)}` }
