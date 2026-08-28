@@ -209,9 +209,13 @@ class TaskControllerIT extends MarketplaceItSupport {
 
     @Test
     void draftTierCannotPublish() {
+        String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        // org 级授权服务端化后 tier 门槛读 identity 回包（org.permissionTier），不再读断言 tier。
+        when(storeAuthorization.authorize(merchant, org, null, "manager"))
+                .thenReturn(Mono.just(orgAccess(merchant, org, "draft")));
         client().post().uri("/api/tasks")
-                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", org, "draft"))
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "draft"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body(org, "x", null, null))
                 .exchange().expectStatus().isForbidden();
@@ -220,9 +224,12 @@ class TaskControllerIT extends MarketplaceItSupport {
     @Test
     void nullTierCannotPublish() {
         // 2 参 sign → tier=null → MerchantTier.fromDb 视作 DRAFT → 403
+        String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(merchant, org, null, "manager"))
+                .thenReturn(Mono.just(orgAccess(merchant, org, null)));
         client().post().uri("/api/tasks")
-                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant"))
+                .header("X-Grassland-Identity", sign(merchant, "merchant"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body(org, "x", null, null))
                 .exchange().expectStatus().isForbidden();
@@ -230,19 +237,81 @@ class TaskControllerIT extends MarketplaceItSupport {
 
     @Test
     void orgMismatchForbidden() {
+        String caller = UUID.randomUUID().toString();
         String callerOrg = UUID.randomUUID().toString();
         String otherOrg = UUID.randomUUID().toString();
+        // HLD 7.4：org 级资源授权服务端自查（identity 成员表 ADMIN+），断言 org 不再是唯一依据。
+        // 本用例模拟 identity 判定该账号在 body 声明的别家 org 无管理权 → 403。
+        when(storeAuthorization.authorize(caller, otherOrg, null, "manager"))
+                .thenReturn(Mono.error(new MarketplaceException(403, "无权管理该组织资源")));
         client().post().uri("/api/tasks")
-                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", callerOrg, "basic_publish"))
+                .header("X-Grassland-Identity", sign(caller, "merchant", callerOrg, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body(otherOrg, "x", null, null))  // body 声明别家 org
                 .exchange().expectStatus().isForbidden();
+    }
+
+    /**
+     * org 级授权服务端化的正反面：断言 org 缺失（历史「先开通后建主体」脏档案）但 identity
+     * 成员表判定为 ADMIN+ → 放行；此前该场景被断言比对整体 403（org 级任务建/发/管全灭）。
+     */
+    @Test
+    void orgScopeAllowedByServerSideCheckEvenWhenAssertionOrgMissing() {
+        String caller = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(caller, org, null, "manager"))
+                .thenReturn(Mono.just(orgAccess(caller, org, "basic_publish")));
+        client().post().uri("/api/tasks")
+                .header("X-Grassland-Identity", sign(caller, "merchant", null, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body(org, "脏档案账号建任务", null, null))
+                .exchange().expectStatus().isCreated();
+    }
+
+    /**
+     * 问题一连带缺陷：门店级草稿被驳回后，owner 主体级列表（不传 storeId）也要回带真实驳回原因
+     * ——此前 findByStore 无 review join，门店草稿的 lastRejectedNote 恒 null（前端显示「平台未填写原因」）。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void ownerListingCarriesRejectedNoteForStoreScopedDraft() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
+        Map<String, Object> requestBody = body(org, "门店草稿被驳回", null, null);
+        requestBody.put("storeId", store);
+        Map<String, Object> draft = (Map<String, Object>) client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        // 提交审核 → 驳回：任务回 draft 且留 task_review 记录。
+        Map<String, Object> submitted = (Map<String, Object>) client()
+                .post().uri("/api/tasks/" + draft.get("id") + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", ((Number) draft.get("version")).intValue()))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        rejectTask(submitted, "门店任务驳回原因");
+
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].storeId").isEqualTo(store)
+                .jsonPath("$.data[0].lastRejectedNote").isEqualTo("门店任务驳回原因")
+                .jsonPath("$.data[0].lastReviewAction").isEqualTo("rejected");
     }
 
     @Test
     void basicPublishQuotaEnforced() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(merchant, org, null, "manager"))
+                .thenReturn(Mono.just(orgAccess(merchant, org, "basic_publish")));
         for (int i = 0; i < 5; i++) {
             publish(merchant, org, "basic_publish", "t" + i, null);  // 前 5 个均 201
         }
@@ -326,10 +395,13 @@ class TaskControllerIT extends MarketplaceItSupport {
 
     @Test
     void basicTierCannotPublishBountyTask() {
+        String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
-        // BASIC_PUBLISH 可发布普通任务，但 maxTxAmountCents=0 → 资金型任务 403
+        // BASIC_PUBLISH 可发布普通任务，但 maxTxAmountCents=0 → 资金型任务 403（tier 读 identity 回包）
+        when(storeAuthorization.authorize(merchant, org, null, "manager"))
+                .thenReturn(Mono.just(orgAccess(merchant, org, "basic_publish")));
         client().post().uri("/api/tasks")
-                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "merchant", org, "basic_publish"))
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(bountyBody(org, "资金型任务", 500L))
                 .exchange().expectStatus().isForbidden();
@@ -1255,44 +1327,6 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data[0].lastRejectedAt").value(v -> assertThat(v).isNull());
     }
 
-    /**
-     * 问题一连带缺陷：门店级草稿被驳回后，owner 主体级列表（不传 storeId）也要回带真实驳回原因
-     * ——此前 findByStore 无 review join，门店草稿的 lastRejectedNote 恒 null（前端显示「平台未填写原因」）。
-     */
-    @Test
-    @SuppressWarnings("unchecked")
-    void ownerListingCarriesRejectedNoteForStoreScopedDraft() {
-        String merchant = UUID.randomUUID().toString();
-        String org = UUID.randomUUID().toString();
-        String store = UUID.randomUUID().toString();
-        when(storeAuthorization.authorize(merchant, org, store, "manager"))
-                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
-        Map<String, Object> requestBody = body(org, "门店草稿被驳回", null, null);
-        requestBody.put("storeId", store);
-        Map<String, Object> draft = (Map<String, Object>) client().post().uri("/api/tasks/draft")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
-                .exchange().expectStatus().isCreated()
-                .expectBody(Map.class).returnResult().getResponseBody().get("data");
-        // 提交审核 → 驳回：任务回 draft 且留 task_review 记录。
-        Map<String, Object> submitted = (Map<String, Object>) client()
-                .post().uri("/api/tasks/" + draft.get("id") + "/publish")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of("expectedVersion", ((Number) draft.get("version")).intValue()))
-                .exchange().expectStatus().isOk()
-                .expectBody(Map.class).returnResult().getResponseBody().get("data");
-        rejectTask(submitted, "门店任务驳回原因");
-
-        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-                .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.length()").isEqualTo(1)
-                .jsonPath("$.data[0].storeId").isEqualTo(store)
-                .jsonPath("$.data[0].lastRejectedNote").isEqualTo("门店任务驳回原因")
-                .jsonPath("$.data[0].lastReviewAction").isEqualTo("rejected");
-    }
-
     /** 审核队列信封：offset 取第二页、total 与筛选同口径、limit/offset 钳制边界。 */
     @Test
     void reviewQueueEnvelopePaginatesAndClamps() {
@@ -1424,5 +1458,12 @@ class TaskControllerIT extends MarketplaceItSupport {
             String accountId, String organizationId, String storeId, String role) {
         return new IdentityStoreAuthorizationClient.Authorization(
                 true, accountId, organizationId, storeId, role, "store", "basic_publish");
+    }
+
+    /** org 级服务端授权回包（HLD 7.4 后 requireScope org 分支调 identity，tier 以此为准）。 */
+    private IdentityStoreAuthorizationClient.Authorization orgAccess(
+            String accountId, String organizationId, String permissionTier) {
+        return new IdentityStoreAuthorizationClient.Authorization(
+                true, accountId, organizationId, null, "manager", "organization", permissionTier);
     }
 }

@@ -21,10 +21,20 @@ public class TaskResourceAuthorization {
     public Mono<ScopeAccess> requireScope(
             Caller caller, String organizationId, String storeId, String minimumRole) {
         if (storeId == null || storeId.isBlank()) {
-            if (!caller.isMerchant() || !organizationId.equals(caller.organizationId())) {
+            // HLD 7.4：资源级授权须服务端自查，不能只信断言——org 级改走 Identity 成员表判定
+            //（ADMIN+，不传 storeId）。断言 organization_id 缺失/滞后的账号（先开通后建主体的
+            // 历史序列）不再被整体 403；非 owner/admin 的 403 语义不变。
+            if (!caller.isMerchant() || caller.accountId() == null) {
                 return Mono.error(new MarketplaceException(403, "无权管理该组织资源"));
             }
-            return Mono.just(new ScopeAccess(organizationId, null, caller.permissionTier(), "organization"));
+            // minimumRole 在 identity org 级分支被忽略（固定要求 ADMIN+）；传 manager 仅凑非空契约。
+            return stores.authorize(caller.accountId(), organizationId, null, "manager")
+                    .map(decision -> new ScopeAccess(
+                            decision.organizationId(), null, decision.permissionTier(), "organization"))
+                    .onErrorResume(MarketplaceException.class, error -> error.status() == 403
+                            // identity 侧门店文案不适用 org 级资源，统一回本资源语义
+                            ? Mono.error(new MarketplaceException(403, "无权管理该组织资源"))
+                            : Mono.error(error));
         }
         if (caller.isService() || caller.accountId() == null) {
             return Mono.error(new MarketplaceException(403, "需要用户身份"));

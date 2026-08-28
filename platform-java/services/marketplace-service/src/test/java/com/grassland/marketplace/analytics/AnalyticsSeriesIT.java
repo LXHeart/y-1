@@ -3,12 +3,15 @@ package com.grassland.marketplace.analytics;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.marketplace.MarketplaceItSupport;
+import com.grassland.marketplace.security.MarketplaceException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.test.web.reactive.server.EntityExchangeResult;
+import reactor.core.publisher.Mono;
 
 /** {@code GET /api/analytics/series} 营销看板时间序列（PRD §2.4 按日/周/月）。 */
 class AnalyticsSeriesIT extends MarketplaceItSupport {
@@ -122,12 +125,14 @@ class AnalyticsSeriesIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isBadRequest()
                 .expectBody().jsonPath("$.error").isEqualTo("时间跨度的桶数超过上限（400）");
 
-        // 别家 org 的商家 → 403
+        // 别家 org 的商家 → 403（org 级授权服务端化：模拟 identity 判定无管理权）
+        String outsider = UUID.randomUUID().toString();
+        Mockito.when(storeAuthorization.authorize(outsider, org, null, "manager"))
+                .thenReturn(Mono.error(new MarketplaceException(403, "无权管理该组织资源")));
         client().get().uri(uri -> uri.path("/api/analytics/series")
                         .queryParam("organizationId", org)
                         .queryParam("from", FROM.toString()).queryParam("to", TO.toString()).build())
-                .header("X-Grassland-Identity",
-                        sign(UUID.randomUUID().toString(), "merchant", UUID.randomUUID().toString(), "basic_publish"))
+                .header("X-Grassland-Identity", sign(outsider, "merchant", UUID.randomUUID().toString(), "basic_publish"))
                 .exchange().expectStatus().isForbidden();
     }
 

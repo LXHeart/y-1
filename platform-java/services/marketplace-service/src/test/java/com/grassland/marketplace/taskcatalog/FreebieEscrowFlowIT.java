@@ -253,13 +253,21 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
         // ADR-D12 D5：押金任务涉及托管与商家收款，与 bounty 同一 funding 闸门（basic_publish maxTx=0 → 403）。
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
+        // org 级授权服务端化后 tier 门槛读 identity 回包：basic_publish 段显式 stub。
+        when(storeAuthorization.authorize(merchant, org, null, "manager"))
+                .thenReturn(Mono.just(new com.grassland.marketplace.security.IdentityStoreAuthorizationClient.Authorization(
+                        true, merchant, org, null, "manager", "organization", "basic_publish")));
         client().post().uri("/api/tasks")
                 .header(H, sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("organizationId", org, "title", "押金任务", "freebieDepositCents", 100L))
                 .exchange().expectStatus().isForbidden();
 
-        // finance_transaction tier → 201，响应带 freebieDepositCents
+        // finance_transaction tier → 201，响应带 freebieDepositCents。authorize 参数不含 tier，
+        // 同参命中上一段 stub——先覆写为 finance（identity 回包 tier 换档）。
+        when(storeAuthorization.authorize(merchant, org, null, "manager"))
+                .thenReturn(Mono.just(new com.grassland.marketplace.security.IdentityStoreAuthorizationClient.Authorization(
+                        true, merchant, org, null, "manager", "organization", "finance_transaction")));
         client().post().uri("/api/tasks")
                 .header(H, sign(merchant, "merchant", org, "finance_transaction"))
                 .contentType(MediaType.APPLICATION_JSON)
