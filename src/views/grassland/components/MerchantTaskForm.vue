@@ -1,6 +1,20 @@
 <template>
-  <article class="gl-tile gl-tile-wide">
-    <h3>发布任务<span v-if="revisingTask" class="gl-hint"> · 正在修订已发布任务（保存出新版本）</span><span v-else-if="editingDraft" class="gl-hint"> · 正在编辑草稿（保存后仍为草稿，需在上方「提交审核」）</span><span v-else class="gl-hint"> · 提交后经平台内容审核，通过后在大厅上架</span></h3>
+  <!-- 抽屉化（不再常驻页签顶部）：发布/编辑是偶发动作，让位给每天要看的任务与报名列表。
+       Teleport 到 body 规避祖先 backdrop-filter 造成的 fixed containing block 问题；
+       根节点补挂 .gl-field —— 田垄系统的表单样式全部写在 `.gl-field xxx` 后代选择器下
+       （src/style.css），脱离工作台根后不补这个类，整个抽屉的输入框/按钮会裸奔。 -->
+  <Teleport to="body">
+    <div v-if="open" class="gl-field task-drawer-overlay" @click.self="requestClose">
+      <section class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title">
+        <header class="task-drawer-head">
+          <div class="task-drawer-head-copy">
+            <h3 id="task-drawer-title">{{ drawerTitle }}</h3>
+            <p class="gl-hint">{{ drawerHint }}</p>
+          </div>
+          <button type="button" class="task-drawer-close" aria-label="关闭任务表单" @click="requestClose">×</button>
+        </header>
+
+        <div class="task-drawer-body">
     <div class="gl-row">
       <label>资源范围
         <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
@@ -8,7 +22,7 @@
           <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
         </select>
       </label>
-      <input :value="form.title" aria-label="任务标题" name="task-title" autocomplete="off" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
+      <input ref="titleInputRef" :value="form.title" aria-label="任务标题" name="task-title" autocomplete="off" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
       <label>发布平台
         <select name="task-platform" :value="form.platform ?? ''" aria-label="发布平台（PRD §2.2 九平台）" @change="updateField('platform', ($event.target as HTMLSelectElement).value)">
           <option value="">未指定</option>
@@ -116,17 +130,24 @@
       <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
       <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
     </div>
-    <div class="gl-row">
-      <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
-      <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
-      <button v-if="editingDraft || revisingTask" type="button" :disabled="loading" @click="confirmResetForm">取消编辑</button>
-    </div>
     <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
-  </article>
+        </div>
+
+        <!-- 提交条 sticky 在抽屉底：长表单滚动时主操作始终可达 -->
+        <footer class="task-drawer-foot">
+          <div class="gl-row">
+            <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
+            <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
+            <button type="button" :disabled="loading" @click="confirmResetForm">{{ editingDraft || revisingTask ? '取消编辑' : '取消' }}</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 import type { Store } from '../../../types/grassland'
 import { formatYuan, yuanToCents } from '../../../lib/money'
@@ -161,6 +182,8 @@ interface TaskFormData {
 }
 
 const props = defineProps<{
+  /** 抽屉开合由父组件持有：三种模式（新建 / 编辑草稿 / 修订已发布）共用同一实例。 */
+  open: boolean
   form: TaskFormData
   editingDraft: { id: string; version: number } | null
   revisingTask: { id: string; version: number } | null
@@ -255,7 +278,21 @@ const emit = defineEmits<{
   publish: []
   'save-draft': []
   'reset-form': []
+  /** 用户请求关闭抽屉（遮罩 / Esc / ×）——已过脏状态确认，父组件收到即可直接关。 */
+  close: []
 }>()
+
+/** 抽屉标题与副文案按三种模式分派（原先挤在一行 h3 里的 hint，抽屉里有位置说清）。 */
+const drawerTitle = computed(() => {
+  if (props.revisingTask) return '修订已发布任务'
+  if (props.editingDraft) return '编辑任务草稿'
+  return '发布任务'
+})
+const drawerHint = computed(() => {
+  if (props.revisingTask) return '正在修订已发布任务（保存出新版本）：改赏金/平台只影响新报名，已接受的履约按接受时金额结算'
+  if (props.editingDraft) return '正在编辑草稿（保存后仍为草稿，需回任务列表点「提交审核」）'
+  return '提交后经平台内容审核，通过后在大厅上架'
+})
 
 // ---------- 未保存变更守卫（Web Interface Guidelines：带未保存修改离开需警告） ----------
 // SPA 内切标签页由 KeepAlive 保活、状态不丢，守卫只针对整页刷新/关闭（beforeunload）。
@@ -282,6 +319,42 @@ function confirmResetForm(): void {
   if (formDirty.value && !window.confirm('取消编辑将丢弃当前未保存的修改，确定继续？')) return
   emit('reset-form')
 }
+
+// ---------- 抽屉开合：脏状态确认 / Esc / 初始焦点 / 焦点归还 / 背景锁滚 ----------
+// 遮罩点击与 Esc 走与「取消」同一条确认，避免抽屉比内联表单更容易丢数据。
+function requestClose(): void {
+  if (formDirty.value && !window.confirm('关闭将丢弃当前未保存的修改，确定继续？')) return
+  emit('close')
+}
+
+function onDrawerKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') requestClose()
+}
+
+/** 打开前的焦点元素（一般是触发按钮）：关闭后归还，键盘用户不被丢回文档开头。 */
+let lastFocused: HTMLElement | null = null
+const titleInputRef = ref<HTMLInputElement | null>(null)
+
+watch(() => props.open, (open) => {
+  if (open) {
+    // 编辑/修订时父组件先回填表单再置 open：此刻记基线，"脏"只算抽屉内的用户输入。
+    recordFormBaseline()
+    lastFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onDrawerKeydown)
+    void nextTick(() => titleInputRef.value?.focus())
+    return
+  }
+  document.body.style.overflow = ''
+  window.removeEventListener('keydown', onDrawerKeydown)
+  lastFocused?.focus()
+  lastFocused = null
+})
+
+onBeforeUnmount(() => {
+  document.body.style.overflow = ''
+  window.removeEventListener('keydown', onDrawerKeydown)
+})
 
 function updateField(field: string, value: string | number | null): void {
   emit('update:field', field, value)
@@ -327,6 +400,71 @@ function removeCommissionTier(index: number): void {
 </script>
 
 <style scoped>
+/* 右侧抽屉：z-index 80 落在工作台内容之上、治理台 .modal-overlay(100) 之下。
+   宽度取 720px —— 「必须包含/禁止内容/指标要求/凭证要求」是 2 列 textarea 网格，
+   仓库既有弹窗宽度（440 / 560）装不下。 */
+.task-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--color-overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.task-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100vw);
+  height: 100%;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-elevated);
+}
+
+.task-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.task-drawer-head-copy { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+
+.task-drawer-close {
+  flex: 0 0 auto;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: var(--text-lg);
+  line-height: 1;
+  color: var(--color-text-muted);
+}
+
+/* 表单主体：原 .gl-tile 的纵向节奏（flex column + gap）在此重建——抽屉不再套磁贴 */
+.task-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.task-drawer-foot {
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+@media (max-width: 720px) {
+  .task-drawer { border-left: none; }
+}
+
 .payment-mode-label { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
 .payment-mode-option { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer; }
 h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }

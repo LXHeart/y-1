@@ -40,8 +40,22 @@ function mountWorkbench(options?: Parameters<typeof mount>[1]) {
   })
   return mount(GrasslandWorkbench, {
     ...options,
-    global: { ...options?.global, plugins: [...(options?.global?.plugins ?? []), router] },
+    global: {
+      ...options?.global,
+      plugins: [...(options?.global?.plugins ?? []), router],
+      // 任务表单抽屉 Teleport 到 body：不 stub 的话内容落在 wrapper 之外，find 全查不到。
+      stubs: { Teleport: true, ...options?.global?.stubs },
+    },
   })
+}
+
+/**
+ * 打开任务表单抽屉（新建模式）。表单已不常驻页签顶部——新建路径必须先点垄眉的
+ * 「发布新任务」；「编辑」按钮自带开抽屉，走编辑路径的用例不需要这一步。
+ */
+async function openTaskDrawer(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper.findAll('button').find((b) => b.text() === '发布新任务')!.trigger('click')
+  await flushPromises()
 }
 
 const ORG = {
@@ -1051,6 +1065,7 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
     const { calls } = stubFetch()
     const wrapper = mountWorkbench()
     await loginMerchant(wrapper)
+    await openTaskDrawer(wrapper)
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('阶梯佣金任务')
     await bountyInput(wrapper).setValue('100')
@@ -1088,6 +1103,7 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
     const { calls } = stubFetch()
     const wrapper = mountWorkbench()
     await loginMerchant(wrapper)
+    await openTaskDrawer(wrapper)
 
     await wrapper.find('input[placeholder="任务标题"]').setValue('超额阶梯任务')
     await bountyInput(wrapper).setValue('50')  // 赏金 5000 分

@@ -145,6 +145,46 @@ const {
   updateCommissionLadder, handleTaskFormUpdate, handleTaskFormStoreChange, reset: resetTaskDrafts,
 } = useWorkbenchTaskDrafts(grassland, setNotice, { activeOrgId, selectedStoreId, refreshTasks })
 
+/**
+ * 任务表单抽屉开合（三种模式共用一个 MerchantTaskForm 实例）。
+ *
+ * 原先表单常驻「任务与报名」页签顶部：不管来干什么都占满首屏，且列表里的「编辑」按钮
+ * 在表单下方——点了之后被改写的是已滚出视口的那张表单，唯一反馈是标题旁一行小字。
+ * 收进抽屉后编辑是明确的模式切换，页签主体让给每天要看的任务与报名列表。
+ */
+const taskFormOpen = ref(false)
+
+function openNewTaskForm(): void {
+  // 先清编辑上下文：从「编辑草稿」直接点「发布新任务」不能带着 editingDraft 进新建模式
+  resetTaskForm()
+  taskFormOpen.value = true
+}
+
+function openEditDraft(task: Task): void {
+  editDraft(task)
+  taskFormOpen.value = true
+}
+
+function openEditPublished(task: Task): void {
+  editPublished(task)
+  taskFormOpen.value = true
+}
+
+/** 取消编辑 / 关闭抽屉（子组件已过脏状态确认）：清表单并关抽屉。 */
+function cancelTaskForm(): void {
+  resetTaskForm()
+  taskFormOpen.value = false
+}
+
+/** 提交成功才关抽屉——失败（本地校验或后端 4xx）要留在抽屉里改，不能把用户填的内容关掉。 */
+async function publishTaskFromDrawer(): Promise<void> {
+  if (await publishTask()) taskFormOpen.value = false
+}
+
+async function saveDraftFromDrawer(): Promise<void> {
+  if (await saveDraft()) taskFormOpen.value = false
+}
+
 /** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。 */function confirmCancelTask(task: Task): void {
   const message = task.status === 'draft'
     ? `取消草稿「${task.title}」？草稿将被删除，不可恢复。`
@@ -564,9 +604,12 @@ watch(grasslandNavigationTarget, async (target) => {
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">发布与撮合</h3>
           <p class="gl-zone-note">任务沿 草稿 → 审核 → 招募 → 履约 → 结算 的生长线推进</p>
+          <!-- 发布是偶发动作：入口收进垄眉，表单在抽屉里填（页签主体让给任务与报名列表） -->
+          <button type="button" class="gl-btn-primary gl-zone-action" :disabled="!activeOrgId || grassland.loading.value" @click="openNewTaskForm">发布新任务</button>
         </div>
         <div class="gl-zone-body">
           <MerchantTaskForm
+            :open="taskFormOpen"
             :form="taskForm"
             :editing-draft="editingDraft"
             :revising-task="revisingTask"
@@ -579,9 +622,10 @@ watch(grasslandNavigationTarget, async (target) => {
             @update:field="handleTaskFormUpdate"
             @update:commission-ladder="updateCommissionLadder"
             @change-store="handleTaskFormStoreChange"
-            @publish="publishTask"
-            @save-draft="saveDraft"
-            @reset-form="resetTaskForm"
+            @publish="publishTaskFromDrawer"
+            @save-draft="saveDraftFromDrawer"
+            @reset-form="cancelTaskForm"
+            @close="cancelTaskForm"
           />
 
           <article id="gl-engagements" class="gl-tile gl-tile-wide">
@@ -621,7 +665,7 @@ watch(grasslandNavigationTarget, async (target) => {
                 <div class="gl-task-actions">
                   <!-- 草稿：编辑 / 提交审核 / 取消 -->
                   <template v-if="t.status === 'draft'">
-                    <button type="button" :disabled="grassland.loading.value" @click="editDraft(t)">编辑</button>
+                    <button type="button" :disabled="grassland.loading.value" @click="openEditDraft(t)">编辑</button>
                     <button type="button" :disabled="grassland.loading.value" @click="publishDraft(t)">提交审核</button>
                     <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消</button>
                   </template>
@@ -632,7 +676,7 @@ watch(grasslandNavigationTarget, async (target) => {
                   </template>
                   <!-- 已发布：编辑出新版本 / 关闭报名 / 取消 -->
                   <template v-else-if="t.status === 'published'">
-                    <button type="button" :disabled="grassland.loading.value" @click="editPublished(t)">编辑</button>
+                    <button type="button" :disabled="grassland.loading.value" @click="openEditPublished(t)">编辑</button>
                     <button type="button" :disabled="grassland.loading.value" @click="closeTaskAction(t)">关闭报名</button>
                     <button type="button" :disabled="grassland.loading.value" @click="confirmCancelTask(t)">取消任务</button>
                   </template>
@@ -1205,6 +1249,9 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-subtab:hover { color: var(--color-text-secondary); }
 .gl-subtab-active { background: var(--gradient-accent); color: var(--color-on-accent); }
 .gl-workbench[data-side="recommender"] .gl-subtab-active { background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 70%, var(--color-info))); }
+/* 垄眉右端的主操作（「发布新任务」）：标题/说明占左，按钮靠右 */
+.gl-zone-action { margin-left: auto; }
+
 .gl-workbench .gl-zone-title { transition: color var(--duration-normal) var(--ease-out); }
 .gl-workbench[data-side="merchant"] .gl-zone-title { color: var(--color-accent-2); }
 .gl-workbench[data-side="recommender"] .gl-zone-title { color: var(--color-grass); }

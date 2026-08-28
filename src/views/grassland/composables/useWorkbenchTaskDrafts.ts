@@ -45,15 +45,16 @@ export function useWorkbenchTaskDrafts(
   /** 待修订的已发布任务 id/version（GL-P1-TASK-001：编辑出新版本）。与 editingDraft 互斥。 */
   const revisingTask = ref<{ id: string; version: number } | null>(null)
 
-  async function publishTask(): Promise<void> {
-    if (!activeOrgId.value || !taskForm.value.title.trim()) return
+  /** @returns 是否提交成功——调用方（抽屉）据此决定关不关，失败要留在表单里改。 */
+  async function publishTask(): Promise<boolean> {
+    if (!activeOrgId.value || !taskForm.value.title.trim()) return false
     // 付费方式三选一：未选中模式的资金字段一律归零（表单互斥切换 + payload 双保险）
     const bountyCents = taskForm.value.paymentMode === 'freebie'
       ? 0 : yuanToCents(taskForm.value.bountyYuan)
     const freebieDepositCents = taskForm.value.paymentMode === 'commission'
       ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
     // 任务书 #25：validate-then-build——本地校验失败 setNotice 后不发请求。
-    if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return
+    if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return false
     const created = await grassland.createTask({
       organizationId: activeOrgId.value,
       storeId: selectedStoreId.value || undefined,
@@ -69,10 +70,11 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
-    if (!created) return
+    if (!created) return false
     resetTaskForm()
     setNotice(`任务「${created.title}」已提交审核，审核通过后将在大厅上架`)
     await refreshTasks()
+    return true
   }
 
   /** datetime-local 字符串 → ISO（给后端）；空或不可解析 → undefined（无截止）。 */
@@ -154,15 +156,18 @@ export function useWorkbenchTaskDrafts(
     revisingTask.value = null
   }
 
-  /** 存草稿 / 保存修订：revisingTask → POST /revise，editingDraft → PUT 草稿，否则 POST 新建草稿。 */
-  async function saveDraft(): Promise<void> {
-    if (!activeOrgId.value || !taskForm.value.title.trim()) return
+  /**
+   * 存草稿 / 保存修订：revisingTask → POST /revise，editingDraft → PUT 草稿，否则 POST 新建草稿。
+   * @returns 是否保存成功——调用方（抽屉）据此决定关不关。
+   */
+  async function saveDraft(): Promise<boolean> {
+    if (!activeOrgId.value || !taskForm.value.title.trim()) return false
     const bountyCents = taskForm.value.paymentMode === 'freebie'
       ? 0 : yuanToCents(taskForm.value.bountyYuan)
     const freebieDepositCents = taskForm.value.paymentMode === 'commission'
       ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
     // 任务书 #25：三条提交链路（revise / update / createDraft）共用同一阶梯校验入口。
-    if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return
+    if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return false
     const revising = revisingTask.value
     if (revising) {
       // 全字段修订：accept/结算读 app 的 bounty 快照（snapshot-pinning），改 task 赏金只影响新报名。
@@ -180,11 +185,11 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
-    if (!revised) return
+    if (!revised) return false
     setNotice(`任务「${revised.title}」已修订出新版本（v${revised.version}）`)
     resetTaskForm()
     await refreshTasks()
-    return
+    return true
   }
   const editing = editingDraft.value
   if (editing) {
@@ -202,7 +207,7 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
-    if (!updated) return
+    if (!updated) return false
     setNotice(`草稿「${updated.title}」已更新（v${updated.version}）`)
   } else {
     const created = await grassland.createDraft({
@@ -220,11 +225,12 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
     })
-    if (!created) return
+    if (!created) return false
     setNotice(`草稿「${created.title}」已保存`)
   }
   resetTaskForm()
   await refreshTasks()
+  return true
   }
 
   /** 把草稿载入表单供编辑。 */
