@@ -4,7 +4,9 @@
        根节点补挂 .gl-field —— 田垄系统的表单样式全部写在 `.gl-field xxx` 后代选择器下
        （src/style.css），脱离工作台根后不补这个类，整个抽屉的输入框/按钮会裸奔。 -->
   <Teleport to="body">
-    <div v-if="open" class="gl-field task-drawer-overlay" @click.self="requestClose">
+    <!-- 关闭途径收窄（问题 1）：遮罩空白处不再关闭（误触即丢表单）；只有 取消 / × / 提交审核 / 存为草稿 四个出口，
+         Esc 等同 ×——脏表单先过三选一确认，干净表单直接关。 -->
+    <div v-if="open" class="gl-field task-drawer-overlay">
       <section class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title">
         <header class="task-drawer-head">
           <div class="task-drawer-head-copy">
@@ -15,6 +17,8 @@
         </header>
 
         <div class="task-drawer-body">
+    <!-- 提交失败/本地校验错误就地表态：写到背景页会被抽屉盖住，等于「点了没反应」 -->
+    <p v-if="notice" class="gl-alert gl-alert-error" role="alert">{{ notice }}</p>
     <div class="gl-row">
       <label>资源范围
         <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
@@ -130,7 +134,7 @@
       <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
       <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
     </div>
-    <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务可「编辑」出新版本；改赏金/平台<b>只影响新报名</b>，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+    <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
         </div>
 
         <!-- 提交条 sticky 在抽屉底：长表单滚动时主操作始终可达 -->
@@ -138,10 +142,28 @@
           <div class="gl-row">
             <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
             <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
-            <button type="button" :disabled="loading" @click="confirmResetForm">{{ editingDraft || revisingTask ? '取消编辑' : '取消' }}</button>
+            <button type="button" :disabled="loading" @click="requestClose">{{ editingDraft || revisingTask ? '取消编辑' : '取消' }}</button>
           </div>
         </footer>
       </section>
+
+      <!-- 三选一离开确认（复用全局 modal 骨架，z-100 盖过抽屉 z-80）：脏表单才出现；
+           表单没改动过直接关，不打扰。文案按模式分派（新建/编辑草稿=存草稿，修订=保存修订）。 -->
+      <div v-if="confirmExitOpen" class="modal-overlay" @click.self="confirmExitOpen = false">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="task-exit-title" aria-describedby="task-exit-copy">
+          <div class="modal-header">
+            <h4 class="modal-title" id="task-exit-title">离开任务表单？</h4>
+          </div>
+          <div class="modal-body">
+            <p id="task-exit-copy" class="task-exit-copy">{{ exitConfirmMessage }}</p>
+            <div class="modal-actions task-exit-actions">
+              <button type="button" class="btn-cancel" @click="confirmExitOpen = false">继续编辑</button>
+              <button type="button" class="btn-confirm danger" @click="discardAndExit">直接退出（作废）</button>
+              <button ref="exitPrimaryBtnRef" type="button" class="btn-confirm" @click="saveDraftAndExit">{{ saveExitLabel }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -193,6 +215,8 @@ const props = defineProps<{
   hasOrganizationAccess: boolean
   canPublishBounty: boolean
   loading: boolean
+  /** 抽屉内告警条（提交失败 / 本地校验错误）：失败信息必须落在抽屉里，不能写到被盖住的背景页。可选，缺省不显示。 */
+  notice?: string
 }>()
 
 /** 任务书 #46：赏金与押金可组合（两腿独立）；仍互斥的是阶梯 × 押金（#25）。 */
@@ -277,8 +301,7 @@ const emit = defineEmits<{
   'change-store': [storeId: string]
   publish: []
   'save-draft': []
-  'reset-form': []
-  /** 用户请求关闭抽屉（遮罩 / Esc / ×）——已过脏状态确认，父组件收到即可直接关。 */
+  /** 用户确认关闭（干净表单直接关 / 三选一确认的「直接退出」）——父组件收到即可清表单并关抽屉。 */
   close: []
 }>()
 
@@ -297,9 +320,11 @@ const drawerHint = computed(() => {
 // ---------- 未保存变更守卫（Web Interface Guidelines：带未保存修改离开需警告） ----------
 // SPA 内切标签页由 KeepAlive 保活、状态不丢，守卫只针对整页刷新/关闭（beforeunload）。
 // 基线随编辑上下文重置：进入/退出草稿·修订时父组件整体换表单值，那一刻的差异不是用户输入。
-let formBaseline = ''
-const recordFormBaseline = (): void => { formBaseline = JSON.stringify(props.form) }
-const formDirty = computed(() => JSON.stringify(props.form) !== formBaseline)
+// 基线必须是响应式：computed 会缓存首次求值，普通 let 赋值触发不了重算——
+// 此前干净表单的 dirty 一直是陈旧的 true（旧版 Esc 必弹 confirm，缺陷不可见）。
+const formBaseline = ref('')
+const recordFormBaseline = (): void => { formBaseline.value = JSON.stringify(props.form) }
+const formDirty = computed(() => JSON.stringify(props.form) !== formBaseline.value)
 
 function warnUnsavedChanges(event: BeforeUnloadEvent): void {
   event.preventDefault()
@@ -314,21 +339,53 @@ watch(formDirty, (dirty) => {
 })
 onBeforeUnmount(() => window.removeEventListener('beforeunload', warnUnsavedChanges))
 
-/** 丢弃未保存修改属破坏性操作：脏表单先经确认（未改动则直接取消，不加摩擦）。 */
-function confirmResetForm(): void {
-  if (formDirty.value && !window.confirm('取消编辑将丢弃当前未保存的修改，确定继续？')) return
-  emit('reset-form')
+// ---------- 三选一离开确认（替换 window.confirm：原生框只有「丢弃/留下」，没有存草稿出口） ----------
+const confirmExitOpen = ref(false)
+const exitPrimaryBtnRef = ref<HTMLButtonElement | null>(null)
+
+/** 确认文案按模式分派：修订模式问「保存修订」，新建/编辑草稿问「存为草稿」——保存链路复用 saveDraft 的分派。 */
+const exitConfirmMessage = computed(() => props.revisingTask
+  ? '返回将清空当前已填内容，要先保存修订吗？'
+  : '返回将清空当前已填内容，要先存为草稿吗？')
+const saveExitLabel = computed(() => props.revisingTask
+  ? '保存修订并退出'
+  : props.editingDraft ? '保存草稿并退出' : '存为草稿并退出')
+
+/** 确认框弹起时焦点落到主出口（存草稿并退出）——键盘用户不必再爬回抽屉。 */
+watch(confirmExitOpen, (open) => {
+  if (open) void nextTick(() => exitPrimaryBtnRef.value?.focus())
+})
+
+/** 存草稿并退出：复用提交条的保存链路（父组件成功才关抽屉，失败留在抽屉里改、错误见告警条）。 */
+function saveDraftAndExit(): void {
+  confirmExitOpen.value = false
+  emit('save-draft')
 }
 
-// ---------- 抽屉开合：脏状态确认 / Esc / 初始焦点 / 焦点归还 / 背景锁滚 ----------
-// 遮罩点击与 Esc 走与「取消」同一条确认，避免抽屉比内联表单更容易丢数据。
-function requestClose(): void {
-  if (formDirty.value && !window.confirm('关闭将丢弃当前未保存的修改，确定继续？')) return
+/** 直接退出（作废）：丢弃已填内容并关抽屉。 */
+function discardAndExit(): void {
+  confirmExitOpen.value = false
   emit('close')
 }
 
+// ---------- 抽屉开合：脏状态确认 / Esc / 初始焦点 / 焦点归还 / 背景锁滚 ----------
+// 关闭途径只有 取消 / × / 提交审核 / 存为草稿：脏表单统一走三选一确认（Esc=×），干净表单直接关不加摩擦。
+function requestClose(): void {
+  if (!formDirty.value) {
+    emit('close')
+    return
+  }
+  confirmExitOpen.value = true
+}
+
 function onDrawerKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') requestClose()
+  if (event.key !== 'Escape') return
+  // 确认框开着时 Esc 只收确认框（=继续编辑），不穿透到抽屉再弹一次。
+  if (confirmExitOpen.value) {
+    confirmExitOpen.value = false
+    return
+  }
+  requestClose()
 }
 
 /** 打开前的焦点元素（一般是触发按钮）：关闭后归还，键盘用户不被丢回文档开头。 */
@@ -345,11 +402,12 @@ watch(() => props.open, (open) => {
     void nextTick(() => titleInputRef.value?.focus())
     return
   }
+  confirmExitOpen.value = false
   document.body.style.overflow = ''
   window.removeEventListener('keydown', onDrawerKeydown)
   lastFocused?.focus()
   lastFocused = null
-})
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   document.body.style.overflow = ''
@@ -464,6 +522,10 @@ function removeCommissionTier(index: number): void {
 @media (max-width: 720px) {
   .task-drawer { border-left: none; }
 }
+
+/* 三选一离开确认：四个文案长度不一的按钮在 440px 卡片内可能放不下，允许换行兜底 */
+.task-exit-actions { flex-wrap: wrap; }
+.task-exit-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
 
 .payment-mode-label { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
 .payment-mode-option { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer; }

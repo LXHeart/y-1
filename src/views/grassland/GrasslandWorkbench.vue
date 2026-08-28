@@ -140,11 +140,25 @@ const {
   withdrawApp,
 } = engagements
 
+/**
+ * 任务表单抽屉内的告警条（提交失败 / 本地校验错误）——失败信息必须出现在抽屉里，
+ * 写到背景页会被抽屉整个盖住，表现就是「点了没反应」。
+ */
+const taskFormNotice = ref('')
+/** 提交成功的结果弹窗文案；非空即弹（单按钮「知道了」）。 */
+const taskFormResult = ref('')
+
+/** 任务域通知路由：抽屉开着 → 抽屉内告警条；否则回落背景页通知条。 */
+function setTaskFormNotice(message: string): void {
+  if (taskFormOpen.value) taskFormNotice.value = message
+  else setNotice(message)
+}
+
 const {
   taskForm, editingDraft, revisingTask,
   publishTask, saveDraft, editDraft, editPublished, resetTaskForm,
   updateCommissionLadder, handleTaskFormUpdate, handleTaskFormStoreChange, reset: resetTaskDrafts,
-} = useWorkbenchTaskDrafts(grassland, setNotice, { activeOrgId, selectedStoreId, refreshTasks })
+} = useWorkbenchTaskDrafts(grassland, setTaskFormNotice, { activeOrgId, selectedStoreId, refreshTasks })
 
 /**
  * 任务表单抽屉开合（三种模式共用一个 MerchantTaskForm 实例）。
@@ -158,32 +172,53 @@ const taskFormOpen = ref(false)
 function openNewTaskForm(): void {
   // 先清编辑上下文：从「编辑草稿」直接点「发布新任务」不能带着 editingDraft 进新建模式
   resetTaskForm()
+  taskFormNotice.value = ''
   taskFormOpen.value = true
 }
 
 function openEditDraft(task: Task): void {
   editDraft(task)
+  taskFormNotice.value = ''
   taskFormOpen.value = true
 }
 
 function openEditPublished(task: Task): void {
   editPublished(task)
+  taskFormNotice.value = ''
   taskFormOpen.value = true
 }
 
-/** 取消编辑 / 关闭抽屉（子组件已过脏状态确认）：清表单并关抽屉。 */
+/** 关闭抽屉（×/取消/三选一确认的「直接退出」/干净表单直接关）：清表单并关抽屉。 */
 function cancelTaskForm(): void {
   resetTaskForm()
+  taskFormNotice.value = ''
   taskFormOpen.value = false
 }
 
-/** 提交成功才关抽屉——失败（本地校验或后端 4xx）要留在抽屉里改，不能把用户填的内容关掉。 */
+/**
+ * 提交审核 / 存草稿（含修订）：成功 → 关抽屉 + 结果弹窗；失败 → 停留抽屉，
+ * 错误显示在抽屉内告警条（本地校验错误经 setTaskFormNotice 已写入；后端 4xx 取 grassland.error）。
+ */
 async function publishTaskFromDrawer(): Promise<void> {
-  if (await publishTask()) taskFormOpen.value = false
+  taskFormNotice.value = ''
+  const message = await publishTask()
+  if (message != null) {
+    taskFormOpen.value = false
+    taskFormResult.value = message
+  } else if (!taskFormNotice.value) {
+    taskFormNotice.value = grassland.error.value || '提交失败，请稍后重试'
+  }
 }
 
 async function saveDraftFromDrawer(): Promise<void> {
-  if (await saveDraft()) taskFormOpen.value = false
+  taskFormNotice.value = ''
+  const message = await saveDraft()
+  if (message != null) {
+    taskFormOpen.value = false
+    taskFormResult.value = message
+  } else if (!taskFormNotice.value) {
+    taskFormNotice.value = grassland.error.value || '保存失败，请稍后重试'
+  }
 }
 
 /** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。 */function confirmCancelTask(task: Task): void {
@@ -630,12 +665,12 @@ watch(grasslandNavigationTarget, async (target) => {
             :has-organization-access="activeOrgHasOrganizationAccess"
             :can-publish-bounty="canPublishBounty"
             :loading="grassland.loading.value"
+            :notice="taskFormNotice"
             @update:field="handleTaskFormUpdate"
             @update:commission-ladder="updateCommissionLadder"
             @change-store="handleTaskFormStoreChange"
             @publish="publishTaskFromDrawer"
             @save-draft="saveDraftFromDrawer"
-            @reset-form="cancelTaskForm"
             @close="cancelTaskForm"
           />
 
@@ -1183,6 +1218,18 @@ watch(grasslandNavigationTarget, async (target) => {
       </section>
     </div>
 
+    <!-- 任务表单提交结果弹窗：成功后的单一确认出口（失败不出这里——失败留在抽屉内改） -->
+    <div v-if="taskFormResult" class="modal-overlay" @click.self="taskFormResult = ''">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="任务表单提交结果">
+        <div class="modal-body">
+          <p class="task-form-result-copy">{{ taskFormResult }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-confirm" @click="taskFormResult = ''">知道了</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
     <!-- 子页签 账号与合规（两侧共享页签）：标记一份，渲染在当前身份面板之后 -->
     <section v-show="subTab === 'account'" class="gl-zone" aria-label="账号与合规">
@@ -1265,16 +1312,7 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-horizon-recommender.on { color: var(--color-grass); }
 @media (max-width: 640px) { .gl-horizon-tag { display: none; } }
 
-/* ---------- 提示条 ---------- */
-.gl-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--text-sm); border: 1px solid transparent; }
-.gl-alert-error {
-  background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
-}
-.gl-alert-ok {
-  background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 24%, transparent);
-}
+/* ---------- 提示条（规则本体已收口 src/style.css 的 .gl-field 全局层——任务表单抽屉 Teleport 到 body 后也用得上） ---------- */
 
 /* 垄眉：micro-caps，颜色随视角（商家紫 / 推荐官苗绿），切侧时交叉淡入 */
 .gl-subtabs { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-card); overflow-x: auto; scrollbar-width: none; width: fit-content; max-width: 100%; }
@@ -1384,4 +1422,7 @@ watch(grasslandNavigationTarget, async (target) => {
 /* 展开块头部：选中任务的排序+报名块给出明确「收起」出口——此前一旦展开永远开着 */
 .gl-apps-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 .gl-apps-caption { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 任务表单提交结果弹窗正文 */
+.task-form-result-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
 </style>
