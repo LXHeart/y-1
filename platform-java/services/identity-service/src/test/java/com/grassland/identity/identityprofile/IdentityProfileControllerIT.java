@@ -60,6 +60,34 @@ class IdentityProfileControllerIT extends IdentityItSupport {
                 .exchange().expectStatus().isForbidden();
     }
 
+    /**
+     * 「先建主体、后开通」序列闭合（问题二③镜像侧）：登录页自动开通不带 org，若账号已是
+     * 主体 owner 则自动补绑——否则档案 organization_id=NULL 永无回填路径，断言从此不带 org。
+     */
+    @Test
+    void openMerchantWithoutOrgBackfillsOwnedOrganization() {
+        var owner = seedAccount("ip-backfill@example.com");
+        String orgId = createOrg(owner.cookie(), "先建主体后开通");
+        client().post().uri("/api/me/identities")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+                .bodyValue("{\"type\":\"merchant\"}")  // 不带 organizationId（登录页自动开通同款）
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.identityType").isEqualTo("merchant")
+                .jsonPath("$.data.organizationId").isEqualTo(orgId);
+    }
+
+    /** 无主体的账号开通商家身份仍为 NULL 透传（商家可无组织开通，行为不变）。 */
+    @Test
+    void openMerchantWithoutOrgAndWithoutOrganizationStaysNull() {
+        var acc = seedAccount("ip-noorg@example.com");
+        client().post().uri("/api/me/identities")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + acc.cookie())
+                .bodyValue("{\"type\":\"merchant\"}")
+                .exchange().expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.identityType").isEqualTo("merchant")
+                .jsonPath("$.data.organizationId").isEmpty();
+    }
+
     @Test
     void duplicateOpenReturns409() {
         var acc = seedAccount("ip-dup@example.com");

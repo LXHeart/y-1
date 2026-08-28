@@ -89,6 +89,28 @@ class OrganizationControllerIT {
         assertThat(count).isEqualTo(1);
     }
 
+    /**
+     * 问题二③：「登录先开通商家身份（不带 org）→ 工作台建主体」序列的档案回填——
+     * 建主体时把 owner 的 org=NULL 商家档案绑到新主体，断言（edge 每请求查库）从此带上 org。
+     */
+    @Test
+    void createBackfillsMerchantIdentityProfileOrganization() {
+        String email = "bind-org@example.com";
+        String cookie = seedOwnerWithCookie(email);
+        String accountId = db.sql("SELECT id::text FROM app_users WHERE email = :email")
+                .bind("email", email).map(r -> r.get(0, String.class)).one().block();
+        db.sql("INSERT INTO identity_profile(id, account_id, identity_type, organization_id, status)"
+                        + " VALUES (gen_random_uuid(), CAST(:acct AS uuid), 'merchant', NULL, 'active')")
+                .bind("acct", accountId).then().block();
+
+        String orgId = createOrg(cookie, "回填主体");
+
+        String boundOrg = db.sql("SELECT organization_id::text FROM identity_profile"
+                        + " WHERE account_id = CAST(:acct AS uuid) AND identity_type = 'merchant'")
+                .bind("acct", accountId).map(r -> r.get(0, String.class)).one().block();
+        assertThat(boundOrg).isEqualTo(orgId);
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void getByIdAndListByOwner() {

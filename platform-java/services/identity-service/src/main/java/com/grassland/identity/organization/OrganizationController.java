@@ -55,6 +55,7 @@ public class OrganizationController {
 	private final OrganizationRepository organizations;
 	private final OrganizationRenameRepository renames;
 	private final MembershipRepository memberships;
+	private final com.grassland.identity.identityprofile.IdentityProfileRepository identityProfiles;
 	private final com.grassland.identity.store.StoreRepository stores;
 	private final OrgAuthorization authz;
 	private final OutboxRepository outbox;
@@ -67,6 +68,7 @@ public class OrganizationController {
 			OrganizationRenameRepository renames,
 			MembershipRepository memberships, OrgAuthorization authz,
 			OutboxRepository outbox, TransactionalOperator transactions,
+			com.grassland.identity.identityprofile.IdentityProfileRepository identityProfiles,
 			com.grassland.identity.store.StoreRepository stores) {
 		this.accounts = accounts;
 		this.organizations = organizations;
@@ -75,6 +77,7 @@ public class OrganizationController {
 		this.authz = authz;
 		this.outbox = outbox;
 		this.transactions = transactions;
+		this.identityProfiles = identityProfiles;
 		this.stores = stores;
 	}
 
@@ -95,6 +98,12 @@ public class OrganizationController {
 												.switchIfEmpty(organizations
 														.create(owner.id(), body.name(), normalizeIndustry(body.industry())))
 												.flatMap(org -> seedOwnerMembership(org, owner.id()).thenReturn(org))
+									// 「登录先开通商家身份（不带 org）→ 工作台内建主体」序列的档案回填：
+									// identity_profile.organization_id 之前永远无法经 API 补上（只有 create），
+									// 断言从此不带 org、org 级任务整体 403。best-effort（无档案 0 行不阻断）；
+									// marketplace 的 org 级授权另已改走服务端成员表，脏数据不再构成权限故障。
+									.flatMap(org -> identityProfiles
+											.bindOrganizationIfAbsent(owner.id(), org.id()).thenReturn(org))
 												// 任务书 #50 D2：注册即开店——同事务自动建默认门店（名=主体名），
 												// 单店商家从此不需要「建店」这个动作；StoreCreated 与手动建店同款（审计/下游一致）。
 												.flatMap(org -> stores.create(org.id(), org.name())

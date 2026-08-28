@@ -55,19 +55,22 @@ public class IdentityProfileController {
 	private final IdentityAuditLogRepository audit;
 	private final IdentitySessionPolicyProperties sessionPolicy;
 	private final OrgAuthorization authz;
+	private final com.grassland.identity.organization.OrganizationRepository organizations;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 
 	public IdentityProfileController(CurrentAccountResolver accounts, IdentityProfileRepository profiles,
 			IdentitySessionRepository sessions, IdentityAuditLogRepository audit,
-			IdentitySessionPolicyProperties sessionPolicy, OrgAuthorization authz, OutboxRepository outbox,
-			TransactionalOperator transactions) {
+			IdentitySessionPolicyProperties sessionPolicy, OrgAuthorization authz,
+			com.grassland.identity.organization.OrganizationRepository organizations,
+			OutboxRepository outbox, TransactionalOperator transactions) {
 		this.accounts = accounts;
 		this.profiles = profiles;
 		this.sessions = sessions;
 		this.audit = audit;
 		this.sessionPolicy = sessionPolicy;
 		this.authz = authz;
+		this.organizations = organizations;
 		this.outbox = outbox;
 		this.transactions = transactions;
 	}
@@ -86,16 +89,25 @@ public class IdentityProfileController {
 			IdentityType type = IdentityType.fromDb(body.type());
 			String rawOrgId = body.organizationId();
 			String orgId = (rawOrgId == null || rawOrgId.isBlank()) ? null : rawOrgId;
-			// 商家身份 + 提供了 org → 校验为该 org owner；否则放行（orgId 为 null 时透传，不能用 Mono.just(null)）
-			Mono<Void> ownershipGate = (type == IdentityType.MERCHANT && orgId != null)
-					? authz.requireRole(request, orgId, MembershipRole.OWNER).then()
-					: Mono.empty();
-			return ownershipGate.then(transactions.transactional(profiles.create(account.id(), type.dbValue(), orgId)
-					.flatMap(p -> outbox
-							.append(new EventEnvelope(UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
-									p.id(), 1, Instant.now(), null, profileEventPayload(p, account.id())))
-							.thenReturn(p))))
-					.map(p -> ResponseEntity.status(201).body(Map.of("success", true, "data", profileBody(p))));
+			// 商家身份未带 org 且该账号已是某主体 owner（「先建主体、后开通」序列）→ 自动补绑，
+			// 否则档案建出 organization_id=NULL 且再无回填路径（断言不带 org）。
+			// 仅 owner 回填：成员/无主体保持 null 透传，与既有行为一致。空串 = 无主体（reactor 禁 null）。
+			Mono<String> orgResolution = (type == IdentityType.MERCHANT && orgId == null)
+					? organizations.findByOwner(account.id()).next().map(org -> org.id()).defaultIfEmpty("")
+					: Mono.just(orgId == null ? "" : orgId);
+			return orgResolution.flatMap(resolved -> {
+				String effectiveOrgId = resolved.isBlank() ? null : resolved;
+				// 商家身份 + 提供了 org → 校验为该 org owner；否则放行（orgId 为 null 时透传，不能用 Mono.just(null)）
+				Mono<Void> ownershipGate = (type == IdentityType.MERCHANT && effectiveOrgId != null)
+						? authz.requireRole(request, effectiveOrgId, MembershipRole.OWNER).then()
+						: Mono.empty();
+				return ownershipGate.then(transactions.transactional(profiles.create(account.id(), type.dbValue(), effectiveOrgId)
+						.flatMap(p -> outbox
+								.append(new EventEnvelope(UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
+										p.id(), 1, Instant.now(), null, profileEventPayload(p, account.id())))
+								.thenReturn(p))))
+						.map(p -> ResponseEntity.status(201).body(Map.of("success", true, "data", profileBody(p))));
+			});
 		}).onErrorResume(DataIntegrityViolationException.class,
 				e -> Mono.just(ResponseEntity.status(409).body(Map.of("success", false, "error", "已开通该身份"))));
 	}

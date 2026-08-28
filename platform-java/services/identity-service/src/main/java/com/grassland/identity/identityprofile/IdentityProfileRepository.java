@@ -63,6 +63,21 @@ public class IdentityProfileRepository {
                 .map(row -> row.get("e", Boolean.class)).one();
     }
 
+    /**
+     * 把商家身份档案绑到 org（仅当 organization_id 仍为 NULL 时改写；已绑定的行不动）。
+     *
+     * <p>堵「登录先开通（不带 org）→ 之后才建主体」序列的漏点：建主体时回调此方法回填，
+     * 让断言（edge 每请求实时查库）带上 org。无档案时影响 0 行（之后开通走带 org 路径），
+     * 谓词 IS NULL 保证可重复调用。
+     */
+    public Mono<Void> bindOrganizationIfAbsent(String accountId, String organizationId) {
+        return db.sql("UPDATE identity_profile SET organization_id = CAST(:org AS uuid), updated_at = now()"
+                + " WHERE account_id = CAST(:acct AS uuid) AND identity_type = 'merchant'"
+                + " AND organization_id IS NULL")
+                .bind("acct", accountId).bind("org", organizationId)
+                .then();
+    }
+
     private static IdentityProfile map(Readable row) {
         return new IdentityProfile(
                 row.get("id", String.class),
