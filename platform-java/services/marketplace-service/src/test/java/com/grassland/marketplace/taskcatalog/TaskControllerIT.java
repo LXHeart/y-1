@@ -99,9 +99,15 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .expectBody().jsonPath("$.data.length()").isEqualTo(1)
                 .jsonPath("$.data[0].storeId").isEqualTo(store);
 
-        // Legacy organization-level listing cannot leak store-scoped drafts.
+        // owner 主体级视角（不传 storeId）= 全量视角：含门店草稿——门店任务的管理入口在主体
+        // 工作台，列表不得按资源范围隐式过滤（否则商家「丢任务」）。推荐官视角仍不泄漏非 published。
         client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].storeId").isEqualTo(store);
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
+                .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender"))
                 .exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.length()").isEqualTo(0);
     }
@@ -1247,6 +1253,44 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .jsonPath("$.data[0].status").isEqualTo("published")
                 .jsonPath("$.data[0].lastRejectedNote").value(v -> assertThat(v).isNull())
                 .jsonPath("$.data[0].lastRejectedAt").value(v -> assertThat(v).isNull());
+    }
+
+    /**
+     * 问题一连带缺陷：门店级草稿被驳回后，owner 主体级列表（不传 storeId）也要回带真实驳回原因
+     * ——此前 findByStore 无 review join，门店草稿的 lastRejectedNote 恒 null（前端显示「平台未填写原因」）。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void ownerListingCarriesRejectedNoteForStoreScopedDraft() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String store = UUID.randomUUID().toString();
+        when(storeAuthorization.authorize(merchant, org, store, "manager"))
+                .thenReturn(Mono.just(storeAccess(merchant, org, store, "manager")));
+        Map<String, Object> requestBody = body(org, "门店草稿被驳回", null, null);
+        requestBody.put("storeId", store);
+        Map<String, Object> draft = (Map<String, Object>) client().post().uri("/api/tasks/draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        // 提交审核 → 驳回：任务回 draft 且留 task_review 记录。
+        Map<String, Object> submitted = (Map<String, Object>) client()
+                .post().uri("/api/tasks/" + draft.get("id") + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", ((Number) draft.get("version")).intValue()))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        rejectTask(submitted, "门店任务驳回原因");
+
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].storeId").isEqualTo(store)
+                .jsonPath("$.data[0].lastRejectedNote").isEqualTo("门店任务驳回原因")
+                .jsonPath("$.data[0].lastReviewAction").isEqualTo("rejected");
     }
 
     /** 审核队列信封：offset 取第二页、total 与筛选同口径、limit/offset 钳制边界。 */

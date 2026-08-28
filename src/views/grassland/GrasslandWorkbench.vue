@@ -121,7 +121,7 @@ const {
 } = useWorkbenchTaskHall(grassland, side, setNotice)
 
 const engagements = useWorkbenchEngagements(grassland, setNotice, {
-  side, activeOrgId, selectedStoreId, feedItems, refreshAccount,
+  side, activeOrgId, selectedStoreId, activeOrgStoreOnlyView, feedItems, refreshAccount,
 })
 const {
   tasks, applications, selectedTaskId, selectedTask,

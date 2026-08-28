@@ -561,6 +561,23 @@ public class TaskRepository {
      * 避免已上架任务泄漏历史驳回。
      */
     public Flux<Task> findByOrganization(String organizationId, String status, String query) {
+        return listByOrganization(organizationId, status, query, true);
+    }
+
+    /**
+     * 商家 owner 全量视角：该 org 的组织级 + 全部门店任务一并返回（status 为空则不限）。
+     *
+     * <p>门店任务的管理入口在主体工作台（发布表单的「资源范围」决定挂主体还是挂店），
+     * 列表不能按资源范围隐式过滤，否则门店任务「凭空消失」；同时沿用 review join，
+     * 让被驳回的门店草稿也能回带真实驳回原因。
+     */
+    public Flux<Task> findAllScopesByOrganization(String organizationId, String status, String query) {
+        return listByOrganization(organizationId, status, query, false);
+    }
+
+    private Flux<Task> listByOrganization(String organizationId, String status, String query,
+                                          boolean orgLevelOnly) {
+        String scopePredicate = orgLevelOnly ? " AND t.store_id IS NULL" : "";
         String search = query == null ? "" : " AND lower(coalesce(t.title,'') || ' ' || coalesce(t.description,''))"
                 + " LIKE lower(:query) ESCAPE E'\\\\'";
         String reviewCols = ", tr.action AS last_review_action, tr.review_note AS last_review_note,"
@@ -568,14 +585,14 @@ public class TaskRepository {
         if (status == null || status.isBlank()) {
             var spec = db.sql("SELECT " + SELECT_COLS_REVIEW + reviewCols
                     + " FROM task t" + LATEST_REVIEW_JOIN
-                    + " WHERE t.organization_id = CAST(:org AS uuid) AND t.store_id IS NULL"
+                    + " WHERE t.organization_id = CAST(:org AS uuid)" + scopePredicate
                     + search + " ORDER BY t.created_at DESC").bind("org", organizationId);
             if (query != null) spec = spec.bind("query", query);
             return spec.map(TaskRepository::mapWithReview).all();
         }
         var spec = db.sql("SELECT " + SELECT_COLS_REVIEW + reviewCols
                 + " FROM task t" + LATEST_REVIEW_JOIN
-                + " WHERE t.organization_id = CAST(:org AS uuid) AND t.store_id IS NULL"
+                + " WHERE t.organization_id = CAST(:org AS uuid)" + scopePredicate
                 + " AND t.status = :status" + search + " ORDER BY t.created_at DESC")
                 .bind("org", organizationId).bind("status", status);
         if (query != null) spec = spec.bind("query", query);

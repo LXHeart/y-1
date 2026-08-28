@@ -397,8 +397,10 @@ public class TaskController {
                                     ? status
                                     : TaskStatus.PUBLISHED.dbValue());
                     boolean ownerView = caller.isMerchant() && organizationId.equals(caller.organizationId());
+                    // owner 全量视角：组织级 + 全部门店任务（门店任务的管理入口在主体工作台，
+                    // 不传 storeId 时不得隐式排除）；推荐官浏览仍只见组织级 published。
                     Mono<List<Task>> visibleTasks = ownerView
-                            ? tasks.findByOrganization(organizationId, effectiveStatus, query).collectList()
+                            ? tasks.findAllScopesByOrganization(organizationId, effectiveStatus, query).collectList()
                             : visibleRecommenderLevel(caller).flatMap(level ->
                                     tasks.findByOrganization(organizationId, effectiveStatus, query)
                                             .filter(task -> !TaskStatus.PUBLISHED.dbValue().equals(task.status())

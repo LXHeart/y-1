@@ -29,11 +29,12 @@ export function useWorkbenchEngagements(
     side: Ref<'merchant' | 'recommender'>
     activeOrgId: Ref<string>
     selectedStoreId: Ref<string>
+    activeOrgStoreOnlyView: Ref<boolean>
     feedItems: Ref<Task[]>
     refreshAccount: () => Promise<void>
   },
 ) {
-  const { side, activeOrgId, selectedStoreId, feedItems, refreshAccount } = refs
+  const { side, activeOrgId, selectedStoreId, activeOrgStoreOnlyView, feedItems, refreshAccount } = refs
 
   const tasks = ref<Task[]>([])
   const applications = ref<TaskApplication[]>([])
@@ -127,8 +128,12 @@ export function useWorkbenchEngagements(
   async function refreshTasks(): Promise<void> {
     if (!activeOrgId.value) return
     const orgId = activeOrgId.value
+    // 列表不得被发布表单的「资源范围」隐式过滤——那个下拉是纯发布语义（新任务挂主体还是挂店），
+    // 曾被误用作列表过滤，导致门店任务在主体级视角「凭空消失」。owner/admin 全量视角传
+    // undefined（后端 ownerView 返回 org 级 + 全部门店）；仅店长 store-only 视图锁本店。
+    const storeId = activeOrgStoreOnlyView.value ? selectedStoreId.value || undefined : undefined
     const groups = await Promise.all(
-      MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status, selectedStoreId.value || undefined)))
+      MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status, storeId)))
     if (groups.some((g) => g)) tasks.value = groups.flatMap((g) => g ?? [])
   }
 
