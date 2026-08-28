@@ -1,6 +1,7 @@
 package com.grassland.intelligence.media;
 
 import com.grassland.identity.assertion.BackendRole;
+import com.grassland.intelligence.admin.PageEnvelope;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Instant;
@@ -37,7 +38,6 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/api/admin/store-media-moderation")
 public class StoreMediaModerationAdminController {
 
-	private static final int QUEUE_LIMIT = 200;
 	private static final Set<String> STATUSES = Set.of("pass", "review", "blocked");
 	/** 队列预览 URL TTL：短时即可，复核页刷新重取。 */
 	private static final long PREVIEW_TTL_SECONDS = 300;
@@ -58,18 +58,27 @@ public class StoreMediaModerationAdminController {
 		this.storage = storage;
 	}
 
-	/** 复核队列（默认 review；status 可选 pass/blocked 复查人工裁决史）。 */
+	/** 复核队列（默认 review；status 可选 pass/blocked 复查人工裁决史）：统一分页信封（保留 status 字段）。 */
 	@GetMapping
 	public Mono<Map<String, Object>> queue(@RequestParam(name = "status", required = false) String status,
+			@RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
 			ServerWebExchange exchange) {
 		String target = status == null || status.isBlank() ? "review" : status;
 		if (!STATUSES.contains(target)) {
 			return Mono.error(new IntelligenceException(400, "status 仅支持 pass/review/blocked"));
 		}
+		int pageSize = PageEnvelope.limit(limit);
+		int pageOffset = PageEnvelope.offset(offset);
 		return callers.requireRole(exchange.getRequest(), BackendRole.CONTENT_REVIEWER)
-				.flatMap(caller -> moderation.listQueue(target, QUEUE_LIMIT).collectList())
-				.map(items -> Map.of("success", true, "data", Map.of("status", target, "items",
-						items.stream().map(item -> toQueueView(item, previewUrl(item))).toList())));
+				.flatMap(caller -> Mono.zip(moderation.listQueue(target, pageSize, pageOffset).collectList(),
+						moderation.countQueue(target))
+						.map(tuple -> {
+						Map<String, Object> data = PageEnvelope.data(
+								tuple.getT1().stream().map(item -> toQueueView(item, previewUrl(item))).toList(),
+								tuple.getT2(), pageSize, pageOffset);
+						data.put("status", target);
+						return Map.of("success", true, "data", data);
+					}));
 	}
 
 	/** 人工裁决：approve→pass（恢复展示）/ reject→blocked（拦截展示）。 */

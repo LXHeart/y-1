@@ -53,8 +53,8 @@ class TaskControllerIT extends MarketplaceItSupport {
         client().get().uri(uri -> uri.path("/api/admin/tasks/review").queryParam("q", "%").build())
                 .header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "content_reviewer"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.length()").isEqualTo(1)
-                .jsonPath("$.data[0].title").isEqualTo("100% 命中任务");
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].title").isEqualTo("100% 命中任务");
 
         approveTask(percent);
         approveTask(ordinary);
@@ -469,8 +469,10 @@ class TaskControllerIT extends MarketplaceItSupport {
                         + org + "&platform=" + platform + "&limit=20")
                 .header("X-Grassland-Identity", reviewerHeader)
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.length()").isEqualTo(1)
-                .jsonPath("$.data[0].id").isEqualTo(taskId)
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].id").isEqualTo(taskId)
+                .jsonPath("$.data.total").isEqualTo(1)
+                .jsonPath("$.meta.total").isEqualTo(1)
                 .jsonPath("$.meta.queue.pending").isNumber();
 
         client().get().uri("/api/admin/tasks/" + taskId + "/review/history")
@@ -1121,6 +1123,202 @@ class TaskControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.status").isEqualTo("published");
         return taskId;
+    }
+
+    // ---------- 任务书 #53：信封分页 + 任务审核三态 ----------
+
+    /** 审核队列 status=published 列已上架任务（信封形状，meta 补 total）。 */
+    @Test
+    void reviewQueueListsPublishedTasksInEnvelope() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String id = publish(merchant, org, "basic_publish", "队列内已上架", null);
+        String reviewer = signWithRole(UUID.randomUUID().toString(), "content_reviewer");
+
+        client().get().uri("/api/admin/tasks/review?status=published&organizationId=" + org)
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].id").isEqualTo(id)
+                .jsonPath("$.data.items[0].status").isEqualTo("published")
+                .jsonPath("$.data.total").isEqualTo(1)
+                .jsonPath("$.data.limit").isEqualTo(50)
+                .jsonPath("$.data.offset").isEqualTo(0)
+                .jsonPath("$.meta.total").isEqualTo(1)
+                .jsonPath("$.meta.queue.pending").isNumber();
+    }
+
+    /**
+     * status=rejected 视图：最新决定为驳回的 draft 任务带 lastReviewNote/lastReviewedAt；
+     * 重新提交（追加 submitted 记录）后移出视图。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void rejectedViewShowsLatestRejectionAndClearsAfterResubmission() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> pending = createPendingTask(merchant, org, "被驳回任务");
+        Map<String, Object> rejected = rejectTask(pending, "标题含绝对化用语");
+        String reviewer = signWithRole(UUID.randomUUID().toString(), "content_reviewer");
+
+        client().get().uri("/api/admin/tasks/review?status=rejected&organizationId=" + org)
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].id").isEqualTo(pending.get("id"))
+                .jsonPath("$.data.items[0].status").isEqualTo("draft")
+                .jsonPath("$.data.items[0].lastReviewAction").isEqualTo("rejected")
+                .jsonPath("$.data.items[0].lastReviewNote").isEqualTo("标题含绝对化用语")
+                .jsonPath("$.data.items[0].lastReviewedAt").isNotEmpty()
+                .jsonPath("$.data.total").isEqualTo(1);
+
+        // 重新提交 → 最新记录变 submitted → 移出 rejected 视图。
+        client().post().uri("/api/tasks/" + pending.get("id") + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", ((Number) rejected.get("version")).intValue()))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("pending_review");
+        client().get().uri("/api/admin/tasks/review?status=rejected&organizationId=" + org)
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(0)
+                .jsonPath("$.data.total").isEqualTo(0);
+    }
+
+    /** 语义红线：历史上被驳回、现已 published 的任务不出现在 rejected 视图。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void historicallyRejectedPublishedTaskIsAbsentFromRejectedView() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> pending = createPendingTask(merchant, org, "驳回后重新过审");
+        Map<String, Object> rejected = rejectTask(pending, "封面图不清晰");
+        // 重新提交并通过审核 → published。
+        Map<String, Object> resubmit = (Map<String, Object>) client().post()
+                .uri("/api/tasks/" + pending.get("id") + "/publish")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", ((Number) rejected.get("version")).intValue()))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody().get("data");
+        approveTask(resubmit);
+        String reviewer = signWithRole(UUID.randomUUID().toString(), "content_reviewer");
+
+        client().get().uri("/api/admin/tasks/review?status=rejected&organizationId=" + org)
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(0)
+                .jsonPath("$.data.total").isEqualTo(0);
+        // sanity：任务确实已上架，且历史驳回记录仍在审计流水里。
+        client().get().uri("/api/admin/tasks/review?status=published&organizationId=" + org)
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].id").isEqualTo(pending.get("id"));
+        client().get().uri("/api/admin/tasks/" + pending.get("id") + "/review/history")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(4); // submitted/rejected/submitted/approved
+    }
+
+    /** 商家端 GET /api/tasks：被驳回草稿带 lastRejectedNote/lastRejectedAt；published 任务恒 null（形状仍裸数组）。 */
+    @Test
+    void merchantListingExposesLastRejectedOnlyForRejectedDrafts() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> pending = createPendingTask(merchant, org, "商家驳回回显");
+        rejectTask(pending, "需更换配图");
+        publish(merchant, org, "basic_publish", "正常上架任务", null);
+        String merchantHeader = sign(merchant, "merchant", org, "basic_publish");
+
+        client().get().uri("/api/tasks?organizationId=" + org + "&status=draft")
+                .header("X-Grassland-Identity", merchantHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].id").isEqualTo(pending.get("id"))
+                .jsonPath("$.data[0].lastRejectedNote").isEqualTo("需更换配图")
+                .jsonPath("$.data[0].lastRejectedAt").isNotEmpty()
+                .jsonPath("$.data[0].lastReviewAction").isEqualTo("rejected");
+
+        client().get().uri("/api/tasks?organizationId=" + org)
+                .header("X-Grassland-Identity", merchantHeader)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.length()").isEqualTo(1)
+                .jsonPath("$.data[0].status").isEqualTo("published")
+                .jsonPath("$.data[0].lastRejectedNote").value(v -> assertThat(v).isNull())
+                .jsonPath("$.data[0].lastRejectedAt").value(v -> assertThat(v).isNull());
+    }
+
+    /** 审核队列信封：offset 取第二页、total 与筛选同口径、limit/offset 钳制边界。 */
+    @Test
+    void reviewQueueEnvelopePaginatesAndClamps() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> first = createPendingTask(merchant, org, "信封分页-A");
+        createPendingTask(merchant, org, "信封分页-B");
+        String reviewer = signWithRole(UUID.randomUUID().toString(), "content_reviewer");
+
+        // 分页生效：limit=1 两页各一条不重叠，total 恒 2。
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org + "&limit=1")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].id").isEqualTo(first.get("id")) // updated_at ASC：先提交在前
+                .jsonPath("$.data.total").isEqualTo(2)
+                .jsonPath("$.data.limit").isEqualTo(1)
+                .jsonPath("$.data.offset").isEqualTo(0)
+                .jsonPath("$.meta.total").isEqualTo(2);
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org + "&limit=1&offset=1")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].id").value(v -> assertThat(v).isNotEqualTo(first.get("id")))
+                .jsonPath("$.data.total").isEqualTo(2)
+                .jsonPath("$.data.offset").isEqualTo(1);
+
+        // total 与筛选同口径：叠加 status 筛选后仍是 2，换 published 口径归 0。
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org
+                        + "&status=pending_review&limit=1")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(2);
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org + "&status=published")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(0)
+                .jsonPath("$.data.items.length()").isEqualTo(0);
+
+        // 钳制边界：limit=0→50、limit>200→200、offset<0→0。
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org + "&limit=0")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(50)
+                .jsonPath("$.meta.limit").isEqualTo(50);
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org + "&limit=201")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(200)
+                .jsonPath("$.meta.limit").isEqualTo(200);
+        client().get().uri("/api/admin/tasks/review?organizationId=" + org + "&offset=-5")
+                .header("X-Grassland-Identity", reviewer)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.offset").isEqualTo(0)
+                .jsonPath("$.meta.offset").isEqualTo(0);
+    }
+
+    /** 审核驳回辅助：待审核任务 → draft，返回驳回后的任务体（version 已 +1）。 */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> rejectTask(Map<String, Object> task, String note) {
+        Map<String, Object> response = client().post()
+                .uri("/api/admin/tasks/" + task.get("id") + "/review/reject")
+                .header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "platform_admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("expectedVersion", ((Number) task.get("version")).intValue(), "note", note))
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> rejected = (Map<String, Object>) response.get("data");
+        assertThat(rejected.get("status")).isEqualTo("draft");
+        return rejected;
     }
 
     @SuppressWarnings("unchecked")

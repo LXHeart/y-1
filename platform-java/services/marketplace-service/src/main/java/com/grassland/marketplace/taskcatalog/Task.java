@@ -20,6 +20,10 @@ import java.time.Instant;
  *   <li>{@code cancelledAt} 取消时刻。</li>
  * </ul>
  * 不可变要求快照见 {@code task_version} 表（publish 时落一行），不在此 record。
+ *
+ * <p>任务书 #53 审核视图字段：{@code lastReviewAction}/{@code lastReviewNote}/{@code lastReviewAt}
+ * 仅由携带 LATERAL join {@code task_review} 的查询（审核队列 rejected 视图、商家端组织级列表）填充，
+ * 其余查询路径恒 null。商家端展示时由 controller 按「最新一条记录为 rejected 且任务仍 draft」收紧。
  */
 public record Task(
         String id,
@@ -42,10 +46,25 @@ public record Task(
         String storeId,
         TaskRequirements requirements,
         Integer autoAcceptMinLevel,
-        Long freebieDepositCents
+        Long freebieDepositCents,
+        String lastReviewAction,
+        String lastReviewNote,
+        Instant lastReviewAt
 ) {
     public Task {
         requirements = TaskRequirements.normalize(requirements);
+    }
+
+    /** 便捷构造：审核视图字段恒 null（非 LATERAL join 查询路径）。 */
+    public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+                String status, String contentForm, String platform, Integer maxSlots, Long bountyCents,
+                Instant createdAt, Instant updatedAt, int version, Instant applicationDeadline,
+                Instant publishedAt, Instant cancelledAt, int minRecommenderLevel, String storeId,
+                TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents) {
+        this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+                bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+                minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, freebieDepositCents,
+                null, null, null);
     }
 
     /** 是否霸王餐押金任务（ADR-D12：deposit &gt; 0 即押金型；与 bounty XOR）。 */

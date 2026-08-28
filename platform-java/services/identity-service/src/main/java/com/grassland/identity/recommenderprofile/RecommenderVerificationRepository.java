@@ -22,6 +22,9 @@ public class RecommenderVerificationRepository {
             "id::text, account_id::text, materials::text, status, reviewer_account_id::text,"
                     + " review_note, review_deadline, created_at, updated_at";
 
+    /** 待审核口径（行查与 COUNT 共用，防分页漂移）。 */
+    private static final String PENDING_FILTER = " WHERE status = 'pending'";
+
     private final DatabaseClient db;
 
     public RecommenderVerificationRepository(DatabaseClient db) {
@@ -59,11 +62,19 @@ public class RecommenderVerificationRepository {
                 .map(RecommenderVerificationRepository::map).one();
     }
 
-    /** 待审核队列（admin 审核台用）。 */
-    public Flux<RecommenderVerificationRequest> findPending() {
+    /** 待审核队列（admin 审核台用）：分页，保留原 ORDER BY（先到先审）。 */
+    public Flux<RecommenderVerificationRequest> findPending(int limit, int offset) {
         return db.sql("SELECT " + SELECT_COLS
-                        + " FROM recommender_verification_request WHERE status = 'pending' ORDER BY created_at")
+                        + " FROM recommender_verification_request" + PENDING_FILTER
+                        + " ORDER BY created_at LIMIT :limit OFFSET :offset")
+                .bind("limit", limit).bind("offset", offset)
                 .map(RecommenderVerificationRepository::map).all();
+    }
+
+    /** 待审核队列总数（与 {@link #findPending(int, int)} 同 WHERE 口径）。 */
+    public Mono<Long> countPending() {
+        return db.sql("SELECT COUNT(*) AS c FROM recommender_verification_request" + PENDING_FILTER)
+                .map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     /** 更新审核结果（status 守卫：仅 pending 可审）。 */

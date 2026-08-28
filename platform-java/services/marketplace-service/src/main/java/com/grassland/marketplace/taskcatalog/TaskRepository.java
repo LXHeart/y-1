@@ -36,6 +36,18 @@ public class TaskRepository {
             + " version, application_deadline, published_at, cancelled_at, min_recommender_level,"
             + " requirements::text, auto_accept_min_level, freebie_deposit_cents";
 
+    /** {@link #SELECT_COLS} 的 {@code t.} 限定版本，供 LATERAL join task_review 的行查复用（与裸列同字段集）。 */
+    private static final String SELECT_COLS_REVIEW =
+            "t.id::text, t.owner_account_id::text, t.organization_id::text, t.store_id::text, t.title,"
+            + " t.description, t.status, t.content_form, t.platform, t.max_slots, t.bounty_cents,"
+            + " t.created_at, t.updated_at, t.version, t.application_deadline, t.published_at, t.cancelled_at,"
+            + " t.min_recommender_level, t.requirements::text, t.auto_accept_min_level, t.freebie_deposit_cents";
+
+    /** LATERAL 取每任务最新一条 task_review 记录（无记录时 LEFT 保行，字段归 null）。 */
+    private static final String LATEST_REVIEW_JOIN =
+            " LEFT JOIN LATERAL (SELECT action, review_note, created_at FROM task_review"
+            + " WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) tr ON true";
+
     /**
      * #26 D6/D7 满员谓词（feed 与自动接受扫描同口径共用）：counter occupied≥max 不展示/不扫描——
      * 与 apply 端「名额已满」同口径；closed 任务已被 status 谓词排除，counter 谓词兜住资金型 reserving
@@ -388,25 +400,103 @@ public class TaskRepository {
                 .map(TaskRepository::map).all();
     }
 
-    /** Operational review queue with status, organization, platform, SLA and offset filters. */
+    /** Operational review queue with status, organization, platform, SLA and offset filters.
+     *  任务书 #53：{@code status=rejected} 走专用视图（最新决定为驳回的 draft 任务），其余分支不变。 */
     public reactor.core.publisher.Flux<Task> findReviewQueue(
             String status, String organizationId, String platform, boolean overdue, int limit, int offset,
             String query) {
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        int safeOffset = Math.max(0, offset);
+        if ("rejected".equalsIgnoreCase(status)) {
+            return findRejectedQueue(organizationId, platform, overdue, query, safeLimit, safeOffset);
+        }
         StringBuilder sql = new StringBuilder("SELECT ").append(SELECT_COLS).append(" FROM task WHERE 1=1");
         if (status != null && !status.isBlank()) sql.append(" AND status = :status");
-        if (organizationId != null && !organizationId.isBlank()) sql.append(" AND organization_id = CAST(:org AS uuid)");
-        if (platform != null && !platform.isBlank()) sql.append(" AND platform = :platform");
-        if (overdue) sql.append(" AND status = 'pending_review' AND updated_at < now() - interval '24 hours'");
-        if (query != null) sql.append(" AND lower(coalesce(title,'') || ' ' || coalesce(description,''))"
-                + " LIKE lower(:query) ESCAPE E'\\\\'");
+        sql.append(reviewQueuePredicates("", organizationId, platform, overdue, query));
         sql.append(" ORDER BY updated_at ASC, id LIMIT :limit OFFSET :offset");
-        var spec = db.sql(sql.toString()).bind("limit", Math.max(1, Math.min(limit, 200)))
-                .bind("offset", Math.max(0, offset));
+        var spec = db.sql(sql.toString()).bind("limit", safeLimit).bind("offset", safeOffset);
         if (status != null && !status.isBlank()) spec = spec.bind("status", status);
+        spec = bindReviewQueueFilters(spec, organizationId, platform, query);
+        return spec.map(TaskRepository::map).all();
+    }
+
+    /**
+     * 任务书 #53 rejected 视图：<b>最新一条</b> task_review 记录 action='rejected' 的 draft 任务。
+     *
+     * <p>语义红线：这是「最新决定为驳回」而非「历史上被驳回过」——商家重新提交后最新记录变 submitted，
+     * 任务自然移出本视图；审核通过后任务不再是 draft，同样移出（历史驳回不泄漏）。
+     * 谓词与 {@link #countReviewQueue} 共用 {@link #reviewQueuePredicates} 防口径漂移。
+     */
+    private Flux<Task> findRejectedQueue(String organizationId, String platform, boolean overdue,
+                                         String query, int limit, int offset) {
+        String sql = "SELECT " + SELECT_COLS_REVIEW
+                + ", tr.action AS last_review_action, tr.review_note AS last_review_note,"
+                + " tr.created_at AS last_review_at"
+                + " FROM task t"
+                + " JOIN LATERAL (SELECT action, review_note, created_at FROM task_review"
+                + " WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) tr ON true"
+                + " WHERE t.status = 'draft' AND tr.action = 'rejected'"
+                + reviewQueuePredicates("t.", organizationId, platform, overdue, query)
+                + " ORDER BY tr.created_at DESC, t.id LIMIT :limit OFFSET :offset";
+        var spec = bindReviewQueueFilters(db.sql(sql), organizationId, platform, query)
+                .bind("limit", limit).bind("offset", offset);
+        return spec.map(TaskRepository::mapWithReview).all();
+    }
+
+    /**
+     * 与 {@link #findReviewQueue} 同 WHERE 口径的 COUNT（不含 ORDER BY / LIMIT / OFFSET）——信封 total 用。
+     */
+    public Mono<Integer> countReviewQueue(String status, String organizationId, String platform,
+                                          boolean overdue, String query) {
+        if ("rejected".equalsIgnoreCase(status)) {
+            String sql = "SELECT COUNT(*)::int AS c FROM task t"
+                    + " JOIN LATERAL (SELECT action, review_note, created_at FROM task_review"
+                    + " WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) tr ON true"
+                    + " WHERE t.status = 'draft' AND tr.action = 'rejected'"
+                    + reviewQueuePredicates("t.", organizationId, platform, overdue, query);
+            return bindReviewQueueFilters(db.sql(sql), organizationId, platform, query)
+                    .map(r -> r.get("c", Integer.class)).one();
+        }
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*)::int AS c FROM task WHERE 1=1");
+        if (status != null && !status.isBlank()) sql.append(" AND status = :status");
+        sql.append(reviewQueuePredicates("", organizationId, platform, overdue, query));
+        var spec = db.sql(sql.toString());
+        if (status != null && !status.isBlank()) spec = spec.bind("status", status);
+        spec = bindReviewQueueFilters(spec, organizationId, platform, query);
+        return spec.map(r -> r.get("c", Integer.class)).one();
+    }
+
+    /**
+     * 审核队列共用谓词片段（行查与 COUNT 同口径，防漂移）。prefix 为列限定符（"" 或 "t."）；
+     * org/platform/query 参数仅在对应子句出现时由 {@link #bindReviewQueueFilters} 绑定。
+     */
+    private static String reviewQueuePredicates(String prefix, String organizationId, String platform,
+                                                boolean overdue, String query) {
+        StringBuilder sql = new StringBuilder();
+        if (organizationId != null && !organizationId.isBlank()) {
+            sql.append(" AND ").append(prefix).append("organization_id = CAST(:org AS uuid)");
+        }
+        if (platform != null && !platform.isBlank()) {
+            sql.append(" AND ").append(prefix).append("platform = :platform");
+        }
+        if (overdue) {
+            sql.append(" AND ").append(prefix).append("status = 'pending_review'")
+                    .append(" AND ").append(prefix).append("updated_at < now() - interval '24 hours'");
+        }
+        if (query != null) {
+            sql.append(" AND lower(coalesce(").append(prefix).append("title,'') || ' ' || coalesce(")
+                    .append(prefix).append("description,'')) LIKE lower(:query) ESCAPE E'\\\\'");
+        }
+        return sql.toString();
+    }
+
+    /** 只绑定谓词中实际出现的命名参数（缺失标识符会抛 NoSuchElementException，见 {@link #findFeed} 注释）。 */
+    private static GenericExecuteSpec bindReviewQueueFilters(GenericExecuteSpec spec,
+            String organizationId, String platform, String query) {
         if (organizationId != null && !organizationId.isBlank()) spec = spec.bind("org", organizationId);
         if (platform != null && !platform.isBlank()) spec = spec.bind("platform", platform);
         if (query != null) spec = spec.bind("query", query);
-        return spec.map(TaskRepository::map).all();
+        return spec;
     }
 
     public Mono<Task> findById(String id) {
@@ -463,23 +553,33 @@ public class TaskRepository {
         return spec.map(TaskRepository::map).all();
     }
 
-    /** 列某 org 的组织级任务（不含 store-scoped 行）；status 为空则不限。 */
+    /**
+     * 列某 org 的组织级任务（不含 store-scoped 行）；status 为空则不限。
+     *
+     * <p>任务书 #53：LEFT JOIN LATERAL 带出每任务最新一条 task_review（无审核记录时字段归 null，行不丢）；
+     * controller 的 toBody 仅在「任务仍 draft 且最新记录为 rejected」时暴露商家端驳回字段，
+     * 避免已上架任务泄漏历史驳回。
+     */
     public Flux<Task> findByOrganization(String organizationId, String status, String query) {
-        String search = query == null ? "" : " AND lower(coalesce(title,'') || ' ' || coalesce(description,''))"
+        String search = query == null ? "" : " AND lower(coalesce(t.title,'') || ' ' || coalesce(t.description,''))"
                 + " LIKE lower(:query) ESCAPE E'\\\\'";
+        String reviewCols = ", tr.action AS last_review_action, tr.review_note AS last_review_note,"
+                + " tr.created_at AS last_review_at";
         if (status == null || status.isBlank()) {
-            var spec = db.sql("SELECT " + SELECT_COLS
-                    + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL"
-                    + search + " ORDER BY created_at DESC").bind("org", organizationId);
+            var spec = db.sql("SELECT " + SELECT_COLS_REVIEW + reviewCols
+                    + " FROM task t" + LATEST_REVIEW_JOIN
+                    + " WHERE t.organization_id = CAST(:org AS uuid) AND t.store_id IS NULL"
+                    + search + " ORDER BY t.created_at DESC").bind("org", organizationId);
             if (query != null) spec = spec.bind("query", query);
-            return spec.map(TaskRepository::map).all();
+            return spec.map(TaskRepository::mapWithReview).all();
         }
-        var spec = db.sql("SELECT " + SELECT_COLS
-                + " FROM task WHERE organization_id = CAST(:org AS uuid) AND store_id IS NULL"
-                + " AND status = :status" + search + " ORDER BY created_at DESC")
+        var spec = db.sql("SELECT " + SELECT_COLS_REVIEW + reviewCols
+                + " FROM task t" + LATEST_REVIEW_JOIN
+                + " WHERE t.organization_id = CAST(:org AS uuid) AND t.store_id IS NULL"
+                + " AND t.status = :status" + search + " ORDER BY t.created_at DESC")
                 .bind("org", organizationId).bind("status", status);
         if (query != null) spec = spec.bind("query", query);
-        return spec.map(TaskRepository::map).all();
+        return spec.map(TaskRepository::mapWithReview).all();
     }
 
     /** 列某一门店的任务；调用方必须先完成 Identity 门店授权。 */
@@ -577,6 +677,19 @@ public class TaskRepository {
     }
 
     private static Task map(Readable row) {
+        return mapBase(row, null, null, null);
+    }
+
+    /** 带最新审核记录列的行映射（仅用于 LATERAL join task_review 的查询）。 */
+    private static Task mapWithReview(Readable row) {
+        return mapBase(row,
+                row.get("last_review_action", String.class),
+                row.get("last_review_note", String.class),
+                toInstant(row.get("last_review_at", OffsetDateTime.class)));
+    }
+
+    private static Task mapBase(Readable row, String lastReviewAction, String lastReviewNote,
+                                Instant lastReviewAt) {
         return new Task(
                 row.get("id", String.class),
                 row.get("owner_account_id", String.class),
@@ -598,7 +711,10 @@ public class TaskRepository {
                 row.get("store_id", String.class),
                 requirements(row.get("requirements", String.class)),
                 row.get("auto_accept_min_level", Integer.class),
-                row.get("freebie_deposit_cents", Long.class)
+                row.get("freebie_deposit_cents", Long.class),
+                lastReviewAction,
+                lastReviewNote,
+                lastReviewAt
         );
     }
 

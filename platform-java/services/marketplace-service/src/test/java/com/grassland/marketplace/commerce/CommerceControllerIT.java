@@ -287,6 +287,138 @@ class CommerceControllerIT extends MarketplaceItSupport {
                 .exchange().expectStatus().isEqualTo(409);
     }
 
+    // ---------- 任务书 #53：管理端点信封分页 ----------
+
+    /** admin orders 信封：offset 取第二页、total 与筛选同口径、钳制边界（保留 created_at DESC 排序）。 */
+    @Test
+    void adminOrdersEnvelopePaginatesAndClamps() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> offer = createAndPublish(merchant, org, 1000, 5);
+        Map<String, Object> firstOrder = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"), null);
+        Map<String, Object> secondOrder = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"), null);
+        String admin = signWithRole(UUID.randomUUID().toString(), "customer_service");
+
+        // created_at DESC：后创建的订单在前；offset=1 恰好取到先创建的那条。
+        client().get().uri("/api/admin/commerce/orders?limit=1")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.items[0].id").isEqualTo(secondOrder.get("id"))
+                .jsonPath("$.data.limit").isEqualTo(1)
+                .jsonPath("$.data.offset").isEqualTo(0)
+                .jsonPath("$.data.total").isNumber();
+        client().get().uri("/api/admin/commerce/orders?limit=1&offset=1")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].id").isEqualTo(firstOrder.get("id"))
+                .jsonPath("$.data.offset").isEqualTo(1);
+
+        // total 与筛选同口径：两次调用一致，且叠加 status 筛选不越过无筛选总数。
+        Map<String, Object> unfiltered = dataOf(adminOrders(admin, null));
+        Map<String, Object> paid = dataOf(adminOrders(admin, "paid"));
+        assertThat((Integer) unfiltered.get("total"))
+                .isEqualTo((Integer) dataOf(adminOrders(admin, null)).get("total"))
+                .isGreaterThanOrEqualTo((Integer) paid.get("total"));
+        assertThat(((java.util.List<?>) paid.get("items")))
+                .allSatisfy(item -> assertThat(((Map<String, Object>) item).get("status")).isEqualTo("paid"));
+
+        // 钳制边界：limit=0→50、limit>200→200、offset<0→0。
+        client().get().uri("/api/admin/commerce/orders?limit=0")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(50);
+        client().get().uri("/api/admin/commerce/orders?limit=201")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(200);
+        client().get().uri("/api/admin/commerce/orders?offset=-5")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.offset").isEqualTo(0);
+    }
+
+    /**
+     * admin redemptions：单条 SQL 统一排序分页——redeeming/redeemed 混合状态按 created_at DESC
+     * 交错出现（不再按状态分组拼接），total 同口径，钳制边界同 orders。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void adminRedemptionsEnvelopeMixesStatusesOrderedByCreatedAt() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        Map<String, Object> offer = createAndPublish(merchant, org, 900, 5);
+        Map<String, Object> early = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"), null);
+        Map<String, Object> late = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"), null);
+        // 直写混合状态：先创建的置 redeemed，后创建的置 redeeming——旧两次查询拼接会按状态分组，
+        // 新单条 SQL 应按 created_at DESC 让 late（redeeming）排在 early（redeemed）之前。
+        db.sql("UPDATE consumer_order SET status = 'redeemed', redeemed_at = now()"
+                + " WHERE id = CAST(:id AS uuid)").bind("id", early.get("id")).then().block();
+        db.sql("UPDATE consumer_order SET status = 'redeeming'"
+                + " WHERE id = CAST(:id AS uuid)").bind("id", late.get("id")).then().block();
+        String admin = signWithRole(UUID.randomUUID().toString(), "finance");
+
+        Map<String, Object> response = client().get().uri("/api/admin/commerce/redemptions?limit=200")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = dataOf(response);
+        java.util.List<Map<String, Object>> items = (java.util.List<Map<String, Object>>) data.get("items");
+        assertThat(items).allSatisfy(item ->
+                assertThat(item.get("status")).isIn("redeeming", "redeemed"));
+        int lateIndex = indexOf(items, late.get("id"));
+        int earlyIndex = indexOf(items, early.get("id"));
+        assertThat(lateIndex).isGreaterThanOrEqualTo(0);
+        assertThat(earlyIndex).isGreaterThanOrEqualTo(0);
+        assertThat(lateIndex).isLessThan(earlyIndex);
+        int total = ((Number) data.get("total")).intValue();
+        assertThat(total).isGreaterThanOrEqualTo(2);
+
+        // 分页生效 + total 跨页同口径。
+        client().get().uri("/api/admin/commerce/redemptions?limit=1&offset=1")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(1)
+                .jsonPath("$.data.total").isEqualTo(total)
+                .jsonPath("$.data.offset").isEqualTo(1);
+
+        // 钳制边界。
+        client().get().uri("/api/admin/commerce/redemptions?limit=0")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(50);
+        client().get().uri("/api/admin/commerce/redemptions?limit=999&offset=-1")
+                .header("X-Grassland-Identity", admin)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(200)
+                .jsonPath("$.data.offset").isEqualTo(0);
+    }
+
+    private Map<String, Object> adminOrders(String adminHeader, String status) {
+        String uri = "/api/admin/commerce/orders?limit=200";
+        if (status != null) {
+            uri += "&status=" + status;
+        }
+        return client().get().uri(uri)
+                .header("X-Grassland-Identity", adminHeader)
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> dataOf(Map<String, Object> body) {
+        return (Map<String, Object>) body.get("data");
+    }
+
+    private static int indexOf(java.util.List<Map<String, Object>> items, Object id) {
+        for (int i = 0; i < items.size(); i++) {
+            if (id.equals(items.get(i).get("id"))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> createAndPublish(
             String merchant, String org, long priceCents, int stock) {

@@ -155,10 +155,50 @@ class KybVerificationControllerIT extends IdentityItSupport {
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
-                .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].status").isEqualTo("pending")
-                .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].requesterAccountId").exists()
-                .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].materials").exists()
-                .jsonPath("$.data[?(@.organizationId == '" + s.orgId() + "')].reviewDeadline").exists();
+                .jsonPath("$.data.items[?(@.organizationId == '" + s.orgId() + "')].status").isEqualTo("pending")
+                .jsonPath("$.data.items[?(@.organizationId == '" + s.orgId() + "')].requesterAccountId").exists()
+                .jsonPath("$.data.items[?(@.organizationId == '" + s.orgId() + "')].materials").exists()
+                .jsonPath("$.data.items[?(@.organizationId == '" + s.orgId() + "')].reviewDeadline").exists();
+    }
+
+    @Test
+    @DisplayName("分页信封：offset 取末行、total 与筛选同口径、limit/offset 钗制回显")
+    @SuppressWarnings("unchecked")
+    void adminListUsesPaginationEnvelope() {
+        Submitted s = submitMerchant("page");
+        var admin = seedAdmin("kyb-admin-page-" + UUID.randomUUID() + "@example.com");
+        String cookie = "y1.sid=" + admin.cookie();
+
+        Long dbTotal = db.sql("SELECT count(*) FROM kyb_verification_request "
+                        + "WHERE status IN ('pending', 'under_review')")
+                .map(r -> r.get(0, Long.class)).one().block();
+
+        // offset 取第二页（末行，ORDER BY created_at ASC → 刚提交的那单）
+        Map<String, Object> body = client()
+                .get().uri("/api/admin/kyb-requests?limit=1&offset=" + (dbTotal - 1))
+                .header("Cookie", cookie)
+                .exchange().expectStatus().isOk()
+                .expectBody(Map.class).returnResult().getResponseBody();
+        Map<String, Object> data = (Map<String, Object>) body.get("data");
+        List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("items");
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).get("organizationId")).isEqualTo(s.orgId());
+        // total 与筛选同口径（= DB 直查 pending/under_review 总数）
+        assertThat(((Number) data.get("total")).longValue()).isEqualTo(dbTotal);
+        assertThat(((Number) data.get("limit")).intValue()).isEqualTo(1);
+        assertThat(((Number) data.get("offset")).intValue()).isEqualTo(dbTotal.intValue() - 1);
+
+        // 钗制边界：limit=0→50、offset<0→0、limit>200→200
+        client().get().uri("/api/admin/kyb-requests?limit=0&offset=-5")
+                .header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(50)
+                .jsonPath("$.data.offset").isEqualTo(0)
+                .jsonPath("$.data.total").isEqualTo(dbTotal.intValue());
+        client().get().uri("/api/admin/kyb-requests?limit=999")
+                .header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.limit").isEqualTo(200);
     }
 
     @Test

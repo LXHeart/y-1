@@ -29,7 +29,12 @@ import reactor.core.publisher.Mono;
  * 平台 admin 用户管理 + 积分调整（迁自 legacy {@code server/src/routes/admin.ts}）。
  *
  * <p>两个端点都要求 {@code role==admin}（{@link CurrentAccountResolver#requireAdmin}），与 KYB/权限审核同口径。
- * 响应统一 {@code {success:true, data:{...}}} 信封。前端 {@code AdminView.vue} 已同步适配（不再读裸 {@code {users}}）。
+ * 响应统一 {@code {success:true, data:{...}}} 信封；列表端点为统一分页信封
+ * {@code data:{items, total, limit, offset}}（任务书 #2）。
+ *
+ * <p><b>先分页后 enrich</b>：SQL 层先 LIMIT/OFFSET 取当页 ≤200 行，再对当页做
+ * {@link #collectBackendRoles}（逐账号查询）与 {@link FinanceCreditsAdminClient#fetchBalances}；
+ * 顺序反了等于全表逐账号放大查询。
  *
  * <p>credits 余额经 {@link FinanceCreditsAdminClient} 批量取（一次 HTTP，避免 N+1）；
  * adjust 的 award/refund 也经它代理 finance，与 legacy {@code credit.service.ts} 路径一致。
@@ -60,26 +65,36 @@ public class AdminUserController {
 
     @GetMapping("/api/admin/users")
     public Mono<ResponseEntity<Map<String, Object>>> listUsers(
-            @RequestParam(required = false) String q, ServerHttpRequest request) {
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset,
+            ServerHttpRequest request) {
         String query = searchQuery(q);
+        int pageSize = PageEnvelope.limit(limit);
+        int pageOffset = PageEnvelope.offset(offset);
         return accounts.requireAdmin(request)
-                .flatMap(admin -> (query == null ? adminUsers.findAll() : adminUsers.findAll(query))
-                        .flatMap(rows -> {
+                .flatMap(admin -> Mono.zip(adminUsers.findAll(query, pageSize, pageOffset),
+                                adminUsers.countAll(query))
+                        .flatMap(tuple -> {
+                            List<AdminUserRow> rows = tuple.getT1();
                             List<String> accountIds = rows.stream().map(AdminUserRow::id).toList();
                             return financeCredits.fetchBalances(accountIds)
                                     .flatMap(balances -> collectBackendRoles(accountIds)
-                                            .map(roleMap -> rows.stream()
-                                                    .map(row -> toUserItem(row,
-                                                            balances.get(row.id()),
-                                                            roleMap.getOrDefault(row.id(), List.of())))
-                                                    .toList()));
-                        })
-                        .map(users -> ResponseEntity.ok(Map.of("success", true,
-                                "data", Map.of("users", users)))));
+                                            .map(roleMap -> {
+                                                List<Map<String, Object>> items = rows.stream()
+                                                        .map(row -> toUserItem(row,
+                                                                balances.get(row.id()),
+                                                                roleMap.getOrDefault(row.id(), List.of())))
+                                                        .toList();
+                                                return ResponseEntity.ok(Map.of("success", true,
+                                                        "data", PageEnvelope.data(items, tuple.getT2(),
+                                                                pageSize, pageOffset)));
+                                            }));
+                        }));
     }
 
     Mono<ResponseEntity<Map<String, Object>>> listUsers(ServerHttpRequest request) {
-        return listUsers(null, request);
+        return listUsers(null, null, null, request);
     }
 
     @PutMapping(value = "/api/admin/users/{id}/roles", consumes = MediaType.APPLICATION_JSON_VALUE)

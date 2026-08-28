@@ -1,6 +1,7 @@
 package com.grassland.identity.kyb;
 
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.admin.PageEnvelope;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.organization.CurrentAccountResolver;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -64,9 +66,17 @@ public class KybVerificationController {
 	}
 
 	@GetMapping
-	public Mono<ResponseEntity<Map<String, Object>>> listPending(ServerHttpRequest request) {
-		return accounts.requireAdmin(request).flatMap(admin -> requests.findPending().collectList()).map(
-				list -> ResponseEntity.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList())));
+	public Mono<ResponseEntity<Map<String, Object>>> listPending(
+			@RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
+			ServerHttpRequest request) {
+		int pageSize = PageEnvelope.limit(limit);
+		int pageOffset = PageEnvelope.offset(offset);
+		return accounts.requireAdmin(request)
+				.flatMap(admin -> Mono.zip(requests.findPending(pageSize, pageOffset).collectList(),
+						requests.countPending())
+						.map(tuple -> ResponseEntity.ok(Map.of("success", true,
+								"data", PageEnvelope.data(tuple.getT1().stream().map(this::toBody).toList(),
+										tuple.getT2(), pageSize, pageOffset)))));
 	}
 
 	@GetMapping("/{id}")

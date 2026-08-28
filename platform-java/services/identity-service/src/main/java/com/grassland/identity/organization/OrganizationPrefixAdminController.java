@@ -1,5 +1,6 @@
 package com.grassland.identity.organization;
 
+import com.grassland.identity.admin.PageEnvelope;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
@@ -46,9 +47,6 @@ public class OrganizationPrefixAdminController {
     /** 前缀规则（与 #49 建号侧登录名各段同规则）。 */
     private static final String PREFIX_PATTERN = "^[a-z0-9]{3,24}$";
 
-    /** 搜索结果硬上限：运营用搜索定位单个主体，不是浏览全表。 */
-    private static final int SEARCH_LIMIT = 50;
-
     private final CurrentAccountResolver accounts;
     private final OrganizationRepository organizations;
     private final OrganizationPrefixRewriteRepository rewrites;
@@ -67,11 +65,17 @@ public class OrganizationPrefixAdminController {
 
     @GetMapping("/api/admin/organizations")
     public Mono<ResponseEntity<Map<String, Object>>> search(@RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
             ServerHttpRequest request) {
+        int pageSize = PageEnvelope.limit(limit);
+        int pageOffset = PageEnvelope.offset(offset);
+        String query = searchQuery(q);
         return accounts.requireAdmin(request)
-                .flatMap(admin -> rewrites.searchForAdmin(searchQuery(q), SEARCH_LIMIT)
-                        .map(rows -> ResponseEntity.ok(Map.of("success", true,
-                                "data", rows.stream().map(this::toBody).toList()))));
+                .flatMap(admin -> Mono.zip(rewrites.searchForAdmin(query, pageSize, pageOffset),
+                        rewrites.countSearchForAdmin(query))
+                        .map(tuple -> ResponseEntity.ok(Map.of("success", true, "data", PageEnvelope
+                                .data(tuple.getT1().stream().map(this::toBody).toList(), tuple.getT2(),
+                                        pageSize, pageOffset)))));
     }
 
     /**

@@ -194,7 +194,8 @@ class OrganizationPrefixAdminIT extends IdentityItSupport {
     private List<Map<String, Object>> rowsOf(WebTestClient.ResponseSpec spec) {
         Map<String, Object> body = spec.expectStatus().isOk()
                 .expectBody(Map.class).returnResult().getResponseBody();
-        return (List<Map<String, Object>>) body.get("data");
+        // 任务书 #53：列表信封 data:{items,total,limit,offset}
+        return (List<Map<String, Object>>) ((Map<String, Object>) body.get("data")).get("items");
     }
 
     @SuppressWarnings("unchecked")

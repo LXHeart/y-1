@@ -395,8 +395,21 @@ public class CommerceService {
 				.exportMerchantOrders(scope.organizationId(), scope.storeId(), status, from, to, 10_000));
 	}
 
-	public Flux<Order> listAdminOrders(String status, int limit) {
-		return repository.listAdminOrders(status, limit);
+	public Flux<Order> listAdminOrders(String status, int limit, int offset) {
+		return repository.listAdminOrders(status, limit, offset);
+	}
+
+	/** 任务书 #53：与行查同 WHERE 口径的 total。 */
+	public Mono<Integer> countAdminOrders(String status) {
+		return repository.countAdminOrders(status);
+	}
+
+	public Flux<Order> listAdminRedemptions(int limit, int offset) {
+		return repository.listAdminRedemptions(limit, offset);
+	}
+
+	public Mono<Integer> countAdminRedemptions() {
+		return repository.countAdminRedemptions();
 	}
 
 	public Mono<Review> review(Caller caller, String orderId, ReviewCommand command) {

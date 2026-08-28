@@ -97,10 +97,10 @@ class OrganizationRenameIT extends IdentityItSupport {
 
         // 平台 admin 审核通过 → 名称生效
         Seeded admin = seedAdmin("rename-admin-" + UUID.randomUUID() + "@example.com");
-        List<Map<String, Object>> queue = (List<Map<String, Object>>) ((Map<String, Object>) client.get()
+        List<Map<String, Object>> queue = (List<Map<String, Object>>) ((Map<String, Object>) ((Map<String, Object>) client.get()
                 .uri("/api/admin/org-rename-requests").header("Cookie", "y1.sid=" + admin.cookie())
                 .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody())
-                .get("data");
+                .get("data")).get("items");
         String requestId = ((String) ((Map<String, Object>) queue.stream()
                 .filter(r -> orgId.equals(r.get("organizationId"))).findFirst().orElseThrow()).get("id"));
 
@@ -143,10 +143,10 @@ class OrganizationRenameIT extends IdentityItSupport {
                 .exchange().expectStatus().isCreated();
 
         Seeded admin = seedAdmin("reject-admin-" + UUID.randomUUID() + "@example.com");
-        List<Map<String, Object>> queue = (List<Map<String, Object>>) ((Map<String, Object>) client.get()
+        List<Map<String, Object>> queue = (List<Map<String, Object>>) ((Map<String, Object>) ((Map<String, Object>) client.get()
                 .uri("/api/admin/org-rename-requests").header("Cookie", "y1.sid=" + admin.cookie())
                 .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody())
-                .get("data");
+                .get("data")).get("items");
         String requestId = ((String) ((Map<String, Object>) queue.stream()
                 .filter(r -> orgId.equals(r.get("organizationId"))).findFirst().orElseThrow()).get("id"));
 

@@ -69,19 +69,31 @@ public class StoreMediaModerationRepository {
 				.bind("id", mediaReferenceId.toString()).map(row -> Boolean.TRUE).one().defaultIfEmpty(false);
 	}
 
-	/** 人工复核队列：按状态列（moderated_at 倒序——最新的先处理），联媒体上下文。 */
-	public Flux<QueueRow> listQueue(String status, int limit) {
+	/** 队列口径（行查与 COUNT 共用，防分页漂移）：联媒体上下文 + 按状态筛。 */
+	private static final String QUEUE_FROM_WHERE = """
+			FROM store_media_moderation s
+			JOIN media_reference m ON m.id = s.media_reference_id
+			WHERE s.status = :status
+			""";
+	
+	/** 人工复核队列：按状态列队（moderated_at 倒序——最新的先处理），联媒体上下文：分页。 */
+	public Flux<QueueRow> listQueue(String status, int limit, int offset) {
 		return db.sql("""
 				SELECT s.media_reference_id::text, s.status, s.findings::text, s.model, s.run_id,
 				       s.moderated_at, s.reviewed_by, s.reviewed_at, s.review_note,
 				       m.mime_type, m.size_bytes, m.organization_id, m.domain_id,
 				       m.object_key, m.created_at
-				FROM store_media_moderation s
-				JOIN media_reference m ON m.id = s.media_reference_id
-				WHERE s.status = :status
+				""" + QUEUE_FROM_WHERE + """
 				ORDER BY s.moderated_at DESC
-				LIMIT :limit
-				""").bind("status", status).bind("limit", limit).map(StoreMediaModerationRepository::mapQueueRow).all();
+				LIMIT :limit OFFSET :offset
+				""").bind("status", status).bind("limit", limit).bind("offset", offset)
+				.map(StoreMediaModerationRepository::mapQueueRow).all();
+	}
+	
+	/** 队列总数（与 {@link #listQueue(String, int, int)} 同 WHERE 口径）。 */
+	public Mono<Long> countQueue(String status) {
+		return db.sql("SELECT COUNT(*)::bigint AS c " + QUEUE_FROM_WHERE).bind("status", status)
+				.map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
 	}
 
 	/**

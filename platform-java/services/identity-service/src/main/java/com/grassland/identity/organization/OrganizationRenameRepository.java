@@ -41,6 +41,9 @@ public class OrganizationRenameRepository {
             reviewed_by_account_id::text, review_note
             """;
 
+    /** 平台审核队列口径（行查与 COUNT 共用，防分页漂移）。 */
+    private static final String PENDING_FILTER = " WHERE status = 'pending'";
+
     public Mono<RenameRequest> insert(String organizationId, String requestedBy, String currentName, String requestedName) {
         return db.sql("INSERT INTO organization_rename_request"
                         + "(id, organization_id, requested_by_account_id, current_name, requested_name, status)"
@@ -77,11 +80,18 @@ public class OrganizationRenameRepository {
                 .map(OrganizationRenameRepository::map).all();
     }
 
-    /** 平台审核队列：全部待审（按申请时间正序，先到先审）。 */
-    public Flux<RenameRequest> findPendingAll() {
+    /** 平台审核队列：全部待审（按申请时间正序，先到先审）：分页。 */
+    public Flux<RenameRequest> findPendingAll(int limit, int offset) {
         return db.sql("SELECT " + COLS + " FROM organization_rename_request"
-                        + " WHERE status = 'pending' ORDER BY requested_at")
+                        + PENDING_FILTER + " ORDER BY requested_at LIMIT :limit OFFSET :offset")
+                .bind("limit", limit).bind("offset", offset)
                 .map(OrganizationRenameRepository::map).all();
+    }
+
+    /** 待审队列总数（与 {@link #findPendingAll(int, int)} 同 WHERE 口径）。 */
+    public Mono<Long> countPendingAll() {
+        return db.sql("SELECT COUNT(*) AS c FROM organization_rename_request" + PENDING_FILTER)
+                .map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     public Mono<RenameRequest> findById(String id) {

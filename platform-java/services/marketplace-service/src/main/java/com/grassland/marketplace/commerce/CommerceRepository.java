@@ -369,15 +369,44 @@ public class CommerceRepository {
 		return spec.map(CommerceRepository::mapOrderWithSlot).all();
 	}
 
-	public Flux<Order> listAdminOrders(String status, int limit) {
+	public Flux<Order> listAdminOrders(String status, int limit, int offset) {
 		String predicate = status == null || status.isBlank() ? "" : " WHERE o.status = :status";
 		GenericExecuteSpec spec = db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o"
-				+ ORDER_SLOT_JOIN + predicate + " ORDER BY o.created_at DESC LIMIT :limit")
-				.bind("limit", bounded(limit));
+				+ ORDER_SLOT_JOIN + predicate + " ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset")
+				.bind("limit", bounded(limit)).bind("offset", Math.max(0, offset));
 		if (!predicate.isEmpty())
 			spec = spec.bind("status", status);
 		return spec.map(CommerceRepository::mapOrderWithSlot).all();
 	}
+
+	/** 任务书 #53：与 {@link #listAdminOrders} 同 WHERE 口径的 COUNT（无 ORDER BY / LIMIT / OFFSET）——信封 total。 */
+	public Mono<Integer> countAdminOrders(String status) {
+		String predicate = status == null || status.isBlank() ? "" : " WHERE o.status = :status";
+		GenericExecuteSpec spec = db.sql("SELECT COUNT(*)::int AS c FROM consumer_order o" + predicate);
+		if (!predicate.isEmpty())
+			spec = spec.bind("status", status);
+		return spec.map(row -> row.get("c", Integer.class)).one();
+	}
+
+	/**
+	 * 任务书 #53：核销视图单条查询（替代原两次查询内存拼接）：{@code status IN ('redeeming','redeemed')}
+	 * 统一 {@code created_at DESC} 排序分页，保证跨页顺序稳定。
+	 */
+	public Flux<Order> listAdminRedemptions(int limit, int offset) {
+		return db.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o"
+				+ ORDER_SLOT_JOIN + REDEMPTION_STATUSES_PREDICATE
+				+ " ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset")
+				.bind("limit", bounded(limit)).bind("offset", Math.max(0, offset))
+				.map(CommerceRepository::mapOrderWithSlot).all();
+	}
+
+	/** {@link #listAdminRedemptions} 同口径 COUNT——信封 total。 */
+	public Mono<Integer> countAdminRedemptions() {
+		return db.sql("SELECT COUNT(*)::int AS c FROM consumer_order o" + REDEMPTION_STATUSES_PREDICATE)
+				.map(row -> row.get("c", Integer.class)).one();
+	}
+
+	private static final String REDEMPTION_STATUSES_PREDICATE = " WHERE o.status IN ('redeeming', 'redeemed')";
 
 	public Mono<Order> markPaid(String id, String providerRef) {
 		return db

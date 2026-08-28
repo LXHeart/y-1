@@ -81,11 +81,17 @@ class RecommenderVerificationControllerTest {
 
 	@Test
 	void listPendingUsesReviewerRoleGate() {
-		when(requests.findPending()).thenReturn(reactor.core.publisher.Flux.just(sample("pending")));
-		var response = controller.listPending(request).block();
+		when(requests.findPending(50, 0)).thenReturn(reactor.core.publisher.Flux.just(sample("pending")));
+		when(requests.countPending()).thenReturn(Mono.just(1L));
+		var response = controller.listPending(null, null, request).block();
 		assertThat(response).isNotNull();
 		assertThat(response.getStatusCode().value()).isEqualTo(200);
 		assertThat(response.getBody()).containsEntry("success", true);
+		@SuppressWarnings("unchecked")
+		var data = (java.util.Map<String, Object>) response.getBody().get("data");
+		assertThat(data.get("total")).isEqualTo(1L);
+		assertThat(data.get("limit")).isEqualTo(50);
+		assertThat(data.get("offset")).isEqualTo(0);
 	}
 
 	private RecommenderVerificationRequest sample(String status) {

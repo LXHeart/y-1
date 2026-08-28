@@ -209,25 +209,51 @@ public class CommerceController {
 				.map(order -> ResponseEntity.ok(success(orderBody(order))));
 	}
 
+	/**
+	 * 任务书 #53：信封化 {@code {items, total, limit, offset}}；limit 钳 1–200（≤0 归默认），
+	 * offset 负数归 0；保留既有 status 筛选与 {@code created_at DESC} 排序。
+	 */
 	@GetMapping("/api/admin/commerce/orders")
 	public Mono<ResponseEntity<Map<String, Object>>> adminOrders(@RequestParam(required = false) String status,
-			@RequestParam(defaultValue = "200") int limit, ServerHttpRequest request) {
+			@RequestParam(defaultValue = "50") int limit,
+			@RequestParam(defaultValue = "0") int offset, ServerHttpRequest request) {
+		int safeLimit = clampLimit(limit);
+		int safeOffset = Math.max(0, offset);
 		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
-				.then(commerce.listAdminOrders(status, limit).map(this::orderBody).collectList())
-				.map(values -> ResponseEntity.ok(success(values)));
+				.then(Mono.zip(commerce.listAdminOrders(status, safeLimit, safeOffset)
+						.map(this::orderBody).collectList(), commerce.countAdminOrders(status)))
+				.map(tuple -> ResponseEntity.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
 	}
 
+	/**
+	 * 任务书 #53：单条 {@code status IN ('redeeming','redeemed')} SQL 统一排序分页（替代原两次查询内存拼接），
+	 * 信封化 {@code {items, total, limit, offset}}。
+	 */
 	@GetMapping("/api/admin/commerce/redemptions")
-	public Mono<ResponseEntity<Map<String, Object>>> adminRedemptions(@RequestParam(defaultValue = "200") int limit,
-			ServerHttpRequest request) {
+	public Mono<ResponseEntity<Map<String, Object>>> adminRedemptions(
+			@RequestParam(defaultValue = "50") int limit,
+			@RequestParam(defaultValue = "0") int offset, ServerHttpRequest request) {
+		int safeLimit = clampLimit(limit);
+		int safeOffset = Math.max(0, offset);
 		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
-				.then(Mono.zip(commerce.listAdminOrders("redeeming", limit).map(this::orderBody).collectList(),
-						commerce.listAdminOrders("redeemed", limit).map(this::orderBody).collectList()))
-				.map(tuple -> {
-					List<Map<String, Object>> values = new java.util.ArrayList<>(tuple.getT1());
-					values.addAll(tuple.getT2());
-					return ResponseEntity.ok(success(values));
-				});
+				.then(Mono.zip(commerce.listAdminRedemptions(safeLimit, safeOffset)
+						.map(this::orderBody).collectList(), commerce.countAdminRedemptions()))
+				.map(tuple -> ResponseEntity.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
+	}
+
+	/** 统一分页信封（任务书 #53）；LinkedHashMap 保序。 */
+	private static Map<String, Object> envelope(List<Map<String, Object>> items, int total, int limit, int offset) {
+		Map<String, Object> data = new LinkedHashMap<>();
+		data.put("items", items);
+		data.put("total", total);
+		data.put("limit", limit);
+		data.put("offset", offset);
+		return data;
+	}
+
+	/** 任务书 #53 钳制：limit ≤0 归默认 50，上限 200。 */
+	private static int clampLimit(int limit) {
+		return limit <= 0 ? 50 : Math.min(limit, 200);
 	}
 
 	private Map<String, Object> offerBody(OfferDetail detail) {

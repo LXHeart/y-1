@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -23,22 +24,25 @@ public class AdminUserRepository {
         this.db = db;
     }
 
-    /** 全部用户按注册时间倒序（对齐 legacy ORDER BY created_at DESC）。 */
-    public Mono<List<AdminUserRow>> findAll() {
-        return findAll(null);
-    }
-
-    public Mono<List<AdminUserRow>> findAll(String query) {
-        String search = query == null ? "" : """
+    /** 搜索谓词：分页行查询与 COUNT 共用同一片段，保证 total 与列表同口径（防漂移）。 */
+    private static String searchPredicate(String query) {
+        return query == null ? "" : """
                          WHERE lower(coalesce(email,'') || ' ' || coalesce(display_name,'') || ' ' || id::text)
                                LIKE lower(:query) ESCAPE E'\\\\'
                 """;
-        DatabaseClient.GenericExecuteSpec spec = db.sql("""
+    }
+
+    /** 用户分页（注册时间倒序，对齐 legacy ORDER BY created_at DESC，不换序）。 */
+    public Mono<List<AdminUserRow>> findAll(String query, int limit, int offset) {
+        GenericExecuteSpec spec = db.sql("""
                         SELECT id::text, email, display_name, role, status, created_at
                           FROM app_users
                         %s
                          ORDER BY created_at DESC
-                        """.formatted(search));
+                         LIMIT :limit OFFSET :offset
+                        """.formatted(searchPredicate(query)))
+                .bind("limit", limit).bind("offset", offset);
+        // 动态 SQL 只 bind 实际出现在 SQL 里的命名参数（缺失标识符会抛 NoSuchElementException）。
         if (query != null) spec = spec.bind("query", query);
         return spec
                 .map((row, meta) -> new AdminUserRow(
@@ -50,6 +54,17 @@ public class AdminUserRepository {
                         toInstant(row.get("created_at", OffsetDateTime.class))))
                 .all()
                 .collectList();
+    }
+
+    /** 与 {@link #findAll(String, int, int)} 同 WHERE 口径的总数。 */
+    public Mono<Long> countAll(String query) {
+        GenericExecuteSpec spec = db.sql("""
+                        SELECT COUNT(*) AS c
+                          FROM app_users
+                        %s
+                        """.formatted(searchPredicate(query)));
+        if (query != null) spec = spec.bind("query", query);
+        return spec.map((row, meta) -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     private static Instant toInstant(OffsetDateTime value) {

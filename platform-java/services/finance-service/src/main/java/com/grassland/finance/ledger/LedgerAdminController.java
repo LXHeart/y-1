@@ -1,6 +1,7 @@
 package com.grassland.finance.ledger;
 
 import com.grassland.identity.assertion.BackendRole;
+import com.grassland.finance.admin.PageEnvelope;
 import com.grassland.finance.security.FinanceCallerResolver;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -46,13 +47,18 @@ public class LedgerAdminController {
             @RequestParam(required = false) String organizationId,
             @RequestParam(required = false) Instant from,
             @RequestParam(required = false) Instant to,
-            @RequestParam(required = false, defaultValue = "50") int limit,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset,
             ServerHttpRequest request) {
+        int pageSize = PageEnvelope.limit(limit);
+        int pageOffset = PageEnvelope.offset(offset);
         return callers.requireRole(request, BackendRole.FINANCE)
-                .thenMany(ledger.listJournals(organizationId, from, to, limit)
-                        .map(LedgerAdminController::toJournalBody))
-                .collectList()
-                .map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+                .then(Mono.zip(
+                        ledger.listJournals(organizationId, from, to, pageSize, pageOffset)
+                                .map(LedgerAdminController::toJournalBody).collectList(),
+                        ledger.countJournals(organizationId, from, to))
+                        .map(tuple -> ResponseEntity.ok(Map.of("success", true, "data", PageEnvelope
+                                .data(tuple.getT1(), tuple.getT2(), pageSize, pageOffset)))));
     }
 
     @GetMapping("/api/admin/finance/journals/{id}/postings")

@@ -234,18 +234,26 @@ public class ContentAssetRepository {
                 .map(ContentAssetRepository::map).one();
     }
 
-    /** 列待审核公共素材（内容审核员队列，GL-P2-ADMIN-003 同款 pending_review）。按提交时间正序。 */
-    public Flux<ContentAsset> listPendingReview(int limit) {
-        return listPendingReview(limit, null);
-    }
+    /** 待审核队列基础口径（行查与 COUNT 共用，防分页漂移）。 */
+    private static final String PENDING_REVIEW_FILTER =
+            " WHERE library_type='public' AND status='pending_review' AND deleted_at IS NULL";
 
-    public Flux<ContentAsset> listPendingReview(int limit, String query) {
+    /** 列待审核公共素材（内容审核员队列，GL-P2-ADMIN-003 同款 pending_review）。按提交时间正序：分页。 */
+    public Flux<ContentAsset> listPendingReview(int limit, int offset, String query) {
         var spec = db.sql("SELECT " + SELECT_COLS + " FROM content_asset"
-                + " WHERE library_type='public' AND status='pending_review' AND deleted_at IS NULL"
-                + searchPredicate(query) + " ORDER BY created_at LIMIT :limit")
-                .bind("limit", Math.max(1, Math.min(limit, 200)));
+                + PENDING_REVIEW_FILTER + searchPredicate(query)
+                + " ORDER BY created_at LIMIT :limit OFFSET :offset")
+                .bind("limit", limit).bind("offset", offset);
         if (query != null) spec = spec.bind("query", query);
         return spec.map(ContentAssetRepository::map).all();
+    }
+
+    /** 待审核队列总数（与 {@link #listPendingReview(int, int, String)} 同 WHERE 口径）。 */
+    public Mono<Long> countPendingReview(String query) {
+        var spec = db.sql("SELECT COUNT(*)::bigint AS c FROM content_asset"
+                + PENDING_REVIEW_FILTER + searchPredicate(query));
+        if (query != null) spec = spec.bind("query", query);
+        return spec.map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     private static String searchPredicate(String query) {

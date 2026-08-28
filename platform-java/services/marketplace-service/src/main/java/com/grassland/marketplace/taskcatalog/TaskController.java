@@ -429,7 +429,8 @@ public class TaskController {
 
     // ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）----------
 
-    /** 待审核任务队列（内容审核员视角）。门闩 requireRole(CONTENT_REVIEWER)，PLATFORM_ADMIN 超集。 */
+    /** 待审核任务队列（内容审核员视角）。门闩 requireRole(CONTENT_REVIEWER)，PLATFORM_ADMIN 超集。
+     *  任务书 #53：data 信封化 {@code {items, total, limit, offset}}；meta 保留 queue 四统计并补 total。 */
     @GetMapping("/api/admin/tasks/review")
     public Mono<ResponseEntity<Map<String, Object>>> listPendingReview(
             @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "50") int limit,
@@ -441,16 +442,42 @@ public class TaskController {
             @org.springframework.web.bind.annotation.RequestParam(required = false) String q,
             ServerHttpRequest request) {
         String query = searchQuery(q);
+        String statusFilter = blankToNull(status);
+        int safeLimit = clampLimit(limit);
+        int safeOffset = Math.max(0, offset);
         return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
-                .thenMany(tasks.findReviewQueue(blankToNull(status), blankToNull(organizationId),
-                                blankToNull(platform), overdue, limit, offset, query).map(this::toBody))
-                .collectList()
-                .flatMap(items -> taskReviews.queueStats()
-                        .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", items,
-                                "meta", Map.of("offset", Math.max(0, offset), "limit", Math.max(1, Math.min(limit, 200)),
-                                        "queue", Map.of("pending", stats.pending(), "overdue", stats.overdue(),
-                                                "approvedLast24Hours", stats.approvedLast24Hours(),
-                                                "rejectedLast24Hours", stats.rejectedLast24Hours()))))));
+                .then(Mono.zip(
+                        tasks.findReviewQueue(statusFilter, blankToNull(organizationId),
+                                blankToNull(platform), overdue, safeLimit, safeOffset, query)
+                                .map(this::toBody).collectList(),
+                        tasks.countReviewQueue(statusFilter, blankToNull(organizationId),
+                                blankToNull(platform), overdue, query),
+                        taskReviews.queueStats()))
+                .map(tuple -> {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("items", tuple.getT1());
+                    data.put("total", tuple.getT2());
+                    data.put("limit", safeLimit);
+                    data.put("offset", safeOffset);
+                    Map<String, Object> meta = new LinkedHashMap<>();
+                    meta.put("offset", safeOffset);
+                    meta.put("limit", safeLimit);
+                    meta.put("total", tuple.getT2());
+                    var stats = tuple.getT3();
+                    meta.put("queue", Map.of("pending", stats.pending(), "overdue", stats.overdue(),
+                            "approvedLast24Hours", stats.approvedLast24Hours(),
+                            "rejectedLast24Hours", stats.rejectedLast24Hours()));
+                    Map<String, Object> body = new LinkedHashMap<>();
+                    body.put("success", true);
+                    body.put("data", data);
+                    body.put("meta", meta);
+                    return ResponseEntity.ok(body);
+                });
+    }
+
+    /** 任务书 #53 信封钳制：limit ≤0 归默认 50，上限 200；与「默认 50 钳 1–200」一致。 */
+    private static int clampLimit(int limit) {
+        return limit <= 0 ? 50 : Math.min(limit, 200);
     }
 
     /** Append-only review history for audit drill-down. */
@@ -867,6 +894,16 @@ public class TaskController {
         m.put("version", task.version());
         m.put("applicationDeadline", task.applicationDeadline() == null ? null : task.applicationDeadline().toString());
         m.put("autoAcceptMinLevel", task.autoAcceptMinLevel());
+        // 任务书 #53：审核视图字段仅 rejected 视图（最新决定为驳回的 draft）有值，其余路径恒 null。
+        m.put("lastReviewAction", task.lastReviewAction());
+        m.put("lastReviewNote", task.lastReviewNote());
+        m.put("lastReviewedAt", task.lastReviewAt() == null ? null : task.lastReviewAt().toString());
+        // 商家端驳回回显：仅当任务仍 draft 且最新一条审核记录为 rejected 时非 null，
+        // 避免已上架任务泄漏历史驳回（重新提交/通过后不再显示）。
+        boolean showRejected = TaskStatus.DRAFT.dbValue().equals(task.status())
+                && "rejected".equals(task.lastReviewAction());
+        m.put("lastRejectedNote", showRejected ? task.lastReviewNote() : null);
+        m.put("lastRejectedAt", showRejected && task.lastReviewAt() != null ? task.lastReviewAt().toString() : null);
         m.put("publishedAt", task.publishedAt() == null ? null : task.publishedAt().toString());
         m.put("cancelledAt", task.cancelledAt() == null ? null : task.cancelledAt().toString());
         m.put("createdAt", task.createdAt() == null ? null : task.createdAt().toString());

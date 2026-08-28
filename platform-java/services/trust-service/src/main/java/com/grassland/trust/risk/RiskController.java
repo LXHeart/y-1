@@ -2,6 +2,7 @@ package com.grassland.trust.risk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.assertion.BackendRole;
+import com.grassland.trust.admin.PageEnvelope;
 import com.grassland.trust.risk.RiskModels.CaseActionRequest;
 import com.grassland.trust.risk.RiskModels.RegisterSignalRequest;
 import com.grassland.trust.risk.RiskModels.RiskCase;
@@ -50,21 +51,34 @@ public class RiskController {
     @GetMapping("/api/trust/risk/signals")
     public Mono<ResponseEntity<Map<String, Object>>> signals(
             @RequestParam(required = false) String status, @RequestParam(required = false) String subjectKind,
-            @RequestParam(required = false) String subjectRef, @RequestParam(defaultValue = "100") int limit,
-            ServerHttpRequest request) {
+            @RequestParam(required = false) String subjectRef, @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset, ServerHttpRequest request) {
+        int pageSize = PageEnvelope.limit(limit);
+        int pageOffset = PageEnvelope.offset(offset);
         return callers.requireRole(request, BackendRole.RISK)
-                .thenMany(repository.listSignals(status, subjectKind, subjectRef, limit).map(this::signalBody))
-                .collectList().map(items -> ResponseEntity.ok(success(items)));
+                .then(Mono.zip(
+                        repository.listSignals(status, subjectKind, subjectRef, pageSize, pageOffset)
+                                .map(this::signalBody).collectList(),
+                        repository.countListSignals(status, subjectKind, subjectRef))
+                        .map(tuple -> ResponseEntity.ok(success(PageEnvelope
+                                .data(tuple.getT1(), tuple.getT2(), pageSize, pageOffset)))));
     }
 
     @GetMapping("/api/trust/risk/cases")
     public Mono<ResponseEntity<Map<String, Object>>> cases(
             @RequestParam(required = false) String status, @RequestParam(required = false) String severity,
             @RequestParam(required = false) String subjectKind, @RequestParam(required = false) String subjectRef,
-            @RequestParam(defaultValue = "100") int limit, ServerHttpRequest request) {
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
+            ServerHttpRequest request) {
+        int pageSize = PageEnvelope.limit(limit);
+        int pageOffset = PageEnvelope.offset(offset);
         return callers.requireRole(request, BackendRole.RISK)
-                .thenMany(repository.listCases(status, severity, subjectKind, subjectRef, limit).map(RiskController::caseBody))
-                .collectList().map(items -> ResponseEntity.ok(success(items)));
+                .then(Mono.zip(
+                        repository.listCases(status, severity, subjectKind, subjectRef, pageSize, pageOffset)
+                                .map(RiskController::caseBody).collectList(),
+                        repository.countListCases(status, severity, subjectKind, subjectRef))
+                        .map(tuple -> ResponseEntity.ok(success(PageEnvelope
+                                .data(tuple.getT1(), tuple.getT2(), pageSize, pageOffset)))));
     }
 
     @GetMapping("/api/trust/risk/cases/{id}")

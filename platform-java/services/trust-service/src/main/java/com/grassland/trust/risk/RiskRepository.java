@@ -27,6 +27,15 @@ public class RiskRepository {
     private static final String CASE_COLS = "id::text, subject_kind, subject_ref, organization_id::text, status, "
             + "severity, score, reason, resolution_note, assigned_to::text, created_at, updated_at, resolved_at";
 
+    /** signals 列表筛选口径（行查与 COUNT 共用，防分页漂移）。 */
+    private static final String SIGNAL_LIST_FILTER = "(:status IS NULL OR status=:status) "
+            + "AND (:kind IS NULL OR subject_kind=:kind) AND (:ref IS NULL OR subject_ref=:ref)";
+
+    /** cases 列表筛选口径（行查与 COUNT 共用，防分页漂移）。 */
+    private static final String CASE_LIST_FILTER = "(:status IS NULL OR status=:status) "
+            + "AND (:severity IS NULL OR severity=:severity) "
+            + "AND (:kind IS NULL OR subject_kind=:kind) AND (:ref IS NULL OR subject_ref=:ref)";
+
     private final DatabaseClient db;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -72,15 +81,23 @@ public class RiskRepository {
                 .map(row -> value(row.get("count", Integer.class))).one().defaultIfEmpty(0);
     }
 
-    public Flux<Signal> listSignals(String status, String subjectKind, String subjectRef, int limit) {
-        var spec = db.sql("SELECT " + SIGNAL_COLS + " FROM risk_signal WHERE "
-                        + "(:status IS NULL OR status=:status) AND (:kind IS NULL OR subject_kind=:kind) "
-                        + "AND (:ref IS NULL OR subject_ref=:ref) ORDER BY occurred_at DESC, id DESC LIMIT :limit")
-                .bind("limit", bounded(limit));
+    public Flux<Signal> listSignals(String status, String subjectKind, String subjectRef, int limit, int offset) {
+        var spec = db.sql("SELECT " + SIGNAL_COLS + " FROM risk_signal WHERE " + SIGNAL_LIST_FILTER
+                        + " ORDER BY occurred_at DESC, id DESC LIMIT :limit OFFSET :offset")
+                .bind("limit", limit).bind("offset", offset);
         spec = bindNullableText(spec, "status", status);
         spec = bindNullableText(spec, "kind", subjectKind);
         spec = bindNullableText(spec, "ref", subjectRef);
         return spec.map(RiskRepository::mapSignal).all();
+    }
+
+    /** signals 列表总数（与 {@link #listSignals(String, String, String, int, int)} 同 WHERE 口径）。 */
+    public Mono<Long> countListSignals(String status, String subjectKind, String subjectRef) {
+        var spec = db.sql("SELECT COUNT(*)::bigint AS c FROM risk_signal WHERE " + SIGNAL_LIST_FILTER);
+        spec = bindNullableText(spec, "status", status);
+        spec = bindNullableText(spec, "kind", subjectKind);
+        spec = bindNullableText(spec, "ref", subjectRef);
+        return spec.map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     public Mono<RiskCase> createOrFindActiveCase(Signal signal, Evaluation evaluation) {
@@ -107,18 +124,27 @@ public class RiskRepository {
                 .bind("cid", caseId).bind("sid", signalId).then();
     }
 
-    public Flux<RiskCase> listCases(String status, String severity, String subjectKind, String subjectRef, int limit) {
-        var spec = db.sql("SELECT " + CASE_COLS + " FROM risk_case WHERE "
-                        + "(:status IS NULL OR status=:status) AND (:severity IS NULL OR severity=:severity) "
-                        + "AND (:kind IS NULL OR subject_kind=:kind) AND (:ref IS NULL OR subject_ref=:ref) "
-                        + "ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, "
-                        + "created_at, id LIMIT :limit")
-                .bind("limit", bounded(limit));
+    public Flux<RiskCase> listCases(String status, String severity, String subjectKind, String subjectRef,
+            int limit, int offset) {
+        var spec = db.sql("SELECT " + CASE_COLS + " FROM risk_case WHERE " + CASE_LIST_FILTER
+                        + " ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 "
+                        + "WHEN 'medium' THEN 2 ELSE 1 END DESC, created_at, id LIMIT :limit OFFSET :offset")
+                .bind("limit", limit).bind("offset", offset);
         spec = bindNullableText(spec, "status", status);
         spec = bindNullableText(spec, "severity", severity);
         spec = bindNullableText(spec, "kind", subjectKind);
         spec = bindNullableText(spec, "ref", subjectRef);
         return spec.map(RiskRepository::mapCase).all();
+    }
+
+    /** cases 列表总数（与 {@link #listCases(String, String, String, String, int, int)} 同 WHERE 口径）。 */
+    public Mono<Long> countListCases(String status, String severity, String subjectKind, String subjectRef) {
+        var spec = db.sql("SELECT COUNT(*)::bigint AS c FROM risk_case WHERE " + CASE_LIST_FILTER);
+        spec = bindNullableText(spec, "status", status);
+        spec = bindNullableText(spec, "severity", severity);
+        spec = bindNullableText(spec, "kind", subjectKind);
+        spec = bindNullableText(spec, "ref", subjectRef);
+        return spec.map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     public Mono<RiskCase> findCase(String id) {
@@ -202,7 +228,6 @@ public class RiskRepository {
                 instant(row.get("resolved_at", OffsetDateTime.class)));
     }
 
-    private static int bounded(int limit) { return Math.max(1, Math.min(limit, 200)); }
     private static int integer(Integer value) { return value == null ? 0 : value; }
     private static Instant instant(OffsetDateTime value) { return value == null ? null : value.toInstant(); }
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {

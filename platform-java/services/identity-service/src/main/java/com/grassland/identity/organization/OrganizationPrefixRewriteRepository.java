@@ -100,11 +100,7 @@ public class OrganizationPrefixRewriteRepository {
      * 仿 {@code AdminUserRepository} 的 search 拼法（含 ESCAPE，调用方负责转义通配符）。
      * {@code query} 为 null 时列最近创建的若干主体（运营首次进面板即有内容）。
      */
-    public Mono<List<AdminOrganizationRow>> searchForAdmin(String query, int limit) {
-        String filter = query == null ? "" : """
-                 WHERE lower(o.name || ' ' || o.account_prefix || ' ' || o.id::text)
-                       LIKE lower(:query) ESCAPE E'\\\\'
-                """;
+    public Mono<List<AdminOrganizationRow>> searchForAdmin(String query, int limit, int offset) {
         DatabaseClient.GenericExecuteSpec spec = db.sql("""
                 SELECT o.id::text AS id, o.name, o.account_prefix, o.status, o.created_at,
                        (SELECT COUNT(*)::int FROM (
@@ -118,13 +114,31 @@ public class OrganizationPrefixRewriteRepository {
                   FROM organization o
                 %s
                  ORDER BY o.created_at DESC
-                 LIMIT :limit
-                """.formatted(filter))
-                .bind("limit", limit);
+                 LIMIT :limit OFFSET :offset
+                """.formatted(searchFilter(query)))
+                .bind("limit", limit).bind("offset", offset);
         if (query != null) {
             spec = spec.bind("query", query);
         }
         return spec.map(OrganizationPrefixRewriteRepository::mapAdminRow).all().collectList();
+    }
+
+    /** 搜索命中总数（与 {@link #searchForAdmin(String, int, int)} 同 WHERE 口径）。 */
+    public Mono<Long> countSearchForAdmin(String query) {
+        DatabaseClient.GenericExecuteSpec spec = db.sql(
+                "SELECT COUNT(*) AS c FROM organization o " + searchFilter(query).trim());
+        if (query != null) {
+            spec = spec.bind("query", query);
+        }
+        return spec.map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
+    }
+
+    /** 搜索谓词片段（行查与 COUNT 共用，防分页漂移）；{@code query} 为 null 时不筛。 */
+    private static String searchFilter(String query) {
+        return query == null ? "" : """
+                 WHERE lower(o.name || ' ' || o.account_prefix || ' ' || o.id::text)
+                       LIKE lower(:query) ESCAPE E'\\\\'
+                """;
     }
 
     private static AdminOrganizationRow mapAdminRow(Readable row) {

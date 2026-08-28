@@ -1,5 +1,6 @@
 package com.grassland.identity.recommenderprofile;
 
+import com.grassland.identity.admin.PageEnvelope;
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.messaging.EventEnvelope;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -94,10 +96,17 @@ public class RecommenderVerificationController {
 	// ---------------- 平台 admin ----------------
 
 	@GetMapping("/api/admin/recommender-requests")
-	public Mono<ResponseEntity<Map<String, Object>>> listPending(ServerHttpRequest request) {
+	public Mono<ResponseEntity<Map<String, Object>>> listPending(
+			@RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
+			ServerHttpRequest request) {
+		int pageSize = PageEnvelope.limit(limit);
+		int pageOffset = PageEnvelope.offset(offset);
 		return accounts.requireRole(request, BackendRole.MERCHANT_REVIEWER, BackendRole.CONTENT_REVIEWER)
-				.flatMap(admin -> requests.findPending().collectList().map(list -> ResponseEntity
-						.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
+				.flatMap(admin -> Mono.zip(requests.findPending(pageSize, pageOffset).collectList(),
+						requests.countPending())
+						.map(tuple -> ResponseEntity.ok(Map.of("success", true, "data", PageEnvelope
+								.data(tuple.getT1().stream().map(this::toBody).toList(), tuple.getT2(),
+										pageSize, pageOffset)))));
 	}
 
 	@PostMapping(value = "/api/admin/recommender-requests/{id}/approve", consumes = MediaType.APPLICATION_JSON_VALUE)

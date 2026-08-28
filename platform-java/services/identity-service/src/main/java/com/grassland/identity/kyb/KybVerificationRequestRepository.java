@@ -62,11 +62,22 @@ public class KybVerificationRequestRepository {
                 .map(KybVerificationRequestRepository::map).all();
     }
 
-    /** 查询待审核队列。*/
-    public Flux<KybVerificationRequest> findPending() {
+    /** 待审队列谓词：分页行查询与 COUNT 共用同一片段，保证 total 与列表同口径（防漂移）。 */
+    private static final String PENDING_FILTER = " WHERE status IN ('pending', 'under_review')";
+
+    /** 查询待审核队列（分页，保留原 ORDER BY created_at 不换序）。 */
+    public Flux<KybVerificationRequest> findPending(int limit, int offset) {
         return db.sql("SELECT " + SELECT_COLS
-                + " FROM kyb_verification_request WHERE status IN ('pending', 'under_review') ORDER BY created_at")
+                + " FROM kyb_verification_request" + PENDING_FILTER
+                + " ORDER BY created_at LIMIT :limit OFFSET :offset")
+                .bind("limit", limit).bind("offset", offset)
                 .map(KybVerificationRequestRepository::map).all();
+    }
+
+    /** 与 {@link #findPending(int, int)} 同 WHERE 口径的总数。 */
+    public Mono<Long> countPending() {
+        return db.sql("SELECT COUNT(*) AS c FROM kyb_verification_request" + PENDING_FILTER)
+                .map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 
     /** 查询指定类型和目标的审核申请。*/

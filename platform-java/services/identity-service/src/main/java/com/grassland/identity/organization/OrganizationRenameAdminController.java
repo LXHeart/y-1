@@ -1,5 +1,6 @@
 package com.grassland.identity.organization;
 
+import com.grassland.identity.admin.PageEnvelope;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -43,11 +45,17 @@ public class OrganizationRenameAdminController {
 
 
 	@GetMapping("/api/admin/org-rename-requests")
-	public Mono<ResponseEntity<Map<String, Object>>> adminListPending(ServerHttpRequest request) {
+	public Mono<ResponseEntity<Map<String, Object>>> adminListPending(
+			@RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
+			ServerHttpRequest request) {
+		int pageSize = PageEnvelope.limit(limit);
+		int pageOffset = PageEnvelope.offset(offset);
 		return accounts.requireAdmin(request)
-				.flatMap(admin -> renames.findPendingAll().collectList()
-						.map(list -> ResponseEntity.ok(Map.of("success", true,
-								"data", list.stream().map(this::toRenameBody).toList()))));
+				.flatMap(admin -> Mono.zip(renames.findPendingAll(pageSize, pageOffset).collectList(),
+						renames.countPendingAll())
+						.map(tuple -> ResponseEntity.ok(Map.of("success", true, "data", PageEnvelope
+								.data(tuple.getT1().stream().map(this::toRenameBody).toList(),
+										tuple.getT2(), pageSize, pageOffset)))));
 	}
 
 	/** 审核：approve = 更名生效（同事务 UPDATE organization + 终态 + outbox）；reject = 驳回留痕。 */

@@ -82,12 +82,28 @@ public class LedgerRepository {
      * 利用 idx_journal_org(org, created_at DESC) 索引。
      */
     public reactor.core.publisher.Flux<JournalEntry> listJournals(
-            String organizationId, java.time.Instant from, java.time.Instant to, int limit) {
-        StringBuilder sql = new StringBuilder("""
+            String organizationId, java.time.Instant from, java.time.Instant to, int limit, int offset) {
+        String sql = """
                 SELECT id::text, journal_type, operation_id, currency, organization_id::text AS org,
                        engagement_ref, memo, created_at
                   FROM journal
-                """);
+                """ + journalFilter(organizationId, from, to)
+                + " ORDER BY created_at DESC LIMIT :limit OFFSET :offset";
+        GenericExecuteSpec spec = bindJournalFilter(
+                db.sql(sql).bind("limit", limit).bind("offset", offset), organizationId, from, to);
+        return spec.map(LedgerRepository::mapJournalEntry).all();
+    }
+
+    /** journal 列表总数（与 {@link #listJournals(String, java.time.Instant, java.time.Instant, int, int)} 同 WHERE 口径）。 */
+    public Mono<Long> countJournals(String organizationId, java.time.Instant from, java.time.Instant to) {
+        GenericExecuteSpec spec = bindJournalFilter(
+                db.sql("SELECT COUNT(*)::bigint AS c FROM journal" + journalFilter(organizationId, from, to)),
+                organizationId, from, to);
+        return spec.map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
+    }
+
+    /** 筛选谓词片段（行查与 COUNT 共用，防分页漂移）。 */
+    private static String journalFilter(String organizationId, java.time.Instant from, java.time.Instant to) {
         var conditions = new java.util.ArrayList<String>();
         if (organizationId != null && !organizationId.isBlank()) {
             conditions.add("organization_id = CAST(:orgId AS uuid)");
@@ -98,12 +114,12 @@ public class LedgerRepository {
         if (to != null) {
             conditions.add("created_at < :to");
         }
-        if (!conditions.isEmpty()) {
-            sql.append(" WHERE ").append(String.join(" AND ", conditions));
-        }
-        sql.append(" ORDER BY created_at DESC LIMIT :limit");
+        return conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+    }
 
-        GenericExecuteSpec spec = db.sql(sql.toString()).bind("limit", Math.max(1, Math.min(limit, 200)));
+    /** 只 bind 谓词片段里实际出现的命名参数（缺失标识符会抛 NoSuchElementException）。 */
+    private static GenericExecuteSpec bindJournalFilter(GenericExecuteSpec spec,
+            String organizationId, java.time.Instant from, java.time.Instant to) {
         if (organizationId != null && !organizationId.isBlank()) {
             spec = spec.bind("orgId", organizationId);
         }
@@ -113,7 +129,7 @@ public class LedgerRepository {
         if (to != null) {
             spec = spec.bind("to", java.time.OffsetDateTime.ofInstant(to, java.time.ZoneOffset.UTC));
         }
-        return spec.map(LedgerRepository::mapJournalEntry).all();
+        return spec;
     }
 
     private static JournalEntry mapJournalEntry(Readable row) {

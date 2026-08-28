@@ -2,6 +2,7 @@ package com.grassland.intelligence.contentlibrary;
 
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.messaging.outbox.OutboxRepository;
+import com.grassland.intelligence.admin.PageEnvelope;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -38,8 +39,6 @@ import java.time.Instant;
 @RestController
 @RequestMapping("/api/admin/content-assets")
 public class ContentAssetAdminController {
-
-	private static final int REVIEW_QUEUE_LIMIT = 200;
 
 	/** 审核请求体：乐观锁版本 + 驳回理由（approve 可空，reject 必填）。 */
 	public record ReviewRequest(Integer expectedVersion, String note) {
@@ -110,15 +109,21 @@ public class ContentAssetAdminController {
 		});
 	}
 
-	/** 列待审核公共素材（内容审核员队列）。 */
+	/** 列待审核公共素材（内容审核员队列）：统一分页信封。 */
 	@GetMapping("/review")
 	public Mono<ResponseEntity<Map<String, Object>>> reviewQueue(@RequestParam(required = false) String q,
+			@RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
 			ServerWebExchange exchange) {
 		String query = ContentAssetController.searchQuery(q);
+		int pageSize = PageEnvelope.limit(limit);
+		int pageOffset = PageEnvelope.offset(offset);
 		return callers.requireRole(exchange.getRequest(), BackendRole.CONTENT_REVIEWER)
-				.flatMap(caller -> assets.listPendingReview(REVIEW_QUEUE_LIMIT, query).collectList())
-				.map(list -> ContentAssetController
-						.success(Map.of("items", list.stream().map(ContentAssetController::toResponse).toList())));
+				.flatMap(caller -> Mono.zip(
+						assets.listPendingReview(pageSize, pageOffset, query).collectList(),
+						assets.countPendingReview(query))
+						.map(tuple -> ContentAssetController.success(PageEnvelope.data(
+								tuple.getT1().stream().map(ContentAssetController::toResponse).toList(),
+								tuple.getT2(), pageSize, pageOffset))));
 	}
 
 	/** 审核通过（pending_review→active）。乐观锁 + 同事务 outbox。 */
