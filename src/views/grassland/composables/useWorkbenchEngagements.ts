@@ -197,6 +197,22 @@ export function useWorkbenchEngagements(
     return map[status] || status
   }
 
+  /**
+   * 收起选中任务：清掉与选中态绑定的全部列表/缓存（与 selectTask 切换任务时的清理同一批）。
+   * 深链 `?task=` 与通知导航不受影响——它们经 selectTask 只在导航时设置一次选中。
+   */
+  function clearSelectedTask(): void {
+    selectedTaskId.value = ''
+    applications.value = []
+    recommendations.value = null
+    applicantReputation.value = {}
+    applicantProfile.value = {}
+    confirmedAppIds.value = new Set()
+    selectedAppIds.value = new Set()
+    // 门店公开资料随选中态走：清选中后拉空（loadStorePublicProfile 对无门店/无选中即置空）。
+    void loadStorePublicProfile()
+  }
+
   async function selectTask(taskId: string): Promise<void> {
     selectedTaskId.value = taskId
     applications.value = []
@@ -215,6 +231,15 @@ export function useWorkbenchEngagements(
     if (list) applications.value = list
     await recommendationRequest
     await loadApplicantProfiles()
+  }
+
+  /** 点任务标题：同一任务再点一次 = 收起（toggle），否则切换选中——展开块不再「一旦点开就永远开着」。 */
+  async function toggleSelectTask(taskId: string): Promise<void> {
+    if (selectedTaskId.value === taskId) {
+      clearSelectedTask()
+      return
+    }
+    await selectTask(taskId)
   }
 
   /** 任务书 #24：拉选中任务的门店公开资料；组织级任务/404 → 面板空态。 */
@@ -532,7 +557,8 @@ export function useWorkbenchEngagements(
     selectedAppIds, batchLoading,
     filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled,
     refreshTasks, publishDraft, closeTaskAction, cancelTaskAction,
-    taskStatusLabel, isRejectedDraft, statusLabel, selectTask, loadRecommendations, inviteRecommended,
+    taskStatusLabel, isRejectedDraft, statusLabel, selectTask, toggleSelectTask, clearSelectedTask,
+    loadRecommendations, inviteRecommended,
     accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
     contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
     withdrawApp, reset,

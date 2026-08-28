@@ -133,7 +133,8 @@ const {
   selectedAppIds,
   filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled,
   refreshTasks, publishDraft, closeTaskAction, cancelTaskAction,
-  taskStatusLabel, isRejectedDraft, statusLabel, selectTask, loadRecommendations, inviteRecommended,
+  taskStatusLabel, isRejectedDraft, statusLabel, selectTask, toggleSelectTask, clearSelectedTask,
+  loadRecommendations, inviteRecommended,
   accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
   contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
   withdrawApp,
@@ -644,7 +645,13 @@ watch(grasslandNavigationTarget, async (target) => {
             <ul class="gl-list">
               <li v-for="t in tasks" :key="t.id">
                 <div class="gl-task-main">
-                  <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }" @click="selectTask(t.id)">
+                  <button
+                    type="button"
+                    class="gl-link"
+                    :class="{ active: selectedTaskId === t.id }"
+                    :aria-expanded="selectedTaskId === t.id"
+                    @click="toggleSelectTask(t.id)"
+                  >
                     {{ t.title }}
                   </button>
                   <!-- 任务书 #53：被驳回退回的草稿标「已驳回·待修改」（danger），其余按状态取 neutral -->
@@ -702,6 +709,16 @@ watch(grasslandNavigationTarget, async (target) => {
             </ul>
 
             <div v-if="selectedTaskId" class="gl-apps">
+              <!-- 展开块头部：给一个明确的「收起」出口——selectTask 此前只设不清，块一旦展开永远开着 -->
+              <div class="gl-apps-head">
+                <span class="gl-apps-caption">「{{ selectedTask?.title ?? '' }}」的推荐官排序与报名</span>
+                <button
+                  type="button"
+                  class="gl-apps-collapse"
+                  :aria-label="`收起 ${selectedTask?.title ?? ''} 的推荐官排序与报名列表`"
+                  @click="clearSelectedTask"
+                >收起</button>
+              </div>
               <RecommenderRecommendations
                 v-if="selectedTask?.status === 'published'"
                 :items="recommendations?.items || []"
@@ -1071,7 +1088,7 @@ watch(grasslandNavigationTarget, async (target) => {
             @update:feed-filter="handleFeedFilterUpdate"
             @load-feed="loadFeed"
             @update:apply-note="applyNote = $event"
-            @select-task="selectTask"
+            @select-task="toggleSelectTask"
             @apply="apply"
             @use-location="useCurrentLocation"
           />
@@ -1363,4 +1380,8 @@ watch(grasslandNavigationTarget, async (target) => {
 
 .gl-sub-block { margin-top: var(--space-sm); }
 .gl-sub-block h5 { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--color-text-muted); letter-spacing: 0.04em; }
+
+/* 展开块头部：选中任务的排序+报名块给出明确「收起」出口——此前一旦展开永远开着 */
+.gl-apps-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.gl-apps-caption { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

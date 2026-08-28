@@ -1320,3 +1320,31 @@ describe('GrasslandWorkbench 修订入口冻结（问题 2）', () => {
     expect(wrapper.text()).toContain('已有 2 名推荐官报名成功，任务不可再修改')
   })
 })
+
+/**
+ * 问题 3：任务标题再点一次收起展开块；展开块头部有「收起」出口——
+ * selectTask 此前只设不清，块一旦展开永远开着。
+ */
+describe('GrasslandWorkbench 任务展开块收起（问题 3）', () => {
+  test('任务标题再点一次收起展开块；「收起」按钮清掉选中态', async () => {
+    const wrapper = await loginAndMount([openTask()])
+    const title = wrapper.findAll('button').find((b) => b.text() === '无人报名的任务')!
+
+    await title.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('报名列表')
+    expect(wrapper.find('.gl-apps-collapse').exists()).toBe(true)
+
+    // 再点同一标题 = 收起（toggle）
+    await title.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('报名列表')
+
+    // 重新展开后走「收起」按钮
+    await title.trigger('click')
+    await flushPromises()
+    await wrapper.find('.gl-apps-collapse').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('报名列表')
+  })
+})
