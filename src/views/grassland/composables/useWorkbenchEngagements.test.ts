@@ -11,7 +11,9 @@ import type { useGrassland } from '../../../composables/useGrassland'
  * 仅店长 store-only 视图（activeOrgStoreOnlyView）锁本店。
  */
 function harness(options: { storeOnlyView: boolean, selectedStoreId?: string }) {
-  const listTasks = vi.fn(async () => [])
+  // 形参照真实签名 listTasks(organizationId, status, storeId?) 写全：
+  // 零参 mock 会被推断成空 tuple，下面断言 call[2] 时 vue-tsc 报 TS2493。
+  const listTasks = vi.fn(async (_organizationId: string, _status?: string, _storeId?: string) => [])
   const grassland = { listTasks } as unknown as ReturnType<typeof useGrassland>
   const side = ref<'merchant' | 'recommender'>('merchant')
   const activeOrgId = ref('org-1')
