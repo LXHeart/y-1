@@ -1,3 +1,5 @@
+import type { Industry } from './organization'
+
 // ---------- GL-P3-MERCHANT-001：商家 KYB 资料 ----------
 
 /** 商家资料状态。 */
@@ -16,6 +18,8 @@ export interface MerchantProfile {
   organizationId: string
   legalName: string | null
   unifiedSocialCreditCode: string | null
+  /** 组织准入行业；由 KYB 表单维护，响应来自 organization.industry。 */
+  industry: Industry | string | null
   businessType: string | null
   legalPersonName: string | null
   legalPersonIdNumberMasked: string | null
@@ -36,6 +40,7 @@ export interface MerchantProfile {
 export interface CreateMerchantProfileInput {
   legalName?: string
   unifiedSocialCreditCode?: string
+  industry?: Industry
   businessType?: string
   legalPersonName?: string
   legalPersonIdNumber?: string
@@ -143,6 +148,7 @@ export interface MerchantProfileReviewSubject {
   organizationId: string
   legalName: string | null
   unifiedSocialCreditCode: string | null
+  industry: Industry | string | null
   businessType: string | null
   legalPersonName: string | null
   legalPersonIdNumberMasked: string | null

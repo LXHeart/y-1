@@ -139,7 +139,7 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
           unifiedSocialCreditCode: `91310000${suffix.replace(/\D/g, '').slice(-10).padStart(10, '0')}`,
           businessType: 'company',
           legalPersonName: '张三',
-          legalPersonIdNumber: '310101199001015678',
+          legalPersonIdNumber: '310101199001015673',
           registeredCapitalCents: 1_000_000,
           establishmentDate: '2020-01-02',
           businessAddress: {
@@ -186,7 +186,7 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
 
       const dialog = page.getByRole('dialog', { name: '通过商户资料' })
       await expect(dialog).toContainText(`草场 E2E 商户 ${suffix}`)
-      await expect(dialog).toContainText('****5678')
+      await expect(dialog).toContainText('****5673')
       await expect(dialog).toContainText('南京西路 8 号')
       await expect(dialog.locator('.material-row')).toHaveCount(3)
 

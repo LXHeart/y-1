@@ -8,7 +8,8 @@ function stubKybFetch(): ReturnType<typeof vi.fn> {
     const data = url.endsWith('/merchant-profile')
       ? {
           organizationId: 'org-1', legalName: '草场商贸', unifiedSocialCreditCode: '91310000TEST',
-          businessType: 'company', legalPersonName: '张三', legalPersonIdNumberMasked: '****5678',
+          industry: 'retail', businessType: 'company', legalPersonName: '张三',
+          legalPersonIdNumberMasked: '****5678',
           registeredCapitalCents: 10000, establishmentDate: '2020-01-01',
           businessAddress: '{"province":"上海市","city":"上海市","district":"静安区","address":"南京西路 1 号"}',
           contactPhone: '13800000000', contactEmail: null, status: 'rejected',
@@ -213,6 +214,161 @@ describe('MerchantKybCard 契约展示', () => {
     expect(wrapper.text()).not.toContain('310101199002025678')
     const submit = wrapper.findAll('button').find((button) => button.text() === '提交审核')
     expect(submit?.attributes('disabled')).toBeUndefined()
+  })
+
+  test('企业类型与行业类型分别使用下拉并按各自契约保存', async () => {
+    const spy = stubKybFetch()
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+
+    const businessType = wrapper.get('#merchant-business-type')
+    expect(businessType.element.tagName).toBe('SELECT')
+    expect((businessType.element as HTMLSelectElement).value).toBe('company')
+    expect(businessType.findAll('option').map((option) => option.text())).toEqual([
+      '请选择企业类型', '个体工商户', '个人独资企业', '合伙企业', '有限责任公司',
+      '股份有限公司', '公司',
+    ])
+
+    const industry = wrapper.get('#merchant-industry')
+    expect(industry.element.tagName).toBe('SELECT')
+    expect((industry.element as HTMLSelectElement).value).toBe('retail')
+    expect(industry.findAll('option').map((option) => option.text())).toEqual([
+      '请选择行业类型', '餐饮', '零售', '美业', '教育培训', '电商',
+      '医疗健康', '金融服务', '房地产', '旅游', '母婴儿童', '其他',
+    ])
+
+    await industry.setValue('catering')
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+
+    const save = spy.mock.calls.find(([url, init]) =>
+      String(url).endsWith('/merchant-profile') && (init as RequestInit)?.method === 'PUT')
+    expect(save).toBeDefined()
+    const body = JSON.parse(String((save![1] as RequestInit).body)) as Record<string, unknown>
+    expect(body.businessType).toBe('company')
+    expect(body.industry).toBe('catering')
+  })
+
+  test('电话、身份证号和邮箱格式错误时就地提示并阻止保存请求', async () => {
+    const spy = stubKybFetch()
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+
+    await wrapper.get('#merchant-id-number').setValue('310101199001011235')
+    await wrapper.get('#merchant-contact-phone').setValue('12345')
+    await wrapper.get('#merchant-contact-email').setValue('wrong@email')
+    await wrapper.get('#merchant-id-number').trigger('blur')
+    await wrapper.get('#merchant-contact-phone').trigger('blur')
+    await wrapper.get('#merchant-contact-email').trigger('blur')
+
+    expect(wrapper.get('#merchant-id-number-error').text()).toContain('身份证号')
+    expect(wrapper.get('#merchant-contact-phone-error').text()).toContain('联系电话')
+    expect(wrapper.get('#merchant-contact-email-error').text()).toContain('邮箱')
+    expect(wrapper.get('#merchant-id-number').attributes('aria-invalid')).toBe('true')
+
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+    expect(spy.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/merchant-profile') && (init as RequestInit)?.method === 'PUT')).toBe(false)
+
+    await wrapper.get('#merchant-id-number').setValue('11010519491231002X')
+    await wrapper.get('#merchant-contact-phone').setValue('13800138000')
+    await wrapper.get('#merchant-contact-email').setValue('kyb@example.com')
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+    expect(spy.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/merchant-profile') && (init as RequestInit)?.method === 'PUT')).toBe(true)
+  })
+
+  test('商家省市区下拉逐级联动，切换上级会清空下级并提交所选地址', async () => {
+    const spy = stubKybFetch()
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+
+    const province = wrapper.get('select[name="businessAddressProvince"]')
+    const city = wrapper.get('select[name="businessAddressCity"]')
+    const district = wrapper.get('select[name="businessAddressDistrict"]')
+    expect((province.element as HTMLSelectElement).value).toBe('上海市')
+    expect((city.element as HTMLSelectElement).value).toBe('上海市')
+    expect((district.element as HTMLSelectElement).value).toBe('静安区')
+
+    await province.setValue('广东省')
+    expect((city.element as HTMLSelectElement).value).toBe('')
+    expect((district.element as HTMLSelectElement).value).toBe('')
+    expect(city.findAll('option').map((option) => option.text())).toContain('广州市')
+    expect(district.attributes('disabled')).not.toBeUndefined()
+
+    await city.setValue('广州市')
+    expect(district.findAll('option').map((option) => option.text())).toContain('天河区')
+    await district.setValue('天河区')
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+
+    const save = spy.mock.calls.find(([url, init]) =>
+      String(url).endsWith('/merchant-profile') && (init as RequestInit)?.method === 'PUT')
+    const body = JSON.parse(String((save![1] as RequestInit).body)) as {
+      businessAddress: Record<string, string>
+    }
+    expect(body.businessAddress).toMatchObject({ province: '广东省', city: '广州市', district: '天河区' })
+  })
+
+  test('门店地址兼容对象回填并三级联动，电话格式错误时阻止保存', async () => {
+    const spy = stubKybFetch()
+    const implementation = spy.getMockImplementation()!
+    spy.mockImplementation(async (...args: Parameters<typeof fetch>) => {
+      const response = await implementation(...args) as Response
+      const body = await response.json() as { success: boolean; data: unknown }
+      if (String(args[0]).endsWith('/stores/store-1/profile') && !(args[1] as RequestInit | undefined)?.method) {
+        body.data = {
+          ...(body.data as Record<string, unknown>),
+          address: {
+            province: '浙江省', city: '杭州市', district: '西湖区', address: '文三路 1 号',
+          },
+        }
+      }
+      return { ...response, json: async () => body } as Response
+    })
+
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '门店资料')!.trigger('click')
+    await flushPromises()
+
+    const province = wrapper.get('select[name="storeAddressProvince"]')
+    const city = wrapper.get('select[name="storeAddressCity"]')
+    const district = wrapper.get('select[name="storeAddressDistrict"]')
+    expect((province.element as HTMLSelectElement).value).toBe('浙江省')
+    expect((city.element as HTMLSelectElement).value).toBe('杭州市')
+    expect((district.element as HTMLSelectElement).value).toBe('西湖区')
+
+    await province.setValue('广东省')
+    expect((city.element as HTMLSelectElement).value).toBe('')
+    expect((district.element as HTMLSelectElement).value).toBe('')
+    await city.setValue('深圳市')
+    await district.setValue('南山区')
+
+    await wrapper.get('#store-contact-phone').setValue('12345')
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#store-contact-phone-error').text()).toContain('联系电话')
+    expect(spy.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/stores/store-1/profile') && (init as RequestInit)?.method === 'POST')).toBe(false)
+
+    await wrapper.get('#store-contact-phone').setValue('0755-12345678')
+    await wrapper.findAll('button').find((button) => button.text() === '保存资料')!.trigger('click')
+    await flushPromises()
+
+    const save = spy.mock.calls.find(([url, init]) =>
+      String(url).endsWith('/stores/store-1/profile') && (init as RequestInit)?.method === 'POST')
+    expect(save).toBeDefined()
+    const savedBody = JSON.parse(String((save![1] as RequestInit).body)) as {
+      address: string
+      phone: string
+    }
+    expect(JSON.parse(savedBody.address)).toMatchObject({
+      province: '广东省', city: '深圳市', district: '南山区', address: '文三路 1 号',
+    })
+    expect(savedBody.phone).toBe('0755-12345678')
   })
 
   test('收款账户展示服务端掩码字段', async () => {

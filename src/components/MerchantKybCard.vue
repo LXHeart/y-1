@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
+import {
+  CHINA_REGIONS,
+  getCitiesByProvince,
+  getDistrictsByCity,
+} from '../constants/china-regions'
+import {
+  validateChineseIdCard,
+  validateEmail,
+  validatePhone,
+} from '../lib/kyb-validation'
 import StoreMediaManager from './StoreMediaManager.vue'
 import type {
   MerchantProfile,
@@ -9,6 +19,7 @@ import type {
   OrgKybSummary,
   WithdrawalAccount,
   StoreProfile,
+  Industry,
 } from '../types/grassland'
 
 interface Props {
@@ -47,6 +58,7 @@ const merchantAttachments = ref<MerchantAttachment[]>([])
 const merchantForm = ref({
   legalName: '',
   unifiedSocialCreditCode: '',
+  industry: '',
   businessType: '',
   legalPersonName: '',
   legalPersonIdNumber: '',
@@ -111,11 +123,110 @@ const accountTypeLabels: Record<string, string> = {
   wechat: '微信',
 }
 
-// 计算属性
+const INDUSTRY_OPTIONS: ReadonlyArray<{ value: Industry; label: string }> = [
+  { value: 'catering', label: '餐饮' },
+  { value: 'retail', label: '零售' },
+  { value: 'beauty', label: '美业' },
+  { value: 'education', label: '教育培训' },
+  { value: 'e_commerce', label: '电商' },
+  { value: 'healthcare', label: '医疗健康' },
+  { value: 'finance', label: '金融服务' },
+  { value: 'real_estate', label: '房地产' },
+  { value: 'travel', label: '旅游' },
+  { value: 'children', label: '母婴儿童' },
+  { value: 'other', label: '其他' },
+]
+
+const BUSINESS_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'individual', label: '个体工商户' },
+  { value: 'sole_proprietorship', label: '个人独资企业' },
+  { value: 'partnership', label: '合伙企业' },
+  { value: 'llc', label: '有限责任公司' },
+  { value: 'corp', label: '股份有限公司' },
+  { value: 'company', label: '公司' },
+]
+
+const businessTypeOptions = computed(() => {
+  const current = merchantForm.value.businessType
+  return optionsWithCurrentValue(BUSINESS_TYPE_OPTIONS, current)
+})
+
+const industryOptions = computed(() => {
+  const current = merchantForm.value.industry
+  return optionsWithCurrentValue(INDUSTRY_OPTIONS, current)
+})
+
+type MerchantValidationField = 'legalPersonIdNumber' | 'contactPhone' | 'contactEmail'
+type StoreValidationField = 'phone'
+
+const merchantFieldErrors = ref<Partial<Record<MerchantValidationField, string>>>({})
+const storeFieldErrors = ref<Partial<Record<StoreValidationField, string>>>({})
+
+const provinceOptions = CHINA_REGIONS
+
+function optionsWithCurrentValue(
+  options: ReadonlyArray<{ value: string; label: string }>,
+  currentValue: string,
+): ReadonlyArray<{ value: string; label: string }> {
+  if (!currentValue || options.some((option) => option.value === currentValue)) return options
+  return [{ value: currentValue, label: `${currentValue}（已保存）` }, ...options]
+}
+
+const merchantProvinceOptions = computed(() => optionsWithCurrentValue(
+  provinceOptions,
+  merchantForm.value.businessAddressProvince,
+))
+const storeProvinceOptions = computed(() => optionsWithCurrentValue(
+  provinceOptions,
+  storeForm.value.addressProvince,
+))
+
+// 地址级联选项。值使用行政区中文全称，与现有 JSON 地址契约保持一致。
+const merchantCityOptions = computed(() => optionsWithCurrentValue(
+  getCitiesByProvince(merchantForm.value.businessAddressProvince),
+  merchantForm.value.businessAddressCity,
+))
+const merchantDistrictOptions = computed(() => optionsWithCurrentValue(
+  getDistrictsByCity(
+    merchantForm.value.businessAddressProvince,
+    merchantForm.value.businessAddressCity,
+  ),
+  merchantForm.value.businessAddressDistrict,
+))
+const storeCityOptions = computed(() => optionsWithCurrentValue(
+  getCitiesByProvince(storeForm.value.addressProvince),
+  storeForm.value.addressCity,
+))
+const storeDistrictOptions = computed(() => optionsWithCurrentValue(
+  getDistrictsByCity(storeForm.value.addressProvince, storeForm.value.addressCity),
+  storeForm.value.addressDistrict,
+))
+
+function merchantIdError(): string | null {
+  // 已保存证件只回掩码；空输入代表沿用原证件，不应要求用户再次录入明文。
+  if (!merchantForm.value.legalPersonIdNumber && merchantProfile.value?.legalPersonIdNumberMasked) return null
+  return validateChineseIdCard(merchantForm.value.legalPersonIdNumber)
+}
+
+function merchantPhoneError(): string | null {
+  return validatePhone(merchantForm.value.contactPhone)
+}
+
+function merchantEmailError(): string | null {
+  return validateEmail(merchantForm.value.contactEmail)
+}
+
+function storePhoneError(): string | null {
+  return validatePhone(storeForm.value.phone)
+}
+
 const canSubmitMerchant = computed(() => {
   const f = merchantForm.value
   const hasIdNumber = Boolean(f.legalPersonIdNumber || merchantProfile.value?.legalPersonIdNumberMasked)
-  return Boolean(f.legalName && f.unifiedSocialCreditCode && f.legalPersonName && hasIdNumber)
+  return Boolean(
+    f.legalName && f.unifiedSocialCreditCode && f.legalPersonName && hasIdNumber
+      && !merchantIdError() && !merchantPhoneError() && !merchantEmailError(),
+  )
 })
 
 const canEditMerchant = computed(() => merchantProfileLoaded.value && !merchantReadError.value
@@ -137,10 +248,81 @@ const canEditStore = computed(() => storeProfileLoaded.value && !storeReadError.
     || ['draft', 'rejected', 'inactive'].includes(storeProfile.value.status)))
 
 const canSubmitStore = computed(() => storeProfile.value !== null
-  && ['draft', 'rejected'].includes(storeProfile.value.status))
+  && ['draft', 'rejected'].includes(storeProfile.value.status)
+  && !storePhoneError())
 
-function parseAddress(value: string | null): Record<string, string> {
+function setMerchantFieldError(field: MerchantValidationField, message: string | null): void {
+  const next = { ...merchantFieldErrors.value }
+  if (message) next[field] = message
+  else delete next[field]
+  merchantFieldErrors.value = next
+}
+
+function setStoreFieldError(field: StoreValidationField, message: string | null): void {
+  const next = { ...storeFieldErrors.value }
+  if (message) next[field] = message
+  else delete next[field]
+  storeFieldErrors.value = next
+}
+
+function validateMerchantField(field: MerchantValidationField): boolean {
+  const error = field === 'legalPersonIdNumber'
+    ? merchantIdError()
+    : field === 'contactPhone' ? merchantPhoneError() : merchantEmailError()
+  setMerchantFieldError(field, error)
+  return !error
+}
+
+function validateStoreField(field: StoreValidationField): boolean {
+  const error = field === 'phone' ? storePhoneError() : null
+  setStoreFieldError(field, error)
+  return !error
+}
+
+function validateMerchantForm(): boolean {
+  const valid = (['legalPersonIdNumber', 'contactPhone', 'contactEmail'] as MerchantValidationField[])
+    .map((field) => validateMerchantField(field)).every(Boolean)
+  return valid
+}
+
+function validateStoreForm(): boolean {
+  return validateStoreField('phone')
+}
+
+function clearMerchantFieldError(field: MerchantValidationField): void {
+  if (merchantFieldErrors.value[field]) setMerchantFieldError(field, null)
+}
+
+function clearStoreFieldError(field: StoreValidationField): void {
+  if (storeFieldErrors.value[field]) setStoreFieldError(field, null)
+}
+
+function onMerchantProvinceChange(): void {
+  merchantForm.value.businessAddressCity = ''
+  merchantForm.value.businessAddressDistrict = ''
+}
+
+function onMerchantCityChange(): void {
+  merchantForm.value.businessAddressDistrict = ''
+}
+
+function onStoreProvinceChange(): void {
+  storeForm.value.addressCity = ''
+  storeForm.value.addressDistrict = ''
+}
+
+function onStoreCityChange(): void {
+  storeForm.value.addressDistrict = ''
+}
+
+function parseAddress(value: unknown): Record<string, string> {
   if (!value) return {}
+  // 后端当前返回 jsonb 文本，但兼容网关/旧客户端已经解码的对象，避免
+  // 回填时把可用的省市区静默清空。
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, string>
+  }
+  if (typeof value !== 'string') return {}
   try {
     const parsed = JSON.parse(value) as unknown
     return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, string> : {}
@@ -195,6 +377,7 @@ async function loadMerchantProfile(orgId: string, version: number): Promise<void
     const profile = await grassland.getMerchantProfile(orgId)
     if (!isCurrentOrganization(orgId, version)) return
     merchantProfileLoaded.value = true
+    merchantFieldErrors.value = {}
     if (profile) {
       merchantProfile.value = profile
       // 回填表单
@@ -202,6 +385,7 @@ async function loadMerchantProfile(orgId: string, version: number): Promise<void
       merchantForm.value = {
         legalName: profile.legalName || '',
         unifiedSocialCreditCode: profile.unifiedSocialCreditCode || '',
+        industry: profile.industry || '',
         businessType: profile.businessType || '',
         legalPersonName: profile.legalPersonName || '',
         legalPersonIdNumber: '',
@@ -227,6 +411,7 @@ async function loadMerchantAttachments(orgId: string, version: number): Promise<
 }
 
 async function saveMerchantProfile(): Promise<void> {
+  if (!validateMerchantForm()) return
   const orgId = props.orgId
   const version = organizationLoadVersion
   const address = {
@@ -238,16 +423,19 @@ async function saveMerchantProfile(): Promise<void> {
   const input = {
     legalName: merchantForm.value.legalName || undefined,
     unifiedSocialCreditCode: merchantForm.value.unifiedSocialCreditCode || undefined,
+    industry: INDUSTRY_OPTIONS.some((option) => option.value === merchantForm.value.industry)
+      ? merchantForm.value.industry as Industry
+      : undefined,
     businessType: merchantForm.value.businessType || undefined,
     legalPersonName: merchantForm.value.legalPersonName || undefined,
-    legalPersonIdNumber: merchantForm.value.legalPersonIdNumber || undefined,
+    legalPersonIdNumber: merchantForm.value.legalPersonIdNumber.trim().toUpperCase() || undefined,
     registeredCapitalCents: merchantForm.value.registeredCapitalYuan
       ? Math.round(parseFloat(merchantForm.value.registeredCapitalYuan) * 100)
       : undefined,
     establishmentDate: merchantForm.value.establishmentDate || undefined,
     businessAddress: address.address ? address : undefined,
-    contactPhone: merchantForm.value.contactPhone || undefined,
-    contactEmail: merchantForm.value.contactEmail || undefined,
+    contactPhone: merchantForm.value.contactPhone.trim() || undefined,
+    contactEmail: merchantForm.value.contactEmail.trim() || undefined,
   }
   const result = merchantProfile.value
     ? await grassland.updateMerchantProfile(orgId, input)
@@ -259,6 +447,7 @@ async function saveMerchantProfile(): Promise<void> {
 }
 
 async function submitMerchantProfile(): Promise<void> {
+  if (!validateMerchantForm() || !canSubmitMerchant.value) return
   const orgId = props.orgId
   const version = organizationLoadVersion
   const result = await grassland.submitMerchantProfile(orgId)
@@ -384,6 +573,7 @@ async function loadStoreProfile(): Promise<void> {
     const profile = await grassland.getStoreProfile(orgId, storeId)
     if (!isCurrentStoreOperation(orgId, version, storeId, operationVersion)) return
     storeProfileLoaded.value = true
+    storeFieldErrors.value = {}
     if (profile) {
       storeProfile.value = profile
       const address = parseAddress(profile.address)
@@ -415,7 +605,7 @@ async function loadStoreProfile(): Promise<void> {
 }
 
 async function saveStoreProfile(): Promise<void> {
-  if (!selectedStoreId.value) return
+  if (!selectedStoreId.value || !validateStoreForm()) return
   const orgId = props.orgId
   const version = organizationLoadVersion
   const storeId = selectedStoreId.value
@@ -428,7 +618,7 @@ async function saveStoreProfile(): Promise<void> {
   }
   const result = await grassland.createStoreProfile(orgId, storeId, {
     address: Object.values(address).some(Boolean) ? JSON.stringify(address) : undefined,
-    phone: storeForm.value.phone || undefined,
+    phone: storeForm.value.phone.trim() || undefined,
     description: storeForm.value.description || undefined,
     // 任务书 #24：营销字段整份覆盖（后端空数组 = 清空），列表按换行拆行。
     categories: storeFormLines(storeForm.value.categories),
@@ -449,7 +639,7 @@ async function saveStoreProfile(): Promise<void> {
 }
 
 async function submitStoreProfile(): Promise<void> {
-  if (!selectedStoreId.value || !canSubmitStore.value) return
+  if (!selectedStoreId.value || !validateStoreForm() || !canSubmitStore.value) return
   const orgId = props.orgId
   const version = organizationLoadVersion
   const storeId = selectedStoreId.value
@@ -464,6 +654,7 @@ async function submitStoreProfile(): Promise<void> {
 watch(selectedStoreId, () => {
   storeProfile.value = null
   storeProfileLoaded.value = false
+  storeFieldErrors.value = {}
   storeForm.value = emptyStoreForm()
   void loadStoreProfile()
 })
@@ -475,8 +666,9 @@ function resetOrganizationState(): void {
   merchantAttachments.value = []
   merchantReadError.value = ''
   merchantProfileLoaded.value = false
+  merchantFieldErrors.value = {}
   merchantForm.value = {
-    legalName: '', unifiedSocialCreditCode: '', businessType: '', legalPersonName: '',
+    legalName: '', unifiedSocialCreditCode: '', industry: '', businessType: '', legalPersonName: '',
     legalPersonIdNumber: '', registeredCapitalYuan: '', establishmentDate: '',
     businessAddressProvince: '', businessAddressCity: '', businessAddressDistrict: '',
     businessAddressDetail: '', contactPhone: '', contactEmail: '',
@@ -490,6 +682,7 @@ function resetOrganizationState(): void {
   storeProfile.value = null
   storeReadError.value = ''
   storeProfileLoaded.value = false
+  storeFieldErrors.value = {}
   storeForm.value = emptyStoreForm()
 }
 
@@ -588,31 +781,127 @@ watch(
           <label>统一社会信用代码 <input v-model="merchantForm.unifiedSocialCreditCode" placeholder="请输入统一社会信用代码" /></label>
         </div>
         <div class="form-row">
-          <label>行业类型 <input v-model="merchantForm.businessType" placeholder="请输入行业类型" /></label>
+          <label for="merchant-business-type">企业类型
+            <select id="merchant-business-type" v-model="merchantForm.businessType" name="businessType">
+              <option value="">请选择企业类型</option>
+              <option v-for="option in businessTypeOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <label for="merchant-industry">行业类型
+            <select id="merchant-industry" v-model="merchantForm.industry" name="industry">
+              <option value="">请选择行业类型</option>
+              <option v-for="option in industryOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+        </div>
+        <div class="form-row">
           <label>注册资本（元） <input v-model.number="merchantForm.registeredCapitalYuan" type="number" placeholder="请输入注册资本" /></label>
+          <label>成立日期 <input v-model="merchantForm.establishmentDate" type="date" /></label>
         </div>
         <div class="form-row">
           <label>法人姓名 <input v-model="merchantForm.legalPersonName" placeholder="请输入法人姓名" /></label>
-          <label>法人身份证号
-            <input v-model="merchantForm.legalPersonIdNumber" placeholder="请输入法人身份证号" />
+          <label for="merchant-id-number">法人身份证号
+            <input
+              id="merchant-id-number"
+              v-model.trim="merchantForm.legalPersonIdNumber"
+              name="legalPersonIdNumber"
+              inputmode="text"
+              autocomplete="off"
+              maxlength="18"
+              placeholder="请输入法人身份证号"
+              :aria-invalid="Boolean(merchantFieldErrors.legalPersonIdNumber)"
+              aria-describedby="merchant-id-number-error"
+              @input="clearMerchantFieldError('legalPersonIdNumber')"
+              @blur="validateMerchantField('legalPersonIdNumber')"
+            />
             <span v-if="merchantProfile?.legalPersonIdNumberMasked" class="masked-value">
               已保存证件：{{ merchantProfile.legalPersonIdNumberMasked }}
+            </span>
+            <span v-if="merchantFieldErrors.legalPersonIdNumber" id="merchant-id-number-error" class="field-error" role="alert">
+              {{ merchantFieldErrors.legalPersonIdNumber }}
             </span>
           </label>
         </div>
         <div class="form-row">
-          <label>成立日期 <input v-model="merchantForm.establishmentDate" type="date" /></label>
-          <label>联系电话 <input v-model="merchantForm.contactPhone" placeholder="请输入联系电话" /></label>
-        </div>
-        <div class="form-row">
-          <label>联系邮箱 <input v-model="merchantForm.contactEmail" type="email" placeholder="请输入联系邮箱" /></label>
+          <label for="merchant-contact-phone">联系电话
+            <input
+              id="merchant-contact-phone"
+              v-model.trim="merchantForm.contactPhone"
+              name="contactPhone"
+              type="tel"
+              inputmode="tel"
+              autocomplete="tel"
+              maxlength="32"
+              placeholder="请输入联系电话"
+              :aria-invalid="Boolean(merchantFieldErrors.contactPhone)"
+              aria-describedby="merchant-contact-phone-error"
+              @input="clearMerchantFieldError('contactPhone')"
+              @blur="validateMerchantField('contactPhone')"
+            />
+            <span v-if="merchantFieldErrors.contactPhone" id="merchant-contact-phone-error" class="field-error" role="alert">
+              {{ merchantFieldErrors.contactPhone }}
+            </span>
+          </label>
+          <label for="merchant-contact-email">联系邮箱
+            <input
+              id="merchant-contact-email"
+              v-model.trim="merchantForm.contactEmail"
+              name="contactEmail"
+              type="email"
+              autocomplete="email"
+              maxlength="254"
+              placeholder="请输入联系邮箱"
+              :aria-invalid="Boolean(merchantFieldErrors.contactEmail)"
+              aria-describedby="merchant-contact-email-error"
+              @input="clearMerchantFieldError('contactEmail')"
+              @blur="validateMerchantField('contactEmail')"
+            />
+            <span v-if="merchantFieldErrors.contactEmail" id="merchant-contact-email-error" class="field-error" role="alert">
+              {{ merchantFieldErrors.contactEmail }}
+            </span>
+          </label>
         </div>
         <div class="form-row">
           <label>企业地址</label>
           <div class="address-inputs">
-            <input v-model="merchantForm.businessAddressProvince" placeholder="省份" />
-            <input v-model="merchantForm.businessAddressCity" placeholder="城市" />
-            <input v-model="merchantForm.businessAddressDistrict" placeholder="区县" />
+            <select
+              v-model="merchantForm.businessAddressProvince"
+              name="businessAddressProvince"
+              aria-label="省份"
+              @change="onMerchantProvinceChange"
+            >
+              <option value="">请选择省份</option>
+              <option v-for="province in merchantProvinceOptions" :key="province.value" :value="province.value">
+                {{ province.label }}
+              </option>
+            </select>
+            <select
+              v-model="merchantForm.businessAddressCity"
+              name="businessAddressCity"
+              aria-label="城市"
+              :disabled="!merchantForm.businessAddressProvince"
+              @change="onMerchantCityChange"
+            >
+              <option value="">请选择城市</option>
+              <option v-for="city in merchantCityOptions" :key="city.value" :value="city.value">
+                {{ city.label }}
+              </option>
+            </select>
+            <select
+              v-model="merchantForm.businessAddressDistrict"
+              name="businessAddressDistrict"
+              aria-label="区县"
+              :disabled="!merchantForm.businessAddressCity"
+            >
+              <option value="">请选择区县</option>
+              <option v-for="district in merchantDistrictOptions" :key="district.value" :value="district.value">
+                {{ district.label }}
+              </option>
+            </select>
             <input v-model="merchantForm.businessAddressDetail" placeholder="详细地址" class="full-width" />
           </div>
         </div>
@@ -807,14 +1096,63 @@ watch(
         <div class="form-row">
           <label>门店地址</label>
           <div class="address-inputs">
-            <input v-model="storeForm.addressProvince" placeholder="省份" />
-            <input v-model="storeForm.addressCity" placeholder="城市" />
-            <input v-model="storeForm.addressDistrict" placeholder="区县" />
+            <select
+              v-model="storeForm.addressProvince"
+              name="storeAddressProvince"
+              aria-label="门店省份"
+              @change="onStoreProvinceChange"
+            >
+              <option value="">请选择省份</option>
+              <option v-for="province in storeProvinceOptions" :key="province.value" :value="province.value">
+                {{ province.label }}
+              </option>
+            </select>
+            <select
+              v-model="storeForm.addressCity"
+              name="storeAddressCity"
+              aria-label="门店城市"
+              :disabled="!storeForm.addressProvince"
+              @change="onStoreCityChange"
+            >
+              <option value="">请选择城市</option>
+              <option v-for="city in storeCityOptions" :key="city.value" :value="city.value">
+                {{ city.label }}
+              </option>
+            </select>
+            <select
+              v-model="storeForm.addressDistrict"
+              name="storeAddressDistrict"
+              aria-label="门店区县"
+              :disabled="!storeForm.addressCity"
+            >
+              <option value="">请选择区县</option>
+              <option v-for="district in storeDistrictOptions" :key="district.value" :value="district.value">
+                {{ district.label }}
+              </option>
+            </select>
             <input v-model="storeForm.addressDetail" placeholder="详细地址" class="full-width" />
           </div>
         </div>
         <div class="form-row">
-          <label>联系电话 <input v-model="storeForm.phone" placeholder="请输入联系电话" /></label>
+          <label for="store-contact-phone">联系电话
+            <input
+              id="store-contact-phone"
+              v-model.trim="storeForm.phone"
+              name="storePhone"
+              type="tel"
+              inputmode="tel"
+              autocomplete="tel"
+              maxlength="32"
+              placeholder="请输入联系电话"
+              :aria-invalid="Boolean(storeFieldErrors.phone)"
+              aria-describedby="store-contact-phone-error"
+              @input="clearStoreFieldError('phone')"
+              @blur="validateStoreField('phone')"
+            />
+            <span v-if="storeFieldErrors.phone" id="store-contact-phone-error" class="field-error" role="alert">
+              {{ storeFieldErrors.phone }}
+            </span>
+          </label>
         </div>
         <div class="form-row">
           <label>门店描述 <textarea v-model="storeForm.description" placeholder="请输入门店描述（选填）" rows="3" /></label>
@@ -977,9 +1315,13 @@ watch(
 .form-row input,
 .form-row select,
 .form-row textarea {
+  width: 100%;
+  min-width: 0;
   padding: 8px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font-size: 14px;
 }
 
@@ -991,10 +1333,28 @@ watch(
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
+.form-row input[aria-invalid="true"],
+.form-row select[aria-invalid="true"],
+.form-row textarea[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.form-row select:disabled {
+  cursor: not-allowed;
+  color: var(--color-text-muted);
+  background: var(--surface-muted);
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--text-xs);
+}
+
 .address-inputs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
+  min-width: 0;
 }
 
 .address-inputs .full-width {
@@ -1010,7 +1370,8 @@ watch(
 .form-actions button {
   padding: 8px 16px;
   border: 1px solid var(--color-border);
-  background: white;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s;
@@ -1164,5 +1525,15 @@ watch(
   padding: 24px;
   text-align: center;
   color: var(--color-text-muted);
+}
+
+@media (max-width: 768px) {
+  .address-inputs {
+    grid-template-columns: 1fr;
+  }
+
+  .address-inputs .full-width {
+    grid-column: auto;
+  }
 }
 </style>
