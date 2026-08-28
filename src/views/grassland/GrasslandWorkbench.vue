@@ -133,7 +133,7 @@ const {
   selectedAppIds,
   filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled,
   refreshTasks, publishDraft, closeTaskAction, cancelTaskAction,
-  taskStatusLabel, statusLabel, selectTask, loadRecommendations, inviteRecommended,
+  taskStatusLabel, isRejectedDraft, statusLabel, selectTask, loadRecommendations, inviteRecommended,
   accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
   contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
   withdrawApp,
@@ -593,7 +593,10 @@ watch(grasslandNavigationTarget, async (target) => {
                   <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }" @click="selectTask(t.id)">
                     {{ t.title }}
                   </button>
-                  <span class="badge badge-neutral">{{ taskStatusLabel(t.status) }}</span>
+                  <!-- 任务书 #53：被驳回退回的草稿标「已驳回·待修改」（danger），其余按状态取 neutral -->
+                  <span class="badge" :class="isRejectedDraft(t) ? 'badge-danger' : 'badge-neutral'">{{
+                    isRejectedDraft(t) ? '已驳回·待修改' : taskStatusLabel(t.status)
+                  }}</span>
                   <span v-if="t.bountyCents" class="badge badge-success gl-num">{{ formatYuan(t.bountyCents) }}</span>
                   <!-- 任务书 #25：阶梯任务在状态/赏金标签旁展示 compact 档位摘要（赏金 = 最高档预留） -->
                   <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" compact />
@@ -611,6 +614,10 @@ watch(grasslandNavigationTarget, async (target) => {
                     />
                   </div>
                 </div>
+                <!-- 任务书 #53：被驳回的草稿在行下展示驳回原因（重新提交/通过后后端置 null，不再显示） -->
+                <p v-if="isRejectedDraft(t)" class="gl-hint gl-reject-hint">
+                  驳回原因：{{ t.lastRejectedNote || '平台未填写原因' }}
+                </p>
                 <div class="gl-task-actions">
                   <!-- 草稿：编辑 / 提交审核 / 取消 -->
                   <template v-if="t.status === 'draft'">
@@ -1250,6 +1257,8 @@ watch(grasslandNavigationTarget, async (target) => {
 }
 .gl-task-main { display: flex; align-items: center; gap: var(--space-xs); flex: 1 1 240px; min-width: 0; flex-wrap: wrap; }
 .gl-task-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* 任务书 #53：被驳回草稿的行下原因提示——muted 小字独占整行（li 是 wrap flex，不占满会挤进操作区） */
+.gl-reject-hint { flex-basis: 100%; margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
 /* 生长刻度：五段轨（草稿/审核/招募/履约/结算），已完成=段色半透、当前=段色实心；
    段色映射状态 token：中性/警示/信息/强调/成功——结构即状态机，不新增色相 */
 .gl-growth { display: inline-flex; align-items: center; gap: 3px; }

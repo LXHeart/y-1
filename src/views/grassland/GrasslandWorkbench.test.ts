@@ -186,6 +186,54 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(statuses).toEqual(['draft', 'pending_review', 'published', 'closed', 'cancelled'])
   })
 
+  /**
+   * 任务书 #53 S2.5：被平台驳回退回的草稿在任务列表标「已驳回·待修改」并展示驳回原因；
+   * 已上架任务即使残留历史驳回字段也不显示（isRejectedDraft 只认 draft + 驳回字段非空）。
+   */
+  test('被驳回的草稿显示已驳回标记与驳回原因，已上架任务不显示历史驳回', async () => {
+    const baseTask = {
+      ownerAccountId: 'acct-1', organizationId: 'org-1', description: null,
+      contentForm: null, platform: 'douyin', maxSlots: 1, bountyCents: 10000,
+      freebieDepositCents: 0, minRecommenderLevel: 1,
+      requirements: { mustInclude: [], forbiddenContent: [], metricRequirements: [], evidenceRequirements: [] },
+      version: 2, applicationDeadline: null, cancelledAt: null,
+      createdAt: '2026-08-27T00:00:00Z', autoAcceptMinLevel: null,
+    }
+    const rejectedDraft: Task = {
+      ...baseTask, id: 'task-rejected', title: '被驳回的任务', status: 'draft',
+      publishedAt: null,
+      lastReviewAction: 'rejected', lastReviewNote: '画面含平台禁投品类',
+      lastReviewedAt: '2026-08-28T10:00:00Z',
+      lastRejectedNote: '画面含平台禁投品类', lastRejectedAt: '2026-08-28T10:00:00Z',
+    } as Task
+    const publishedTask: Task = {
+      ...baseTask, id: 'task-published', title: '已上架的任务', status: 'published',
+      publishedAt: '2026-08-28T00:00:00Z',
+      lastReviewAction: 'approved', lastReviewNote: null, lastReviewedAt: null,
+      lastRejectedNote: null, lastRejectedAt: null,
+    } as Task
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      let data = dataFor(url)
+      if (url.startsWith('/api/tasks?')) {
+        data = url.includes('status=draft') ? [rejectedDraft]
+          : url.includes('status=published') ? [publishedTask] : []
+      }
+      return { ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data }) }
+    }))
+    const wrapper = mountWorkbench()
+
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已驳回·待修改')
+    expect(wrapper.text().match(/驳回原因：/g)).toHaveLength(1)
+    expect(wrapper.text()).toContain('驳回原因：画面含平台禁投品类')
+    // 已上架任务保持原状态文案，不出现驳回标记
+    expect(wrapper.text()).toContain('已发布')
+    expect(wrapper.text().match(/已驳回·待修改/g)).toHaveLength(1)
+  })
+
   test('recommender-only 账号直接激活推荐官，不尝试 merchant', async () => {
     const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
     const { calls } = stubFetch(identities)

@@ -170,6 +170,15 @@ export function useWorkbenchEngagements(
     return map[status] || status
   }
 
+  /**
+   * 任务书 #53：被平台驳回退回的草稿。后端仅在「任务仍 draft 且最新一条审核记录为 rejected」时
+   * 回带 lastRejectedNote/lastRejectedAt（重新提交/通过后恒 null），据此标「已驳回·待修改」并展示原因。
+   */
+  function isRejectedDraft(task: Task): boolean {
+    return task.status === 'draft'
+      && (task.lastRejectedNote != null || task.lastRejectedAt != null)
+  }
+
   function statusLabel(status: string): string {
     const map: Record<string, string> = {
       pending: '待处理',
@@ -518,7 +527,7 @@ export function useWorkbenchEngagements(
     selectedAppIds, batchLoading,
     filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled,
     refreshTasks, publishDraft, closeTaskAction, cancelTaskAction,
-    taskStatusLabel, statusLabel, selectTask, loadRecommendations, inviteRecommended,
+    taskStatusLabel, isRejectedDraft, statusLabel, selectTask, loadRecommendations, inviteRecommended,
     accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
     contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
     withdrawApp, reset,
