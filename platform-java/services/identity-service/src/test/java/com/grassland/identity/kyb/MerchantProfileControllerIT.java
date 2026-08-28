@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import com.grassland.identity.IdentityItSupport;
 import com.grassland.messaging.outbox.OutboxRepository;
 import java.util.Base64;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,10 +60,22 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 				""".formatted(usccSuffix);
 	}
 
+	private String draftBodyWithIndustry(String usccSuffix, String industry) {
+		return draftBody(usccSuffix).replace("\"businessType\":\"company\",",
+				"\"businessType\":\"company\",\n \"industry\":\"" + industry + "\",");
+	}
+
 	private void postDraft(String orgId, String cookie, String body, int expectedStatus) {
 		client().post().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
 				.header("Cookie", "y1.sid=" + cookie).bodyValue(body).exchange().expectStatus()
 				.isEqualTo(expectedStatus);
+	}
+
+	private void postDraftInvalid(String orgId, String cookie, String body, String expectedError) {
+		client().post().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie).bodyValue(body)
+				.exchange().expectStatus().isBadRequest().expectBody()
+				.jsonPath("$.error").value(message -> assertThat((String) message).contains(expectedError));
 	}
 
 	private void uploadAllDocuments(String orgId, String cookie) {
@@ -110,15 +123,176 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 	}
 
 	@Test
-	@DisplayName("更新未提供新身份证号时保留原密文和掩码")
-	void updateWithoutIdNumberPreservesCiphertext() {
+	@DisplayName("POST 校验电话、邮箱和身份证；支持座机与 15 位身份证")
+	void postValidatesContactFieldsBeforeInsert() {
+		var owner = seedAccount("kyb-fields-post-" + UUID.randomUUID() + "@example.com");
+		String orgId = createOrg(owner.cookie(), "KYB Fields POST Org");
+		String valid = draftBody("0104");
+
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("13800138000", "12800138000"), "联系电话");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("kyb@example.com", "kyb@example"), "联系邮箱");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105194912310021"),
+				"身份证号");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105199902300023"),
+				"身份证号");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110000194912310022"),
+				"身份证号");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "119999194912310021"),
+				"身份证号");
+
+		Long profiles = db
+				.sql("SELECT count(*) FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
+				.bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
+		assertThat(profiles).isZero();
+
+		client().post().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(valid.replace("13800138000", "010-12345678")
+						.replace("310101199001011234", "110105491231002")
+						.replace("kyb@example.com", "name+tag@sub.example.cn"))
+				.exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.contactPhone").isEqualTo("010-12345678")
+				.jsonPath("$.data.contactEmail").isEqualTo("name+tag@sub.example.cn")
+				.jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****1002");
+	}
+
+	@Test
+	@DisplayName("PUT 非法联系方式或身份证返回 400 且不修改原资料")
+	void putRejectsInvalidContactFieldsWithoutMutation() {
+		var owner = seedAccount("kyb-fields-put-" + UUID.randomUUID() + "@example.com");
+		String orgId = createOrg(owner.cookie(), "KYB Fields PUT Org");
+		postDraft(orgId, owner.cookie(), draftBody("0105"), 200);
+
+		String invalidPhone = draftBody("0105").replace("13800138000", "010--12345678");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(invalidPhone).exchange().expectStatus().isBadRequest().expectBody()
+				.jsonPath("$.error").value(message -> assertThat((String) message).contains("联系电话"));
+
+		String invalidEmail = draftBody("0105").replace("kyb@example.com", "user..name@example.com");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(invalidEmail).exchange().expectStatus().isBadRequest();
+
+		String invalidId = draftBody("0105").replace("310101199001011234", "110000194912310022");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(invalidId).exchange().expectStatus().isBadRequest();
+		String unknownArea = draftBody("0105").replace("310101199001011234", "119999194912310021");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(unknownArea).exchange().expectStatus().isBadRequest();
+
+		Map<String, Object> stored = db.sql("SELECT contact_phone, contact_email FROM merchant_profile "
+				+ "WHERE organization_id = CAST(:org AS uuid)").bind("org", orgId).fetch().one().block();
+		assertThat(stored).containsEntry("contact_phone", "13800138000")
+				.containsEntry("contact_email", "kyb@example.com");
+
+		String historicalArea = draftBody("0105").replace("310101199001011234", "110103194912310027");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(historicalArea).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****0027");
+	}
+
+	@Test
+	@DisplayName("行业写入 organization，businessType 保持企业类型，POST/PUT/GET 响应均回填")
+	void industryUsesOrganizationContractWithoutPollutingBusinessType() {
+		var owner = seedAccount("kyb-industry-" + UUID.randomUUID() + "@example.com");
+		String orgId = createOrg(owner.cookie(), "KYB Industry Org");
+
+		client().post().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(draftBodyWithIndustry("0102", "retail")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.industry").isEqualTo("retail")
+				.jsonPath("$.data.businessType").isEqualTo("company");
+
+		String storedIndustry = db.sql("SELECT industry FROM organization WHERE id = CAST(:org AS uuid)")
+				.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+		String storedBusinessType = db
+				.sql("SELECT business_type FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
+				.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+		assertThat(storedIndustry).isEqualTo("retail");
+		assertThat(storedBusinessType).isEqualTo("company");
+
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(draftBodyWithIndustry("0102", "education")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.industry").isEqualTo("education")
+				.jsonPath("$.data.businessType").isEqualTo("company");
+
+		client().get().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.header("Cookie", "y1.sid=" + owner.cookie()).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.industry").isEqualTo("education")
+				.jsonPath("$.data.businessType").isEqualTo("company");
+
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(draftBodyWithIndustry("0102", "other")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.industry").isEqualTo("other");
+	}
+
+	@Test
+	@DisplayName("旧客户端省略行业时保留原值，存量禁止/未知行业可显式原值保存")
+	void omittedAndLegacyIndustryValuesArePreserved() {
+		var owner = seedAccount("kyb-industry-legacy-" + UUID.randomUUID() + "@example.com");
+		String orgId = createOrg(owner.cookie(), "KYB Legacy Industry Org");
+		db.sql("UPDATE organization SET industry = 'gambling' WHERE id = CAST(:org AS uuid)")
+				.bind("org", orgId).then().block();
+
+		postDraft(orgId, owner.cookie(), draftBody("0103"), 200);
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(draftBodyWithIndustry("0103", "gambling")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.industry").isEqualTo("gambling");
+
+		db.sql("UPDATE organization SET industry = 'legacy_industry' WHERE id = CAST(:org AS uuid)")
+				.bind("org", orgId).then().block();
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(draftBodyWithIndustry("0103", "legacy_industry")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.industry").isEqualTo("legacy_industry");
+	}
+
+	@Test
+	@DisplayName("新设禁止行业或非法行业 → 400，组织和商家资料均不写入")
+	void rejectsNewProhibitedAndUnknownIndustries() {
+		String[] industries = {"gambling", "adult", "not_an_industry"};
+		for (int index = 0; index < industries.length; index++) {
+			var owner = seedAccount("kyb-industry-invalid-" + index + "-" + UUID.randomUUID() + "@example.com");
+			String orgId = createOrg(owner.cookie(), "KYB Invalid Industry " + index);
+
+			postDraft(orgId, owner.cookie(), draftBodyWithIndustry("011" + index, industries[index]), 400);
+
+			String storedIndustry = db.sql("SELECT industry FROM organization WHERE id = CAST(:org AS uuid)")
+					.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+			Long profiles = db
+					.sql("SELECT count(*) FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
+					.bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
+			assertThat(storedIndustry).isEqualTo("other");
+			assertThat(profiles).isZero();
+		}
+	}
+
+	@Test
+	@DisplayName("更新身份证号为空或省略时保留原密文；支持 400 服务号码")
+	void updateWithBlankOrMissingIdNumberPreservesCiphertext() {
 		var owner = seedAccount("kyb-preserve-id-" + UUID.randomUUID() + "@example.com");
 		String orgId = createOrg(owner.cookie(), "KYB Preserve ID Org");
 		postDraft(orgId, owner.cookie(), draftBody("0111"), 200);
 		String before = db
 				.sql("SELECT legal_person_id_number FROM merchant_profile "
 						+ "WHERE organization_id = CAST(:org AS uuid)")
-				.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+					.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+		String bodyWithBlankId = draftBody("0112")
+				.replace("\"legalPersonIdNumber\":\"310101199001011234\"", "\"legalPersonIdNumber\":\"   \"")
+				.replace("13800138000", "400-123-4567");
+
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(bodyWithBlankId).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****1234")
+				.jsonPath("$.data.contactPhone").isEqualTo("400-123-4567");
+
 		String bodyWithoutId = draftBody("0112").replace("\"legalPersonIdNumber\":\"310101199001011234\",", "");
 
 		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
@@ -252,7 +426,12 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 
 		var second = seedAccount("kyb-dup-b-" + UUID.randomUUID() + "@example.com");
 		String secondOrg = createOrg(second.cookie(), "KYB Dup B");
-		postDraft(secondOrg, second.cookie(), draftBody("0501"), 409);
+		postDraft(secondOrg, second.cookie(), draftBodyWithIndustry("0501", "retail"), 409);
+
+		// 行业与 profile 在同一事务中；profile 唯一冲突时 organization 更新也必须回滚。
+		String industry = db.sql("SELECT industry FROM organization WHERE id = CAST(:org AS uuid)")
+				.bind("org", secondOrg).map(row -> row.get(0, String.class)).one().block();
+		assertThat(industry).isEqualTo("other");
 	}
 
 	@Test

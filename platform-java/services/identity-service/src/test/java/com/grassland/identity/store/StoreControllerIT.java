@@ -163,6 +163,33 @@ class StoreControllerIT extends IdentityItSupport {
     }
 
     @Test
+    void storeProfilePhoneIsNormalizedAndInvalidUpdateDoesNotPersist() {
+        var owner = seedAccount("store-profile-phone@example.com");
+        String orgId = createOrg(owner.cookie(), "门店电话校验主体");
+        String storeId = createStore(orgId, owner.cookie(), "电话校验门店");
+        String uri = "/api/organizations/" + orgId + "/stores/" + storeId + "/profile";
+        String cookie = "y1.sid=" + owner.cookie();
+
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of(
+                        "address", "{\"address\":\"原地址\"}",
+                        "phone", " 021-12345678 "))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.phone").isEqualTo("021-12345678");
+
+        client().post().uri(uri).contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue(Map.of(
+                        "address", "{\"address\":\"不应保存的新地址\"}",
+                        "phone", "12345"))
+                .exchange().expectStatus().isBadRequest();
+
+        client().get().uri(uri).header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.address").isEqualTo("{\"address\": \"原地址\"}")
+                .jsonPath("$.data.phone").isEqualTo("021-12345678");
+    }
+
+    @Test
     void malformedBusinessHoursIsBadRequest() {
         var owner = seedAccount("store-profile-hours@example.com");
         String orgId = createOrg(owner.cookie(), "门店营业时间校验主体");

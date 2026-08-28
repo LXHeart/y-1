@@ -3,6 +3,7 @@ package com.grassland.identity.kyb;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.organization.OrganizationRepository;
 import com.grassland.identity.store.StoreProfile;
 import com.grassland.identity.store.StoreProfileRepository;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import reactor.core.publisher.Mono;
 public class KybReviewDetailService {
 
     private final MerchantProfileRepository merchantProfiles;
+    private final OrganizationRepository organizations;
     private final MerchantAttachmentRepository attachments;
     private final WithdrawalAccountRepository withdrawalAccounts;
     private final StoreProfileRepository storeProfiles;
@@ -30,6 +32,7 @@ public class KybReviewDetailService {
 
     public KybReviewDetailService(
             MerchantProfileRepository merchantProfiles,
+            OrganizationRepository organizations,
             MerchantAttachmentRepository attachments,
             WithdrawalAccountRepository withdrawalAccounts,
             StoreProfileRepository storeProfiles,
@@ -37,6 +40,7 @@ public class KybReviewDetailService {
             KybEvidenceService evidence,
             KybMediaClient mediaClient) {
         this.merchantProfiles = merchantProfiles;
+        this.organizations = organizations;
         this.attachments = attachments;
         this.withdrawalAccounts = withdrawalAccounts;
         this.storeProfiles = storeProfiles;
@@ -89,15 +93,17 @@ public class KybReviewDetailService {
                 || !request.organizationId().equals(request.targetId().toString())) {
             return targetChanged();
         }
-        return merchantProfiles.findById(request.organizationId())
-                .switchIfEmpty(targetChanged())
-                .map(profile -> {
+        return Mono.zip(merchantProfiles.findById(request.organizationId()),
+                        organizations.findById(request.organizationId()))
+                .map(result -> {
+                    MerchantProfile profile = result.getT1();
                     Map<String, Object> body = new LinkedHashMap<>();
                     body.put("type", KybVerificationType.MERCHANT_PROFILE.dbValue());
                     body.put("organizationId", profile.organizationId());
                     body.put("legalName", profile.legalName());
                     body.put("unifiedSocialCreditCode", profile.unifiedSocialCreditCode());
                     body.put("businessType", profile.businessType());
+                    body.put("industry", result.getT2().industry());
                     body.put("legalPersonName", profile.legalPersonName());
                     body.put("legalPersonIdNumberMasked", crypto.maskTail4(profile.legalPersonIdNumber()));
                     body.put("registeredCapitalCents", profile.registeredCapitalCents());
@@ -108,7 +114,8 @@ public class KybReviewDetailService {
                     body.put("contactEmail", profile.contactEmail());
                     body.put("status", profile.status());
                     return body;
-                });
+                })
+                .switchIfEmpty(targetChanged());
     }
 
     private Mono<Map<String, Object>> withdrawalSubject(KybVerificationRequest request) {

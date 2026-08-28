@@ -43,7 +43,8 @@ class KybVerificationControllerIT extends IdentityItSupport {
     private static String profileBody(String label, String code, String street) {
         return """
                 {"legalName":"审核测试 %s","unifiedSocialCreditCode":"%s","businessType":"company",
-                 "legalPersonName":"李四","legalPersonIdNumber":"310101199002025678",
+                 "industry":"retail",
+                 "legalPersonName":"李四","legalPersonIdNumber":"310101199002025670",
                  "businessAddress":{"province":"上海市","city":"上海市","district":"静安区","address":"%s"},
                  "contactPhone":"13900139000"}
                 """.formatted(label, code, street);
@@ -177,7 +178,8 @@ class KybVerificationControllerIT extends IdentityItSupport {
                 .jsonPath("$.data.request.id").isEqualTo(s.requestId())
                 .jsonPath("$.data.subject.type").isEqualTo("merchant_profile")
                 .jsonPath("$.data.subject.legalName").isEqualTo("审核测试 detail")
-                .jsonPath("$.data.subject.legalPersonIdNumberMasked").isEqualTo("****5678")
+                .jsonPath("$.data.subject.industry").isEqualTo("retail")
+                .jsonPath("$.data.subject.legalPersonIdNumberMasked").isEqualTo("****5670")
                 .jsonPath("$.data.subject.legalPersonIdNumber").doesNotExist()
                 .jsonPath("$.data.attachments.length()").isEqualTo(3)
                 .jsonPath("$.data.attachments[0].mediaReferenceId").doesNotExist();

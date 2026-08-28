@@ -8,6 +8,7 @@ import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
+import com.grassland.identity.kyb.MerchantProfileFields;
 import com.grassland.identity.kyb.KybSubmissionService;
 import com.grassland.identity.kyb.KybVerificationRequest;
 import com.grassland.identity.kyb.KybVerificationType;
@@ -226,7 +227,7 @@ public class StoreController {
 
 	/** 任务书 #24：写前归一化营销字段（帽与 trim/去重；blank → null；空数组 = 清空）。 */
 	private StoreProfileDraft draftFrom(CreateStoreProfileRequest body) {
-		return new StoreProfileDraft(requireAddress(body.address()), body.phone(),
+		return new StoreProfileDraft(requireAddress(body.address()), MerchantProfileFields.contactPhone(body.phone()),
 				requireBusinessHours(body.businessHours()), body.description(),
 				StoreMarketingFields.items(body.categories(), "主营品类"),
 				StoreMarketingFields.items(body.signatureItems(), "特色产品/服务"),

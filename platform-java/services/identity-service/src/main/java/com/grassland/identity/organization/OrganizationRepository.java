@@ -54,6 +54,13 @@ public class OrganizationRepository {
                 .fetch().rowsUpdated();
     }
 
+    /** 更新组织行业。调用方必须先完成行业枚举校验，并在持有组织行锁的事务内调用。 */
+    public Mono<Long> updateIndustry(String id, String industry) {
+        return db.sql("UPDATE organization SET industry = :industry, updated_at = now() WHERE id = CAST(:id AS uuid)")
+                .bind("industry", industry).bind("id", id)
+                .fetch().rowsUpdated();
+    }
+
     /** 在调用方事务内锁定组织，供跨表业务流程统一串行化。 */
     public Mono<Organization> findByIdForUpdate(String id) {
         return db.sql("SELECT " + SELECT_COLS + " FROM organization WHERE id = CAST(:id AS uuid) FOR UPDATE")

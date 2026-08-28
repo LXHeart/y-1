@@ -7,14 +7,16 @@ import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
 import com.grassland.identity.membership.OrgAuthorization;
+import com.grassland.identity.organization.Organization;
 import com.grassland.identity.organization.OrganizationRepository;
+import com.grassland.identity.permission.Industry;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
@@ -85,24 +87,71 @@ public class MerchantProfileController {
 		return authz.requireRole(request, orgId, MembershipRole.ADMIN)
 				// 状态守卫：此前 POST 无守卫且 upsert 无条件覆盖 status，
 				// 已 approved 的资料被 POST 一下就静默打回 draft，审核结果丢失。
-				.flatMap(account -> transactions.transactional(lockOrganization(orgId)
-						.then(profiles.findById(orgId)
-								.flatMap(existing -> requireEditable(existing).thenReturn(existing)))
-						.then(saveFields(orgId, body))))
-				.map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))));
+				.flatMap(account -> transactions.transactional(lockOrganization(orgId).flatMap(organization ->
+						profiles.findById(orgId)
+								.flatMap(existing -> requireEditable(existing).thenReturn(existing))
+								.then(saveFields(orgId, body, organization)))))
+				.map(saved -> ResponseEntity.ok(Map.of("success", true, "data",
+						toBody(saved.profile(), saved.industry()))));
 	}
 
-	/** 写入资料字段（敏感字段先加密），并把 USCC 唯一冲突翻成 409。 */
-	private Mono<MerchantProfile> saveFields(String orgId, CreateMerchantProfileRequest body) {
-		return Mono.fromCallable(() -> {
-			LocalDate establishmentDate = parseLocalDate(body.establishmentDate());
-			String encryptedId = crypto.encrypt(body.legalPersonIdNumber());
-			return new Object[]{establishmentDate, encryptedId};
-		}).flatMap(prepared -> profiles.upsertFields(orgId, body.legalName(), body.unifiedSocialCreditCode(),
-				body.businessType(), body.legalPersonName(), (String) prepared[1], body.registeredCapitalCents(),
-				(LocalDate) prepared[0], serializeAddress(body.businessAddress()), body.contactPhone(),
-				body.contactEmail())).onErrorMap(DataIntegrityViolationException.class,
-						e -> new IdentityException(409, "该统一社会信用代码已被其他商家使用"));
+	/** 在组织行锁内写入行业和资料字段（敏感字段先加密），并把 USCC 唯一冲突翻成 409。 */
+	private Mono<ProfileWithIndustry> saveFields(String orgId, CreateMerchantProfileRequest body,
+			Organization organization) {
+		return Mono.defer(() -> {
+			String industry = resolveIndustry(body.industry(), organization.industry());
+			Mono<Long> updateIndustry = Objects.equals(industry, organization.industry())
+					? Mono.just(0L)
+					: organizations.updateIndustry(orgId, industry);
+			Mono<PreparedFields> preparedFields = Mono.fromCallable(() -> {
+				String legalPersonId = MerchantProfileFields.legalPersonIdNumber(body.legalPersonIdNumber());
+				String contactPhone = MerchantProfileFields.contactPhone(body.contactPhone());
+				String contactEmail = MerchantProfileFields.contactEmail(body.contactEmail());
+				return new PreparedFields(parseLocalDate(body.establishmentDate()), crypto.encrypt(legalPersonId),
+						contactPhone, contactEmail);
+			});
+			Mono<MerchantProfile> saveProfile = preparedFields
+					.flatMap(prepared -> updateIndustry.then(profiles.upsertFields(orgId, body.legalName(),
+							body.unifiedSocialCreditCode(), body.businessType(), body.legalPersonName(),
+							prepared.encryptedId(), body.registeredCapitalCents(), prepared.establishmentDate(),
+							serializeAddress(body.businessAddress()), prepared.contactPhone(), prepared.contactEmail())))
+					.onErrorMap(DataIntegrityViolationException.class,
+							e -> new IdentityException(409, "该统一社会信用代码已被其他商家使用"));
+			return saveProfile.map(profile -> new ProfileWithIndustry(profile, industry));
+		});
+	}
+
+	/**
+	 * 行业写入规则：省略即保留；新值必须属于 Industry 且不能是禁入行业。
+	 * 存量禁入/未知值允许以原值继续保存其他资料，避免历史组织被 KYB 编辑锁死。
+	 */
+	private static String resolveIndustry(String requested, String current) {
+		if (requested == null) {
+			return current;
+		}
+		if (current != null && requested.trim().equalsIgnoreCase(current.trim())) {
+			return current;
+		}
+
+		Industry parsed;
+		try {
+			parsed = Industry.fromDb(requested);
+		} catch (IllegalArgumentException error) {
+			throw new IdentityException(400, "行业类型无效");
+		}
+		if (current != null && !current.isBlank()) {
+			try {
+				if (Industry.fromDb(current) == parsed) {
+					return current;
+				}
+			} catch (IllegalArgumentException ignored) {
+				// 未知存量值只有在请求原样保留时才被接受；切换到合法行业仍然允许。
+			}
+		}
+		if (parsed.isProhibited()) {
+			throw new IdentityException(400, "该行业不支持商家认证");
+		}
+		return parsed.dbValue();
 	}
 
 	/** 响应包装。用 LinkedHashMap 而非 {@code Map.of}——data 可为 null（资料尚未创建）。 */
@@ -145,19 +194,22 @@ public class MerchantProfileController {
 				// ⚠️ 不能写 switchIfEmpty(Mono.just(ResponseEntity.ok(Map.of("data", null))))：
 				// switchIfEmpty 的备选在**装配期**求值，而 Map.of 不接受 null value → 无论资料存不存在，
 				// GET 一律 NPE→500。这里改用允许 null 的 LinkedHashMap。
-				.flatMap(
-						account -> profiles.findById(orgId).map(profile -> ResponseEntity.ok(envelope(toBody(profile))))
-								.defaultIfEmpty(ResponseEntity.ok(envelope(null))));
+				.flatMap(account -> profiles.findById(orgId)
+						.flatMap(profile -> organizations.findById(orgId)
+								.map(organization -> ResponseEntity.ok(envelope(toBody(profile, organization.industry())))))
+						.defaultIfEmpty(ResponseEntity.ok(envelope(null))));
 	}
 
 	@PutMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> update(@PathVariable String orgId,
 			@RequestBody CreateMerchantProfileRequest body, ServerHttpRequest request) {
 		return authz.requireRole(request, orgId, MembershipRole.ADMIN)
-				.flatMap(account -> transactions.transactional(lockOrganization(orgId).then(
-						profiles.findById(orgId).switchIfEmpty(Mono.error(new IdentityException(404, "商家资料不存在，请先创建")))
-								.flatMap(profile -> requireEditable(profile).then(saveFields(orgId, body))))))
-				.map(profile -> ResponseEntity.ok(Map.of("success", true, "data", toBody(profile))));
+				.flatMap(account -> transactions.transactional(lockOrganization(orgId).flatMap(organization ->
+						profiles.findById(orgId)
+								.switchIfEmpty(Mono.error(new IdentityException(404, "商家资料不存在，请先创建")))
+								.flatMap(profile -> requireEditable(profile).then(saveFields(orgId, body, organization))))))
+				.map(saved -> ResponseEntity.ok(Map.of("success", true, "data",
+						toBody(saved.profile(), saved.industry()))));
 	}
 
 	/**
@@ -195,7 +247,10 @@ public class MerchantProfileController {
 														.onErrorResume(error -> releaseReviewMaterials(orgId,
 																materialItems, req.id()).then(Mono.error(error)))
 														.thenReturn(updated)))))))
-				.map(profile -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(profile))));
+				.flatMap(profile -> organizations.findById(orgId)
+						.switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
+						.map(organization -> ResponseEntity.status(201)
+								.body(Map.of("success", true, "data", toBody(profile, organization.industry())))));
 	}
 
 	/**
@@ -222,9 +277,9 @@ public class MerchantProfileController {
 				.onErrorResume(releaseError -> Mono.empty());
 	}
 
-	private Mono<Void> lockOrganization(String orgId) {
-		return organizations.findByIdForUpdate(orgId).switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")))
-				.then();
+	private Mono<Organization> lockOrganization(String orgId) {
+		return organizations.findByIdForUpdate(orgId)
+				.switchIfEmpty(Mono.error(new IdentityException(404, "组织不存在")));
 	}
 
 	/**
@@ -255,12 +310,13 @@ public class MerchantProfileController {
 		}
 	}
 
-	private Map<String, Object> toBody(MerchantProfile profile) {
+	private Map<String, Object> toBody(MerchantProfile profile, String industry) {
 		Map<String, Object> m = new LinkedHashMap<>();
 		m.put("organizationId", profile.organizationId());
 		m.put("legalName", profile.legalName());
 		m.put("unifiedSocialCreditCode", profile.unifiedSocialCreditCode());
 		m.put("businessType", profile.businessType());
+		m.put("industry", industry);
 		m.put("legalPersonName", profile.legalPersonName());
 		// 身份证号只回末 4 位掩码，完整明文永不出响应体（D-10）。
 		m.put("legalPersonIdNumberMasked", crypto.maskTail4(profile.legalPersonIdNumber()));
@@ -279,8 +335,15 @@ public class MerchantProfileController {
 	}
 
 	public record CreateMerchantProfileRequest(String legalName, String unifiedSocialCreditCode, String businessType,
-			String legalPersonName, String legalPersonIdNumber, Long registeredCapitalCents, String establishmentDate,
+			String industry, String legalPersonName, String legalPersonIdNumber, Long registeredCapitalCents, String establishmentDate,
 			BusinessAddress businessAddress, String contactPhone, String contactEmail) {
+	}
+
+	private record ProfileWithIndustry(MerchantProfile profile, String industry) {
+	}
+
+	private record PreparedFields(LocalDate establishmentDate, String encryptedId, String contactPhone,
+			String contactEmail) {
 	}
 
 	/**
