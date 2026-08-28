@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { reloadOnChunkError } from '../lib/chunk-reload'
 
 /**
  * 治理台路由（独立入口 ops.html，独立 origin 部署）。
@@ -33,6 +34,13 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+// 发版后旧标签页的懒加载 chunk 自救：失败即带目标路由刷新一次（src/lib/chunk-reload.ts）。
+// 治理台两个视图都是懒加载——旧标签页点「运营处置」/「管理后台」加载已删除 chunk
+// 时若不自救，点击毫无反应（2026-08-29 实录）。
+router.onError((error, to) => {
+  reloadOnChunkError(error, to.fullPath)
 })
 
 export default router

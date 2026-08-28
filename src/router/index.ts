@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { reloadOnChunkError } from '../lib/chunk-reload'
 
 /**
  * 用户端路由（index.html 入口）。
@@ -101,6 +102,11 @@ router.beforeEach((to) => {
     // 无活动 Pinia（部分单测直挂视图）→ 放行，不参与导航
     return true
   }
+})
+
+// 发版后旧标签页的懒加载 chunk 自救：失败即带目标路由刷新一次（src/lib/chunk-reload.ts）。
+router.onError((error, to) => {
+  reloadOnChunkError(error, to.fullPath)
 })
 
 export default router
