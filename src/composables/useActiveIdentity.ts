@@ -23,6 +23,13 @@ const merchantViewViaManagerScope = ref(false)
 /** 初始视角激活每个账号只做一次（防并发装载用默认覆盖显式选择）。 */
 let initialActivationApplied = false
 /**
+ * 服务端已激活侧的本地镜像（null = 服务端会话尚无活动身份）。
+ * `activeSide` 只是 UI 视角猜测（默认 merchant），不能证明服务端已激活——
+ * 冷会话选「商家」登录时若按 `activeSide === next` 短路激活 POST，会话会一直停在
+ * 消费者（isMerchant()=false，草稿/资料全部不可见）。快路径必须以本镜像为准。
+ */
+let serverActivatedSide: IdentitySide | null = null
+/**
  * 激活独占声明（登录/注册路径）：登录时 ensureLoginIdentity 与布局的账号 watch
  * 并发装载——若布局那份按默认 POST 商家、ensure POST 所选身份，两个激活赛跑，
  * 商家后落地会把会话盖回默认（实测复现：选推荐官登录→刷新变回商家）。
@@ -87,9 +94,11 @@ export function useActiveIdentity() {
         ? serverActive.activeIdentityType : null
       if (serverSide && (serverSide === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value)) {
         activeSide.value = serverSide
+        serverActivatedSide = serverSide
       } else {
         activeSide.value = initialIdentity
-        await grassland.activateIdentity(initialIdentity)
+        const activated = await grassland.activateIdentity(initialIdentity)
+        if (activated !== null) serverActivatedSide = initialIdentity
       }
       grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
     }
@@ -119,13 +128,16 @@ export function useActiveIdentity() {
   async function activateIdentitySide(
     next: IdentitySide, grassland: ReturnType<typeof useGrassland>,
   ): Promise<ActivateIdentityResult> {
-    if (next === activeSide.value) return 'ok'
+    // 快路径只在服务端确认已处于该侧时成立（activeSide 是 UI 猜测，默认即 merchant——
+    // 冷会话登录选商家若据此短路，服务端会话将停留在消费者，商家数据全部不可见）。
+    if (next === activeSide.value && serverActivatedSide === next) return 'ok'
     const opened = next === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value
     if (!opened) return 'not-opened'
     const activated = await grassland.activateIdentity(next)
     if (activated === null) return 'failed'
     grassland.clearError()
     activeSide.value = next
+    serverActivatedSide = next
     return 'ok'
   }
 
@@ -139,6 +151,7 @@ export function useActiveIdentity() {
     identitiesLoaded.value = false
     merchantViewViaManagerScope.value = false
     initialActivationApplied = false
+    serverActivatedSide = null // 换账号 = 新会话，服务端激活状态未知
     // 刻意不清 activationClaimed：登录瞬间账号 watch 的 reset 恰好落在
     // claim 与 ensure 完成之间——清了就拦不住布局装载的默认激活与所选身份赛跑。
     // claim 只由 finalize（成功）/ release（登录失败）收敛。

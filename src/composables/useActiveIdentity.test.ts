@@ -192,6 +192,33 @@ describe('activateIdentitySide 账号菜单切换', () => {
     expect(state.activeSide.value).toBe('recommender')
   })
 
+  /**
+   * 冷会话选「商家」登录的回归（2026-08-28 治理台 #53 实测发现）：
+   * activeSide 默认就是 merchant，旧快路径 `next === activeSide` 据此跳过激活 POST，
+   * 服务端会话停留在消费者（isMerchant()=false，草稿/商家资料全部不可见）。
+   * 快路径必须以「服务端已激活侧」镜像为准——未经服务端确认的同侧切换仍要 POST。
+   */
+  test('服务端未确认前，同侧切换不得短路激活（冷会话登录选商家）', async () => {
+    const { api, calls } = fakeGrassland({ identities: [identity('merchant')] })
+    const state = useActiveIdentity()
+    // 登录路径：claim → 装载（跳过初始激活块）→ activateIdentitySide('merchant')
+    state.claimActivation()
+    await state.loadAccountIdentity(api)
+
+    const result = await state.activateIdentitySide('merchant', api)
+
+    expect(result).toBe('ok')
+    expect(calls).toContain('activate:merchant')
+
+    // 服务端确认后，重复切同侧才允许短路（账号菜单点击当前身份不重发）
+    const callsBefore = calls.length
+    expect(await state.activateIdentitySide('merchant', api)).toBe('ok')
+    expect(calls.length).toBe(callsBefore)
+
+    // claim 是模块级独占标记（reset 刻意不清），用完必须收敛，否则污染同文件后续用例
+    state.initialActivationFinalize()
+  })
+
   test('后端激活失败：failed 且保持原视角（不得只信客户端）', async () => {
     const { api } = fakeGrassland({
       identities: [identity('merchant'), identity('recommender')],
