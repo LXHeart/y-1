@@ -15,8 +15,9 @@ import reactor.core.publisher.Mono;
 /**
  * 门店分配服务（任务书 #52）：主体池内成员 ↔ 门店 的挂靠调配。
  *
- * <p>与 #49 下线的外部挂靠（任意 accountId 挂入）不同：这里只操作<b>本主体池内</b>的成员
- * （organization_membership.role=member），且门禁在 controller 层收归主体 ADMIN+（决策 C）。
+ * <p>与 #49 下线的外部挂靠（任意 accountId 挂入）不同：这里只操作<b>本主体内</b>的账号
+ * （有组织关系即可；2026-08-28 拍板 owner/admin 也可挂店——管理层亲自运营某店时领名分，
+ * 权限本就由 orgSuperUserAsManager 覆盖，分配只是如实呈现），门禁在 controller 层收归主体 ADMIN+（决策 C）。
  *
  * <ul>
  * <li>{@link #assign} = 分配或调度（assign-or-move）：已挂他店则同事务先解除再挂目标店
@@ -79,12 +80,14 @@ public class StoreAssignmentService {
                 .then();
     }
 
-    /** 只允许分配池内 member（owner/admin 不可被挂店；非本 org 账号 404 跨主体隔离）。 */
+    /**
+     * 分配对象须为本 org 成员（owner/admin/member 皆可——2026-08-28 拍板放开管理层；
+     * 非本 org 账号 404 跨主体隔离）。挂店为店长即占位（一店一店长闸照常生效）。
+     */
     private Mono<Void> ensurePoolMember(String accountId, String organizationId) {
         return orgMemberships.findRole(organizationId, accountId)
                 .switchIfEmpty(Mono.error(new IdentityException(404, "该账号不是本主体成员")))
-                .flatMap(role -> "member".equals(role) ? Mono.<Void>empty()
-                        : Mono.error(new IdentityException(400, "仅成员（member）可分配到门店，owner/admin 不可挂店")));
+                .then();
     }
 
     /** 一店一店长（决策 B）：排除自身（同店改角色）后已有店长行 → 409。 */

@@ -213,6 +213,9 @@ describe('OrgTeamCard · 成员池与门店分配（任务书 #52）', () => {
     expect(sec.text()).toContain('由主体账号代管')
 
     const details = sec.findAll('details').find((d) => d.find('summary')?.text().includes('从成员池分配'))!
+    // 2026-08-28 拍板：管理层也在可选之列（owner 行带「（所有者）」标注）
+    const poolOptions = details.findAll('select')[0]!.findAll('option').map((o) => o.text())
+    expect(poolOptions.some((t) => t.includes('（所有者）'))).toBe(true)
     const selects = details.findAll('select')
     await selects[0]!.setValue('acc-pool')
     await selects[1]!.setValue('manager')

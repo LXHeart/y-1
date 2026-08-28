@@ -10,9 +10,10 @@ import org.springframework.http.MediaType;
 /**
  * 门店分配/移除/调度端到端（任务书 #52 池模型）。继承 {@link IdentityItSupport}。
  *
- * <p>守卫矩阵：仅主体 ADMIN+（member/店长 403）、店须属本组织（404）、分配对象须为池内
- * member（owner/admin 400、外部账号 404）、一店一店长（建号与分配两处同闸，同店改角色排自身）、
- * assign-or-move 原子性（挂他店再分配=移动）、移除回池（组织关系保留）。
+ * <p>守卫矩阵：仅主体 ADMIN+（member/店长 403）、店须属本组织（404）、分配对象须为本 org
+ * 成员（owner/admin/member 皆可——2026-08-28 拍板放开管理层，外部账号 404）、一店一店长
+ * （建号与分配两处同闸，同店改角色排自身）、assign-or-move 原子性（挂他店再分配=移动）、
+ * 移除回池（组织关系保留）。
  */
 class StoreAssignmentIT extends IdentityItSupport {
 
@@ -76,6 +77,39 @@ class StoreAssignmentIT extends IdentityItSupport {
         remove(orgId, storeB, poolId, cookie).expectStatus().isNotFound();
     }
 
+    /**
+     * 2026-08-28 拍板：owner/admin 也可被分配到门店（管理层亲自运营领名分）。
+     * owner 占店长位后一店一店长闸照常拦第二位；移除后归位。admin 经 SQL 直插（无自助端点）。
+     */
+    @Test
+    void ownerAndAdminAssignable_takesManagerSeat() {
+        var owner = seedAccount("as-mgmt@example.com");
+        String cookie = owner.cookie();
+        String orgId = createOrg(cookie, "管理层分配主体");
+        String storeA = createStore(orgId, cookie, "自营店");
+
+        // owner 挂店长：200，行落库（权限本就隐式全覆盖，这是身份的如实呈现）
+        assign(orgId, storeA, owner.accountId(), "manager", cookie).expectStatus().isOk()
+                .expectBody().jsonPath("$.data.role").isEqualTo("manager");
+        assertThat(storeIdOf(orgId, owner.accountId())).isEqualTo(storeA);
+
+        // owner 占位后，第二位店长被一店一店长闸拒绝
+        String poolId = createPoolMember(orgId, cookie, "mgmtpool", "候补");
+        assign(orgId, storeA, poolId, "manager", cookie).expectStatus().isEqualTo(409);
+        // 同店改店员（排自身）与移除均正常
+        assign(orgId, storeA, owner.accountId(), "staff", cookie).expectStatus().isOk();
+        remove(orgId, storeA, owner.accountId(), cookie).expectStatus().isOk();
+        assertThat(storeIdOf(orgId, owner.accountId())).isNull();
+
+        // admin 同样可分配（admin 关系经 SQL 直插——无自助授予端点）
+        var admin = seedAccount("as-mgmt-admin@example.com");
+        db.sql("INSERT INTO organization_membership(id, organization_id, account_id, role)"
+                        + " VALUES (gen_random_uuid(), CAST(:org AS uuid), CAST(:acct AS uuid), 'admin')")
+                .bind("org", orgId).bind("acct", admin.accountId()).then().block();
+        assign(orgId, storeA, admin.accountId(), "manager", cookie).expectStatus().isOk();
+        assertThat(storeRoleOf(orgId, admin.accountId())).isEqualTo("manager");
+    }
+
     @Test
     void uniqueManagerGate_rejectsSecondManager() {
         var owner = seedAccount("as-gate@example.com");
@@ -121,9 +155,6 @@ class StoreAssignmentIT extends IdentityItSupport {
 
         // 普通组织 member 也不可 → 403
         assign(orgId, storeA, poolId, "staff", cookieFor(poolId)).expectStatus().isForbidden();
-
-        // owner/admin 不可被挂店 → 400
-        assign(orgId, storeA, owner.accountId(), "staff", cookie).expectStatus().isBadRequest();
 
         // 外部账号 → 404 跨主体隔离
         var outsider = seedAccount("as-out@example.com");

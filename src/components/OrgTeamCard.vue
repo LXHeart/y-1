@@ -205,11 +205,22 @@ const ACCOUNT_STATUS_LABEL: Record<string, string> = {
 const orgCreateDisabled = computed(() =>
   !loginNameValid(orgCreateLoginName.value) || !orgCreateName.value.trim())
 
-/** 池内未分配成员（#52）：门店区「从池中分配」的数据源；role=member 且未挂店。 */
+/**
+ * 池内可分配人选（#52）：未挂店的组织成员。2026-08-28 拍板纳入 owner/admin——
+ * 管理层亲自运营某店时领店长名分（权限本就全覆盖，这是身份的如实呈现）。
+ */
 const poolMembers = computed(() => {
   const memberList = Array.isArray(members.value) ? members.value : []
-  return memberList.filter((m) => m.role === 'member' && !m.storeId)
+  return memberList.filter((m) => !m.storeId)
 })
+
+/** accountId → 组织角色（门店行据此区分管理层：owner 行不给停用/删除，同主体成员表口径）。 */
+const orgRoleByAccount = computed(() => {
+  const map = new Map<string, MembershipRole>()
+  for (const m of Array.isArray(members.value) ? members.value : []) map.set(m.accountId, m.role)
+  return map
+})
+const isOrgOwner = (accountId: string) => orgRoleByAccount.value.get(accountId) === 'owner'
 
 /** 建号预览：前缀-登录名（后端拼同样规则，前端只做提示）。 */
 const orgUsernamePreview = computed(() =>
@@ -583,16 +594,21 @@ async function confirmDelete(): Promise<void> {
           <tr v-for="m in storeStaffRows" :key="m.id">
             <td>
               <code>{{ m.username || m.accountId.slice(0, 8) + '…' }}</code>
-              <!-- 主体账号（owner/admin）默认就是店长，不需要也不该被「添加」成本店成员 -->
-              <span v-if="m.implicit" class="team-tag">主体账号</span>
+              <!-- 主体账号（隐式合成行或真实挂靠的管理层） -->
+              <span v-if="m.implicit || (orgRoleByAccount.get(m.accountId) ?? 'member') !== 'member'" class="team-tag">主体账号</span>
             </td>
             <td>{{ STORE_ROLE_LABEL[m.role] || m.role }}</td>
             <td><span v-if="m.accountStatus" class="team-tag">{{ ACCOUNT_STATUS_LABEL[m.accountStatus] || m.accountStatus }}</span></td>
             <td>
               <span v-if="m.implicit" class="team-hint">默认管理本店（在「主体成员」处管理）</span>
               <template v-else>
-                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
-                <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+                <!-- owner 行的停用/恢复/删除服务端一律 403（账号级守卫），不画死按钮；
+                     分配层的调度/移除与其无关，照常可用 -->
+                <template v-if="!isOrgOwner(m.accountId)">
+                  <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, false)">停用账号</button>
+                  <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="setAccountActive(m.accountId, true)">恢复</button>
+                </template>
+                <span v-else class="team-hint">主体所有者（账号管理在「主体成员」处）</span>
                 <!-- 调度/移除（#52 第 4 条）：分配层人事操作，仅多店且 ADMIN+（后端门禁） -->
                 <template v-if="!singleStore">
                   <button type="button" class="team-quiet" :disabled="grassland.loading.value" @click="startTransfer(m.accountId)">调度</button>
@@ -626,7 +642,8 @@ async function confirmDelete(): Promise<void> {
             <select v-model="assignAccountId">
               <option value="" disabled>选择未分配成员</option>
               <option v-for="p in poolMembers" :key="p.id" :value="p.accountId">
-                {{ p.username || p.accountId.slice(0, 8) + '…' }}{{ p.storeName ? `（${p.storeName}）` : '' }}
+                {{ (p.username || p.accountId.slice(0, 8) + '…')
+                  + (p.role !== 'member' ? `（${ROLE_LABEL[p.role]}）` : '') }}
               </option>
             </select>
             <select v-model="assignRole">
@@ -640,11 +657,11 @@ async function confirmDelete(): Promise<void> {
             >分配到本店</button>
           </div>
           <p v-if="poolMembers.length === 0" class="team-hint">
-            池内暂无未分配成员——先在上方「主体成员」区创建（可不选门店），再回到这里分配。
+            暂无可分配人选——先在上方「主体成员」区创建（可不选门店），再回到这里分配。
           </p>
           <p class="team-hint">
-            分配即定岗（店长/店员）；一个门店只能有一个店长，冲突会被拒绝。成员已挂他店时
-            分配到本店即完成调度（先解除原店）。
+            可分配未分配成员或主体管理层（所有者/管理员亲自运营时领店长名分）；分配即定岗
+            （店长/店员），一个门店只能有一个店长，冲突会被拒绝。已挂他店时分配到本店即完成调度。
           </p>
         </details>
 
