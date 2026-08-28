@@ -118,7 +118,7 @@ cd .. && docker compose up -d --build \
 
 注意 `--profile` 是全局 flag，必须放在子命令前：`docker compose --profile observability up -d --build`（放后面报 `unknown flag`）。
 
-### 建议加 zsh 函数（~/.zshrc）
+### 建议加 zsh 函数（~/.zshrc，2026-08-28 已装，清理已内置）
 
 ```bash
 y1-rebuild() {
@@ -126,11 +126,13 @@ y1-rebuild() {
     && JAVA_HOME=/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home ./gradlew bootJar \
     && cd .. && docker compose up -d --build \
       frontend identity-service edge-bff \
-      marketplace-service finance-service trust-service intelligence-service "$@"
+      marketplace-service finance-service trust-service intelligence-service "$@" \
+    && docker image prune -f \
+    && docker builder prune -af --keep-storage 10GB
 }
 ```
 
-之后改完代码 `y1-rebuild` 一条命令搞定。
+之后改完代码 `y1-rebuild` 一条命令搞定，重建 + 清理一步到位（清理逻辑见下节）。
 
 ### ⚠️ 命名卷的属主漂移坑（2026-08-26 实录）
 
@@ -155,9 +157,17 @@ docker restart y-1-intelligence-service-1
 
 ## 六、防再堆积的习惯
 
-1. **e2e 跑完随手整删**：`docker compose -p <e2e项目名> down --rmi all -v`。历史垃圾最大来源就是 e2e 每次换项目名（y1-e2e-mtlsfix / final3 / final4 / local...）留下一整套镜像
-2. 每隔一阵 `docker system df` 看一眼 RECLAIMABLE，超过 10GB 再动手；构建缓存是正常的构建加速设施，不必次次清零
-3. 清完构建缓存后第一次重建必然全量、明显变慢（一次性代价），之后恢复增量
+1. **每次重建后顺手清**（2026-08-28 起内置进 `y1-rebuild`，手动跑这两条也行）：
+   ```bash
+   docker image prune -f                        # 只删悬空镜像，零风险（绝不用 -a）
+   docker builder prune -af --keep-storage 10GB # 构建缓存封顶 10GB，只逐出最旧的
+   ```
+   逻辑：悬空镜像是每次重建必然产生的（旧 tag 被顶掉变 `<none>`），不清就会攒；
+   构建缓存保留最近 10GB 足够增量构建秒级命中，超出部分是最旧的、早被新构建作废，
+   逐出不拖慢下次构建——这样既不回到 2026-08-28 之前 66GB 缓存的状态，也不付出每次全量冷构建 4 分钟的代价。
+2. **e2e 跑完随手整删**：`docker compose -p <e2e项目名> down --rmi all -v`。历史垃圾最大来源就是 e2e 每次换项目名（y1-e2e-mtlsfix / final3 / final4 / local...）留下一整套镜像
+3. 每隔一阵 `docker system df` 看一眼 RECLAIMABLE，超过 10GB 再动手；构建缓存是正常的构建加速设施，不必次次清零（有了 keep-storage 封顶后这条基本不会再触发）
+4. 清完构建缓存后第一次重建必然全量、明显变慢（一次性代价），之后恢复增量
 
 ## 附：2026-08-21 实测数据参考
 
