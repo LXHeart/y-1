@@ -56,10 +56,12 @@ async function upsertOrganization(ownerAccountId: string): Promise<string> {
       [existing.rows[0].id])
     return existing.rows[0].id
   }
+  // 任务书 #49/#51 后直插 organization 必带 account_prefix（NOT NULL + UNIQUE，成员账号名 = 前缀-登录名）。
+  // 前缀取「e2e + 时间基36」保证唯一且符合 ^[a-z0-9]{3,24}$；真实路径由后端自动生成。
   const created = await queryDb<{ id: string }>(
-    `INSERT INTO organization(id, owner_account_id, name, status, permission_tier, industry)
-     VALUES (gen_random_uuid(), $1, $2, 'active', 'finance_transaction', 'other') RETURNING id`,
-    [ownerAccountId, ORG_NAME])
+    `INSERT INTO organization(id, owner_account_id, name, status, permission_tier, industry, account_prefix)
+     VALUES (gen_random_uuid(), $1, $2, 'active', 'finance_transaction', 'other', $3) RETURNING id`,
+    [ownerAccountId, ORG_NAME, `e2e${Date.now().toString(36)}`])
   return created.rows[0].id
 }
 
