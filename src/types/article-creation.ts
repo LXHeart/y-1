@@ -2,6 +2,18 @@ export type ArticlePlatform = 'wechat' | 'zhihu' | 'xiaohongshu'
 
 export type ArticleCreationStage = 'topic' | 'titles' | 'outline' | 'content' | 'images'
 
+/** 创作 style skill 分类（任务书 #57）：与后端 creation_style_skill.category 对齐。 */
+export type CreationStyleSkillCategory = 'TITLE_FORMULA' | 'GENRE' | 'STYLE'
+
+/** 用户侧目录项（GET /api/creation-style-skills 下发，不含 promptContent）。 */
+export interface CreationStyleSkillOption {
+  category: CreationStyleSkillCategory
+  code: string
+  name: string
+  description: string
+  sortOrder: number
+}
+
 export interface ArticleTitleOption {
   title: string
   hook: string

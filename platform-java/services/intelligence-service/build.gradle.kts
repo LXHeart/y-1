@@ -72,6 +72,10 @@ tasks.processResources {
     from(rootProject.file("../contracts/hot-topic-taxonomy.json")) {
         into("contracts")
     }
+    // 任务书 #57：小红书图文创作风格 skill 种子（标题套路/体裁/文风，启动 Seeder 表空才种）。
+    from(rootProject.file("../contracts/creation-style-skills.json")) {
+        into("contracts")
+    }
 }
 
 // Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.

@@ -109,10 +109,42 @@
         抖音定位图集短文案：短句式表达、强开场突出卖点、结尾带话题标签，配图建议竖版封面并按顺序编排。
       </p>
 
+      <!-- 任务书 #57：小红书图文（非抖音）生成标题前必选标题套路；目录服务端下发 -->
+      <div v-if="styleChipsVisible" class="style-skills" data-test="style-skills-titles">
+        <p v-if="styleSkillsLoading && !formulaOptions.length" class="field-note">正在加载标题套路…</p>
+        <template v-else>
+          <fieldset class="form-field style-field">
+            <legend>标题套路 <span class="required-mark" aria-hidden="true">*</span></legend>
+            <div class="option-grid" role="radiogroup" aria-label="标题套路">
+              <label
+                v-for="item in formulaOptions"
+                :key="item.code"
+                class="style-option"
+                :class="{ active: titleFormula === item.code }"
+              >
+                <input
+                  v-model="titleFormula"
+                  type="radio"
+                  name="title-formula"
+                  :value="item.code"
+                  :data-test="`skill-formula-${item.code}`"
+                >
+                {{ item.name }}
+              </label>
+            </div>
+            <p v-if="selectedFormula" class="field-note" data-test="skill-formula-desc">{{ selectedFormula.description }}</p>
+          </fieldset>
+        </template>
+        <div v-if="styleSkillsError" class="style-catalog-error">
+          <p class="field-note" role="alert">{{ styleSkillsError }}</p>
+          <button type="button" class="btn-secondary btn-sm" data-test="style-skills-retry" @click="fetchStyleSkills">重试</button>
+        </div>
+      </div>
+
       <div class="action-row">
         <button
           class="btn-primary gl-btn-primary"
-          :disabled="titlesLoading || !topic.trim()"
+          :disabled="titlesLoading || !topic.trim() || (styleChipsVisible && !titleFormula)"
           @click="fetchTitles"
         >
           {{ titlesLoading ? '生成中…' : '生成标题' }}
@@ -212,10 +244,51 @@
         </div>
       </div>
 
+      <!-- 任务书 #57：生成正文前必选体裁+文风（仅小红书非抖音） -->
+      <div v-if="styleChipsVisible" class="style-skills" data-test="style-skills-content">
+        <p v-if="styleSkillsLoading && !genreOptions.length" class="field-note">正在加载体裁与文风…</p>
+        <template v-else>
+          <fieldset class="form-field style-field">
+            <legend>内容体裁 <span class="required-mark" aria-hidden="true">*</span></legend>
+            <div class="option-grid" role="radiogroup" aria-label="内容体裁">
+              <label
+                v-for="item in genreOptions"
+                :key="item.code"
+                class="style-option"
+                :class="{ active: genre === item.code }"
+              >
+                <input v-model="genre" type="radio" name="content-genre" :value="item.code" :data-test="`skill-genre-${item.code}`">
+                {{ item.name }}
+              </label>
+            </div>
+            <p v-if="selectedGenre" class="field-note" data-test="skill-genre-desc">{{ selectedGenre.description }}</p>
+          </fieldset>
+          <fieldset class="form-field style-field">
+            <legend>文风口吻 <span class="required-mark" aria-hidden="true">*</span></legend>
+            <div class="option-grid" role="radiogroup" aria-label="文风口吻">
+              <label
+                v-for="item in styleOptions"
+                :key="item.code"
+                class="style-option"
+                :class="{ active: style === item.code }"
+              >
+                <input v-model="style" type="radio" name="content-style" :value="item.code" :data-test="`skill-style-${item.code}`">
+                {{ item.name }}
+              </label>
+            </div>
+            <p v-if="selectedStyle" class="field-note" data-test="skill-style-desc">{{ selectedStyle.description }}</p>
+          </fieldset>
+        </template>
+        <div v-if="styleSkillsError" class="style-catalog-error">
+          <p class="field-note" role="alert">{{ styleSkillsError }}</p>
+          <button type="button" class="btn-secondary btn-sm" data-test="style-skills-retry-content" @click="fetchStyleSkills">重试</button>
+        </div>
+      </div>
+
       <div class="action-row">
         <button
           class="btn-primary gl-btn-primary"
-          :disabled="contentLoading || outlineLoading || !outline.trim()"
+          :disabled="contentLoading || outlineLoading || !outline.trim() || (styleChipsVisible && (!genre || !style))"
           @click="streamContent"
         >
           {{ contentLoading ? '生成中…' : '生成正文' }}
@@ -358,8 +431,10 @@ const router = useRouter()
 const {
   stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
   titlesLoading, outlineLoading, contentLoading, error,
+  titleFormula, genre, style, styleSkillOptions,
+  styleSkillsLoading, styleSkillsError, styleSkillsActive,
   imageSlots, imageRecommendations, loadingRecommendations, completed,
-  fetchTitles, streamOutline, streamContent,
+  fetchTitles, streamOutline, streamContent, fetchStyleSkills,
   selectTitle, goToTitles, goToOutline, goToContent,
   loadImageRecommendations, searchImageForSlot, generateImageForSlot,
   selectImageForSlot, clearImageForSlot, toggleSlot,
@@ -408,6 +483,26 @@ function selectNonDouyinPlatform(target: 'wechat' | 'zhihu' | 'xiaohongshu'): vo
 watch(platform, (value) => {
   if (value !== 'xiaohongshu') isDouyinMode.value = false
 })
+
+// 任务书 #57：三选择器只在「小红书 && 非抖音」出现——抖音 platform 值同为 xiaohongshu，
+// 是否携带必须由视图显式同步给 composable（styleSkillsActive），不能只看 platform。
+const styleChipsVisible = computed(() => platform.value === 'xiaohongshu' && !isDouyinMode.value)
+const formulaOptions = computed(() => styleSkillOptions.value.TITLE_FORMULA)
+const genreOptions = computed(() => styleSkillOptions.value.GENRE)
+const styleOptions = computed(() => styleSkillOptions.value.STYLE)
+const selectedFormula = computed(() => formulaOptions.value.find((item) => item.code === titleFormula.value))
+const selectedGenre = computed(() => genreOptions.value.find((item) => item.code === genre.value))
+const selectedStyle = computed(() => styleOptions.value.find((item) => item.code === style.value))
+
+let styleSkillsFetchAttempted = false
+watch(styleChipsVisible, (visible) => {
+  styleSkillsActive.value = visible
+  // 懒拉目录（一次）：失败不重拉自动，chips 区内提供显式重试
+  if (visible && !styleSkillsFetchAttempted) {
+    styleSkillsFetchAttempted = true
+    void fetchStyleSkills()
+  }
+}, { immediate: true })
 
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
@@ -850,6 +945,41 @@ const contentWithImages = computed(() => {
   color: var(--color-text-secondary);
   font-size: 0.84rem;
   line-height: 1.6;
+}
+
+.style-skills {
+  display: grid;
+  gap: 12px;
+}
+
+.style-field {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: grid;
+  gap: 8px;
+}
+
+.style-field legend {
+  padding: 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.required-mark {
+  color: var(--color-danger);
+}
+
+.style-catalog-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.style-catalog-error .field-note[role='alert'] {
+  color: var(--color-danger);
 }
 
 .format-rule-bar {

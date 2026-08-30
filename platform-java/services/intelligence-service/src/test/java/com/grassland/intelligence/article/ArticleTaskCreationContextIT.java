@@ -28,6 +28,15 @@ import reactor.core.publisher.Mono;
 class ArticleTaskCreationContextIT extends IntelligenceItSupport {
     private static final String ACCOUNT = "19191919-1919-1919-1919-191919191919";
     private static final String OTHER = "20202020-2020-2020-2020-202020202020";
+    private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void kekProps(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
 
     @MockitoBean
     CreditsClient credits;
@@ -51,14 +60,25 @@ class ArticleTaskCreationContextIT extends IntelligenceItSupport {
         db.sql("DELETE FROM ai_model_budget").then().block();
         db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
+        db.sql("DELETE FROM platform_provider_credential WHERE base_url LIKE 'http://localhost:%' OR name = 'article-text'").then().block();
+        // 任务书 #58：平台 text 行必须带凭据密钥（无 env 兜底，密钥经 KEK 信封加密落库）
+        String encryptedKey = encryptionProvider.getIfAvailable().encrypt("sk-article-text-key-1234");
         platformConfigId = db.sql("""
+                        WITH cred AS (
+                            INSERT INTO platform_provider_credential(name, provider, base_url,
+                                encrypted_key, key_version, masked_hint, enabled)
+                            VALUES ('article-text', 'qwen', :baseUrl, :encryptedKey, 'v1', 'sk-***art', true)
+                            RETURNING id
+                        )
                         INSERT INTO platform_model_config(
                             capability, model_role, provider, model, base_url,
-                            health_status, enabled, version)
-                        VALUES ('text','primary','qwen','qwen-plus',:baseUrl,'healthy',true,7)
+                            health_status, enabled, version, credential_id)
+                        SELECT 'text','primary','qwen','qwen-plus',:baseUrl,'healthy',true,7,cred.id
+                        FROM cred
                         RETURNING id::text
                         """)
                 .bind("baseUrl", QWEN.baseUrl())
+                .bind("encryptedKey", encryptedKey)
                 .map(row -> row.get("id", String.class)).one().block();
         QWEN.resetAll();
     }
@@ -95,6 +115,31 @@ class ArticleTaskCreationContextIT extends IntelligenceItSupport {
                         + "WHERE event_type='AiRunCompleted'")
                 .map(row -> row.get("n", Long.class)).one().block();
         assertThat(completedEvents).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("task titles inject the selected title formula into the upstream system message")
+    void taskTitlesInjectTitleFormula() {
+        String snapshotId = seedSnapshot(ACCOUNT, "xiaohongshu", "graphic");
+        QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(okJson("""
+                {"choices":[{"message":{"content":"{\\"titles\\":[{\\"title\\":\\"3个探店要点\\",\\"hook\\":\\"数字\\"}]}"}}],
+                 "usage":{"prompt_tokens":21,"completion_tokens":8}}
+                """)));
+
+        client().post().uri("/api/article-generation/titles")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"topic":"探店任务","platform":"xiaohongshu","taskMode":true,
+                         "contextSnapshotId":"%s","titleFormula":"number"}
+                        """.formatted(snapshotId))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.titles[0].title").isEqualTo("3个探店要点");
+
+        // 上游请求体（WireMock 实收）含注入段——任务模式同样注入（任务书 #57 决策 A）
+        QWEN.verify(1, postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("【标题套路：数字型】"))
+                .withRequestBody(containing("数字尽量放在标题前半段")));
     }
 
     @Test

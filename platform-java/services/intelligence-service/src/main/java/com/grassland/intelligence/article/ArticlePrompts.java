@@ -167,7 +167,7 @@ final class ArticlePrompts {
     private ArticlePrompts() {}
 
     static ChatMessage titlesSystem(Platform platform) {
-        return ChatMessage.system(prompt(TITLES, platform));
+        return titlesSystem(platform, null);
     }
 
     static ChatMessage outlineSystem(Platform platform) {
@@ -175,7 +175,42 @@ final class ArticlePrompts {
     }
 
     static ChatMessage contentSystem(Platform platform) {
-        return ChatMessage.system(prompt(CONTENT, platform));
+        return contentSystem(platform, null, null);
+    }
+
+    /**
+     * titles system + 标题套路注入段（任务书 #57 决策 D）：追加进同一条 system 消息文本，
+     * 不新增 system 消息（BYOK 任意端点对多条 system 兼容性不可假设）。
+     * 注入段带优先级句——小红书 base 的「风格多样化」要求与「全候选遵循同一套路」冲突时以本段为准。
+     */
+    static ChatMessage titlesSystem(Platform platform, com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt formula) {
+        String base = prompt(TITLES, platform);
+        if (formula == null) {
+            return ChatMessage.system(base);
+        }
+        return ChatMessage.system(base + "\n\n【标题套路：" + formula.name() + "】\n"
+                + "在满足上述输出格式要求的前提下，全部 5 个候选标题都必须遵循以下套路"
+                + "（与前文「风格多样化」的要求冲突时，以本段为准）：\n" + formula.promptContent());
+    }
+
+    /**
+     * content system + 体裁/文风注入段（任务书 #57 决策 D）：体裁在前、文风在后，各一段；
+     * 文风段带优先级句——须能覆盖小红书 base 默认的「闺蜜口吻」语气。
+     */
+    static ChatMessage contentSystem(Platform platform,
+            com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt genre,
+            com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt style) {
+        StringBuilder sb = new StringBuilder(prompt(CONTENT, platform));
+        if (genre != null) {
+            sb.append("\n\n【内容体裁：").append(genre.name()).append("】\n")
+                    .append("正文必须遵循以下体裁结构要求：\n").append(genre.promptContent());
+        }
+        if (style != null) {
+            sb.append("\n\n【文风口吻：").append(style.name()).append("】\n")
+                    .append("全文语言风格必须遵循以下口吻要求（与前文默认语气冲突时，以本段为准）：\n")
+                    .append(style.promptContent());
+        }
+        return ChatMessage.system(sb.toString());
     }
 
     /** 取平台 prompt；null/未知平台回退 wechat（{@code Map.of} 不允许 null 键，故先归一）。 */

@@ -67,6 +67,18 @@
         @click="activeSection = 'org-prefix'">
         账号前缀
       </button>
+      <!-- 任务书 #57：创作风格 skill 库（查看/编辑/启停）。必须保持 DOM 最末页签
+           （测试按下标点页签）；admin-only 功能，对 reviewer 隐藏。 -->
+      <button
+        v-if="!reviewerOnly"
+        type="button"
+        role="tab"
+        :aria-selected="activeSection === 'creation-skills'"
+        :class="{ active: activeSection === 'creation-skills' }"
+        @click="activeSection = 'creation-skills'"
+      >
+        创作风格
+      </button>
     </div>
 
     <div v-if="activeSection === 'org-renames'" class="admin-panel" role="tabpanel">
@@ -322,6 +334,11 @@
       <HomepageHotConfigPanel />
     </div>
 
+    <div v-else-if="activeSection === 'creation-skills'" class="admin-panel" role="tabpanel">
+      <!-- 任务书 #57：创作风格 skill 库（标题套路/体裁/文风的目录与注入 prompt 运营） -->
+      <CreationSkillsAdminPanel />
+    </div>
+
     <div v-else class="admin-panel" role="tabpanel">
       <UnifiedAuditPanel />
     </div>
@@ -414,6 +431,7 @@ import AiPlatformCredentialsPanel from '../../components/AiPlatformCredentialsPa
 import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import AiPriceTablePanel from '../../components/AiPriceTablePanel.vue'
 import HomepageHotConfigPanel from '../../components/HomepageHotConfigPanel.vue'
+import CreationSkillsAdminPanel from './components/CreationSkillsAdminPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
@@ -467,7 +485,7 @@ const userSearch = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

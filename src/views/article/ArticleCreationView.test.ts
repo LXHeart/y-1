@@ -37,6 +37,37 @@ function sseResponse(content: string): Response {
   }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
 }
 
+/** 任务书 #57：风格目录下发（titles/content 生成前的小红书三选择器数据源）。 */
+const SKILLS_FIXTURE = {
+  success: true,
+  data: {
+    skills: [
+      { category: 'TITLE_FORMULA', code: 'number', name: '数字型', description: '数字量化收获，阅读门槛低', sortOrder: 1 },
+      { category: 'TITLE_FORMULA', code: 'suspense', name: '悬念型', description: '钩子留到正文揭晓', sortOrder: 2 },
+      { category: 'GENRE', code: 'practical_guide', name: '干货攻略型', description: '分步保姆级教程，收藏率高', sortOrder: 1 },
+      { category: 'GENRE', code: 'review', name: '种草测评型', description: '实测分维度，结论明确不骑墙', sortOrder: 2 },
+      { category: 'STYLE', code: 'professional', name: '专业博主风', description: '数据依据，克制冷静', sortOrder: 2 },
+      { category: 'STYLE', code: 'bestie', name: '闺蜜种草风', description: '闺蜜聊天感，热情种草', sortOrder: 1 },
+    ],
+  },
+}
+
+/** 目录 + 标题响应的常见组合桩（小红书流必用）。 */
+function stubFetchWithCatalog(titlesImpl: () => Partial<Response>) {
+  stubFetch((call) => {
+    if (call.url === '/api/creation-style-skills') {
+      return { ok: true, json: async () => SKILLS_FIXTURE }
+    }
+    return titlesImpl()
+  })
+}
+
+/** 选中小红书并等目录就绪（fetch 需已 stub）。 */
+async function selectXiaohongshuWithCatalog(wrapper: Awaited<ReturnType<typeof mountView>>) {
+  await wrapper.findAll('.platform-btn')[2].trigger('click')
+  await flushPromises()
+}
+
 beforeEach(() => {
   calls.length = 0
 })
@@ -226,7 +257,7 @@ describe('ArticleCreationView 抖音平台接入', () => {
 
 describe('ArticleCreationView 平台规范提示条', () => {
   test('主题阶段不渲染规范提示条（无结果内容），标题阶段渲染字数范围与标题上限', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({
         success: true,
@@ -238,7 +269,8 @@ describe('ArticleCreationView 平台规范提示条', () => {
     expect(wrapper.find('.format-rule-bar').exists()).toBe(false)
 
     await wrapper.find('textarea.topic-input').setValue('探店图文')
-    await wrapper.findAll('.platform-btn')[2].trigger('click') // 小红书：50-1000 字、标题 20 字
+    await selectXiaohongshuWithCatalog(wrapper)
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
@@ -250,7 +282,7 @@ describe('ArticleCreationView 平台规范提示条', () => {
   })
 
   test('标题超过平台上限：非阻断提示出现，但「生成大纲」仍可用', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({
         success: true,
@@ -260,7 +292,8 @@ describe('ArticleCreationView 平台规范提示条', () => {
     const wrapper = mountView()
 
     await wrapper.find('textarea.topic-input').setValue('探店图文')
-    await wrapper.findAll('.platform-btn')[2].trigger('click') // 小红书：标题上限 20 字
+    await selectXiaohongshuWithCatalog(wrapper)
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
@@ -274,7 +307,7 @@ describe('ArticleCreationView 平台规范提示条', () => {
   })
 
   test('正文阶段：内容超限给出非阻断提示，复制按钮不被禁用', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({
         success: true,
@@ -285,7 +318,8 @@ describe('ArticleCreationView 平台规范提示条', () => {
     const vm = wrapper.vm as unknown as { content: string; stage: string }
 
     await wrapper.find('textarea.topic-input').setValue('探店图文')
-    await wrapper.findAll('.platform-btn')[2].trigger('click') // 小红书：正文上限 1000 字
+    await selectXiaohongshuWithCatalog(wrapper)
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
@@ -385,19 +419,22 @@ describe('ArticleCreationView creationHandoff 预填', () => {
   })
 
   test('任务 handoff 的标题请求强制携带 taskMode 与冻结快照 ID', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({ success: true, data: { titles: [{ title: '任务标题', hook: '' }] } }),
     }))
     const wrapper = mountView(buildHandoff('xiaohongshu', true))
     await flushPromises()
 
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+    const titlesCall = calls.find((call) => call.url.endsWith('/titles'))
+    expect(JSON.parse(String(titlesCall?.init?.body))).toEqual({
       topic: '餐饮创业复盘',
       platform: 'xiaohongshu',
+      titleFormula: 'number',
       taskMode: true,
       contextSnapshotId: '11111111-1111-1111-1111-111111111111',
     })
@@ -511,5 +548,168 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       prompt: '生成正文插图', size: '1024x1024',
     })
+  })
+})
+
+describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
+  test('小红书（非抖音）：目录拉取一次、标题套路 chips 渲染、选中显示描述', async () => {
+    stubFetchWithCatalog(() => ({
+      ok: true,
+      json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }),
+    }))
+    const wrapper = mountView()
+
+    // 切换两次平台：目录只拉一次（懒取一次语义）
+    await wrapper.findAll('.platform-btn')[2].trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.platform-btn')[0].trigger('click')
+    await wrapper.findAll('.platform-btn')[2].trigger('click')
+    await flushPromises()
+    expect(calls.filter((call) => call.url === '/api/creation-style-skills')).toHaveLength(1)
+
+    expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(true)
+    expect(wrapper.findAll('input[name="title-formula"]')).toHaveLength(2)
+    // 未选套路：生成标题禁用（有主题也禁用）
+    await wrapper.find('textarea.topic-input').setValue('探店')
+    expect(wrapper.get('.action-row .btn-primary').attributes('disabled')).toBe('')
+
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
+    expect(wrapper.get('.action-row .btn-primary').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-test="skill-formula-desc"]').text()).toBe('数字量化收获，阅读门槛低')
+  })
+
+  test('公众号/知乎/抖音：无 chips、请求体不带新字段', async () => {
+    stubFetch(() => ({
+      ok: true,
+      json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }),
+    }))
+    const wrapper = mountView()
+    await wrapper.find('textarea.topic-input').setValue('探店')
+
+    // 公众号（默认）与知乎：无选择器、无目录请求
+    expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
+    await wrapper.findAll('.platform-btn')[1].trigger('click')
+    expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店', platform: 'zhihu' })
+
+    // 抖音：platform 值同为 xiaohongshu，但视图层标记 douyin——不展示、不携带
+    await wrapper.find('.btn-back').trigger('click')
+    await wrapper.findAll('.platform-btn')[3].trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
+    expect(calls.some((call) => call.url === '/api/creation-style-skills')).toBe(false)
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ topic: '探店', platform: 'xiaohongshu' })
+  })
+
+  test('titles 请求体携带所选标题套路；content 请求体携带体裁+文风', async () => {
+    stubFetch((call) => {
+      if (call.url === '/api/creation-style-skills') {
+        return { ok: true, json: async () => SKILLS_FIXTURE }
+      }
+      if (call.url.endsWith('/titles')) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }),
+        }
+      }
+      return { ok: true, body: sseResponse('正文段落').body }
+    })
+    const wrapper = mountView()
+
+    await wrapper.find('textarea.topic-input').setValue('探店')
+    await selectXiaohongshuWithCatalog(wrapper)
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/titles'))?.init?.body))).toEqual({
+      topic: '探店', platform: 'xiaohongshu', titleFormula: 'number',
+    })
+
+    // 标题 → 大纲 → 正文：大纲阶段出现体裁+文风两组 chips，未选齐则生成正文禁用
+    await wrapper.find('.title-item').trigger('click')
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成大纲（免费 SSE）
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="style-skills-content"]').exists()).toBe(true)
+    expect(wrapper.findAll('input[name="content-genre"]')).toHaveLength(2)
+    expect(wrapper.findAll('input[name="content-style"]')).toHaveLength(2)
+    await wrapper.find('textarea.stream-textarea').setValue('一、开头足够长的大纲内容供生成正文使用')
+    expect(wrapper.get('.action-row .btn-primary').attributes('disabled')).toBe('')
+
+    await wrapper.find('[data-test="skill-genre-practical_guide"]').setValue(true)
+    expect(wrapper.get('.action-row .btn-primary').attributes('disabled')).toBe('')
+    await wrapper.find('[data-test="skill-style-professional"]').setValue(true)
+    expect(wrapper.get('.action-row .btn-primary').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成正文
+    await flushPromises()
+    const contentCall = calls.find((c) => c.url.endsWith('/content'))
+    expect(JSON.parse(String(contentCall?.init?.body))).toMatchObject({
+      platform: 'xiaohongshu',
+      genre: 'practical_guide',
+      style: 'professional',
+    })
+  })
+
+  test('目录加载失败：内联错误 + 重试按钮，不阻塞其它步骤', async () => {
+    stubFetch((call) => {
+      if (call.url === '/api/creation-style-skills') {
+        return { ok: false, status: 500, json: async () => ({ success: false, error: '目录暂不可用' }) }
+      }
+      return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }) }
+    })
+    const wrapper = mountView()
+
+    await wrapper.find('textarea.topic-input').setValue('探店')
+    await wrapper.findAll('.platform-btn')[2].trigger('click')
+    await flushPromises()
+
+    const block = wrapper.get('[data-test="style-skills-titles"]')
+    expect(block.find('[role="alert"]').text()).toContain('目录暂不可用')
+    expect(block.find('[data-test="style-skills-retry"]').exists()).toBe(true)
+    // 必选门控下生成仍被禁（未选项），但主题输入/平台切换未被阻塞
+    expect(wrapper.get('.action-row .btn-primary').attributes('disabled')).toBe('')
+    expect(wrapper.find('textarea.topic-input').attributes('disabled')).toBeUndefined()
+  })
+
+  test('锁定会话「重新开始」保留三选择（决策 J：与平台保留一致）', async () => {
+    stubFetchWithCatalog(() => ({
+      ok: true,
+      json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }),
+    }))
+    // handoff 锁定小红书（keepPlatform=true）——「重新开始」不退回公众号，chips 常驻
+    const wrapper = mountView({
+      revision: 1,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'article',
+      source: { type: 'independent' },
+      prefill: { topic: '探店' },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { stage: string; content: string }
+
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
+    vm.stage = 'content'
+    vm.content = '一段正文'
+    await flushPromises()
+
+    await wrapper.get('.action-row .btn-secondary').trigger('click') // 重新开始
+    await flushPromises()
+
+    expect(vm.stage).toBe('topic')
+    expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(true)
+    expect((wrapper.find('[data-test="skill-formula-number"]').element as HTMLInputElement).checked).toBe(true)
+    // 直接生成：请求仍带已保留的套路
+    await wrapper.find('textarea.topic-input').setValue('再来一篇')
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    const titlesCall = calls.find((call) => call.url.endsWith('/titles'))
+    expect(JSON.parse(String(titlesCall?.init?.body)).titleFormula).toBe('number')
   })
 })

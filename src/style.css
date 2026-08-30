@@ -377,6 +377,25 @@ img {
 .gl-field .gl-tile-button-primary { border-color: var(--color-border-accent); background: var(--color-surface-highlight); }
 .gl-field .gl-tile-button-primary:hover:not(:disabled) { border-color: var(--color-border-accent); background: var(--color-surface-highlight); }
 
+/* 选项 chips 共用层（fieldset.form-field > legend + .option-grid > label.style-option 包 radio）：
+   任务书 #57 从 CardSeriesPanel scoped 上提全局（创作中心三组风格选择器复用同款范式）。 */
+.gl-field .option-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.gl-field .style-option {
+  padding: 7px 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+.gl-field .style-option:hover { border-color: var(--color-border-hover); }
+.gl-field .style-option.active { border-color: var(--color-accent); color: var(--color-accent); background: var(--color-surface-highlight); }
+.gl-field .style-option input { margin-right: 4px; accent-color: var(--color-accent); }
+.gl-field .style-option:focus-within { outline: none; border-color: var(--color-border-accent); box-shadow: var(--focus-ring); }
+
 /* ---------- 弹窗骨架共用层 ----------
    治理台两处弹窗（AdminView 审核弹窗、AdjustCreditsDialog）共用类名。
    弹窗经 Teleport 挂到 body，脱离任何 .gl-field 根，scoped 样式也够不着

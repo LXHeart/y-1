@@ -4,6 +4,8 @@ import type {
   ArticleImageSlot,
   ArticlePlatform,
   ArticleTitleOption,
+  CreationStyleSkillCategory,
+  CreationStyleSkillOption,
   GeneratedImage,
   ImageRecommendation,
   ImageSearchResult,
@@ -29,6 +31,21 @@ export function useArticleCreation() {
   const contentLoading = ref(false)
   const error = ref('')
 
+  // 任务书 #57：小红书图文（非抖音）风格三选。''=未选（必选无默认，未选禁用生成按钮）；
+  // 目录由服务端下发（治理台改完/停用即随下次拉取生效），前端不硬编码清单。
+  const titleFormula = ref('')
+  const genre = ref('')
+  const style = ref('')
+  const styleSkillOptions = ref<Record<CreationStyleSkillCategory, CreationStyleSkillOption[]>>({
+    TITLE_FORMULA: [],
+    GENRE: [],
+    STYLE: [],
+  })
+  const styleSkillsLoading = ref(false)
+  const styleSkillsError = ref('')
+  /** 视图同步：仅小红书非抖音时携带新字段（抖音 platform 值同为 xiaohongshu，不能只看 platform）。 */
+  const styleSkillsActive = ref(false)
+
   const imageSlots = ref<ArticleImageSlot[]>([])
   const imageRecommendations = ref<ImageRecommendation | null>(null)
   const loadingRecommendations = ref(false)
@@ -47,6 +64,39 @@ export function useArticleCreation() {
     return taskMode.value
       ? { taskMode: true, contextSnapshotId: contextSnapshotId.value }
       : {}
+  }
+
+  /** 风格三选注入载荷：active 且已选才携带；未选/非小红书非抖音 → 不带新字段（后端=现状）。 */
+  function stylePayload(): Record<string, string> {
+    if (!styleSkillsActive.value) return {}
+    const payload: Record<string, string> = {}
+    if (titleFormula.value) payload.titleFormula = titleFormula.value
+    if (genre.value) payload.genre = genre.value
+    if (style.value) payload.style = style.value
+    return payload
+  }
+
+  /** 拉取风格目录（一次全量三组合并；失败置 error 态供重试，不阻塞其它步骤）。 */
+  async function fetchStyleSkills(): Promise<void> {
+    if (styleSkillsLoading.value) return
+    styleSkillsLoading.value = true
+    styleSkillsError.value = ''
+    try {
+      const data = await request<{ skills: CreationStyleSkillOption[] }>('/api/creation-style-skills')
+      const grouped: Record<CreationStyleSkillCategory, CreationStyleSkillOption[]> = {
+        TITLE_FORMULA: [],
+        GENRE: [],
+        STYLE: [],
+      }
+      for (const skill of data?.skills || []) {
+        if (skill.category in grouped) grouped[skill.category].push(skill)
+      }
+      styleSkillOptions.value = grouped
+    } catch (err: unknown) {
+      styleSkillsError.value = err instanceof Error ? err.message : '风格目录加载失败，请稍后重试'
+    } finally {
+      styleSkillsLoading.value = false
+    }
   }
 
   function imageExecutionContext() {
@@ -127,7 +177,12 @@ export function useArticleCreation() {
         '/api/article-generation/titles',
         {
           method: 'POST',
-          body: JSON.stringify({ topic: trimmed, platform: platform.value, ...executionContext() }),
+          body: JSON.stringify({
+            topic: trimmed,
+            platform: platform.value,
+            ...stylePayload(),
+            ...executionContext(),
+          }),
           signal: controller.signal,
         },
         { fallbackError: '标题生成失败' },
@@ -212,6 +267,7 @@ export function useArticleCreation() {
           title: selectedTitle.value.trim(),
           outline: outline.value.trim(),
           platform: platform.value,
+          ...stylePayload(),
           ...executionContext(),
         }),
         signal: controller.signal,
@@ -431,6 +487,7 @@ export function useArticleCreation() {
    * 重置为第一步。keepPlatform：创作中心 handoff 会话内「重新开始」时保留已锁定的
    * 发布平台（否则会退回默认 wechat，与创作中心的配置脱节）；无 handoff 的直入
    * 场景保持原行为（回到默认公众号）。
+   * 任务书 #57 决策 J：风格三选择随平台一并保留（连载创作少重复选）；清空仅靠手动改选。
    */
   function reset(options?: { keepPlatform?: boolean }): void {
     titlesController?.abort()
@@ -493,8 +550,10 @@ export function useArticleCreation() {
   return {
     stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
     titlesLoading, outlineLoading, contentLoading, error,
+    titleFormula, genre, style, styleSkillOptions,
+    styleSkillsLoading, styleSkillsError, styleSkillsActive,
     imageSlots, imageRecommendations, loadingRecommendations, completed,
-    fetchTitles, streamOutline, streamContent,
+    fetchTitles, streamOutline, streamContent, fetchStyleSkills,
     selectTitle, confirmOutline,
     goToTitles, goToOutline, goToContent,
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
